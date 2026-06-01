@@ -1,0 +1,4139 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Database Modernizer API",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.modernizer.example.com",
+      "description": "Production API (HTTPS only)"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "Root endpoint.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check endpoint for ALB and monitoring.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/prepare": {
+      "post": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Prepare Assessment",
+        "description": "Pre-create a job ID and S3 upload folder for offline/DDL assessments.\n\nReturns the job ID, S3 upload prefix, and a presigned URL so the client\ncan upload collector output files before starting the assessment.",
+        "operationId": "prepare_assessment_api_v1_assessments_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareAssessmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentPrepared"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/uploads/confirm": {
+      "post": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Confirm Upload",
+        "description": "Confirm that the file upload completed successfully.\n\nChecks that the collector output file exists in S3 at the expected\nlocation. Call this after the presigned URL upload finishes.",
+        "operationId": "confirm_upload_api_v1_assessments__job_id__uploads_confirm_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Database Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/uploads": {
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "List Uploads",
+        "description": "List uploaded files for a prepared assessment.",
+        "operationId": "list_uploads_api_v1_assessments__job_id__uploads_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Database Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/uploads/{filename}": {
+      "delete": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Delete Upload",
+        "description": "Delete an uploaded file from a prepared assessment.",
+        "operationId": "delete_upload_api_v1_assessments__job_id__uploads__filename__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Database Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments": {
+      "post": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Create Assessment",
+        "description": "Start a new database modernization assessment.",
+        "operationId": "create_assessment_api_v1_assessments_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssessmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "List Assessments",
+        "description": "List all assessments.",
+        "operationId": "list_assessments_api_v1_assessments_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 25,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}": {
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Get Assessment",
+        "description": "Get assessment status with pipeline progress.",
+        "operationId": "get_assessment_api_v1_assessments__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Cancel Assessment",
+        "description": "Cancel a running assessment or delete a completed one.",
+        "operationId": "cancel_assessment_api_v1_assessments__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/agents": {
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Get Agent Statuses",
+        "description": "Get per-agent status table with artifact summaries for completed agents.",
+        "operationId": "get_agent_statuses_api_v1_assessments__job_id__agents_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/execution-history": {
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Get Execution History",
+        "description": "Get full Step Functions execution history with all state types.\n\nReturns a flat table of all states (Task, Map, MapIteration, Pass, etc.)\nin chronological order \u2014 mirrors the SFN console table view.",
+        "operationId": "get_execution_history_api_v1_assessments__job_id__execution_history_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/logs": {
+      "get": {
+        "tags": [
+          "assessments"
+        ],
+        "summary": "Get Logs",
+        "description": "Get execution logs, optionally filtered by agent.",
+        "operationId": "get_logs_api_v1_assessments__job_id__logs_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "next_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/results": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Results",
+        "description": "Get full analysis results (executive summary, architecture, TCO, risks).",
+        "operationId": "get_results_api_v1_assessments__job_id__results_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/collector": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Collector Output",
+        "description": "Get raw collector output artifact.",
+        "operationId": "get_collector_output_api_v1_assessments__job_id__collector_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/triage": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Triage Output",
+        "description": "Get raw triage decisions artifact.",
+        "operationId": "get_triage_output_api_v1_assessments__job_id__triage_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/analysis/{agent_type}": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Analysis Output",
+        "description": "Get raw analysis output for a specific agent type.",
+        "operationId": "get_analysis_output_api_v1_assessments__job_id__analysis__agent_type__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "agent_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/reality-check": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Reality Check",
+        "description": "Get reality check output \u2014 engine consolidations and recommendations.",
+        "operationId": "get_reality_check_api_v1_assessments__job_id__reality_check_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/results/table-mappings": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Table Mappings",
+        "description": "Get paginated table mappings from the synthesis report.\n\nReads table_mappings from the synthesis artifact and returns a paginated,\nfilterable slice. Returns 404 until synthesis has completed.",
+        "operationId": "get_table_mappings_api_v1_assessments__job_id__results_table_mappings_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Max rows to return",
+              "default": 25,
+              "title": "Limit"
+            },
+            "description": "Max rows to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Rows to skip",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Rows to skip"
+          },
+          {
+            "name": "recommended_db",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by target engine",
+              "title": "Recommended Db"
+            },
+            "description": "Filter by target engine"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Sort field:direction \u2014 supported: confidence:asc, confidence:desc, source_table:asc, source_table:desc",
+              "default": "confidence:desc",
+              "title": "Sort"
+            },
+            "description": "Sort field:direction \u2014 supported: confidence:asc, confidence:desc, source_table:asc, source_table:desc"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema-designs": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Get Schema Designs",
+        "description": "Get all schema design artifacts.",
+        "operationId": "get_schema_designs_api_v1_assessments__job_id__schema_designs_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/stats": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Get Dashboard Stats",
+        "description": "Get aggregate stats for the dashboard system status cards.",
+        "operationId": "get_dashboard_stats_api_v1_dashboard_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Settings",
+        "description": "Get current settings.",
+        "operationId": "get_settings_api_v1_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Settings",
+        "description": "Update settings.",
+        "operationId": "update_settings_api_v1_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Settings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/test-connection": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test Connection",
+        "description": "Test AWS connectivity (S3, DynamoDB).",
+        "operationId": "test_connection_api_v1_settings_test_connection_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/assignments": {
+      "get": {
+        "tags": [
+          "assignments"
+        ],
+        "summary": "Get Assignments",
+        "description": "Read the current (latest version) assignment artifact.",
+        "operationId": "get_assignments_api_v1_assessments__job_id__assignments_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "assignments"
+        ],
+        "summary": "Put Assignments",
+        "description": "Accept overrides or scope narrowing.\n\nReads the current assignment, applies overrides, validates, writes a new\nversioned artifact, and returns validation warnings.\nReturns HTTP 422 for hard errors (e.g. query assigned to unanalyzed engine).",
+        "operationId": "put_assignments_api_v1_assessments__job_id__assignments_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentOverrideRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/phases": {
+      "get": {
+        "tags": [
+          "phases"
+        ],
+        "summary": "Get Phases",
+        "description": "Return the PhaseProgression for a job.",
+        "operationId": "get_phases_api_v1_assessments__job_id__phases_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseProgression"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/resume": {
+      "post": {
+        "tags": [
+          "phases"
+        ],
+        "summary": "Resume Phase",
+        "description": "Resume execution at the given phase.\n\nReturns HTTP 409 if phase prerequisites are not met.",
+        "operationId": "resume_phase_api_v1_assessments__job_id__resume_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/agents/{agent}/questions": {
+      "get": {
+        "tags": [
+          "agent-interaction"
+        ],
+        "summary": "Get Questions",
+        "description": "Read the questions artifact for an agent.",
+        "operationId": "get_questions_api_v1_assessments__job_id__agents__agent__questions_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentQuestions"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/agents/{agent}/answers": {
+      "put": {
+        "tags": [
+          "agent-interaction"
+        ],
+        "summary": "Put Answers",
+        "description": "Write the answers artifact for an agent.",
+        "operationId": "put_answers_api_v1_assessments__job_id__agents__agent__answers_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitAnswersRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/agents/{agent}/validate-answer": {
+      "post": {
+        "tags": [
+          "agent-interaction"
+        ],
+        "summary": "Validate Single Answer",
+        "description": "Validate a single answer using tiered validation.\n\nOption-select questions are validated deterministically.\nFree-text questions are validated via Bedrock.",
+        "operationId": "validate_single_answer_api_v1_assessments__job_id__agents__agent__validate_answer_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema/{engine}": {
+      "get": {
+        "tags": [
+          "schema-revisions"
+        ],
+        "summary": "Get Schema",
+        "description": "Return schema output and version metadata for a specific engine and version.",
+        "operationId": "get_schema_api_v1_assessments__job_id__schema__engine__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Schema version (omit for latest)",
+              "title": "Version"
+            },
+            "description": "Schema version (omit for latest)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema/{engine}/versions": {
+      "get": {
+        "tags": [
+          "schema-revisions"
+        ],
+        "summary": "Get Schema Versions",
+        "description": "Return full version history for an engine, ordered by version number ascending.",
+        "operationId": "get_schema_versions_api_v1_assessments__job_id__schema__engine__versions_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema/{engine}/revisions": {
+      "put": {
+        "tags": [
+          "schema-revisions"
+        ],
+        "summary": "Put Schema Revision",
+        "description": "Submit a schema revision request for an engine.\n\nPerforms optimistic concurrency check: returns 409 if base_version != latest.\nFull revision execution will be wired in a subsequent task (currently returns 501).",
+        "operationId": "put_schema_revision_api_v1_assessments__job_id__schema__engine__revisions_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaRevisionRequest-Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema/{engine}/confirm": {
+      "post": {
+        "tags": [
+          "schema-revisions"
+        ],
+        "summary": "Confirm Schema",
+        "description": "Confirm the latest schema version for an engine. Writes confirmed.json.",
+        "operationId": "confirm_schema_api_v1_assessments__job_id__schema__engine__confirm_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/schema/confirm-all": {
+      "post": {
+        "tags": [
+          "schema-revisions"
+        ],
+        "summary": "Confirm All Schemas",
+        "description": "Confirm the latest schema version for every active engine.\n\nActive engines are read from the triage output. Returns a mapping of\nengine \u2192 confirmed_version. Returns 400 if no engines are found.",
+        "operationId": "confirm_all_schemas_api_v1_assessments__job_id__schema_confirm_all_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "database_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Database name for artifact lookup",
+              "title": "Database Name"
+            },
+            "description": "Database name for artifact lookup"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmAllResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/query-journeys": {
+      "get": {
+        "tags": [
+          "query-journeys"
+        ],
+        "summary": "List Query Journeys",
+        "description": "Return paginated list of all query journeys for a job.",
+        "operationId": "list_query_journeys_api_v1_assessments__job_id__query_journeys_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number (1-based)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-based)"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Items per page (max 200)",
+              "default": 50,
+              "title": "Page Size"
+            },
+            "description": "Items per page (max 200)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/assessments/{job_id}/query-journeys/{query_id}": {
+      "get": {
+        "tags": [
+          "query-journeys"
+        ],
+        "summary": "Get Query Journey",
+        "description": "Return the full modernization journey for a single query.",
+        "operationId": "get_query_journey_api_v1_assessments__job_id__query_journeys__query_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "query_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Query Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentQuestion": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "title": "Question Id",
+            "description": "Unique question identifier within the agent run"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "description": "Question category (e.g., 'partition_key_strategy', 'index_selection')"
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Id",
+            "description": "Table this question relates to, if applicable"
+          },
+          "question": {
+            "type": "string",
+            "title": "Question",
+            "description": "Human-readable question text"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/QuestionOption"
+                },
+                "type": "array",
+                "maxItems": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options",
+            "description": "Selectable options; None for free-text questions"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Supporting data or rationale for the customer"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default",
+            "description": "Recommended default answer (option ID or suggested text)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "category",
+          "question"
+        ],
+        "title": "AgentQuestion",
+        "description": "A question an agent needs answered to continue execution."
+      },
+      "AgentQuestions": {
+        "properties": {
+          "agent_type": {
+            "type": "string",
+            "title": "Agent Type",
+            "description": "Agent type that produced the questions (e.g., 'schema-dynamodb')"
+          },
+          "target_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Engine",
+            "description": "Target engine the agent is designing for, if applicable"
+          },
+          "partial_result_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partial Result Key",
+            "description": "Artifact key for the agent's partial output (e.g., 'partial_output.json')"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/AgentQuestion"
+            },
+            "type": "array",
+            "title": "Questions",
+            "description": "List of questions the agent needs answered",
+            "maxItems": 10000
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "ISO 8601 timestamp when questions were generated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agent_type",
+          "questions",
+          "timestamp"
+        ],
+        "title": "AgentQuestions",
+        "description": "Questions artifact written by an agent that needs customer input.\n\nWritten to ``{db}/{job}/{agent-name}/questions.json`` when the agent\nexits with code 2."
+      },
+      "AssessmentCreated": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "estimated_completion_time": {
+            "type": "string",
+            "title": "Estimated Completion Time"
+          },
+          "execution_arn": {
+            "type": "string",
+            "title": "Execution Arn"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "created_at",
+          "estimated_completion_time",
+          "execution_arn"
+        ],
+        "title": "AssessmentCreated"
+      },
+      "AssessmentDetail": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "source_database_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Database Type"
+          },
+          "database_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "execution_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Arn"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssessmentProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "AssessmentDetail"
+      },
+      "AssessmentList": {
+        "properties": {
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentSummary"
+            },
+            "type": "array",
+            "title": "Assessments",
+            "maxItems": 10000
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assessments",
+          "total_count",
+          "limit",
+          "offset"
+        ],
+        "title": "AssessmentList"
+      },
+      "AssessmentPrepared": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "upload_prefix": {
+            "type": "string",
+            "title": "Upload Prefix"
+          },
+          "upload_bucket": {
+            "type": "string",
+            "title": "Upload Bucket"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url"
+          },
+          "upload_key": {
+            "type": "string",
+            "title": "Upload Key"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "PREPARED"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "title": "Expires In Seconds",
+            "default": 3600
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "upload_prefix",
+          "upload_bucket",
+          "upload_url",
+          "upload_key",
+          "created_at"
+        ],
+        "title": "AssessmentPrepared"
+      },
+      "AssessmentProgress": {
+        "properties": {
+          "percent_complete": {
+            "type": "integer",
+            "title": "Percent Complete"
+          },
+          "current_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Stage"
+          },
+          "current_activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Activity"
+          },
+          "estimated_remaining_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Remaining Seconds"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageProgress"
+            },
+            "type": "array",
+            "title": "Stages",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "percent_complete",
+          "stages"
+        ],
+        "title": "AssessmentProgress"
+      },
+      "AssessmentRequest": {
+        "properties": {
+          "source_database_type": {
+            "type": "string",
+            "title": "Source Database Type"
+          },
+          "database_name": {
+            "type": "string",
+            "title": "Database Name"
+          },
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CollectionOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_databases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Databases"
+          },
+          "full_analysis": {
+            "type": "boolean",
+            "title": "Full Analysis",
+            "default": false
+          },
+          "collection_mode": {
+            "type": "string",
+            "title": "Collection Mode",
+            "default": "live"
+          },
+          "offline_s3_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline S3 Key"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_database_type",
+          "database_name"
+        ],
+        "title": "AssessmentRequest"
+      },
+      "AssessmentSummary": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "source_database_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Database Type"
+          },
+          "database_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "progress_percent": {
+            "type": "integer",
+            "title": "Progress Percent",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "AssessmentSummary"
+      },
+      "Assignment": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "Unique job identifier"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version",
+            "description": "Monotonically increasing version number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssignmentStatus",
+            "description": "Origin status of this assignment"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "ISO 8601 timestamp when this assignment was created"
+          },
+          "query_assignments": {
+            "items": {
+              "$ref": "#/components/schemas/QueryAssignment"
+            },
+            "type": "array",
+            "title": "Query Assignments",
+            "description": "Per-query engine assignments",
+            "maxItems": 10000
+          },
+          "table_assignments": {
+            "items": {
+              "$ref": "#/components/schemas/TableAssignment"
+            },
+            "type": "array",
+            "title": "Table Assignments",
+            "description": "Derived per-table engine assignments",
+            "maxItems": 10000
+          },
+          "co_dependency_groups": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "maxItems": 10000
+            },
+            "type": "array",
+            "title": "Co Dependency Groups",
+            "description": "Groups of query IDs sharing significant JOIN relationships",
+            "maxItems": 10000
+          },
+          "validation_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Validation Warnings",
+            "description": "Warnings from assignment validation",
+            "maxItems": 10000
+          },
+          "previous_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Version",
+            "description": "Version number of the previous assignment (None for first version)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "version",
+          "status",
+          "timestamp",
+          "query_assignments",
+          "table_assignments",
+          "co_dependency_groups",
+          "validation_warnings"
+        ],
+        "title": "Assignment",
+        "description": "Complete versioned assignment artifact."
+      },
+      "AssignmentOverrideRequest": {
+        "properties": {
+          "overrides": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOverride"
+            },
+            "type": "array",
+            "title": "Overrides",
+            "description": "Per-query overrides (engine change or scope change)",
+            "maxItems": 10000
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScopeNarrowing"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Table-level scope narrowing (exclude entire tables)"
+          }
+        },
+        "type": "object",
+        "title": "AssignmentOverrideRequest",
+        "description": "PUT body for assignment overrides / scope narrowing."
+      },
+      "AssignmentResponse": {
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/Assignment"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidationResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipped_engines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skipped Engines",
+            "description": "Engines with zero in-scope queries (schema design will be SKIPPED)",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "assignment"
+        ],
+        "title": "AssignmentResponse",
+        "description": "Response wrapper for assignment data with validation info."
+      },
+      "AssignmentStatus": {
+        "type": "string",
+        "enum": [
+          "auto_generated",
+          "customer_approved",
+          "customer_modified"
+        ],
+        "title": "AssignmentStatus",
+        "description": "Status of an assignment artifact indicating its origin."
+      },
+      "ChangelogEntry": {
+        "properties": {
+          "change_type": {
+            "type": "string",
+            "enum": [
+              "added",
+              "removed",
+              "modified",
+              "reassigned"
+            ],
+            "title": "Change Type",
+            "description": "Nature of the change applied"
+          },
+          "entity_type": {
+            "type": "string",
+            "enum": [
+              "access_pattern",
+              "table",
+              "index",
+              "collection"
+            ],
+            "title": "Entity Type",
+            "description": "Type of entity that was changed"
+          },
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id",
+            "description": "Identifier of the changed entity"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Human-readable description of what changed and why"
+          },
+          "from_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Engine",
+            "description": "Previous engine (set for reassigned access patterns)"
+          },
+          "to_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Engine",
+            "description": "New engine (set for reassigned access patterns)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "change_type",
+          "entity_type",
+          "entity_id",
+          "description"
+        ],
+        "title": "ChangelogEntry",
+        "description": "A single entry in the schema version changelog."
+      },
+      "CollectionOptions": {
+        "properties": {
+          "anonymize_pii": {
+            "type": "boolean",
+            "title": "Anonymize Pii",
+            "default": true
+          },
+          "include_sample_data": {
+            "type": "boolean",
+            "title": "Include Sample Data",
+            "default": true
+          },
+          "sample_size": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 100.0,
+            "title": "Sample Size",
+            "default": 1000
+          },
+          "query_log_period_days": {
+            "type": "integer",
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Query Log Period Days",
+            "default": 7
+          },
+          "query_log_source": {
+            "type": "string",
+            "title": "Query Log Source",
+            "default": "performance-insights"
+          },
+          "include_table_patterns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Table Patterns"
+          },
+          "exclude_table_patterns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Table Patterns"
+          },
+          "top_sql_queries": {
+            "type": "integer",
+            "title": "Top Sql Queries",
+            "default": 100
+          },
+          "top_wait_events": {
+            "type": "integer",
+            "title": "Top Wait Events",
+            "default": 50
+          }
+        },
+        "type": "object",
+        "title": "CollectionOptions"
+      },
+      "ConfirmAllResponse": {
+        "properties": {
+          "confirmed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Confirmed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirmed"
+        ],
+        "title": "ConfirmAllResponse",
+        "description": "Result of confirming all active engine schemas."
+      },
+      "ConfirmResponse": {
+        "properties": {
+          "confirmed_version": {
+            "type": "integer",
+            "title": "Confirmed Version"
+          },
+          "engine": {
+            "type": "string",
+            "title": "Engine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirmed_version",
+          "engine"
+        ],
+        "title": "ConfirmResponse",
+        "description": "Result of confirming a single engine schema."
+      },
+      "ConnectionDetails": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          },
+          "credentials_type": {
+            "type": "string",
+            "title": "Credentials Type",
+            "default": "secrets-arn"
+          },
+          "secret_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Arn"
+          },
+          "secret_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret Name"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "database"
+        ],
+        "title": "ConnectionDetails"
+      },
+      "DashboardStats": {
+        "properties": {
+          "total_assessments": {
+            "type": "integer",
+            "title": "Total Assessments"
+          },
+          "active_jobs": {
+            "type": "integer",
+            "title": "Active Jobs"
+          },
+          "success_rate_percent": {
+            "type": "number",
+            "title": "Success Rate Percent"
+          },
+          "average_duration_hours": {
+            "type": "number",
+            "title": "Average Duration Hours"
+          },
+          "completed_today": {
+            "type": "integer",
+            "title": "Completed Today"
+          },
+          "last_analysis_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Analysis At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_assessments",
+          "active_jobs",
+          "success_rate_percent",
+          "average_duration_hours",
+          "completed_today"
+        ],
+        "title": "DashboardStats"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "cause": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cause"
+          }
+        },
+        "type": "object",
+        "title": "ErrorDetail"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LogEntry": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "message"
+        ],
+        "title": "LogEntry"
+      },
+      "LogsResponse": {
+        "properties": {
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            },
+            "type": "array",
+            "title": "Logs",
+            "maxItems": 10000
+          },
+          "next_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "logs"
+        ],
+        "title": "LogsResponse"
+      },
+      "NewPattern": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Human-readable description of what this pattern does"
+          },
+          "target_engine": {
+            "type": "string",
+            "title": "Target Engine",
+            "description": "Target engine this pattern should be designed for (e.g. dynamodb, opensearch)"
+          },
+          "source_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Tables",
+            "description": "Source tables this pattern reads from or writes to",
+            "maxItems": 10000
+          },
+          "estimated_reads_per_second": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Reads Per Second",
+            "description": "Estimated read throughput for capacity planning (optional)"
+          },
+          "estimated_writes_per_second": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Writes Per Second",
+            "description": "Estimated write throughput for capacity planning (optional)"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Additional context about this pattern to guide schema redesign"
+          }
+        },
+        "type": "object",
+        "required": [
+          "description",
+          "target_engine",
+          "source_tables"
+        ],
+        "title": "NewPattern",
+        "description": "A new access pattern to be added during schema revision."
+      },
+      "PatternAction": {
+        "type": "string",
+        "enum": [
+          "DROP",
+          "NOTE",
+          "REASSIGN"
+        ],
+        "title": "PatternAction",
+        "description": "Action to apply to an existing access pattern during schema revision."
+      },
+      "PatternModification": {
+        "properties": {
+          "pattern_id": {
+            "type": "string",
+            "title": "Pattern Id",
+            "description": "Identifier of the access pattern to modify"
+          },
+          "action": {
+            "$ref": "#/components/schemas/PatternAction",
+            "description": "Action to apply: DROP removes it, NOTE annotates it, REASSIGN moves it to another engine"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Annotation text (used with NOTE action, or as context for any action)"
+          },
+          "target_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Engine",
+            "description": "Target engine for REASSIGN action (e.g. opensearch, dynamodb)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pattern_id",
+          "action"
+        ],
+        "title": "PatternModification",
+        "description": "Modification instruction for an existing access pattern."
+      },
+      "Phase": {
+        "type": "string",
+        "enum": [
+          "collect_triage",
+          "analysis",
+          "assignment",
+          "reality_check",
+          "assignment_review",
+          "schema_design",
+          "load_test",
+          "synthesis"
+        ],
+        "title": "Phase",
+        "description": "Execution phases in the modernization pipeline.\n\nPhases execute in order with prerequisite enforcement.\nLOAD_TEST is a placeholder for Phase 1B."
+      },
+      "PhaseProgression": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "Unique job identifier"
+          },
+          "current_phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "Phase currently active or most recently active"
+          },
+          "phases": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PhaseRecord"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Phase"
+            },
+            "type": "object",
+            "title": "Phases",
+            "description": "Per-phase status records keyed by Phase enum"
+          },
+          "assignment_version": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Assignment Version",
+            "description": "Current assignment version (0 = no assignment / legacy)",
+            "default": 0
+          },
+          "total_iterations": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Total Iterations",
+            "description": "Total iteration count across all phases",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "current_phase",
+          "phases"
+        ],
+        "title": "PhaseProgression",
+        "description": "Full progression state for a job across all phases."
+      },
+      "PhaseRecord": {
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "Which phase this record tracks"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PhaseStatus",
+            "description": "Current status of the phase",
+            "default": "not_started"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "ISO 8601 timestamp when phase started"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At",
+            "description": "ISO 8601 timestamp when phase completed"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Id",
+            "description": "ECS task or subprocess execution identifier"
+          },
+          "scope_engines": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Engines",
+            "description": "Engines in scope for this phase execution"
+          },
+          "assignment_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Version",
+            "description": "Assignment version used for this phase execution"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message",
+            "description": "Error message if phase status is FAILED"
+          },
+          "iteration": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Iteration",
+            "description": "Execution iteration count (increments on retry)",
+            "default": 1
+          },
+          "revision_in_progress": {
+            "type": "boolean",
+            "title": "Revision In Progress",
+            "description": "Concurrency lock: True while a schema revision is being processed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase"
+        ],
+        "title": "PhaseRecord",
+        "description": "Status record for a single phase execution."
+      },
+      "PhaseStatus": {
+        "type": "string",
+        "enum": [
+          "not_started",
+          "in_progress",
+          "completed",
+          "failed",
+          "awaiting_review",
+          "awaiting_input",
+          "skipped"
+        ],
+        "title": "PhaseStatus",
+        "description": "Status of a single phase within a job's progression."
+      },
+      "PrepareAssessmentRequest": {
+        "properties": {
+          "database_name": {
+            "type": "string",
+            "title": "Database Name"
+          },
+          "source_database_type": {
+            "type": "string",
+            "title": "Source Database Type",
+            "default": "mysql"
+          }
+        },
+        "type": "object",
+        "required": [
+          "database_name"
+        ],
+        "title": "PrepareAssessmentRequest"
+      },
+      "QueryAssignment": {
+        "properties": {
+          "query_id": {
+            "type": "string",
+            "title": "Query Id",
+            "description": "Unique query identifier from collector output"
+          },
+          "assigned_engine": {
+            "type": "string",
+            "title": "Assigned Engine",
+            "description": "Target engine this query is assigned to"
+          },
+          "confidence": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "description": "Assignment confidence score (0-100 integer scale)"
+          },
+          "source_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Source Tables",
+            "description": "Tables this query accesses",
+            "maxItems": 10000
+          },
+          "assignment_reason": {
+            "type": "string",
+            "title": "Assignment Reason",
+            "description": "Why this engine was chosen for the query"
+          },
+          "in_scope": {
+            "type": "boolean",
+            "title": "In Scope",
+            "description": "False when customer excluded this query from current iteration",
+            "default": true
+          },
+          "customer_override": {
+            "type": "boolean",
+            "title": "Customer Override",
+            "description": "True if customer changed the assignment",
+            "default": false
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Warnings associated with this query assignment",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "query_id",
+          "assigned_engine",
+          "confidence",
+          "source_tables",
+          "assignment_reason"
+        ],
+        "title": "QueryAssignment",
+        "description": "Single query-to-engine assignment with confidence and scope metadata."
+      },
+      "QueryOverride": {
+        "properties": {
+          "query_id": {
+            "type": "string",
+            "title": "Query Id"
+          },
+          "assigned_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Engine"
+          },
+          "in_scope": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Scope"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query_id"
+        ],
+        "title": "QueryOverride",
+        "description": "A single query-level override submitted by the customer."
+      },
+      "QuestionOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique option identifier (e.g., 'A', 'B', 'option_1')"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Human-readable description of this option"
+          },
+          "recommended": {
+            "type": "boolean",
+            "title": "Recommended",
+            "description": "True if this option is the agent's recommended choice",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "description"
+        ],
+        "title": "QuestionOption",
+        "description": "A selectable option for an agent question."
+      },
+      "ResumeRequest": {
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "Phase to resume"
+          },
+          "scope_engines": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Engines",
+            "description": "Optional list of engines in scope for this phase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase"
+        ],
+        "title": "ResumeRequest",
+        "description": "POST body for resuming a phase."
+      },
+      "ResumeResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "resumed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "phase"
+        ],
+        "title": "ResumeResponse",
+        "description": "Response after a successful resume call."
+      },
+      "SchemaResponse": {
+        "properties": {
+          "schema_output": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Schema Output"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SchemaVersionMeta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_output",
+          "meta"
+        ],
+        "title": "SchemaResponse",
+        "description": "Schema output + version metadata for a single version."
+      },
+      "SchemaRevisionRequest-Input": {
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "title": "Base Version",
+            "description": "Schema version number this revision is based on"
+          },
+          "pattern_modifications": {
+            "items": {
+              "$ref": "#/components/schemas/PatternModification"
+            },
+            "type": "array",
+            "title": "Pattern Modifications",
+            "description": "Modifications to apply to existing access patterns",
+            "maxItems": 10000
+          },
+          "table_modifications": {
+            "items": {
+              "$ref": "#/components/schemas/TableModification"
+            },
+            "type": "array",
+            "title": "Table Modifications",
+            "description": "Modifications to apply to source tables",
+            "maxItems": 10000
+          },
+          "new_patterns": {
+            "items": {
+              "$ref": "#/components/schemas/NewPattern"
+            },
+            "type": "array",
+            "title": "New Patterns",
+            "description": "New access patterns to add to the schema design",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_version",
+          "pattern_modifications",
+          "table_modifications",
+          "new_patterns"
+        ],
+        "title": "SchemaRevisionRequest",
+        "description": "Customer-provided revision request against a specific schema version."
+      },
+      "SchemaRevisionRequest-Output": {
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "title": "Base Version",
+            "description": "Schema version number this revision is based on"
+          },
+          "pattern_modifications": {
+            "items": {
+              "$ref": "#/components/schemas/PatternModification"
+            },
+            "type": "array",
+            "title": "Pattern Modifications",
+            "description": "Modifications to apply to existing access patterns",
+            "maxItems": 10000
+          },
+          "table_modifications": {
+            "items": {
+              "$ref": "#/components/schemas/TableModification"
+            },
+            "type": "array",
+            "title": "Table Modifications",
+            "description": "Modifications to apply to source tables",
+            "maxItems": 10000
+          },
+          "new_patterns": {
+            "items": {
+              "$ref": "#/components/schemas/NewPattern"
+            },
+            "type": "array",
+            "title": "New Patterns",
+            "description": "New access patterns to add to the schema design",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_version",
+          "pattern_modifications",
+          "table_modifications",
+          "new_patterns"
+        ],
+        "title": "SchemaRevisionRequest",
+        "description": "Customer-provided revision request against a specific schema version."
+      },
+      "SchemaVersionMeta": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "description": "Monotonically increasing schema version number"
+          },
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version",
+            "description": "Version this was derived from (None for the initial system-generated version)"
+          },
+          "initiated_by": {
+            "type": "string",
+            "enum": [
+              "system",
+              "customer"
+            ],
+            "title": "Initiated By",
+            "description": "Who triggered this version: system (auto-generated) or customer (revision request)"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "ISO 8601 timestamp when this version was created"
+          },
+          "modifications": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchemaRevisionRequest-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision request that produced this version (None for system-generated versions)"
+          },
+          "redesigned_groups": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Redesigned Groups",
+            "description": "Engine groups that were re-run during this revision (e.g. ['dynamodb', 'opensearch'])",
+            "maxItems": 10000
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationResult",
+            "description": "Verification result produced alongside this schema version"
+          },
+          "changelog": {
+            "items": {
+              "$ref": "#/components/schemas/ChangelogEntry"
+            },
+            "type": "array",
+            "title": "Changelog",
+            "description": "List of changes applied relative to the base version",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "initiated_by",
+          "timestamp",
+          "redesigned_groups",
+          "verification",
+          "changelog"
+        ],
+        "title": "SchemaVersionMeta",
+        "description": "Metadata for a single schema version, tracking its origin and changes."
+      },
+      "ScopeNarrowing": {
+        "properties": {
+          "exclude_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Exclude Tables",
+            "maxItems": 10000
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "ScopeNarrowing",
+        "description": "Table-level scope narrowing: exclude entire tables from the current iteration."
+      },
+      "StageProgress": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "StageProgress"
+      },
+      "SubmitAnswersRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Answers",
+            "description": "Mapping of question_id to answer (option ID or free text)"
+          },
+          "answered_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered By",
+            "description": "Identifier of who provided the answers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "answers"
+        ],
+        "title": "SubmitAnswersRequest",
+        "description": "PUT body for submitting answers to agent questions."
+      },
+      "TableAssignment": {
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "title": "Table Id",
+            "description": "Table identifier from collector output"
+          },
+          "primary_engine": {
+            "type": "string",
+            "title": "Primary Engine",
+            "description": "Engine with the most assigned queries for this table"
+          },
+          "engines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Engines",
+            "description": "All engines that have queries referencing this table",
+            "maxItems": 10000
+          },
+          "query_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Query Count",
+            "description": "Total number of queries referencing this table"
+          },
+          "multi_engine_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Multi Engine Reason",
+            "description": "Reason this table spans multiple engines (set when engines has 2+ entries)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "table_id",
+          "primary_engine",
+          "engines",
+          "query_count"
+        ],
+        "title": "TableAssignment",
+        "description": "Derived table-to-engine assignment.\n\nA table can span multiple engines when different queries against the\nsame table have different access patterns. The primary_engine is the\nengine with the most assigned queries for this table."
+      },
+      "TableModification": {
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "title": "Table Id",
+            "description": "Identifier of the source table to modify"
+          },
+          "action": {
+            "type": "string",
+            "const": "drop",
+            "title": "Action",
+            "description": "Action to apply to the table (currently only 'drop' is supported)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "table_id",
+          "action"
+        ],
+        "title": "TableModification",
+        "description": "Modification instruction for a source table."
+      },
+      "ValidateAnswerRequest": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "title": "Question Id",
+            "description": "ID of the question being answered"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer",
+            "description": "The answer to validate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "answer"
+        ],
+        "title": "ValidateAnswerRequest",
+        "description": "POST body for validating a single answer."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location",
+            "maxItems": 10000
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValidationResult": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid",
+            "description": "Whether the assignment passed validation"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Validation warnings (assignment may still be accepted)",
+            "maxItems": 10000
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors",
+            "description": "Validation errors (assignment is rejected)",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "ValidationResult",
+        "description": "Result of validating an assignment."
+      },
+      "VerificationIssue": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "coverage",
+              "consistency",
+              "conflict",
+              "cost"
+            ],
+            "title": "Category",
+            "description": "Category of issue: coverage (uncovered tables/patterns), consistency (engine mismatch), conflict (incompatible patterns), cost (budget impact)"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "title": "Severity",
+            "description": "Severity: error blocks acceptance, warning is informational"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable description of the issue"
+          },
+          "affected_patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Patterns",
+            "description": "Access pattern IDs affected by this issue",
+            "maxItems": 10000
+          },
+          "affected_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Tables",
+            "description": "Table IDs affected by this issue",
+            "maxItems": 10000
+          },
+          "cost_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Delta",
+            "description": "Estimated monthly cost change in USD (positive = increase, negative = decrease)"
+          },
+          "suggested_resolutions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Suggested Resolutions",
+            "description": "Suggested actions to resolve this issue",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "category",
+          "severity",
+          "message",
+          "affected_patterns",
+          "affected_tables"
+        ],
+        "title": "VerificationIssue",
+        "description": "A single issue found during schema revision verification."
+      },
+      "VerificationResult": {
+        "properties": {
+          "passed": {
+            "type": "boolean",
+            "title": "Passed",
+            "description": "True when there are no hard errors blocking the revision"
+          },
+          "hard_errors": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationIssue"
+            },
+            "type": "array",
+            "title": "Hard Errors",
+            "description": "Errors that must be resolved before the revision can proceed",
+            "maxItems": 10000
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/VerificationIssue"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Non-blocking issues the customer should be aware of",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "passed",
+          "hard_errors",
+          "warnings"
+        ],
+        "title": "VerificationResult",
+        "description": "Result of verifying a schema revision request."
+      },
+      "VersionsResponse": {
+        "properties": {
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/SchemaVersionMeta"
+            },
+            "type": "array",
+            "title": "Versions",
+            "maxItems": 10000
+          }
+        },
+        "type": "object",
+        "required": [
+          "versions"
+        ],
+        "title": "VersionsResponse",
+        "description": "All version metadata for an engine, ordered ascending."
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC/Cognito JWT token"
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ]
+}
