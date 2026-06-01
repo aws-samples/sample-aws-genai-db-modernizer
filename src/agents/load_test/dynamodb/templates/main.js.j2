@@ -1,0 +1,30 @@
+// Auto-generated k6 entry point
+{% for scenario in scenarios %}
+import { default as scenario_{{ scenario.safe_id }} } from './scenarios/{{ scenario.query_id }}.js';
+{% endfor %}
+
+export const options = {
+  scenarios: {
+{% for scenario in scenarios %}
+    s_{{ scenario.safe_id }}: {
+      executor: 'constant-arrival-rate',
+      exec: 'run_{{ scenario.safe_id }}',
+      rate: {{ scenario.design_rps }},
+      timeUnit: '1s',
+      duration: '{{ duration }}',
+      preAllocatedVUs: {{ scenario.pre_allocated_vus }},
+      maxVUs: {{ scenario.max_vus }},
+      startTime: '{{ warmup_seconds }}s',
+    },
+{% endfor %}
+  },
+};
+
+{% for scenario in scenarios %}
+export function run_{{ scenario.safe_id }}() { scenario_{{ scenario.safe_id }}(); }
+{% endfor %}
+
+export function handleSummary(data) {
+  const path = __ENV.K6_SUMMARY_PATH || './k6_summary.json';
+  return { [path]: JSON.stringify(data) };
+}

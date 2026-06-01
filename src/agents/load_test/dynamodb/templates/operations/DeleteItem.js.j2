@@ -1,0 +1,79 @@
+// {{ query_id }}.js — DeleteItem: {{ description }}
+import { dynamoRequest } from '../helpers/aws-client.js';
+import { createPatternMetrics } from '../helpers/metrics-collector.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+
+const TABLE_NAME = '{{ table_name }}';
+const PK_ATTR = '{{ pk_attr }}';
+const PK_TYPE = '{{ pk_type }}';
+const PK_COUNT = {{ pk_count }};
+{% if pk_type == 'S' %}
+const PK_PAD = {{ pk_pad_width }};
+{% endif %}
+{% if sk_attr %}
+const SK_ATTR = '{{ sk_attr }}';
+const SK_TYPE = '{{ sk_type }}';
+{% if sk_count %}
+const SK_COUNT = {{ sk_count }};
+{% endif %}
+{% if sk_pad_width and sk_type == 'S' %}
+const SK_PAD = {{ sk_pad_width }};
+{% endif %}
+{% endif %}
+
+{% if pk_type == 'N' %}
+function generatePK() {
+  return { N: String(Math.floor(Math.random() * PK_COUNT) + 1) };
+}
+{% else %}
+function generatePK() {
+  const id = Math.floor(Math.random() * PK_COUNT) + 1;
+  return { S: String(id).padStart(PK_PAD, '0') };
+}
+{% endif %}
+
+{% if sk_attr %}
+{% if sk_operator == 'equals' and sk_literal %}
+function generateSK() {
+  return { {{ sk_type }}: '{{ sk_literal }}' };
+}
+{% elif sk_type == 'N' %}
+function generateSK() {
+  return { N: String(Math.floor(Math.random() * SK_COUNT) + 1) };
+}
+{% else %}
+function generateSK() {
+  const id = Math.floor(Math.random() * SK_COUNT) + 1;
+  return { S: String(id).padStart(SK_PAD, '0') };
+}
+{% endif %}
+{% endif %}
+
+export default function () {
+  const key = { [PK_ATTR]: generatePK() };
+{% if sk_attr %}
+  key[SK_ATTR] = generateSK();
+{% endif %}
+
+  const start = Date.now();
+  const res = dynamoRequest('DeleteItem', {
+    TableName: TABLE_NAME,
+    Key: key,
+    ReturnConsumedCapacity: 'TOTAL',
+  });
+  const latency = Date.now() - start;
+
+  metrics.latency.add(latency);
+  metrics.requests.add(1);
+
+  if (res.status !== 200) {
+    metrics.errors.add(1);
+    return;
+  }
+
+  const body = JSON.parse(res.body);
+  if (body.ConsumedCapacity) {
+    metrics.consumedWCU.add(body.ConsumedCapacity.CapacityUnits);
+  }
+}

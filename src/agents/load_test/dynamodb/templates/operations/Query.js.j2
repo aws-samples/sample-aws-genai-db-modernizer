@@ -1,0 +1,94 @@
+// {{ query_id }}.js — Query: {{ description }}
+import { dynamoRequest } from '../helpers/aws-client.js';
+import { createPatternMetrics } from '../helpers/metrics-collector.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+
+const TABLE_NAME = '{{ table_name }}';
+const PK_ATTR = '{{ pk_attr }}';
+const PK_TYPE = '{{ pk_type }}';
+const PK_COUNT = {{ pk_count }};
+{% if pk_type == 'S' %}
+const PK_PAD = {{ pk_pad_width }};
+{% endif %}
+{% if sk_attr %}
+const SK_ATTR = '{{ sk_attr }}';
+const SK_TYPE = '{{ sk_type }}';
+{% if sk_count %}
+const SK_COUNT = {{ sk_count }};
+{% endif %}
+{% if sk_pad_width and sk_type == 'S' %}
+const SK_PAD = {{ sk_pad_width }};
+{% endif %}
+{% endif %}
+{% if gsi_name %}
+const GSI_NAME = '{{ gsi_name }}';
+{% endif %}
+
+{% if pk_type == 'N' %}
+function generatePK() {
+  return { N: String(Math.floor(Math.random() * PK_COUNT) + 1) };
+}
+{% else %}
+function generatePK() {
+  const id = Math.floor(Math.random() * PK_COUNT) + 1;
+  return { S: String(id).padStart(PK_PAD, '0') };
+}
+{% endif %}
+
+export default function () {
+  const pkVal = generatePK();
+  const pkExprVal = PK_TYPE === 'N' ? { N: pkVal.N } : { S: pkVal.S };
+
+  const params = {
+    TableName: TABLE_NAME,
+{% if gsi_name %}
+    IndexName: GSI_NAME,
+{% endif %}
+    ReturnConsumedCapacity: 'TOTAL',
+  };
+
+{% if sk_attr and sk_operator == 'begins_with' and sk_literal %}
+  params.KeyConditionExpression = '#pk = :pk AND begins_with(#sk, :sk_prefix)';
+  params.ExpressionAttributeNames = { '#pk': PK_ATTR, '#sk': SK_ATTR };
+  params.ExpressionAttributeValues = {
+    ':pk': pkExprVal,
+    ':sk_prefix': { {{ sk_type }}: '{{ sk_literal }}' },
+  };
+{% elif sk_attr and sk_operator == 'equals' and sk_literal %}
+  params.KeyConditionExpression = '#pk = :pk AND #sk = :sk_val';
+  params.ExpressionAttributeNames = { '#pk': PK_ATTR, '#sk': SK_ATTR };
+  params.ExpressionAttributeValues = {
+    ':pk': pkExprVal,
+    ':sk_val': { {{ sk_type }}: '{{ sk_literal }}' },
+  };
+{% elif sk_attr and sk_operator == 'between' and sk_literal %}
+  params.KeyConditionExpression = '#pk = :pk AND #sk >= :sk_start';
+  params.ExpressionAttributeNames = { '#pk': PK_ATTR, '#sk': SK_ATTR };
+  params.ExpressionAttributeValues = {
+    ':pk': pkExprVal,
+    ':sk_start': { {{ sk_type }}: '{{ sk_literal }}' },
+  };
+{% else %}
+  params.KeyConditionExpression = '#pk = :pk';
+  params.ExpressionAttributeNames = { '#pk': PK_ATTR };
+  params.ExpressionAttributeValues = { ':pk': pkExprVal };
+{% endif %}
+
+  const start = Date.now();
+  const res = dynamoRequest('Query', params);
+  const latency = Date.now() - start;
+
+  metrics.latency.add(latency);
+  metrics.requests.add(1);
+
+  if (res.status !== 200) {
+    metrics.errors.add(1);
+    return;
+  }
+
+  const body = JSON.parse(res.body);
+  if (body.ConsumedCapacity) {
+    metrics.consumedRCU.add(body.ConsumedCapacity.CapacityUnits);
+  }
+}
