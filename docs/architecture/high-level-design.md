@@ -11,12 +11,22 @@
 
 ## Executive Summary
 
-Database Modernizer is an AI-powered database modernization analysis and recommendation system that runs in customer AWS environments and analyzes Amazon RDS instances and Redis deployments. The system uses a modular agent-based architecture optimized for AWS-managed databases with AWS-native data collection.
+Customers modernizing off monolithic relational databases ask us the same question: **which purpose-built database should I choose?** Should this workload go to DynamoDB? Does it need a document store like DocumentDB? Would a cache layer in ElastiCache solve the problem? Should full-text search move to OpenSearch? Or does the query pattern actually belong in Aurora?
+
+Getting the answer wrong means failed modernizations, re-architecture mid-project, and wasted months. Getting it right requires deep analysis of every query pattern, understanding access patterns at scale, and mapping them to the right engine — a process that traditionally takes weeks of specialist time per database.
+
+**Database Modernizer answers that question automatically.** It analyzes every query pattern in your relational database, scores each one against AWS purpose-built engines, validates the overall architecture for operational complexity, and produces ready-to-implement schema designs with load-tested performance data. You can run it from your laptop, with Claude Code, or deploy to your own AWS account.
+
+The core pipeline is **fully deterministic** — pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
+
+**Supported sources:** PostgreSQL, MySQL, MariaDB (Redis planned)
+
+**Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
 
 ### Key Design Decisions
 
 - **AWS-native deployment**: Runs on ECS Fargate in customer VPC with direct private connectivity to RDS instances
-- **AWS-managed databases**: Analyzes Amazon RDS (MySQL, PostgreSQL, MariaDB, SQL Server, Oracle, DB2) and Redis (ElastiCache/self-managed)
+- **Deterministic core**: Full pipeline runs without LLM calls (`--llm-mode none`); GenAI is an enhancement layer, not a dependency
 - **Strands SDK agent framework**: Open-source agentic framework for agent orchestration, tool management, and LLM integration
 - **Multi-agent architecture**: Independent, composable agents (Collector, Referee-Triage, Analysis, Assignment Resolution, Reality Check, Referee-Synthesis, Schema Design, Load Testing)
 - **Three-layer orchestration**: Step Functions for job workflow, EventBridge for notifications, Strands SDK for intra-agent logic ([ADR-016](decisions/ADR-016-compute-and-orchestration-strategy.md))
@@ -26,8 +36,8 @@ Database Modernizer is an AI-powered database modernization analysis and recomme
 - **Query journey materialization**: Progressive per-query S3 files tracking each query from source through assignment, schema design, and load testing ([ADR-019](decisions/ADR-019-query-journey-materialization.md))
 - **Hybrid analysis selection**: AI-driven triage selects relevant analysis agents; Step Functions executes them deterministically
 - **IAM-based security**: IAM roles for AWS service access, IAM authentication for RDS connections
-- **Bedrock integration**: AWS Bedrock for AI-powered analysis (required)
-- **Open-source distribution**: GitHub repository with Apache 2.0 license
+- **Bedrock integration**: AWS Bedrock for AI-powered analysis (optional, enhances results)
+- **Open-source distribution**: GitHub repository with MIT-0 license
 
 ### Phase 1 Definition
 
@@ -1013,7 +1023,7 @@ Per [ADR-014](decisions/ADR-014-cicd-pipeline-and-ephemeral-environments.md), fe
 **Architecture:**
 
 - [Architecture Diagrams](diagrams/README.md) - Comprehensive Mermaid diagrams
-- [Business Requirements](project requirements) - Business context and requirements
+- [Business Requirements](../01-requirements/business-requirements.md) - Business context and requirements
 
 **Contracts:**
 
