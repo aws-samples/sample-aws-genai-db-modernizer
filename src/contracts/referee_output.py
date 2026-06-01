@@ -14,8 +14,8 @@ Version History:
 - v1.0 (2026-01-21): Initial version based on referee-output.json schema
 
 Related Documentation:
-- docs/03-contracts/agent-contracts-spec.md - Contract specification
-- docs/02-architecture/decisions/ADR-008-contract-versioning.md - Versioning strategy
+- docs/contracts/agent-contracts-spec.md - Contract specification
+- docs/architecture/decisions/ADR-008-contract-versioning.md - Versioning strategy
 """
 
 from enum import Enum
