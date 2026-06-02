@@ -206,7 +206,7 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
-                  - !Sub 'arn:aws:bedrock:us-*::foundation-model/*'
+                  - 'arn:aws:bedrock:us-*::foundation-model/*'
               - Sid: SecretsManagerAccess
                 Effect: Allow
                 Action:
@@ -639,7 +639,7 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
-                  - !Sub 'arn:aws:bedrock:us-*::foundation-model/*'
+                  - 'arn:aws:bedrock:us-*::foundation-model/*'
               - Sid: CloudWatchMetrics
                 Effect: Allow
                 Action:
