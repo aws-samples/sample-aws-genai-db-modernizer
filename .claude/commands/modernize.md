@@ -23,18 +23,18 @@ Before anything else, ask the user:
 **If user picks 2 or 3**, start the local services:
 
 ```bash
-# Install UI dependencies (first time only)
-cd src/ui && npm install && cd ../..
-
 # Start API server
 STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
 
-# Start frontend
-cd src/ui && REACT_APP_API_URL=http://localhost:8000/api/v1/ npm start &
+# Build and serve frontend (install deps on first run)
+cd src/ui && npm install && REACT_APP_API_URL=http://localhost:8000/api/v1/ npx react-scripts build && npx serve -s build -l 3000 &
 ```
 
-Wait a few seconds for both to start, then tell the user:
+Wait a few seconds for both to start, then verify:
+- API health: `curl -s http://localhost:8000/health`
+- Frontend: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` (expect 200)
 
+Tell the user:
 - API running at <http://localhost:8000>
 - Frontend running at <http://localhost:3000>
 - Wait for the user to confirm the UI is loaded before proceeding
@@ -63,52 +63,47 @@ The orchestrator NEVER:
 
 ## Pipeline
 
-### Phase 1: Collect
+### Phases 1-5: Collect → Triage → Analysis → Assignment → Reality Check
 
-**Dispatch subagent** with task: "Run /collect with file `{collector_file}`"
+Run the full deterministic pipeline in one command (no subagent needed):
 
-This creates `.modernizer-state.json` with `job_id`, `database_name`, and `phase_status`.
+```bash
+uv run python scripts/run_assessment.py --file {collector_file} --db {database_name}
+```
 
-**If UI mode:** Tell user "Collection complete — refresh the UI to see the job."
+The database name is derived from the collector filename (e.g., `wordpress-collection.json` → `wordpress`). The script outputs one JSON line per phase to stdout and updates `.modernizer-state.json` after each phase so the UI shows progress.
 
-### Phase 2: Triage
+**If reality check returns `awaiting_llm` (this is the expected path):**
 
-**Dispatch subagent** with task: "Run /triage"
+1. Tell user: "Deterministic phases complete. Producing CTO-level consolidation analysis..."
+2. Read the LLM request from the path in stdout (`llm_request` field)
+3. Produce the consolidation validation + executive summary (follow the schema in the request)
+4. Write response to `./artifacts/{database_name}/{job_id}/llm_responses/reality_check.json`
+5. Resume reality check:
+   ```bash
+   uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
+   ```
 
-- **If interactive:** Present engine selection from subagent output, wait for approval.
-- **If --auto:** Auto-approve.
+**DO NOT present results or proceed to the Decision Gate until resume-reality-check completes.** The LLM reality check can change consolidation decisions and engine assignments.
 
-**If UI mode:** Tell user "Triage results available in the UI."
+**After finalize**, present a brief summary:
+- Selected engines and why
+- Query distribution across engines
+- Reality check consolidations (with LLM reasoning)
+- Architecture patterns detected
 
-### Phase 3: Assignment
+**If UI mode:** Tell user "Assessment complete — check the UI for full results."
 
-**Dispatch subagent** with task: "Run /assign"
+### Decision Gate: Assignment Approval
 
-- **If interactive:** Present query distribution from subagent output, wait for approval.
-- **If --auto:** Auto-approve.
+After reality check, present the final assignment to the user:
+- Which engines survived consolidation
+- Query distribution across engines
+- Any queries that were redirected
 
-**If UI mode:** Tell user "Query assignments visible in the UI — review the distribution before continuing."
+Ask: "Approve this assignment and continue to Schema Design, or modify?"
 
-### Phase 4: Analysis (Parallel Subagents)
-
-Read `selected_engines` from state. Launch ONE subagent per engine in a SINGLE message:
-
-- Subagent: "Run /analyze-dynamodb"
-- Subagent: "Run /analyze-elasticache"
-- Subagent: "Run /analyze-documentdb"
-- Subagent: "Run /analyze-opensearch"
-- Subagent: "Run /analyze-aurora-postgresql"
-- Subagent: "Run /analyze-aurora-mysql"
-
-(Only for engines in `selected_engines`.)
-
-Wait for all to complete.
-
-**If UI mode:** Tell user "Analysis complete for all engines — check patterns and recommendations in the UI."
-
-### Phase 5: Reality Check
-
-**Dispatch subagent** with task: "Run /reality-check"
+Only proceed to schema design after user approval (unless `--auto`).
 
 ### Phase 6: Schema Design (Parallel Subagents)
 
