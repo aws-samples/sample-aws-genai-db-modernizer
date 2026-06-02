@@ -651,7 +651,9 @@ def _build_queries(raw: list[dict]) -> Queries:
         QueryPattern(
             query_id=p["query_id"],
             query_text=p["query_text"],
-            query_type=QueryType("INSERT" if p.get("query_type") == "REPLACE" else (p.get("query_type") or "SELECT")),
+            query_type=QueryType(
+                "INSERT" if p.get("query_type") == "REPLACE" else (p.get("query_type") or "SELECT")
+            ),
             frequency_per_hour=p["frequency_per_hour"],
             calls_per_second=p.get("calls_per_second"),
             tables_accessed=p["tables_accessed"] or ["unknown"],

@@ -108,7 +108,9 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         complexities = [t.get("migration_complexity", "MEDIUM") for t in table_recs]
         complexity_counts = {c: complexities.count(c) for c in set(complexities)}
         most_common = (
-            max(complexity_counts, key=lambda k: complexity_counts[k]) if complexity_counts else "MEDIUM"
+            max(complexity_counts, key=lambda k: complexity_counts[k])
+            if complexity_counts
+            else "MEDIUM"
         )
 
         monthly_cost = cost.get("monthly_cost_usd", 0)
