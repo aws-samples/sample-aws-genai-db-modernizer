@@ -1,0 +1,321 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Automation Machine Stack - EC2 instance with database clients for SSM-based
+  collection. Deployed once per VPC, reusable across all clusters in that VPC.
+  The API layer manages per-cluster SG ingress rules separately.
+  Includes VPC endpoints for SSM, Secrets Manager, and S3 — works in
+  private subnets without NAT gateway or internet access.
+
+  Phase 0 decision: SecretsManager GetSecretValue is broad (all secrets in account).
+  Future improvement: scope to a naming prefix like "modernizer/*".
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the automation machine will be deployed
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for the automation machine (must be in the same VPC as RDS)
+
+  SubnetId2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Second private subnet in a different AZ (required for interface VPC endpoints)
+    Default: ''
+
+  VpcCidr:
+    Type: String
+    Description: VPC CIDR block (e.g., 10.0.0.0/16) — used to scope egress and VPC endpoint access
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Must be a valid CIDR block
+
+  RouteTableId:
+    Type: String
+    Description: Route table ID for the private subnets (required for S3 gateway endpoint)
+
+  S3BucketName:
+    Type: String
+    Description: Modernizer S3 bucket name (for DDL file read access)
+    Default: ''
+
+  InstanceType:
+    Type: String
+    Description: EC2 instance type for the automation machine
+    Default: t3.medium
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+
+  ProjectName:
+    Type: String
+    Default: modernizer
+    Description: Project identifier for resource naming
+
+Conditions:
+  HasS3Bucket: !Not [!Equals [!Ref S3BucketName, '']]
+  HasSubnet2: !Not [!Equals [!Ref SubnetId2, '']]
+
+Resources:
+  # ============================================================
+  # VPC Endpoints — SSM, Secrets Manager, S3 access without NAT
+  # ============================================================
+
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS access for VPC endpoints
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: HTTPS from within VPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: HTTPS within VPC for endpoints
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-automation-vpce-sg'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      SubnetIds: !If
+        - HasSubnet2
+        - [!Ref SubnetId, !Ref SubnetId2]
+        - [!Ref SubnetId]
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      SubnetIds: !If
+        - HasSubnet2
+        - [!Ref SubnetId, !Ref SubnetId2]
+        - [!Ref SubnetId]
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      SubnetIds: !If
+        - HasSubnet2
+        - [!Ref SubnetId, !Ref SubnetId2]
+        - [!Ref SubnetId]
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      SubnetIds: !If
+        - HasSubnet2
+        - [!Ref SubnetId, !Ref SubnetId2]
+        - [!Ref SubnetId]
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      PrivateDnsEnabled: true
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref RouteTableId
+
+  # ============================================================
+  # Automation Machine Security Group
+  # ============================================================
+
+  AutomationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: "Egress to 0.0.0.0/0 on 443 required for HTTPS to AWS service endpoints (SSM, Secrets Manager, S3)"
+          - id: W29
+            reason: "Full TCP port range to VPC CIDR required — automation machine connects to customer databases on any port"
+    Properties:
+      GroupDescription: Database Modernizer automation machine - trusted collector
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS to AWS endpoints (SSM, Secrets Manager, S3)
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: !Ref VpcCidr
+          Description: All TCP to VPC (database engines on any port)
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-automation-sg'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # IAM Role
+  # ============================================================
+
+  AutomationRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit role name required for stable SSM instance profile reference across stack updates"
+    Properties:
+      RoleName: !Sub '${ProjectName}-automation-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        # Phase 0: broad read on all secrets in account
+        # Future: scope to "modernizer/*" prefix
+        - PolicyName: SecretsManagerRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue  # pragma: allowlist secret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
+        - !If
+          - HasS3Bucket
+          - PolicyName: S3ReadDdl
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  AutomationInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-automation-profile'
+      Roles:
+        - !Ref AutomationRole
+
+  # ============================================================
+  # EC2 Automation Machine
+  # ============================================================
+
+  AutomationInstance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - SSMEndpoint
+      - SSMMessagesEndpoint
+      - EC2MessagesEndpoint
+      - SecretsManagerEndpoint
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref AutomationSecurityGroup
+      IamInstanceProfile: !Ref AutomationInstanceProfile
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euo pipefail
+          exec > /var/log/automation-bootstrap.log 2>&1
+
+          echo "=== Database Modernizer Automation Machine Bootstrap ==="
+          echo "Started: $(date -u)"
+
+          # Update system
+          dnf update -y -q
+
+          # MySQL / MariaDB client
+          dnf install -y -q mariadb105
+
+          # PostgreSQL client
+          dnf install -y -q postgresql15
+
+          # SQL Server client (mssql-tools18)
+          curl -sSL https://packages.microsoft.com/config/rhel/9/prod.repo \
+            -o /etc/yum.repos.d/mssql-release.repo
+          ACCEPT_EULA=Y dnf install -y -q mssql-tools18 unixODBC-devel 2>/dev/null || \
+            echo "WARN: mssql-tools18 install failed — SQL Server collection unavailable"
+
+          # Ensure python3 + boto3
+          dnf install -y -q python3-pip
+          pip3 install -q boto3
+
+          echo "=== Bootstrap complete: $(date -u) ==="
+          echo "Installed clients:"
+          mysql --version 2>/dev/null || echo "  mysql: not installed"
+          psql --version 2>/dev/null || echo "  psql: not installed"
+          sqlcmd -? 2>/dev/null | head -1 || echo "  sqlcmd: not installed"
+          python3 --version
+          aws --version
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-automation-machine'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  AutomationInstanceId:
+    Description: EC2 instance ID for SSM Run Command
+    Value: !Ref AutomationInstance
+    Export:
+      Name: !Sub '${ProjectName}-automation-instance-id'
+
+  AutomationSecurityGroupId:
+    Description: >-
+      Security group ID of the automation machine. The API layer adds this SG
+      as an ingress source on each RDS cluster's SG when starting an analysis.
+    Value: !Ref AutomationSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-automation-sg-id'

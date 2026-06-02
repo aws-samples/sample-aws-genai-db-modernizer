@@ -1,0 +1,717 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  API Service Stack - ECS Fargate service with ALB, IAM roles, security groups,
+  and logging for the Database Modernizer FastAPI application
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: db-modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID from core infrastructure stack
+
+  PublicSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet 1 ID for ALB
+
+  PublicSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet 2 ID for ALB
+
+  PrivateAppSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private application subnet 1 ID for ECS tasks
+
+  PrivateAppSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private application subnet 2 ID for ECS tasks
+
+  ContainerImage:
+    Type: String
+    Description: ECR image URI for the FastAPI application container
+
+  DesiredCount:
+    Type: Number
+    Description: Number of ECS tasks to run
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+
+  ContainerPort:
+    Type: Number
+    Description: Port the container listens on
+    Default: 8000
+
+  HealthCheckPath:
+    Type: String
+    Description: Health check endpoint path
+    Default: /health
+
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN for HTTPS listener
+
+  UserPoolArn:
+    Type: String
+    Description: Cognito User Pool ARN from authentication stack
+
+  UserPoolClientId:
+    Type: String
+    Description: Cognito User Pool App Client ID from authentication stack
+
+  UserPoolDomain:
+    Type: String
+    Description: Cognito User Pool domain (e.g., my-app-dev-123456789012)
+
+  KmsKeyArn:
+    Type: String
+    Description: KMS key ARN from core infrastructure stack for encryption
+    Default: ''
+
+  CommitSha:
+    Type: String
+    Description: Git commit SHA for version tracking
+    Default: unknown
+
+  LogsBucketName:
+    Type: String
+    Description: Centralized logging bucket name from core-infra stack
+    Default: ''
+
+  HostedZoneId:
+    Type: String
+    Description: Route 53 hosted zone ID from dns stack
+    Default: ''
+
+  DomainName:
+    Type: String
+    Description: Domain name for the API (e.g., api-dev.modernizer.example.com)
+    Default: ''
+
+  AppDomainName:
+    Type: String
+    Description: Domain name for the UI (e.g., app-dev.modernizer.example.com)
+    Default: ''
+
+  EcsClusterArn:
+    Type: String
+    Description: ECS cluster ARN from ecs-infrastructure stack
+
+  EcsSecurityGroupId:
+    Type: String
+    Description: ECS security group ID from ecs-infrastructure stack
+
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN from ecs-infrastructure stack
+
+  StateMachineArn:
+    Type: String
+    Description: Step Functions state machine ARN from orchestration stack
+
+  S3BucketName:
+    Type: String
+    Description: Storage bucket name from storage stack
+
+Conditions:
+  HasDnsConfig: !And
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+    - !Not [!Equals [!Ref DomainName, '']]
+  HasAppDomain: !Not [!Equals [!Ref AppDomainName, '']]
+  HasKmsKey: !Not [!Equals [!Ref KmsKeyArn, '']]
+  HasLogsBucket: !Not [!Equals [!Ref LogsBucketName, '']]
+
+Resources:
+  # ============================================================
+  # Security Groups
+  # ============================================================
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W2
+            reason: "ALB must accept inbound traffic from the internet on port 443"
+          - id: W9
+            reason: "ALB must accept inbound traffic from the internet on port 443"
+          - id: W5
+            reason: "ALB needs outbound access to ECS tasks and AWS services"
+    Properties:
+      GroupDescription: !Sub 'Security group for ${ProjectName}-${Environment} ALB - allows inbound HTTP/HTTPS from internet'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+          Description: Allow HTTPS from internet
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-alb-sg'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ALB needs to reach ECS tasks on container port
+  AlbEgressToEcs:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      DestinationSecurityGroupId: !Ref EcsSecurityGroupId
+      Description: Allow ALB to reach ECS tasks on container port
+
+  # ECS tasks need to accept traffic from ALB
+  EcsIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Description: Allow traffic from ALB on container port
+
+  AlbEgressToCognito:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Allow HTTPS to Cognito endpoints for authentication
+
+  # ============================================================
+  # IAM Roles
+  # ============================================================
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ecs-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  EcsTaskRolePolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W12
+            reason: "Task role needs broad access to RDS, DynamoDB, S3, Bedrock, Secrets Manager, EventBridge, Cognito, and CloudWatch within the account. Resources are scoped by account."
+          - id: F4
+            reason: "Task role requires permissions across multiple services for application functionality. Access is scoped to the account level."
+    Properties:
+      PolicyName: !Sub '${ProjectName}-${Environment}-ecs-task-policy'
+      Roles:
+        - !Ref EcsTaskRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RdsAccess
+            Effect: Allow
+            Action:
+              - rds:DescribeDBInstances
+              - rds:DescribeDBClusters
+              - rds:DescribeDBSnapshots
+              - rds:ListTagsForResource
+              - rds-data:ExecuteStatement
+              - rds-data:BatchExecuteStatement
+              - rds-data:BeginTransaction
+              - rds-data:CommitTransaction
+              - rds-data:RollbackTransaction
+            Resource: !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:*'
+          - Sid: S3Access
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource:
+              - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*'
+              - !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-*/*'
+          - Sid: DynamoDbAccess
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*'
+          - Sid: KmsAccessForDynamoDb
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+          - Sid: CloudWatchAccess
+            Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+              - cloudwatch:GetMetricData
+              - cloudwatch:GetMetricStatistics
+              - cloudwatch:ListMetrics
+            Resource: '*'
+            Condition:
+              StringEquals:
+                cloudwatch:namespace: !Sub '${ProjectName}/${Environment}'
+          - Sid: CloudWatchLogsAccess
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogStreams
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}-${Environment}*'
+          - Sid: PerformanceInsightsAccess
+            Effect: Allow
+            Action:
+              - pi:GetResourceMetrics
+              - pi:DescribeDimensionKeys
+              - pi:GetDimensionKeyDetails
+            Resource: !Sub 'arn:aws:pi:${AWS::Region}:${AWS::AccountId}:metrics/rds/*'
+          - Sid: BedrockAccess
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:ListFoundationModels
+              - bedrock:GetFoundationModel
+            Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+          - Sid: SecretsManagerAccess
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue  # pragma: allowlist secret
+              - secretsmanager:DescribeSecret  # pragma: allowlist secret
+            Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/${Environment}/*'
+          - Sid: EventBridgeAccess
+            Effect: Allow
+            Action:
+              - events:PutEvents
+              - events:DescribeRule
+              - events:ListRules
+            Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/${ProjectName}-${Environment}-*'
+          - Sid: StepFunctionsAccess
+            Effect: Allow
+            Action:
+              - states:StartExecution
+              - states:ListExecutions
+            Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ProjectName}-${Environment}-*'
+          - Sid: StepFunctionsExecutionAccess
+            Effect: Allow
+            Action:
+              - states:DescribeExecution
+              - states:GetExecutionHistory
+              - states:ListExecutions
+            Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${ProjectName}-${Environment}-*:*'
+          - Sid: StepFunctionsTaskTokenAccess
+            Effect: Allow
+            Action:
+              - states:SendTaskSuccess
+              - states:SendTaskFailure
+              - states:SendTaskHeartbeat
+            Resource: '*'
+          - Sid: CognitoAccess
+            Effect: Allow
+            Action:
+              - cognito-idp:AdminGetUser
+              - cognito-idp:AdminListGroupsForUser
+              - cognito-idp:ListUsers
+              - cognito-idp:GetUser
+            Resource: !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+
+  # ============================================================
+  # CloudWatch Log Group
+  # ============================================================
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+      KmsKeyId: !If [HasKmsKey, !Ref KmsKeyArn, !Ref 'AWS::NoValue']
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # Application Load Balancer
+  # ============================================================
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack reference predictability"
+      checkov:
+        skip:
+          - id: CKV_AWS_91
+            comment: "ALB access logging is conditional — enabled when LogsBucketName is provided (dev/prod), skipped for ephemeral feature branches"
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+      LoadBalancerAttributes:
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: 'true'
+        - Key: deletion_protection.enabled
+          Value: 'false'
+        - !If
+          - HasLogsBucket
+          - Key: access_logs.s3.enabled
+            Value: 'true'
+          - !Ref 'AWS::NoValue'
+        - !If
+          - HasLogsBucket
+          - Key: access_logs.s3.bucket
+            Value: !Ref LogsBucketName
+          - !Ref 'AWS::NoValue'
+        - !If
+          - HasLogsBucket
+          - Key: access_logs.s3.prefix
+            Value: alb-logs
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # Route 53 Alias Record (conditional — only if DNS params provided)
+  # ============================================================
+  # ============================================================
+  # Route 53 Alias Records
+  # ============================================================
+  ApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApplicationLoadBalancer.DNSName
+        HostedZoneId: !GetAtt ApplicationLoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  AppDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref AppDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApplicationLoadBalancer.DNSName
+        HostedZoneId: !GetAtt ApplicationLoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions:
+        - Type: authenticate-cognito
+          Order: 1
+          AuthenticateCognitoConfig:
+            UserPoolArn: !Ref UserPoolArn
+            UserPoolClientId: !Ref UserPoolClientId
+            UserPoolDomain: !Ref UserPoolDomain
+            OnUnauthenticatedRequest: authenticate
+            Scope: openid email profile
+            SessionTimeout: 3600
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # Health endpoint bypasses Cognito authentication
+  HealthCheckListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /health
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # API paths — explicit rule so UI catch-all doesn't intercept
+  ApiPathListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref AlbListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/*
+      Actions:
+        - Type: authenticate-cognito
+          Order: 1
+          AuthenticateCognitoConfig:
+            UserPoolArn: !Ref UserPoolArn
+            UserPoolClientId: !Ref UserPoolClientId
+            UserPoolDomain: !Ref UserPoolDomain
+            OnUnauthenticatedRequest: authenticate
+            Scope: openid email profile
+            SessionTimeout: 3600
+        - Type: forward
+          Order: 2
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  # ============================================================
+  # ECS Task Definition and Service
+  # ============================================================
+  EcsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-api'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Ref ContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref EcsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: api
+          Environment:
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: COMMIT_SHA
+              Value: !Ref CommitSha
+            - Name: STATE_MACHINE_ARN
+              Value: !Ref StateMachineArn
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+            - Name: LOG_GROUP
+              Value: !Sub '/ecs/${ProjectName}-${Environment}'
+            - Name: ALLOWED_ORIGIN
+              Value: !If
+                - HasAppDomain
+                - !Sub 'https://${AppDomainName}'
+                - 'http://localhost:3000'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  EcsService:
+    Type: AWS::ECS::Service
+    DependsOn: AlbListener
+    Properties:
+      ServiceName: !Sub '${ProjectName}-${Environment}-api-service'
+      Cluster: !Ref EcsClusterArn
+      TaskDefinition: !Ref EcsTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 120
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref EcsSecurityGroupId
+          Subnets:
+            - !Ref PrivateAppSubnet1Id
+            - !Ref PrivateAppSubnet2Id
+      LoadBalancers:
+        - ContainerName: api
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref AlbTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  ServiceName:
+    Description: ECS service name
+    Value: !GetAtt EcsService.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-ServiceName'
+
+  AlbDnsName:
+    Description: ALB public DNS endpoint
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbDnsName'
+
+  AlbUrl:
+    Description: Full URL to the application
+    Value: !Sub 'https://${ApplicationLoadBalancer.DNSName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbUrl'
+
+  AlbArn:
+    Description: ALB ARN
+    Value: !Ref ApplicationLoadBalancer
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbArn'
+
+  TaskRoleArn:
+    Description: ECS task role ARN (for future service integrations)
+    Value: !GetAtt EcsTaskRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TaskRoleArn'
+
+  LogGroupName:
+    Description: CloudWatch log group name for ECS tasks
+    Value: !Ref EcsLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroupName'
+
+  AlbListenerArn:
+    Description: ALB HTTPS listener ARN for adding UI listener rules
+    Value: !Ref AlbListener
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbListenerArn'
+
+  AlbSecurityGroupId:
+    Description: ALB security group ID for UI ECS ingress rules
+    Value: !Ref AlbSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbSecurityGroupId'

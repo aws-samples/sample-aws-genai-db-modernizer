@@ -1,0 +1,8 @@
+# Production parameter overrides for CloudFormation stacks.
+# Currently minimal — the pipeline passes most parameters inline.
+# Kept as a reference for when additional stacks (storage, auth, api-service)
+# need more parameters (KmsKeyArn, ContainerImage, CertificateArn, etc.).
+# Remove if it doesn't prove useful.
+Parameters:
+  Environment: prod
+  ProjectName: modernizer

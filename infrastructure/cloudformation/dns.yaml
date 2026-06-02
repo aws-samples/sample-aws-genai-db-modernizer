@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  DNS and TLS certificate stack for Database Modernizer.
+  Creates a Route 53 hosted zone and ACM wildcard certificate
+  with DNS validation. Supports per-environment subdomains.
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, prod, or sanitized branch name)
+    Default: dev
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: modernizer
+
+  ParentDomainName:
+    Type: String
+    Description: Parent domain (e.g., example.com)
+    Default: example.com
+
+  SubDomainPrefix:
+    Type: String
+    Description: Subdomain prefix under the parent domain (e.g., modernizer)
+    Default: modernizer
+
+Resources:
+  # ============================================================
+  # Route 53 Hosted Zone
+  # ============================================================
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Sub '${SubDomainPrefix}.${ParentDomainName}'
+      HostedZoneConfig:
+        Comment: !Sub '${ProjectName} ${Environment} - managed by CloudFormation'
+      HostedZoneTags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # ACM Wildcard Certificate
+  # ============================================================
+  WildcardCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub '*.${SubDomainPrefix}.${ParentDomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub '*.${SubDomainPrefix}.${ParentDomainName}'
+          HostedZoneId: !Ref HostedZone
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  HostedZoneId:
+    Description: Route 53 hosted zone ID
+    Value: !Ref HostedZone
+    Export:
+      Name: !Sub '${AWS::StackName}-HostedZoneId'
+
+  HostedZoneNameServers:
+    Description: NS records to add to parent zone for delegation
+    Value: !Join [',', !GetAtt HostedZone.NameServers]
+    Export:
+      Name: !Sub '${AWS::StackName}-NameServers'
+
+  CertificateArn:
+    Description: ACM wildcard certificate ARN for HTTPS
+    Value: !Ref WildcardCertificate
+    Export:
+      Name: !Sub '${AWS::StackName}-CertificateArn'
+
+  DomainName:
+    Description: Base domain name for this zone
+    Value: !Sub '${SubDomainPrefix}.${ParentDomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DomainName'

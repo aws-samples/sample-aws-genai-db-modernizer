@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Storage Stack - S3 buckets and DynamoDB table for the Database Modernizer project
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: db-modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  AppDomainName:
+    Type: String
+    Description: Full UI domain for S3 CORS allowed origins (e.g., app-dev.modernizer.example.com)
+    Default: ''
+
+  KmsKeyArn:
+    Type: String
+    Description: KMS key ARN from core infrastructure stack for encryption
+
+Conditions:
+  HasAppDomain: !Not [!Equals [!Ref AppDomainName, '']]
+
+Resources:
+  # ============================================================
+  # S3 Logging Bucket
+  # ============================================================
+  LoggingBucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "Logging bucket cannot log to itself - this is the destination for other bucket logs"
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack reference predictability"
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "Logging bucket cannot log to itself - this is the destination for other bucket logs"
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-logs-bucket'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Purpose
+          Value: Access Logging
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  LoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LoggingBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3ServerAccessLogsPolicy
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${LoggingBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  # ============================================================
+  # S3 Storage Bucket - Application Data
+  # ============================================================
+  StorageBucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack reference predictability"
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-storage-bucket'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - PUT
+              - GET
+            AllowedOrigins:
+              - !If
+                - HasAppDomain
+                - !Sub 'https://${AppDomainName}'
+                - !Sub 'https://app-${Environment}.${ProjectName}.example.com'
+              - 'http://localhost:3000'
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionOldVersionsToGlacier
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+        LogFilePrefix: storage-bucket-logs/
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-storage-bucket'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  StorageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StorageBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt StorageBucket.Arn
+              - !Sub '${StorageBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  # ============================================================
+  # DynamoDB Table - Job Metadata
+  # ============================================================
+  # Phase 1A additional attributes (DynamoDB is schemaless — no schema change needed):
+  #   task_token (String)          — Current SFN task token, set on WaitForTaskToken pause, cleared on resume
+  #   assignment_version (Number)  — Current assignment version (0 = no assignment / legacy mode)
+  #   phase_progression (Map)      — Per-phase status records as defined in PhaseProgression model
+  JobMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack reference predictability"
+          - id: W78
+            reason: "Backup is handled via point-in-time recovery which is enabled"
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-job-metadata'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: jobId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: 'N'
+      KeySchema:
+        - AttributeName: jobId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref KmsKeyArn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-job-metadata'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  S3BucketName:
+    Description: Name of the S3 storage bucket
+    Value: !Ref StorageBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketName'
+
+  S3BucketArn:
+    Description: ARN of the S3 storage bucket
+    Value: !GetAtt StorageBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketArn'
+
+  LoggingBucketName:
+    Description: Name of the S3 logging bucket
+    Value: !Ref LoggingBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-LoggingBucketName'
+
+  DynamoDbTableName:
+    Description: Name of the DynamoDB job metadata table
+    Value: !Ref JobMetadataTable
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDbTableName'
+
+  DynamoDbTableArn:
+    Description: ARN of the DynamoDB job metadata table
+    Value: !GetAtt JobMetadataTable.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDbTableArn'

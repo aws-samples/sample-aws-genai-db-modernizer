@@ -1,0 +1,1453 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Orchestration Stack - Step Functions state machine for job workflow,
+  EventBridge event bus for progress notifications, and agent ECS task
+  definitions per ADR-016.
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  EcsClusterArn:
+    Type: String
+    Description: ECS cluster ARN from api-service stack
+
+  EcsSecurityGroupId:
+    Type: String
+    Description: ECS security group ID from api-service stack
+
+  PrivateAppSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private application subnet 1 ID for agent tasks
+
+  PrivateAppSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private application subnet 2 ID for agent tasks
+
+  ContainerImage:
+    Type: String
+    Description: ECR image URI for agent containers
+
+  LoadTestContainerImage:
+    Type: String
+    Description: ECR image URI for load test agent (includes k6 binary)
+    Default: ''
+
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN from api-service stack
+
+  S3BucketName:
+    Type: String
+    Description: Storage bucket name from storage stack
+
+  DynamoDbTableName:
+    Type: String
+    Description: DynamoDB job metadata table name from storage stack
+
+  KmsKeyArn:
+    Type: String
+    Description: KMS key ARN for encryption
+    Default: ''
+
+Conditions:
+  HasKmsKey: !Not [!Equals [!Ref KmsKeyArn, '']]
+  NoKmsKey: !Equals [!Ref KmsKeyArn, '']
+  HasLoadTestImage: !Not [!Equals [!Ref LoadTestContainerImage, '']]
+
+Resources:
+  # ============================================================
+  # EventBridge Event Bus (notifications only)
+  # ============================================================
+  NotificationEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-notifications'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # CloudWatch Log Group for Step Functions (with KMS)
+  # ============================================================
+  StepFunctionsLogGroupWithKms:
+    # checkov:skip=CKV_AWS_158:KMS encryption is configured via KmsKeyId property
+    Type: AWS::Logs::LogGroup
+    Condition: HasKmsKey
+    Properties:
+      LogGroupName: !Sub '/stepfunctions/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+      KmsKeyId: !Ref KmsKeyArn
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # CloudWatch Log Group for Step Functions (without KMS)
+  # ============================================================
+  StepFunctionsLogGroupWithoutKms:
+    # checkov:skip=CKV_AWS_158:Feature branches use AWS-managed encryption for simplicity
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: "Conditional resource for environments without KMS key — KMS version exists"
+    Condition: NoKmsKey
+    Properties:
+      LogGroupName: !Sub '/stepfunctions/${ProjectName}-${Environment}'
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # IAM Role for Agent ECS Tasks
+  # ============================================================
+  AgentTaskRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+          - id: W12
+            reason: "Agent tasks need broad access to RDS, S3, Bedrock, etc. Resources scoped by account."
+          - id: F4
+            reason: "Agent tasks require permissions across multiple services."
+          - id: W11
+            reason: "Agent tasks need * resource for Bedrock, RDS describe, and CloudWatch metrics"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-agent-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-${Environment}-agent-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3Access
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Sid: DynamoDbAccess
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*'
+              - Sid: RdsAccess
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:ListTagsForResource
+                Resource: !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:*'
+              - Sid: CloudWatchMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                Resource: '*'
+              - Sid: PerformanceInsights
+                Effect: Allow
+                Action:
+                  - pi:GetResourceMetrics
+                  - pi:DescribeDimensionKeys
+                  - pi:GetDimensionKeyDetails
+                Resource: !Sub 'arn:aws:pi:${AWS::Region}:${AWS::AccountId}:metrics/rds/*'
+              - Sid: BedrockAccess
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+                  - !Sub 'arn:aws:bedrock:us-*::foundation-model/*'
+              - Sid: SecretsManagerAccess
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue  # pragma: allowlist secret
+                  - secretsmanager:DescribeSecret  # pragma: allowlist secret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/${Environment}/*'
+              - Sid: EventBridgeNotifications
+                Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: !GetAtt NotificationEventBus.Arn
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}-${Environment}*'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # ECS Task Definitions per Agent Type (ADR-016 sizing)
+  # ============================================================
+  CollectorTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-collector'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '4096'
+      Memory: '8192'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: collector
+          Environment:
+            - Name: AGENT_TYPE
+              Value: collector
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: collector
+
+  RefereeTriageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-referee-triage'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '2048'
+      Memory: '4096'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: referee-triage
+          Environment:
+            - Name: AGENT_TYPE
+              Value: referee-triage
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: referee-triage
+
+  AnalysisTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-analysis'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '2048'
+      Memory: '4096'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: analysis
+          Environment:
+            - Name: AGENT_TYPE
+              Value: analysis
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: analysis
+
+  RefereeSynthesisTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-referee-synthesis'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '2048'
+      Memory: '4096'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: referee-synthesis
+          Environment:
+            - Name: AGENT_TYPE
+              Value: referee-synthesis
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: referee-synthesis
+
+  SchemaDesignTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-schema-design'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '4096'
+      Memory: '8192'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: schema-design
+          Environment:
+            - Name: AGENT_TYPE
+              Value: schema-design
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: schema-design
+
+  AssignmentResolverTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-assignment-resolver'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: assignment-resolver
+          Environment:
+            - Name: AGENT_TYPE
+              Value: assignment-resolver
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: assignment-resolver
+
+  RealityCheckTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-reality-check'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref ContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: reality-check
+          Environment:
+            - Name: AGENT_TYPE
+              Value: reality-check
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: reality-check
+
+  LoadTestTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasLoadTestImage
+    Properties:
+      Family: !Sub '${ProjectName}-${Environment}-load-test'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '4096'
+      Memory: '16384'
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt LoadTestTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref LoadTestContainerImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub '/ecs/${ProjectName}-${Environment}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: load-test
+          Environment:
+            - Name: AGENT_TYPE
+              Value: load-test
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            - Name: PROJECT_NAME
+              Value: !Ref ProjectName
+            - Name: EVENT_BUS_NAME
+              Value: !Ref NotificationEventBus
+            - Name: S3_BUCKET
+              Value: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: AgentType
+          Value: load-test
+
+  # ============================================================
+  # IAM Role for Load Test Agent (needs DynamoDB provisioning)
+  # ============================================================
+  LoadTestTaskRole:
+    Type: AWS::IAM::Role
+    Condition: HasLoadTestImage
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+          - id: W11
+            reason: "Load test needs CreateTable with dynamic names and Bedrock for script generation"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-load-test-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-${Environment}-load-test-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3Access
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Sid: DynamoDbProvisioning
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/LoadTest_*'
+              - Sid: DynamoDbDataOperations
+                Effect: Allow
+                Action:
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/LoadTest_*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/LoadTest_*/index/*'
+              - Sid: DynamoDbJobMetadata
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*'
+              - Sid: BedrockAccess
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+                  - !Sub 'arn:aws:bedrock:us-*::foundation-model/*'
+              - Sid: CloudWatchMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # IAM Role for StoreTaskToken Lambda
+  # ============================================================
+  StoreTaskTokenRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-store-task-token-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-${Environment}-store-task-token-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DynamoDbUpdateTaskToken
+                Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}'
+              - Sid: KmsDecryptForDynamoDb
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource:
+                  - !If
+                    - HasKmsKey
+                    - !Ref KmsKeyArn
+                    - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-store-task-token*'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # Lambda Function to store Step Functions task token in DynamoDB
+  # ============================================================
+  StoreTaskTokenFunction:
+    Type: AWS::Lambda::Function
+    # checkov:skip=CKV_AWS_116:DLQ not needed for synchronous Step Functions invocation
+    # checkov:skip=CKV_AWS_173:No sensitive data in environment variables
+    # checkov:skip=CKV_AWS_115:Reserved concurrency not needed for low-volume token storage
+    # checkov:skip=CKV_AWS_117:VPC not required for DynamoDB access via public endpoint
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "Lambda only accesses DynamoDB — VPC not required"
+          - id: W92
+            reason: "Low-volume function invoked only during human-review gates"
+          - id: W58
+            reason: "CloudWatch Logs permissions granted via StoreTaskTokenRole"
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-store-task-token'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt StoreTaskTokenRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          def handler(event, context):
+              dynamodb = boto3.client("dynamodb")
+              phase = event["phase"]
+              status = "AWAITING_REVIEW" if phase in ("assignment", "assignment_review") else "AWAITING_INPUT"
+              try:
+                  # Try setting nested attribute (works if phase_progression exists)
+                  dynamodb.update_item(
+                      TableName=event["table_name"],
+                      Key={
+                          "jobId": {"S": event["job_id"]},
+                          "timestamp": {"N": "0"},
+                      },
+                      UpdateExpression="SET task_token = :tt, phase_progression.#ph = :ps",
+                      ExpressionAttributeNames={"#ph": phase},
+                      ExpressionAttributeValues={
+                          ":tt": {"S": event["task_token"]},
+                          ":ps": {"S": status},
+                      },
+                  )
+              except dynamodb.exceptions.ClientError as e:
+                  if "document path" in str(e):
+                      # phase_progression doesn't exist yet — create it with the nested key
+                      dynamodb.update_item(
+                          TableName=event["table_name"],
+                          Key={
+                              "jobId": {"S": event["job_id"]},
+                              "timestamp": {"N": "0"},
+                          },
+                          UpdateExpression="SET task_token = :tt, phase_progression = :pp",
+                          ExpressionAttributeValues={
+                              ":tt": {"S": event["task_token"]},
+                              ":pp": {"M": {phase: {"S": status}}},
+                          },
+                      )
+                  else:
+                      raise
+              return {"status": "token_stored", "phase": phase}
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # Step Functions IAM Role
+  # ============================================================
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+          - id: W12
+            reason: "Step Functions needs ecs:RunTask on agent task definitions and iam:PassRole for task roles"
+          - id: W11
+            reason: "Step Functions needs broad ECS/IAM/S3/logs access for orchestration"
+          - id: W76
+            reason: "Step Functions orchestration role requires permissions across ECS, S3, IAM, and logs"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-sfn-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-${Environment}-sfn-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RunEcsTasks
+                Effect: Allow
+                Action:
+                  - ecs:RunTask
+                  - ecs:StopTask
+                  - ecs:DescribeTasks
+                Resource:
+                  - !Sub 'arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${ProjectName}-${Environment}-*'
+              - Sid: PassRolesToEcs
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Ref TaskExecutionRoleArn
+                  - !GetAtt AgentTaskRole.Arn
+                  - !If
+                    - HasLoadTestImage
+                    - !GetAtt LoadTestTaskRole.Arn
+                    - !Ref AWS::NoValue
+              - Sid: EcsEvents
+                Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule'
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+              - Sid: S3ReadAgentOutput
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Sid: DynamoDbWriteTaskToken
+                Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}'
+              - Sid: InvokeStoreTaskTokenLambda
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt StoreTaskTokenFunction.Arn
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================
+  # Step Functions State Machine
+  # ============================================================
+  JobOrchestrator:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${ProjectName}-${Environment}-job-orchestrator'
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !If
+                - HasKmsKey
+                - !GetAtt StepFunctionsLogGroupWithKms.Arn
+                - !GetAtt StepFunctionsLogGroupWithoutKms.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Database Modernizer job orchestration (ADR-016)",
+          "StartAt": "RunCollector",
+          "States": {
+            "RunCollector": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${EcsClusterArn}",
+                "TaskDefinition": "${ProjectName}-${Environment}-collector",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "AssignPublicIp": "DISABLED",
+                    "SecurityGroups": ["${EcsSecurityGroupId}"],
+                    "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "agent",
+                    "Environment": [
+                      {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                      {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                      {"Name": "AGENT_TYPE", "Value": "collector"},
+                      {"Name": "COLLECTION_MODE", "Value.$": "$.collection_mode"},
+                      {"Name": "OFFLINE_S3_KEY", "Value.$": "$.offline_s3_key"},
+                      {"Name": "CLUSTER_ENDPOINT", "Value.$": "$.cluster_endpoint"},
+                      {"Name": "SECRET_ARN", "Value.$": "$.secret_arn"},
+                      {"Name": "AUTOMATION_INSTANCE_ID", "Value.$": "$.automation_instance_id"},
+                      {"Name": "PORT", "Value.$": "$.port"},
+                      {"Name": "ENGINE", "Value.$": "$.engine"},
+                      {"Name": "DB_INSTANCE_IDENTIFIER", "Value.$": "$.db_instance_identifier"}
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.collector_result",
+              "Next": "RunRefereeTriage",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 2, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "RunRefereeTriage": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${EcsClusterArn}",
+                "TaskDefinition": "${ProjectName}-${Environment}-referee-triage",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "AssignPublicIp": "DISABLED",
+                    "SecurityGroups": ["${EcsSecurityGroupId}"],
+                    "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "agent",
+                    "Environment": [
+                      {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                      {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                      {"Name": "AGENT_TYPE", "Value": "referee-triage"}
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.triage_ecs_result",
+              "Next": "LoadTriageOutput",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "LoadTriageOutput": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+              "Parameters": {
+                "Bucket": "${S3BucketName}",
+                "Key.$": "States.Format('{}/{}/referee-triage/triage.json', $.database_name, $.job_id)"
+              },
+              "ResultSelector": {
+                "parsed.$": "States.StringToJson($.Body)"
+              },
+              "ResultPath": "$.s3_triage",
+              "Next": "ExtractTriageFields"
+            },
+            "ExtractTriageFields": {
+              "Type": "Pass",
+              "Parameters": {
+                "selected_agents.$": "$.s3_triage.parsed.selected_agents",
+                "skipped_agents.$": "$.s3_triage.parsed.skipped_agents",
+                "confidence_score.$": "$.s3_triage.parsed.confidence_score"
+              },
+              "ResultPath": "$.triage",
+              "Next": "RunAnalysisPipelines"
+            },
+            "RunAnalysisPipelines": {
+              "Type": "Map",
+              "Comment": "Phase 2: Per-engine parallel analysis",
+              "ItemsPath": "$.triage.selected_agents",
+              "MaxConcurrency": 7,
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "database_name.$": "$.database_name",
+                "agent_type.$": "$$.Map.Item.Value.agent_type"
+              },
+              "Iterator": {
+                "StartAt": "RunAnalysis",
+                "States": {
+                  "RunAnalysis": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::ecs:runTask.sync",
+                    "Parameters": {
+                      "LaunchType": "FARGATE",
+                      "Cluster": "${EcsClusterArn}",
+                      "TaskDefinition": "${ProjectName}-${Environment}-analysis",
+                      "NetworkConfiguration": {
+                        "AwsvpcConfiguration": {
+                          "AssignPublicIp": "DISABLED",
+                          "SecurityGroups": ["${EcsSecurityGroupId}"],
+                          "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                        }
+                      },
+                      "Overrides": {
+                        "ContainerOverrides": [{
+                          "Name": "agent",
+                          "Environment": [
+                            {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                            {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                            {"Name": "AGENT_TYPE", "Value.$": "$.agent_type"}
+                          ]
+                        }]
+                      }
+                    },
+                    "ResultPath": "$.analysis_ecs_result",
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 2, "BackoffRate": 2}],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": "$.analysis_results",
+              "Next": "RunAssignmentResolution",
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "RunAssignmentResolution": {
+              "Type": "Task",
+              "Comment": "Phase 3: Run assignment-resolver agent to produce query-to-engine mapping",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${EcsClusterArn}",
+                "TaskDefinition": "${ProjectName}-${Environment}-assignment-resolver",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "AssignPublicIp": "DISABLED",
+                    "SecurityGroups": ["${EcsSecurityGroupId}"],
+                    "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "agent",
+                    "Environment": [
+                      {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                      {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                      {"Name": "AGENT_TYPE", "Value": "assignment-resolver"}
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.assignment_result",
+              "Next": "SetAssignmentVersion",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "SetAssignmentVersion": {
+              "Type": "Pass",
+              "Comment": "Initialize assignment_version for downstream phases. Defaults to 1 for the first auto-generated assignment.",
+              "Result": 1,
+              "ResultPath": "$.assignment_version",
+              "Next": "RunRealityCheck"
+            },
+            "RunRealityCheck": {
+              "Type": "Task",
+              "Comment": "Phase 3b: CTO-level reality check — consolidates redundant engines and may bump assignment_version if consolidation occurs.",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${EcsClusterArn}",
+                "TaskDefinition": "${ProjectName}-${Environment}-reality-check",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "AssignPublicIp": "DISABLED",
+                    "SecurityGroups": ["${EcsSecurityGroupId}"],
+                    "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "agent",
+                    "Environment": [
+                      {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                      {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                      {"Name": "AGENT_TYPE", "Value": "reality-check"},
+                      {"Name": "ASSIGNMENT_VERSION", "Value.$": "States.Format('{}', $.assignment_version)"}
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.reality_check_result",
+              "Next": "UpdateAssignmentVersionAfterRealityCheck",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "UpdateAssignmentVersionAfterRealityCheck": {
+              "Type": "Task",
+              "Comment": "Read reality check output to determine if assignment_version was bumped (consolidation occurred). If so, schema design uses the revised version.",
+              "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+              "Parameters": {
+                "Bucket": "${S3BucketName}",
+                "Key.$": "States.Format('{}/{}/reality-check/output.json', $.database_name, $.job_id)"
+              },
+              "ResultSelector": {
+                "parsed.$": "States.StringToJson($.Body)"
+              },
+              "ResultPath": "$.reality_check_output",
+              "Next": "CheckConsolidationOccurred",
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "WaitForAssignmentApproval", "ResultPath": "$.reality_check_read_error"}]
+            },
+            "CheckConsolidationOccurred": {
+              "Type": "Choice",
+              "Comment": "If consolidations array is non-empty, bump assignment_version by 1 for downstream schema design.",
+              "Choices": [
+                {
+                  "Variable": "$.reality_check_output.parsed.consolidations[0]",
+                  "IsPresent": true,
+                  "Next": "BumpAssignmentVersion"
+                }
+              ],
+              "Default": "WaitForAssignmentApproval"
+            },
+            "BumpAssignmentVersion": {
+              "Type": "Pass",
+              "Comment": "Consolidation occurred — reality check wrote a new assignment at v(N+1). Increment assignment_version so schema design reads the revised assignment.",
+              "Parameters": {
+                "assignment_version.$": "States.MathAdd($.assignment_version, 1)"
+              },
+              "ResultPath": "$.assignment_version_bump",
+              "Next": "ApplyBumpedVersion"
+            },
+            "ApplyBumpedVersion": {
+              "Type": "Pass",
+              "Comment": "Overwrite top-level assignment_version with the bumped value.",
+              "InputPath": "$.assignment_version_bump.assignment_version",
+              "ResultPath": "$.assignment_version",
+              "Next": "WaitForAssignmentApproval"
+            },
+            "WaitForAssignmentApproval": {
+              "Type": "Task",
+              "Comment": "Pause for customer to review the reality-checked assignment. User sees the optimized engine distribution (after consolidation) and can approve or override before schema design begins.",
+              "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+              "Parameters": {
+                "FunctionName": "${StoreTaskTokenFunction}",
+                "Payload": {
+                  "task_token.$": "$$.Task.Token",
+                  "job_id.$": "$.job_id",
+                  "table_name": "${DynamoDbTableName}",
+                  "phase": "assignment_review"
+                }
+              },
+              "ResultPath": "$.approval_result",
+              "Next": "RunSchemaDesignPipelines",
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "RunSchemaDesignPipelines": {
+              "Type": "Map",
+              "Comment": "Phase 4: Per-engine schema design for assigned queries only. LOAD_TEST phase can be inserted after this state in Phase 1B without breaking changes.",
+              "ItemsPath": "$.triage.selected_agents",
+              "MaxConcurrency": 7,
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "database_name.$": "$.database_name",
+                "agent_type.$": "$$.Map.Item.Value.agent_type",
+                "assignment_version.$": "$.assignment_version"
+              },
+              "Iterator": {
+                "StartAt": "RunSchemaDesign",
+                "States": {
+                  "RunSchemaDesign": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::ecs:runTask.sync",
+                    "Parameters": {
+                      "LaunchType": "FARGATE",
+                      "Cluster": "${EcsClusterArn}",
+                      "TaskDefinition": "${ProjectName}-${Environment}-schema-design",
+                      "NetworkConfiguration": {
+                        "AwsvpcConfiguration": {
+                          "AssignPublicIp": "DISABLED",
+                          "SecurityGroups": ["${EcsSecurityGroupId}"],
+                          "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                        }
+                      },
+                      "Overrides": {
+                        "ContainerOverrides": [{
+                          "Name": "agent",
+                          "Environment": [
+                            {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                            {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                            {"Name": "TARGET_TYPE", "Value.$": "$.agent_type"},
+                            {"Name": "AGENT_TYPE", "Value": "schema-design"},
+                            {"Name": "ASSIGNMENT_VERSION", "Value.$": "States.Format('{}', $.assignment_version)"}
+                          ]
+                        }]
+                      }
+                    },
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 2, "BackoffRate": 2}],
+                    "End": true
+                  }
+
+                }
+              },
+              "ResultPath": "$.schema_results",
+              "Next": "RunLoadTestPipelines",
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "RunLoadTestPipelines": {
+              "Type": "Map",
+              "Comment": "Phase 5: Per-engine load test against provisioned DynamoDB tables. Validates schema design with real traffic patterns.",
+              "ItemsPath": "$.triage.selected_agents",
+              "MaxConcurrency": 3,
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "database_name.$": "$.database_name",
+                "agent_type.$": "$$.Map.Item.Value.agent_type",
+                "assignment_version.$": "$.assignment_version"
+              },
+              "Iterator": {
+                "StartAt": "RunLoadTest",
+                "States": {
+                  "RunLoadTest": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::ecs:runTask.sync",
+                    "Parameters": {
+                      "LaunchType": "FARGATE",
+                      "Cluster": "${EcsClusterArn}",
+                      "TaskDefinition": "${ProjectName}-${Environment}-load-test",
+                      "NetworkConfiguration": {
+                        "AwsvpcConfiguration": {
+                          "AssignPublicIp": "DISABLED",
+                          "SecurityGroups": ["${EcsSecurityGroupId}"],
+                          "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                        }
+                      },
+                      "Overrides": {
+                        "ContainerOverrides": [{
+                          "Name": "agent",
+                          "Environment": [
+                            {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                            {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                            {"Name": "TARGET_TYPE", "Value.$": "$.agent_type"},
+                            {"Name": "AGENT_TYPE", "Value": "load-test"},
+                            {"Name": "ASSIGNMENT_VERSION", "Value.$": "States.Format('{}', $.assignment_version)"}
+                          ]
+                        }]
+                      }
+                    },
+                    "TimeoutSeconds": 1800,
+                    "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": "$.load_test_results",
+              "Next": "RunRefereeSynthesis",
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "RunRefereeSynthesis", "ResultPath": "$.load_test_error"}]
+            },
+            "RunRefereeSynthesis": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${EcsClusterArn}",
+                "TaskDefinition": "${ProjectName}-${Environment}-referee-synthesis",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "AssignPublicIp": "DISABLED",
+                    "SecurityGroups": ["${EcsSecurityGroupId}"],
+                    "Subnets": ["${PrivateAppSubnet1Id}", "${PrivateAppSubnet2Id}"]
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "agent",
+                    "Environment": [
+                      {"Name": "JOB_ID", "Value.$": "$.job_id"},
+                      {"Name": "DATABASE_NAME", "Value.$": "$.database_name"},
+                      {"Name": "AGENT_TYPE", "Value": "referee-synthesis"},
+                      {"Name": "ITERATION", "Value.$": "States.Format('{}', $.synthesis_iteration)"}
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.synthesis_ecs_result",
+              "Next": "LoadSynthesisOutput",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "FormatError", "ResultPath": "$.error"}]
+            },
+            "LoadSynthesisOutput": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+              "Parameters": {
+                "Bucket": "${S3BucketName}",
+                "Key.$": "States.Format('{}/{}/referee-synthesis/report.json', $.database_name, $.job_id)"
+              },
+              "ResultSelector": {
+                "parsed.$": "States.StringToJson($.Body)"
+              },
+              "ResultPath": "$.s3_synthesis",
+              "Next": "ExtractSynthesisFields"
+            },
+            "ExtractSynthesisFields": {
+              "Type": "Pass",
+              "Parameters": {
+                "needs_deeper_analysis.$": "$.s3_synthesis.parsed.needs_deeper_analysis",
+                "ranking.$": "$.s3_synthesis.parsed.ranking"
+              },
+              "ResultPath": "$.synthesis",
+              "Next": "CheckDeeperAnalysis"
+            },
+            "CheckDeeperAnalysis": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "And": [
+                    {"Variable": "$.synthesis.needs_deeper_analysis", "BooleanEquals": true},
+                    {"Variable": "$.synthesis_iteration", "NumericLessThan": 2}
+                  ],
+                  "Next": "IncrementIteration"
+                }
+              ],
+              "Default": "JobComplete"
+            },
+            "IncrementIteration": {
+              "Type": "Pass",
+              "Parameters": {
+                "job_id.$": "$.job_id",
+                "database_name.$": "$.database_name",
+                "triage.$": "$.triage",
+                "synthesis.$": "$.synthesis",
+                "assignment_version.$": "$.assignment_version",
+                "synthesis_iteration.$": "States.MathAdd($.synthesis_iteration, 1)"
+              },
+              "Next": "RunSchemaDesignPipelines"
+            },
+            "JobComplete": {
+              "Type": "Succeed"
+            },
+            "FormatError": {
+              "Type": "Pass",
+              "Parameters": {
+                "Error.$": "States.Format('AgentExecutionError: {}', $.error.Error)",
+                "Cause.$": "States.Format('Cause: {} | Detail: {}', $.error.Cause, States.JsonToString($.error))"
+              },
+              "ResultPath": "$.formatted_error",
+              "Next": "JobFailed"
+            },
+            "JobFailed": {
+              "Type": "Fail",
+              "ErrorPath": "$.formatted_error.Error",
+              "CausePath": "$.formatted_error.Cause"
+            }
+          }
+        }
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  StateMachineArn:
+    Description: Step Functions state machine ARN
+    Value: !Ref JobOrchestrator
+    Export:
+      Name: !Sub '${AWS::StackName}-StateMachineArn'
+
+  StateMachineName:
+    Description: Step Functions state machine name
+    Value: !GetAtt JobOrchestrator.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-StateMachineName'
+
+  NotificationEventBusArn:
+    Description: EventBridge event bus ARN for notifications
+    Value: !GetAtt NotificationEventBus.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-NotificationEventBusArn'
+
+  NotificationEventBusName:
+    Description: EventBridge event bus name
+    Value: !Ref NotificationEventBus
+    Export:
+      Name: !Sub '${AWS::StackName}-NotificationEventBusName'
+
+  AgentTaskRoleArn:
+    Description: IAM role ARN for agent ECS tasks
+    Value: !GetAtt AgentTaskRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentTaskRoleArn'
+
+  CollectorTaskDefinitionArn:
+    Description: Collector task definition ARN
+    Value: !Ref CollectorTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-CollectorTaskDefArn'
+
+  AnalysisTaskDefinitionArn:
+    Description: Analysis task definition ARN
+    Value: !Ref AnalysisTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-AnalysisTaskDefArn'
+
+  AssignmentResolverTaskDefinitionArn:
+    Description: Assignment Resolver task definition ARN
+    Value: !Ref AssignmentResolverTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-AssignmentResolverTaskDefArn'
+
+  RealityCheckTaskDefinitionArn:
+    Description: Reality Check task definition ARN
+    Value: !Ref RealityCheckTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-RealityCheckTaskDefArn'
+
+  LoadTestTaskDefinitionArn:
+    Condition: HasLoadTestImage
+    Description: Load Test task definition ARN
+    Value: !Ref LoadTestTaskDefinition
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadTestTaskDefArn'
+
+  LoadTestTaskRoleArn:
+    Condition: HasLoadTestImage
+    Description: IAM role ARN for load test ECS tasks
+    Value: !GetAtt LoadTestTaskRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadTestTaskRoleArn'

@@ -1,0 +1,1046 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Core Infrastructure Stack - Foundational resources for Database Modernizer
+  project including VPC, networking, and container registry
+
+Mappings:
+  RegionalELBAccountId:
+    us-east-1:
+      AccountId: '127311923021'
+    us-east-2:
+      AccountId: '033677994240'
+    us-west-1:
+      AccountId: '027434742980'
+    us-west-2:
+      AccountId: '797873946194'
+    ap-east-1:
+      AccountId: '754344448648'
+    ap-south-1:
+      AccountId: '718504428378'
+    ap-northeast-1:
+      AccountId: '582318560864'
+    ap-northeast-2:
+      AccountId: '600734575887'
+    ap-northeast-3:
+      AccountId: '383597477331'
+    ap-southeast-1:
+      AccountId: '114774131450'
+    ap-southeast-2:
+      AccountId: '783225319266'
+    ca-central-1:
+      AccountId: '985666609251'
+    eu-central-1:
+      AccountId: '054676820928'
+    eu-west-1:
+      AccountId: '156460612806'
+    eu-west-2:
+      AccountId: '652711504416'
+    eu-west-3:
+      AccountId: '009996457667'
+    eu-north-1:
+      AccountId: '897822967062'
+    sa-east-1:
+      AccountId: '507241528517'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: db-modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  VpcCidr:
+    Type: String
+    Description: CIDR block for the VPC
+    Default: '10.0.0.0/16'
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Must be a valid CIDR block (e.g., 10.0.0.0/16)
+
+Resources:
+  # ============================================================
+  # VPC and Core Networking
+  # ============================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-vpc'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-igw'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ============================================================
+  # Shared KMS Key for Core Infrastructure Encryption
+  # Used by: VPC Flow Logs, ECR, and future services in this stack
+  # ============================================================
+  CoreInfraKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Shared KMS key for ${ProjectName}-${Environment} core infrastructure encryption'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAccountAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - kms:Encrypt*
+              - kms:Decrypt*
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:Describe*
+            Resource: '*'
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/vpc/${ProjectName}-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/stepfunctions/${ProjectName}-*'
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  CoreInfraKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-${Environment}-core-infra-key'
+      TargetKeyId: !Ref CoreInfraKmsKey
+
+  VpcFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/vpc/${ProjectName}-${Environment}-flow-logs'
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt CoreInfraKmsKey.Arn
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  VpcFlowLogRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-vpc-flow-log-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VpcFlowLogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt VpcFlowLogGroup.Arn
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  VpcFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref VpcFlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt VpcFlowLogRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-vpc-flow-log'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # Public Subnets (ALB + NAT Gateways)
+  # ============================================================
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-subnet-1'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Public
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-subnet-2'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Public
+
+  # ============================================================
+  # Private App Subnets (ECS Fargate Tasks)
+  # ============================================================
+  PrivateAppSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.10.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-app-subnet-1'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Application
+
+  PrivateAppSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.11.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-app-subnet-2'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Application
+
+  # ============================================================
+  # Private Data Subnets (RDS, Redis - future)
+  # ============================================================
+  PrivateDataSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.20.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-data-subnet-1'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Data
+
+  PrivateDataSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.21.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-data-subnet-2'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+        - Key: Tier
+          Value: Data
+
+  # ============================================================
+  # NAT Gateway (single for dev - add second for prod HA)
+  # ============================================================
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-eip'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-nat-gw'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # Route Tables - Public
+  # ============================================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-public-rt'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================
+  # Route Tables - Private App (shared, single NAT)
+  # ============================================================
+  PrivateAppRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-app-rt'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  PrivateAppRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateAppRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+
+  PrivateAppSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateAppSubnet1
+      RouteTableId: !Ref PrivateAppRouteTable
+
+  PrivateAppSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateAppSubnet2
+      RouteTableId: !Ref PrivateAppRouteTable
+
+  # ============================================================
+  # Route Tables - Private Data (shared, single NAT)
+  # ============================================================
+  PrivateDataRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-private-data-rt'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  PrivateDataRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateDataRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+
+  PrivateDataSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateDataSubnet1
+      RouteTableId: !Ref PrivateDataRouteTable
+
+  PrivateDataSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateDataSubnet2
+      RouteTableId: !Ref PrivateDataRouteTable
+
+  # ============================================================
+  # VPC Gateway Endpoints (free, routes traffic over AWS backbone)
+  # ============================================================
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateAppRouteTable
+        - !Ref PrivateDataRouteTable
+        - !Ref PublicRouteTable
+
+  DynamoDbVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateAppRouteTable
+        - !Ref PrivateDataRouteTable
+        - !Ref PublicRouteTable
+
+  # ============================================================
+  # Centralized Logging Bucket
+  # ============================================================
+  CentralLogsBucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "Centralized logging bucket cannot log to itself"
+          - id: W28
+            reason: "Explicit naming follows project naming convention"
+          - id: W51
+            reason: "Bucket policy defined separately"
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "Centralized logging bucket cannot log to itself"
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-central-logs'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Purpose
+          Value: Centralized Logging
+
+  CentralLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CentralLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowS3ServerAccessLogs
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CentralLogsBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AllowELBLogDeliveryService
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CentralLogsBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: AllowELBLogDeliveryGetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CentralLogsBucket.Arn
+          - Sid: AllowALBAccessLogs
+            Effect: Allow
+            Principal:
+              AWS: !Sub
+                - 'arn:aws:iam::${ELBAccountId}:root'
+                - ELBAccountId: !FindInMap [RegionalELBAccountId, !Ref 'AWS::Region', AccountId]
+            Action: s3:PutObject
+            Resource: !Sub '${CentralLogsBucket.Arn}/alb-logs/AWSLogs/${AWS::AccountId}/*'
+
+  # ============================================================
+  # ECR Repository
+  # ============================================================
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-api'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt CoreInfraKmsKey.Arn
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only last 20 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["dev", "staging", "prod"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # ECR Repository - UI
+  # ============================================================
+  EcrRepositoryUi:
+    Type: AWS::ECR::Repository
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-ui'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt CoreInfraKmsKey.Arn
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only last 20 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["dev", "staging", "prod"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # ECR Repository - Agent
+  # ============================================================
+  EcrRepositoryAgent:
+    Type: AWS::ECR::Repository
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-agent'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt CoreInfraKmsKey.Arn
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only last 20 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["dev", "staging", "prod"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # ECR Repository - Agent Load Test (includes k6 binary)
+  # ============================================================
+  EcrRepositoryAgentLoadTest:
+    Type: AWS::ECR::Repository
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-${Environment}-agent-load-test'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt CoreInfraKmsKey.Arn
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only last 20 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["dev", "staging", "prod"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  VpcId:
+    Description: VPC identifier
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  PublicSubnet1Id:
+    Description: Public subnet 1 ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet1Id'
+
+  PublicSubnet2Id:
+    Description: Public subnet 2 ID
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet2Id'
+
+  PublicSubnetIds:
+    Description: Comma-separated list of public subnet IDs
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetIds'
+
+  PrivateAppSubnet1Id:
+    Description: Private application subnet 1 ID
+    Value: !Ref PrivateAppSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateAppSubnet1Id'
+
+  PrivateAppSubnet2Id:
+    Description: Private application subnet 2 ID
+    Value: !Ref PrivateAppSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateAppSubnet2Id'
+
+  PrivateAppSubnetIds:
+    Description: Comma-separated list of private application subnet IDs
+    Value: !Join [',', [!Ref PrivateAppSubnet1, !Ref PrivateAppSubnet2]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateAppSubnetIds'
+
+  PrivateDataSubnet1Id:
+    Description: Private data subnet 1 ID
+    Value: !Ref PrivateDataSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateDataSubnet1Id'
+
+  PrivateDataSubnet2Id:
+    Description: Private data subnet 2 ID
+    Value: !Ref PrivateDataSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateDataSubnet2Id'
+
+  PrivateDataSubnetIds:
+    Description: Comma-separated list of private data subnet IDs
+    Value: !Join [',', [!Ref PrivateDataSubnet1, !Ref PrivateDataSubnet2]]
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateDataSubnetIds'
+
+  EcrRepositoryUri:
+    Description: ECR repository URI
+    Value: !GetAtt EcrRepository.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryUri'
+
+  EcrRepositoryArn:
+    Description: ECR repository ARN
+    Value: !GetAtt EcrRepository.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryArn'
+
+  EcrRepositoryUiUri:
+    Description: ECR repository URI for UI
+    Value: !GetAtt EcrRepositoryUi.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryUiUri'
+
+  EcrRepositoryUiArn:
+    Description: ECR repository ARN for UI
+    Value: !GetAtt EcrRepositoryUi.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryUiArn'
+
+  EcrRepositoryAgentUri:
+    Description: ECR repository URI for Agent
+    Value: !GetAtt EcrRepositoryAgent.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryAgentUri'
+
+  EcrRepositoryAgentArn:
+    Description: ECR repository ARN for Agent
+    Value: !GetAtt EcrRepositoryAgent.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryAgentArn'
+
+  EcrRepositoryAgentLoadTestUri:
+    Description: ECR repository URI for Agent Load Test
+    Value: !GetAtt EcrRepositoryAgentLoadTest.RepositoryUri
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryAgentLoadTestUri'
+
+  EcrRepositoryAgentLoadTestArn:
+    Description: ECR repository ARN for Agent Load Test
+    Value: !GetAtt EcrRepositoryAgentLoadTest.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcrRepositoryAgentLoadTestArn'
+
+  CoreInfraKmsKeyArn:
+    Description: Shared KMS key ARN for core infrastructure encryption
+    Value: !GetAtt CoreInfraKmsKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CoreInfraKmsKeyArn'
+
+  CentralLogsBucketName:
+    Description: Centralized logging bucket name
+    Value: !Ref CentralLogsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-CentralLogsBucketName'
+
+  CentralLogsBucketArn:
+    Description: Centralized logging bucket ARN
+    Value: !GetAtt CentralLogsBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CentralLogsBucketArn'

@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Authentication Stack - Cognito User Pool, App Client, and Domain
+  for the Database Modernizer project
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: db-modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  CallbackUrl:
+    Type: CommaDelimitedList
+    Description: OAuth2 callback URLs (comma-separated, e.g., https://api-dev.example.com/oauth2/idpresponse,https://api-feat-branch.example.com/oauth2/idpresponse)
+
+Resources:
+  # ============================================================
+  # Cognito User Pool
+  # ============================================================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-${Environment}-user-pool'
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      UserPoolTags:
+        Project: Database Modernizer
+        Environment: !Ref Environment
+        ManagedBy: CloudFormation
+        Owner: Platform Team
+        CostCenter: Engineering
+
+  # ============================================================
+  # Cognito User Pool Domain
+  # ============================================================
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub '${ProjectName}-${Environment}-${AWS::AccountId}'
+      UserPoolId: !Ref UserPool
+
+  # ============================================================
+  # Cognito User Pool App Client
+  # ============================================================
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-${Environment}-app-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true  # Required for ALB Cognito authentication  # pragma: allowlist secret
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs: !Ref CallbackUrl
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  UserPoolArn:
+    Description: Cognito User Pool ARN
+    Value: !GetAtt UserPool.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolArn'
+
+  UserPoolClientId:
+    Description: Cognito User Pool App Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
+  UserPoolDomainUrl:
+    Description: Cognito hosted UI domain URL
+    Value: !Sub 'https://${ProjectName}-${Environment}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolDomainUrl'
+
+  UserPoolDomainPrefix:
+    Description: Cognito User Pool domain prefix (for ALB authenticate-cognito)
+    Value: !Sub '${ProjectName}-${Environment}-${AWS::AccountId}'
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolDomainPrefix'

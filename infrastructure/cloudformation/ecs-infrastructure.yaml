@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ECS Infrastructure Stack - Shared ECS cluster and security groups for all services.
+  This stack provides the foundational compute infrastructure that both API and agent services use.
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (e.g., dev, staging, prod)
+    Default: dev
+    MaxLength: 20
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens (max 20 chars)
+
+  ProjectName:
+    Type: String
+    Description: Project identifier for resource naming
+    Default: db-modernizer
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    ConstraintDescription: >-
+      Must start with a letter and contain only lowercase letters, numbers,
+      and hyphens
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID from core infrastructure stack
+
+Resources:
+  # ============================================================
+  # ECS Cluster - Shared by all services
+  # ============================================================
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack reference predictability"
+    Properties:
+      ClusterName: !Sub '${ProjectName}-${Environment}-ecs-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # Security Group for ECS Tasks
+  # ============================================================
+  EcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W5
+            reason: "ECS tasks need outbound internet access via NAT for pulling images and calling AWS APIs"
+    Properties:
+      GroupDescription: !Sub 'Security group for ${ProjectName}-${Environment} ECS tasks'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+          Description: Allow HTTPS outbound for AWS API calls and image pulls
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-ecs-sg'
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+  # ============================================================
+  # IAM Role for ECS Task Execution (shared)
+  # ============================================================
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Explicit naming follows project naming convention for cross-stack references"
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-ecs-task-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Project
+          Value: Database Modernizer
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Owner
+          Value: Platform Team
+        - Key: CostCenter
+          Value: Engineering
+
+# ============================================================
+# Outputs
+# ============================================================
+Outputs:
+  ClusterId:
+    Description: ECS cluster ID
+    Value: !Ref EcsCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterId'
+
+  ClusterArn:
+    Description: ECS cluster ARN
+    Value: !GetAtt EcsCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ClusterArn'
+
+  EcsSecurityGroupId:
+    Description: ECS security group ID for task networking
+    Value: !Ref EcsSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-EcsSecurityGroupId'
+
+  TaskExecutionRoleArn:
+    Description: ECS task execution role ARN
+    Value: !GetAtt EcsTaskExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TaskExecutionRoleArn'
