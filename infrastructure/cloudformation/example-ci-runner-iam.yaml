@@ -1,12 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  GitHub Actions OIDC IAM Role and Policies - Database Modernizer Project
-  Creates the CI runner role with OIDC trust policy and scoped managed
-  policies for CloudFormation deployments.
+  OPTIONAL — Example CI/CD IAM Role for Database Modernizer Project.
+  This template is a reference implementation using GitHub Actions OIDC.
+  Adapt the trust policy to your own CI/CD system (CodePipeline, Jenkins,
+  GitLab, etc.) or deploy the other stacks manually via AWS CLI.
 
   DEPLOYMENT:
   aws cloudformation deploy \
-    --template-file infrastructure/cloudformation/ci-runner-iam.yaml \
+    --template-file infrastructure/cloudformation/example-ci-runner-iam.yaml \
     --stack-name modernizer-ci-runner-iam \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
 
