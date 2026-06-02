@@ -4,11 +4,11 @@
 
 **Date:** 2026-02-11
 
-**Decision Makers:** Database Modernizer Team
+**Decision Makers:** Database Modernizer Assessment Team
 
 ## Context
 
-We need to choose an Infrastructure as Code (IaC) solution for deploying Database Modernizer into customer AWS accounts. The two options are AWS CloudFormation (native AWS IaC) and AWS CDK (higher-level abstraction).
+We need to choose an Infrastructure as Code (IaC) solution for deploying Database Modernizer Assessment into customer AWS accounts. The two options are AWS CloudFormation (native AWS IaC) and AWS CDK (higher-level abstraction).
 
 ## Decision
 

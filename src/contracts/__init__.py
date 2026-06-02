@@ -1,5 +1,5 @@
 """
-Database Modernizer - Contract Models
+Database Modernizer Assessment - Contract Models
 
 Pydantic models for all agent contracts.
 """

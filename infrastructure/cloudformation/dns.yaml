@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  DNS and TLS certificate stack for Database Modernizer.
+  DNS and TLS certificate stack for Database Modernizer Assessment.
   Creates a Route 53 hosted zone and ACM wildcard certificate
   with DNS validation. Supports per-environment subdomains.
 

@@ -1,4 +1,4 @@
-# Pre-commit hooks for Database Modernizer
+# Pre-commit hooks for Database Modernizer Assessment
 # See https://pre-commit.com for more information
 
 repos:

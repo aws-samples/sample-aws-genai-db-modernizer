@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  UI Service Stack - ECS Fargate service for the Database Modernizer React
+  UI Service Stack - ECS Fargate service for the Database Modernizer Assessment React
   application. Shares the API stack's ALB with path-based routing (/* default).
 
 Parameters:
@@ -119,7 +119,7 @@ Resources:
       KmsKeyId: !If [HasKmsKey, !Ref KmsKeyArn, !Ref 'AWS::NoValue']
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -149,7 +149,7 @@ Resources:
           Value: '30'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -214,7 +214,7 @@ Resources:
               Value: !Ref Environment
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -250,7 +250,7 @@ Resources:
         MaximumPercent: 200
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy

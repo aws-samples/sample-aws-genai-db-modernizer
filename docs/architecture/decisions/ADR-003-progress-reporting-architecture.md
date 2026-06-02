@@ -11,7 +11,7 @@
 
 ## Context
 
-Database Modernizer jobs run 1-6 hours with 11 distinct stages (collector + 7 analysis agents + referee + 2 schema design). Users need real-time progress updates to monitor job execution. We need to design a progress reporting pipeline that:
+Database Modernizer Assessment jobs run 1-6 hours with 11 distinct stages (collector + 7 analysis agents + referee + 2 schema design). Users need real-time progress updates to monitor job execution. We need to design a progress reporting pipeline that:
 
 1. **Real-time updates**: Users see progress as jobs execute
 2. **Stage-level granularity**: 11 progress updates per job (aligned with checkpoints from ADR-001)

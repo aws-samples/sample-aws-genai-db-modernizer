@@ -1,6 +1,6 @@
 # Agent Contracts Documentation
 
-This directory contains the formal contract specifications for all agents in the Database Modernizer system.
+This directory contains the formal contract specifications for all agents in the Database Modernizer Assessment system.
 
 ## 📚 Documentation Index
 
@@ -168,4 +168,4 @@ See section 8 of [agent-contracts-spec.md](agent-contracts-spec.md) for complete
 ---
 
 **Last Updated:** June 2026
-**Maintained By:** Database Modernizer Team
+**Maintained By:** Database Modernizer Assessment Team

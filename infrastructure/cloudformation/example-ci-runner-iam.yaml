@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: |
-  OPTIONAL — Example CI/CD IAM Role for Database Modernizer Project.
+  OPTIONAL — Example CI/CD IAM Role for Database Modernizer Assessment Project.
   This template is a reference implementation using GitHub Actions OIDC.
   Adapt the trust policy to your own CI/CD system (CodePipeline, Jenkins,
   GitLab, etc.) or deploy the other stacks manually via AWS CLI.
@@ -47,7 +47,7 @@ Resources:
         - 6938fd4d98bab03faadb97b34396831e3780aea1
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
 
@@ -77,7 +77,7 @@ Resources:
                 token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
         - Key: Purpose

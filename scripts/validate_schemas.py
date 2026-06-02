@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate JSON schema files for Database Modernizer.
+Validate JSON schema files for Database Modernizer Assessment.
 
 This script validates that JSON schema files:
 1. Are valid JSON

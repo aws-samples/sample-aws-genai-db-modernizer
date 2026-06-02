@@ -13,7 +13,7 @@ Usage:
     uv run python scripts/run_assessment.py --job-id <id> --db <name>
 
     # Finalize reality check after LLM response is written:
-    uv run python scripts/run_assessment.py --job-id <id> --db <name> --finalize
+    uv run python scripts/run_assessment.py --job-id <id> --db <name> --resume-reality-check
 
     # Full pipeline with Bedrock LLM (schema design + synthesis via orchestrator):
     uv run python scripts/run_assessment.py --file <collector_file> --all -y --llm-mode bedrock
@@ -407,9 +407,9 @@ def main() -> None:
         help="LLM mode for reality check and schema design (default: external)",
     )
     parser.add_argument(
-        "--finalize",
+        "--resume-reality-check",
         action="store_true",
-        help="Finalize reality check after LLM response is written",
+        help="Resume reality check after LLM response has been written",
     )
     parser.add_argument(
         "--all",
@@ -432,10 +432,10 @@ def main() -> None:
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
 
-    # Finalize mode — just finalize reality check and exit
-    if args.finalize:
+    # Resume reality check after LLM response has been written
+    if args.resume_reality_check:
         if not args.job_id or not args.db:
-            _error("init", "--finalize requires --job-id and --db")
+            _error("init", "--resume-reality-check requires --job-id and --db")
         phase_reality_check_finalize(store, args.job_id, args.db)
         state = _read_state()
         state["phase_status"]["reality_check"] = "complete"
@@ -445,7 +445,7 @@ def main() -> None:
 
     # Header
     print(f"\n{'='*60}", file=sys.stderr)
-    print("  Database Modernizer — Assessment Pipeline", file=sys.stderr)
+    print("  Database Modernizer Assessment — Assessment Pipeline", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
     if args.file:
         print(f"  Input:     {args.file}", file=sys.stderr)
@@ -514,7 +514,7 @@ def main() -> None:
     if rc_status == "awaiting_llm":
         state["phase_status"]["reality_check"] = "awaiting_llm"
         _write_state(state)
-        return  # Stop here — resume with --finalize after LLM response
+        return  # Stop here — resume with --resume-reality-check after LLM response
     state["phase_status"]["reality_check"] = "complete"
     state["current_phase"] = "schema_design"
     _write_state(state)

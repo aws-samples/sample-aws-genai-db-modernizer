@@ -1,11 +1,11 @@
-# Database Modernizer - High-Level Design (HLD)
+# Database Modernizer Assessment - High-Level Design (HLD)
 
 ## Document Information
 
 **Version:** 11.1 (Open-Source Release Candidate Review)
 **Date:** June 1, 2026
 **Status:** Approved
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 
 ---
 
@@ -15,7 +15,7 @@ Customers modernizing off monolithic relational databases ask us the same questi
 
 Getting the answer wrong means failed modernizations, re-architecture mid-project, and wasted months. Getting it right requires deep analysis of every query pattern, understanding access patterns at scale, and mapping them to the right engine — a process that traditionally takes weeks of specialist time per database.
 
-**Database Modernizer answers that question automatically.** It analyzes every query pattern in your relational database, scores each one against AWS purpose-built engines, validates the overall architecture for operational complexity, and produces ready-to-implement schema designs with load-tested performance data. You can run it from your laptop, with Claude Code, or deploy to your own AWS account.
+**Database Modernizer Assessment answers that question automatically.** It analyzes every query pattern in your relational database, scores each one against AWS purpose-built engines, validates the overall architecture for operational complexity, and produces ready-to-implement schema designs with load-tested performance data. You can run it from your laptop, with Claude Code, or deploy to your own AWS account.
 
 The core pipeline is **fully deterministic** — pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
 
@@ -118,7 +118,7 @@ Phase 0 (Q1-Q2 2026) established the foundational architecture: collector agents
 - RDS Instances: MySQL, PostgreSQL, MariaDB, SQL Server, Oracle, DB2 (customer private subnets)
 - Redis Instances: ElastiCache for Redis or self-managed Redis (customer infrastructure)
 - Direct VPC connectivity, CloudWatch metrics, Performance Insights enabled
-- Database Modernizer does NOT deploy its own RDS/Redis instances
+- Database Modernizer Assessment does NOT deploy its own RDS/Redis instances
 
 **AWS Services (via IAM Role):**
 
@@ -179,7 +179,7 @@ Customer AWS Account / VPC
 ├── Private Subnets (Data Tier)
 │   ├── Customer RDS Instances (read-only access)
 │   └── Customer Redis Instances (read-only access)
-│   NOTE: Database Modernizer does NOT deploy its own RDS/Redis.
+│   NOTE: Database Modernizer Assessment does NOT deploy its own RDS/Redis.
 │         These subnets host the customer's existing database
 │         instances that the tool analyzes.
 │
@@ -751,7 +751,7 @@ KSUID provides time-ordered, globally unique job IDs. The `<database-name>` pref
 
 ### 7.1 Security Overview
 
-Database Modernizer analyzes existing RDS instances in customer environments. Security focuses on safe handling of temporary credentials and analysis results.
+Database Modernizer Assessment analyzes existing RDS instances in customer environments. Security focuses on safe handling of temporary credentials and analysis results.
 
 **Shared Responsibility Model:**
 
@@ -762,7 +762,7 @@ Database Modernizer analyzes existing RDS instances in customer environments. Se
 - VPC configuration and network security
 - CloudTrail logging for audit
 
-**Database Modernizer Responsibilities:**
+**Database Modernizer Assessment Responsibilities:**
 
 - Secure credential handling during job execution
 - SSL/TLS for database connections

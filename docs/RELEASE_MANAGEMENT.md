@@ -1,14 +1,14 @@
-# Database Modernizer - Release Management Guide
+# Database Modernizer Assessment - Release Management Guide
 
 **Version:** 2.0
 **Date:** February 4, 2026
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 
 ---
 
 ## Overview
 
-This document describes the release management process for Database Modernizer, including version numbering, git workflow, release procedures, and hotfix processes.
+This document describes the release management process for Database Modernizer Assessment, including version numbering, git workflow, release procedures, and hotfix processes.
 
 **Repository Structure:** Monorepo (single repository for backend, frontend, contracts, infrastructure)
 
@@ -23,7 +23,7 @@ This document describes the release management process for Database Modernizer, 
 
 ### Single Repository, Single Release
 
-Database Modernizer uses a **monorepo structure** where all components are released together:
+Database Modernizer Assessment uses a **monorepo structure** where all components are released together:
 
 **Components in Single Release:**
 

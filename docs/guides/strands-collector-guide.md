@@ -5,7 +5,7 @@
 **Version:** 2.0.0 (Strands SDK)
 **Date:** January 22, 2026
 **Status:** Draft
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 **Audience:** Backend Engineers implementing Collector Agents with Strands
 
 ---
@@ -247,7 +247,7 @@ result3 = agent3(f"Finalize: {result2}")
 
 ## 2. Architecture with Strands
 
-### 2.1 Database Modernizer Agent Architecture
+### 2.1 Database Modernizer Assessment Agent Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -338,7 +338,7 @@ mysql_collector = Agent(
 
 ### 3.1 Tool Structure
 
-Database Modernizer uses **custom Strands tools** for database operations:
+Database Modernizer Assessment uses **custom Strands tools** for database operations:
 
 ```
 src/tools/

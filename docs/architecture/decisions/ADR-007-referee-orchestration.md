@@ -458,7 +458,7 @@ class ModernizationReport(BaseModel):
     """
     Final modernization report.
 
-    This is the ultimate output of the Database Modernizer workflow.
+    This is the ultimate output of the Database Modernizer Assessment workflow.
     """
     job_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)

@@ -10,7 +10,7 @@
 
 ## Context
 
-Database Modernizer collector agents need to gather data from multiple sources to provide comprehensive analysis:
+Database Modernizer Assessment collector agents need to gather data from multiple sources to provide comprehensive analysis:
 
 1. **Direct database connection** (MySQL, PostgreSQL, etc.)
    - Schema metadata (tables, columns, indexes)
@@ -968,12 +968,12 @@ Execute all tools and return comprehensive analysis.
 # customer-role-template.yaml
 
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'IAM role for Database Modernizer cross-account access'
+Description: 'IAM role for Database Modernizer Assessment cross-account access'
 
 Parameters:
   ModernizerAccountId:
     Type: String
-    Description: 'AWS Account ID of Database Modernizer'
+    Description: 'AWS Account ID of Database Modernizer Assessment'
   ExternalId:
     Type: String
     Description: 'Unique external ID for this customer'

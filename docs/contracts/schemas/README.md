@@ -15,7 +15,7 @@ These JSON Schema files are **deprecated** and should not be used for new develo
 
 ## Why Deprecated?
 
-As of Database Modernizer v2.0, we use **Pydantic models** instead of JSON Schema for contracts.
+As of Database Modernizer Assessment v2.0, we use **Pydantic models** instead of JSON Schema for contracts.
 
 **Reasons:**
 

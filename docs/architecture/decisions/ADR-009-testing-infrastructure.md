@@ -9,7 +9,7 @@
 
 ## Context
 
-Database Modernizer uses AI agents (Strands SDK) with LLM interactions. Testing AI agents presents unique challenges:
+Database Modernizer Assessment uses AI agents (Strands SDK) with LLM interactions. Testing AI agents presents unique challenges:
 
 - **Non-deterministic**: LLM responses vary between runs
 - **Expensive**: LLM API calls cost money and time

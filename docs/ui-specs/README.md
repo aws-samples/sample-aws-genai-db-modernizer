@@ -1,4 +1,4 @@
-# Database Modernizer - UI Requirements
+# Database Modernizer Assessment - UI Requirements
 
 **Version:** 1.1
 **Date:** February 5, 2026
@@ -8,7 +8,7 @@
 
 ## Overview
 
-Database Modernizer needs a user-friendly interface that allows users to:
+Database Modernizer Assessment needs a user-friendly interface that allows users to:
 
 1. Configure analysis settings (target databases, table filters, etc.)
 2. Monitor agent execution in real-time
@@ -50,7 +50,7 @@ Database Modernizer needs a user-friendly interface that allows users to:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Database Modernizer                    [New Analysis] [⚙️]  │
+│  Database Modernizer Assessment                    [New Analysis] [⚙️]  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  📊 System Overview                                         │

@@ -4,7 +4,7 @@
 
 **Date:** 2026-02-13
 
-**Decision Makers:** Database Modernizer Team
+**Decision Makers:** Database Modernizer Assessment Team
 
 ## Context
 

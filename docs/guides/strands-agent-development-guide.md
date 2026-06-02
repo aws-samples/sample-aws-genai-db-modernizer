@@ -682,4 +682,4 @@ All collector agents follow this pattern:
 ---
 
 **Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

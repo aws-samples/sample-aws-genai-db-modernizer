@@ -9,7 +9,7 @@
 
 ## Context
 
-Database Modernizer uses contracts (Pydantic models) to define input/output between agents. As the system evolves:
+Database Modernizer Assessment uses contracts (Pydantic models) to define input/output between agents. As the system evolves:
 
 - **New fields** may be added to contracts (new analysis types, additional metadata)
 - **Field types** may change (string → enum, optional → required)
@@ -59,7 +59,7 @@ output = CollectorOutput(
 
 **Users see:**
 
-- Deployment version (e.g., "Database Modernizer v1.5.0")
+- Deployment version (e.g., "Database Modernizer Assessment v1.5.0")
 - Release notes (features, bug fixes)
 
 **Users don't see:**
@@ -75,7 +75,7 @@ output = CollectorOutput(
 
 ### Deployment Model: Single Version at a Time
 
-**Important:** Database Modernizer deploys as a **single version** (not multiple versions simultaneously).
+**Important:** Database Modernizer Assessment deploys as a **single version** (not multiple versions simultaneously).
 
 - ✅ One agent version deployed at a time
 - ✅ All agents in deployment use same codebase version
@@ -181,11 +181,11 @@ class MySQLCollectorAgent:
 
 ### Single Version Deployment
 
-**Database Modernizer deploys as a single version:**
+**Database Modernizer Assessment deploys as a single version:**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│         Database Modernizer Deployment v1.1             │
+│         Database Modernizer Assessment Deployment v1.1             │
 │                                                         │
 │  All agents use same codebase version:                  │
 │  - Collector agents: v1.1 code                          │

@@ -1,10 +1,10 @@
 # Implementation Guides
 
-Complete implementation guides for building Database Modernizer components using the Strands SDK.
+Complete implementation guides for building Database Modernizer Assessment components using the Strands SDK.
 
 ## Architecture Overview
 
-Database Modernizer uses a three-layer architecture (ADR-016):
+Database Modernizer Assessment uses a three-layer architecture (ADR-016):
 
 1. **Job Orchestration (Step Functions):** Collector → Referee-Triage → Map(selected analyses) → Referee-Synthesis → Schema Design
 2. **Notifications:** Phase 0 uses polling (`GET /api/v1/assessments/{job_id}`); EventBridge → WebSocket push is [PLANNED] for Phase 1
@@ -27,7 +27,7 @@ See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-
 
 ## Strands SDK Architecture
 
-Database Modernizer uses **Strands SDK** for agent implementation:
+Database Modernizer Assessment uses **Strands SDK** for agent implementation:
 
 ```python
 from strands import Agent, Tool
@@ -197,4 +197,4 @@ Before implementing any agent:
 ---
 
 **Last Updated:** June 2026
-**Maintained By:** Database Modernizer Team
+**Maintained By:** Database Modernizer Assessment Team

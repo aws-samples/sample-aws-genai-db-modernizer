@@ -1,16 +1,13 @@
-# Database Modernizer
+# Database Modernizer Assessment
 
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT--0-green.svg)](LICENSE)
 
 Modernizing off a monolithic relational database is hard. Which queries belong in DynamoDB? Which need a document store? What stays relational? Getting it wrong means failed modernizations, re-architecture mid-project, and wasted months.
 
-**Database Modernizer answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections. You can run from your laptop, with Claude Code, or deploy to your own AWS account.
-
-The core pipeline is **fully deterministic** - pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
+**Database Modernizer Assessment answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections.
 
 **Supported sources:** PostgreSQL, MySQL, MariaDB
-
 **Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
 
 ---
@@ -20,7 +17,7 @@ The core pipeline is **fully deterministic** - pattern detection, scoring, assig
 The modernizer runs a multi-phase pipeline that progressively narrows from "all possible targets" to a concrete, validated modernization architecture:
 
 ```
-Collect → Triage → Analyze → Assign → Reality Check → Schema Design → Synthesis
+Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --> Synthesis
 ```
 
 | Phase             | What it does                                                                                               |
@@ -33,51 +30,159 @@ Collect → Triage → Analyze → Assign → Reality Check → Schema Design �
 | **Schema Design** | Designs target schemas per engine (DynamoDB tables, DocumentDB collections, OpenSearch indices, etc.)      |
 | **Synthesis**     | Produces the final migration assessment report with TCO, risk analysis, and recommendations                |
 
-**Stack:** Strands SDK (AI agents) · Amazon Bedrock (Claude) · ECS Fargate · FastAPI · React · Pydantic contracts
+The core pipeline through Reality Check is **fully deterministic**. Pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (Schema Design, Synthesis executive summaries) but the analysis and recommendations are reproducible and auditable every time.
 
-## Quick Start
+---
+
+## Getting Started
 
 ### Prerequisites
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- AWS credentials (for Bedrock LLM calls in `bedrock` mode)
 
-### Setup
+### Install
 
 ```bash
 git clone https://github.com/aws-samples/aws-genai-db-modernizer.git
 cd aws-genai-db-modernizer
-
-# Install dependencies
-pip install uv
-uv sync --extra dev
-
-# Run tests
-uv run pytest tests/ -v
+uv sync
 ```
 
-### Run Locally (Offline Mode)
+That's it. No AWS account, no API keys, no Docker required.
 
-You can run the full pipeline locally against a collector output JSON file, no live database connection required:
+---
+
+## Usage
+
+The project includes sample databases you can run immediately. Two collector outputs are provided:
+
+- `docs/examples/wordpress/wordpress.zip` WordPress + WooCommerce (50 tables, 107 queries)
+- `docs/examples/discourse/discourse.zip` Discourse forum (170+ tables, 500+ queries)
+
+Unzip whichever you want to try:
 
 ```bash
-# Deterministic only (no LLM calls)
-uv run python scripts/test_local_phased.py <collector-output.json> -y
-
-# With LLM advisor (requires AWS credentials for Bedrock)
-uv run python scripts/test_local_phased.py <collector-output.json> --llm-mode bedrock -y
+unzip docs/examples/wordpress/wordpress.zip -d docs/examples/wordpress/
 ```
+
+### Option 1: Deterministic Mode (zero config)
+
+Run the full analysis pipeline with no credentials, no LLM, no network calls. This executes Triage through Reality Check and produces architecture recommendations in seconds:
+
+```bash
+uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json
+```
+
+The pipeline will pause after Reality Check to show you the assignment and architecture recommendations. Press Enter to continue, or Ctrl+C to stop and inspect the artifacts produced so far.
+
+> **Note:** Without an LLM backend, the pipeline completes through Reality Check. The `-y` flag (auto-approve) will attempt to continue into Schema Design which requires an LLM, so only use `-y` with `--llm-mode bedrock` or `--llm-mode external`.
 
 Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
-### LLM Modes
+**What you get without LLM:**
+- Workload signal detection (key-value, text search, aggregations, session stores, etc.)
+- Per-engine analysis with confidence scores for every query
+- Query-to-engine assignment with co-dependency resolution
+- Reality Check: engine consolidation, architectural pattern detection, cost savings analysis
 
-| Mode       | Description                                                                                                       |
-| ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| `none`     | Fully deterministic, no LLM calls, fastest                                                                        |
-| `bedrock`  | Production: uses Amazon Bedrock (Claude) for analysis advisors, consolidation validation, and executive summaries |
-| `external` | Uses Claude Code as the LLM backend (local development)                                                           |
+### Option 2: Full Pipeline with Claude Code
+
+If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, you already have everything needed for the full pipeline, including AI-powered Schema Design and Synthesis. No AWS account required.
+
+```bash
+uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode external
+```
+
+In `external` mode, the pipeline prepares structured prompts for each Schema Design agent and the Synthesis phase. Claude Code acts as the LLM backend.
+
+You can also use the built-in Claude Code commands for a step-by-step interactive experience:
+
+```
+/modernize           # Run the full pipeline end-to-end
+/collect             # Parse collector output and initialize a job
+/triage              # Select target engines based on workload signals
+/analyze             # Run analysis for all selected engines
+/assign              # Assign queries to best-fit engines
+/reality-check       # Consolidate engines and validate decisions
+/design-schema       # Design target schemas (LLM required)
+/synthesize          # Generate the final migration report
+```
+
+These commands are defined in `.claude/commands/` and available automatically when you open the project in Claude Code.
+
+**What you get with Claude Code:**
+- Everything from deterministic mode, plus:
+- Target schema designs (DynamoDB table definitions, DocumentDB collections, OpenSearch mappings, etc.)
+- Full migration assessment report with executive summary
+- TCO projections and risk analysis
+
+### Option 3: Full Pipeline with Amazon Bedrock
+
+For production use, automation, or running without Claude Code, use Amazon Bedrock as the LLM backend:
+
+```bash
+uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode bedrock -y
+```
+
+**AWS setup required:**
+
+1. Configure AWS credentials (any standard method works):
+   ```bash
+   # Option A: AWS CLI profile
+   aws configure
+
+   # Option B: Environment variables
+   export AWS_ACCESS_KEY_ID=...
+   export AWS_SECRET_ACCESS_KEY=...
+   export AWS_DEFAULT_REGION=us-east-1
+
+   # Option C: AWS SSO
+   aws sso login --profile your-profile
+   export AWS_PROFILE=your-profile
+   ```
+
+2. Enable model access in [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess):
+   - Enable **Anthropic Claude Sonnet** (used for Schema Design and Synthesis)
+
+3. Run with Bedrock:
+   ```bash
+   uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode bedrock -y
+   ```
+
+### Option 4: Analyze Your Own Database
+
+To analyze your own database, run the collection script to extract schema and query patterns:
+
+**PostgreSQL** (requires `pg_stat_statements` extension):
+
+```bash
+psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql > my-collection.json
+```
+
+**MySQL** (requires `performance_schema`):
+
+```bash
+mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
+```
+
+Then run the pipeline against your collection:
+
+```bash
+uv run python scripts/test_local_phased.py my-collection.json --llm-mode bedrock -y
+```
+
+> **Note:** The collection scripts are read-only and do not modify your database. They need SELECT access to `information_schema`, `pg_stat_statements` (PostgreSQL), or `performance_schema` (MySQL).
+
+---
+
+## LLM Modes Summary
+
+| Mode       | Credentials needed | Phases covered | Best for |
+| ---------- | ------------------ | -------------- | -------- |
+| `none`     | None               | Collect through Reality Check | Quick evaluation, CI/CD, deterministic audits |
+| `external` | Claude Code license | Full pipeline | Local development, interactive exploration |
+| `bedrock`  | AWS credentials + Bedrock access | Full pipeline | Production, automation, team use |
 
 ---
 
@@ -87,9 +192,9 @@ Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
 Every agent exposes three methods:
 
-1. `run_deterministic()` - always runs, produces baseline results
-2. `prepare_llm_input()` - formats context for the LLM
-3. `apply_llm_output()` - merges LLM feedback into deterministic results
+1. `run_deterministic()` always runs, produces baseline results
+2. `prepare_llm_input()` formats context for the LLM
+3. `apply_llm_output()` merges LLM feedback into deterministic results
 
 This allows the pipeline to run fully deterministic (`--llm-mode none`) or with LLM enhancement (`--llm-mode bedrock`).
 
@@ -119,58 +224,45 @@ All agent I/O flows through Pydantic contracts (`src/contracts/`). This enables:
 ## Development
 
 ```bash
+# Install with dev dependencies
+uv sync --extra dev
+
 # Run all tests
 uv run pytest tests/ -v --cov=src
 
 # Run specific suites
 uv run pytest tests/unit/ -v
-uv run pytest tests/integration/ -v
 uv run pytest tests/contract/ -v
+uv run pytest tests/integration/ -v
 
 # Code quality
 uv run black src/ tests/
 uv run ruff check src/ tests/
 uv run mypy src/
 
+# Full dev setup (pre-commit hooks, cfn-nag, etc.)
+./scripts/setup_dev.sh
+```
 
-# Run a single phase
+### Running Individual Phases
+
+```bash
 uv run python scripts/run_triage.py <collector-output.json>
 uv run python scripts/run_analysis.py <collector-output.json> --engine dynamodb
 uv run python scripts/run_reality_check.py <artifacts-dir>
 ```
 
-### Claude Code Skills
-
-The project includes Claude Code skills (`.claude/skills/`) that let you run individual pipeline phases interactively from your terminal:
-
-```bash
-# Run the full pipeline end-to-end
-/modernize
-
-# Run individual phases
-/collect           # Parse collector output and initialize a job
-/triage            # Select target engines based on workload signals
-/analyze           # Run analysis for all selected engines
-/analyze-dynamodb  # Run analysis for a specific engine
-/assign            # Assign queries to best-fit engines
-/reality-check     # Consolidate engines and validate decisions
-/design-schema     # Design target schemas in parallel
-/synthesize        # Generate the final migration report
-```
-
-These skills orchestrate the same pipeline code but through Claude Code's interactive workflow, useful for step-by-step debugging or running with `--llm-mode external` where Claude Code itself acts as the LLM backend.
-
 ### Local Web UI
 
-You can also run the full React web interface locally to visualize results, browse query journeys, and review schema designs in a richer format:
+Run the React web interface locally to visualize results, browse query journeys, and review schema designs:
 
 ```bash
 # Start the API server
-STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run python -m src.api.main
+STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
 # Build and serve the UI (in another terminal)
-cd src/ui
-REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build
+cd src/ui && npm install
+REACT_APP_API_URL=http://localhost:8000/api/v1/ npx react-scripts build
 npx serve -s build -l 3000
 ```
 
@@ -178,14 +270,22 @@ Then open `http://localhost:3000` to browse your modernization results.
 
 ---
 
-## CI/CD Pipeline
+## Project Structure
 
-GitHub Actions with the following stages:
-
-1. **Security** - Semgrep, cfn-nag, Checkov, Bandit
-2. **Lint** - ruff, black, mypy, isort
-3. **Test** - pytest with coverage (unit, contract, integration)
-4. **Deploy** - CloudFormation stack deployment
+```
+src/
+  agents/           # Pipeline agents (collector, analysis, referee, schema_design)
+  contracts/        # Pydantic I/O contracts between phases
+  orchestrator/     # Local and Step Functions orchestrators
+  storage/          # Artifact store (S3 or local filesystem)
+  tools/            # Analysis tools, scoring, pattern catalogs
+  api/              # FastAPI backend
+  ui/               # React frontend
+scripts/            # CLI entry points and collection scripts
+infrastructure/     # CloudFormation templates for AWS deployment
+docs/               # Architecture docs, contracts, guides
+tests/              # Unit, contract, and integration tests
+```
 
 ---
 

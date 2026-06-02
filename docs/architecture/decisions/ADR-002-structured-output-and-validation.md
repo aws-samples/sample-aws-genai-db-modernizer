@@ -10,7 +10,7 @@
 
 ## Context
 
-Database Modernizer agents must produce structured output conforming to strict contract schemas. We need to ensure:
+Database Modernizer Assessment agents must produce structured output conforming to strict contract schemas. We need to ensure:
 
 1. **Contract compliance**: All agent outputs match defined schemas
 2. **Type safety**: Catch errors at development time, not runtime

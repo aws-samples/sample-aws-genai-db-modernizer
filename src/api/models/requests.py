@@ -1,4 +1,4 @@
-"""Request models for the Database Modernizer API."""
+"""Request models for the Database Modernizer Assessment API."""
 
 from pydantic import BaseModel, Field, model_validator
 

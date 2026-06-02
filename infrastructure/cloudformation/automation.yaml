@@ -83,7 +83,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-automation-vpce-sg'
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
 
@@ -166,7 +166,7 @@ Resources:
           - id: W29
             reason: "Full TCP port range to VPC CIDR required — automation machine connects to customer databases on any port"
     Properties:
-      GroupDescription: Database Modernizer automation machine - trusted collector
+      GroupDescription: Database Modernizer Assessment automation machine - trusted collector
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: tcp
@@ -183,7 +183,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-automation-sg'
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
 
@@ -233,7 +233,7 @@ Resources:
           - !Ref AWS::NoValue
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
 
@@ -268,7 +268,7 @@ Resources:
           set -euo pipefail
           exec > /var/log/automation-bootstrap.log 2>&1
 
-          echo "=== Database Modernizer Automation Machine Bootstrap ==="
+          echo "=== Database Modernizer Assessment Automation Machine Bootstrap ==="
           echo "Started: $(date -u)"
 
           # Update system
@@ -301,7 +301,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-automation-machine'
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: ManagedBy
           Value: CloudFormation
 

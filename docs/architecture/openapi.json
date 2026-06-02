@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Database Modernizer API",
+    "title": "Database Modernizer Assessment API",
     "version": "0.1.0"
   },
   "servers": [

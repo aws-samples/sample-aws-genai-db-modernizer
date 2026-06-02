@@ -4,11 +4,11 @@
 
 **Status:** Accepted
 **Date:** 2026-02-16
-**Decision Makers:** Database Modernizer Engineering Team
+**Decision Makers:** Database Modernizer Assessment Engineering Team
 
 ## Context
 
-The Database Modernizer project uses CloudFormation for infrastructure and a CI/CD pipeline for automation. We needed a CI/CD strategy that:
+The Database Modernizer Assessment project uses CloudFormation for infrastructure and a CI/CD pipeline for automation. We needed a CI/CD strategy that:
 
 1. Prevents broken infrastructure from reaching production
 2. Lets developers validate their changes before merging

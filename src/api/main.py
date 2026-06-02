@@ -1,4 +1,4 @@
-"""FastAPI application for Database Modernizer."""
+"""FastAPI application for Database Modernizer Assessment."""
 
 import hashlib
 import os
@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
-    title="Database Modernizer API",
+    title="Database Modernizer Assessment API",
     servers=[
         {"url": "https://api.modernizer.example.com", "description": "Production API (HTTPS only)"},
     ],
@@ -92,7 +92,7 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "Database Modernizer API"}
+    return {"message": "Database Modernizer Assessment API"}
 
 
 @app.get("/health")
@@ -200,4 +200,4 @@ app.include_router(query_journeys.router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # nosec B104 — local dev only

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   API Service Stack - ECS Fargate service with ALB, IAM roles, security groups,
-  and logging for the Database Modernizer FastAPI application
+  and logging for the Database Modernizer Assessment FastAPI application
 
 Parameters:
   Environment:
@@ -166,7 +166,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-alb-sg'
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -229,7 +229,7 @@ Resources:
             Action: sts:AssumeRole
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -384,7 +384,7 @@ Resources:
       KmsKeyId: !If [HasKmsKey, !Ref KmsKeyArn, !Ref 'AWS::NoValue']
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -438,7 +438,7 @@ Resources:
           - !Ref 'AWS::NoValue'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -499,7 +499,7 @@ Resources:
           Value: '30'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -617,7 +617,7 @@ Resources:
                 - 'http://localhost:3000'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -654,7 +654,7 @@ Resources:
         MaximumPercent: 200
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy

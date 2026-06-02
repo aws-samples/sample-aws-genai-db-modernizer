@@ -5,7 +5,7 @@
 **Version:** 2.0.0
 **Date:** February 18, 2026
 **Status:** Draft
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 **Audience:** Backend Engineers implementing the Referee Agents
 
 ---
@@ -560,4 +560,4 @@ See [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-
 ---
 
 **Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

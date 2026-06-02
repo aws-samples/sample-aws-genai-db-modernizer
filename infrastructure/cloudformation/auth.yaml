@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Authentication Stack - Cognito User Pool, App Client, and Domain
-  for the Database Modernizer project
+  for the Database Modernizer Assessment project
 
 Parameters:
   Environment:
@@ -57,7 +57,7 @@ Resources:
           Required: true
           Mutable: true
       UserPoolTags:
-        Project: Database Modernizer
+        Project: Database Modernizer Assessment
         Environment: !Ref Environment
         ManagedBy: CloudFormation
         Owner: Platform Team

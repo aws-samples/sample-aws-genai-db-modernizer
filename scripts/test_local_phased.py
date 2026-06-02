@@ -114,7 +114,7 @@ def main():
         raw_queries = input_data.get("queries", [])
 
         print(f"\n{'='*60}")
-        print("  Database Modernizer — Local Phased Workflow")
+        print("  Database Modernizer Assessment — Local Phased Workflow")
         print(f"{'='*60}")
         print("  Input format: Raw collection script output")
         print(f"  Database:     {db_name}")
@@ -205,7 +205,7 @@ def main():
 
     if is_contract:
         print(f"\n{'='*60}")
-        print("  Database Modernizer — Local Phased Workflow")
+        print("  Database Modernizer Assessment — Local Phased Workflow")
         print(f"{'='*60}")
         print("  Input format: Collector contract output")
         print(f"  Database:     {db_name}")
