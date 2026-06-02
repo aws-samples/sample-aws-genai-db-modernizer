@@ -55,9 +55,13 @@ jobs:
       - name: Bandit security scan
         run: uv run bandit -r src/ -c pyproject.toml
       - name: Semgrep
-        uses: returntocorp/semgrep-action@v1
+        uses: semgrep/semgrep-action@v1
         with:
-          config: p/python
+          config: p/python p/security-audit
+      - name: Checkov (CloudFormation)
+        run: |
+          pip install checkov
+          checkov -d infrastructure/cloudformation/ --framework cloudformation --quiet
 
   validate-contracts:
     runs-on: ubuntu-latest
