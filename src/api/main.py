@@ -195,3 +195,9 @@ app.include_router(phases.router)
 app.include_router(agent_interaction.router)
 app.include_router(schema_revisions.router)
 app.include_router(query_journeys.router)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
