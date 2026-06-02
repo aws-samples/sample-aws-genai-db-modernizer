@@ -58,3 +58,6 @@ logs/
 *.log
 artifacts/
 .modernizer-state.json
+
+# Example collector outputs (unzipped from .zip files)
+docs/examples/**/*.json

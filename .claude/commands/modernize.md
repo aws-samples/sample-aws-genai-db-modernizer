@@ -57,9 +57,10 @@ The orchestrator's job is ONLY:
 The orchestrator NEVER:
 
 - Reads collector output, analysis results, or schema designs
-- Reads `llm_requests/` files
-- Produces LLM responses
+- Reads `llm_requests/` or `llm_input.json` files
+- Produces LLM responses or writes to `llm_responses/`
 - Reads `output_schema` contents
+- Makes consolidation validation decisions
 
 ## Pipeline
 
@@ -75,21 +76,19 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 
 **If reality check returns `awaiting_llm` (this is the expected path):**
 
-1. Tell user: "Deterministic phases complete. Producing CTO-level consolidation analysis..."
-2. Read the LLM request from the path in stdout (`llm_request` field)
-3. Produce the consolidation validation + executive summary (follow the schema in the request)
-4. Write response to `./artifacts/{database_name}/{job_id}/llm_responses/reality_check.json`
-5. Resume reality check:
+1. Tell user: "Deterministic phases complete. Dispatching consolidation validator..."
+2. **Dispatch a subagent:** "Run /reality-check for job_id={job_id} db={database_name}"
+3. After subagent completes, resume:
    ```bash
    uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
    ```
 
-**DO NOT present results or proceed to the Decision Gate until resume-reality-check completes.** The LLM reality check can change consolidation decisions and engine assignments.
+**DO NOT read the LLM input file yourself. DO NOT produce the consolidation response yourself. The subagent handles this with a clean context following the /reality-check skill.**
 
-**After finalize**, present a brief summary:
+**After resume-reality-check completes**, present a brief summary:
 - Selected engines and why
 - Query distribution across engines
-- Reality check consolidations (with LLM reasoning)
+- Reality check consolidations and any reversals
 - Architecture patterns detected
 
 **If UI mode:** Tell user "Assessment complete — check the UI for full results."
@@ -99,7 +98,7 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 After reality check, present the final assignment to the user:
 - Which engines survived consolidation
 - Query distribution across engines
-- Any queries that were redirected
+- Any queries that were redirected by the LLM validator
 
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
 
@@ -141,6 +140,7 @@ Wait for all to complete.
 3. **Only dispatch for selected engines.** If triage selects 2 engines, launch 2 subagents — not 4.
 4. **Subagent task descriptions are minimal.** Just the skill name and any required args. The subagent loads the skill and follows it.
 5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents.
+6. **The reality check subagent is NON-OPTIONAL.** The orchestrator must NEVER attempt to read llm_input.json or write llm_responses/ itself.
 
 ## Error Handling
 
