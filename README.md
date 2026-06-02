@@ -68,15 +68,11 @@ unzip docs/examples/wordpress/wordpress.zip -d docs/examples/wordpress/
 
 ### Option 1: Deterministic Mode (zero config)
 
-Run the full analysis pipeline with no credentials, no LLM, no network calls. This executes Triage through Reality Check and produces architecture recommendations in seconds:
+Run the assessment pipeline with no credentials, no LLM, no network calls. This executes Triage through Reality Check and produces architecture recommendations in seconds:
 
 ```bash
-uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json
+uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress
 ```
-
-The pipeline will pause after Reality Check to show you the assignment and architecture recommendations. Press Enter to continue, or Ctrl+C to stop and inspect the artifacts produced so far.
-
-> **Note:** Without an LLM backend, the pipeline completes through Reality Check. The `-y` flag (auto-approve) will attempt to continue into Schema Design which requires an LLM, so only use `-y` with `--llm-mode bedrock` or `--llm-mode external`.
 
 Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
@@ -90,13 +86,7 @@ Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
 If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, you already have everything needed for the full pipeline, including AI-powered Schema Design and Synthesis. No AWS account required.
 
-```bash
-uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode external
-```
-
-In `external` mode, the pipeline prepares structured prompts for each Schema Design agent and the Synthesis phase. Claude Code acts as the LLM backend.
-
-You can also use the built-in Claude Code commands for a step-by-step interactive experience:
+Use the built-in Claude Code commands for an interactive experience:
 
 ```
 /modernize           # Run the full pipeline end-to-end
@@ -122,7 +112,7 @@ These commands are defined in `.claude/commands/` and available automatically wh
 For production use, automation, or running without Claude Code, use Amazon Bedrock as the LLM backend:
 
 ```bash
-uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode bedrock -y
+uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress --llm-mode bedrock --all -y
 ```
 
 **AWS setup required:**
@@ -143,11 +133,12 @@ uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-col
    ```
 
 2. Enable model access in [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess):
-   - Enable **Anthropic Claude Sonnet** (used for Schema Design and Synthesis)
+   - Enable **Anthropic Claude Sonnet** (used for Reality Check validation)
+   - Enable **Anthropic Claude Opus** (used for Schema Design and Synthesis)
 
 3. Run with Bedrock:
    ```bash
-   uv run python scripts/test_local_phased.py docs/examples/wordpress/wordpress-collection.json --llm-mode bedrock -y
+   uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress --llm-mode bedrock --all -y
    ```
 
 ### Option 4: Analyze Your Own Database
@@ -169,7 +160,7 @@ mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-c
 Then run the pipeline against your collection:
 
 ```bash
-uv run python scripts/test_local_phased.py my-collection.json --llm-mode bedrock -y
+uv run python scripts/run_assessment.py --file my-collection.json --db my_database --llm-mode bedrock --all -y
 ```
 
 > **Note:** The collection scripts are read-only and do not modify your database. They need SELECT access to `information_schema`, `pg_stat_statements` (PostgreSQL), or `performance_schema` (MySQL).
@@ -247,9 +238,14 @@ uv run mypy src/
 ### Running Individual Phases
 
 ```bash
-uv run python scripts/run_triage.py <collector-output.json>
-uv run python scripts/run_analysis.py <collector-output.json> --engine dynamodb
-uv run python scripts/run_reality_check.py <artifacts-dir>
+# Assessment only (phases 1-5, stops after reality-check):
+uv run python scripts/run_assessment.py --file <collector-output.json> --db <name>
+
+# Resume after providing LLM response (external mode):
+uv run python scripts/run_assessment.py --job-id <id> --db <name> --resume-reality-check
+
+# Full pipeline including schema design + synthesis:
+uv run python scripts/run_assessment.py --file <collector-output.json> --db <name> --llm-mode bedrock --all -y
 ```
 
 ### Local Web UI
