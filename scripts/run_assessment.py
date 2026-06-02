@@ -497,8 +497,11 @@ def main() -> None:
     state["current_phase"] = "analysis"
     _write_state(state)
 
-    # Phase: Analysis
-    phase_analysis(store, job_id, db_name, selected_engines, llm_mode=args.llm_mode)
+    # Phase: Analysis — always deterministic (llm-mode none).
+    # The LLM advisor enriches text but does not change routing decisions.
+    # Real LLM value starts at reality-check. Pass --llm-mode to analysis only
+    # if you explicitly want richer recommendation text (at ~9min cost).
+    phase_analysis(store, job_id, db_name, selected_engines, llm_mode="none")
     state["phase_status"]["analysis"] = "complete"
     state["current_phase"] = "assignment"
     _write_state(state)
