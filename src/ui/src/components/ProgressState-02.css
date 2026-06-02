@@ -1,0 +1,66 @@
+.progress-state-02 {
+  position: relative;
+  width: 100%;
+  padding: 10px 0;
+}
+
+.progress-state-02-steps {
+  display: flex;
+  width: 100%;
+  gap: 0;
+}
+
+.progress-state-02-step {
+  flex: 1;
+  position: relative;
+  height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.progress-state-02-step-arrow {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: var(--ps02-arrow-bg, #414d5c);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%, 20px 50%);
+  transition: background-color 0.3s ease;
+}
+
+.progress-state-02-step:first-child .progress-state-02-step-arrow {
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
+  border-radius: 25px 0 0 25px;
+}
+
+.progress-state-02-step:last-child .progress-state-02-step-arrow {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 20px 50%);
+  border-radius: 0 25px 25px 0;
+}
+
+.progress-state-02-step.active .progress-state-02-step-arrow {
+  background-color: #0972D3;
+}
+
+.progress-state-02-step.current .progress-state-02-step-arrow {
+  background-color: #0972D3;
+  box-shadow: 0 0 10px rgba(9, 114, 211, 0.5);
+}
+
+.progress-state-02-step-label {
+  font-size: 12px;
+  color: var(--ps02-label-inactive, #9ba7b6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 25px;
+  z-index: 1;
+  transition: color 0.3s ease;
+}
+
+.progress-state-02-step.active .progress-state-02-step-label {
+  color: var(--ps02-label-active, #ffffff);
+  font-weight: 500;
+}

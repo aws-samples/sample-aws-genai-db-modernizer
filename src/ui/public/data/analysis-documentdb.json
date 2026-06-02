@@ -1,0 +1,258 @@
+{
+  "contract_version": "2.1",
+  "agent_metadata": {
+    "agent_name": "documentdb-analysis-agent",
+    "agent_version": "1.0.0",
+    "target_database": "documentdb",
+    "analysis_timestamp": "2026-03-31T04:33:37.837210",
+    "analysis_duration_seconds": 27.007099
+  },
+  "table_recommendations": [
+    {
+      "table_id": "forum_db.discussion_tags",
+      "confidence_score": 81,
+      "rationale": "Detected patterns: polymorphic data, nested document, extended reference. 2 FK(s) — embedding candidate for DocumentDB. Simple joins can be eliminated via denormalization. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 70,
+        "performance_score": 55,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "documentdb-03",
+        "documentdb-04",
+        "documentdb-07"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussions, forum_db.posts, forum_db.tags, forum_db.upvotes, forum_db.users. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "forum_db.discussions",
+      "confidence_score": 82,
+      "rationale": "Detected patterns: polymorphic data, nested document, extended reference. 1 FK(s) — embedding candidate for DocumentDB. Simple joins can be eliminated via denormalization. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 70,
+        "performance_score": 60,
+        "cost_score": 75
+      },
+      "supporting_patterns": [
+        "documentdb-03",
+        "documentdb-04",
+        "documentdb-07"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussion_tags, forum_db.posts, forum_db.tags, forum_db.upvotes, forum_db.users. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "forum_db.posts",
+      "confidence_score": 82,
+      "rationale": "Detected patterns: polymorphic data, nested document, extended reference. 2 FK(s) — embedding candidate for DocumentDB. Simple joins can be eliminated via denormalization. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 85,
+        "performance_score": 40,
+        "cost_score": 70
+      },
+      "supporting_patterns": [
+        "documentdb-03",
+        "documentdb-04",
+        "documentdb-07"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussion_tags, forum_db.discussions, forum_db.tags, forum_db.upvotes, forum_db.users. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "forum_db.tags",
+      "confidence_score": 88,
+      "rationale": "Detected patterns: polymorphic data, nested document, extended reference. Simple joins can be eliminated via denormalization. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 90,
+        "performance_score": 55,
+        "cost_score": 85
+      },
+      "supporting_patterns": [
+        "documentdb-03",
+        "documentdb-04",
+        "documentdb-07"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussion_tags, forum_db.discussions, forum_db.posts, forum_db.upvotes, forum_db.users. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "forum_db.upvotes",
+      "confidence_score": 72,
+      "rationale": "Detected patterns: polymorphic data. 3 FK(s) — embedding candidate for DocumentDB. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 95,
+        "complexity_score": 55,
+        "performance_score": 40,
+        "cost_score": 65
+      },
+      "supporting_patterns": [
+        "documentdb-03"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussion_tags, forum_db.discussions, forum_db.posts, forum_db.tags, forum_db.users. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    },
+    {
+      "table_id": "forum_db.users",
+      "confidence_score": 91,
+      "rationale": "Detected patterns: polymorphic data, nested document, extended reference. Simple joins can be eliminated via denormalization. Small table — low storage cost on DocumentDB.",
+      "score_breakdown": {
+        "pattern_match_score": 100,
+        "complexity_score": 95,
+        "performance_score": 60,
+        "cost_score": 90
+      },
+      "supporting_patterns": [
+        "documentdb-03",
+        "documentdb-04",
+        "documentdb-07"
+      ],
+      "concerns": [
+        "FK cluster: migrates together with forum_db.discussion_tags, forum_db.discussions, forum_db.posts, forum_db.tags, forum_db.upvotes. Consider embedding related tables into a single document."
+      ],
+      "migration_complexity": "MEDIUM"
+    }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [
+      {
+        "pattern_id": "documentdb-03",
+        "pattern_type": "polymorphic-data",
+        "confidence": "MEDIUM",
+        "description": "Tables with sparse columns or EAV pattern indicating polymorphic entities. DocumentDB stores each variant as a document with only its relevant fields.",
+        "query_ids": [
+          "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee",
+          "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0",
+          "9fe18f7ff74933474d8fa2c4865dd22ac41620cb23b738d74450b4cf8c756dee",
+          "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+          "8e293caa43450f9908386b68c8dd5f12c9f5637feb4d3351fd6bd8bf1158fd51",
+          "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959",
+          "0dbcb09e30aff946f64417c4cc3acbe14835df039cb9fed6585f41adad93d8e7",
+          "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028",
+          "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42",
+          "cd2fb4586ced0ffbab7abcf28a109e28684564224e74144e604dee5fa1a3fd43",
+          "9e26d42a0e572b0b3239e5d0a9feb61ca568b37d85f247dc2e11091aad996cba",
+          "0cef17325cad7ef25bf0c99a47fe6b76b7d1b04f91e668b3728552d97e1e3cf0",
+          "b72ca0d9bf0fa653bda75da41efa63f12950f6ca0db69ea63af28fa7fd386622",
+          "8c4f895ea79ceb8669d9454b6c6b6cb9d8e81e5a7d846e4315583780245a30ba",
+          "68fbdbe44e11a12b9680806748679ebba3e0c4b15223b5a5faa1409321473425",
+          "dc95e9e0ac2b78e477c19fa6110bc48352823363835f916c23c3c7ad5b9615b2",
+          "7f047b78f6beb53c289f50b5e8111f6178ea229bdceacccafc6ad1e25a6e7430",
+          "9fa182c8ca9b3bdb1c389aba22e050d46e96a5e7d27b60b8a4df4ce9de4c0667",
+          "ed3a882554eb8af4832510afe043172482d3d3eb71b71ec1ff5c9dcc74ecf9a9",
+          "f02372527743745f3184a79eb8a7f33d4b42b8f3c6e270eeff0e1ffb0072a50c",
+          "d630ead43e6c43a814ade9e42721022adc21b45056c5c8e9fa86d0bd6f885485",
+          "6a15d4810a003b957a3e8be7caa4cdea04a29956fb82719ff613d48360ec3c85",
+          "7be293799c612f697f312708429d53ef213f9a856ba3653e97af3ebc58d1490e",
+          "9432b5f9c696c26a698155af60221ec8801f9c562b5dc4a2a993214db5bb802b",
+          "baab0452e3677838f93c31c4505435c4a625b01f0484e4c62b4210e9535cff37",
+          "e1d705981d26a77bc4d19d20d5ddce320d906b4d6e57b3ba1724d76b2a5e6cce",
+          "88fab58e67b0d04fc996081f330c14e8a129a09afda209fb932ca485e68e79c3",
+          "c78ad2a8dd3e007b5f6ba4a9d0dbbf44ddad0eb7bfff01fddfc9e0ee1c507d51",
+          "c4fdcc8f2bdfa97d35d0c63e11efa560378d1f18270bb598a3e0612811695da4",
+          "38c450aee854f467ac58fa597d6f3d9f3e1c2d218cdb403daa108e9a5732016b",
+          "6d2aceae83d10185d0ecbb7be801d7bb3dd6fd1b105c6ed84ea50be2cf84074f"
+        ],
+        "table_ids": [
+          "forum_db.upvotes",
+          "forum_db.posts",
+          "forum_db.users",
+          "forum_db.tags",
+          "forum_db.discussion_tags",
+          "forum_db.discussions"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "documentdb-04",
+        "pattern_type": "nested-document",
+        "confidence": "HIGH",
+        "description": "Parent-child FK relationships with bounded child cardinality suitable for embedding as nested arrays. Eliminates JOINs entirely.",
+        "query_ids": [
+          "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee",
+          "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0",
+          "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+          "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028",
+          "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42"
+        ],
+        "table_ids": [
+          "forum_db.posts",
+          "forum_db.users",
+          "forum_db.tags",
+          "forum_db.discussion_tags",
+          "forum_db.discussions"
+        ],
+        "frequency_percent": null
+      },
+      {
+        "pattern_id": "documentdb-07",
+        "pattern_type": "extended-reference",
+        "confidence": "HIGH",
+        "description": "Queries joining large transactional tables with small reference/lookup tables (country, merchant, payment_type) just to get display names. Embed the few referenced fields directly — especially valuable in DocumentDB where $lookup lacks correlated subqueries.",
+        "query_ids": [
+          "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee",
+          "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0",
+          "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+          "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028",
+          "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42"
+        ],
+        "table_ids": [
+          "forum_db.posts",
+          "forum_db.users",
+          "forum_db.tags",
+          "forum_db.discussion_tags",
+          "forum_db.discussions"
+        ],
+        "frequency_percent": null
+      }
+    ],
+    "anti_patterns_detected": null
+  },
+  "cost_estimate": {
+    "monthly_cost_usd": 324.52,
+    "cost_components": {
+      "instance": 254.04,
+      "io_requests": 70.47,
+      "storage_gb": 0.01,
+      "instance_type": "db.r6g.large"
+    },
+    "pricing_assumptions": [
+      "Single db.r6g.large instance (no replicas)",
+      "Region: us-east-1",
+      "I/O: $0.20 per million read/write requests",
+      "Storage: $0.10 per GB-month",
+      "No backups, snapshots, or data transfer included"
+    ]
+  },
+  "load_test_results": null,
+  "aggregate_recommendations": [
+    {
+      "aggregate_id": "agg-discussions",
+      "root_table": "forum_db.discussions",
+      "member_tables": [
+        "forum_db.discussion_tags",
+        "forum_db.discussions",
+        "forum_db.posts",
+        "forum_db.tags",
+        "forum_db.upvotes",
+        "forum_db.users"
+      ],
+      "co_access_confidence": 100,
+      "combined_migration_complexity": "HIGH"
+    }
+  ]
+}

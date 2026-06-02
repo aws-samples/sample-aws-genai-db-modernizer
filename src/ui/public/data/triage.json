@@ -1,0 +1,207 @@
+{
+  "job_id": "7721b142-c3f7-4c95-8e83-b52f8d8b9f10",
+  "database_name": "forum_db",
+  "agent_type": "referee-triage",
+  "selected_agents": [
+    {
+      "agent_type": "dynamodb",
+      "reasons": [
+        "junction_tables: 2 junction tables: forum_db.discussion_tags, forum_db.upvotes",
+        "key_value_lookups: 15 key-value lookup queries (PK reads, \u22645 rows, MAX/MIN)",
+        "write_heavy: 6 high-frequency write queries (\u22655 cps)",
+        "time_series: 4 time-series / event log queries (timestamp in WHERE/ORDER BY)",
+        "metadata_config: 7 metadata/config store queries (small result, high reads)",
+        "high_frequency_reads: 1 high-frequency read queries (\u226510 cps)"
+      ]
+    },
+    {
+      "agent_type": "documentdb",
+      "reasons": [
+        "key_value_lookups: 15 key-value lookup queries (PK reads, \u22645 rows, MAX/MIN)",
+        "write_heavy: 6 high-frequency write queries (\u22655 cps)",
+        "time_series: 4 time-series / event log queries (timestamp in WHERE/ORDER BY)",
+        "metadata_config: 7 metadata/config store queries (small result, high reads)",
+        "high_frequency_reads: 1 high-frequency read queries (\u226510 cps)"
+      ]
+    },
+    {
+      "agent_type": "opensearch",
+      "reasons": [
+        "time_series: 4 time-series / event log queries (timestamp in WHERE/ORDER BY)",
+        "text_search: 1 text search queries (LIKE, MATCH, tsvector)"
+      ]
+    }
+  ],
+  "skipped_agents": [],
+  "baseline": {
+    "aurora": [
+      "Relational baseline \u2014 tables not claimed by purpose-built agents"
+    ]
+  },
+  "deferred_agents": [
+    {
+      "agent_type": "neptune",
+      "reasons": [
+        "junction_tables: 2 junction tables: forum_db.discussion_tags, forum_db.upvotes"
+      ]
+    },
+    {
+      "agent_type": "elasticache",
+      "reasons": [
+        "key_value_lookups: 15 key-value lookup queries (PK reads, \u22645 rows, MAX/MIN)",
+        "leaderboard_pattern: 4 leaderboard queries (ORDER BY + LIMIT)",
+        "high_frequency_reads: 1 high-frequency read queries (\u226510 cps)"
+      ]
+    },
+    {
+      "agent_type": "keyspaces",
+      "reasons": [
+        "write_heavy: 6 high-frequency write queries (\u22655 cps)",
+        "time_series: 4 time-series / event log queries (timestamp in WHERE/ORDER BY)"
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "signal": "junction_tables",
+      "targets": [
+        "neptune",
+        "dynamodb"
+      ],
+      "evidence": "2 junction tables: forum_db.discussion_tags, forum_db.upvotes",
+      "query_ids": [],
+      "table_ids": [
+        "forum_db.discussion_tags",
+        "forum_db.upvotes"
+      ],
+      "query_count": 0
+    },
+    {
+      "signal": "key_value_lookups",
+      "targets": [
+        "dynamodb",
+        "elasticache",
+        "documentdb"
+      ],
+      "evidence": "15 key-value lookup queries (PK reads, \u22645 rows, MAX/MIN)",
+      "query_ids": [
+        "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959",
+        "840a880ebd1642e8a0c4926cfbaf7d4da9616b03025a080fafd43a732800fab5",
+        "b72ca0d9bf0fa653bda75da41efa63f12950f6ca0db69ea63af28fa7fd386622",
+        "68fbdbe44e11a12b9680806748679ebba3e0c4b15223b5a5faa1409321473425",
+        "7f047b78f6beb53c289f50b5e8111f6178ea229bdceacccafc6ad1e25a6e7430",
+        "ec2ea8ed52b54757134707e131df023cf5e90cf926f2e8ecc61ba8c11a96895a",
+        "283ed4b36c2a761e425e8ede85c2e8a0870d2d2d02efcbfd5b98f89f0c8f8e4a",
+        "baab0452e3677838f93c31c4505435c4a625b01f0484e4c62b4210e9535cff37",
+        "e1d705981d26a77bc4d19d20d5ddce320d906b4d6e57b3ba1724d76b2a5e6cce",
+        "88fab58e67b0d04fc996081f330c14e8a129a09afda209fb932ca485e68e79c3",
+        "c78ad2a8dd3e007b5f6ba4a9d0dbbf44ddad0eb7bfff01fddfc9e0ee1c507d51",
+        "c4fdcc8f2bdfa97d35d0c63e11efa560378d1f18270bb598a3e0612811695da4",
+        "38c450aee854f467ac58fa597d6f3d9f3e1c2d218cdb403daa108e9a5732016b",
+        "6d2aceae83d10185d0ecbb7be801d7bb3dd6fd1b105c6ed84ea50be2cf84074f",
+        "774bd5291c3470ae2597b3becd6cc30e2d25ca5f97675d3e4812b7da1d66b9e8"
+      ],
+      "table_ids": [],
+      "query_count": 15
+    },
+    {
+      "signal": "write_heavy",
+      "targets": [
+        "dynamodb",
+        "keyspaces",
+        "documentdb"
+      ],
+      "evidence": "6 high-frequency write queries (\u22655 cps)",
+      "query_ids": [
+        "9fe18f7ff74933474d8fa2c4865dd22ac41620cb23b738d74450b4cf8c756dee",
+        "8e293caa43450f9908386b68c8dd5f12c9f5637feb4d3351fd6bd8bf1158fd51",
+        "0dbcb09e30aff946f64417c4cc3acbe14835df039cb9fed6585f41adad93d8e7",
+        "cd2fb4586ced0ffbab7abcf28a109e28684564224e74144e604dee5fa1a3fd43",
+        "9e26d42a0e572b0b3239e5d0a9feb61ca568b37d85f247dc2e11091aad996cba",
+        "4da8efbaa428fc171288f817b1fe5cdce20b58a09f21bb17afe027e013a74be7"
+      ],
+      "table_ids": [],
+      "query_count": 6
+    },
+    {
+      "signal": "time_series",
+      "targets": [
+        "dynamodb",
+        "keyspaces",
+        "documentdb",
+        "opensearch"
+      ],
+      "evidence": "4 time-series / event log queries (timestamp in WHERE/ORDER BY)",
+      "query_ids": [
+        "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+        "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42",
+        "9fa182c8ca9b3bdb1c389aba22e050d46e96a5e7d27b60b8a4df4ce9de4c0667",
+        "ed3a882554eb8af4832510afe043172482d3d3eb71b71ec1ff5c9dcc74ecf9a9"
+      ],
+      "table_ids": [],
+      "query_count": 4
+    },
+    {
+      "signal": "metadata_config",
+      "targets": [
+        "dynamodb",
+        "documentdb"
+      ],
+      "evidence": "7 metadata/config store queries (small result, high reads)",
+      "query_ids": [
+        "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959",
+        "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028",
+        "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42",
+        "840a880ebd1642e8a0c4926cfbaf7d4da9616b03025a080fafd43a732800fab5",
+        "b72ca0d9bf0fa653bda75da41efa63f12950f6ca0db69ea63af28fa7fd386622",
+        "68fbdbe44e11a12b9680806748679ebba3e0c4b15223b5a5faa1409321473425",
+        "7f047b78f6beb53c289f50b5e8111f6178ea229bdceacccafc6ad1e25a6e7430"
+      ],
+      "table_ids": [],
+      "query_count": 7
+    },
+    {
+      "signal": "text_search",
+      "targets": [
+        "opensearch"
+      ],
+      "evidence": "1 text search queries (LIKE, MATCH, tsvector)",
+      "query_ids": [
+        "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee"
+      ],
+      "table_ids": [],
+      "query_count": 1
+    },
+    {
+      "signal": "leaderboard_pattern",
+      "targets": [
+        "elasticache"
+      ],
+      "evidence": "4 leaderboard queries (ORDER BY + LIMIT)",
+      "query_ids": [
+        "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee",
+        "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0",
+        "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+        "0cef17325cad7ef25bf0c99a47fe6b76b7d1b04f91e668b3728552d97e1e3cf0"
+      ],
+      "table_ids": [],
+      "query_count": 4
+    },
+    {
+      "signal": "high_frequency_reads",
+      "targets": [
+        "dynamodb",
+        "elasticache",
+        "documentdb"
+      ],
+      "evidence": "1 high-frequency read queries (\u226510 cps)",
+      "query_ids": [
+        "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959"
+      ],
+      "table_ids": [],
+      "query_count": 1
+    }
+  ],
+  "confidence_score": 99,
+  "timestamp": "2026-03-31T04:32:13.873700+00:00"
+}

@@ -1,0 +1,120 @@
+/* Global styles for the application */
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f2f3f3;
+  color: #0f1b2a;
+}
+
+body.awsui-dark-mode {
+  background-color: #0f1b2a;
+  color: #d1d5db;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ============================================ */
+/* Theme-aware CSS variables                    */
+/* ============================================ */
+
+:root {
+  /* Light mode (default) */
+  --dbm-text-primary: #0f1b2a;
+  --dbm-text-secondary: #5f6b7a;
+  --dbm-text-muted: #7f8897;
+  --dbm-text-link: #0972D3;
+  --dbm-text-link-hover: #033160;
+  --dbm-text-code: #0972D3;
+  --dbm-border-subtle: rgba(0, 0, 0, 0.08);
+  --dbm-border-divider: rgba(0, 0, 0, 0.05);
+  --dbm-bg-surface: rgba(0, 0, 0, 0.02);
+  --dbm-bg-surface-hover: rgba(0, 0, 0, 0.04);
+  --dbm-bg-code: rgba(0, 0, 0, 0.04);
+  --dbm-bg-highlight: rgba(9, 114, 211, 0.06);
+  --dbm-bg-highlight-hover: rgba(9, 114, 211, 0.1);
+  --dbm-accent-blue: #0972D3;
+  --dbm-accent-orange: #ec7211;
+  --dbm-accent-green: #1d8102;
+  --dbm-signal-badge-color: #0972D3;
+  --dbm-signal-badge-bg: rgba(9, 114, 211, 0.1);
+  --dbm-signal-badge-muted-color: #5f6b7a;
+  --dbm-signal-badge-muted-bg: rgba(0, 0, 0, 0.06);
+  /* ProgressState-02 pipeline arrows */
+  --ps02-arrow-bg: #d5dbdb;
+  --ps02-label-inactive: #5f6b7a;
+  --ps02-label-active: #ffffff;
+}
+
+.awsui-dark-mode {
+  /* Dark mode overrides */
+  --dbm-text-primary: #d1d5db;
+  --dbm-text-secondary: #879596;
+  --dbm-text-muted: #687078;
+  --dbm-text-link: #539fe5;
+  --dbm-text-link-hover: #89bcf0;
+  --dbm-text-code: #89bcf0;
+  --dbm-border-subtle: rgba(255, 255, 255, 0.06);
+  --dbm-border-divider: rgba(255, 255, 255, 0.04);
+  --dbm-bg-surface: rgba(255, 255, 255, 0.03);
+  --dbm-bg-surface-hover: rgba(255, 255, 255, 0.05);
+  --dbm-bg-code: rgba(0, 0, 0, 0.3);
+  --dbm-bg-highlight: rgba(9, 114, 211, 0.04);
+  --dbm-bg-highlight-hover: rgba(9, 114, 211, 0.06);
+  --dbm-accent-blue: #0972D3;
+  --dbm-accent-orange: #ec7211;
+  --dbm-accent-green: #1d8102;
+  --dbm-signal-badge-color: #89bcf0;
+  --dbm-signal-badge-bg: rgba(9, 114, 211, 0.12);
+  --dbm-signal-badge-muted-color: #879596;
+  --dbm-signal-badge-muted-bg: rgba(255, 255, 255, 0.06);
+  /* ProgressState-02 pipeline arrows */
+  --ps02-arrow-bg: #414d5c;
+  --ps02-label-inactive: #9ba7b6;
+  --ps02-label-active: #ffffff;
+}
+
+/* ============================================ */
+/* Progress State Slider Full Width */
+/* ============================================ */
+
+.progress-state-slider [class*="awsui_slider-wrapper"] {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+.progress-state-slider [class*="awsui_root"] {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* ============================================ */
+/* Amplify Authenticator Styles */
+/* ============================================ */
+
+/* Center the Amplify Authenticator form vertically and horizontally */
+[data-amplify-authenticator] {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(19, 25, 32);
+}
+
+/* Ensure the form container is properly sized */
+[data-amplify-authenticator] [data-amplify-container] {
+  width: 100%;
+  max-width: 460px;
+}

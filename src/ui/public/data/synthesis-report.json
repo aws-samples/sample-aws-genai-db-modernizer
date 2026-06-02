@@ -1,0 +1,1185 @@
+{
+  "job_id": "30a01c08-b7da-474c-8e4e-1dd06ce0038d",
+  "database_name": "forum_db",
+  "agent_type": "referee-synthesis",
+  "status": "completed",
+  "timestamp": "2026-03-30T06:24:45.704457+00:00",
+  "needs_deeper_analysis": false,
+  "ranking": [
+    {
+      "target": "dynamodb",
+      "confidence_score": 82,
+      "weight": 0.789,
+      "monthly_cost_usd": 33.37,
+      "tables_analyzed": 6,
+      "tables_highly_suitable": 4,
+      "tables_suitable": 2,
+      "tables_marginal": 0,
+      "tables_not_suitable": 0,
+      "patterns_detected": 6,
+      "anti_patterns_detected": 1,
+      "migration_complexity_avg": "MEDIUM",
+      "aggregate_count": 1,
+      "schema_design_available": true,
+      "target_tables": 3,
+      "access_patterns": 26,
+      "pattern_groups": 9
+    },
+    {
+      "target": "documentdb",
+      "confidence_score": 81,
+      "weight": 0.788,
+      "monthly_cost_usd": 272.2,
+      "tables_analyzed": 6,
+      "tables_highly_suitable": 4,
+      "tables_suitable": 2,
+      "tables_marginal": 0,
+      "tables_not_suitable": 0,
+      "patterns_detected": 3,
+      "anti_patterns_detected": 0,
+      "migration_complexity_avg": "MEDIUM",
+      "aggregate_count": 1,
+      "schema_design_available": false,
+      "target_tables": 0,
+      "access_patterns": 8,
+      "pattern_groups": 1
+    },
+    {
+      "target": "elasticache",
+      "confidence_score": 0,
+      "weight": 0.15,
+      "monthly_cost_usd": 0.0,
+      "tables_analyzed": 0,
+      "tables_highly_suitable": 0,
+      "tables_suitable": 0,
+      "tables_marginal": 0,
+      "tables_not_suitable": 0,
+      "patterns_detected": 0,
+      "anti_patterns_detected": 0,
+      "migration_complexity_avg": "MEDIUM",
+      "aggregate_count": 0,
+      "schema_design_available": false,
+      "target_tables": 0,
+      "access_patterns": 0,
+      "pattern_groups": 0
+    }
+  ],
+  "summary": "Our analysis of your current database architecture reveals two highly viable modernization paths, with DynamoDB emerging as the optimal choice for both cost efficiency and performance optimization. After analyzing 6 source tables handling 893 requests per second across 5 primary query groups, DynamoDB demonstrates an 82% confidence score with projected monthly costs of $33.37, representing a 88% cost reduction compared to DocumentDB's $272.20 alternative. The migration complexity is assessed as medium for both platforms, with all 6 tables showing high or suitable compatibility for DynamoDB migration, while only minimal anti-patterns were detected that can be addressed through complementary services like OpenSearch for full-text search capabilities.\n\nThe recommended DynamoDB architecture leverages strategic denormalization and item collections to eliminate expensive multi-table JOINs that currently impact your discussion detail pages and tag lookup operations. Key optimizations include consolidating discussions, posts, and tags into item collections that enable single-partition queries, and implementing a sharded Global Secondary Index (GSI) for the DiscussionsByLastPost access pattern to distribute the 192 write capacity units per second across 10 partitions. These design decisions directly address your highest-traffic query groups, particularly the Discussion reads (246 rps) and Discussion writes (196 rps), while maintaining your 10ms service level objectives through single GetItem and Query operations.\n\nThe migration presents manageable trade-offs that align with your application's usage patterns. User information denormalization will require fan-out updates via DynamoDB Streams when users modify their profiles, but with an average of 43 discussions and 126 posts per user across 500 users, this represents a controlled update volume. Similarly, tag name denormalization eliminates the 12,863 requests per second currently required for tag lookups, with minimal risk given your stable set of 5 tags. The primary technical risks are rated as low to medium and include implementing OpenSearch integration for full-text search and replacing database views with application-layer aggregation logic, both of which are standard patterns in modern cloud-native architectures.",
+  "summary_deterministic": "Analyzed 6 source tables and 28 query patterns across 3 target database(s). Top recommendation: dynamodb with 82% average confidence. Schema design produced 3 target tables with 26 access patterns across 9 query groups. 6 source tables mapped to dynamodb. Estimated monthly cost: $305.57. 3 risk(s) identified (overall: LOW). Top query groups by throughput: Discussion reads, Discussion writes, Post writes. Other targets evaluated: documentdb (81%), elasticache (0%).",
+  "recommended_architecture": {
+    "databases": [
+      {
+        "service": "dynamodb",
+        "table_count": 6,
+        "rationale": "82% average confidence across 6 tables. 6 matching workload patterns. schema design: 3 target tables, 26 access patterns. estimated $33.37/month.",
+        "tables": [
+          "forum_db.discussion_tags",
+          "forum_db.discussions",
+          "forum_db.posts",
+          "forum_db.tags",
+          "forum_db.upvotes",
+          "forum_db.users"
+        ],
+        "confidence_score": 82
+      }
+    ],
+    "architecture_type": "SINGLE_DATABASE",
+    "rationale": "Workload analysis indicates dynamodb as the primary target with 82% confidence."
+  },
+  "table_mappings": [
+    {
+      "source_table": "forum_db.discussion_tags",
+      "recommended_database": "dynamodb",
+      "target_table": "Discussions",
+      "aggregate_pattern": "item_collection",
+      "confidence_score": 80,
+      "alternatives": []
+    },
+    {
+      "source_table": "forum_db.discussions",
+      "recommended_database": "dynamodb",
+      "target_table": "Discussions",
+      "aggregate_pattern": "item_collection",
+      "confidence_score": 86,
+      "alternatives": []
+    },
+    {
+      "source_table": "forum_db.posts",
+      "recommended_database": "dynamodb",
+      "target_table": "Discussions",
+      "aggregate_pattern": "item_collection",
+      "confidence_score": 84,
+      "alternatives": []
+    },
+    {
+      "source_table": "forum_db.tags",
+      "recommended_database": "dynamodb",
+      "target_table": "Discussions",
+      "aggregate_pattern": "item_collection",
+      "confidence_score": 74,
+      "alternatives": []
+    },
+    {
+      "source_table": "forum_db.upvotes",
+      "recommended_database": "dynamodb",
+      "target_table": "Upvotes",
+      "aggregate_pattern": "separate",
+      "confidence_score": 78,
+      "alternatives": []
+    },
+    {
+      "source_table": "forum_db.users",
+      "recommended_database": "dynamodb",
+      "target_table": "Users",
+      "aggregate_pattern": "separate",
+      "confidence_score": 87,
+      "alternatives": []
+    }
+  ],
+  "query_groups": [
+    {
+      "group_name": "Discussion reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-2",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 97.71,
+          "description": "Check if a discussion exists by primary key. Maps to GetItem on METADATA sort key.",
+          "in_scope": true,
+          "query_ids": [
+            "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959"
+          ]
+        },
+        {
+          "pattern_id": "AP-7",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 65.03,
+          "description": "Fetch full discussion detail with author username and email. User data denormalized into discussion METADATA item. Single GetItem replaces JOIN.",
+          "in_scope": true,
+          "query_ids": [
+            "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028"
+          ]
+        },
+        {
+          "pattern_id": "AP-9",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "PK=gsi_partition AND SK last_post_at DESC",
+          "design_rps": 64.84,
+          "description": "List recent discussions ordered by last_post_at DESC with author info. Replaces full scan (186,890 FTS) with GSI Query on DiscussionsByLastPost. Scatter-gather across 10 shards.",
+          "in_scope": true,
+          "query_ids": [
+            "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a"
+          ]
+        },
+        {
+          "pattern_id": "AP-18",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "PK=gsi_partition AND SK last_post_at DESC",
+          "design_rps": 18.58,
+          "description": "Fetch top 50 discussions by last_post_at. Replaces full scan (53,510 FTS). DiscussionsByLastPost GSI scatter-gather across 10 shards.",
+          "in_scope": true,
+          "query_ids": [
+            "0cef17325cad7ef25bf0c99a47fe6b76b7d1b04f91e668b3728552d97e1e3cf0"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "5294269904f51150f3407d44cdf8f442afe61d6b63f639129b16bdd12ddf3959",
+          "query_text": "SELECT `id` FROM `discussions` WHERE `id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 11724.958333333334,
+          "execution_time_ms_avg": 0.235,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-2"
+          ]
+        },
+        {
+          "query_id": "ef6f645d24019a0298745d5cbb08fd7bd7f92864f16abb7ef84cddae5f14c028",
+          "query_text": "SELECT `d` . * , `u` . `email` , `u` . `username` FROM `discussions` `d` JOIN `users` `u` ON `d` . `user_id` = `u` . `id` WHERE `d` . `id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7803.791666666667,
+          "execution_time_ms_avg": 0.318,
+          "tables_accessed": [
+            "forum_db.discussions",
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-7"
+          ]
+        },
+        {
+          "query_id": "5b38abf3d7340353d0c05e8c7df7152bdafcba0f7eab306c8218bce986d6408a",
+          "query_text": "SELECT `d` . `id` , `d` . `title` , `d` . `post_count` , `d` . `upvote_count` , `d` . `created_at` , `d` . `last_post_at` , `u` . `email` , `u` . `username` FROM `discussions` `d` JOIN `users` `u` ON ",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7780.458333333333,
+          "execution_time_ms_avg": 0.667,
+          "tables_accessed": [
+            "forum_db.discussions",
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-9"
+          ]
+        },
+        {
+          "query_id": "0cef17325cad7ef25bf0c99a47fe6b76b7d1b04f91e668b3728552d97e1e3cf0",
+          "query_text": "SELECT `id` , `post_count` FROM `discussions` ORDER BY `last_post_at` DESC LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2229.5833333333335,
+          "execution_time_ms_avg": 0.671,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-18"
+          ]
+        }
+      ],
+      "total_design_rps": 246.16000000000003
+    },
+    {
+      "group_name": "Discussion writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-3",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 96.02,
+          "description": "Increment post_count and update last_post_at on a discussion. High contention in MySQL (lock_time_pct=10.24%, errors=2716). DynamoDB atomic ADD eliminates row-level locking.",
+          "in_scope": true,
+          "query_ids": [
+            "8e293caa43450f9908386b68c8dd5f12c9f5637feb4d3351fd6bd8bf1158fd51"
+          ]
+        },
+        {
+          "pattern_id": "AP-12",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 50.83,
+          "description": "Increment upvote_count on a discussion. High contention in MySQL (errors=1352). DynamoDB atomic ADD eliminates locking.",
+          "in_scope": true,
+          "query_ids": [
+            "9e26d42a0e572b0b3239e5d0a9feb61ca568b37d85f247dc2e11091aad996cba"
+          ]
+        },
+        {
+          "pattern_id": "AP-13",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 49.38,
+          "description": "Create a new discussion. Writes a METADATA item into the Discussions table with initial counters.",
+          "in_scope": true,
+          "query_ids": [
+            "0dbcb09e30aff946f64417c4cc3acbe14835df039cb9fed6585f41adad93d8e7"
+          ]
+        },
+        {
+          "pattern_id": "AP-20",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 0.09,
+          "description": "Decrement upvote_count on a discussion (floor at 0). UpdateItem with condition upvote_count > 0.",
+          "in_scope": true,
+          "query_ids": [
+            "f02372527743745f3184a79eb8a7f33d4b42b8f3c6e270eeff0e1ffb0072a50c"
+          ]
+        },
+        {
+          "pattern_id": "AP-23",
+          "engine": "dynamodb",
+          "operation": "BatchWriteItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=METADATA",
+          "design_rps": 0.01,
+          "description": "Batch insert discussions with historical timestamps. Seed/admin operation.",
+          "in_scope": true,
+          "query_ids": [
+            "9fa182c8ca9b3bdb1c389aba22e050d46e96a5e7d27b60b8a4df4ce9de4c0667"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "8e293caa43450f9908386b68c8dd5f12c9f5637feb4d3351fd6bd8bf1158fd51",
+          "query_text": "UPDATE `discussions` SET `post_count` = `post_count` + ? , `last_post_at` = NOW ( ) WHERE `id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 11522.833333333334,
+          "execution_time_ms_avg": 0.372,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-3"
+          ]
+        },
+        {
+          "query_id": "9e26d42a0e572b0b3239e5d0a9feb61ca568b37d85f247dc2e11091aad996cba",
+          "query_text": "UPDATE `discussions` SET `upvote_count` = `upvote_count` + ? WHERE `id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 6100.166666666667,
+          "execution_time_ms_avg": 0.372,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-12"
+          ]
+        },
+        {
+          "query_id": "0dbcb09e30aff946f64417c4cc3acbe14835df039cb9fed6585f41adad93d8e7",
+          "query_text": "INSERT INTO `discussions` ( `user_id` , `title` , `post_count` , `upvote_count` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 5925.416666666667,
+          "execution_time_ms_avg": 0.388,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-13"
+          ]
+        },
+        {
+          "query_id": "f02372527743745f3184a79eb8a7f33d4b42b8f3c6e270eeff0e1ffb0072a50c",
+          "query_text": "UPDATE `discussions` SET `upvote_count` = `GREATEST` ( ? , `upvote_count` - ? ) WHERE `id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 10.291666666666666,
+          "execution_time_ms_avg": 0.575,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-20"
+          ]
+        },
+        {
+          "query_id": "9fa182c8ca9b3bdb1c389aba22e050d46e96a5e7d27b60b8a4df4ce9de4c0667",
+          "query_text": "INSERT INTO `discussions` ( `user_id` , `title` , `post_count` , `created_at` , `last_post_at` ) VALUES ( ?, ... , NOW ( ) - INTERVAL ? SQL_TSI_DAY , NOW ( ) - INTERVAL ? SQL_TSI_DAY ) , ( ?, ... , NO",
+          "query_type": "INSERT",
+          "frequency_per_hour": 1.3333333333333333,
+          "execution_time_ms_avg": 7.468,
+          "tables_accessed": [
+            "forum_db.discussions"
+          ],
+          "linked_patterns": [
+            "AP-23"
+          ]
+        }
+      ],
+      "total_design_rps": 196.32999999999998
+    },
+    {
+      "group_name": "Post writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-1",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=POST#<created_at>#<post_id>",
+          "design_rps": 145.41,
+          "description": "Insert a new post into a discussion. High-throughput write (lock_time_pct=37%). Maps to PutItem on POST# sort key under the discussion partition.",
+          "in_scope": true,
+          "query_ids": [
+            "9fe18f7ff74933474d8fa2c4865dd22ac41620cb23b738d74450b4cf8c756dee"
+          ]
+        },
+        {
+          "pattern_id": "AP-16",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=POST#<created_at>#<post_id>",
+          "design_rps": 21.48,
+          "description": "Increment upvote_count on a post. Application provides discussion_id context. Atomic ADD.",
+          "in_scope": true,
+          "query_ids": [
+            "dc95e9e0ac2b78e477c19fa6110bc48352823363835f916c23c3c7ad5b9615b2"
+          ]
+        },
+        {
+          "pattern_id": "AP-24",
+          "engine": "dynamodb",
+          "operation": "BatchWriteItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=POST#<created_at>#<post_id>",
+          "design_rps": 0.01,
+          "description": "Batch insert posts with historical timestamps. Seed/admin operation.",
+          "in_scope": true,
+          "query_ids": [
+            "ed3a882554eb8af4832510afe043172482d3d3eb71b71ec1ff5c9dcc74ecf9a9"
+          ]
+        },
+        {
+          "pattern_id": "AP-26",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=POST#<created_at>#<post_id>",
+          "design_rps": 0.005,
+          "description": "Decrement upvote_count on a post (floor at 0). Application provides discussion_id context.",
+          "in_scope": true,
+          "query_ids": [
+            "7be293799c612f697f312708429d53ef213f9a856ba3653e97af3ebc58d1490e"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "9fe18f7ff74933474d8fa2c4865dd22ac41620cb23b738d74450b4cf8c756dee",
+          "query_text": "INSERT INTO `posts` ( `discussion_id` , `user_id` , `content` , `upvote_count` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 17449.791666666668,
+          "execution_time_ms_avg": 0.482,
+          "tables_accessed": [
+            "forum_db.posts"
+          ],
+          "linked_patterns": [
+            "AP-1"
+          ]
+        },
+        {
+          "query_id": "dc95e9e0ac2b78e477c19fa6110bc48352823363835f916c23c3c7ad5b9615b2",
+          "query_text": "UPDATE `posts` SET `upvote_count` = `upvote_count` + ? WHERE `id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 2577.625,
+          "execution_time_ms_avg": 0.272,
+          "tables_accessed": [
+            "forum_db.posts"
+          ],
+          "linked_patterns": [
+            "AP-16"
+          ]
+        },
+        {
+          "query_id": "ed3a882554eb8af4832510afe043172482d3d3eb71b71ec1ff5c9dcc74ecf9a9",
+          "query_text": "INSERT INTO `posts` ( `discussion_id` , `user_id` , `content` , `created_at` ) VALUES ( ?, ... , NOW ( ) - INTERVAL ? SQL_TSI_DAY ) , ( ?, ... , NOW ( ) - INTERVAL ? SQL_TSI_DAY ) , ( ?, ... , NOW ( )",
+          "query_type": "INSERT",
+          "frequency_per_hour": 1.3333333333333333,
+          "execution_time_ms_avg": 7.465,
+          "tables_accessed": [
+            "forum_db.posts"
+          ],
+          "linked_patterns": [
+            "AP-24"
+          ]
+        },
+        {
+          "query_id": "7be293799c612f697f312708429d53ef213f9a856ba3653e97af3ebc58d1490e",
+          "query_text": "UPDATE `posts` SET `upvote_count` = `GREATEST` ( ? , `upvote_count` - ? ) WHERE `id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 0.5416666666666666,
+          "execution_time_ms_avg": 0.236,
+          "tables_accessed": [
+            "forum_db.posts"
+          ],
+          "linked_patterns": [
+            "AP-26"
+          ]
+        }
+      ],
+      "total_design_rps": 166.90499999999997
+    },
+    {
+      "group_name": "Upvote management",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-10",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=DISC#<discussion_id>",
+          "design_rps": 50.91,
+          "description": "Check if a user has upvoted a discussion. Returns 0 or 1 rows. Maps to GetItem on Upvotes table.",
+          "in_scope": true,
+          "query_ids": [
+            "b72ca0d9bf0fa653bda75da41efa63f12950f6ca0db69ea63af28fa7fd386622"
+          ]
+        },
+        {
+          "pattern_id": "AP-11",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=DISC#<discussion_id>",
+          "design_rps": 50.84,
+          "description": "Record a user upvote on a discussion. PutItem with ConditionExpression attribute_not_exists to enforce uniqueness. High contention in MySQL (lock_time_pct=47.93%).",
+          "in_scope": true,
+          "query_ids": [
+            "cd2fb4586ced0ffbab7abcf28a109e28684564224e74144e604dee5fa1a3fd43"
+          ]
+        },
+        {
+          "pattern_id": "AP-15",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=POST#<post_id>",
+          "design_rps": 21.49,
+          "description": "Check if a user has upvoted a post. GetItem on Upvotes with sort key POST#<post_id>.",
+          "in_scope": true,
+          "query_ids": [
+            "7f047b78f6beb53c289f50b5e8111f6178ea229bdceacccafc6ad1e25a6e7430"
+          ]
+        },
+        {
+          "pattern_id": "AP-17",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=POST#<post_id>",
+          "design_rps": 21.48,
+          "description": "Record a user upvote on a post. PutItem with ConditionExpression attribute_not_exists to enforce uniqueness.",
+          "in_scope": true,
+          "query_ids": [
+            "8c4f895ea79ceb8669d9454b6c6b6cb9d8e81e5a7d846e4315583780245a30ba"
+          ]
+        },
+        {
+          "pattern_id": "AP-21",
+          "engine": "dynamodb",
+          "operation": "DeleteItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=DISC#<discussion_id>",
+          "design_rps": 0.09,
+          "description": "Remove a user upvote from a discussion. DeleteItem by exact PK+SK.",
+          "in_scope": true,
+          "query_ids": [
+            "d630ead43e6c43a814ade9e42721022adc21b45056c5c8e9fa86d0bd6f885485"
+          ]
+        },
+        {
+          "pattern_id": "AP-25",
+          "engine": "dynamodb",
+          "operation": "DeleteItem",
+          "table_name": "Upvotes",
+          "key_condition": "PK=user_id AND SK=POST#<post_id>",
+          "design_rps": 0.005,
+          "description": "Remove a user upvote from a post. DeleteItem by exact PK+SK.",
+          "in_scope": true,
+          "query_ids": [
+            "9432b5f9c696c26a698155af60221ec8801f9c562b5dc4a2a993214db5bb802b"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "b72ca0d9bf0fa653bda75da41efa63f12950f6ca0db69ea63af28fa7fd386622",
+          "query_text": "SELECT ? FROM `upvotes` WHERE `user_id` = ? AND `discussion_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 6109.708333333333,
+          "execution_time_ms_avg": 0.194,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-10"
+          ]
+        },
+        {
+          "query_id": "cd2fb4586ced0ffbab7abcf28a109e28684564224e74144e604dee5fa1a3fd43",
+          "query_text": "INSERT INTO `upvotes` ( `user_id` , `discussion_id` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 6100.958333333333,
+          "execution_time_ms_avg": 0.596,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-11"
+          ]
+        },
+        {
+          "query_id": "7f047b78f6beb53c289f50b5e8111f6178ea229bdceacccafc6ad1e25a6e7430",
+          "query_text": "SELECT ? FROM `upvotes` WHERE `user_id` = ? AND `post_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2578.4166666666665,
+          "execution_time_ms_avg": 0.177,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-15"
+          ]
+        },
+        {
+          "query_id": "8c4f895ea79ceb8669d9454b6c6b6cb9d8e81e5a7d846e4315583780245a30ba",
+          "query_text": "INSERT INTO `upvotes` ( `user_id` , `post_id` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 2577.4583333333335,
+          "execution_time_ms_avg": 0.304,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-17"
+          ]
+        },
+        {
+          "query_id": "d630ead43e6c43a814ade9e42721022adc21b45056c5c8e9fa86d0bd6f885485",
+          "query_text": "DELETE FROM `upvotes` WHERE `user_id` = ? AND `discussion_id` = ?",
+          "query_type": "DELETE",
+          "frequency_per_hour": 10.291666666666666,
+          "execution_time_ms_avg": 0.357,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-21"
+          ]
+        },
+        {
+          "query_id": "9432b5f9c696c26a698155af60221ec8801f9c562b5dc4a2a993214db5bb802b",
+          "query_text": "DELETE FROM `upvotes` WHERE `user_id` = ? AND `post_id` = ?",
+          "query_type": "DELETE",
+          "frequency_per_hour": 0.5416666666666666,
+          "execution_time_ms_avg": 0.274,
+          "tables_accessed": [
+            "forum_db.upvotes"
+          ],
+          "linked_patterns": [
+            "AP-25"
+          ]
+        }
+      ],
+      "total_design_rps": 144.815
+    },
+    {
+      "group_name": "Tag management",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-4",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK=TAG#<tag_id>",
+          "design_rps": 73.98,
+          "description": "Associate a tag with a discussion. Writes a TAG# item into the Discussions item collection, enabling the DiscussionsByTag GSI.",
+          "in_scope": true,
+          "query_ids": [
+            "4da8efbaa428fc171288f817b1fe5cdce20b58a09f21bb17afe027e013a74be7"
+          ]
+        },
+        {
+          "pattern_id": "AP-8",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "PK=tag_name AND SK last_post_at DESC",
+          "design_rps": 65.03,
+          "description": "List discussions by tag name ordered by last_post_at DESC. Replaces 3-table JOIN + full scan (12,863 FTS) with a single GSI Query on DiscussionsByTag.",
+          "in_scope": true,
+          "query_ids": [
+            "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "4da8efbaa428fc171288f817b1fe5cdce20b58a09f21bb17afe027e013a74be7",
+          "query_text": "INSERT INTO `discussion_tags` ( `discussion_id` , `tag_id` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 8877.375,
+          "execution_time_ms_avg": 0.248,
+          "tables_accessed": [
+            "forum_db.discussion_tags"
+          ],
+          "linked_patterns": [
+            "AP-4"
+          ]
+        },
+        {
+          "query_id": "4c6e26f941552b76d62db1b2e9e7e889ffadaff63f8aa6a7a3610f5c5fcf0ba0",
+          "query_text": "SELECT `d` . `id` , `d` . `title` , `d` . `post_count` FROM `discussions` `d` JOIN `discussion_tags` `dt` ON `d` . `id` = `dt` . `discussion_id` JOIN `tags` `t` ON `dt` . `tag_id` = `t` . `id` WHERE `",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7804.041666666667,
+          "execution_time_ms_avg": 26.786,
+          "tables_accessed": [
+            "forum_db.discussions",
+            "forum_db.discussion_tags",
+            "forum_db.tags"
+          ],
+          "linked_patterns": [
+            "AP-8"
+          ]
+        }
+      ],
+      "total_design_rps": 139.01
+    },
+    {
+      "group_name": "Post reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-6",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK begins_with 'POST#'",
+          "design_rps": 65.07,
+          "description": "Fetch all posts for a discussion with author username and email. User data denormalized into post items. Query on SK begins_with POST# returns posts sorted by created_at ASC.",
+          "in_scope": true,
+          "query_ids": [
+            "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42"
+          ]
+        },
+        {
+          "pattern_id": "AP-14",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "PK=discussion_id AND SK begins_with 'POST#'",
+          "design_rps": 21.85,
+          "description": "Fetch post IDs for a discussion. Served by Query with ProjectionExpression on post_id.",
+          "in_scope": true,
+          "query_ids": [
+            "68fbdbe44e11a12b9680806748679ebba3e0c4b15223b5a5faa1409321473425"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "4e6a49f84428e54461cfc2fafaa710566bf52d2b5a985c106fbf720f9bfb4a42",
+          "query_text": "SELECT `p` . * , `u` . `email` , `u` . `username` FROM `posts` `p` JOIN `users` `u` ON `p` . `user_id` = `u` . `id` WHERE `p` . `discussion_id` = ? ORDER BY `p` . `created_at` ASC , `p` . `id` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7808.125,
+          "execution_time_ms_avg": 0.45,
+          "tables_accessed": [
+            "forum_db.posts",
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-6"
+          ]
+        },
+        {
+          "query_id": "68fbdbe44e11a12b9680806748679ebba3e0c4b15223b5a5faa1409321473425",
+          "query_text": "SELECT `id` FROM `posts` WHERE `discussion_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2622.25,
+          "execution_time_ms_avg": 0.273,
+          "tables_accessed": [
+            "forum_db.posts"
+          ],
+          "linked_patterns": [
+            "AP-14"
+          ]
+        }
+      ],
+      "total_design_rps": 86.91999999999999
+    },
+    {
+      "group_name": "User lookups",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-5",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Users",
+          "key_condition": "PK=user_id",
+          "design_rps": 65.21,
+          "description": "Fetch full user profile by primary key id. Direct GetItem on Users table.",
+          "in_scope": true,
+          "query_ids": [
+            "840a880ebd1642e8a0c4926cfbaf7d4da9616b03025a080fafd43a732800fab5"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "840a880ebd1642e8a0c4926cfbaf7d4da9616b03025a080fafd43a732800fab5",
+          "query_text": "SELECT * FROM `users` WHERE `id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7825.041666666667,
+          "execution_time_ms_avg": 0.204,
+          "tables_accessed": [
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-5"
+          ]
+        }
+      ],
+      "total_design_rps": 65.21
+    },
+    {
+      "group_name": "Discussion search",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-19",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Discussions",
+          "key_condition": "N/A - text search",
+          "design_rps": 5.4,
+          "description": "Search discussions by title LIKE pattern with author info. Text search cannot be served by DynamoDB. Requires OpenSearch.",
+          "in_scope": false,
+          "query_ids": [
+            "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee",
+          "query_text": "SELECT `d` . `id` , `d` . `title` , `d` . `post_count` , `d` . `upvote_count` , `u` . `email` , `u` . `username` FROM `discussions` `d` JOIN `users` `u` ON `d` . `user_id` = `u` . `id` WHERE `d` . `ti",
+          "query_type": "SELECT",
+          "frequency_per_hour": 647.75,
+          "execution_time_ms_avg": 76.775,
+          "tables_accessed": [
+            "forum_db.discussions",
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-19"
+          ]
+        }
+      ],
+      "total_design_rps": 5.4
+    },
+    {
+      "group_name": "User writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-22",
+          "engine": "dynamodb",
+          "operation": "BatchWriteItem",
+          "table_name": "Users",
+          "key_condition": "PK=user_id",
+          "design_rps": 0.03,
+          "description": "Batch insert users. Low frequency seed/admin operation.",
+          "in_scope": true,
+          "query_ids": [
+            "800d79435a6dc4f958caa0cf1fe5dc3b74a6da3f6cc409ab896b00a6d3067d16"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "800d79435a6dc4f958caa0cf1fe5dc3b74a6da3f6cc409ab896b00a6d3067d16",
+          "query_text": "INSERT INTO `users` ( `email` , `username` , `password_hash` ) VALUES (...) /* , ... */",
+          "query_type": "INSERT",
+          "frequency_per_hour": 3.3333333333333335,
+          "execution_time_ms_avg": 13.987,
+          "tables_accessed": [
+            "forum_db.users"
+          ],
+          "linked_patterns": [
+            "AP-22"
+          ]
+        }
+      ],
+      "total_design_rps": 0.03
+    },
+    {
+      "group_name": "ungrouped",
+      "engines": [
+        "documentdb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "AP-1",
+          "engine": "documentdb",
+          "operation": "findOne",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Lookup a single record by primary key (_id). Serves point-read operations such as detail page loads.",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-2",
+          "engine": "documentdb",
+          "operation": "findOne",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Lookup a single record by unique email address. Serves login, duplicate-check, and profile-fetch operations.",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-3",
+          "engine": "documentdb",
+          "operation": "find",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "List records filtered by status, sorted by created_at descending (most recent first). Serves admin dashboards and paginated listings.",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-4",
+          "engine": "documentdb",
+          "operation": "insertOne",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Insert a new record. Application layer sets created_at and updated_at to current ISODate (replaces source DB trigger behavior).",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-5",
+          "engine": "documentdb",
+          "operation": "updateOne",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Update an existing record by primary key. Application layer must set updated_at to current ISODate (replaces source DB trigger behavior).",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-6",
+          "engine": "documentdb",
+          "operation": "find",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "List records filtered by category. Supports category browsing and reporting.",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-7",
+          "engine": "documentdb",
+          "operation": "aggregate",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Count records grouped by status. Replaces source database summary view with an aggregation pipeline.",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "AP-8",
+          "engine": "documentdb",
+          "operation": "deleteOne",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Delete a single record by primary key.",
+          "in_scope": true,
+          "query_ids": []
+        }
+      ],
+      "source_queries": [],
+      "total_design_rps": 0
+    }
+  ],
+  "tco_analysis": {
+    "current_monthly_cost": 0,
+    "projected_monthly_cost": 305.57,
+    "savings_percent": 0,
+    "cost_breakdown": [
+      {
+        "database": "dynamodb",
+        "monthly_cost_usd": 33.37,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "elasticache",
+        "monthly_cost_usd": 0.0,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "documentdb",
+        "monthly_cost_usd": 272.2,
+        "pricing_mode": "on-demand"
+      }
+    ],
+    "assumptions": [
+      "On-demand capacity mode for all target databases",
+      "Region: us-east-1",
+      "Current RDS cost estimated from instance class (actual billing may differ)",
+      "Does not include data transfer, backups, or global tables"
+    ]
+  },
+  "risk_assessment": {
+    "overall_risk_level": "LOW",
+    "risks": [
+      {
+        "risk_id": "RISK-001",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "severity": "MEDIUM",
+        "description": "[dynamodb] text_search: LIKE '%pattern%' full-text search on discussion title requires OpenSearch integration. DynamoDB begins_with only supports prefix matching. Stream Discussions table changes to OpenSearch via DynamoDB Streams + Lambda for a search-by-title index.",
+        "affected_tables": [],
+        "mitigation": "LIKE '%pattern%' full-text search on discussion title requires OpenSearch integration. DynamoDB begins_with only supports prefix matching. Stream Discussions table changes to OpenSearch via DynamoDB Streams + Lambda for a search-by-title index."
+      },
+      {
+        "risk_id": "RISK-002",
+        "risk_type": "OPERATIONAL_RISK",
+        "severity": "MEDIUM",
+        "description": "[documentdb] view: vw_records_status_summary \u2014 Replace with a runtime aggregation pipeline: db.records.aggregate([{$group: {_id: '$status', count: {$sum: 1}}}, {$sort: {count: -1}}]). For high-frequency dashboard reads, pre-materialize counts into a dedicated 'stats' collection updated via Change Streams or a scheduled batch job.",
+        "affected_tables": [
+          "table_1"
+        ],
+        "mitigation": "Implement as application logic: Replace with a runtime aggregation pipeline: db.records.aggregate([{$group: {_id: '$status', count: {$sum: 1}}}, {$sort: {count: -1}}]). For high-frequency dashboard reads, pre-materialize counts into a dedicated 'stats' collection updated via Change Streams or a scheduled batch job."
+      },
+      {
+        "risk_id": "RISK-003",
+        "risk_type": "OPERATIONAL_RISK",
+        "severity": "MEDIUM",
+        "description": "[documentdb] trigger: trg_records_set_updated_at \u2014 DocumentDB does not support triggers. The application layer must set the 'updated_at' field to the current ISODate on every updateOne/updateMany call. Wrap this logic in a shared data-access helper or repository method to guarantee consistency across all write paths.",
+        "affected_tables": [
+          "table_1"
+        ],
+        "mitigation": "Implement as application logic: DocumentDB does not support triggers. The application layer must set the 'updated_at' field to the current ISODate on every updateOne/updateMany call. Wrap this logic in a shared data-access helper or repository method to guarantee consistency across all write paths."
+      }
+    ],
+    "mitigation_strategies": [
+      "Implement unsupported patterns (text search, aggregations) via complementary services (OpenSearch, application-layer computation)",
+      "Refactor stored procedures, triggers, and views into application logic before migration",
+      "Monitor target database metrics closely during the first 2 weeks post-migration"
+    ]
+  },
+  "schema_designs": {
+    "dynamodb": {
+      "status": "completed",
+      "validation_passed": true,
+      "tables": [
+        {
+          "table_name": "Discussions",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "forum_db.discussions",
+            "forum_db.posts",
+            "forum_db.discussion_tags",
+            "forum_db.tags"
+          ],
+          "gsi_count": 2,
+          "item_count": 116915,
+          "item_size_bytes": 400
+        },
+        {
+          "table_name": "Upvotes",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "forum_db.upvotes"
+          ],
+          "gsi_count": 0,
+          "item_count": 32125,
+          "item_size_bytes": 82
+        },
+        {
+          "table_name": "Users",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "forum_db.users"
+          ],
+          "gsi_count": 1,
+          "item_count": 500,
+          "item_size_bytes": 294
+        }
+      ],
+      "access_pattern_count": 26,
+      "hot_partitions_at_risk": 0,
+      "trade_offs": [
+        "Item collection (discussions + posts + tags): Gained single-partition Query for discussion detail page (discussion + all posts) and eliminated 3-table JOIN for tag lookup. Traded independent scaling of posts \u2014 a viral discussion with thousands of posts could grow the item collection, but at ~2.9 posts/discussion avg this is well within DynamoDB 10 GB partition limit.",
+        "User username and email denormalized into DISCUSSION and POST items: Gained single GetItem/Query for discussion/post detail with author info (eliminates JOIN, meets 10ms SLO). Traded write amplification when a user updates email/username \u2014 all their discussions and posts must be updated. At 500 users and ~43 discussions + ~126 posts per user, a fan-out update via DynamoDB Streams + Lambda is manageable.",
+        "Tag name denormalized from tags reference table into TAG entity items: Gained DiscussionsByTag GSI query on tag_name directly, eliminating the 3-table JOIN (12,863 FTS). Traded update complexity if a tag is renamed \u2014 all ~6,441 TAG items per tag must be updated. With only 5 tags that rarely change, this is acceptable.",
+        "DiscussionsByLastPost GSI PK sharded into 10 partitions (DISC#0 through DISC#9): Gained write distribution for the mutable last_post_at sort key (192 WCU/s total -> 19.2 per shard). Traded read complexity \u2014 listing recent discussions requires scatter-gather across 10 shards and client-side merge-sort. Application must issue 10 parallel Query calls and merge-sort results.",
+        "Upvote uniqueness enforced via PutItem ConditionExpression attribute_not_exists(user_id) instead of dedicated lookup tables: Gained simple single-item write (1 WCU). The composite PK(user_id) + SK(DISC#id / POST#id) naturally enforces both unique constraints. No TransactWriteItems needed.",
+        "Username uniqueness on Users table enforced at the application layer. Email lookup served by UsersByEmail GSI (KEYS_ONLY). No query pattern was observed for username-based lookup. If strict database-level username uniqueness is required, a dedicated UsernameLookup table with TransactWriteItems can be added.",
+        "Discussion counter updates (post_count, upvote_count) use DynamoDB atomic ADD expressions: Gained contention-free increments eliminating MySQL row-level lock contention (37% lock_time_pct, 2,716 errors on post_count; 9.9% lock_time_pct, 1,352 errors on upvote_count). Traded strict transactional consistency \u2014 counter and upvote record are not atomically linked. Eventual consistency is acceptable for display counters.",
+        "Post upvote_count updates (AP-16, AP-26) require the application to supply discussion_id alongside post_id to construct the composite key: Gained item-collection co-location of posts with discussions. Traded application complexity \u2014 the app must track discussion context and the full composite SK (POST#<created_at>#<post_id>) from the initial post query. This is natural in the forum UI where posts are always viewed within a discussion.",
+        "TAG entity items store denormalized last_post_at, title, and post_count from parent discussion for DiscussionsByTag GSI projection: Gained single GSI query returning all display fields. Traded write amplification \u2014 when discussion last_post_at or post_count changes, all TAG items (~1.5 per discussion) must also be updated. At ~96 RPS * 1.5 tags = ~144 additional WCU/s, manageable.",
+        "UsersByEmail GSI has no mapped access pattern among the 26 documented patterns. This is likely an authentication flow (login by email) not captured in the MySQL performance_schema slow query log. Kept because KEYS_ONLY on 500 items has negligible cost and email-based lookup is a standard auth requirement.",
+        "[PE note] DISCUSSION entity definition is missing 3 attributes that are critical for the design to function: (1) gsi_partition \u2014 the computed shard key (e.g., DISC#{id%10}) that powers the DiscussionsByLastPost GSI, (2) last_post_at \u2014 used as SK for the same GSI and updated by AP-3, (3) upvote_count \u2014 projected into DiscussionsByLastPost and updated by AP-12/AP-20. An ETL pipeline implementing this contract would produce incomplete items. Add these to the entity attribute list with appropriate source mappings or calculation definitions.",
+        "[PE note] DiscussionsByLastPost GSI projects user_email. Forum listing pages (AP-9, AP-18) rarely display author emails publicly. Consider removing user_email from the projection to reduce GSI item size (~12% smaller) and eliminate one write-amplification vector on email changes. If the application does need email on listing pages, document the reason.",
+        "[PE note] The hot partition analysis treats total table throughput as single-partition load, which is overly conservative for high-cardinality PKs like discussion_id. At ~21K discussions, the true per-partition write load is ~0.02 WCU/s, not 411.2 WCU/s. This doesn't affect the design but may cause unnecessary alarm during capacity reviews. Consider adding a note about effective per-partition load based on PK cardinality."
+      ],
+      "unsupported_patterns": [
+        {
+          "query_ids": [
+            "b5b9fff86cab20bb6a4dc1de009c460910696704fb3aa9ebc6aa219a0c0efdee"
+          ],
+          "pattern_type": "text_search",
+          "recommendation": "LIKE '%pattern%' full-text search on discussion title requires OpenSearch integration. DynamoDB begins_with only supports prefix matching. Stream Discussions table changes to OpenSearch via DynamoDB Streams + Lambda for a search-by-title index."
+        }
+      ],
+      "migration_notes": []
+    },
+    "elasticache": {
+      "status": "not_available"
+    },
+    "documentdb": {
+      "status": "not_available"
+    }
+  },
+  "trade_offs": [
+    "[dynamodb] Item collection (discussions + posts + tags): Gained single-partition Query for discussion detail page (discussion + all posts) and eliminated 3-table JOIN for tag lookup. Traded independent scaling of posts \u2014 a viral discussion with thousands of posts could grow the item collection, but at ~2.9 posts/discussion avg this is well within DynamoDB 10 GB partition limit.",
+    "[dynamodb] User username and email denormalized into DISCUSSION and POST items: Gained single GetItem/Query for discussion/post detail with author info (eliminates JOIN, meets 10ms SLO). Traded write amplification when a user updates email/username \u2014 all their discussions and posts must be updated. At 500 users and ~43 discussions + ~126 posts per user, a fan-out update via DynamoDB Streams + Lambda is manageable.",
+    "[dynamodb] Tag name denormalized from tags reference table into TAG entity items: Gained DiscussionsByTag GSI query on tag_name directly, eliminating the 3-table JOIN (12,863 FTS). Traded update complexity if a tag is renamed \u2014 all ~6,441 TAG items per tag must be updated. With only 5 tags that rarely change, this is acceptable.",
+    "[dynamodb] DiscussionsByLastPost GSI PK sharded into 10 partitions (DISC#0 through DISC#9): Gained write distribution for the mutable last_post_at sort key (192 WCU/s total -> 19.2 per shard). Traded read complexity \u2014 listing recent discussions requires scatter-gather across 10 shards and client-side merge-sort. Application must issue 10 parallel Query calls and merge-sort results.",
+    "[dynamodb] Upvote uniqueness enforced via PutItem ConditionExpression attribute_not_exists(user_id) instead of dedicated lookup tables: Gained simple single-item write (1 WCU). The composite PK(user_id) + SK(DISC#id / POST#id) naturally enforces both unique constraints. No TransactWriteItems needed.",
+    "[dynamodb] Username uniqueness on Users table enforced at the application layer. Email lookup served by UsersByEmail GSI (KEYS_ONLY). No query pattern was observed for username-based lookup. If strict database-level username uniqueness is required, a dedicated UsernameLookup table with TransactWriteItems can be added.",
+    "[dynamodb] Discussion counter updates (post_count, upvote_count) use DynamoDB atomic ADD expressions: Gained contention-free increments eliminating MySQL row-level lock contention (37% lock_time_pct, 2,716 errors on post_count; 9.9% lock_time_pct, 1,352 errors on upvote_count). Traded strict transactional consistency \u2014 counter and upvote record are not atomically linked. Eventual consistency is acceptable for display counters.",
+    "[dynamodb] Post upvote_count updates (AP-16, AP-26) require the application to supply discussion_id alongside post_id to construct the composite key: Gained item-collection co-location of posts with discussions. Traded application complexity \u2014 the app must track discussion context and the full composite SK (POST#<created_at>#<post_id>) from the initial post query. This is natural in the forum UI where posts are always viewed within a discussion.",
+    "[dynamodb] TAG entity items store denormalized last_post_at, title, and post_count from parent discussion for DiscussionsByTag GSI projection: Gained single GSI query returning all display fields. Traded write amplification \u2014 when discussion last_post_at or post_count changes, all TAG items (~1.5 per discussion) must also be updated. At ~96 RPS * 1.5 tags = ~144 additional WCU/s, manageable.",
+    "[dynamodb] UsersByEmail GSI has no mapped access pattern among the 26 documented patterns. This is likely an authentication flow (login by email) not captured in the MySQL performance_schema slow query log. Kept because KEYS_ONLY on 500 items has negligible cost and email-based lookup is a standard auth requirement.",
+    "[dynamodb] [PE note] DISCUSSION entity definition is missing 3 attributes that are critical for the design to function: (1) gsi_partition \u2014 the computed shard key (e.g., DISC#{id%10}) that powers the DiscussionsByLastPost GSI, (2) last_post_at \u2014 used as SK for the same GSI and updated by AP-3, (3) upvote_count \u2014 projected into DiscussionsByLastPost and updated by AP-12/AP-20. An ETL pipeline implementing this contract would produce incomplete items. Add these to the entity attribute list with appropriate source mappings or calculation definitions.",
+    "[dynamodb] [PE note] DiscussionsByLastPost GSI projects user_email. Forum listing pages (AP-9, AP-18) rarely display author emails publicly. Consider removing user_email from the projection to reduce GSI item size (~12% smaller) and eliminate one write-amplification vector on email changes. If the application does need email on listing pages, document the reason.",
+    "[dynamodb] [PE note] The hot partition analysis treats total table throughput as single-partition load, which is overly conservative for high-cardinality PKs like discussion_id. At ~21K discussions, the true per-partition write load is ~0.02 WCU/s, not 411.2 WCU/s. This doesn't affect the design but may cause unnecessary alarm during capacity reviews. Consider adding a note about effective per-partition load based on PK cardinality.",
+    "[documentdb] Single-table source maps 1:1 to a single 'records' collection with no embedding or referencing decisions required. This is the simplest migration topology and avoids any $lookup overhead.",
+    "[documentdb] JSON/JSONB 'metadata' column is stored as a native BSON sub-document, enabling dot-notation queries (e.g., {'metadata.source': 'web'}). Any frequently-queried nested field should have a dedicated index added post-migration based on observed workload.",
+    "[documentdb] The source database trigger for 'updated_at' auto-stamping is replaced by application-layer logic. This trades server-enforced consistency for application-layer responsibility; all write paths must be audited to ensure the timestamp is always set.",
+    "[documentdb] The summary view (vw_records_status_summary) is replaced by a runtime aggregation pipeline. For low-frequency dashboard reads this is acceptable; if calls_per_second exceeds SLO thresholds, pre-materialization via a 'stats' collection with Change Streams should be implemented.",
+    "[documentdb] Unique index on 'email' preserves the RDBMS uniqueness constraint at slight write-overhead cost but is essential for data integrity during and after migration.",
+    "[documentdb] Document sizes are well within the 16 MB limit (estimated max ~4 KB). No sharding or document-splitting strategies are needed for the foreseeable growth horizon.",
+    "[documentdb] [PE note] The 'metadata' sub-document has a variable shape across documents (different keys per record). Post-migration, monitor query patterns against metadata fields \u2014 if any dot-notation query (e.g., {'metadata.source': 'web'}) becomes frequent, add a targeted single-field index. Do NOT use a wildcard index ($**) as it is unsupported in DocumentDB.",
+    "[documentdb] [PE note] AP-7's full collection scan for status counts is fine at low volume. If this dashboard query exceeds ~1 call/sec or the collection grows past ~1M documents, implement the pre-materialized 'stats' collection strategy described in the migration notes. Change Streams are available in DocumentDB 4.0+ for this purpose.",
+    "[documentdb] [PE note] The application-layer responsibility for setting 'updated_at' is a known risk. Consider adding a integration/contract test that verifies every write path through the repository layer sets updated_at, to prevent regression.",
+    "[documentdb] [PE note] Integer _id values are used (1001, 1002, 1003). Confirm the migration will preserve these as the original integer type rather than converting to ObjectId. If using auto-incrementing IDs, the application layer will need a sequence generator since DocumentDB does not have native auto-increment \u2014 alternatively, switch to ObjectId for new records post-migration."
+  ]
+}
