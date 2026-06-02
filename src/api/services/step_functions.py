@@ -269,7 +269,7 @@ class StepFunctionsService:
                         and iteration_key in iterations
                         and iterations[iteration_key]["state"]["status"] == "in-progress"
                     )
-                    if active_iter:
+                    if active_iter and iteration_key is not None:
                         child_key = f"{name}-{len(iteration_child_keys[iteration_key])}"
                         iteration_child_keys[iteration_key][child_key] = entry
                         iterations[iteration_key]["children"].append(entry)
@@ -290,7 +290,7 @@ class StepFunctionsService:
                         and iteration_key in iterations
                         and iterations[iteration_key]["state"]["status"] == "in-progress"
                     )
-                    if active_iter_exit:
+                    if active_iter_exit and iteration_key is not None:
                         # Find the last in-progress child with this name
                         for child in reversed(iterations[iteration_key]["children"]):
                             if child["name"] == name and child["status"] == "in-progress":

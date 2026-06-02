@@ -281,7 +281,7 @@ def split_schema_input(
     for idx, group in enumerate(groups):
         group_queries = group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables)
-        group_table_ids = {t.get("table_id") for t in group_tables}
+        group_table_ids: set[str] = {t["table_id"] for t in group_tables if t.get("table_id")}
         group_recs = recommendations_for_tables(group_table_ids, analysis_output)
 
         group_db_schema = {

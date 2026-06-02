@@ -54,7 +54,7 @@ def _dedupe_table_definitions(tables: list[dict]) -> list[dict]:
     result: list[dict] = []
     for t in tables:
         name = t.get("table_name")
-        if name not in seen:
+        if name and name not in seen:
             seen.add(name)
             result.append(t)
     return result
@@ -66,7 +66,7 @@ def _dedupe_by_name(items: list[dict], key: str) -> list[dict]:
     result: list[dict] = []
     for item in items:
         name = item.get(key)
-        if name not in seen:
+        if name and name not in seen:
             seen.add(name)
             result.append(item)
     return result

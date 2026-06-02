@@ -68,6 +68,8 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cred_mgr = _build_cred_mgr(inp)
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
 
+    assert inp.live_config is not None
+    assert cred_mgr is not None
     ssm = SSMExecutor(cred_mgr, inp.live_config.automation_instance_id)
     db = MariaDBRemoteCollector(
         ssm=ssm,

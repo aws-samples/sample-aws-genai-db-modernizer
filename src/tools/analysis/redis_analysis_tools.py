@@ -114,7 +114,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 pattern_type="caching",
                 confidence=Confidence.HIGH,
                 description=f"Detected {len(caching_queries)} high-frequency SELECT queries suitable for caching",
-                query_ids=[q.get("query_id") for q in caching_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in caching_queries if q.get("query_id")],
                 table_ids=caching_table_ids,
                 frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
             )
@@ -128,7 +128,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 pattern_type="session-store",
                 confidence=Confidence.MEDIUM,
                 description="Detected session or user lookup patterns",
-                query_ids=[q.get("query_id") for q in session_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in session_queries if q.get("query_id")],
                 table_ids=session_table_ids,
                 frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
             )
@@ -144,7 +144,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 pattern_type="leaderboard",
                 confidence=Confidence.MEDIUM,
                 description="Detected ranking/leaderboard query patterns (ORDER BY + LIMIT)",
-                query_ids=[q.get("query_id") for q in leaderboard_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in leaderboard_queries if q.get("query_id")],
                 table_ids=leaderboard_table_ids,
                 frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
             )
@@ -160,7 +160,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 pattern_type="time-series",
                 confidence=Confidence.MEDIUM,
                 description="Detected time series aggregation patterns",
-                query_ids=[q.get("query_id") for q in timeseries_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in timeseries_queries if q.get("query_id")],
                 table_ids=timeseries_table_ids,
                 frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
             )
@@ -176,7 +176,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 pattern_type="geospatial",
                 confidence=Confidence.MEDIUM,
                 description="Detected geospatial query patterns",
-                query_ids=[q.get("query_id") for q in geospatial_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in geospatial_queries if q.get("query_id")],
                 table_ids=geospatial_table_ids,
                 frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
             )
@@ -192,7 +192,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 anti_pattern_type="large-result-sets",
                 severity_weight=0.5,
                 description="Queries returning large result sets (>10k rows) not ideal for Redis",
-                query_ids=[q.get("query_id") for q in large_result_queries if q.get("query_id")],
+                query_ids=[str(q["query_id"]) for q in large_result_queries if q.get("query_id")],
                 table_ids=large_result_table_ids,
                 recommendation="Consider pagination or filtering to reduce result set size",
             )
