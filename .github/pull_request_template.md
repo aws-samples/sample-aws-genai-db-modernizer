@@ -1,4 +1,4 @@
-## What does this MR do?
+## What does this PR do?
 
 <!-- Brief description. Link to issue/task if applicable. -->
 
