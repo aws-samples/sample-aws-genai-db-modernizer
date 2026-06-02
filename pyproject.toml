@@ -18,7 +18,7 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
 
     # Database Connectors
-    "mysql-connector-python==8.2.0",
+    "mysql-connector-python==9.7.0",
     "psycopg2-binary==2.9.10",
     "pymssql>=2.3.0",
 
