@@ -490,7 +490,7 @@ def _summarize_artifact(summary: dict | None) -> str | None:
 
 def _extract_artifact_summary(database_name: str, job_id: str, agent_name: str) -> dict | None:
     """Extract key metrics from an agent's S3 artifact for the status view."""
-    assert s3_service is not None
+    assert s3_service is not None  # nosec B101 — type narrowing for mypy
     try:
         if agent_name == "collector":
             data = s3_service.read_artifact(database_name, job_id, "collector", "output.json")
