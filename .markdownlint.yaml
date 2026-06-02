@@ -1,0 +1,46 @@
+# Markdown linting configuration for Database Modernizer
+# See https://github.com/DavidAnson/markdownlint for rule details
+
+# Default state for all rules
+default: true
+
+# MD013/line-length - Line length
+# Disabled because documentation often needs long lines for readability
+MD013: false
+
+# MD033/no-inline-html - Inline HTML
+# Allow inline HTML for complex table formatting and line breaks
+MD033: false
+
+# MD036/no-emphasis-as-heading - Emphasis used instead of heading
+# Allow emphasized text that looks like headings for document markers
+MD036: false
+
+# MD040/fenced-code-language - Fenced code blocks should have a language
+# Allow code blocks without language specification for generic examples
+MD040: false
+
+# MD024/no-duplicate-heading - Multiple headings with same content
+# Allow duplicate headings in different sections (e.g., "### Added" in changelog)
+MD024:
+  siblings_only: true
+
+# MD003/heading-style - Heading style
+# Allow both ATX and setext heading styles
+MD003: false
+
+# MD041/first-line-heading - First line should be top-level heading
+# Allow templates to start with H2 instead of H1
+MD041: false
+
+# MD025/single-title - Multiple top-level headings
+# Allow multiple H1 headings in long documents
+MD025: false
+
+# MD029/ol-prefix - Ordered list item prefix
+# Allow any ordered list numbering style (1/1/1 or 1/2/3)
+MD029: false
+
+# MD046/code-block-style - Code block style
+# Allow both fenced and indented code blocks
+MD046: false

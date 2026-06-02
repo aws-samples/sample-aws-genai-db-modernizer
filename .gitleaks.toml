@@ -1,0 +1,30 @@
+# Gitleaks configuration for Database Modernizer
+# See https://github.com/gitleaks/gitleaks for more information
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for false positives"
+
+# Paths to exclude from scanning
+paths = [
+  '''\.secrets\.baseline''',
+  '''\.gitlab-ci\.yml''',
+  '''uv\.lock''',
+  '''docs/.*\.md''',
+  '''docs/examples/.*\.json''',
+  '''docs/examples/.*\.mmd''',
+  '''scripts/setup_dev\.sh''',
+  '''tests/unit/tools/aws/test_credential_manager\.py''',
+]
+
+# Regexes to exclude
+regexes = [
+  '''<SECRET_NAME>''',
+  '''<PASSWORD>''',
+  '''<API_KEY>''',
+  '''<TOKEN>''',
+  '''<DB_PASSWORD>''',
+  '''in_scope=True''',
+]

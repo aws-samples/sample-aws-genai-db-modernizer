@@ -7,7 +7,7 @@ Modernizing off a monolithic relational database is hard. Which queries belong i
 
 **Database Modernizer answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections. You can run from your laptop, with Claude Code, or deploy to your own AWS account.
 
-The core pipeline is **fully deterministic** — pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
+The core pipeline is **fully deterministic** - pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (analysis advisors, consolidation validation, executive summaries) but is never required. You get reproducible, auditable results every time, with AI refinement layered on top when available.
 
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 
@@ -182,10 +182,10 @@ Then open `http://localhost:3000` to browse your modernization results.
 
 GitHub Actions with the following stages:
 
-1. **Security** — Semgrep, cfn-nag, Checkov, Bandit
-2. **Lint** — ruff, black, mypy, isort
-3. **Test** — pytest with coverage (unit, contract, integration)
-4. **Deploy** — CloudFormation stack deployment
+1. **Security** - Semgrep, cfn-nag, Checkov, Bandit
+2. **Lint** - ruff, black, mypy, isort
+3. **Test** - pytest with coverage (unit, contract, integration)
+4. **Deploy** - CloudFormation stack deployment
 
 ---
 

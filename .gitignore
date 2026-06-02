@@ -4,29 +4,57 @@ Thumbs.db
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
 *.egg-info/
 dist/
 .venv/
 venv/
+ENV/
 
-# Node
-node_modules/
-build/
-coverage/
+# Virtual Environments
+.venv/
+venv/
 
-# Environment
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# Environment & Secrets
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+
+# Node (React UI)
+node_modules/
+npm-debug.log*
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
-# Artifacts
+# Type checking & linting caches
+.mypy_cache/
+.ruff_cache/
+
+# Docker
+docker-compose.override.yml
+
+# Build artifacts
+build/
+coverage/
+
+# Data & Logs
+logs/
+*.log
 artifacts/
 .modernizer-state.json

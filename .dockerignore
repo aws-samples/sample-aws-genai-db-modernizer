@@ -1,0 +1,44 @@
+# Python bytecode — must not leak into container images
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+.kiro/
+
+# Testing artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+
+# Docs and CI (not needed in container)
+docs/
+.gitlab/
+.github/
+*.md
+!README.md
+
+# Infrastructure (not needed in container)
+infrastructure/
+scripts/
+tests/
+
+# Node (UI has its own Dockerfile)
+node_modules/

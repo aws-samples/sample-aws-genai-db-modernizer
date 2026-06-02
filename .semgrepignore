@@ -1,0 +1,7 @@
+# .secrets.baseline contains hashes of known non-secret values for gitleaks tracking.
+# The generic-api-key rule produces false positives on this file.
+.secrets.baseline
+
+# package.json version ranges are covered by the committed package-lock.json.
+# The package-dependencies-check rule is a false positive when lock files exist.
+src/ui/package.json
