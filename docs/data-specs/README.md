@@ -324,4 +324,4 @@ To add support for a new database:
 ---
 
 **Last Updated:** June 2026
-**Maintained By:** Database Modernizer Team
+**Maintained By:** Database Modernizer Assessment Team

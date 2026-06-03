@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-03-13
-**Deciders:** Database Modernizer Architecture Team
+**Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-006 (Analysis Agent Architecture)
 
 ---

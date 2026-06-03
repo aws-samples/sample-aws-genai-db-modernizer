@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-02-18
-**Deciders:** Database Modernizer Architecture Team
+**Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-001 (State Management), ADR-003 (Progress Reporting), ADR-005 (Mini-Collectors), ADR-007 (Referee Orchestration)
 
 ---

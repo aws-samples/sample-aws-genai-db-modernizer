@@ -6,7 +6,7 @@
 
 **Status:** Template/Draft
 **Last Updated:** January 22, 2026
-**Owner:** Database Modernizer Team
+**Owner:** Database Modernizer Assessment Team
 **Priority:** Phase 1 (Post-MySQL/PostgreSQL/SQL Server)
 
 **Purpose:** This document provides SQL query templates for Oracle and DB2 data collection. These queries follow the same pattern as the validated MySQL, PostgreSQL, and SQL Server queries but **require testing and validation** before production use.

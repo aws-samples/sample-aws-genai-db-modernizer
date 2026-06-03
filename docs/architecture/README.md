@@ -1,6 +1,6 @@
 # Architecture Documentation
 
-This directory contains the high-level design and architecture documentation for the Database Modernizer system.
+This directory contains the high-level design and architecture documentation for the Database Modernizer Assessment system.
 
 ## 📚 Documentation Index
 
@@ -13,7 +13,7 @@ This directory contains the high-level design and architecture documentation for
 
 ## 🏗️ Architecture Overview
 
-Database Modernizer is an AI-powered database modernization analysis and recommendation system that customers deploy and run in their own environments.
+Database Modernizer Assessment is an AI-powered database modernization analysis and recommendation system that customers deploy and run in their own environments.
 
 ### Key Design Decisions
 
@@ -84,7 +84,7 @@ Visual diagrams are stored in the [diagrams/](diagrams/) directory:
 
 ### Strands SDK Architecture
 
-Database Modernizer uses the **Strands SDK** for agent implementation:
+Database Modernizer Assessment uses the **Strands SDK** for agent implementation:
 
 - **Strands Agent** - Framework-provided agent class
 - **Custom Tools** - Database-specific operations (connect, collect schema, query patterns)
@@ -190,4 +190,4 @@ When updating architecture documentation:
 ---
 
 **Last Updated:** June 1, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

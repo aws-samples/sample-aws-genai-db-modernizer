@@ -59,7 +59,7 @@ class LlmAdvisorBase(ABC):
             from strands import Agent
             from strands.models.bedrock import BedrockModel
 
-            model_id = os.environ.get("ANALYSIS_MODEL_ID", "us.anthropic.claude-sonnet-4-6-v1")
+            model_id = os.environ.get("ANALYSIS_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
             model = BedrockModel(model_id=model_id)
             self._agent = Agent(
                 model=model,

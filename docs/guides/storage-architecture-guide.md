@@ -332,4 +332,4 @@ This keeps agent code simple — no partial state recovery logic. The cost of re
 ---
 
 **Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

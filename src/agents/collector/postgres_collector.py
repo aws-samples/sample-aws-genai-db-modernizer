@@ -122,6 +122,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cred_mgr = _build_cred_mgr(inp)
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
 
+    assert inp.live_config is not None  # nosec B101 — type narrowing for mypy
+    assert cred_mgr is not None  # nosec B101 — type narrowing for mypy
     ssm = SSMExecutor(cred_mgr, inp.live_config.automation_instance_id)
     db = PostgreSQLRemoteCollector(
         ssm=ssm,

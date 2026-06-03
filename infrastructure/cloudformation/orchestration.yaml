@@ -81,7 +81,7 @@ Resources:
       Name: !Sub '${ProjectName}-${Environment}-notifications'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -100,7 +100,7 @@ Resources:
       KmsKeyId: !Ref KmsKeyArn
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -123,7 +123,7 @@ Resources:
       RetentionInDays: 30
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -226,7 +226,7 @@ Resources:
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}-${Environment}*'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -268,7 +268,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -309,7 +309,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -350,7 +350,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -391,7 +391,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -432,7 +432,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -473,7 +473,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -514,7 +514,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -556,7 +556,7 @@ Resources:
               Value: !Ref S3BucketName
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -649,7 +649,7 @@ Resources:
                 Resource: '*'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -706,7 +706,7 @@ Resources:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-store-task-token*'
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -781,7 +781,7 @@ Resources:
               return {"status": "token_stored", "phase": phase}
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -876,7 +876,7 @@ Resources:
                   - !GetAtt StoreTaskTokenFunction.Arn
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -901,7 +901,7 @@ Resources:
                 - !GetAtt StepFunctionsLogGroupWithoutKms.Arn
       DefinitionString: !Sub |
         {
-          "Comment": "Database Modernizer job orchestration (ADR-016)",
+          "Comment": "Database Modernizer Assessment job orchestration (ADR-016)",
           "StartAt": "RunCollector",
           "States": {
             "RunCollector": {
@@ -1374,7 +1374,7 @@ Resources:
         }
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy

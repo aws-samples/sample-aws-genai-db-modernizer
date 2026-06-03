@@ -1,6 +1,6 @@
 # Architecture Diagrams
 
-Mermaid diagrams for the Database Modernizer architecture. Render in GitLab/GitHub, VS Code (with Mermaid extension), or [mermaid.live](https://mermaid.live/).
+Mermaid diagrams for the Database Modernizer Assessment architecture. Render in GitLab/GitHub, VS Code (with Mermaid extension), or [mermaid.live](https://mermaid.live/).
 
 ## Diagrams
 

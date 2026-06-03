@@ -1,15 +1,15 @@
-# ADR-011: Monorepo Structure for Database Modernizer
+# ADR-011: Monorepo Structure for Database Modernizer Assessment
 
 **Status:** Accepted
 **Date:** February 4, 2026
-**Deciders:** tebanieo, Database Modernizer Team
+**Deciders:** tebanieo, Database Modernizer Assessment Team
 **Related:** ADR-002 (Structured Output with Pydantic), ADR-008 (Contract Versioning)
 
 ---
 
 ## Context
 
-Database Modernizer consists of multiple components:
+Database Modernizer Assessment consists of multiple components:
 
 - Backend (Python): Agents, API server, orchestrator
 - Frontend (TypeScript/React): React UI
@@ -207,7 +207,7 @@ cd database-modernizer
 ## Review and Approval
 
 - **Proposed by:** tebanieo
-- **Reviewed by:** Database Modernizer Team
+- **Reviewed by:** Database Modernizer Assessment Team
 - **Approved by:** Architecture Team
 - **Date:** February 4, 2026
 

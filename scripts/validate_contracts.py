@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # type: ignore
 """
-Validate Pydantic contract models for Database Modernizer.
+Validate Pydantic contract models for Database Modernizer Assessment.
 
 This script validates that Pydantic models:
 1. Can be imported without errors

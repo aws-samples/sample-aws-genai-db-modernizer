@@ -45,7 +45,7 @@ Resources:
           Value: enabled
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -78,7 +78,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-${Environment}-ecs-sg'
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy
@@ -111,7 +111,7 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
       Tags:
         - Key: Project
-          Value: Database Modernizer
+          Value: Database Modernizer Assessment
         - Key: Environment
           Value: !Ref Environment
         - Key: ManagedBy

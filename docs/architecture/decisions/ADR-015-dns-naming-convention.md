@@ -4,7 +4,7 @@
 
 **Status:** Accepted
 **Date:** 2026-02-17
-**Decision Makers:** Database Modernizer Engineering Team
+**Decision Makers:** Database Modernizer Assessment Engineering Team
 
 ## Context
 

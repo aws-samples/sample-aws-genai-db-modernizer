@@ -1,4 +1,4 @@
-"""Response models for the Database Modernizer API."""
+"""Response models for the Database Modernizer Assessment API."""
 
 from pydantic import BaseModel
 

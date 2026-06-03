@@ -38,6 +38,7 @@ from src.contracts.collector_output import (
     Queries,
     QueryLogSource,
     QueryPattern,
+    QueryType,
     RDSCloudWatchMetrics,
     RDSInstanceMetadata,
     Schema,
@@ -126,9 +127,11 @@ class CheckpointStore:
             return False
 
     def load(self, stage: str):
+        assert self._cred_mgr is not None  # nosec B101 — type narrowing for mypy
         return load_json(self._cred_mgr, self._bucket, self._key(stage))
 
     def save(self, stage: str, data):
+        assert self._cred_mgr is not None  # nosec B101 — type narrowing for mypy
         save_json(self._cred_mgr, self._bucket, self._key(stage), data)
         logger.info("Checkpoint saved: %s", stage)
 
@@ -211,6 +214,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     # SSM-based remote collector — credentials resolved ON the automation instance
     # Password never leaves the automation instance or appears in SSM command history
+    assert inp.live_config is not None  # nosec B101 — type narrowing for mypy
+    assert cred_mgr is not None  # nosec B101 — type narrowing for mypy
     ssm = SSMExecutor(cred_mgr, inp.live_config.automation_instance_id)
     db = MySQLRemoteCollector(
         ssm=ssm,
@@ -332,6 +337,7 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     start = time.monotonic()
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
     cred_mgr = _build_cred_mgr(inp)
+    assert inp.offline_config is not None  # nosec B101 — type narrowing for mypy
 
     from src.tools.database.offline_parser import fetch_offline_json, parse_offline_collection
 
@@ -645,7 +651,9 @@ def _build_queries(raw: list[dict]) -> Queries:
         QueryPattern(
             query_id=p["query_id"],
             query_text=p["query_text"],
-            query_type="INSERT" if p.get("query_type") == "REPLACE" else p.get("query_type"),
+            query_type=QueryType(
+                "INSERT" if p.get("query_type") == "REPLACE" else (p.get("query_type") or "SELECT")
+            ),
             frequency_per_hour=p["frequency_per_hour"],
             calls_per_second=p.get("calls_per_second"),
             tables_accessed=p["tables_accessed"] or ["unknown"],

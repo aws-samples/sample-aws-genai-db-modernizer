@@ -1,6 +1,6 @@
 # Orchestrator
 
-Step Functions state machine that coordinates the Database Modernizer job workflow. All agents run as ECS Fargate tasks; Step Functions manages sequencing, parallelism, retries, and the deeper-analysis loop.
+Step Functions state machine that coordinates the Database Modernizer Assessment job workflow. All agents run as ECS Fargate tasks; Step Functions manages sequencing, parallelism, retries, and the deeper-analysis loop.
 
 ## Workflow
 

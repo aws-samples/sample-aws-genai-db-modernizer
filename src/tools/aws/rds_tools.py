@@ -499,8 +499,8 @@ def get_database_insights(
                     "frequency_per_hour": (calls_per_sec or 0) * 3600,
                     "calls_per_second": calls_per_sec,
                     "execution_time_ms_avg": avg_latency_ms,
-                    "rows_affected_avg": (rows_affected_per_sec / calls_per_sec)
-                    if calls_per_sec and calls_per_sec > 0
+                    "rows_affected_avg": ((rows_affected_per_sec or 0) / calls_per_sec)
+                    if calls_per_sec is not None and calls_per_sec > 0
                     else 0,
                     "tables_accessed": _extract_tables(query_text),
                     "has_joins": " join " in query_text.lower(),

@@ -990,7 +990,7 @@ def _detect_architectural_patterns(
         return patterns
 
     # Find the primary engine (most queries)
-    primary = max(active_engines, key=active_engines.get)
+    primary = max(active_engines, key=lambda e: active_engines[e])
     secondaries = [e for e in active_engines if e != primary and active_engines[e] > 0]
 
     # Check for CQRS pattern

@@ -151,7 +151,7 @@ def ensure_automation_machine(
         "Parameters": params,
         "Capabilities": ["CAPABILITY_NAMED_IAM"],
         "Tags": [
-            {"Key": "Project", "Value": "Database Modernizer"},
+            {"Key": "Project", "Value": "Database Modernizer Assessment"},
             {"Key": "ManagedBy", "Value": "API"},
             {"Key": "VpcId", "Value": vpc_id},
         ],
@@ -198,7 +198,7 @@ def add_ingress_rule(
                     "UserIdGroupPairs": [
                         {
                             "GroupId": automation_security_group_id,
-                            "Description": "Database Modernizer automation machine",
+                            "Description": "Database Modernizer Assessment automation machine",
                         }
                     ],
                 }

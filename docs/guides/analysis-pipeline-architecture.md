@@ -5,7 +5,7 @@
 **Version:** 2.0.0
 **Date:** February 18, 2026
 **Status:** Draft
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 **Audience:** Backend Engineers implementing Analysis Agents
 
 ---
@@ -458,4 +458,4 @@ Each agent is independent — no shared state between parallel tasks. All coordi
 ---
 
 **Last Updated:** March 17, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

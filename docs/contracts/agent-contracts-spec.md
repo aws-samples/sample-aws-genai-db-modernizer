@@ -1,17 +1,17 @@
-# Database Modernizer - Agent Contracts Specification
+# Database Modernizer Assessment - Agent Contracts Specification
 
 ## Document Information
 
 **Version:** 2.0.0
 **Date:** February 2, 2026
 **Status:** Draft
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 
 ---
 
 ## Executive Summary
 
-This document defines the formal contracts (interfaces) for all agents in the Database Modernizer system. Each contract is specified using **Pydantic models** to ensure type-safe, validated communication between agents developed by different teams.
+This document defines the formal contracts (interfaces) for all agents in the Database Modernizer Assessment system. Each contract is specified using **Pydantic models** to ensure type-safe, validated communication between agents developed by different teams.
 
 **Purpose:**
 

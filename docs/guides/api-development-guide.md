@@ -38,7 +38,7 @@ import boto3
 import json
 import os
 
-app = FastAPI(title="Database Modernizer API")
+app = FastAPI(title="Database Modernizer Assessment API")
 
 # No CORS middleware needed — UI and API share the same ALB with
 # path-based routing (/api/* → API, /* → UI). Same origin, same
@@ -388,4 +388,4 @@ uv run pytest tests/ -v --cov=app --cov-report=html
 ---
 
 **Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

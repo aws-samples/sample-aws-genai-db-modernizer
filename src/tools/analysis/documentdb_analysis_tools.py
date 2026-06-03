@@ -515,7 +515,7 @@ def _build_patterns_from_matches(
         if not matched_queries:
             continue
         table_ids = list({t for q in matched_queries for t in (q.get("tables_accessed") or [])})
-        query_ids = [q.get("query_id") for q in matched_queries if q.get("query_id")]
+        query_ids = [str(q["query_id"]) for q in matched_queries if q.get("query_id")]
         if catalog_pattern.base_score >= 85:
             confidence = Confidence.HIGH
         elif catalog_pattern.base_score >= 70:
@@ -544,7 +544,7 @@ def _build_anti_patterns_from_matches(
         if not matched_queries:
             continue
         table_ids = list({t for q in matched_queries for t in (q.get("tables_accessed") or [])})
-        query_ids = [q.get("query_id") for q in matched_queries if q.get("query_id")]
+        query_ids = [str(q["query_id"]) for q in matched_queries if q.get("query_id")]
         anti_patterns.append(
             AntiPattern(
                 anti_pattern_id=catalog_ap.pattern_id,

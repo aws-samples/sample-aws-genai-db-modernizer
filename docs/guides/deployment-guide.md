@@ -8,7 +8,7 @@
 
 ## Overview
 
-Deployment instructions for Database Modernizer. The platform runs on ECS Fargate with Step Functions orchestration, deployed via CloudFormation stacks through a GitHub Actions pipeline.
+Deployment instructions for Database Modernizer Assessment. The platform runs on ECS Fargate with Step Functions orchestration, deployed via CloudFormation stacks through a GitHub Actions pipeline.
 
 ---
 
@@ -62,6 +62,21 @@ Required IAM permissions for deployment and runtime:
 - `route53:ChangeResourceRecordSets`
 - `elasticloadbalancing:*`
 - `iam:PassRole`, `iam:CreateRole` (with `CAPABILITY_NAMED_IAM`)
+
+### Domain and Certificate Requirement
+
+> **Cloud deployment requires a custom domain with an ACM certificate.**
+
+The API is secured behind Cognito authentication enforced at the ALB via HTTPS. This prevents unauthorized access to your Bedrock models and AWS resources. Without it, anyone with your ALB URL could invoke LLM calls on your account.
+
+The `dns.yaml` stack creates a Route 53 hosted zone and wildcard ACM certificate for your domain. You need:
+
+- A domain you own (registered in Route 53 or elsewhere with NS delegation)
+- ~5 minutes for ACM DNS validation to complete
+
+**If you're evaluating locally**, use local mode (`STORAGE_TYPE=local`) which requires no cloud infrastructure, no domain, and no certificate. See [Local Development](#3-local-development).
+
+**Future:** We plan to offer an API Gateway alternative that provides free HTTPS via the default `execute-api` domain, removing the custom domain requirement. See [GitHub Issues](../../issues) for status.
 
 ---
 
@@ -437,4 +452,4 @@ export ENV="dev"
 
 **Last Updated:** March 27, 2026
 **Version:** 2.0
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

@@ -246,7 +246,7 @@ class LocalOrchestrator(Orchestrator):
 
         if len(engines) <= 1:
             for engine in engines:
-                run_analysis(job_id, database_name, engine, self.store, llm_mode=self.llm_mode)
+                run_analysis(job_id, database_name, engine, self.store, llm_mode="none")
             return
 
         # Fan-out: run engines in parallel (threads — avoids pickling issues with store)

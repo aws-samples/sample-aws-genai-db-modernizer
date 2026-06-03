@@ -10,7 +10,7 @@
 
 ## Context
 
-Database Modernizer collector agents need to analyze databases of varying sizes:
+Database Modernizer Assessment collector agents need to analyze databases of varying sizes:
 
 - **Small databases**: 10-100 tables (fast, single collector)
 - **Medium databases**: 100-500 tables (manageable, single collector)

@@ -31,9 +31,11 @@ s3_service: S3ArtifactsService | None = None
 cw_service: CloudWatchLogsService | None = None
 
 
-def _require_services():
+def _require_services() -> tuple[StepFunctionsService, S3ArtifactsService]:
+    """Raise 503 if services aren't configured; returns narrowed types."""
     if not sfn_service or not s3_service:
         raise HTTPException(status_code=503, detail="Services not configured")
+    return sfn_service, s3_service
 
 
 @router.post("/prepare", response_model=AssessmentPrepared, status_code=201)
@@ -43,7 +45,7 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
     Returns the job ID, S3 upload prefix, and a presigned URL so the client
     can upload collector output files before starting the assessment.
     """
-    _require_services()
+    _, s3_svc = _require_services()
     job_id = str(uuid.uuid4())
     now = datetime.now(UTC)
 
@@ -52,10 +54,10 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
     expires_in = 3600  # 1 hour
 
     # Generate presigned URL for uploading
-    upload_url = s3_service.client.generate_presigned_url(
+    upload_url = s3_svc.client.generate_presigned_url(
         "put_object",
         Params={
-            "Bucket": s3_service.bucket,
+            "Bucket": s3_svc.bucket,
             "Key": upload_key,
             "ContentType": "application/json",
         },
@@ -65,7 +67,7 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
     return AssessmentPrepared(
         job_id=job_id,
         upload_prefix=upload_prefix,
-        upload_bucket=s3_service.bucket,
+        upload_bucket=s3_svc.bucket,
         upload_url=upload_url,
         upload_key=upload_key,
         status="PREPARED",
@@ -81,11 +83,11 @@ async def confirm_upload(job_id: str, database_name: str):
     Checks that the collector output file exists in S3 at the expected
     location. Call this after the presigned URL upload finishes.
     """
-    _require_services()
+    _, s3_svc = _require_services()
     upload_key = f"{database_name}/{job_id}/uploads/collector-output.json"
 
     try:
-        head = s3_service.client.head_object(Bucket=s3_service.bucket, Key=upload_key)
+        head = s3_svc.client.head_object(Bucket=s3_svc.bucket, Key=upload_key)
         return {
             "job_id": job_id,
             "status": "confirmed",
@@ -103,12 +105,12 @@ async def confirm_upload(job_id: str, database_name: str):
 @router.get("/{job_id}/uploads")
 async def list_uploads(job_id: str, database_name: str):
     """List uploaded files for a prepared assessment."""
-    _require_services()
+    _, s3_svc = _require_services()
     prefix = f"{database_name}/{job_id}/uploads/"
 
     try:
-        response = s3_service.client.list_objects_v2(
-            Bucket=s3_service.bucket,
+        response = s3_svc.client.list_objects_v2(
+            Bucket=s3_svc.bucket,
             Prefix=prefix,
         )
     except Exception as e:
@@ -134,25 +136,25 @@ async def list_uploads(job_id: str, database_name: str):
 @router.delete("/{job_id}/uploads/{filename}")
 async def delete_upload(job_id: str, database_name: str, filename: str):
     """Delete an uploaded file from a prepared assessment."""
-    _require_services()
+    _, s3_svc = _require_services()
     key = f"{database_name}/{job_id}/uploads/{filename}"
 
     try:
         # Check if file exists first
-        s3_service.client.head_object(Bucket=s3_service.bucket, Key=key)
-    except s3_service.client.exceptions.NoSuchKey as e:
+        s3_svc.client.head_object(Bucket=s3_svc.bucket, Key=key)
+    except s3_svc.client.exceptions.NoSuchKey as e:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}") from e
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}") from e
 
-    s3_service.client.delete_object(Bucket=s3_service.bucket, Key=key)
+    s3_svc.client.delete_object(Bucket=s3_svc.bucket, Key=key)
     return {"job_id": job_id, "filename": filename, "status": "deleted"}
 
 
 @router.post("", response_model=AssessmentCreated, status_code=202)
 async def create_assessment(request: AssessmentRequest):
     """Start a new database modernization assessment."""
-    _require_services()
+    sfn_svc, _ = _require_services()
     job_id = request.job_id or str(uuid.uuid4())
     now = datetime.now(UTC)
 
@@ -205,7 +207,7 @@ async def create_assessment(request: AssessmentRequest):
         sfn_input["engine"] = cluster_info["engine"]
         sfn_input["db_instance_identifier"] = cluster_info["db_instance_identifier"]
 
-    result = sfn_service.start_execution(job_id, sfn_input)
+    result = sfn_svc.start_execution(job_id, sfn_input)
 
     return AssessmentCreated(
         job_id=job_id,
@@ -223,8 +225,8 @@ async def list_assessments(
     offset: int = 0,
 ):
     """List all assessments."""
-    _require_services()
-    executions = sfn_service.list_executions(
+    sfn_svc, _ = _require_services()
+    executions = sfn_svc.list_executions(
         status_filter=status.upper() if status else None,
         max_results=limit + offset,
     )
@@ -262,13 +264,13 @@ async def list_assessments(
 @router.get("/{job_id}", response_model=AssessmentDetail)
 async def get_assessment(job_id: str):
     """Get assessment status with pipeline progress."""
-    _require_services()
-    execution = sfn_service.describe_execution(job_id)
+    sfn_svc, _ = _require_services()
+    execution = sfn_svc.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
     # Get per-agent progress from execution history
-    history = sfn_service.get_execution_history(job_id)
+    history = sfn_svc.get_execution_history(job_id)
     stages = []
     completed_count = 0
     current_stage = None
@@ -321,7 +323,7 @@ async def get_assessment(job_id: str):
         source_database_type=sfn_input.get("source_database_type"),
         database_name=sfn_input.get("database_name"),
         created_at=execution.get("started_at"),
-        execution_arn=sfn_service._execution_arn(job_id),
+        execution_arn=sfn_svc._execution_arn(job_id),
         progress=progress,
         error=error_detail,
     )
@@ -330,13 +332,13 @@ async def get_assessment(job_id: str):
 @router.delete("/{job_id}")
 async def cancel_assessment(job_id: str):
     """Cancel a running assessment or delete a completed one."""
-    _require_services()
-    execution = sfn_service.describe_execution(job_id)
+    sfn_svc, _ = _require_services()
+    execution = sfn_svc.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
     if execution["status"] == "RUNNING":
-        sfn_service.stop_execution(job_id)
+        sfn_svc.stop_execution(job_id)
 
     return {"job_id": job_id, "status": "CANCELLED", "message": "Assessment cancelled successfully"}
 
@@ -344,12 +346,12 @@ async def cancel_assessment(job_id: str):
 @router.get("/{job_id}/agents")
 async def get_agent_statuses(job_id: str):
     """Get per-agent status table with artifact summaries for completed agents."""
-    _require_services()
-    execution = sfn_service.describe_execution(job_id)
+    sfn_svc, s3_svc = _require_services()
+    execution = sfn_svc.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
-    history = sfn_service.get_execution_history(job_id)
+    history = sfn_svc.get_execution_history(job_id)
     database_name = execution.get("input", {}).get("database_name", "")
 
     agents = []
@@ -367,9 +369,9 @@ async def get_agent_statuses(job_id: str):
         artifact_summary = None
         if stage["status"] == "completed" and database_name:
             agent_name = _stage_to_agent_name(stage["name"])
-            filename = _agent_filename(agent_name)
+            filename = _agent_filename(agent_name) if agent_name else None
             if agent_name and filename:
-                output_size = s3_service.artifact_size(database_name, job_id, agent_name, filename)
+                output_size = s3_svc.artifact_size(database_name, job_id, agent_name, filename)
                 artifact_summary = _extract_artifact_summary(database_name, job_id, agent_name)
 
         agents.append(
@@ -395,12 +397,12 @@ async def get_execution_history(job_id: str):
     Returns a flat table of all states (Task, Map, MapIteration, Pass, etc.)
     in chronological order — mirrors the SFN console table view.
     """
-    _require_services()
-    execution = sfn_service.describe_execution(job_id)
+    sfn_svc, _ = _require_services()
+    execution = sfn_svc.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
-    states = sfn_service.get_full_execution_history(job_id)
+    states = sfn_svc.get_full_execution_history(job_id)
 
     return {
         "job_id": job_id,
@@ -419,7 +421,7 @@ async def get_logs(
     next_token: str | None = None,
 ):
     """Get execution logs, optionally filtered by agent."""
-    _require_services()
+    _require_services()  # validates services exist
     if not cw_service:
         raise HTTPException(status_code=503, detail="CloudWatch logs not configured")
 
@@ -488,6 +490,7 @@ def _summarize_artifact(summary: dict | None) -> str | None:
 
 def _extract_artifact_summary(database_name: str, job_id: str, agent_name: str) -> dict | None:
     """Extract key metrics from an agent's S3 artifact for the status view."""
+    assert s3_service is not None  # nosec B101 — type narrowing for mypy
     try:
         if agent_name == "collector":
             data = s3_service.read_artifact(database_name, job_id, "collector", "output.json")

@@ -104,3 +104,8 @@ exclude_dirs = ["tests", "scripts/ci-database"]
 
 [tool.hypothesis]
 database = ".hypothesis/examples"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.7.1",
+]

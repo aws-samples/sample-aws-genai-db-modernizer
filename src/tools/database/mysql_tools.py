@@ -472,8 +472,12 @@ def _has_time_range_filter(query_text: str) -> bool:
 def _version_gte(version: str, minimum: str) -> bool:
     """Check if MySQL version >= minimum. Handles '8.0.43-log' style strings."""
     try:
-        v_parts = [int(x) for x in re.match(r"(\d+)\.(\d+)\.(\d+)", version).groups()]
-        m_parts = [int(x) for x in re.match(r"(\d+)\.(\d+)\.(\d+)", minimum).groups()]
+        v_match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+        m_match = re.match(r"(\d+)\.(\d+)\.(\d+)", minimum)
+        if not v_match or not m_match:
+            return False
+        v_parts = [int(x) for x in v_match.groups()]
+        m_parts = [int(x) for x in m_match.groups()]
         return v_parts >= m_parts
     except Exception:
         return False

@@ -1,6 +1,6 @@
 # System Context
 
-External actors and systems for Database Modernizer (Phase 0).
+External actors and systems for Database Modernizer Assessment (Phase 0).
 
 ```mermaid
 graph TB
@@ -11,7 +11,7 @@ graph TB
     end
 
     subgraph "Customer AWS Account"
-        DBM[Database Modernizer]
+        DBM[Database Modernizer Assessment]
         RDS[(Customer RDS<br/>Read-only)]
         REDIS[(Customer Redis<br/>Read-only)]
 

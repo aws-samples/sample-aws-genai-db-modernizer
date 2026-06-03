@@ -1,18 +1,18 @@
-# Testing Guide for Database Modernizer
+# Testing Guide for Database Modernizer Assessment
 
 ## Document Information
 
 **Version:** 2.0.0
 **Date:** February 18, 2026
 **Status:** Draft
-**Owner:** Database Modernizer Engineering Team
+**Owner:** Database Modernizer Assessment Engineering Team
 **Audience:** All Engineers
 
 ---
 
 ## Overview
 
-Testing strategies for the Database Modernizer system, covering all 6 testing layers defined in ADR-009.
+Testing strategies for the Database Modernizer Assessment system, covering all 6 testing layers defined in ADR-009.
 
 Key principles:
 
@@ -613,4 +613,4 @@ tests/
 ---
 
 **Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Engineering Team
+**Maintained By:** Database Modernizer Assessment Engineering Team

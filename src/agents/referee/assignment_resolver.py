@@ -166,7 +166,7 @@ class AssignmentResolver:
             # Otherwise pick highest adjusted score
             query_scores = scores.get(qid, {})
             if query_scores:
-                best = max(query_scores, key=query_scores.get)
+                best = max(query_scores, key=lambda k: query_scores[k])
                 assigned[qid] = best
                 assigned_confidence[qid] = query_scores[best]
                 assigned_reason[qid] = f"highest confidence for {best}"
@@ -471,7 +471,7 @@ def derive_table_assignments(
     for table_id in sorted(table_engine_counts.keys()):
         engine_counts = table_engine_counts[table_id]
         engines = sorted(engine_counts.keys())
-        primary_engine = max(engine_counts, key=engine_counts.get)
+        primary_engine = max(engine_counts, key=lambda k: engine_counts[k])
 
         multi_engine_reason = None
         if len(engines) >= 2:

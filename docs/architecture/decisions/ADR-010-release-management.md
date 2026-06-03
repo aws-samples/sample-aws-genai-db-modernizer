@@ -9,7 +9,7 @@
 
 ## Context
 
-Database Modernizer needs a clear release management strategy for:
+Database Modernizer Assessment needs a clear release management strategy for:
 
 - **Version numbering**: User-facing release versions
 - **Git workflow**: Branch strategy and commit practices

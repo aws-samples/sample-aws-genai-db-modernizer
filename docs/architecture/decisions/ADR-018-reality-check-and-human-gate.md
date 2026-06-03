@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-04-24
-**Deciders:** Database Modernizer Architecture Team
+**Deciders:** Database Modernizer Assessment Architecture Team
 
 ## Context
 

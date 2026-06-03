@@ -11,7 +11,7 @@
 
 ## Context
 
-Database Modernizer agents need to communicate data between stages (Collector → Analysis → Referee → Schema Design). We had two conflicting approaches:
+Database Modernizer Assessment agents need to communicate data between stages (Collector → Analysis → Referee → Schema Design). We had two conflicting approaches:
 
 1. **Pure JSON files**: Serialize between every agent (slow, but resumable)
 2. **Pure Strands state**: In-memory only (fast, but not resumable)

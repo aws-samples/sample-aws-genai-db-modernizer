@@ -1,6 +1,6 @@
 # Agent Contracts (Pydantic Models)
 
-Pydantic model definitions for all agent contracts in the Database Modernizer pipeline.
+Pydantic model definitions for all agent contracts in the Database Modernizer Assessment pipeline.
 
 ## Contract Files
 

@@ -87,7 +87,7 @@ def main():
             sys.exit(1)
 
     print(f"\n{'='*60}")
-    print("  Database Modernizer — Load Test Runner")
+    print("  Database Modernizer Assessment — Load Test Runner")
     print(f"{'='*60}")
     print(f"  Database:       {args.database_name}")
     print(f"  Job ID:         {args.job_id}")
