@@ -36,6 +36,43 @@ os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
 
 STATE_FILE = ".modernizer-state.json"
 
+# ============================================================
+# Colored output: auto-colorize [phase] prefixes on stdout/stderr
+# ============================================================
+import re
+
+_PHASE_RE = re.compile(r"^(\[[\w./-]+\])")
+
+
+class _ColorizedStream:
+    """Wraps a stream to colorize [phase-name] prefixes in cyan."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        # Colorize each line that starts with [something]
+        lines = text.split("\n")
+        colored = []
+        for line in lines:
+            m = _PHASE_RE.match(line)
+            if m:
+                prefix = m.group(1)
+                rest = line[m.end():]
+                colored.append(f"\033[36m{prefix}\033[0m{rest}")
+            else:
+                colored.append(line)
+        return self._stream.write("\n".join(colored))
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
+
 
 def _output(phase: str, data: dict) -> None:
     """Print phase progress as JSON to stdout."""
@@ -49,7 +86,12 @@ def _error(phase: str, message: str) -> None:
 
 def _log(phase: str, msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [{phase}] {msg}", file=sys.stderr, flush=True)
+    print(f"[{phase}] {msg}  [{ts}]", flush=True)
+
+
+def _log_artifact(phase: str, path: str) -> None:
+    """Print artifact output path with green highlight."""
+    print(f"[{phase}] Output available at: \033[32m{path}\033[0m", flush=True)
 
 
 def _banner(title: str) -> None:
@@ -190,12 +232,15 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])
 
+    artifact = f"{db_name}/{job_id}/collector/output.json"
+    _log_artifact("collect", artifact)
     _output("collect", {
         "status": "complete",
         "job_id": job_id,
         "database_name": db_name,
         "tables": len(tables),
         "queries": len(queries),
+        "artifact": artifact,
     })
     return job_id, db_name
 
@@ -215,7 +260,9 @@ def phase_triage(store, job_id: str, db: str) -> list[str]:
     selected = [a["agent_type"] for a in triage_output.get("selected_agents", [])]
     skipped = [a["agent_type"] for a in triage_output.get("skipped_agents", [])]
 
-    _output("triage", {"status": "complete", "selected": selected, "skipped": skipped})
+    artifact = f"{db}/{job_id}/referee-triage/triage.json"
+    _log_artifact("triage", artifact)
+    _output("triage", {"status": "complete", "selected": selected, "skipped": skipped, "artifact": artifact})
     return selected
 
 
@@ -253,7 +300,10 @@ def phase_analysis(store, job_id: str, db: str, selected_engines: list[str], llm
                 results[engine] = f"error: {e}"
                 _log("analysis", f"{engine} FAILED: {e}")
 
-    _output("analysis", {"status": "complete", "results": results})
+    artifacts = {engine: f"{db}/{job_id}/analysis-{engine}/" for engine in results if results[engine] == "complete"}
+    for engine, path in artifacts.items():
+        _log_artifact(f"analysis/{engine}", path)
+    _output("analysis", {"status": "complete", "results": results, "artifacts": artifacts})
     return results
 
 
@@ -277,7 +327,9 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
         distribution[engine] = distribution.get(engine, 0) + 1
 
     total = sum(distribution.values())
-    _output("assignment", {"status": "complete", "distribution": distribution, "total_queries": total})
+    artifact = f"{db}/{job_id}/assignment/v1/assignment.json"
+    _log_artifact("assignment", artifact)
+    _output("assignment", {"status": "complete", "distribution": distribution, "total_queries": total, "artifact": artifact})
     return distribution
 
 
@@ -296,7 +348,9 @@ def phase_reality_check(store, job_id: str, db: str, llm_mode: str) -> str:
             _output("reality_check", {"status": "awaiting_llm", "llm_request": llm_input_path})
             return "awaiting_llm"
 
-    _output("reality_check", {"status": "complete"})
+    artifact = f"{db}/{job_id}/reality-check/output.json"
+    _log_artifact("reality-check", artifact)
+    _output("reality_check", {"status": "complete", "artifact": artifact})
     return "complete"
 
 
@@ -346,7 +400,9 @@ def phase_reality_check_finalize(store, job_id: str, db: str, assignment_version
         revised_key = f"{db}/{job_id}/assignment/v{new_version}/assignment.json"
         store.write_json(revised_key, revised_assignment)
 
-    _output("reality_check", {"status": "complete", "finalized": True})
+    artifact = f"{db}/{job_id}/reality-check/output.json"
+    _log_artifact("reality-check", artifact)
+    _output("reality_check", {"status": "complete", "finalized": True, "artifact": artifact})
 
 
 # ============================================================
@@ -370,7 +426,9 @@ def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> None:
     # Post-schema routing
     orch._run_post_schema_routing(job_id, db)
 
-    _output("schema_design", {"status": "complete"})
+    artifact = f"{db}/{job_id}/schema-*/v1/schema_output.json"
+    _log_artifact("schema-design", artifact)
+    _output("schema_design", {"status": "complete", "artifact": artifact})
 
 
 # ============================================================
@@ -387,7 +445,9 @@ def phase_synthesis(store, job_id: str, db: str, llm_mode: str) -> None:
     orch._save_progression(progression)
 
     orch.resume(job_id, Phase.SYNTHESIS)
-    _output("synthesis", {"status": "complete"})
+    artifact = f"{db}/{job_id}/referee-synthesis/report.json"
+    _log_artifact("synthesis", artifact)
+    _output("synthesis", {"status": "complete", "artifact": artifact})
 
 
 # ============================================================
