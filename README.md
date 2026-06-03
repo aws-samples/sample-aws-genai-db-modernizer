@@ -74,6 +74,8 @@ Run the assessment pipeline with no credentials, no LLM, no network calls. This 
 uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress
 ```
 
+![Deterministic mode demo](docs/assets/local-modernizer.gif)
+
 Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
 **What you get without LLM:**
@@ -140,6 +142,8 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
    ```bash
    uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress --llm-mode bedrock --all -y
    ```
+
+![Bedrock mode demo](docs/assets/local-modernizer-bedrock.gif)
 
 ### Option 4: Analyze Your Own Database
 
