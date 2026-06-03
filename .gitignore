@@ -61,3 +61,6 @@ artifacts/
 
 # Example collector outputs (unzipped from .zip files)
 docs/examples/**/*.json
+
+# Asciinema recordings (large binary files)
+*.cast
