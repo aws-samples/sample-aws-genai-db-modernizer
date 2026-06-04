@@ -82,6 +82,29 @@ The `dns.yaml` stack creates a Route 53 hosted zone and wildcard ACM certificate
 
 ## 2. ECS Fargate Deployment
 
+### Quick Start (Makefile)
+
+The simplest way to deploy is via the Makefile at the project root:
+
+```bash
+cp .env.example .env       # Edit with your domain and region
+make deploy-dns            # Step 1: Route 53 + ACM certificate
+# ACTION: Add NS records to your parent domain, wait for cert validation
+make deploy-infra          # Step 2: VPC, ECR, KMS
+make build                 # Step 3: Build and push Docker images
+make deploy-services       # Step 4: ECS, ALB, Cognito, S3, Step Functions
+make create-test-user      # Step 5: Create a Cognito login
+```
+
+To tear down:
+
+```bash
+make destroy               # Empties S3/ECR, deletes services + infra
+make destroy-dns           # Also delete DNS (optional, keeps for reuse)
+```
+
+Run `make help` to see all available targets.
+
 ### Architecture Overview
 
 The platform is deployed as a set of CloudFormation stacks with the naming convention `{prefix}-{stack}` (e.g., `modernizer-dev-storage`, `modernizer-dev-api-service`).

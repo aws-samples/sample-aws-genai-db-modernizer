@@ -199,8 +199,8 @@ python scripts/generate_types.py \
 
 ```bash
 # Customer experience
-git clone https://github.com/aws-samples/aws-genai-db-modernizer.git
-cd database-modernizer
+git clone https://github.com/aws-samples/sample-aws-genai-db-modernizer.git
+cd sample-aws-genai-db-modernizer
 ./scripts/setup_dev.sh  # Or deploy to AWS
 ```
 

@@ -20,7 +20,7 @@ Parameters:
   GitHubRepo:
     Type: String
     Description: GitHub repository name
-    Default: aws-genai-db-modernizer
+    Default: sample-aws-genai-db-modernizer
 
   GitHubBranch:
     Type: String
