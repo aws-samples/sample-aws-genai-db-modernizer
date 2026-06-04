@@ -126,7 +126,13 @@ git checkout -b feat/your-feature-name
 
 ### 4. Commit Changes
 
-Follow our [Commit Message Format](#commit-message-format)
+Follow our [Commit Message Format](#commit-message-format). Set up the commit template to guide your messages:
+
+```bash
+git config commit.template .gitmessage
+```
+
+Then commit as usual:
 
 ```bash
 git add .

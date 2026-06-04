@@ -1,0 +1,108 @@
+name: API Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/api/**'
+      - 'src/contracts/**'
+      - 'scripts/generate_api_spec.py'
+      - '.github/workflows/api-docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/api/**'
+      - 'src/contracts/**'
+      - 'scripts/generate_api_spec.py'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync
+      - name: Generate OpenAPI spec
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+        run: uv run python scripts/generate_api_spec.py
+      - name: Upload spec artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: docs/architecture/openapi.json
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: spec/
+
+      - name: Build Swagger UI site
+        run: |
+          mkdir -p site
+          cat > site/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Database Modernizer API</title>
+            <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+            <style>
+              body { margin: 0; padding: 0; }
+              #swagger-ui .topbar { display: none; }
+            </style>
+          </head>
+          <body>
+            <div id="swagger-ui"></div>
+            <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+            <script>
+              SwaggerUIBundle({
+                url: './openapi.json',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                  SwaggerUIBundle.presets.apis,
+                  SwaggerUIBundle.SwaggerUIStandalonePreset
+                ],
+                layout: "BaseLayout"
+              });
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+          cp spec/openapi.json site/openapi.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
