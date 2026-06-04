@@ -174,7 +174,16 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
-git commit -m "sync: apply changes from source branch ${BRANCH}"
+# First commit attempt — hooks may auto-fix files (openapi regen, formatting, etc.)
+if ! git commit -m "chore: sync changes from source branch ${BRANCH}" 2>/dev/null; then
+  echo "==> Hooks modified files, committing auto-fixes..."
+  git add -A
+  if ! git commit -m "chore: sync changes from source branch ${BRANCH}"; then
+    echo ""
+    echo "Error: Pre-commit hooks failed. Review the errors above and fix in the source repo."
+    exit 1
+  fi
+fi
 
 echo "==> Pushing to target remote..."
 if ! git push origin "$BRANCH" --force-with-lease; then
