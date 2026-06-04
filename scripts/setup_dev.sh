@@ -321,19 +321,19 @@ fi
 print_header "Step 9: Verifying Setup"
 
 print_info "Checking Python packages..."
-if python -c "import pydantic" 2>/dev/null; then
+if uv run python -c "import pydantic" 2>/dev/null; then
     print_success "pydantic package installed"
 else
     print_warning "pydantic package not found (will be installed later)"
 fi
 
-if python -c "import pytest" 2>/dev/null; then
+if uv run python -c "import pytest" 2>/dev/null; then
     print_success "pytest installed"
 else
     print_warning "pytest not found"
 fi
 
-if python -c "import boto3" 2>/dev/null; then
+if uv run python -c "import boto3" 2>/dev/null; then
     print_success "boto3 installed (required for AWS/RDS access)"
 else
     print_warning "boto3 not found (required for RDS data collection)"
@@ -377,7 +377,7 @@ if [ -d "tests" ]; then
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         print_info "Running tests..."
-        if pytest tests/ -v; then
+        if uv run pytest tests/ -v; then
             print_success "All tests passed"
         else
             print_warning "Some tests failed (this may be expected if implementation is incomplete)"
@@ -395,23 +395,20 @@ print_header "Setup Complete!"
 echo -e "${GREEN}Your development environment is ready!${NC}\n"
 
 echo "Next steps:"
-echo "  1. Activate virtual environment:"
-echo -e "     ${BLUE}source .venv/bin/activate${NC}"
-echo ""
-echo "  2. Configure AWS credentials (required for RDS access):"
+echo "  1. Configure AWS credentials (required for RDS access):"
 echo -e "     ${BLUE}aws configure${NC}"
 echo ""
-echo "  3. Start development:"
-echo -e "     ${BLUE}git checkout -b feature/your-feature${NC}"
+echo "  2. Start development:"
+echo -e "     ${BLUE}git checkout -b feat/your-feature${NC}"
 echo ""
-echo "  4. Make changes and commit:"
+echo "  3. Make changes and commit:"
 echo -e "     ${BLUE}git commit${NC}  (template will open in editor)"
 echo ""
-echo "  5. Run tests:"
-echo -e "     ${BLUE}pytest tests/${NC}"
+echo "  4. Run tests:"
+echo -e "     ${BLUE}uv run pytest tests/${NC}"
 echo ""
-echo "  6. Validate contracts:"
-echo -e "     ${BLUE}python scripts/validate_contracts.py docs/03-contracts/models/*.py${NC}"
+echo "  5. Validate contracts:"
+echo -e "     ${BLUE}uv run python scripts/validate_contracts.py src/contracts/*.py${NC}"
 echo ""
 
 print_info "Pre-commit hooks will run automatically on git commit"

@@ -92,6 +92,8 @@ uv run pre-commit install
 uv run pre-commit install --hook-type commit-msg
 ```
 
+> **Note:** If your PR shows failing CI scans (lint, type check, security), it most likely means you haven't installed the pre-commit hooks locally. Install them with the commands above (or run `./scripts/setup_dev.sh`), fix any issues, and re-push your changes.
+
 ---
 
 ## Development Workflow
