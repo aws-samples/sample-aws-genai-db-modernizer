@@ -31,7 +31,7 @@ os.environ.setdefault("ENVIRONMENT", "dev")
 
 from src.api.main import app  # noqa: E402
 
-OUTPUT_PATH = ROOT / "docs" / "02-architecture" / "openapi.json"
+OUTPUT_PATH = ROOT / "docs" / "architecture" / "openapi.json"
 
 
 def generate() -> "dict[str, Any]":

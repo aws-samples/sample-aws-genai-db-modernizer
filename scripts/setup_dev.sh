@@ -4,6 +4,9 @@
 
 set -e  # Exit on error
 
+# Clear any stale VIRTUAL_ENV from parent shell to avoid uv path mismatch warnings
+unset VIRTUAL_ENV
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -225,13 +228,12 @@ else
     exit 1
 fi
 
-# Step 6: Activate virtual environment
-print_header "Step 6: Activating Virtual Environment"
+# Step 6: Verify virtual environment
+print_header "Step 6: Verifying Virtual Environment"
 
 if [ -d ".venv" ]; then
-    print_info "Activating virtual environment..."
-    source .venv/bin/activate
-    print_success "Virtual environment activated"
+    print_success "Virtual environment exists (.venv/)"
+    print_info "All commands use 'uv run' — no manual activation needed"
 else
     print_error "Virtual environment not found"
     print_info "uv sync should have created .venv automatically"
@@ -272,16 +274,22 @@ if [ -f ".pre-commit-config.yaml" ]; then
     uv run pre-commit install --hook-type commit-msg
     print_success "Pre-commit hooks installed"
 
-    # Create detect-secrets baseline
-    print_info "Creating detect-secrets baseline..."
-    if command_exists detect-secrets; then
-        detect-secrets scan > .secrets.baseline 2>/dev/null || true
-        print_success "detect-secrets baseline created"
+    # Create detect-secrets baseline (only if one doesn't already exist with content)
+    if [ ! -s ".secrets.baseline" ]; then
+        print_info "Creating detect-secrets baseline..."
+        if ! command_exists detect-secrets; then
+            print_info "Installing detect-secrets..."
+            uv pip install detect-secrets
+        fi
+        if uv run detect-secrets scan --exclude-files package-lock.json > .secrets.baseline; then
+            print_success "detect-secrets baseline created"
+        else
+            print_error "detect-secrets scan failed"
+            rm -f .secrets.baseline
+            exit 1
+        fi
     else
-        print_info "Installing detect-secrets..."
-        uv pip install detect-secrets
-        detect-secrets scan > .secrets.baseline 2>/dev/null || true
-        print_success "detect-secrets baseline created"
+        print_success "detect-secrets baseline already exists"
     fi
 
     # Install git defender if available

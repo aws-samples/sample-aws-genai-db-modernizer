@@ -698,7 +698,7 @@ const JobMonitoringPage = memo(() => {
           </Box>
         </Box>
       }
-     
+
     />
   ), [stageColumnDefinitions, stageItems, loading, t]);
 
@@ -769,7 +769,7 @@ const JobMonitoringPage = memo(() => {
                   {t("job-monitoring.pipeline.title")}
                 </Header>
               }
-             
+
             >
               <SpaceBetween size="l">
                 <ProgressBar
@@ -822,7 +822,7 @@ const JobMonitoringPage = memo(() => {
                   {t("job-monitoring.agents.title")}
                 </Header>
               }
-             
+
             >
               {agentStatusTable}
             </Container>
@@ -836,7 +836,7 @@ const JobMonitoringPage = memo(() => {
                   {t("job-monitoring.execution-history.title")}
                 </Header>
               }
-             
+
             >
               {executionHistory?.states ? (() => {
                 // Assign unique IDs and flatten children for expandable rows
@@ -953,12 +953,12 @@ const JobMonitoringPage = memo(() => {
                   {t("job-monitoring.artifacts.title")}
                 </Header>
               }
-             
+
             >
               <ExpandableSection
                 headerText={t("job-monitoring.artifacts.view-section")}
                 variant="footer"
-               
+
               >
                 <SpaceBetween size="xs">
                   <SpaceBetween direction="horizontal" size="xs">

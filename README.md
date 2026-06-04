@@ -12,11 +12,11 @@ Modernizing off a monolithic relational database is hard. Which queries belong i
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 **Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
 
-### Who is this for?
+## Who is this for?
 
 This tool is for teams that have **decided to refactor their application** to use purpose-built databases. It helps you figure out which queries go where and what the target schemas should look like.
 
-### Who is this NOT for?
+## Who is this NOT for?
 
 - **Lift-and-shift migrations**: If you're moving a database as-is to RDS or Aurora without changing the data model, you don't need this tool.
 - **Tight deadline migrations**: This tool guides application refactoring, which takes time. If you need to migrate by next week, use AWS DMS for a straight move.
@@ -91,6 +91,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
 Artifacts land in `./artifacts/{db_name}/{job_id}/`.
 
 **What you get without LLM:**
+
 - Workload signal detection (key-value, text search, aggregations, session stores, etc.)
 - Per-engine analysis with confidence scores for every query
 - Query-to-engine assignment with co-dependency resolution
@@ -116,6 +117,7 @@ Use the built-in Claude Code commands for an interactive experience:
 These commands are defined in `.claude/commands/` and available automatically when you open the project in Claude Code.
 
 **What you get with Claude Code:**
+
 - Everything from deterministic mode, plus:
 - Target schema designs (DynamoDB table definitions, DocumentDB collections, OpenSearch mappings, etc.)
 - Full migration assessment report with executive summary
@@ -132,6 +134,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
 **AWS setup required:**
 
 1. Configure AWS credentials (any standard method works):
+
    ```bash
    # Option A: AWS CLI profile
    aws configure
@@ -151,6 +154,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
    - Enable **Anthropic Claude Opus** (used for Schema Design and Synthesis)
 
 3. Run with Bedrock:
+
    ```bash
    uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json --db wordpress --llm-mode bedrock --all -y
    ```

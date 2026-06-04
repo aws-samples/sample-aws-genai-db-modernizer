@@ -947,7 +947,7 @@ const JobMonitoringSummaryPage = memo(() => {
                       {t("job-summary.query-flow.title")}
                     </Header>
                   }
-                 
+
                 >
                   <ChartSankey
                     width={900}
@@ -987,13 +987,13 @@ const JobMonitoringSummaryPage = memo(() => {
                   {t('job-monitoring-summary.artifacts.title')}
                 </Header>
               }
-             
+
             >
               <ExpandableSection
                 headerText={t('job-monitoring.artifacts.view-section')}
                 variant="footer"
                 defaultExpanded={false}
-               
+
               >
                 <SpaceBetween size="xs">
                   <SpaceBetween direction="horizontal" size="xs">
