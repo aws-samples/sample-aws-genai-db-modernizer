@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate OpenAPI spec from the live FastAPI app.
 
-Dumps the auto-generated OpenAPI JSON to docs/02-architecture/openapi.json.
+Dumps the auto-generated OpenAPI JSON to docs/architecture/openapi.json.
 Run this whenever routes or models change to keep the spec in sync.
 
 Usage:
@@ -31,7 +31,7 @@ os.environ.setdefault("ENVIRONMENT", "dev")
 
 from src.api.main import app  # noqa: E402
 
-OUTPUT_PATH = ROOT / "docs" / "02-architecture" / "openapi.json"
+OUTPUT_PATH = ROOT / "docs" / "architecture" / "openapi.json"
 
 
 def generate() -> "dict[str, Any]":

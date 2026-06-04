@@ -47,7 +47,7 @@ function UseCaseSection({ headerText, challenge, challengeLabel }) {
     <ExpandableSection
       headerText={headerText}
       variant="container"
-     
+
     >
       <SpaceBetween size="s">
         <Box variant="awsui-key-label">{challengeLabel}</Box>
@@ -341,7 +341,7 @@ function DatabaseModernizerLanding() {
                 {t("landing.use-cases.title")}
               </Header>
             }
-           
+
           >
             <SpaceBetween size="l">
               {useCases.map((useCase, index) => (

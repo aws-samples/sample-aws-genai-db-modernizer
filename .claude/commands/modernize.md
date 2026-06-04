@@ -31,10 +31,12 @@ cd src/ui && npm install && REACT_APP_API_URL=http://localhost:8000/api/v1/ npx 
 ```
 
 Wait a few seconds for both to start, then verify:
+
 - API health: `curl -s http://localhost:8000/health`
 - Frontend: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` (expect 200)
 
 Tell the user:
+
 - API running at <http://localhost:8000>
 - Frontend running at <http://localhost:3000>
 - Wait for the user to confirm the UI is loaded before proceeding
@@ -79,6 +81,7 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 1. Tell user: "Deterministic phases complete. Dispatching consolidation validator..."
 2. **Dispatch a subagent:** "Run /reality-check for job_id={job_id} db={database_name}"
 3. After subagent completes, resume:
+
    ```bash
    uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
    ```
@@ -86,6 +89,7 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 **DO NOT read the LLM input file yourself. DO NOT produce the consolidation response yourself. The subagent handles this with a clean context following the /reality-check skill.**
 
 **After resume-reality-check completes**, present a brief summary:
+
 - Selected engines and why
 - Query distribution across engines
 - Reality check consolidations and any reversals
@@ -96,6 +100,7 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 ### Decision Gate: Assignment Approval
 
 After reality check, present the final assignment to the user:
+
 - Which engines survived consolidation
 - Query distribution across engines
 - Any queries that were redirected by the LLM validator

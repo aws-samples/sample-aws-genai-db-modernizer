@@ -47,43 +47,50 @@ You are a reviewer receiving a complete brief. Read it, apply judgment, write th
 
    You do NOT need to read any other files. Everything is in `llm_input.json`.
 
-   ### Engine Capabilities Reference
+### Engine Capabilities Reference
 
-   Use these to judge whether a target engine can handle the moved queries:
+Use these to judge whether a target engine can handle the moved queries:
 
-   **DynamoDB** — Key-value/document store
-   - CAN DO: single-item lookups by PK, range queries on sort key, denormalized data via GSI, key-value CRUD, session storage, metadata lookups
-   - CANNOT DO: ad-hoc multi-table JOINs, full-text search (LIKE '%...%'), complex aggregations across partitions, transactions >25 items, queries without a known partition key
+**DynamoDB** — Key-value/document store
 
-   **DocumentDB** — MongoDB-compatible document DB
-   - CAN DO: flexible schemas, nested document queries, aggregation pipelines, $lookup JOINs, multi-document ACID, basic regex matching
-   - CANNOT DO: full-text search at scale (no inverted index), extreme write throughput
+- CAN DO: single-item lookups by PK, range queries on sort key, denormalized data via GSI, key-value CRUD, session storage, metadata lookups
+- CANNOT DO: ad-hoc multi-table JOINs, full-text search (LIKE '%...%'), complex aggregations across partitions, transactions >25 items, queries without a known partition key
 
-   **OpenSearch** — Search and analytics engine
-   - CAN DO: full-text search, fuzzy matching, aggregations/analytics, time-series, geo-spatial, faceted search
-   - CANNOT DO: ACID transactions, strong consistency, primary write path, frequent single-doc updates
+**DocumentDB** — MongoDB-compatible document DB
 
-   **ElastiCache** — In-memory data structures
-   - CAN DO: sorted sets, counters, session storage, pub/sub, hot-path caching, leaderboards
-   - CANNOT DO: complex queries, persistence as source of truth, multi-dimension filters, JOINs
+- CAN DO: flexible schemas, nested document queries, aggregation pipelines, $lookup JOINs, multi-document ACID, basic regex matching
+- CANNOT DO: full-text search at scale (no inverted index), extreme write throughput
 
-   **Aurora MySQL/PostgreSQL** — Relational database
-   - CAN DO: multi-table JOINs, complex GROUP BY, subqueries (correlated, EXISTS), ACID transactions, ad-hoc queries, window functions
-   - CANNOT DO: extreme horizontal scale beyond a few TB, single-digit-ms at millions of TPS for simple lookups
+**OpenSearch** — Search and analytics engine
 
-   ### Flag Criteria
+- CAN DO: full-text search, fuzzy matching, aggregations/analytics, time-series, geo-spatial, faceted search
+- CANNOT DO: ACID transactions, strong consistency, primary write path, frequent single-doc updates
 
-   Only flag queries where the target engine is a genuinely poor fit:
-   - Multi-table JOINs (3+ tables) with aggregations moved to DynamoDB or ElastiCache → **FLAG**
-   - Subqueries with correlated filters moved away from Aurora → **FLAG**
-   - Complex GROUP BY across multiple tables moved to non-relational → **FLAG**
-   - Full-text search (LIKE '%...%', MATCH, tsvector) moved to DynamoDB → **FLAG**
-   - Queries with `complex_joins` or `subqueries` signals moved FROM Aurora TO DynamoDB → **almost always FLAG**
+**ElastiCache** — In-memory data structures
 
-   Do NOT flag:
-   - Simple key-value lookups moved to DynamoDB (that's correct)
-   - Patterns that just need denormalization (expected for NoSQL)
-   - Low-frequency admin queries that any engine can handle
+- CAN DO: sorted sets, counters, session storage, pub/sub, hot-path caching, leaderboards
+- CANNOT DO: complex queries, persistence as source of truth, multi-dimension filters, JOINs
+
+**Aurora MySQL/PostgreSQL** — Relational database
+
+- CAN DO: multi-table JOINs, complex GROUP BY, subqueries (correlated, EXISTS), ACID transactions, ad-hoc queries, window functions
+- CANNOT DO: extreme horizontal scale beyond a few TB, single-digit-ms at millions of TPS for simple lookups
+
+### Flag Criteria
+
+Only flag queries where the target engine is a genuinely poor fit:
+
+- Multi-table JOINs (3+ tables) with aggregations moved to DynamoDB or ElastiCache → **FLAG**
+- Subqueries with correlated filters moved away from Aurora → **FLAG**
+- Complex GROUP BY across multiple tables moved to non-relational → **FLAG**
+- Full-text search (LIKE '%...%', MATCH, tsvector) moved to DynamoDB → **FLAG**
+- Queries with `complex_joins` or `subqueries` signals moved FROM Aurora TO DynamoDB → **almost always FLAG**
+
+Do NOT flag:
+
+- Simple key-value lookups moved to DynamoDB (that's correct)
+- Patterns that just need denormalization (expected for NoSQL)
+- Low-frequency admin queries that any engine can handle
 
 4. **Write the response**
 

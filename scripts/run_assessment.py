@@ -24,6 +24,7 @@ Updates .modernizer-state.json after each phase so the UI can track progress.
 
 import json
 import os
+import re
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,7 +40,6 @@ STATE_FILE = ".modernizer-state.json"
 # ============================================================
 # Colored output: auto-colorize [phase] prefixes on stdout/stderr
 # ============================================================
-import re
 
 _PHASE_RE = re.compile(r"^(\[[\w./-]+\])")
 
@@ -58,11 +58,11 @@ class _ColorizedStream:
             m = _PHASE_RE.match(line)
             if m:
                 prefix = m.group(1)
-                rest = line[m.end():]
+                rest = line[m.end() :]
                 colored.append(f"\033[36m{prefix}\033[0m{rest}")
             else:
                 colored.append(line)
-        return self._stream.write("\n".join(colored))
+        return self._stream.write("\n".join(colored))  # type: ignore[no-any-return]
 
     def flush(self) -> None:
         self._stream.flush()
@@ -101,11 +101,11 @@ def _banner(title: str) -> None:
     print(f"{'='*60}", file=sys.stderr, flush=True)
 
 
-def _read_state() -> dict:
+def _read_state() -> dict:  # type: ignore[type-arg]
     if not os.path.exists(STATE_FILE):
         return {}
     with open(STATE_FILE) as f:
-        return json.load(f)
+        return json.load(f)  # type: ignore[no-any-return]
 
 
 def _write_state(state: dict) -> None:
@@ -126,7 +126,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     with open(collector_file, encoding="utf-8") as f:
         content = f.read().strip()
         if not content.startswith("{") and "\n" in content:
-            content = content[content.index("\n") + 1:]
+            content = content[content.index("\n") + 1 :]
         input_data = json.loads(content)
 
     is_contract = isinstance(input_data.get("contract_version"), str) and input_data[
@@ -234,14 +234,17 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
 
     artifact = f"{db_name}/{job_id}/collector/output.json"
     _log_artifact("collect", artifact)
-    _output("collect", {
-        "status": "complete",
-        "job_id": job_id,
-        "database_name": db_name,
-        "tables": len(tables),
-        "queries": len(queries),
-        "artifact": artifact,
-    })
+    _output(
+        "collect",
+        {
+            "status": "complete",
+            "job_id": job_id,
+            "database_name": db_name,
+            "tables": len(tables),
+            "queries": len(queries),
+            "artifact": artifact,
+        },
+    )
     return job_id, db_name
 
 
@@ -262,14 +265,19 @@ def phase_triage(store, job_id: str, db: str) -> list[str]:
 
     artifact = f"{db}/{job_id}/referee-triage/triage.json"
     _log_artifact("triage", artifact)
-    _output("triage", {"status": "complete", "selected": selected, "skipped": skipped, "artifact": artifact})
+    _output(
+        "triage",
+        {"status": "complete", "selected": selected, "skipped": skipped, "artifact": artifact},
+    )
     return selected
 
 
 # ============================================================
 # Phase: Analysis
 # ============================================================
-def phase_analysis(store, job_id: str, db: str, selected_engines: list[str], llm_mode: str = "none") -> dict:
+def phase_analysis(
+    store, job_id: str, db: str, selected_engines: list[str], llm_mode: str = "none"
+) -> dict:
     _banner(f"ANALYSIS ({len(selected_engines)} engines in parallel)")
     from src.agents.analysis.handler import run_analysis
 
@@ -300,7 +308,11 @@ def phase_analysis(store, job_id: str, db: str, selected_engines: list[str], llm
                 results[engine] = f"error: {e}"
                 _log("analysis", f"{engine} FAILED: {e}")
 
-    artifacts = {engine: f"{db}/{job_id}/analysis-{engine}/" for engine in results if results[engine] == "complete"}
+    artifacts = {
+        engine: f"{db}/{job_id}/analysis-{engine}/"
+        for engine in results
+        if results[engine] == "complete"
+    }
     for engine, path in artifacts.items():
         _log_artifact(f"analysis/{engine}", path)
     _output("analysis", {"status": "complete", "results": results, "artifacts": artifacts})
@@ -321,7 +333,7 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
         _error("assignment", "Assignment output not produced.")
 
     assignment = store.read_json(assignment_path)
-    distribution = {}
+    distribution: dict[str, int] = {}
     for q in assignment.get("query_assignments", []):
         engine = q.get("assigned_engine", "unknown")
         distribution[engine] = distribution.get(engine, 0) + 1
@@ -329,7 +341,15 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
     total = sum(distribution.values())
     artifact = f"{db}/{job_id}/assignment/v1/assignment.json"
     _log_artifact("assignment", artifact)
-    _output("assignment", {"status": "complete", "distribution": distribution, "total_queries": total, "artifact": artifact})
+    _output(
+        "assignment",
+        {
+            "status": "complete",
+            "distribution": distribution,
+            "total_queries": total,
+            "artifact": artifact,
+        },
+    )
     return distribution
 
 
@@ -477,7 +497,8 @@ def main() -> None:
         help="Run full pipeline including schema design and synthesis",
     )
     parser.add_argument(
-        "-y", "--yes",
+        "-y",
+        "--yes",
         action="store_true",
         help="Skip interactive pauses (auto-approve)",
     )
@@ -512,7 +533,7 @@ def main() -> None:
     if args.db:
         print(f"  Database:  {args.db}", file=sys.stderr)
     print(f"  LLM mode:  {args.llm_mode}", file=sys.stderr)
-    print(f"  Artifacts: ./artifacts/", file=sys.stderr)
+    print("  Artifacts: ./artifacts/", file=sys.stderr)
     print(f"{'='*60}\n", file=sys.stderr, flush=True)
 
     # Determine starting point

@@ -400,7 +400,7 @@ function SettingsPage() {
                   {t("settings.aws-config.header.title")}
                 </Header>
               }
-             
+
             >
               <SpaceBetween size="l">
                 <FormField
@@ -486,7 +486,7 @@ function SettingsPage() {
                   {t("settings.analysis-options.header.title")}
                 </Header>
               }
-             
+
             >
               <SpaceBetween size="l">
                 <FormField
@@ -657,7 +657,7 @@ function SettingsPage() {
                   {t("settings.ui-preferences.header.title")}
                 </Header>
               }
-             
+
             >
               <SpaceBetween size="l">
                 <FormField

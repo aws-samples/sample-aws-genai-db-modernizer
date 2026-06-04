@@ -624,7 +624,7 @@ const ComponentPage = memo(() => {
                           {t("dashboard.status.title")}
                         </Header>
                       }
-                     
+
                     >
                       <KeyValuePairs columns={4} items={[
                         { label: t("dashboard.status.total-analyses"), type: "pair", value: (<Link fontSize="display-l" variant="awsui-value-large">{dashboardStats.total_assessments}</Link>)},
@@ -638,7 +638,7 @@ const ComponentPage = memo(() => {
                     <Container
                         fitHeight
                         header={<Header variant="h2">{t("dashboard.activity.title")}</Header>}
-                       
+
                     >
                           <KeyValuePairs columns={3} items={recentActivityItems} />
                     </Container>

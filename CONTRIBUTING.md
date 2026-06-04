@@ -23,7 +23,7 @@ Thank you for your interest in contributing to Database Modernizer Assessment! T
 
 This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).
 For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of-conduct-faq) or contact
-opensource-codeofconduct@amazon.com with any additional questions or comments.
+<opensource-codeofconduct@amazon.com> with any additional questions or comments.
 
 ---
 
@@ -65,6 +65,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
 ```
 
 The setup script will:
+
 1. Check Python 3.12+ is installed
 2. Install uv if not present
 3. Create virtual environment and install all dependencies
@@ -90,6 +91,8 @@ If hooks don't run after cloning, install manually:
 uv run pre-commit install
 uv run pre-commit install --hook-type commit-msg
 ```
+
+> **Note:** If your PR shows failing CI scans (lint, type check, security), it most likely means you haven't installed the pre-commit hooks locally. Install them with the commands above (or run `./scripts/setup_dev.sh`), fix any issues, and re-push your changes.
 
 ---
 
@@ -126,7 +129,13 @@ git checkout -b feat/your-feature-name
 
 ### 4. Commit Changes
 
-Follow our [Commit Message Format](#commit-message-format)
+Follow our [Commit Message Format](#commit-message-format). Set up the commit template to guide your messages:
+
+```bash
+git config commit.template .gitmessage
+```
+
+Then commit as usual:
 
 ```bash
 git add .
