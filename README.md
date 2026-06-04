@@ -3,12 +3,24 @@
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT--0-green.svg)](LICENSE)
 
+> **Disclaimer:** This is a sample project intended for educational and evaluation purposes. It requires proper review, testing, and modification before use in production environments. Use at your own risk.
+
 Modernizing off a monolithic relational database is hard. Which queries belong in DynamoDB? Which need a document store? What stays relational? Getting it wrong means failed modernizations, re-architecture mid-project, and wasted months.
 
 **Database Modernizer Assessment answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections.
 
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 **Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
+
+### Who is this for?
+
+This tool is for teams that have **decided to refactor their application** to use purpose-built databases. It helps you figure out which queries go where and what the target schemas should look like.
+
+### Who is this NOT for?
+
+- **Lift-and-shift migrations**: If you're moving a database as-is to RDS or Aurora without changing the data model, you don't need this tool.
+- **Tight deadline migrations**: This tool guides application refactoring, which takes time. If you need to migrate by next week, use AWS DMS for a straight move.
+- **Teams that haven't committed to refactoring**: If you're still deciding whether to modernize, start with the [AWS Migration Evaluator](https://aws.amazon.com/migration-evaluator/) or a Well-Architected review first.
 
 ---
 
@@ -44,8 +56,8 @@ The core pipeline through Reality Check is **fully deterministic**. Pattern dete
 ### Install
 
 ```bash
-git clone https://github.com/aws-samples/aws-genai-db-modernizer.git
-cd aws-genai-db-modernizer
+git clone https://github.com/aws-samples/sample-aws-genai-db-modernizer.git
+cd sample-aws-genai-db-modernizer
 uv sync
 ```
 
@@ -267,6 +279,22 @@ npx serve -s build -l 3000
 ```
 
 Then open `http://localhost:3000` to browse your modernization results.
+
+### Cloud Deployment (AWS)
+
+Deploy the full platform on AWS with ECS Fargate, Step Functions orchestration, and Cognito authentication:
+
+```bash
+cp .env.example .env       # Edit with your domain and region
+make deploy-dns            # Deploy Route 53 + ACM certificate (one-time)
+# Add NS records to your parent domain, wait for cert validation
+make deploy-infra          # Deploy VPC, ECR, KMS
+make build                 # Build and push Docker images (requires Docker Desktop)
+make deploy-services       # Deploy ECS, ALB, Cognito, S3, Step Functions
+make create-test-user      # Create a Cognito login
+```
+
+See [Deployment Guide](docs/guides/deployment-guide.md) for full details and troubleshooting.
 
 ---
 

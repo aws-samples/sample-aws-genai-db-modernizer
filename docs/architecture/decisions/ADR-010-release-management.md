@@ -420,7 +420,7 @@ git log v1.4.0..v1.5.0 --pretty=format:"%s" | \
 
 ## 🔗 Links
 
-- [Full Changelog](https://github.com/aws-samples/aws-genai-db-modernizer/compare/v1.4.0...v1.5.0)
+- [Full Changelog](https://github.com/aws-samples/sample-aws-genai-db-modernizer/compare/v1.4.0...v1.5.0)
 - [Migration Guide](docs/migration/v1.4-to-v1.5.md)
 ```
 

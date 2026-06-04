@@ -108,7 +108,7 @@ Before starting work, create an issue describing:
 ```bash
 # Fork the repo on GitHub, then clone your fork
 git clone https://github.com/YOUR_USERNAME/sample-aws-genai-db-modernizer.git
-cd aws-genai-db-modernizer
+cd sample-aws-genai-db-modernizer
 
 # Add upstream remote
 git remote add upstream https://github.com/aws-samples/sample-aws-genai-db-modernizer.git
