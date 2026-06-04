@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
     if not file_paths:
         # If no files provided, validate all schema files
-        schemas_dir = Path(__file__).parent.parent / "docs" / "03-contracts" / "schemas"
+        schemas_dir = Path(__file__).parent.parent / "docs" / "contracts" / "schemas"
         if schemas_dir.exists():
             file_paths = [str(f) for f in schemas_dir.glob("*.json")]
             if file_paths:

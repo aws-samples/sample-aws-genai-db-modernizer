@@ -31,6 +31,26 @@ if [ ! -d "$TARGET_REPO_PATH/.git" ]; then
   exit 1
 fi
 
+# Check target repo is clean — you should NOT be working directly in the target repo.
+# The target repo is a deployment mirror only. All development happens in the source repo.
+if ! git -C "$TARGET_REPO_PATH" diff --quiet 2>/dev/null || ! git -C "$TARGET_REPO_PATH" diff --cached --quiet 2>/dev/null; then
+  echo "Error: Target repo has uncommitted changes."
+  echo ""
+  echo "  The target repo is a deployment mirror — do NOT develop there directly."
+  echo "  All work should happen in the source repo (this one)."
+  echo ""
+  echo "  If you have unintended changes in the target, resolve them first:"
+  echo "    cd $TARGET_REPO_PATH && git stash"
+  exit 1
+fi
+
+if [ -f "$TARGET_REPO_PATH/.git/index.lock" ]; then
+  echo "Error: Target repo has a git lock file (.git/index.lock)."
+  echo "  Another git process may be running, or a previous one crashed."
+  echo "  If no git process is active: rm $TARGET_REPO_PATH/.git/index.lock"
+  exit 1
+fi
+
 SOURCE_REPO_PATH=$(git rev-parse --show-toplevel)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
