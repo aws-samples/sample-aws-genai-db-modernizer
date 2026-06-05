@@ -41,7 +41,7 @@ class CloudWatchLogsService:
         try:
             response = self.client.filter_log_events(**params)
         except self.client.exceptions.ResourceNotFoundException:
-            return {"logs": [], "next_token": None}
+            return {"logs": [], "next_token": None}  # nosec B105
 
         logs = [
             {

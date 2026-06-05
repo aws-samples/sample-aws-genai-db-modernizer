@@ -1,6 +1,5 @@
 """Tests for common relational pattern detection accuracy."""
 
-
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
 
 

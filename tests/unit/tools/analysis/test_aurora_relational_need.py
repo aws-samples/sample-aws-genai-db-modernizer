@@ -1,6 +1,5 @@
 """Tests for graduated relational need baseline scoring."""
 
-
 from src.tools.analysis.aurora_common_analysis_tools import compute_relational_need_score
 
 

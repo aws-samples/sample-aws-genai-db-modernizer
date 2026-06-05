@@ -7,7 +7,6 @@ Tests cover:
 - generate_changelog: diffs two schema_output dicts into ChangelogEntry list
 """
 
-
 from unittest.mock import MagicMock
 
 from src.agents.schema_design.revision_handler import (

@@ -1,4 +1,5 @@
 """Contract-aware DynamoDB seeder with correct key types."""
+
 import time
 
 import boto3

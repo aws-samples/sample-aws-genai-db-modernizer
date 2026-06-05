@@ -73,8 +73,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         if has_first_last_seen:
             extra_cols += "FIRST_SEEN, LAST_SEEN, "
 
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 DIGEST AS digest, DIGEST_TEXT AS query_text, SCHEMA_NAME AS schema_name,
                 COUNT_STAR AS execution_count,
@@ -97,8 +96,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
               AND COUNT_STAR >= {min_executions}
             ORDER BY SUM_TIMER_WAIT DESC
             LIMIT {limit}
-        """  # nosec B608
-        )
+        """)  # nosec B608
 
         patterns = []
         for r in raw:

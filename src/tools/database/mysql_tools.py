@@ -66,13 +66,11 @@ class MySQLRemoteCollector:
         return str(rows[0]["version"]) if rows else "unknown"
 
     def get_database_size_gb(self) -> float:
-        rows = self._query(
-            """
+        rows = self._query("""
             SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 4) AS size_gb
             FROM information_schema.tables
             WHERE table_schema = DATABASE()
-        """
-        )
+        """)
         return float(rows[0]["size_gb"] or 0) if rows else 0
 
     # -------------------------------------------------------------------
@@ -80,8 +78,7 @@ class MySQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_tables(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT
                 table_name,
                 table_rows AS row_count,
@@ -93,12 +90,10 @@ class MySQLRemoteCollector:
             WHERE table_schema = DATABASE()
               AND table_type = 'BASE TABLE'
             ORDER BY table_name
-        """
-        )
+        """)
 
     def collect_columns(self, table_name: str) -> list[dict]:
-        return self._query(
-            f"""
+        return self._query(f"""
             SELECT
                 column_name, ordinal_position, data_type, column_type,
                 character_maximum_length AS max_length, is_nullable,
@@ -107,19 +102,16 @@ class MySQLRemoteCollector:
             WHERE table_schema = DATABASE()
               AND table_name = '{table_name}'
             ORDER BY ordinal_position
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
 
     def collect_indexes(self, table_name: str) -> list[dict]:
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT index_name, column_name, seq_in_index, non_unique, index_type
             FROM information_schema.statistics
             WHERE table_schema = DATABASE()
               AND table_name = '{table_name}'
             ORDER BY index_name, seq_in_index
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         indexes: dict[str, dict] = {}
         for r in raw:
             name = r["index_name"]
@@ -135,8 +127,7 @@ class MySQLRemoteCollector:
         return list(indexes.values())
 
     def collect_foreign_keys(self, table_name: str) -> list[dict]:
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 kcu.constraint_name, kcu.column_name,
                 kcu.referenced_table_name, kcu.referenced_column_name,
@@ -149,8 +140,7 @@ class MySQLRemoteCollector:
               AND kcu.table_name = '{table_name}'
               AND kcu.referenced_table_name IS NOT NULL
             ORDER BY kcu.constraint_name, kcu.ordinal_position
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         fks: dict[str, dict] = {}
         for r in raw:
             name = r["constraint_name"]
@@ -168,16 +158,14 @@ class MySQLRemoteCollector:
         return list(fks.values())
 
     def collect_primary_key(self, table_name: str) -> list[str]:
-        rows = self._query(
-            f"""
+        rows = self._query(f"""
             SELECT column_name
             FROM information_schema.key_column_usage
             WHERE table_schema = DATABASE()
               AND table_name = '{table_name}'
               AND constraint_name = 'PRIMARY'
             ORDER BY ordinal_position
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         return [r["column_name"] for r in rows]
 
     # -------------------------------------------------------------------
@@ -185,37 +173,31 @@ class MySQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_views(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT table_name AS view_name, view_definition AS definition, is_updatable
             FROM information_schema.views
             WHERE table_schema = DATABASE()
             ORDER BY table_name
-        """
-        )
+        """)
 
     def collect_procedures(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT routine_name, routine_type, data_type AS return_type,
                    routine_definition AS definition
             FROM information_schema.routines
             WHERE routine_schema = DATABASE()
             ORDER BY routine_type, routine_name
-        """
-        )
+        """)
 
     def collect_triggers(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT trigger_name, event_manipulation AS event_type,
                    event_object_table AS table_name,
                    action_timing AS timing, action_statement AS definition
             FROM information_schema.triggers
             WHERE trigger_schema = DATABASE()
             ORDER BY event_object_table, trigger_name
-        """
-        )
+        """)
 
     # -------------------------------------------------------------------
     # Global status metrics (cache, temp tables)
@@ -223,8 +205,7 @@ class MySQLRemoteCollector:
 
     def collect_global_stats(self) -> dict:
         """Collect InnoDB cache and temp table stats from GLOBAL STATUS."""
-        rows = self._query(
-            """
+        rows = self._query("""
             SELECT VARIABLE_NAME AS name, VARIABLE_VALUE AS val
             FROM performance_schema.global_status
             WHERE VARIABLE_NAME IN (
@@ -233,8 +214,7 @@ class MySQLRemoteCollector:
                 'Created_tmp_disk_tables',
                 'Created_tmp_tables'
             )
-        """
-        )
+        """)
         stats = {r["name"].lower(): int(r["val"] or 0) for r in rows}
         read_req = stats.get("innodb_buffer_pool_read_requests", 0)
         reads = stats.get("innodb_buffer_pool_reads", 0)
@@ -316,12 +296,12 @@ class MySQLRemoteCollector:
                     "execution_time_ms_p50": float(
                         r.get("avg_time_ms") or 0
                     ),  # approx: median ≈ avg for normal dist
-                    "execution_time_ms_p95": float(r.get("p95_ms") or 0)
-                    if r.get("p95_ms")
-                    else None,
-                    "execution_time_ms_p99": float(r.get("p99_ms") or 0)
-                    if r.get("p99_ms")
-                    else None,
+                    "execution_time_ms_p95": (
+                        float(r.get("p95_ms") or 0) if r.get("p95_ms") else None
+                    ),
+                    "execution_time_ms_p99": (
+                        float(r.get("p99_ms") or 0) if r.get("p99_ms") else None
+                    ),
                     "total_time_ms": float(r.get("total_time_ms") or 0),
                     "rows_returned_avg": (r.get("total_rows_sent") or 0) / exec_count,
                     "rows_returned_p95": _estimate_rows_p95(

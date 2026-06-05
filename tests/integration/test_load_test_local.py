@@ -6,6 +6,7 @@ Uses real collector + schema outputs from the wordpress fixture but mocks:
 
 Validates the full pipeline: read → adapt → generate scripts → (mock run) → results.
 """
+
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch

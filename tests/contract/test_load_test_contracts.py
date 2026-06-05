@@ -1,4 +1,5 @@
 """Contract tests for load test Pydantic models."""
+
 import pytest
 from pydantic import ValidationError
 

@@ -34,9 +34,11 @@ class StepFunctionsService:
         result = {
             "status": response["status"],
             "started_at": response["startDate"].isoformat(),
-            "stopped_at": response.get("stopDate", datetime.now(UTC)).isoformat()
-            if response["status"] != "RUNNING"
-            else None,
+            "stopped_at": (
+                response.get("stopDate", datetime.now(UTC)).isoformat()
+                if response["status"] != "RUNNING"
+                else None
+            ),
             "input": json.loads(response.get("input", "{}")),
         }
 
@@ -174,7 +176,7 @@ class StepFunctionsService:
             "Task": "Task",
             "Map": "Map",
             "Parallel": "Parallel",
-            "Pass": "Pass",
+            "Pass": "Pass",  # nosec B105
             "Wait": "Wait",
             "Choice": "Choice",
             "Succeed": "Succeed",

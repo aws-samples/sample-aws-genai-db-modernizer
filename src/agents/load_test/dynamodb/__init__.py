@@ -1,4 +1,5 @@
 """DynamoDB-specific load test components."""
+
 from src.agents.load_test.dynamodb.key_condition_parser import (
     ParsedKeyCondition,
     parse_key_condition,

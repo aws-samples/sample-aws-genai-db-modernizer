@@ -729,9 +729,9 @@ def estimate_aurora_costs(
                 "total_monthly_usd": round(provisioned_total, 2),
                 "instance_type": instance_type,
             },
-            "recommended": "serverless_v2"
-            if serverless_total <= provisioned_total
-            else "provisioned",
+            "recommended": (
+                "serverless_v2" if serverless_total <= provisioned_total else "provisioned"
+            ),
         },
         pricing_assumptions=[
             f"Aurora {engine.title()} — {target_region}",

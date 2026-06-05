@@ -92,9 +92,7 @@ def _setup_schema_v1(store: MagicMock, db: str, job_id: str, engine: str) -> Non
     store.read_json.side_effect = lambda path: (
         _schema_output()
         if path.endswith("schema_output.json")
-        else _version_meta(1, engine)
-        if path.endswith("version_meta.json")
-        else {}
+        else _version_meta(1, engine) if path.endswith("version_meta.json") else {}
     )
     store.exists.return_value = True
 

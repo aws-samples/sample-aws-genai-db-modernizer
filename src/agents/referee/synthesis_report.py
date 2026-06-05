@@ -798,9 +798,11 @@ def generate_executive_summary(
         "risk_level": risks.get("overall_risk_level", "LOW"),
         "high_risks": high_risks,
         "key_trade_offs": [
-            {"description": t["description"], "impact": t["impact"]}
-            if isinstance(t, dict) and "description" in t
-            else str(t)
+            (
+                {"description": t["description"], "impact": t["impact"]}
+                if isinstance(t, dict) and "description" in t
+                else str(t)
+            )
             for t in trade_offs[:5]
         ],
     }

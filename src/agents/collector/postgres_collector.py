@@ -419,9 +419,11 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
         Procedure(
             procedure_id=p.get("routine_name", ""),
             procedure_name=p.get("routine_name", ""),
-            procedure_type=ProcedureType.FUNCTION
-            if p.get("routine_type") == "FUNCTION"
-            else ProcedureType.PROCEDURE,
+            procedure_type=(
+                ProcedureType.FUNCTION
+                if p.get("routine_type") == "FUNCTION"
+                else ProcedureType.PROCEDURE
+            ),
             return_type=p.get("return_type"),
             language=p.get("language"),
         )

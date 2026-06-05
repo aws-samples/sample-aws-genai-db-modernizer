@@ -1,4 +1,5 @@
 """Load test coordinator — engine-agnostic orchestrator."""
+
 import os
 import uuid
 
@@ -165,9 +166,9 @@ def run_load_test(
             "run_complete",
             returncode=run_result.returncode,
             has_summary=run_result.summary is not None,
-            summary_metrics_count=len(run_result.summary.get("metrics", {}))
-            if run_result.summary
-            else 0,
+            summary_metrics_count=(
+                len(run_result.summary.get("metrics", {})) if run_result.summary else 0
+            ),
         )
 
         # 9b. Write k6 diagnostics to S3 for debugging

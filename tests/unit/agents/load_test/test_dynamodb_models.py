@@ -1,4 +1,5 @@
 """Tests for DynamoDB-specific load test models."""
+
 from src.agents.load_test.dynamodb.models import DynamoDBTableSeedInfo
 
 

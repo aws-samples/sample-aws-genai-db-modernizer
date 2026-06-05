@@ -1,6 +1,5 @@
 """Unit tests for the capability registry."""
 
-
 from src.agents.referee.capability_registry import (
     LIGHTWEIGHT_ALTERNATIVES,
     SIGNAL_TO_CAPABILITY,

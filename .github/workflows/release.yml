@@ -19,8 +19,10 @@ jobs:
 
       - name: Determine pre-release
         id: prerelease
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${{ github.ref_name }}" == *"-rc"* ]] || [[ "${{ github.ref_name }}" == *"-alpha"* ]] || [[ "${{ github.ref_name }}" == *"-beta"* ]]; then
+          if [[ "$TAG_NAME" == *"-rc"* ]] || [[ "$TAG_NAME" == *"-alpha"* ]] || [[ "$TAG_NAME" == *"-beta"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -28,20 +30,23 @@ jobs:
 
       - name: Get previous tag
         id: prev_tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "${{ github.ref_name }}" | head -n 1)
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "$TAG_NAME" | head -n 1)
           if [ -z "$PREV_TAG" ]; then
             echo "range=" >> "$GITHUB_OUTPUT"
           else
-            echo "range=$PREV_TAG..${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "range=$PREV_TAG..$TAG_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate release notes
         id: notes
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          RANGE: ${{ steps.prev_tag.outputs.range }}
+          REPO: ${{ github.repository }}
         run: |
-          TAG="${{ github.ref_name }}"
-          RANGE="${{ steps.prev_tag.outputs.range }}"
-
           {
             echo "notes<<EOF"
 
@@ -82,7 +87,7 @@ jobs:
               fi
 
               echo "---"
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$RANGE"
+              echo "**Full Changelog**: https://github.com/$REPO/compare/$RANGE"
             else
               echo "Initial release"
             fi

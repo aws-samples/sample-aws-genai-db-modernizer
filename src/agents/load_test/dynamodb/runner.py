@@ -1,4 +1,5 @@
 """k6 subprocess runner for DynamoDB load tests."""
+
 import json
 import os
 import subprocess  # nosec B404 — intentional subprocess use for k6 CLI

@@ -4,7 +4,6 @@ Referee Input Contract (Pydantic Model)
 Version: 2.0
 """
 
-
 from pydantic import BaseModel, ConfigDict, Field
 
 

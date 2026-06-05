@@ -459,9 +459,9 @@ def run_reality_check(
                         f"< {AURORA_ABSORPTION_QUERY_THRESHOLD} queries and Aurora "
                         f"scores adequately on {'all' if is_full else 'absorbable subset'}"
                     ),
-                    "saved_cost_estimate": (base_cost + EXTRA_ENGINE_BURDEN_MONTHLY)
-                    if is_full
-                    else 0,
+                    "saved_cost_estimate": (
+                        (base_cost + EXTRA_ENGINE_BURDEN_MONTHLY) if is_full else 0
+                    ),
                     "action": "full" if is_full else "partial",
                     "queries_retained": [],
                     "retention_reason": None,
@@ -516,9 +516,9 @@ def run_reality_check(
             engines_to_consolidate.remove(engine)
             committed_engines.add(engine)
             assessment = unique_value_assessment.get(engine, {})
-            assessment[
-                "consolidation_blocked"
-            ] = f"{len(unserviceable_qas)} queries require capabilities no other engine provides"
+            assessment["consolidation_blocked"] = (
+                f"{len(unserviceable_qas)} queries require capabilities no other engine provides"
+            )
             continue
 
         # Per-query placement into committed engines (only serviceable queries)
@@ -581,9 +581,9 @@ def run_reality_check(
                     ),
                     "saved_cost_estimate": 0,
                     "action": "partial" if is_partial else "full",
-                    "queries_retained": [qa["query_id"] for qa in unserviceable_qas]
-                    if is_partial
-                    else [],
+                    "queries_retained": (
+                        [qa["query_id"] for qa in unserviceable_qas] if is_partial else []
+                    ),
                     "retention_reason": (
                         "Queries require capabilities no committed engine provides"
                         if is_partial
@@ -616,9 +616,9 @@ def run_reality_check(
             engines_to_consolidate.remove(engine)
             committed_engines.add(engine)
             assessment = unique_value_assessment.get(engine, {})
-            assessment[
-                "consolidation_blocked"
-            ] = "Some queries could not be placed in any committed engine"
+            assessment["consolidation_blocked"] = (
+                "Some queries could not be placed in any committed engine"
+            )
 
     # Pass 3: Detect architectural patterns
     patterns = _detect_architectural_patterns(revised, committed_engines, engine_queries)

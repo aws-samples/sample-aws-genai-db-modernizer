@@ -1,4 +1,5 @@
 """DynamoDB-specific models for load test seeding and script generation."""
+
 from pydantic import BaseModel
 
 

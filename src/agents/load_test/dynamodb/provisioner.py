@@ -1,4 +1,5 @@
 """DynamoDB multi-table provisioner for load testing."""
+
 import concurrent.futures
 
 import boto3

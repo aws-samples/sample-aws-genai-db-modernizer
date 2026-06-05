@@ -48,8 +48,9 @@ class TestLlmAdvisorRetryExhausted:
         """After 3 failed attempts, advise() returns None."""
         advisor = LlmAdvisor(enabled=True)
 
-        with patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")), patch(
-            "time.sleep"
+        with (
+            patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")),
+            patch("time.sleep"),
         ):
             result = advisor.advise(
                 deterministic_results={},
@@ -65,8 +66,9 @@ class TestLlmAdvisorRetryExhausted:
         """Exactly 3 attempts are made before giving up."""
         advisor = LlmAdvisor(enabled=True)
 
-        with patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")), patch(
-            "time.sleep"
+        with (
+            patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")),
+            patch("time.sleep"),
         ):
             advisor.advise(
                 deterministic_results={},
@@ -82,9 +84,10 @@ class TestLlmAdvisorRetryExhausted:
         """Backoff delays of 1s and 2s are applied between retries."""
         advisor = LlmAdvisor(enabled=True)
 
-        with patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")), patch(
-            "time.sleep"
-        ) as mock_sleep:
+        with (
+            patch.object(advisor, "_call_llm", side_effect=RuntimeError("LLM call failed")),
+            patch("time.sleep") as mock_sleep,
+        ):
             advisor.advise(
                 deterministic_results={},
                 schema={},
@@ -107,11 +110,14 @@ class TestLlmAdvisorRetrySuccess:
         advisor = LlmAdvisor(enabled=True)
         valid_output = _make_valid_llm_output()
 
-        with patch.object(
-            advisor,
-            "_call_llm",
-            side_effect=[RuntimeError("first call failed"), valid_output],
-        ), patch("time.sleep"):
+        with (
+            patch.object(
+                advisor,
+                "_call_llm",
+                side_effect=[RuntimeError("first call failed"), valid_output],
+            ),
+            patch("time.sleep"),
+        ):
             result = advisor.advise(
                 deterministic_results={},
                 schema={},
@@ -130,11 +136,14 @@ class TestLlmAdvisorRetrySuccess:
         advisor = LlmAdvisor(enabled=True)
         valid_output = _make_valid_llm_output()
 
-        with patch.object(
-            advisor,
-            "_call_llm",
-            side_effect=[RuntimeError("first call failed"), valid_output],
-        ), patch("time.sleep"):
+        with (
+            patch.object(
+                advisor,
+                "_call_llm",
+                side_effect=[RuntimeError("first call failed"), valid_output],
+            ),
+            patch("time.sleep"),
+        ):
             advisor.advise(
                 deterministic_results={},
                 schema={},
@@ -150,11 +159,14 @@ class TestLlmAdvisorRetrySuccess:
         advisor = LlmAdvisor(enabled=True)
         valid_output = _make_valid_llm_output()
 
-        with patch.object(
-            advisor,
-            "_call_llm",
-            side_effect=[RuntimeError("first call failed"), valid_output],
-        ), patch("time.sleep") as mock_sleep:
+        with (
+            patch.object(
+                advisor,
+                "_call_llm",
+                side_effect=[RuntimeError("first call failed"), valid_output],
+            ),
+            patch("time.sleep") as mock_sleep,
+        ):
             advisor.advise(
                 deterministic_results={},
                 schema={},
@@ -223,9 +235,10 @@ class TestLlmAdvisorFirstAttemptSuccess:
         advisor = LlmAdvisor(enabled=True)
         valid_output = _make_valid_llm_output()
 
-        with patch.object(advisor, "_call_llm", return_value=valid_output), patch(
-            "time.sleep"
-        ) as mock_sleep:
+        with (
+            patch.object(advisor, "_call_llm", return_value=valid_output),
+            patch("time.sleep") as mock_sleep,
+        ):
             result = advisor.advise(
                 deterministic_results={},
                 schema={},
