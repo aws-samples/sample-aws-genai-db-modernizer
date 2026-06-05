@@ -15,21 +15,21 @@ dependencies = [
 
     # Web Framework & API
     "fastapi>=0.104.1",
-    "uvicorn[standard]>=0.24.0",
+    "uvicorn[standard]>=0.49.0",
 
     # Database Connectors
-    "mysql-connector-python==8.2.0",
-    "psycopg2-binary==2.9.10",
+    "mysql-connector-python==9.7.0",
+    "psycopg2-binary==2.9.12",
     "pymssql>=2.3.0",
 
     # Data Validation & Serialization
     "pydantic>=2.7.2",
-    "jsonschema==4.20.0",
+    "jsonschema==4.26.0",
 
     # Configuration & Logging
-    "pyyaml==6.0.1",
-    "python-dotenv==1.0.0",
-    "structlog==23.2.0",
+    "pyyaml==6.0.3",
+    "python-dotenv==1.2.2",
+    "structlog==25.5.0",
 
     # AWS SDK
     "boto3>=1.34.0",
@@ -40,20 +40,20 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==7.4.3",
-    "pytest-asyncio==0.21.1",
-    "pytest-cov==4.1.0",
-    "pytest-xdist==3.5.0",
-    "black==23.11.0",
-    "isort==5.13.2",
-    "ruff==0.1.6",
-    "mypy==1.7.1",
-    "bandit==1.7.6",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "pytest-xdist==3.8.0",
+    "black==26.5.1",
+    "isort==8.0.1",
+    "ruff==0.15.16",
+    "mypy==2.1.0",
+    "bandit==1.9.4",
     "hypothesis>=6.0.0",
     "pre-commit>=3.0.0",
     "detect-secrets>=1.4.0",
-    "cfn-lint>=0.83.0",
-    "moto[s3,stepfunctions,logs]>=5.0.0",
+    "cfn-lint>=1.51.4",
+    "moto[s3,stepfunctions,logs]>=5.2.1",
 ]
 
 [build-system]
@@ -107,5 +107,5 @@ database = ".hypothesis/examples"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.7.1",
+    "mypy>=2.1.0",
 ]
