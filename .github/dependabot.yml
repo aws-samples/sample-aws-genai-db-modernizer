@@ -9,6 +9,7 @@ updates:
     groups:
       all-js:
         patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -18,3 +19,4 @@ updates:
     groups:
       all-python:
         patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
