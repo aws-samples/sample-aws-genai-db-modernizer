@@ -106,15 +106,6 @@ repos:
         name: Validate commit message format
         stages: [commit-msg]
 
-  # OpenAPI spec generation (auto-regenerate if API routes/models change)
-  - repo: local
-    hooks:
-      - id: generate-openapi
-        name: Generate OpenAPI spec
-        entry: uv run python scripts/generate_api_spec.py
-        language: system
-        files: ^src/api/
-        pass_filenames: false
 
   # JSON Schema validation
   - repo: local

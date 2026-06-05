@@ -1667,7 +1667,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SchemaRevisionRequest-Input"
+                "$ref": "#/components/schemas/SchemaRevisionRequest"
               }
             }
           }
@@ -3575,52 +3575,7 @@
         "title": "SchemaResponse",
         "description": "Schema output + version metadata for a single version."
       },
-      "SchemaRevisionRequest-Input": {
-        "properties": {
-          "base_version": {
-            "type": "integer",
-            "title": "Base Version",
-            "description": "Schema version number this revision is based on"
-          },
-          "pattern_modifications": {
-            "items": {
-              "$ref": "#/components/schemas/PatternModification"
-            },
-            "type": "array",
-            "title": "Pattern Modifications",
-            "description": "Modifications to apply to existing access patterns",
-            "maxItems": 10000
-          },
-          "table_modifications": {
-            "items": {
-              "$ref": "#/components/schemas/TableModification"
-            },
-            "type": "array",
-            "title": "Table Modifications",
-            "description": "Modifications to apply to source tables",
-            "maxItems": 10000
-          },
-          "new_patterns": {
-            "items": {
-              "$ref": "#/components/schemas/NewPattern"
-            },
-            "type": "array",
-            "title": "New Patterns",
-            "description": "New access patterns to add to the schema design",
-            "maxItems": 10000
-          }
-        },
-        "type": "object",
-        "required": [
-          "base_version",
-          "pattern_modifications",
-          "table_modifications",
-          "new_patterns"
-        ],
-        "title": "SchemaRevisionRequest",
-        "description": "Customer-provided revision request against a specific schema version."
-      },
-      "SchemaRevisionRequest-Output": {
+      "SchemaRevisionRequest": {
         "properties": {
           "base_version": {
             "type": "integer",
@@ -3702,7 +3657,7 @@
           "modifications": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SchemaRevisionRequest-Output"
+                "$ref": "#/components/schemas/SchemaRevisionRequest"
               },
               {
                 "type": "null"
@@ -3947,6 +3902,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
