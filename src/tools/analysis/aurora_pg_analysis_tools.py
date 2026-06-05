@@ -136,9 +136,9 @@ def analyze_aurora_pg_use_cases(collector_output: dict) -> WorkloadAnalysis:
                     description=catalog.description,
                     query_ids=data["query_ids"],
                     table_ids=sorted(set(data["table_ids"])) if data["table_ids"] else None,
-                    frequency_percent=round(frequency_pct, 2)
-                    if frequency_pct is not None
-                    else None,
+                    frequency_percent=(
+                        round(frequency_pct, 2) if frequency_pct is not None else None
+                    ),
                 )
             )
 

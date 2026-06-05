@@ -1,6 +1,5 @@
 """Unit tests for the reality check agent core logic."""
 
-
 from src.agents.referee.reality_check import (
     BASIC_CRUD_SCORE,
     SIGNAL_MATCH_BONUS,

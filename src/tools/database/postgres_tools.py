@@ -75,8 +75,7 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_tables(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT
                 schemaname AS schema_name,
                 relname AS table_name,
@@ -88,12 +87,10 @@ class PostgreSQLRemoteCollector:
             FROM pg_stat_user_tables
             WHERE schemaname = 'public'
             ORDER BY relname
-        """
-        )
+        """)
 
     def collect_columns(self, table_name: str) -> list[dict]:
-        return self._query(
-            f"""
+        return self._query(f"""
             SELECT
                 column_name, ordinal_position, data_type, udt_name,
                 character_maximum_length AS max_length,
@@ -101,17 +98,14 @@ class PostgreSQLRemoteCollector:
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = '{table_name}'
             ORDER BY ordinal_position
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
 
     def collect_column_cardinality(self, table_name: str) -> dict[str, int]:
-        rows = self._query(
-            f"""
+        rows = self._query(f"""
             SELECT attname AS col, n_distinct
             FROM pg_stats
             WHERE schemaname = 'public' AND tablename = '{table_name}'
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         result = {}
         for r in rows:
             n = r.get("n_distinct")
@@ -120,8 +114,7 @@ class PostgreSQLRemoteCollector:
         return result
 
     def collect_indexes(self, table_name: str) -> list[dict]:
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 i.relname AS index_name,
                 a.attname AS column_name,
@@ -136,8 +129,7 @@ class PostgreSQLRemoteCollector:
             WHERE t.relname = '{table_name}'
               AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
             ORDER BY i.relname, a.attnum
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         indexes: dict[str, dict] = {}
         for r in raw:
             name = r["index_name"]
@@ -153,8 +145,7 @@ class PostgreSQLRemoteCollector:
         return list(indexes.values())
 
     def collect_foreign_keys(self, table_name: str) -> list[dict]:
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 tc.constraint_name, kcu.column_name,
                 ccu.table_name AS referenced_table_name,
@@ -170,8 +161,7 @@ class PostgreSQLRemoteCollector:
             WHERE tc.constraint_type = 'FOREIGN KEY'
               AND tc.table_schema = 'public' AND tc.table_name = '{table_name}'
             ORDER BY tc.constraint_name
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         fks: dict[str, dict] = {}
         for r in raw:
             name = r["constraint_name"]
@@ -189,15 +179,13 @@ class PostgreSQLRemoteCollector:
         return list(fks.values())
 
     def collect_primary_key(self, table_name: str) -> list[str]:
-        rows = self._query(
-            f"""
+        rows = self._query(f"""
             SELECT a.attname AS column_name
             FROM pg_index i
             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
             WHERE i.indrelid = 'public.{table_name}'::regclass AND i.indisprimary
             ORDER BY a.attnum
-        """  # nosec B608 — table_name from information_schema, not user input
-        )
+        """)  # nosec B608 — table_name from information_schema, not user input
         return [r["column_name"] for r in rows]
 
     # -------------------------------------------------------------------
@@ -205,16 +193,13 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_views(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT viewname AS view_name, definition, viewowner AS owner
             FROM pg_views WHERE schemaname = 'public' ORDER BY viewname
-        """
-        )
+        """)
 
     def collect_procedures(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT
                 p.proname AS routine_name,
                 CASE p.prokind WHEN 'f' THEN 'FUNCTION' WHEN 'p' THEN 'PROCEDURE' END AS routine_type,
@@ -225,12 +210,10 @@ class PostgreSQLRemoteCollector:
             JOIN pg_language l ON p.prolang = l.oid
             WHERE n.nspname = 'public'
             ORDER BY routine_type, routine_name
-        """
-        )
+        """)
 
     def collect_triggers(self) -> list[dict]:
-        return self._query(
-            """
+        return self._query("""
             SELECT
                 t.tgname AS trigger_name,
                 c.relname AS table_name,
@@ -245,16 +228,14 @@ class PostgreSQLRemoteCollector:
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE n.nspname = 'public' AND NOT t.tgisinternal
             ORDER BY c.relname, t.tgname
-        """
-        )
+        """)
 
     # -------------------------------------------------------------------
     # Query patterns (pg_stat_statements)
     # -------------------------------------------------------------------
 
     def collect_query_patterns(self, min_calls: int = 1, limit: int = 1000) -> list[dict]:
-        raw = self._query(
-            f"""
+        raw = self._query(f"""
             SELECT
                 queryid, query, calls,
                 total_exec_time AS total_time_ms,
@@ -272,8 +253,7 @@ class PostgreSQLRemoteCollector:
               AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
             ORDER BY total_exec_time DESC
             LIMIT {limit}
-        """  # nosec B608 — min_calls and limit are internal constants, not user input
-        )
+        """)  # nosec B608 — min_calls and limit are internal constants, not user input
 
         patterns = []
         for r in raw:
@@ -310,11 +290,14 @@ class PostgreSQLRemoteCollector:
                     "rows_examined_avg": total_blks
                     * 8192.0
                     / max(calls, 1),  # blocks * 8KB as proxy for rows examined
-                    "scan_efficiency_pct": min(
-                        round((r.get("rows") or 0) / max(total_blks * 8192.0, 1) * 100, 2), 100.0
-                    )
-                    if total_blks > 0
-                    else None,
+                    "scan_efficiency_pct": (
+                        min(
+                            round((r.get("rows") or 0) / max(total_blks * 8192.0, 1) * 100, 2),
+                            100.0,
+                        )
+                        if total_blks > 0
+                        else None
+                    ),
                     "tables_accessed": _extract_tables(query_text),
                     "filter_columns": _extract_filter_columns(query_text),
                     "sort_columns": _extract_sort_columns(query_text),
@@ -344,8 +327,7 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_global_stats(self) -> dict:
-        rows = self._query(
-            """
+        rows = self._query("""
             SELECT
                 numbackends AS active_connections,
                 xact_commit + xact_rollback AS total_transactions,
@@ -353,8 +335,7 @@ class PostgreSQLRemoteCollector:
                 tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted,
                 temp_files, temp_bytes
             FROM pg_stat_database WHERE datname = current_database()
-        """
-        )
+        """)
         if not rows:
             return {}
         r = rows[0]

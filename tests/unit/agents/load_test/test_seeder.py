@@ -1,4 +1,5 @@
 """Tests for DynamoDB contract-aware seeder."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest

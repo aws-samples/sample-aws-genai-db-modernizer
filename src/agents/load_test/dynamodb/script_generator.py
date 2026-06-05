@@ -1,4 +1,5 @@
 """DynamoDB k6 script generator using per-operation Jinja templates."""
+
 import math
 import tempfile
 from pathlib import Path

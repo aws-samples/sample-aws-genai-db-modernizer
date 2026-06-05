@@ -278,14 +278,14 @@ class SchemaDesignRunner:
                 output = getattr(result, "structured_output", None)
                 if isinstance(output, self.output_model):
                     print(f"{prefix} Valid structured output")
-                    return output
+                    return output  # type: ignore[return-value]
 
                 raw_text = str(result)
                 last_partial_text = raw_text
                 parsed = json.loads(raw_text)
                 validated = self.output_model.model_validate(parsed)
                 print(f"{prefix} Parsed from text")
-                return validated
+                return validated  # type: ignore[return-value]
 
             except Exception as exc:
                 last_error = exc
@@ -303,7 +303,7 @@ class SchemaDesignRunner:
                     )
                 ],
             )
-            return previous_output
+            return previous_output  # type: ignore[return-value]
 
         if last_partial_text:
             try:
@@ -313,7 +313,7 @@ class SchemaDesignRunner:
                 self._append_trade_offs(
                     salvaged, ["[WARNING] Schema design produced from partial LLM output."]
                 )
-                return salvaged
+                return salvaged  # type: ignore[return-value]
             except (json.JSONDecodeError, ValueError, TypeError):
                 logger.warning("Could not salvage partial output from last attempt")
 

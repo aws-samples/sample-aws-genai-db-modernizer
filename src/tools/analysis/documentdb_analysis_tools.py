@@ -144,9 +144,7 @@ def detect_embedding_candidates(collector_output: dict) -> list[EmbeddingCandida
             rel_type = (
                 "many_to_many"
                 if is_junction
-                else "one_to_one"
-                if avg_children <= 1.1
-                else "one_to_many"
+                else "one_to_one" if avg_children <= 1.1 else "one_to_many"
             )
 
             candidates.append(
@@ -882,9 +880,9 @@ def build_decision_trace(
             for root, members in table_groups.items()
             if len(members) > 1
         ],
-        "embedding_candidates": [asdict(c) for c in embedding_candidates]
-        if embedding_candidates
-        else [],
+        "embedding_candidates": (
+            [asdict(c) for c in embedding_candidates] if embedding_candidates else []
+        ),
         "polymorphic_tables": polymorphic_tables or [],
         "denormalization_strategies": denorm_strategies or [],
         "llm_advisor": {

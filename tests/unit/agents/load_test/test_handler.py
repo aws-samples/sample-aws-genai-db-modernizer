@@ -1,4 +1,5 @@
 """Tests for engine-agnostic load test handler."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest

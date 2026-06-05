@@ -87,18 +87,20 @@ def analyze_for_documentdb_deterministic(
         workload_analysis=workload_analysis,
         cost_estimate=cost_estimate,
         load_test_results=None,
-        aggregate_recommendations=[
-            AggregateRecommendation(
-                aggregate_id=a.aggregate_id,
-                root_table=a.root_table,
-                member_tables=a.member_tables,
-                co_access_confidence=a.co_access_confidence,
-                combined_migration_complexity=a.combined_migration_complexity,
-            )
-            for a in aggregates
-        ]
-        if aggregates
-        else None,
+        aggregate_recommendations=(
+            [
+                AggregateRecommendation(
+                    aggregate_id=a.aggregate_id,
+                    root_table=a.root_table,
+                    member_tables=a.member_tables,
+                    co_access_confidence=a.co_access_confidence,
+                    combined_migration_complexity=a.combined_migration_complexity,
+                )
+                for a in aggregates
+            ]
+            if aggregates
+            else None
+        ),
     )
 
     decision_trace = build_decision_trace(

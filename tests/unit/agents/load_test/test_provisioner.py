@@ -1,4 +1,5 @@
 """Tests for DynamoDB multi-table provisioner."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest

@@ -755,14 +755,14 @@ class TestInvalidDataRejection:
             # Invalid source_database (missing required field)
             contract_data["metadata"]["source_database"] = {
                 "engine": "postgresql",
-                "version": "14.7"
+                "version": "14.7",
                 # Missing required field: hostname
             }
         else:
             # Invalid query_pattern (missing required field)
             contract_data["queries"]["query_patterns"][0] = {
                 "query_id": "q1",
-                "query_text": "SELECT * FROM users"
+                "query_text": "SELECT * FROM users",
                 # Missing required fields: frequency_per_hour, tables_accessed
             }
 
@@ -1289,7 +1289,7 @@ class TestErrorMessageDescriptiveness:
             # Missing required field in SourceDatabase
             contract_data["metadata"]["source_database"] = {
                 "engine": "postgresql",
-                "version": "14.7"
+                "version": "14.7",
                 # Missing: hostname
             }
             expected_fields = ["hostname"]
@@ -1297,7 +1297,7 @@ class TestErrorMessageDescriptiveness:
             # Missing required field in QueryPattern
             contract_data["queries"]["query_patterns"][0] = {
                 "query_id": "q1",
-                "query_text": "SELECT * FROM users"
+                "query_text": "SELECT * FROM users",
                 # Missing: frequency_per_hour, tables_accessed
             }
             expected_fields = ["frequency_per_hour", "tables_accessed"]

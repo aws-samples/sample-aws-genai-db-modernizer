@@ -1,4 +1,5 @@
 """Integration test: parse real WordPress schema, generate all scripts, validate."""
+
 import json
 from pathlib import Path
 from unittest.mock import patch

@@ -210,9 +210,9 @@ def get_performance_insights_queries(
                 "query_text": dims.get("db.sql.statement", ""),  # truncated, will be replaced
                 "tokenized_id": dims.get("db.sql.tokenized_id", ""),
                 "db_load_avg": k.get("Total", 0),
-                "db_load_contribution_percent": (k.get("Total", 0) / total_load * 100)
-                if total_load > 0
-                else 0,
+                "db_load_contribution_percent": (
+                    (k.get("Total", 0) / total_load * 100) if total_load > 0 else 0
+                ),
             }
 
         # Get full SQL text for each query (describe_dimension_keys truncates)
@@ -499,9 +499,11 @@ def get_database_insights(
                     "frequency_per_hour": (calls_per_sec or 0) * 3600,
                     "calls_per_second": calls_per_sec,
                     "execution_time_ms_avg": avg_latency_ms,
-                    "rows_affected_avg": ((rows_affected_per_sec or 0) / calls_per_sec)
-                    if calls_per_sec is not None and calls_per_sec > 0
-                    else 0,
+                    "rows_affected_avg": (
+                        ((rows_affected_per_sec or 0) / calls_per_sec)
+                        if calls_per_sec is not None and calls_per_sec > 0
+                        else 0
+                    ),
                     "tables_accessed": _extract_tables(query_text),
                     "has_joins": " join " in query_text.lower(),
                     "has_aggregations": bool(

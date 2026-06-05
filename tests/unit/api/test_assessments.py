@@ -141,9 +141,9 @@ class TestCreateAssessment:
 
 class TestPrepareAssessment:
     def test_returns_201(self, mock_services):
-        mock_services[
-            "s3"
-        ].client.generate_presigned_url.return_value = "https://s3.amazonaws.com/presigned"
+        mock_services["s3"].client.generate_presigned_url.return_value = (
+            "https://s3.amazonaws.com/presigned"
+        )
         mock_services["s3"].bucket = "test-bucket"
         resp = client.post(
             "/api/v1/assessments/prepare",
@@ -152,9 +152,9 @@ class TestPrepareAssessment:
         assert resp.status_code == 201
 
     def test_returns_job_id_and_upload_info(self, mock_services):
-        mock_services[
-            "s3"
-        ].client.generate_presigned_url.return_value = "https://s3.amazonaws.com/presigned"
+        mock_services["s3"].client.generate_presigned_url.return_value = (
+            "https://s3.amazonaws.com/presigned"
+        )
         mock_services["s3"].bucket = "test-bucket"
         data = client.post(
             "/api/v1/assessments/prepare",
@@ -169,9 +169,9 @@ class TestPrepareAssessment:
         assert data["expires_in_seconds"] == 3600
 
     def test_generates_presigned_url(self, mock_services):
-        mock_services[
-            "s3"
-        ].client.generate_presigned_url.return_value = "https://s3.amazonaws.com/presigned"
+        mock_services["s3"].client.generate_presigned_url.return_value = (
+            "https://s3.amazonaws.com/presigned"
+        )
         mock_services["s3"].bucket = "test-bucket"
         client.post(
             "/api/v1/assessments/prepare",
@@ -180,9 +180,9 @@ class TestPrepareAssessment:
         mock_services["s3"].client.generate_presigned_url.assert_called_once()
 
     def test_custom_filename(self, mock_services):
-        mock_services[
-            "s3"
-        ].client.generate_presigned_url.return_value = "https://s3.amazonaws.com/presigned"
+        mock_services["s3"].client.generate_presigned_url.return_value = (
+            "https://s3.amazonaws.com/presigned"
+        )
         mock_services["s3"].bucket = "test-bucket"
         data = client.post(
             "/api/v1/assessments/prepare",

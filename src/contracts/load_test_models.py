@@ -1,4 +1,5 @@
 """Pydantic models for the load testing stage."""
+
 from pydantic import BaseModel, Field
 
 

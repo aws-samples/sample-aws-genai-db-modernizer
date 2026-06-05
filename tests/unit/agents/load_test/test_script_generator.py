@@ -1,4 +1,5 @@
 """Tests for DynamoDB script generator with per-operation templates."""
+
 import pytest
 
 from src.agents.load_test.dynamodb.script_generator import DynamoDBScriptGenerator

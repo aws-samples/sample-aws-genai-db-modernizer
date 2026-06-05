@@ -1,6 +1,5 @@
 """Tests for schema design input contract and projection function."""
 
-
 import pytest
 from pydantic import ValidationError
 

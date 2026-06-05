@@ -1,4 +1,5 @@
 """Engine-agnostic models for load test orchestration."""
+
 from typing import Any
 
 from pydantic import BaseModel

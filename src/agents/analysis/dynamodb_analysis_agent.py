@@ -87,18 +87,20 @@ def analyze_for_dynamodb_deterministic(
         workload_analysis=workload_analysis,
         cost_estimate=cost_estimate,
         load_test_results=None,
-        aggregate_recommendations=[
-            AggregateRecommendation(
-                aggregate_id=a.aggregate_id,
-                root_table=a.root_table,
-                member_tables=a.member_tables,
-                co_access_confidence=a.co_access_confidence,
-                combined_migration_complexity=a.combined_migration_complexity,
-            )
-            for a in aggregates
-        ]
-        if aggregates
-        else None,
+        aggregate_recommendations=(
+            [
+                AggregateRecommendation(
+                    aggregate_id=a.aggregate_id,
+                    root_table=a.root_table,
+                    member_tables=a.member_tables,
+                    co_access_confidence=a.co_access_confidence,
+                    combined_migration_complexity=a.combined_migration_complexity,
+                )
+                for a in aggregates
+            ]
+            if aggregates
+            else None
+        ),
     )
 
     decision_trace = build_decision_trace(
@@ -183,18 +185,20 @@ def apply_dynamodb_llm_output(
     # Enrich existing deterministic aggregates with LLM key design fields
     existing = deterministic_result.aggregate_recommendations or []
     enriched = [
-        agg.model_copy(
-            update={
-                "partition_key": llm_by_id[agg.aggregate_id].partition_key,
-                "sort_key": llm_by_id[agg.aggregate_id].sort_key,
-                "key_design_rationale": llm_by_id[agg.aggregate_id].rationale,
-                "supporting_access_patterns": llm_by_id[
-                    agg.aggregate_id
-                ].supporting_access_patterns,
-            }
+        (
+            agg.model_copy(
+                update={
+                    "partition_key": llm_by_id[agg.aggregate_id].partition_key,
+                    "sort_key": llm_by_id[agg.aggregate_id].sort_key,
+                    "key_design_rationale": llm_by_id[agg.aggregate_id].rationale,
+                    "supporting_access_patterns": llm_by_id[
+                        agg.aggregate_id
+                    ].supporting_access_patterns,
+                }
+            )
+            if agg.aggregate_id in llm_by_id
+            else agg
         )
-        if agg.aggregate_id in llm_by_id
-        else agg
         for agg in existing
     ]
 

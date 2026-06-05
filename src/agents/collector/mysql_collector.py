@@ -504,7 +504,9 @@ def _collect_aws_raw(inp, cred_mgr) -> dict:
     # PI queries (PRIMARY) — needs DbiResourceId, not instance identifier
     pi_queries = []
     if inp.aws_config.collect_performance_insights:
-        pi_resource_id = rds_raw.get("resource_arn") if rds_raw.get("available") else inst_id
+        pi_resource_id: str = (
+            rds_raw.get("resource_arn", inst_id) if rds_raw.get("available") else inst_id
+        )
         pi_raw = get_performance_insights_queries(
             cred_mgr, pi_resource_id, days=inp.aws_config.performance_insights_days
         )
@@ -521,7 +523,7 @@ def _collect_aws_raw(inp, cred_mgr) -> dict:
         result["query_patterns"] = pi_queries
 
     # PI counter metrics (cache, temp tables — maps to cross-DB fields)
-    pi_resource_id = rds_raw.get("resource_arn") if rds_raw.get("available") else inst_id
+    pi_resource_id = rds_raw.get("resource_arn", inst_id) if rds_raw.get("available") else inst_id
     pi_counters = get_pi_counter_metrics(
         cred_mgr, pi_resource_id, days=inp.aws_config.cloudwatch_days
     )
@@ -953,9 +955,11 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
         Procedure(
             procedure_id=p.get("routine_name", ""),
             procedure_name=p.get("routine_name", ""),
-            procedure_type=ProcedureType.FUNCTION
-            if p.get("routine_type") == "FUNCTION"
-            else ProcedureType.PROCEDURE,
+            procedure_type=(
+                ProcedureType.FUNCTION
+                if p.get("routine_type") == "FUNCTION"
+                else ProcedureType.PROCEDURE
+            ),
             definition=p.get("definition"),
             return_type=p.get("return_type"),
         )

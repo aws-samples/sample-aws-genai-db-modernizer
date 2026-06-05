@@ -1,4 +1,5 @@
 """Tests for DynamoDB K6 runner."""
+
 import json
 from unittest.mock import MagicMock, patch
 

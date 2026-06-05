@@ -1,6 +1,5 @@
 """Tests for post-schema router logic."""
 
-
 from src.agents.referee.post_schema_router import (
     _extract_unsupported_query_ids,
     _parse_pe_routing_notes,

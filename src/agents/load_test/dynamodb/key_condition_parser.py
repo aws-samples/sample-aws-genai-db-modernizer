@@ -1,4 +1,5 @@
 """Deterministic parser for DynamoDB key_condition strings from schema design."""
+
 import re
 from dataclasses import dataclass
 

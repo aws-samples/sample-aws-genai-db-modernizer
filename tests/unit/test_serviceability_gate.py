@@ -8,7 +8,6 @@ Tests the interaction between capability detection and consolidation logic:
 - Full end-to-end: text_search queries block DynamoDB absorption
 """
 
-
 from src.agents.referee.reality_check import (
     _find_best_absorber_for_query,
     _suggest_lightweight_for_orphans,

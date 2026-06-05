@@ -1,4 +1,5 @@
 """Verify abstract base classes cannot be instantiated and define correct interface."""
+
 import pytest
 
 from src.agents.load_test.base import BaseProvisioner, BaseRunner, BaseScriptGenerator, BaseSeeder

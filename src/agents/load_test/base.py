@@ -1,4 +1,5 @@
 """Abstract base classes for engine-specific load test components."""
+
 from abc import ABC, abstractmethod
 from typing import Any
 
