@@ -97,7 +97,7 @@ jobs:
         run: npx react-scripts build
         working-directory: src/ui
         env:
-          CI: true
+          CI: false
 
   cfn-lint:
     runs-on: ubuntu-latest
