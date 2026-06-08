@@ -631,6 +631,47 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:Query
                 Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*'
+              - Sid: DocumentDbProvisioning
+                Effect: Allow
+                Action:
+                  - rds:CreateDBCluster
+                  - rds:DeleteDBCluster
+                  - rds:DescribeDBClusters
+                  - rds:CreateDBInstance
+                  - rds:DeleteDBInstance
+                  - rds:DescribeDBInstances
+                  - rds:AddTagsToResource
+                  - rds:RemoveTagsFromResource
+                  - rds:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:loadtest-*'
+                  - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:loadtest-*'
+                  - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:subgrp:*'
+                  - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:pg:*'
+                  - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster-pg:*'
+              - Sid: DocumentDbVpcLookup
+                Effect: Allow
+                Action:
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeAvailabilityZones
+                Resource: '*'
+              - Sid: SecretsManagerForDocumentDb
+                Effect: Allow
+                Action:
+                  - secretsmanager:CreateSecret  # pragma: allowlist secret
+                  - secretsmanager:DeleteSecret  # pragma: allowlist secret
+                  - secretsmanager:DescribeSecret  # pragma: allowlist secret
+                  - secretsmanager:GetSecretValue  # pragma: allowlist secret
+                  - secretsmanager:TagResource  # pragma: allowlist secret
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:LoadTest_DocumentDB_*'  # pragma: allowlist secret
+              - Sid: StsGetCallerIdentity
+                Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
               - Sid: BedrockAccess
                 Effect: Allow
                 Action:
