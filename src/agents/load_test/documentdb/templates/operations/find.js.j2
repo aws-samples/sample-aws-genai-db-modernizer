@@ -1,0 +1,27 @@
+// {{ query_id }}.js — find: {{ description }}
+// Range scan starting from a random primary_id with a fixed limit.
+
+import { runOperation } from '../helpers/client.js';
+import { generateExistingKey } from '../helpers/key-generator.js';
+import { createPatternMetrics } from '../helpers/metrics.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+const COLLECTION = '{{ collection_name }}';
+const KEY_COUNT = {{ primary_key_count }};
+const PAGE_LIMIT = {{ page_limit | default(20) }};
+
+export default function () {
+  const startKey = generateExistingKey(KEY_COUNT);
+
+  const start = Date.now();
+  try {
+    runOperation(COLLECTION, 'find', {
+      filter: { primary_id: { $gte: startKey } },
+      options: { limit: PAGE_LIMIT },
+    });
+    metrics.latency.add(Date.now() - start);
+    metrics.requests.add(1);
+  } catch (err) {
+    metrics.errors.add(1);
+  }
+}

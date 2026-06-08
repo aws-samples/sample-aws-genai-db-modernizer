@@ -1,0 +1,22 @@
+// {{ query_id }}.js — insertOne: {{ description }}
+
+import { runOperation } from '../helpers/client.js';
+import { generateNewDocument } from '../helpers/key-generator.js';
+import { createPatternMetrics } from '../helpers/metrics.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+const COLLECTION = '{{ collection_name }}';
+const KEY_COUNT = {{ primary_key_count }};
+
+export default function () {
+  const doc = generateNewDocument(KEY_COUNT);
+
+  const start = Date.now();
+  try {
+    runOperation(COLLECTION, 'insertOne', { document: doc });
+    metrics.latency.add(Date.now() - start);
+    metrics.requests.add(1);
+  } catch (err) {
+    metrics.errors.add(1);
+  }
+}

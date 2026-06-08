@@ -44,6 +44,20 @@ def create_engine_components(
                 DynamoDBScriptGenerator(region=region),
                 K6Runner(),
             )
+        case "documentdb":
+            from src.agents.load_test.documentdb import (
+                DocumentDBProvisioner,
+                DocumentDBScriptGenerator,
+                DocumentDBSeeder,
+            )
+            from src.agents.load_test.dynamodb.runner import K6Runner
+
+            return (
+                DocumentDBProvisioner(region=region),
+                DocumentDBSeeder(region=region),
+                DocumentDBScriptGenerator(region=region),
+                K6Runner(),
+            )
         case _:
             raise ValueError(f"Unsupported engine: {target_engine}")
 
@@ -98,8 +112,9 @@ def run_load_test(
     base = _base_path(database_name, job_id, schema_version, target_engine)
     log = logger.bind(job_id=job_id, run_id=run_id, target_engine=target_engine)
 
-    # Only DynamoDB is implemented currently
-    if target_engine != "dynamodb":
+    # DynamoDB and DocumentDB are implemented; other engines fall through to skip
+    SUPPORTED_ENGINES = {"dynamodb", "documentdb"}
+    if target_engine not in SUPPORTED_ENGINES:
         log.info("load_test_skipped", reason=f"not implemented for {target_engine}")
         store.write_json(
             f"{base}/result.json",
@@ -138,8 +153,33 @@ def run_load_test(
     try:
         # 4. Provision
         tags = {"job_id": job_id, "run_id": run_id, "database_name": database_name}
+
+        # DocumentDB provisioner reads collector_output + test_config from
+        # schema_output for sizing (the BaseProvisioner signature only carries
+        # schema_output + tags). The coordinator stuffs them in here.
+        if target_engine == "documentdb":
+            schema_output["_collector_output"] = collector_output
+            schema_output["_test_config"] = test_config
+
         manifest = provisioner.provision(schema_output, tags)
         log.info("provisioned", resources=len(manifest.resources))
+
+        # DocumentDB seeder + script_generator need the cluster endpoint and
+        # replica count from the deployed manifest. Stuff them on schema_output
+        # so they're available without changing BaseSeeder / BaseScriptGenerator
+        # signatures.
+        if target_engine == "documentdb":
+            cluster_resource = next(
+                (r for r in manifest.resources if r.resource_type == "AWS::DocDB::DBCluster"),
+                None,
+            )
+            if cluster_resource is not None:
+                schema_output["_documentdb_endpoint"] = cluster_resource.configuration[
+                    "cluster_endpoint"
+                ]
+                schema_output["_documentdb_replica_count"] = cluster_resource.configuration.get(
+                    "replica_count", 0
+                )
 
         # 5. Seed
         seed_manifest = seeder.seed(schema_output, max_items_per_table=10_000)
