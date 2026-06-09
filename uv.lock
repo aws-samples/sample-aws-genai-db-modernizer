@@ -159,30 +159,30 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.43.23"
+version = "1.43.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/51/7e/18f6d87625930231708681ccfba20c2c6ade8d977c37d388992c0589efdd/boto3-1.43.23.tar.gz", hash = "sha256:5d26498702ffd021dc0d57d0eefcc7101cd995ea0ed08c057c9b631efccbaa48", size = 113242, upload-time = "2026-06-04T19:39:37.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/6a/fede22427b4e8e56bae102de50351f1a02519be86f8c8dd5347c377cfceb/boto3-1.43.26.tar.gz", hash = "sha256:33f027b7911dffe84f4896b66024c228eb856f4cf8c1ff3465be0eae1f413731", size = 113143, upload-time = "2026-06-09T19:34:20.381Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/1e/27b67ee4d10cc755aa9a35d45aa476d7bb2366c4dea91b0db94fa0fe27bd/boto3-1.43.23-py3-none-any.whl", hash = "sha256:8afc058924ef8a5c62467fe2e1e2e0304c22018587a044714da89f9c602ba856", size = 140536, upload-time = "2026-06-04T19:39:34.657Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/39/06d683934d94972c070179952746a57adff5c1851e2396d505a9b8cd9754/boto3-1.43.26-py3-none-any.whl", hash = "sha256:7c88bfbde6abcf062d04ac410a1cf4eaf8675f025f35f3ad9accc9b0224ce6b9", size = 140537, upload-time = "2026-06-09T19:34:17.812Z" },
 ]
 
 [[package]]
 name = "botocore"
-version = "1.43.23"
+version = "1.43.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/79/9c3313d8be64ebff5a100d73777d5c6249229ceee57e269a0830b2f7d3a3/botocore-1.43.23.tar.gz", hash = "sha256:a6737c598750f330bfa8ef2be2d9fa84b5d2d643b6bbb0d22e129e03b7535df1", size = 15464775, upload-time = "2026-06-04T19:39:26.6Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/ba/aa37cd4e72aa8b70fdb93f47129ef3b79887edcfb343bd41df2783a72f12/botocore-1.43.26.tar.gz", hash = "sha256:fd9280ac868194afcee59c7def62e0031fb4b599f7ef85360d30c7e42357c1dc", size = 15497173, upload-time = "2026-06-09T19:34:07.37Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/0e/63e4720c6fe6dab278faf9f09b59c377e49a9f9a1afaec2c69dc2e7b9de2/botocore-1.43.23-py3-none-any.whl", hash = "sha256:69ff3d951cb644d1d84db646663c7eb919dc9c0c47e5768e947c8a71121b3d77", size = 15147962, upload-time = "2026-06-04T19:39:22.141Z" },
+    { url = "https://files.pythonhosted.org/packages/be/e6/5a5ec1033613e7812e5b19ec8c2a1889834fde336d8812d53019eac6e04a/botocore-1.43.26-py3-none-any.whl", hash = "sha256:eeb92265bae289555182a46341c998a656ab49c0dbdb762c65b30fe354fcc9e8", size = 15183593, upload-time = "2026-06-09T19:34:03.012Z" },
 ]
 
 [[package]]
@@ -551,7 +551,7 @@ dev = [
 requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.6" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.0.0" },
-    { name = "boto3", specifier = ">=1.34.0" },
+    { name = "boto3", specifier = ">=1.43.26" },
     { name = "cfn-lint", marker = "extra == 'dev'", specifier = ">=0.83.0" },
     { name = "detect-secrets", marker = "extra == 'dev'", specifier = ">=1.4.0" },
     { name = "fastapi", specifier = ">=0.104.1" },
@@ -574,7 +574,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6" },
     { name = "strands-agents", specifier = ">=1.0.0" },
-    { name = "structlog", specifier = ">=23.2.0" },
+    { name = "structlog", specifier = ">=26.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
 ]
 provides-extras = ["dev"]
@@ -2049,11 +2049,11 @@ wheels = [
 
 [[package]]
 name = "structlog"
-version = "25.5.0"
+version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/89/b4a0bcfdf4f71a3dea31379f095929613d7e4528a0996bca6aa964cd0dca/structlog-26.1.0.tar.gz", hash = "sha256:f63a716cbd1b1291cf7661de7794b455acfa4c43c5bcf1630e6ad5ddc1adb3b7", size = 1459881, upload-time = "2026-06-06T07:33:39.348Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/18/489c97b834dfff9cf2fc2507cede4bcd4b11e67f84bc462acd1992496f86/structlog-26.1.0-py3-none-any.whl", hash = "sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e", size = 73764, upload-time = "2026-06-06T07:33:38.046Z" },
 ]
 
 [[package]]

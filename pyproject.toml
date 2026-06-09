@@ -29,10 +29,10 @@ dependencies = [
     # Configuration & Logging
     "pyyaml>=6.0.1",
     "python-dotenv>=1.0.0",
-    "structlog>=23.2.0",
+    "structlog>=26.1.0",
 
     # AWS SDK
-    "boto3>=1.34.0",
+    "boto3>=1.43.26",
 
     # Template rendering (k6 script generation)
     "jinja2>=3.1.0",
