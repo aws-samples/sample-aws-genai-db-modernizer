@@ -1,0 +1,31 @@
+// {{ query_id }}.js — deleteMany: {{ description }}
+// Pre-inserts a small batch, then deletes it. Avoids reducing seeded data.
+
+import { runOperation } from '../helpers/client.js';
+import { generateNewDocument } from '../helpers/key-generator.js';
+import { createPatternMetrics } from '../helpers/metrics.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+const COLLECTION = '{{ collection_name }}';
+const KEY_COUNT = {{ primary_key_count }};
+const BATCH_SIZE = {{ batch_size | default(10) }};
+
+export default function () {
+  const docs = [];
+  const tag = `delbatch-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  for (let i = 0; i < BATCH_SIZE; i++) {
+    const doc = generateNewDocument(KEY_COUNT);
+    doc.batch_tag = tag;
+    docs.push(doc);
+  }
+  runOperation(COLLECTION, 'insertMany', { documents: docs });
+
+  const start = Date.now();
+  try {
+    runOperation(COLLECTION, 'deleteMany', { filter: { batch_tag: tag } });
+    metrics.latency.add(Date.now() - start);
+    metrics.requests.add(1);
+  } catch (err) {
+    metrics.errors.add(1);
+  }
+}

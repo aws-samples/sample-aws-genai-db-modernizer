@@ -1,0 +1,39 @@
+// {{ query_id }}.js — bulkWrite: {{ description }}
+// Mixed operations: 60% updates on existing keys, 40% inserts of new keys.
+
+import { runOperation } from '../helpers/client.js';
+import { generateExistingKey, generateNewDocument } from '../helpers/key-generator.js';
+import { createPatternMetrics } from '../helpers/metrics.js';
+
+const metrics = createPatternMetrics('{{ query_id }}');
+const COLLECTION = '{{ collection_name }}';
+const KEY_COUNT = {{ primary_key_count }};
+const OPS_PER_BATCH = {{ ops_per_batch | default(10) }};
+const UPDATE_RATIO = 0.6;
+
+export default function () {
+  const operations = [];
+  for (let i = 0; i < OPS_PER_BATCH; i++) {
+    if (Math.random() < UPDATE_RATIO) {
+      operations.push({
+        updateOne: {
+          filter: { primary_id: generateExistingKey(KEY_COUNT) },
+          update: { $set: { bulk_updated_at: new Date().toISOString() } },
+        },
+      });
+    } else {
+      operations.push({
+        insertOne: { document: generateNewDocument(KEY_COUNT) },
+      });
+    }
+  }
+
+  const start = Date.now();
+  try {
+    runOperation(COLLECTION, 'bulkWrite', { operations: operations });
+    metrics.latency.add(Date.now() - start);
+    metrics.requests.add(1);
+  } catch (err) {
+    metrics.errors.add(1);
+  }
+}

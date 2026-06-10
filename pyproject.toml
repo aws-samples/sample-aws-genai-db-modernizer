@@ -36,6 +36,10 @@ dependencies = [
 
     # Template rendering (k6 script generation)
     "jinja2>=3.1.0",
+
+    # DocumentDB load test driver — [aws] extra pulls pymongo-auth-aws for
+    # MONGODB-AWS authentication. Used by load_test.documentdb.{provisioner,seeder}.
+    "pymongo[aws]>=4.6.0",
 ]
 
 [project.optional-dependencies]
