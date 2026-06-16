@@ -43,6 +43,22 @@ def create_engine_components(
                 DynamoDBScriptGenerator(region=region),
                 K6Runner(),
             )
+
+        case "documentdb":
+            from src.agents.load_test.documentdb import (
+                DocumentDBProvisioner,
+                DocumentDBScriptGenerator,
+                DocumentDBSeeder,
+            )
+            from src.agents.load_test.dynamodb.runner import K6Runner
+
+            return (
+                DocumentDBProvisioner(region=region),
+                DocumentDBSeeder(region=region),
+                DocumentDBScriptGenerator(region=region),
+                K6Runner(),
+            )
+
         case "elasticache":
             from src.agents.load_test.elasticache import (
                 ElastiCacheProvisioner,
@@ -131,8 +147,9 @@ def run_load_test(
     base = _base_path(database_name, job_id, schema_version, target_engine)
     log = logger.bind(job_id=job_id, run_id=run_id, target_engine=target_engine)
 
-    # Only DynamoDB and ElastiCache are implemented currently
-    if target_engine not in ("dynamodb", "elasticache"):
+    # Only DynamoDB, ElastiCache and DocumentDB are implemented currently
+    SUPPORTED_ENGINES = {"dynamodb", "documentdb", "elasticache"}
+    if target_engine not in SUPPORTED_ENGINES:
         log.info("load_test_skipped", reason=f"not implemented for {target_engine}")
         store.write_json(
             f"{base}/result.json",
@@ -176,10 +193,35 @@ def run_load_test(
     try:
         # 4. Provision
         tags = {"job_id": job_id, "run_id": run_id, "database_name": database_name}
+
+        # DocumentDB provisioner reads collector_output + test_config from
+        # schema_output for sizing (the BaseProvisioner signature only carries
+        # schema_output + tags). The coordinator stuffs them in here.
+        if target_engine == "documentdb":
+            schema_output["_collector_output"] = collector_output
+            schema_output["_test_config"] = test_config
+
         manifest = provisioner.provision(schema_output, tags)
         log.info("provisioned", resources=len(manifest.resources))
 
-        # 4b. Inject provisioned endpoint into schema_output for seeder/generator
+        # DocumentDB seeder + script_generator need the cluster endpoint and
+        # replica count from the deployed manifest. Stuff them on schema_output
+        # so they're available without changing BaseSeeder / BaseScriptGenerator
+        # signatures.
+        if target_engine == "documentdb":
+            cluster_resource = next(
+                (r for r in manifest.resources if r.resource_type == "AWS::DocDB::DBCluster"),
+                None,
+            )
+            if cluster_resource is not None:
+                schema_output["_documentdb_endpoint"] = cluster_resource.configuration[
+                    "cluster_endpoint"
+                ]
+                schema_output["_documentdb_replica_count"] = cluster_resource.configuration.get(
+                    "replica_count", 0
+                )
+
+        # 4b. Inject provisioned ElastiCache endpoint into schema_output for seeder/generator
         for resource in manifest.resources:
             if resource.resource_type == "AWS::ElastiCache::ReplicationGroup":
                 schema_output["_cluster_endpoint"] = resource.configuration.get(
