@@ -11,10 +11,10 @@ license = {text = "MIT-0"}
 
 dependencies = [
     # Strands Agent Framework
-    "strands-agents>=1.0.0",
+    "strands-agents>=1.43.0",
 
     # Web Framework & API
-    "fastapi>=0.104.1",
+    "fastapi>=0.137.1",
     "uvicorn[standard]>=0.24.0",
 
     # Database Connectors
@@ -29,10 +29,10 @@ dependencies = [
     # Configuration & Logging
     "pyyaml>=6.0.1",
     "python-dotenv>=1.0.0",
-    "structlog>=23.2.0",
+    "structlog>=26.1.0",
 
     # AWS SDK
-    "boto3>=1.34.0",
+    "boto3>=1.43.31",
 
     # Template rendering (k6 script generation)
     "jinja2>=3.1.0",
@@ -44,19 +44,19 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.0.0",
+    "pytest>=9.1.0",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.5.0",
     "black>=26.0.0",
     "isort>=5.13.2",
-    "ruff>=0.1.6",
+    "ruff>=0.15.17",
     "mypy>=1.16.0",
     "bandit>=1.7.6",
-    "hypothesis>=6.0.0",
+    "hypothesis>=6.155.3",
     "pre-commit>=3.0.0",
     "detect-secrets>=1.4.0",
-    "cfn-lint>=0.83.0",
+    "cfn-lint>=1.51.5",
     "moto[s3,stepfunctions,logs]>=5.0.0",
 ]
 
