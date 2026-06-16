@@ -147,14 +147,42 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
         total_rows_affected = r.get("total_rows_affected") or 0
         total_time_ms = float(r.get("total_time_ms") or 0)
 
-        # Extract tables from query text and resolve to table_id format
-        # Handles: FROM table, FROM `table` (MySQL), FROM "table" (PostgreSQL)
-        table_re = re.compile(r'(?:FROM|JOIN|INTO|UPDATE)\s+[`"]?(\w+)[`"]?', re.I)
-        raw_tables = list(dict.fromkeys(table_re.findall(query_text)))
-        # Prefix with db_name if the table is known
-        tables_accessed = []
+        # Extract tables from query text and resolve to table_id format.
+        # Handles three quote styles + optional schema-qualified names:
+        #   FROM table         (MySQL bare)
+        #   FROM `table`       (MySQL backtick)
+        #   FROM "table"       (PostgreSQL/Oracle double quote)
+        #   FROM [table]       (SQL Server bracket)
+        #   FROM schema.table, FROM [schema].[table], FROM `schema`.`table`
+        # The named groups capture optional schema and the table.
+        table_re = re.compile(
+            r"(?:FROM|JOIN|INTO|UPDATE)\s+"
+            r'(?:[`"\[]?(?P<schema>\w+)[`"\]]?\s*\.\s*)?'
+            r'[`"\[]?(?P<table>\w+)[`"\]]?',
+            re.I,
+        )
+        raw_tables: list[str] = []
+        for m_raw in table_re.finditer(query_text):
+            schema = m_raw.group("schema")
+            table = m_raw.group("table")
+            if not table:
+                continue
+            # Skip system catalogs / RDS-internal references
+            if schema and schema.lower() in ("sys", "information_schema"):
+                continue
+            if table.lower() in ("sys", "information_schema"):
+                continue
+            raw_tables.append(f"{schema}.{table}" if schema else table)
+        # Dedupe preserving order
+        raw_tables = list(dict.fromkeys(raw_tables))
+
+        # Prefix with db_name if the bare-name table is known
+        tables_accessed: list[str] = []
         for t in raw_tables:
-            if t in known_table_names:
+            # If the regex captured "schema.table", keep as-is (already qualified)
+            if "." in t:
+                tables_accessed.append(t)
+            elif t in known_table_names:
                 tables_accessed.append(f"{db_name}.{t}")
             else:
                 tables_accessed.append(t)

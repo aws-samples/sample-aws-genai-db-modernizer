@@ -370,7 +370,10 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     procedures = _build_procedures(parsed.get("procedures", []))
     triggers = _build_triggers(parsed.get("triggers", []))
 
-    live_queries = _build_queries(parsed.get("queries", []))
+    live_queries = _build_queries(
+        parsed.get("queries", []),
+        query_log_source=_offline_query_log_source(inp.engine.value),
+    )
     aws_queries = aws_raw.get("query_patterns", [])
     queries = _merge_into_queries(live_queries, aws_queries)
 
@@ -474,7 +477,10 @@ def _parse_ddl_raw(inp, region) -> list[dict]:
         key=inp.ddl_config.s3_key,
         region=region,
     )
-    return parse_ddl(ddl_text, database_name=inp.database_name)
+    # Pass the source engine as the dialect hint. The parser is dialect-tolerant
+    # by default (handles MySQL backticks and T-SQL brackets), but the param
+    # documents intent and is reserved for future dialect-specific behavior.
+    return parse_ddl(ddl_text, database_name=inp.database_name, dialect=inp.engine.value)
 
 
 def _collect_aws_raw(inp, cred_mgr) -> dict:
@@ -646,7 +652,20 @@ def _build_columns(raw: list[dict]) -> list[Column]:
     ]
 
 
-def _build_queries(raw: list[dict]) -> Queries:
+def _offline_query_log_source(engine: str) -> QueryLogSource:
+    """Map source engine to its native query stats source for offline mode."""
+    return {
+        "mysql": QueryLogSource.performance_schema,
+        "mariadb": QueryLogSource.performance_schema,
+        "postgresql": QueryLogSource.pg_stat_statements,
+        "sqlserver": QueryLogSource.dmv_query_stats,
+        "oracle": QueryLogSource.v_dollar_sql,
+    }.get(engine, QueryLogSource.performance_schema)
+
+
+def _build_queries(
+    raw: list[dict], query_log_source: QueryLogSource = QueryLogSource.performance_schema
+) -> Queries:
     if not raw:
         return Queries(query_patterns=[])
     patterns = [
@@ -696,7 +715,7 @@ def _build_queries(raw: list[dict]) -> Queries:
     return Queries(
         query_patterns=patterns,
         total_queries_analyzed=len(patterns),
-        query_log_source=QueryLogSource.performance_schema,
+        query_log_source=query_log_source,
     )
 
 
@@ -737,6 +756,14 @@ def _merge_into_queries(live_queries: Queries, aws_patterns: list[dict]) -> Quer
 
 
 def _dict_to_query_pattern(d: dict) -> QueryPattern:
+    """Convert a raw query-stats dict (DMV/V$/PI/etc.) into a QueryPattern.
+
+    Pass-through is generous: any field present in ``d`` flows into the
+    QueryPattern; absent fields stay None. Engine-specific tools populate
+    different fields (e.g. SQL Server fills ``avg_logical_reads`` and
+    percentiles, while AWS PI fills ``db_load_contribution_percent`` and
+    ``wait_events``). Adding a new field here is non-breaking.
+    """
     query_text = d.get("query_text", "")
     return QueryPattern(
         query_id=d["query_id"],
@@ -745,16 +772,41 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         frequency_per_hour=d.get("frequency_per_hour", 0),
         calls_per_second=d.get("calls_per_second"),
         tables_accessed=d.get("tables_accessed") or ["unknown"],
+        # Latency
         execution_time_ms_avg=d.get("execution_time_ms_avg"),
+        execution_time_ms_min=d.get("execution_time_ms_min"),
+        execution_time_ms_max=d.get("execution_time_ms_max"),
+        execution_time_ms_p50=d.get("execution_time_ms_p50"),
+        execution_time_ms_p95=d.get("execution_time_ms_p95"),
+        execution_time_ms_p99=d.get("execution_time_ms_p99"),
         total_time_ms=d.get("total_time_ms"),
+        # Rows
         rows_affected_avg=d.get("rows_affected_avg"),
-        db_load_contribution_percent=d.get("db_load_contribution_percent"),
+        rows_returned_avg=d.get("rows_returned_avg"),
+        rows_returned_p95=d.get("rows_returned_p95"),
+        rows_examined_avg=d.get("rows_examined_avg"),
+        # Engine-neutral SQL Server / Oracle fields
+        avg_cpu_time_ms=d.get("avg_cpu_time_ms"),
+        avg_logical_reads=d.get("avg_logical_reads"),
+        avg_physical_reads=d.get("avg_physical_reads"),
+        cache_hit_ratio_pct=d.get("cache_hit_ratio_pct"),
+        # Pattern flags
+        filter_columns=d.get("filter_columns"),
+        sort_columns=d.get("sort_columns"),
         has_joins=d.get("has_joins"),
+        join_count=d.get("join_count"),
         has_aggregations=d.get("has_aggregations"),
         has_subqueries=d.get("has_subqueries"),
         has_text_search=d.get("has_text_search") or _detect_text_search(query_text),
         text_search_type=d.get("text_search_type") or _detect_text_search_type(query_text),
         has_time_range_filter=d.get("has_time_range_filter") or _detect_time_range(query_text),
+        # Timestamps + counters
+        first_seen=d.get("first_seen"),
+        last_seen=d.get("last_seen"),
+        errors=d.get("errors"),
+        warnings=d.get("warnings"),
+        # PI-only
+        db_load_contribution_percent=d.get("db_load_contribution_percent"),
         wait_events=d.get("wait_events"),
     )
 

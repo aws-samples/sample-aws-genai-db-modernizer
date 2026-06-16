@@ -3,12 +3,31 @@ DDL Parser Tool
 
 Fetches DDL scripts from S3 and parses them into schema structures
 matching the CollectorOutput contract.
+
+Dialect support is additive — the parser accepts both backtick-quoted
+(MySQL/MariaDB) and bracket-quoted (T-SQL/SQL Server) identifiers, and
+recognizes both ``AUTO_INCREMENT`` and ``IDENTITY(seed, increment)`` for
+auto-increment columns. The ``dialect`` parameter signals intent at the
+call site and allows future dialect-specific behavior; today it does not
+gate any behavior — the parser is dialect-tolerant by default.
 """
 
 import logging
 import re
 
 logger = logging.getLogger(__name__)
+
+
+# Identifier quote characters across supported dialects.
+# - Backtick: MySQL/MariaDB
+# - Square bracket: SQL Server (T-SQL)
+# - Double quote: PostgreSQL/Oracle (when QUOTED_IDENTIFIER is on)
+_IDENTIFIER_QUOTES = '`[]"'
+
+
+def _unquote(name: str) -> str:
+    """Strip surrounding identifier quotes and whitespace."""
+    return name.strip().strip(_IDENTIFIER_QUOTES).strip()
 
 
 def fetch_ddl_from_s3(bucket: str, key: str, region: str = "us-east-1") -> str:
@@ -20,7 +39,7 @@ def fetch_ddl_from_s3(bucket: str, key: str, region: str = "us-east-1") -> str:
     return str(resp["Body"].read().decode("utf-8"))  # type: ignore[no-any-return]
 
 
-def parse_ddl(ddl_text: str, database_name: str = "unknown") -> list[dict]:
+def parse_ddl(ddl_text: str, database_name: str = "unknown", dialect: str = "mysql") -> list[dict]:
     """
     Parse CREATE TABLE statements from DDL text.
     Returns list of table dicts compatible with the schema builder.
@@ -29,8 +48,17 @@ def parse_ddl(ddl_text: str, database_name: str = "unknown") -> list[dict]:
     - CREATE TABLE with columns, types, constraints
     - PRIMARY KEY (inline and table-level)
     - FOREIGN KEY constraints
-    - INDEX / UNIQUE INDEX
-    - AUTO_INCREMENT
+    - INDEX / UNIQUE INDEX (MySQL inline syntax)
+    - AUTO_INCREMENT (MySQL) and IDENTITY(seed, increment) (T-SQL)
+    - varchar(N), nvarchar(MAX), varbinary(MAX) length variants
+    - Backtick (MySQL) and bracket (T-SQL) quoted identifiers
+
+    Args:
+        ddl_text: Raw DDL text
+        database_name: Database name for table_id formatting
+        dialect: Source dialect — "mysql", "postgresql", "sqlserver", "oracle".
+                 Currently informational; the parser is dialect-tolerant by
+                 default. May be used for dialect-specific behavior in future.
     """
     tables = []
     # Split on CREATE TABLE, case-insensitive
@@ -41,18 +69,20 @@ def parse_ddl(ddl_text: str, database_name: str = "unknown") -> list[dict]:
         if not stmt:
             continue
 
-        table = _parse_create_table(stmt, database_name)
+        table = _parse_create_table(stmt, database_name, dialect)
         if table:
             tables.append(table)
 
     return tables
 
 
-def _parse_create_table(stmt: str, database_name: str) -> dict | None:
-    """Parse a single CREATE TABLE statement."""
-    # Extract table name
+def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -> dict | None:
+    """Parse a single CREATE TABLE statement. ``dialect`` is currently informational."""
+    # Extract table name. Accept backtick, bracket, or double-quote quoting,
+    # for either bare or schema-qualified names.
     m = re.match(
-        r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?(?:\.`?(\w+)`?)?\s*\(",
+        r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"[`\"\[]?(\w+)[`\"\]]?(?:\.[`\"\[]?(\w+)[`\"\]]?)?\s*\(",
         stmt,
     )
     if not m:
@@ -83,10 +113,14 @@ def _parse_create_table(stmt: str, database_name: str) -> dict | None:
         if not part:
             continue
 
-        # PRIMARY KEY (table-level)
-        pk_match = re.match(r"(?i)PRIMARY\s+KEY\s*\(([^)]+)\)", part)
+        # PRIMARY KEY (table-level) — supports both
+        # ``PRIMARY KEY (cols)`` and ``CONSTRAINT name PRIMARY KEY (cols)``.
+        pk_match = re.match(
+            r"(?i)(?:CONSTRAINT\s+[`\"\[]?\w+[`\"\]]?\s+)?PRIMARY\s+KEY\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(([^)]+)\)",
+            part,
+        )
         if pk_match:
-            primary_key = [c.strip().strip("`") for c in pk_match.group(1).split(",")]
+            primary_key = [_unquote(c) for c in pk_match.group(1).split(",")]
             indexes.append(
                 {
                     "index_name": "PRIMARY",
@@ -98,37 +132,63 @@ def _parse_create_table(stmt: str, database_name: str) -> dict | None:
             )
             continue
 
-        # FOREIGN KEY
+        # FOREIGN KEY — supports both backtick and bracket quoted identifiers
         fk_match = re.match(
-            r"(?i)(?:CONSTRAINT\s+`?(\w+)`?\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+`?(\w+)`?\s*\(([^)]+)\)"
+            r"(?i)(?:CONSTRAINT\s+[`\"\[]?(\w+)[`\"\]]?\s+)?"
+            r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*"
+            r"REFERENCES\s+[`\"\[]?(\w+)[`\"\]]?(?:\.[`\"\[]?(\w+)[`\"\]]?)?\s*\(([^)]+)\)"
             r"(?:\s+ON\s+DELETE\s+(CASCADE|SET\s+NULL|NO\s+ACTION|RESTRICT))?"
             r"(?:\s+ON\s+UPDATE\s+(CASCADE|SET\s+NULL|NO\s+ACTION|RESTRICT))?",
             part,
         )
         if fk_match:
-            fk_cols = [c.strip().strip("`") for c in fk_match.group(2).split(",")]
-            ref_cols = [c.strip().strip("`") for c in fk_match.group(4).split(",")]
+            fk_cols = [_unquote(c) for c in fk_match.group(2).split(",")]
+            ref_cols = [_unquote(c) for c in fk_match.group(5).split(",")]
+            # When the REFERENCES clause is schema-qualified, group(4) holds the table
+            # and group(3) holds the schema; otherwise group(3) is the table.
+            ref_table = fk_match.group(4) or fk_match.group(3)
             foreign_keys.append(
                 {
                     "constraint_name": fk_match.group(1) or f"fk_{table_name}_{'_'.join(fk_cols)}",
                     "columns": fk_cols,
-                    "referenced_table": fk_match.group(3),
+                    "referenced_table": ref_table,
                     "referenced_columns": ref_cols,
-                    "on_delete": fk_match.group(5),
-                    "on_update": fk_match.group(6),
+                    "on_delete": fk_match.group(6),
+                    "on_update": fk_match.group(7),
                 }
             )
             continue
 
-        # INDEX / UNIQUE INDEX / KEY
-        idx_match = re.match(r"(?i)(UNIQUE\s+)?(?:INDEX|KEY)\s+`?(\w+)`?\s*\(([^)]+)\)", part)
+        # INDEX / UNIQUE INDEX / KEY (MySQL inline syntax — T-SQL uses
+        # CREATE INDEX as separate statements outside CREATE TABLE).
+        idx_match = re.match(
+            r"(?i)(UNIQUE\s+)?(?:INDEX|KEY)\s+[`\"\[]?(\w+)[`\"\]]?\s*\(([^)]+)\)", part
+        )
         if idx_match:
-            idx_cols = [c.strip().strip("`") for c in idx_match.group(3).split(",")]
+            idx_cols = [_unquote(c) for c in idx_match.group(3).split(",")]
             indexes.append(
                 {
                     "index_name": idx_match.group(2),
                     "columns": idx_cols,
                     "is_unique": bool(idx_match.group(1)),
+                    "is_primary": False,
+                    "index_type": "btree",
+                }
+            )
+            continue
+
+        # CONSTRAINT name UNIQUE (cols) — T-SQL inline unique constraint
+        unique_match = re.match(
+            r"(?i)CONSTRAINT\s+[`\"\[]?(\w+)[`\"\]]?\s+UNIQUE\s*(?:CLUSTERED|NONCLUSTERED)?\s*\(([^)]+)\)",
+            part,
+        )
+        if unique_match:
+            uq_cols = [_unquote(c) for c in unique_match.group(2).split(",")]
+            indexes.append(
+                {
+                    "index_name": unique_match.group(1),
+                    "columns": uq_cols,
+                    "is_unique": True,
                     "is_primary": False,
                     "index_type": "btree",
                 }
@@ -161,8 +221,11 @@ def _parse_create_table(stmt: str, database_name: str) -> dict | None:
 
 def _parse_column(part: str, ordinal: int) -> dict | None:
     """Parse a column definition line."""
+    # Match identifier (any quote style) followed by type (with optional length).
+    # Length token can be a digit run, a digit pair like "(p,s)", or the
+    # T-SQL keyword MAX (varchar(MAX), varbinary(MAX), nvarchar(MAX)).
     m = re.match(
-        r"(?i)`?(\w+)`?\s+(\w+(?:\([^)]*\))?(?:\s+unsigned)?)",
+        r"(?i)[`\"\[]?(\w+)[`\"\]]?\s+(\w+(?:\([^)]*\))?(?:\s+unsigned)?)",
         part,
     )
     if not m:
@@ -172,20 +235,41 @@ def _parse_column(part: str, ordinal: int) -> dict | None:
     col_type_full = m.group(2).strip()
 
     # Skip if it looks like a constraint keyword
-    if col_name.upper() in ("PRIMARY", "FOREIGN", "UNIQUE", "INDEX", "KEY", "CONSTRAINT", "CHECK"):
+    if col_name.upper() in (
+        "PRIMARY",
+        "FOREIGN",
+        "UNIQUE",
+        "INDEX",
+        "KEY",
+        "CONSTRAINT",
+        "CHECK",
+    ):
         return None
 
     # Extract base type
     base_type_match = re.match(r"(\w+)", col_type_full)
     base_type = base_type_match.group(1).lower() if base_type_match else col_type_full.lower()
 
-    # Extract max_length
-    len_match = re.search(r"\((\d+)", col_type_full)
-    max_length = int(len_match.group(1)) if len_match else None
+    # Extract max_length. Recognize digit values and the T-SQL MAX keyword
+    # (varchar(MAX) → unbounded → None).
+    len_match = re.search(r"\((\d+|MAX)", col_type_full, re.IGNORECASE)
+    max_length: int | None = None
+    if len_match:
+        token = len_match.group(1).upper()
+        if token != "MAX":  # nosec B105 — "MAX" is the T-SQL length keyword, not a password
+            try:
+                max_length = int(token)
+            except ValueError:
+                max_length = None
 
     nullable = "NOT NULL" not in part.upper()
-    auto_inc = "AUTO_INCREMENT" in part.upper()
-    is_primary = "PRIMARY KEY" in part.upper()
+
+    # Auto-increment detection across dialects:
+    # - MySQL/MariaDB: AUTO_INCREMENT
+    # - SQL Server (T-SQL): IDENTITY(seed, increment) or just IDENTITY
+    upper_part = part.upper()
+    auto_inc = "AUTO_INCREMENT" in upper_part or re.search(r"\bIDENTITY\b", upper_part) is not None
+    is_primary = "PRIMARY KEY" in upper_part
 
     # Default value
     default_val = None

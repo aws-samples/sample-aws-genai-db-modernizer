@@ -138,10 +138,23 @@ def _build_sql_command(
             f"-d {database} -F $'\\t' --no-align -c '{safe_sql}'"
         )
     elif engine == "sqlserver":
+        # -s $'\t': tab separator
+        # -W: trim trailing whitespace from each column
+        # -k 1: replace control characters in output with single space (prevents tabs/newlines in
+        #       data from breaking the parser)
+        # -C: trust server certificate. sqlcmd v18 makes encryption mandatory and cert
+        #     validation strict by default. RDS instances use AWS-managed certificates which
+        #     are not in the default OS trust store. Traffic stays TLS-encrypted; this only
+        #     skips cert verification — acceptable since the automation EC2 only resolves
+        #     RDS endpoints reachable through its locked-down SG.
+        # No -h flag: default prints headers once (which the parser needs as line 1).
+        #            sqlcmd also emits a dashes separator line + "(N rows affected)" footer;
+        #            both are stripped by _parse_tabular_output.
+        # -Q: run query and exit
         return (
             f"{cred_fetch} && "
             f'sqlcmd -S {host},{port} -U "$DB_USER" -P "$DB_PASS" '
-            f"-d {database} -s $'\\t' -W -h -1 -Q '{safe_sql}'"
+            f"-d {database} -s $'\\t' -W -k 1 -C -Q '{safe_sql}'"
         )
     elif engine == "oracle":
         return (
@@ -158,11 +171,21 @@ def _parse_tabular_output(raw: str) -> list[dict]:
     """
     Parse tab-separated output from CLI tools into list of dicts.
     First line = headers (lowercased), remaining lines = data.
-    Strips PostgreSQL footer lines like '(5 rows)'.
+
+    Strips engine-specific noise:
+      - PostgreSQL footer: '(5 rows)'
+      - SQL Server footer: '(5 rows affected)'
+      - SQL Server separator: dashes line printed between headers and data
     """
     lines = [line for line in raw.strip().split("\n") if line.strip()]
-    # Remove PostgreSQL row count footer
-    lines = [line for line in lines if not re.match(r"^\(\d+ rows?\)$", line.strip())]
+
+    # Strip row-count footers (PostgreSQL and SQL Server)
+    lines = [line for line in lines if not re.match(r"^\(\d+ rows?( affected)?\)$", line.strip())]
+
+    # Strip SQL Server's dashes separator line (between headers and data).
+    # Format: "-------\t-------\t-------" (alternating dashes and tabs/spaces)
+    lines = [line for line in lines if not re.match(r"^[-\s]+$", line)]
+
     if len(lines) < 2:
         return []
 
