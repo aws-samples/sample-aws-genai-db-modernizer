@@ -382,9 +382,36 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")
     _enrich_patterns_from_pi_and_cw(queries, pi_counters, cw_raw, em_data)
+
+    # On-prem enrichment: if no CloudWatch, use native io_stats/wait_events
+    io_stats = parsed.get("io_stats", {})
+    native_waits = parsed.get("wait_events", [])
+    if native_waits and queries.query_patterns:
+        from src.contracts.collector_output import WaitEvent
+
+        wait_list = [
+            WaitEvent(
+                event_name=w.get("event", ""),
+                wait_time_ms=float(w.get("time_waited_ms") or 0),
+                wait_time_percent=float(w.get("avg_wait_ms") or 0),
+            )
+            for w in native_waits[:5]
+        ]
+        for p in queries.query_patterns:
+            if not p.wait_events:
+                p.wait_events = wait_list
+
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
+
+    # Enrich metrics from native io_stats when CloudWatch unavailable
+    if io_stats and metrics.performance_metrics:
+        perf = metrics.performance_metrics
+        if not perf.read_iops_avg and io_stats.get("physical_reads_per_sec"):
+            perf.read_iops_avg = float(io_stats["physical_reads_per_sec"])
+        if not perf.write_iops_avg and io_stats.get("physical_writes_per_sec"):
+            perf.write_iops_avg = float(io_stats["physical_writes_per_sec"])
 
     offline_meta = parsed.get("metadata", {})
     return _build_output(

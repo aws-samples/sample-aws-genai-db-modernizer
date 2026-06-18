@@ -25,6 +25,14 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     if not content.startswith("{") and "\n" in content:
         content = content[content.index("\n") + 1 :]
 
+    # Oracle 19c JSON_OBJECT doesn't escape control chars in string values.
+    # Strip them (except newlines which are line separators in the JSON).
+    content = "".join(c if ord(c) >= 32 or c == "\n" else " " for c in content)
+
+    # Remove sentinel objects used for trailing-comma handling in PL/SQL scripts
+    content = content.replace(',{"_sentinel": true}', "")
+    content = content.replace(',{"_sentinel":true}', "")
+
     result: dict = json.loads(content)
     return result
 
@@ -126,6 +134,9 @@ def parse_offline_collection(data: dict) -> dict:
         "triggers": data.get("triggers", []),
         "queries": _transform_queries(data.get("queries", []), db_name, known_table_names),
         "global_stats": global_stats,
+        "io_stats": data.get("io_stats", {}),
+        "wait_events": data.get("wait_events", []),
+        "os_stats": data.get("os_stats", {}),
     }
 
 
