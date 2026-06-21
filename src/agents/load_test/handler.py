@@ -60,7 +60,6 @@ def create_engine_components(
                 DocumentDBScriptGenerator(region=region),
                 K6Runner(),
             )
-
         case "elasticache":
             from src.agents.load_test.elasticache import (
                 ElastiCacheProvisioner,
@@ -74,6 +73,21 @@ def create_engine_components(
                 ElastiCacheSeeder(region=region),
                 ElastiCacheScriptGenerator(region=region),
                 ValkeyRunner(),
+            )
+
+        case "opensearch":
+            from src.agents.load_test.opensearch import (
+                OpenSearchProvisioner,
+                OpenSearchRunner,
+                OpenSearchScriptGenerator,
+                OpenSearchSeeder,
+            )
+
+            return (
+                OpenSearchProvisioner(region=region),
+                OpenSearchSeeder(region=region),
+                OpenSearchScriptGenerator(region=region),
+                OpenSearchRunner(),
             )
         case _:
             raise ValueError(f"Unsupported engine: {target_engine}")
@@ -149,8 +163,8 @@ def run_load_test(
     base = _base_path(database_name, job_id, schema_version, target_engine)
     log = logger.bind(job_id=job_id, run_id=run_id, target_engine=target_engine)
 
-    # Only DynamoDB, ElastiCache and DocumentDB are implemented currently
-    SUPPORTED_ENGINES = {"dynamodb", "documentdb", "elasticache"}
+    # DynamoDB, DocumentDB, ElastiCache and OpenSearch are implemented currently
+    SUPPORTED_ENGINES = {"dynamodb", "documentdb", "elasticache", "opensearch"}
     if target_engine not in SUPPORTED_ENGINES:
         log.info("load_test_skipped", reason=f"not implemented for {target_engine}")
         store.write_json(
@@ -231,6 +245,26 @@ def run_load_test(
                 )
                 schema_output["_cluster_port"] = resource.configuration.get("endpoint_port", 6379)
 
+        # OpenSearch seeder + script_generator need the domain endpoint and
+        # master credentials from the provisioned manifest.
+        if target_engine == "opensearch":
+            os_resource = next(
+                (
+                    r
+                    for r in manifest.resources
+                    if r.resource_type == "AWS::OpenSearchService::Domain"
+                ),
+                None,
+            )
+            if os_resource is not None:
+                schema_output["_opensearch_endpoint"] = os_resource.configuration["endpoint"]
+                schema_output["_opensearch_master_user"] = os_resource.configuration.get(
+                    "master_user", "loadtest_admin"
+                )
+                schema_output["_opensearch_master_password"] = os_resource.configuration.get(
+                    "master_password", ""
+                )
+
         # 5. Seed
         seed_manifest = seeder.seed(schema_output, max_items_per_table=10_000)
         log.info("seeded", total_items=seed_manifest.total_items)
@@ -249,6 +283,19 @@ def run_load_test(
         if schema_output.get("_cluster_endpoint"):
             env_vars["ELASTICACHE_ENDPOINT"] = schema_output["_cluster_endpoint"]
             env_vars["ELASTICACHE_PORT"] = str(schema_output.get("_cluster_port", 6379))
+
+        # Inject OpenSearch endpoint + auth for k6 scripts
+        if target_engine == "opensearch" and schema_output.get("_opensearch_endpoint"):
+            import base64
+
+            endpoint = schema_output["_opensearch_endpoint"]
+            user = schema_output.get("_opensearch_master_user", "loadtest_admin")
+            password = schema_output.get("_opensearch_master_password", "")
+            env_vars["OPENSEARCH_ENDPOINT"] = endpoint
+            env_vars["OPENSEARCH_AUTH"] = f"{user}:{password}"
+            env_vars["OPENSEARCH_AUTH_B64"] = base64.b64encode(
+                f"{user}:{password}".encode()
+            ).decode()
 
         # 8. Dry-run
         if not runner.dry_run(scripts_dir, env_vars):

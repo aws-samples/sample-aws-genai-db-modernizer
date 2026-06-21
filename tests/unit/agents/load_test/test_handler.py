@@ -64,12 +64,12 @@ class TestGetTestablePatterns:
 
 class TestRunLoadTest:
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_skips_non_dynamodb_engines(self, mock_factory):
+    def test_skips_unsupported_engines(self, mock_factory):
         store = MagicMock()
         result = run_load_test(
             job_id="j1",
             database_name="test_db",
-            target_engine="opensearch",
+            target_engine="neptune",
             store=store,
             schema_version=1,
         )

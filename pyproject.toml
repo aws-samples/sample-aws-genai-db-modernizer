@@ -46,6 +46,9 @@ dependencies = [
 
     # Embedded graph database (context graph layer)
     "ladybug>=0.17.1",
+
+    # OpenSearch load test driver
+    "opensearch-py>=2.4.0",
 ]
 
 [project.optional-dependencies]
