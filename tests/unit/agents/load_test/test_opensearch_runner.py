@@ -101,8 +101,7 @@ class TestDryRun:
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         runner.dry_run("/tmp/scripts", {})
         cmd = mock_run.call_args[0][0]
-        assert "--duration" in cmd
-        assert "0s" in cmd
+        assert "inspect" in cmd
 
     @patch("subprocess.run")
     def test_dry_run_returns_false_on_timeout(

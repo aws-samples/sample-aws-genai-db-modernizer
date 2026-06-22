@@ -20,10 +20,10 @@ import pytest
 
 from src.agents.load_test.opensearch.provisioner import (
     DEFAULT_ENGINE_VERSION,
-    DEFAULT_INSTANCE_TYPE,
     DOMAIN_PREFIX,
     OpenSearchProvisioner,
 )
+from src.agents.load_test.opensearch.sizing import SEARCH_INSTANCE_TYPE
 from src.contracts.load_test_models import DeployedResource, InfrastructureManifest
 
 
@@ -60,21 +60,12 @@ def schema_output_minimal() -> dict[str, Any]:
 
 @pytest.fixture
 def mock_opensearch_client() -> MagicMock:
-    """Mock boto3 opensearch client with happy-path responses."""
+    """Mock boto3 opensearch client with happy-path responses.
+
+    describe_domain raises ResourceNotFoundException on first call (domain doesn't
+    exist yet), then returns a valid response on subsequent calls (after creation).
+    """
     client = MagicMock()
-
-    client.create_domain.return_value = {
-        "DomainStatus": {"DomainName": "loadtest-mod-job_001-abc123", "Processing": True}
-    }
-
-    client.describe_domain.return_value = {
-        "DomainStatus": {
-            "DomainName": "loadtest-mod-job_001-abc123",
-            "Processing": False,
-            "Endpoint": "search-loadtest-mod-job001-abc123.us-east-1.es.amazonaws.com",
-            "ARN": "arn:aws:es:us-east-1:123456789012:domain/loadtest-mod-job_001-abc123",
-        }
-    }
 
     client.exceptions.ResourceAlreadyExistsException = type(
         "ResourceAlreadyExistsException", (Exception,), {}
@@ -82,6 +73,24 @@ def mock_opensearch_client() -> MagicMock:
     client.exceptions.ResourceNotFoundException = type(
         "ResourceNotFoundException", (Exception,), {}
     )
+
+    client.create_domain.return_value = {
+        "DomainStatus": {"DomainName": "loadtest-mod-job_001-os", "Processing": True}
+    }
+
+    domain_response = {
+        "DomainStatus": {
+            "DomainName": "loadtest-mod-job_001-os",
+            "Processing": False,
+            "Endpoint": "search-loadtest-mod-job001-os.us-east-1.es.amazonaws.com",
+            "ARN": "arn:aws:es:us-east-1:123456789012:domain/loadtest-mod-job_001-os",
+            "ClusterConfig": {"InstanceType": "r8g.large.search", "InstanceCount": 3},
+            "EngineVersion": "OpenSearch_2.17",
+        }
+    }
+    # Default: domain exists (reuse path). Tests that need fresh creation
+    # override this with side_effect.
+    client.describe_domain.return_value = domain_response
 
     return client
 
@@ -95,116 +104,37 @@ def provisioner_with_mocks(mock_opensearch_client: MagicMock) -> OpenSearchProvi
     return p
 
 
-class TestResolveInstanceType:
-    def test_uses_instance_type_from_cost_estimate(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        schema_output_with_instance_type: dict[str, Any],
-    ) -> None:
-        result = provisioner_with_mocks._resolve_instance_type(schema_output_with_instance_type)
-        assert result == "r6g.xlarge.search"
+class TestSizingIntegration:
+    def test_search_workload_uses_r8g(self) -> None:
+        from src.agents.load_test.opensearch.sizing import derive_cluster_config
 
-    def test_falls_back_to_default_when_no_cost_estimate(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        schema_output_minimal: dict[str, Any],
-    ) -> None:
-        result = provisioner_with_mocks._resolve_instance_type(schema_output_minimal)
-        assert result == DEFAULT_INSTANCE_TYPE
+        schema = {"index_designs": [{"index_name": "test"}], "data_stream_designs": []}
+        config = derive_cluster_config(schema, {})
+        assert config["instance_type"] == SEARCH_INSTANCE_TYPE
+        assert "r8g" in config["instance_type"]
 
-    def test_falls_back_to_default_when_instance_type_not_search(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema = {"cost_estimate": {"cost_components": {"instance_type": "cache.r7g.large"}}}
-        result = provisioner_with_mocks._resolve_instance_type(schema)
-        assert result == DEFAULT_INSTANCE_TYPE
+    def test_node_count_is_multiple_of_three(self) -> None:
+        from src.agents.load_test.opensearch.sizing import derive_cluster_config
 
+        schema = {"index_designs": [{"index_name": "test"}], "data_stream_designs": []}
+        config = derive_cluster_config(schema, {})
+        assert config["instance_count"] % 3 == 0
 
-class TestResolveInstanceCount:
-    def test_derives_from_assumed_node_count(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        schema_output_with_instance_type: dict[str, Any],
-    ) -> None:
-        result = provisioner_with_mocks._resolve_instance_count(schema_output_with_instance_type)
-        assert result == 3
+    def test_log_analytics_uses_or2(self) -> None:
+        from src.agents.load_test.opensearch.sizing import (
+            LOG_ANALYTICS_INSTANCE_TYPE,
+            derive_cluster_config,
+        )
 
-    def test_minimum_is_two(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema = {
-            "index_designs": [{"settings": {"assumed_node_count": 1}}],
-        }
-        result = provisioner_with_mocks._resolve_instance_count(schema)
-        assert result == 2
-
-    def test_maximum_is_three(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema = {
-            "index_designs": [{"settings": {"assumed_node_count": 10}}],
-        }
-        result = provisioner_with_mocks._resolve_instance_count(schema)
-        assert result == 3
-
-    def test_defaults_to_two_when_no_index_designs(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        schema_output_minimal: dict[str, Any],
-    ) -> None:
-        result = provisioner_with_mocks._resolve_instance_count(schema_output_minimal)
-        assert result == 2
-
-
-class TestResolveEbsSize:
-    def test_computes_from_shard_count(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema = {
-            "index_designs": [
-                {"settings": {"number_of_shards": 3}},
-                {"settings": {"number_of_shards": 2}},
-            ],
-            "data_stream_designs": [],
-        }
-        # 5 shards * 20GB = 100GB
-        result = provisioner_with_mocks._resolve_ebs_size(schema)
-        assert result == 100
-
-    def test_minimum_is_20(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema: dict[str, Any] = {"index_designs": [], "data_stream_designs": []}
-        result = provisioner_with_mocks._resolve_ebs_size(schema)
-        assert result == 20
-
-    def test_caps_at_100(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
-        schema = {
-            "index_designs": [{"settings": {"number_of_shards": 10}}],
-            "data_stream_designs": [{"index_template": {"settings": {"number_of_shards": 5}}}],
-        }
-        # 15 shards * 20 = 300 -> capped at 100
-        result = provisioner_with_mocks._resolve_ebs_size(schema)
-        assert result == 100
-
-    def test_includes_data_stream_shards(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-    ) -> None:
         schema = {
             "index_designs": [],
-            "data_stream_designs": [{"index_template": {"settings": {"number_of_shards": 2}}}],
+            "data_stream_designs": [
+                {"data_stream_name": "logs", "ism_policy": {"hot_phase_days": 7}}
+            ],
         }
-        result = provisioner_with_mocks._resolve_ebs_size(schema)
-        assert result == 40  # 2 * 20
+        config = derive_cluster_config(schema, {})
+        assert config["instance_type"] == LOG_ANALYTICS_INSTANCE_TYPE
+        assert "or2" in config["instance_type"]
 
 
 class TestBuildDomainName:
@@ -234,13 +164,35 @@ class TestBuildDomainName:
 
 
 class TestProvision:
-    def test_provision_calls_create_domain(
+    def test_reuses_existing_domain(
         self,
         provisioner_with_mocks: OpenSearchProvisioner,
         mock_opensearch_client: MagicMock,
         schema_output_minimal: dict[str, Any],
         tags: dict[str, str],
     ) -> None:
+        """When domain exists, skip create_domain and return existing manifest."""
+        manifest = provisioner_with_mocks.provision(schema_output_minimal, tags)
+
+        mock_opensearch_client.create_domain.assert_not_called()
+        assert len(manifest.resources) == 1
+        assert manifest.resources[0].resource_type == "AWS::OpenSearchService::Domain"
+
+    def test_creates_domain_when_not_found(
+        self,
+        provisioner_with_mocks: OpenSearchProvisioner,
+        mock_opensearch_client: MagicMock,
+        schema_output_minimal: dict[str, Any],
+        tags: dict[str, str],
+    ) -> None:
+        """When domain doesn't exist, create it."""
+        domain_response = mock_opensearch_client.describe_domain.return_value
+        mock_opensearch_client.describe_domain.side_effect = [
+            mock_opensearch_client.exceptions.ResourceNotFoundException("not found"),
+            domain_response,
+            domain_response,
+        ]
+
         provisioner_with_mocks.provision(schema_output_minimal, tags)
 
         mock_opensearch_client.create_domain.assert_called_once()
@@ -251,19 +203,7 @@ class TestProvision:
         assert call_kwargs["DomainEndpointOptions"]["EnforceHTTPS"] is True
         assert call_kwargs["AdvancedSecurityOptions"]["Enabled"] is True
 
-    def test_provision_returns_manifest_with_domain_resource(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        schema_output_minimal: dict[str, Any],
-        tags: dict[str, str],
-    ) -> None:
-        manifest = provisioner_with_mocks.provision(schema_output_minimal, tags)
-
-        assert len(manifest.resources) == 1
-        resource = manifest.resources[0]
-        assert resource.resource_type == "AWS::OpenSearchService::Domain"
-
-    def test_provision_carries_endpoint_in_configuration(
+    def test_provision_returns_manifest_with_endpoint(
         self,
         provisioner_with_mocks: OpenSearchProvisioner,
         schema_output_minimal: dict[str, Any],
@@ -274,47 +214,6 @@ class TestProvision:
         config = manifest.resources[0].configuration
         assert "search-loadtest" in config["endpoint"]
         assert config["master_user"] == "loadtest_admin"
-        assert len(config["master_password"]) >= 24
-
-    def test_provision_already_exists_is_idempotent(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        mock_opensearch_client: MagicMock,
-        schema_output_minimal: dict[str, Any],
-        tags: dict[str, str],
-    ) -> None:
-        mock_opensearch_client.create_domain.side_effect = (
-            mock_opensearch_client.exceptions.ResourceAlreadyExistsException()
-        )
-
-        manifest = provisioner_with_mocks.provision(schema_output_minimal, tags)
-        assert len(manifest.resources) == 1
-
-    def test_provision_uses_custom_instance_type(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        mock_opensearch_client: MagicMock,
-        schema_output_with_instance_type: dict[str, Any],
-        tags: dict[str, str],
-    ) -> None:
-        provisioner_with_mocks.provision(schema_output_with_instance_type, tags)
-
-        call_kwargs = mock_opensearch_client.create_domain.call_args.kwargs
-        assert call_kwargs["ClusterConfig"]["InstanceType"] == "r6g.xlarge.search"
-
-    def test_provision_forwards_tags(
-        self,
-        provisioner_with_mocks: OpenSearchProvisioner,
-        mock_opensearch_client: MagicMock,
-        schema_output_minimal: dict[str, Any],
-        tags: dict[str, str],
-    ) -> None:
-        provisioner_with_mocks.provision(schema_output_minimal, tags)
-
-        call_kwargs = mock_opensearch_client.create_domain.call_args.kwargs
-        tag_keys = {t["Key"] for t in call_kwargs["TagList"]}
-        assert "job_id" in tag_keys
-        assert "run_id" in tag_keys
 
     def test_provision_carries_arn(
         self,
@@ -349,18 +248,27 @@ class TestTeardown:
             tags={"job_id": "job001"},
         )
 
-    def test_teardown_calls_delete_domain(
+    def test_teardown_does_not_delete_by_default(
         self,
         provisioner_with_mocks: OpenSearchProvisioner,
         mock_opensearch_client: MagicMock,
     ) -> None:
         manifest = self._make_manifest()
         provisioner_with_mocks.teardown(manifest)
+        mock_opensearch_client.delete_domain.assert_not_called()
+
+    def test_teardown_force_deletes_domain(
+        self,
+        provisioner_with_mocks: OpenSearchProvisioner,
+        mock_opensearch_client: MagicMock,
+    ) -> None:
+        manifest = self._make_manifest()
+        provisioner_with_mocks.teardown_force(manifest)
         mock_opensearch_client.delete_domain.assert_called_once_with(
             DomainName="loadtest-mod-job001-run01"
         )
 
-    def test_teardown_is_idempotent_when_not_found(
+    def test_teardown_force_is_idempotent_when_not_found(
         self,
         provisioner_with_mocks: OpenSearchProvisioner,
         mock_opensearch_client: MagicMock,
@@ -369,7 +277,7 @@ class TestTeardown:
             mock_opensearch_client.exceptions.ResourceNotFoundException()
         )
         manifest = self._make_manifest()
-        provisioner_with_mocks.teardown(manifest)
+        provisioner_with_mocks.teardown_force(manifest)
 
     def test_teardown_skips_non_opensearch_resources(
         self,

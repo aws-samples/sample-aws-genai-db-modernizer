@@ -13,6 +13,7 @@ Prerequisites:
   - AWS credentials configured (for DynamoDB provisioning)
   - Completed schema design artifacts in ./artifacts/<db>/<job>/schema-<engine>/v<N>/
 """
+
 import argparse
 import os
 import sys
@@ -64,6 +65,11 @@ def main():
         "--skip-provision",
         action="store_true",
         help="Skip provisioning (table already exists)",
+    )
+    parser.add_argument(
+        "--teardown",
+        action="store_true",
+        help="Delete infrastructure after test (default: keep for reuse)",
     )
     args = parser.parse_args()
 
@@ -154,6 +160,28 @@ def main():
             print(
                 f"\n  Artifacts: ./artifacts/{args.database_name}/{args.job_id}/load-test/v{schema_version}/"
             )
+
+            if args.teardown and args.engine == "opensearch":
+                print("\n  Tearing down OpenSearch domain...")
+                from src.agents.load_test.opensearch.provisioner import OpenSearchProvisioner
+
+                provisioner = OpenSearchProvisioner(region=args.region)
+                from src.contracts.load_test_models import DeployedResource, InfrastructureManifest
+
+                manifest = InfrastructureManifest(
+                    resources=[
+                        DeployedResource(
+                            resource_type="AWS::OpenSearchService::Domain",
+                            resource_arn="",
+                            configuration={
+                                "domain_name": f"loadtest-mod-{args.job_id[:12]}-os"[:28],
+                            },
+                        )
+                    ],
+                    tags={},
+                )
+                provisioner.teardown_force(manifest)
+                print("  ✓ Domain deleted")
 
         except Exception as e:
             print(f"\nERROR: Load test failed: {e}")

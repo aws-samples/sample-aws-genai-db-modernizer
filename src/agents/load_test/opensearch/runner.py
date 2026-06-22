@@ -22,9 +22,13 @@ class OpenSearchRunner(BaseRunner):
     """Executes k6 load tests against OpenSearch and parses results."""
 
     def dry_run(self, scripts_dir: str, env_vars: dict) -> bool:
-        """Validate k6 scripts without executing the full run."""
+        """Validate k6 scripts without executing the full run.
+
+        Uses 'k6 inspect' which parses and validates the script without
+        running it (works in k6 v1 and v2).
+        """
         main_js = str(Path(scripts_dir) / "main.js")
-        cmd = ["k6", "run", "--no-color", "--duration", "0s", main_js]
+        cmd = ["k6", "inspect", "--no-color", main_js]
 
         merged_env = os.environ.copy()
         merged_env.update(env_vars)

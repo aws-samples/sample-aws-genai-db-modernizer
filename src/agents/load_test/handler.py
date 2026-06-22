@@ -210,11 +210,11 @@ def run_load_test(
         # 4. Provision
         tags = {"job_id": job_id, "run_id": run_id, "database_name": database_name}
 
-        # DocumentDB provisioner reads collector_output + test_config from
-        # schema_output for sizing (the BaseProvisioner signature only carries
-        # schema_output + tags). The coordinator stuffs them in here.
-        if target_engine == "documentdb":
+        # DocumentDB and OpenSearch provisioners read collector_output for sizing
+        # (the BaseProvisioner signature only carries schema_output + tags).
+        if target_engine in ("documentdb", "opensearch"):
             schema_output["_collector_output"] = collector_output
+        if target_engine == "documentdb":
             schema_output["_test_config"] = test_config
 
         manifest = provisioner.provision(schema_output, tags)

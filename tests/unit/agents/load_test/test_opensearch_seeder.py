@@ -257,8 +257,8 @@ class TestGenerateFieldValue:
     def test_nested_field(self) -> None:
         seeder = OpenSearchSeeder()
         value = seeder._generate_field_value("nested", "tags", 5)
-        assert isinstance(value, dict)
-        assert "id" in value
+        assert isinstance(value, list)
+        assert "id" in value[0]
 
 
 class TestBuildMappingProperties:

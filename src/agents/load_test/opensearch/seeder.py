@@ -97,7 +97,13 @@ class OpenSearchSeeder(BaseSeeder):
         )
 
     def _create_index(self, client, idx_design: dict) -> None:
-        """Create index with mappings and settings from schema design."""
+        """Create index with mappings and settings from schema design.
+
+        Custom analyzers are intentionally omitted — load testing measures
+        latency characteristics, not search relevance. Stripping analyzers
+        avoids failures from incomplete tokenizer/filter definitions in
+        AI-generated schemas.
+        """
         index_name = idx_design["index_name"]
         settings = idx_design.get("settings", {})
         field_mappings = idx_design.get("field_mappings", [])
@@ -110,17 +116,6 @@ class OpenSearchSeeder(BaseSeeder):
             },
             "mappings": {"properties": self._build_mapping_properties(field_mappings)},
         }
-
-        # Add custom analyzers if defined
-        custom_analyzers = settings.get("custom_analyzers", [])
-        if custom_analyzers:
-            body["settings"]["analysis"] = {"analyzer": {}}
-            for analyzer in custom_analyzers:
-                body["settings"]["analysis"]["analyzer"][analyzer.get("name", "custom")] = {
-                    "tokenizer": analyzer.get("tokenizer", "standard"),
-                    "filter": analyzer.get("filter", []),
-                    "char_filter": analyzer.get("char_filter", []),
-                }
 
         if client.indices.exists(index=index_name):
             client.indices.delete(index=index_name)
@@ -156,20 +151,73 @@ class OpenSearchSeeder(BaseSeeder):
         logger.info("created_data_stream_template", template_name=template_name)
 
     def _build_mapping_properties(self, field_mappings: list[dict]) -> dict:
-        """Convert field mapping list to OpenSearch properties dict."""
-        properties: dict = {}
+        """Convert field mapping list to OpenSearch properties dict.
+
+        Analyzer references are stripped — only built-in analyzers (standard,
+        simple, whitespace, keyword, english, etc.) are safe to use without
+        a custom analysis block. For load testing, the standard analyzer is
+        sufficient.
+        """
+        BUILTIN_ANALYZERS = {
+            "standard",
+            "simple",
+            "whitespace",
+            "stop",
+            "keyword",
+            "pattern",
+            "fingerprint",
+            "english",
+            "french",
+            "german",
+            "spanish",
+            "italian",
+            "portuguese",
+            "dutch",
+            "russian",
+            "arabic",
+            "chinese",
+            "japanese",
+            "korean",
+        }
+
+        # First pass: identify nested/object parents and their child fields
+        nested_parents: dict[str, list[dict]] = {}
+        top_level_fields: list[dict] = []
+
         for fm in field_mappings:
             field_name = fm.get("field_name", "")
             if not field_name:
                 continue
+            if "." in field_name:
+                parent = field_name.split(".")[0]
+                nested_parents.setdefault(parent, []).append(fm)
+            else:
+                top_level_fields.append(fm)
 
-            prop: dict = {"type": fm.get("field_type", "keyword")}
-            if fm.get("analyzer"):
-                prop["analyzer"] = fm["analyzer"]
-            if fm.get("search_analyzer"):
-                prop["search_analyzer"] = fm["search_analyzer"]
-            if fm.get("multi_field"):
-                prop["fields"] = {"keyword": {"type": "keyword", "ignore_above": 256}}
+        # Second pass: build properties
+        properties: dict = {}
+        for fm in top_level_fields:
+            field_name = fm["field_name"]
+            field_type = fm.get("field_type", "keyword")
+
+            if field_type in ("nested", "object"):
+                child_props = {}
+                for child_fm in nested_parents.get(field_name, []):
+                    child_name = child_fm["field_name"].split(".", 1)[1]
+                    child_props[child_name] = {"type": child_fm.get("field_type", "keyword")}
+                if not child_props:
+                    child_props = {"id": {"type": "keyword"}, "value": {"type": "keyword"}}
+                prop: dict = {"type": field_type, "properties": child_props}
+            else:
+                prop = {"type": field_type}
+                analyzer = fm.get("analyzer", "")
+                if analyzer and analyzer in BUILTIN_ANALYZERS:
+                    prop["analyzer"] = analyzer
+                search_analyzer = fm.get("search_analyzer", "")
+                if search_analyzer and search_analyzer in BUILTIN_ANALYZERS:
+                    prop["search_analyzer"] = search_analyzer
+                if fm.get("multi_field"):
+                    prop["fields"] = {"keyword": {"type": "keyword", "ignore_above": 256}}
 
             properties[field_name] = prop
 
@@ -217,14 +265,36 @@ class OpenSearchSeeder(BaseSeeder):
 
     def _generate_document(self, field_mappings: list[dict], index: int) -> dict:
         """Generate a synthetic document from field mappings."""
+        # Identify nested parents and their children
+        nested_children: dict[str, list[dict]] = {}
+        for fm in field_mappings:
+            name = fm.get("field_name", "")
+            if "." in name:
+                parent = name.split(".")[0]
+                nested_children.setdefault(parent, []).append(fm)
+
         doc: dict = {}
         for fm in field_mappings:
             field_name = fm.get("field_name", "")
             field_type = fm.get("field_type", "keyword")
             if not field_name or field_name == "@timestamp":
                 continue
+            if "." in field_name:
+                continue
 
-            doc[field_name] = self._generate_field_value(field_type, field_name, index)
+            if field_type in ("nested", "object"):
+                children = nested_children.get(field_name, [])
+                nested_doc = {}
+                for child in children:
+                    child_name = child["field_name"].split(".", 1)[1]
+                    nested_doc[child_name] = self._generate_field_value(
+                        child.get("field_type", "keyword"), child_name, index
+                    )
+                if not nested_doc:
+                    nested_doc = {"id": str(index), "value": f"{field_name}_{index}"}
+                doc[field_name] = [nested_doc] if field_type == "nested" else nested_doc
+            else:
+                doc[field_name] = self._generate_field_value(field_type, field_name, index)
 
         return doc
 
@@ -252,7 +322,9 @@ class OpenSearchSeeder(BaseSeeder):
                 return f"192.168.{(index // 256) % 256}.{index % 256}"
             case "geo_point":
                 return {"lat": 40.0 + (index % 100) * 0.01, "lon": -74.0 + (index % 100) * 0.01}
-            case "nested" | "object":
-                return {"id": index, "value": f"nested_{index}"}
+            case "nested":
+                return [{"id": str(index), "value": f"nested_{index}"}]
+            case "object":
+                return {"id": str(index), "value": f"obj_{index}"}
             case _:
                 return f"{field_name}_{index}"

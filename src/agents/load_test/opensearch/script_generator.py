@@ -52,7 +52,7 @@ class OpenSearchScriptGenerator(BaseScriptGenerator):
         for i, scenario in enumerate(scenarios):
             fn_name = f"scenario_{i}"
             imports.append(f'import {{ {fn_name} }} from "./scenario_{i}.js";')
-            rps = scenario.get("design_rps", 1)
+            rps = max(1, int(round(scenario.get("design_rps", 1))))
             scenario_configs.append(f"""    {fn_name}: {{
       executor: "constant-arrival-rate",
       rate: {rps},
