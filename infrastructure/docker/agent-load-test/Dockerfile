@@ -8,16 +8,18 @@
 # Repo and version are configurable via build args so we can swap the upstream
 # fork without modifying the Dockerfile (xk6-mongo has multiple community forks).
 
-FROM golang:1.22-bookworm AS xk6-builder
+FROM golang:1.25-bookworm AS xk6-builder
 
-ARG XK6_MONGO_PACKAGE=github.com/szkiba/xk6-mongo
+ARG XK6_MONGO_PACKAGE=github.com/GhMartingit/xk6-mongo
 ARG XK6_MONGO_VERSION=latest
+ARG K6_VERSION=v1.8.0
 
 ENV CGO_ENABLED=0
 WORKDIR /build
 
 RUN go install go.k6.io/xk6/cmd/xk6@latest && \
     xk6 build \
+      --k6-version ${K6_VERSION} \
       --output /usr/local/bin/k6 \
       --with ${XK6_MONGO_PACKAGE}@${XK6_MONGO_VERSION}
 
@@ -35,9 +37,12 @@ ENV UV_CACHE_DIR=/app/.uv-cache
 
 WORKDIR /app
 
-# Install system dependencies (curl + ca-certificates for downloads, gnupg for legacy reasons)
+# Install system dependencies (curl + ca-certificates for downloads, gnupg for legacy reasons,
+# gcc + rust for building native Python extensions like cryptography)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl gnupg ca-certificates && \
+    apt-get install -y --no-install-recommends \
+      curl gnupg ca-certificates gcc libffi-dev \
+      rustc cargo pkg-config libssl-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
