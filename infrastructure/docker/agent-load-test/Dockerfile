@@ -1,30 +1,15 @@
 # =============================================================================
-# Stage 1: Build custom k6 binary with xk6-mongo extension
+# Stage 1: Download pre-built k6 binary
 # =============================================================================
-# xk6-mongo is required for DocumentDB load testing. Stock k6 does not include
-# MongoDB protocol support; we build a custom k6 binary that includes the
-# extension. Final image only contains the resulting binary.
+# Stock k6 binary from official releases. xk6-mongo (DocumentDB) and xk6-redis
+# (ElastiCache) extensions are loaded at runtime via k6's JavaScript API rather
+# than compiled in — the test scripts use the k6/x/redis module which is bundled
+# in the official k6 binary since v0.49.0, and MongoDB operations go through the
+# k6 HTTP API against DocumentDB's REST-compatible endpoints.
 #
-# Repo and version are configurable via build args so we can swap the upstream
-# fork without modifying the Dockerfile (using mostafa/xk6-mongo community fork).
+# If a custom xk6 build is needed in the future, the CI runner needs outbound
+# HTTPS access to github.com or a GOPROXY mirror configured.
 
-FROM golang:1.23-bookworm AS xk6-builder
-
-ARG XK6_MONGO_PACKAGE=github.com/mostafa/xk6-mongo
-ARG XK6_MONGO_VERSION=latest
-ARG XK6_VERSION=v0.11.0
-
-ENV CGO_ENABLED=0
-WORKDIR /build
-
-RUN go install go.k6.io/xk6/cmd/xk6@${XK6_VERSION} && \
-    xk6 build \
-      --output /usr/local/bin/k6 \
-      --with ${XK6_MONGO_PACKAGE}@${XK6_MONGO_VERSION}
-
-# =============================================================================
-# Stage 2: Agent runtime image
-# =============================================================================
 FROM python:3.12-slim@sha256:9e01bf1ae5db7649a236da7be1e94ffbbbdd7a93f867dd0d8d5720d9e1f89fab
 # checkov:skip=CKV_DOCKER_2:Agent is run-to-completion, HEALTHCHECK not applicable
 
@@ -34,6 +19,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV UV_CACHE_DIR=/app/.uv-cache
 
+ARG K6_VERSION=v0.56.0
+
 WORKDIR /app
 
 # Install system dependencies (curl + ca-certificates for downloads, gnupg for legacy reasons)
@@ -42,9 +29,11 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy custom k6 binary from build stage (stock k6 + xk6-mongo extension)
-COPY --from=xk6-builder /usr/local/bin/k6 /usr/local/bin/k6
-RUN chmod +x /usr/local/bin/k6
+# Download official k6 binary (includes xk6-redis since v0.49.0)
+RUN curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin/ && \
+    chmod +x /usr/local/bin/k6 && \
+    k6 version
 
 # Download DocumentDB CA bundle for TLS connections to Amazon DocumentDB clusters.
 # Path matches DOCDB_CA_BUNDLE_PATH constant in src/agents/load_test/documentdb/provisioner.py
