@@ -221,7 +221,7 @@ class TestProvision:
         tags: dict[str, str],
     ) -> None:
         with patch("boto3.client", return_value=mock_sts):
-            manifest = provisioner_with_mocks.provision(schema_output_no_cost_estimate, tags)
+            provisioner_with_mocks.provision(schema_output_no_cost_estimate, tags)
 
         mock_elasticache.create_replication_group.assert_called_once()
         call_kwargs = mock_elasticache.create_replication_group.call_args.kwargs
