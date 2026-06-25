@@ -8,7 +8,7 @@
 # Repo and version are configurable via build args so we can swap the upstream
 # fork without modifying the Dockerfile (xk6-mongo has multiple community forks).
 
-FROM golang:1.22-bookworm AS xk6-builder
+FROM golang:1.25-bookworm AS xk6-builder
 
 ARG XK6_MONGO_PACKAGE=github.com/szkiba/xk6-mongo
 ARG XK6_MONGO_VERSION=latest
