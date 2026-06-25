@@ -27,7 +27,7 @@ from src.agents.load_test.models import SeedManifest
 # =============================================================================
 
 
-def _make_mock_redis_module() -> MagicMock:
+def _make_mock_redis_module() -> tuple[MagicMock, MagicMock, MagicMock]:
     """Build a fake redis module with a configurable Redis class."""
     mock_client = MagicMock()
     pipe = MagicMock()
@@ -277,7 +277,8 @@ class TestSeedKeyDesignCommands:
         schema = _schema(key_designs=[kd])
         with patch.dict(sys.modules, {"redis": redis_mod}):
             seeder.seed(schema, max_items_per_table=3)
-        return pipe
+        pipe_mock: MagicMock = pipe
+        return pipe_mock
 
     def test_string_uses_set(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
         pipe = self._seed_type(seeder, "string", monkeypatch)
