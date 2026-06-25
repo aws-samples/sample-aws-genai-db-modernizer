@@ -6,11 +6,11 @@
 # extension. Final image only contains the resulting binary.
 #
 # Repo and version are configurable via build args so we can swap the upstream
-# fork without modifying the Dockerfile (xk6-mongo has multiple community forks).
+# fork without modifying the Dockerfile (using mostafa/xk6-mongo community fork).
 
 FROM golang:1.23-bookworm AS xk6-builder
 
-ARG XK6_MONGO_PACKAGE=github.com/szkiba/xk6-mongo
+ARG XK6_MONGO_PACKAGE=github.com/mostafa/xk6-mongo
 ARG XK6_MONGO_VERSION=latest
 ARG XK6_VERSION=v0.11.0
 
