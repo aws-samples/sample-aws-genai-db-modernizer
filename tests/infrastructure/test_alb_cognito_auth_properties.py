@@ -54,7 +54,7 @@ for tag in [
 
 API_SERVICE_TEMPLATE_PATH = Path("infrastructure/cloudformation/api-service.yaml")
 with open(API_SERVICE_TEMPLATE_PATH, encoding="utf-8") as f:
-    API_SERVICE_TEMPLATE = yaml.load(
+    API_SERVICE_TEMPLATE = yaml.safe_load(
         f, Loader=CfnLoader
     )  # nosec B506 - CfnLoader extends SafeLoader
 
