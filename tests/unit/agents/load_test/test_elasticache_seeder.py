@@ -15,12 +15,11 @@ Mocks redis.Redis to verify:
 """
 
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.agents.load_test.elasticache.seeder import DEFAULT_ITEMS_PER_KEY_DESIGN, ElastiCacheSeeder
-from src.agents.load_test.models import SeedManifest
 
 # =============================================================================
 # Helpers

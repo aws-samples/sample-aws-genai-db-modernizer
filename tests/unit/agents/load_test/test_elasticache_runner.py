@@ -26,7 +26,6 @@ import pytest
 
 from src.agents.load_test.elasticache.runner import ValkeyRunner
 from src.agents.load_test.models import RunResult
-from src.contracts.load_test_models import LatencyPercentiles
 
 # =============================================================================
 # Fixtures

@@ -15,7 +15,6 @@ Verifies:
   - Safe JS identifier is generated for pattern_id containing hyphens/dots
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
