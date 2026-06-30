@@ -109,6 +109,7 @@ from src.api.routes import (  # noqa: E402
     assessments,
     assignments,
     dashboard,
+    graph,
     phases,
     query_journeys,
     results,
@@ -162,6 +163,18 @@ agent_interaction.artifact_store = _artifact_store
 schema_revisions.artifact_store = _artifact_store
 query_journeys.artifact_store = _artifact_store
 
+# Wire graph route
+from src.graph import GraphStoreCache  # noqa: E402
+
+graph.artifact_store = _artifact_store
+graph.graph_cache = GraphStoreCache(
+    max_size=5,
+    base_dir=(
+        str(_artifact_store.base_dir) if hasattr(_artifact_store, "base_dir") else "./artifacts"
+    ),
+)
+graph.sfn_service = _sfn
+
 if STATE_MACHINE_ARN:
     # Cloud mode: use StepFunctionsOrchestrator
     import boto3
@@ -195,6 +208,7 @@ app.include_router(phases.router)
 app.include_router(agent_interaction.router)
 app.include_router(schema_revisions.router)
 app.include_router(query_journeys.router)
+app.include_router(graph.router)
 
 
 if __name__ == "__main__":
