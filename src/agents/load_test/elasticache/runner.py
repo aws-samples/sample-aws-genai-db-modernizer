@@ -2,6 +2,7 @@
 
 Uses xk6-redis extension for native Redis protocol support in k6.
 """
+
 import json
 import os
 import subprocess  # nosec B404 — intentional subprocess use for k6 CLI

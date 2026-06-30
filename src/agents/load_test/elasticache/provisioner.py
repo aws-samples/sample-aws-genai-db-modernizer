@@ -3,6 +3,7 @@
 Creates a Valkey replication group with cluster mode enabled,
 using the instance type identified by the ElastiCache analysis.
 """
+
 import time
 
 import boto3

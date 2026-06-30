@@ -251,7 +251,13 @@ class TestExtractScenarioLatency:
         summary = {
             "metrics": {
                 "iteration_duration": {
-                    "values": {"med": 3.0, "p(90)": 6.0, "p(95)": 7.0, "p(99)": 9.0, "p(99.9)": 12.0}
+                    "values": {
+                        "med": 3.0,
+                        "p(90)": 6.0,
+                        "p(95)": 7.0,
+                        "p(99)": 9.0,
+                        "p(99.9)": 12.0,
+                    }
                 }
             }
         }
@@ -268,7 +274,13 @@ class TestExtractScenarioLatency:
         summary = {
             "metrics": {
                 "iteration_duration{scenario:scenario_0}": {
-                    "values": {"med": 5.0, "p(90)": 9.0, "p(95)": 10.0, "p(99)": 12.0, "p(99.9)": 15.0}
+                    "values": {
+                        "med": 5.0,
+                        "p(90)": 9.0,
+                        "p(95)": 10.0,
+                        "p(99)": 12.0,
+                        "p(99.9)": 15.0,
+                    }
                 }
             }
         }
@@ -284,31 +296,21 @@ class TestExtractScenarioLatency:
 
 class TestExtractScenarioIterations:
     def test_reads_requests_counter(self, runner: ValkeyRunner) -> None:
-        summary = {
-            "metrics": {
-                "requests_scenario_0": {"values": {"count": 12_500, "rate": 208.3}}
-            }
-        }
+        summary = {"metrics": {"requests_scenario_0": {"values": {"count": 12_500, "rate": 208.3}}}}
         count = runner.extract_scenario_iterations(summary, "scenario_0")
         assert count == 12_500
 
     def test_falls_back_to_per_scenario_iteration_count(self, runner: ValkeyRunner) -> None:
         summary = {
             "metrics": {
-                "iteration_duration{scenario:scenario_1}": {
-                    "values": {"count": 8_000, "med": 2.0}
-                }
+                "iteration_duration{scenario:scenario_1}": {"values": {"count": 8_000, "med": 2.0}}
             }
         }
         count = runner.extract_scenario_iterations(summary, "scenario_1")
         assert count == 8_000
 
-    def test_falls_back_to_global_iteration_duration_count(
-        self, runner: ValkeyRunner
-    ) -> None:
-        summary = {
-            "metrics": {"iteration_duration": {"values": {"count": 3_000, "med": 1.5}}}
-        }
+    def test_falls_back_to_global_iteration_duration_count(self, runner: ValkeyRunner) -> None:
+        summary = {"metrics": {"iteration_duration": {"values": {"count": 3_000, "med": 1.5}}}}
         count = runner.extract_scenario_iterations(summary, "scenario_missing")
         assert count == 3_000
 
@@ -317,11 +319,7 @@ class TestExtractScenarioIterations:
         assert count == 0
 
     def test_returns_integer(self, runner: ValkeyRunner) -> None:
-        summary = {
-            "metrics": {
-                "requests_scenario_0": {"values": {"count": 500.9}}
-            }
-        }
+        summary = {"metrics": {"requests_scenario_0": {"values": {"count": 500.9}}}}
         count = runner.extract_scenario_iterations(summary, "scenario_0")
         assert isinstance(count, int)
         assert count == 500

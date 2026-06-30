@@ -85,7 +85,9 @@ def seeder() -> ElastiCacheSeeder:
 
 
 class TestEndpointResolution:
-    def test_uses_env_var_endpoint(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_uses_env_var_endpoint(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("ELASTICACHE_ENDPOINT", "env-cache.example.com")
         monkeypatch.setenv("ELASTICACHE_PORT", "6380")
 
@@ -279,27 +281,39 @@ class TestSeedKeyDesignCommands:
         pipe_mock: MagicMock = pipe
         return pipe_mock
 
-    def test_string_uses_set(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_string_uses_set(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "string", monkeypatch)
         pipe.set.assert_called()
 
-    def test_hash_uses_hset(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_hash_uses_hset(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "hash", monkeypatch, fields=["f1", "f2"])
         pipe.hset.assert_called()
 
-    def test_list_uses_rpush(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_uses_rpush(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "list", monkeypatch)
         pipe.rpush.assert_called()
 
-    def test_set_uses_sadd(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_set_uses_sadd(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "set", monkeypatch)
         pipe.sadd.assert_called()
 
-    def test_sorted_set_uses_zadd(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_sorted_set_uses_zadd(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "sorted_set", monkeypatch)
         pipe.zadd.assert_called()
 
-    def test_stream_uses_xadd(self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_stream_uses_xadd(
+        self, seeder: ElastiCacheSeeder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pipe = self._seed_type(seeder, "stream", monkeypatch)
         pipe.xadd.assert_called()
 

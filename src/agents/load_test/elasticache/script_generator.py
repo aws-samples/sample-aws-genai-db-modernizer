@@ -3,6 +3,7 @@
 Generates k6/xk6-redis scripts that execute Redis commands matching
 the access patterns from the schema design.
 """
+
 import tempfile
 from pathlib import Path
 
@@ -51,8 +52,7 @@ class ElastiCacheScriptGenerator(BaseScriptGenerator):
             fn_name = f"scenario_{i}"
             imports.append(f'import {{ {fn_name} }} from "./scenario_{i}.js";')
             rps = scenario.get("design_rps", 1)
-            scenario_configs.append(
-                f"""
+            scenario_configs.append(f"""
     {fn_name}: {{
       executor: "constant-arrival-rate",
       rate: {rps},
@@ -62,15 +62,12 @@ class ElastiCacheScriptGenerator(BaseScriptGenerator):
       maxVUs: {max(50, rps * 5)},
       startTime: "{warmup_seconds}s",
       exec: "{fn_name}",
-    }},"""
-            )
+    }},""")
 
         # Build per-scenario thresholds to force k6 to split iteration_duration by scenario
         threshold_lines = ['"iteration_duration": ["p(95)<50"]']
         for i in range(len(scenarios)):
-            threshold_lines.append(
-                f'"iteration_duration{{scenario:scenario_{i}}}": ["p(95)<50"]'
-            )
+            threshold_lines.append(f'"iteration_duration{{scenario:scenario_{i}}}": ["p(95)<50"]')
         thresholds_str = ",\n    ".join(threshold_lines)
 
         return f"""// Auto-generated k6 load test for ElastiCache/Valkey

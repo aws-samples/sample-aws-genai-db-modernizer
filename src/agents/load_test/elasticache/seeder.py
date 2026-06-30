@@ -3,6 +3,7 @@
 Seeds Redis key designs from the schema output into the provisioned
 replication group using redis-py with TLS.
 """
+
 import time
 
 import structlog

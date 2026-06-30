@@ -377,7 +377,9 @@ class TestProvision:
 
 
 class TestTeardown:
-    def _make_manifest(self, rg_id: str = "loadtest-modernizer-job001-run001") -> InfrastructureManifest:
+    def _make_manifest(
+        self, rg_id: str = "loadtest-modernizer-job001-run001"
+    ) -> InfrastructureManifest:
         return InfrastructureManifest(
             resources=[
                 DeployedResource(

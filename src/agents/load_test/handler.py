@@ -1,4 +1,5 @@
 """Load test coordinator — engine-agnostic orchestrator."""
+
 import os
 import uuid
 
@@ -259,9 +260,9 @@ def run_load_test(
             "run_complete",
             returncode=run_result.returncode,
             has_summary=run_result.summary is not None,
-            summary_metrics_count=len(run_result.summary.get("metrics", {}))
-            if run_result.summary
-            else 0,
+            summary_metrics_count=(
+                len(run_result.summary.get("metrics", {})) if run_result.summary else 0
+            ),
         )
 
         # 9b. Write k6 diagnostics to S3 for debugging
@@ -361,12 +362,18 @@ def _build_pattern_results(
 
             source_latency = LatencyPercentiles(
                 p50=source_p50,
-                p90=float(collector_query.get("execution_time_ms_p90") or source_p50_raw * 1.5) + source_network_overhead_ms,
-                p95=float(collector_query.get("execution_time_ms_p95") or source_p50_raw * 2.0) + source_network_overhead_ms,
-                p99=float(collector_query.get("execution_time_ms_p99") or source_p50_raw * 3.0) + source_network_overhead_ms,
-                p999=float(collector_query.get("execution_time_ms_p999") or source_p50_raw * 5.0) + source_network_overhead_ms,
-                min=float(collector_query.get("execution_time_ms_min") or source_p50_raw * 0.3) + source_network_overhead_ms,
-                max=float(collector_query.get("execution_time_ms_max") or source_p50_raw * 10.0) + source_network_overhead_ms,
+                p90=float(collector_query.get("execution_time_ms_p90") or source_p50_raw * 1.5)
+                + source_network_overhead_ms,
+                p95=float(collector_query.get("execution_time_ms_p95") or source_p50_raw * 2.0)
+                + source_network_overhead_ms,
+                p99=float(collector_query.get("execution_time_ms_p99") or source_p50_raw * 3.0)
+                + source_network_overhead_ms,
+                p999=float(collector_query.get("execution_time_ms_p999") or source_p50_raw * 5.0)
+                + source_network_overhead_ms,
+                min=float(collector_query.get("execution_time_ms_min") or source_p50_raw * 0.3)
+                + source_network_overhead_ms,
+                max=float(collector_query.get("execution_time_ms_max") or source_p50_raw * 10.0)
+                + source_network_overhead_ms,
             )
 
             scenario_name = qid_to_scenario.get(qid, qid)

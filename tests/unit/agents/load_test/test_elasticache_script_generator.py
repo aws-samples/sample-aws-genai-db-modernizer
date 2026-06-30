@@ -145,14 +145,36 @@ class TestGenerateScenarioStructure:
 
 
 READ_OPS = [
-    "GET", "HGET", "HGETALL", "HMGET", "LRANGE", "SMEMBERS", "SISMEMBER",
-    "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZRANK", "ZSCORE",
-    "XRANGE", "PFCOUNT", "JSON.GET",
+    "GET",
+    "HGET",
+    "HGETALL",
+    "HMGET",
+    "LRANGE",
+    "SMEMBERS",
+    "SISMEMBER",
+    "ZRANGE",
+    "ZREVRANGE",
+    "ZRANGEBYSCORE",
+    "ZRANK",
+    "ZSCORE",
+    "XRANGE",
+    "PFCOUNT",
+    "JSON.GET",
 ]
 
 WRITE_OPS = [
-    "SET", "HSET", "LPUSH", "RPUSH", "SADD", "ZADD", "XADD",
-    "GEOADD", "PFADD", "DEL", "INCR", "JSON.SET",
+    "SET",
+    "HSET",
+    "LPUSH",
+    "RPUSH",
+    "SADD",
+    "ZADD",
+    "XADD",
+    "GEOADD",
+    "PFADD",
+    "DEL",
+    "INCR",
+    "JSON.SET",
 ]
 
 
@@ -174,9 +196,7 @@ class TestGenerateScenarioOperations:
     def test_unknown_operation_uses_sendcommand(
         self, generator: ElastiCacheScriptGenerator, seed_info: dict[str, Any]
     ) -> None:
-        script = generator.generate_scenario(
-            _make_pattern(operation="CUSTOM_OP"), {}, seed_info
-        )
+        script = generator.generate_scenario(_make_pattern(operation="CUSTOM_OP"), {}, seed_info)
         assert "sendCommand" in script
         assert "CUSTOM_OP" in script
 
