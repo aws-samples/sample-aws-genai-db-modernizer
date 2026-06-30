@@ -70,3 +70,95 @@ def sample_triage_output():
             },
         ]
     }
+
+
+@pytest.fixture
+def sample_assignment():
+    """Minimal assignment with 3 queries across 2 engines."""
+    return {
+        "query_assignments": [
+            {
+                "query_id": "q1",
+                "assigned_engine": "dynamodb",
+                "confidence": 0.92,
+                "source_tables": ["orders"],
+                "assignment_reason": "Key-value lookup pattern with high traffic",
+                "in_scope": True,
+            },
+            {
+                "query_id": "q2",
+                "assigned_engine": "documentdb",
+                "confidence": 0.78,
+                "source_tables": ["orders", "customers"],
+                "assignment_reason": "Join pattern suited for document model",
+                "in_scope": True,
+            },
+            {
+                "query_id": "q3",
+                "assigned_engine": "dynamodb",
+                "confidence": 0.85,
+                "source_tables": ["orders"],
+                "assignment_reason": "Write pattern for DynamoDB",
+                "in_scope": True,
+            },
+        ],
+        "table_assignments": [
+            {
+                "table_id": "orders",
+                "primary_engine": "dynamodb",
+                "engines": ["dynamodb", "documentdb"],
+                "query_count": 3,
+            },
+            {
+                "table_id": "customers",
+                "primary_engine": "documentdb",
+                "engines": ["documentdb"],
+                "query_count": 1,
+            },
+        ],
+        "co_dependency_groups": [
+            {
+                "group_id": "grp-1",
+                "query_ids": ["q1", "q3"],
+                "reason": "Both access orders with same key pattern",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def sample_analysis_output():
+    """Minimal analysis output with 1 anti-pattern."""
+    return {
+        "workload_analysis": {
+            "anti_patterns_detected": [
+                {
+                    "anti_pattern_id": "ap-1",
+                    "anti_pattern_type": "hot-partition",
+                    "severity_weight": 0.7,
+                    "description": "customer_id=42 receives 30% of traffic",
+                    "query_ids": ["q1"],
+                    "table_ids": ["orders"],
+                    "recommendation": "Add write sharding or spread traffic across partition keys",
+                },
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def sample_reality_check_output():
+    """Minimal reality check with 1 consolidation."""
+    return {
+        "consolidations": [
+            {
+                "from_engine": "opensearch",
+                "to_engine": "dynamodb",
+                "query_count": 5,
+                "reason": "OpenSearch had no unique value; all queries can be served by DynamoDB",
+                "saved_cost_estimate": 45.0,
+                "action": "full",
+                "queries_retained": [],
+            }
+        ]
+    }
