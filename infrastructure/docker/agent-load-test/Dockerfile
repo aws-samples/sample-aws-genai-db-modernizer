@@ -1,15 +1,39 @@
 # =============================================================================
-# Stage 1: Download pre-built k6 binary
+# Stage 1: Build custom k6 binary with xk6-mongo + xk6-redis extensions
 # =============================================================================
-# Stock k6 binary from official releases. xk6-mongo (DocumentDB) and xk6-redis
-# (ElastiCache) extensions are loaded at runtime via k6's JavaScript API rather
-# than compiled in — the test scripts use the k6/x/redis module which is bundled
-# in the official k6 binary since v0.49.0, and MongoDB operations go through the
-# k6 HTTP API against DocumentDB's REST-compatible endpoints.
+# xk6-mongo is required for DocumentDB load testing (k6/x/mongo) and xk6-redis
+# for ElastiCache load testing (k6/x/redis). Stock k6 does not include either
+# module, so we build a custom k6 binary with both extensions compiled in. The
+# final image only contains the resulting binary.
 #
-# If a custom xk6 build is needed in the future, the CI runner needs outbound
-# HTTPS access to github.com or a GOPROXY mirror configured.
+# Packages/versions are configurable via build args so we can swap the upstream
+# forks without modifying the Dockerfile (xk6-mongo has multiple community forks).
 
+FROM golang:1.25-bookworm AS xk6-builder
+
+ARG XK6_MONGO_PACKAGE=github.com/GhMartingit/xk6-mongo
+ARG XK6_MONGO_VERSION=v1.2.0
+# Pinned to the latest xk6-redis on the k6 v1.x line. v0.4.x targets k6 v2.0.0,
+# which conflicts with K6_VERSION below — do not bump past v0.3.x while on k6 v1.
+ARG XK6_REDIS_PACKAGE=github.com/grafana/xk6-redis
+ARG XK6_REDIS_VERSION=v0.3.6
+ARG K6_VERSION=v1.8.0
+
+ENV CGO_ENABLED=0
+WORKDIR /build
+
+# xk6 v1.4.6 is the last release compatible with the golang:1.25 builder above;
+# newer tags may raise the Go floor. Pinned to keep builds reproducible.
+RUN go install go.k6.io/xk6/cmd/xk6@v1.4.6 && \
+    xk6 build \
+      --k6-version ${K6_VERSION} \
+      --output /usr/local/bin/k6 \
+      --with ${XK6_MONGO_PACKAGE}@${XK6_MONGO_VERSION} \
+      --with ${XK6_REDIS_PACKAGE}@${XK6_REDIS_VERSION}
+
+# =============================================================================
+# Stage 2: Agent runtime image
+# =============================================================================
 FROM python:3.12-slim@sha256:9e01bf1ae5db7649a236da7be1e94ffbbbdd7a93f867dd0d8d5720d9e1f89fab
 # checkov:skip=CKV_DOCKER_2:Agent is run-to-completion, HEALTHCHECK not applicable
 
@@ -19,21 +43,20 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV UV_CACHE_DIR=/app/.uv-cache
 
-ARG K6_VERSION=v0.56.0
-
 WORKDIR /app
 
-# Install system dependencies (curl + ca-certificates for downloads, gnupg for legacy reasons)
+# Install system dependencies (curl + ca-certificates for downloads, gnupg for legacy reasons,
+# gcc + rust for building native Python extensions like cryptography)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl gnupg ca-certificates && \
+    apt-get install -y --no-install-recommends \
+      curl gnupg ca-certificates gcc libffi-dev \
+      rustc cargo pkg-config libssl-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Download official k6 binary (includes xk6-redis since v0.49.0)
-RUN curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
-      | tar -xz --strip-components=1 -C /usr/local/bin/ && \
-    chmod +x /usr/local/bin/k6 && \
-    k6 version
+# Copy custom k6 binary from build stage (stock k6 + xk6-mongo + xk6-redis extensions)
+COPY --from=xk6-builder /usr/local/bin/k6 /usr/local/bin/k6
+RUN chmod +x /usr/local/bin/k6
 
 # Download DocumentDB CA bundle for TLS connections to Amazon DocumentDB clusters.
 # Path matches DOCDB_CA_BUNDLE_PATH constant in src/agents/load_test/documentdb/provisioner.py
