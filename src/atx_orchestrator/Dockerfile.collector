@@ -1,0 +1,65 @@
+# AWS Transform Collector Subagent (one agent per image)
+#
+# Build for linux/arm64 (Bedrock AgentCore runs on Graviton):
+#   docker build --platform linux/arm64 \
+#     -t db-modernization-collector:latest \
+#     -f src/atx_orchestrator/Dockerfile.collector .
+
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.11-slim
+
+WORKDIR /app
+
+# ── System deps ────────────────────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── AWS Transform SDK ───────────────────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    "agent-builder-sdk-aws-transform>=1.0.0" \
+    "agent-builder-agentic-mcp-aws-transform>=1.0.0" \
+    "agent-builder-types-aws-transform>=1.0.0" \
+    "agent-builder-mcp-client-aws-transform>=1.0.0"
+
+# Register botocore service models (REQUIRED — Agentic API + Agent Registry API)
+RUN pip install --no-cache-dir awscli && \
+    SDK_MODELS=$(python -c "from importlib.resources import files; print(files('agent_builder_sdk').joinpath('botocore_models'))") && \
+    aws configure add-model --service-name atxagentregistryexternal \
+      --service-model "file://${SDK_MODELS}/atxagentregistryexternal/2022-07-26/service-2.json" && \
+    aws configure add-model --service-name transformagenticservice \
+      --service-model "file://${SDK_MODELS}/transformagenticservice/2018-05-10/service-2.json"
+
+# ── Project deps ────────────────────────────────────────────────────────────
+COPY src/atx_orchestrator/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ── MCP server shim ─────────────────────────────────────────────────────────
+RUN mkdir -p /home/amazon/AgentBuilderAgenticMCP/bin && \
+    printf '#!/bin/bash\npython -m agent_builder_agentic_mcp "$@"\n' \
+      > /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp && \
+    chmod +x /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp
+
+# ── Application source ──────────────────────────────────────────────────────
+COPY src/ /app/src/
+
+# ── Runtime dirs ────────────────────────────────────────────────────────────
+RUN mkdir -p /tmp/agent_queue /tmp/collector_agent /app/artifacts
+
+# ── Non-root user (security) ─────────────────────────────────────────────────
+RUN useradd --create-home --uid 1000 appuser && \
+    chown -R appuser:appuser /app /tmp/agent_queue /tmp/collector_agent \
+      /home/amazon/AgentBuilderAgenticMCP
+USER appuser
+
+# ── Environment defaults ─────────────────────────────────────────────────────
+ENV ARTIFACT_DIR=/app/artifacts \
+    LLM_MODE=none \
+    AWS_REGION=us-east-1 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/ping || exit 1
+
+ENTRYPOINT ["python", "-m", "src.atx_orchestrator.collector_app"]
