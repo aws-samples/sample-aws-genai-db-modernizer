@@ -102,6 +102,32 @@ def test_populate_from_assignment_creates_co_dependency_groups(
     assert members[1]["q.id"] == "q3"
 
 
+def test_populate_from_assignment_handles_list_of_lists_groups(
+    graph_store, sample_collector_output
+):
+    """Real assignment artifacts store co_dependency_groups as bare lists of query ids."""
+    populate_from_collector(sample_collector_output, graph_store)
+    assignment = {
+        "query_assignments": [
+            {
+                "query_id": "q1",
+                "assigned_engine": "dynamodb",
+                "confidence": 0.9,
+                "source_tables": ["orders"],
+                "assignment_reason": "key-value",
+            },
+        ],
+        "co_dependency_groups": [["q1", "q3"]],
+    }
+    populate_from_assignment(assignment, graph_store)
+    groups = graph_store.query("MATCH (g:CoDependencyGroup) RETURN g.id")
+    assert len(groups) == 1
+    members = graph_store.query(
+        "MATCH (q:Query)-[:MEMBER_OF]->(g:CoDependencyGroup) RETURN q.id ORDER BY q.id"
+    )
+    assert {m["q.id"] for m in members} == {"q1", "q3"}
+
+
 def test_populate_from_analysis_creates_anti_patterns(
     graph_store, sample_collector_output, sample_analysis_output
 ):

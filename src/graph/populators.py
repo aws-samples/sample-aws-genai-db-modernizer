@@ -117,16 +117,27 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
             },
         )
 
-    for group in assignment.get("co_dependency_groups", []):
+    for i, group in enumerate(assignment.get("co_dependency_groups", [])):
+        # A group is either a dict ({group_id, query_ids, reason}) or a bare
+        # list of query ids. Normalize both to an id, reason, and query ids.
+        if isinstance(group, dict):
+            group_id = group.get("group_id", f"group-{i}")
+            reason = group.get("reason", "")
+            query_ids = group.get("query_ids", [])
+        else:
+            group_id = f"group-{i}"
+            reason = ""
+            query_ids = group
+
         store.execute(
             "MERGE (g:CoDependencyGroup {id: $id}) SET g.reason = $reason",
-            {"id": group["group_id"], "reason": group["reason"]},
+            {"id": group_id, "reason": reason},
         )
-        for query_id in group["query_ids"]:
+        for query_id in query_ids:
             store.execute(
                 "MATCH (q:Query {id: $qid}), (g:CoDependencyGroup {id: $gid}) "
                 "MERGE (q)-[:MEMBER_OF]->(g)",
-                {"qid": query_id, "gid": group["group_id"]},
+                {"qid": query_id, "gid": group_id},
             )
 
 
