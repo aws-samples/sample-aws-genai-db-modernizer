@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import ladybug as lb
 
@@ -17,30 +18,46 @@ class GraphStore:
         self._db = lb.Database(db_path)
         self._conn = lb.Connection(self._db)
 
-    def query(self, cypher: str, params: dict | None = None) -> list[dict]:
-        """Run a Cypher query. Returns rows as list of dicts."""
+    def _execute_single(self, cypher: str, params: dict | None = None) -> lb.QueryResult:
+        """Run one Cypher statement and return its single QueryResult.
+
+        Connection.execute is typed as QueryResult | list[QueryResult]; the
+        list form is only returned for multi-statement queries, which this
+        wrapper never issues. Narrow it back to a single result.
+        """
         if params is not None:
             result = self._conn.execute(cypher, parameters=params)
         else:
             result = self._conn.execute(cypher)
-        return list(result.rows_as_dict())
+        if isinstance(result, list):
+            return result[0]
+        return result
+
+    def query(self, cypher: str, params: dict | None = None) -> list[dict]:
+        """Run a Cypher query. Returns rows as list of dicts."""
+        result = self._execute_single(cypher, params)
+        # rows_as_dict() switches each row to a {column: value} dict.
+        return cast("list[dict[Any, Any]]", list(result.rows_as_dict()))
 
     def execute(self, cypher: str, params: dict | None = None) -> None:
         """Run a Cypher statement that doesn't return results (DDL, inserts)."""
-        if params is not None:
-            self._conn.execute(cypher, parameters=params)
-        else:
-            self._conn.execute(cypher)
+        self._execute_single(cypher, params)
 
     def _exec_schema_cypher(self, cypher: str) -> lb.QueryResult:  # nosec B608  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query  # fmt: skip
         """Execute Cypher built from internal schema catalog names (not user input)."""
-        return self._conn.execute(cypher)  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query  # fmt: skip
+        return self._execute_single(cypher)  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query,python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query  # fmt: skip
+
+    def _list_tables(self) -> list[list[Any]]:
+        """Return show_tables() rows as positional lists: [id, name, type, ...]."""
+        rows = self._execute_single("CALL show_tables() RETURN *").get_all()
+        # show_tables() yields positional rows (not dict-formatted), so each
+        # row is a list. Cast for the type checker.
+        return cast("list[list[Any]]", rows)
 
     def is_populated(self) -> bool:
         """Check if the graph has any nodes."""
         try:
-            result = self._conn.execute("CALL show_tables() RETURN *")
-            tables = result.get_all()
+            tables = self._list_tables()
             if not tables:
                 return False
             # Each row: [id, name, type, database, comment].
@@ -50,7 +67,7 @@ class GraphStore:
                 table_type = table[2]
                 if table_type == "NODE":
                     cypher = f"MATCH (n:{table_name}) RETURN COUNT(n) AS c"  # nosec B608
-                    rows = self._exec_schema_cypher(cypher).get_all()
+                    rows = cast("list[list[Any]]", self._exec_schema_cypher(cypher).get_all())
                     if rows and rows[0][0] > 0:
                         return True
             return False
@@ -60,8 +77,7 @@ class GraphStore:
     def clear(self) -> None:
         """Drop all data and schema."""
         try:
-            result = self._conn.execute("CALL show_tables() RETURN *")
-            tables = result.get_all()
+            tables = self._list_tables()
             # Drop rel tables first (they depend on node tables).
             # table names come from show_tables() — internal schema catalog, not user input.
             for table in tables:
