@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 import ladybug as lb
 
-# Semgrep rule IDs suppressed inline below for Cypher DDL on internal schema names.
-# These are false positives: table names come from show_tables(), not user input.
-_NOSEMGREP = (
-    "python.lang.security.audit.formatted-sql-query.formatted-sql-query,"
-    "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query"
-)
+logger = logging.getLogger(__name__)
 
 
 class GraphStore:
@@ -22,7 +19,7 @@ class GraphStore:
 
     def query(self, cypher: str, params: dict | None = None) -> list[dict]:
         """Run a Cypher query. Returns rows as list of dicts."""
-        if params:
+        if params is not None:
             result = self._conn.execute(cypher, parameters=params)
         else:
             result = self._conn.execute(cypher)
@@ -30,7 +27,7 @@ class GraphStore:
 
     def execute(self, cypher: str, params: dict | None = None) -> None:
         """Run a Cypher statement that doesn't return results (DDL, inserts)."""
-        if params:
+        if params is not None:
             self._conn.execute(cypher, parameters=params)
         else:
             self._conn.execute(cypher)
@@ -73,10 +70,10 @@ class GraphStore:
             for table in tables:
                 if table[2] == "NODE":
                     self._exec_schema_cypher(f"DROP TABLE {table[1]}")  # nosec B608
-        except Exception:  # nosec B110  # noqa: BLE001
-            return
+        except Exception as exc:  # nosec B110  # noqa: BLE001
+            logger.warning("clear() failed: %s", exc)
 
     def close(self) -> None:
-        """Close the database connection."""
-        del self._conn
-        del self._db
+        """Close the database connection and release file locks."""
+        self._conn.close()
+        self._db.close()
