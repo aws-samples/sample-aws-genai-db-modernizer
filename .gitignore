@@ -61,7 +61,6 @@ artifacts/
 
 # Embedded graph databases (built from artifacts, never committed)
 *.lbug
-**/graph/
 
 # Example collector outputs (unzipped from .zip files)
 docs/examples/**/*.json
