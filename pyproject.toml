@@ -40,6 +40,9 @@ dependencies = [
     # DocumentDB load test driver — [aws] extra pulls pymongo-auth-aws for
     # MONGODB-AWS authentication. Used by load_test.documentdb.{provisioner,seeder}.
     "pymongo[aws]>=4.6.0",
+
+    # ElastiCache/Valkey load test driver — used by load_test.elasticache.seeder
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

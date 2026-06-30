@@ -1,27 +1,35 @@
 # =============================================================================
-# Stage 1: Build custom k6 binary with xk6-mongo extension
+# Stage 1: Build custom k6 binary with xk6-mongo + xk6-redis extensions
 # =============================================================================
-# xk6-mongo is required for DocumentDB load testing. Stock k6 does not include
-# MongoDB protocol support; we build a custom k6 binary that includes the
-# extension. Final image only contains the resulting binary.
+# xk6-mongo is required for DocumentDB load testing (k6/x/mongo) and xk6-redis
+# for ElastiCache load testing (k6/x/redis). Stock k6 does not include either
+# module, so we build a custom k6 binary with both extensions compiled in. The
+# final image only contains the resulting binary.
 #
-# Repo and version are configurable via build args so we can swap the upstream
-# fork without modifying the Dockerfile (xk6-mongo has multiple community forks).
+# Packages/versions are configurable via build args so we can swap the upstream
+# forks without modifying the Dockerfile (xk6-mongo has multiple community forks).
 
 FROM golang:1.25-bookworm AS xk6-builder
 
 ARG XK6_MONGO_PACKAGE=github.com/GhMartingit/xk6-mongo
-ARG XK6_MONGO_VERSION=latest
+ARG XK6_MONGO_VERSION=v1.2.0
+# Pinned to the latest xk6-redis on the k6 v1.x line. v0.4.x targets k6 v2.0.0,
+# which conflicts with K6_VERSION below — do not bump past v0.3.x while on k6 v1.
+ARG XK6_REDIS_PACKAGE=github.com/grafana/xk6-redis
+ARG XK6_REDIS_VERSION=v0.3.6
 ARG K6_VERSION=v1.8.0
 
 ENV CGO_ENABLED=0
 WORKDIR /build
 
-RUN go install go.k6.io/xk6/cmd/xk6@latest && \
+# xk6 v1.4.6 is the last release compatible with the golang:1.25 builder above;
+# newer tags may raise the Go floor. Pinned to keep builds reproducible.
+RUN go install go.k6.io/xk6/cmd/xk6@v1.4.6 && \
     xk6 build \
       --k6-version ${K6_VERSION} \
       --output /usr/local/bin/k6 \
-      --with ${XK6_MONGO_PACKAGE}@${XK6_MONGO_VERSION}
+      --with ${XK6_MONGO_PACKAGE}@${XK6_MONGO_VERSION} \
+      --with ${XK6_REDIS_PACKAGE}@${XK6_REDIS_VERSION}
 
 # =============================================================================
 # Stage 2: Agent runtime image
@@ -46,7 +54,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy custom k6 binary from build stage (stock k6 + xk6-mongo extension)
+# Copy custom k6 binary from build stage (stock k6 + xk6-mongo + xk6-redis extensions)
 COPY --from=xk6-builder /usr/local/bin/k6 /usr/local/bin/k6
 RUN chmod +x /usr/local/bin/k6
 

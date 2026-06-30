@@ -13,11 +13,8 @@ from pathlib import Path
 import yaml  # type: ignore[import-untyped]
 
 
-# Custom YAML loader that handles CloudFormation intrinsic functions
-class CfnLoader(yaml.SafeLoader):
-    pass
-
-
+# Register CloudFormation intrinsic function tags with SafeLoader so
+# yaml.safe_load() can parse them without raising ConstructorError.
 def _cfn_tag_constructor(loader, tag_suffix, node):
     if isinstance(node, yaml.ScalarNode):
         return loader.construct_scalar(node)
@@ -47,16 +44,14 @@ for tag in [
     "Transform",
     "Condition",
 ]:
-    CfnLoader.add_constructor(
+    yaml.SafeLoader.add_constructor(
         f"!{tag}", lambda loader, node, t=tag: _cfn_tag_constructor(loader, t, node)
     )
 
 
 API_SERVICE_TEMPLATE_PATH = Path("infrastructure/cloudformation/api-service.yaml")
 with open(API_SERVICE_TEMPLATE_PATH, encoding="utf-8") as f:
-    API_SERVICE_TEMPLATE = yaml.load(
-        f, Loader=CfnLoader
-    )  # nosec B506 - CfnLoader extends SafeLoader
+    API_SERVICE_TEMPLATE = yaml.safe_load(f)
 
 RESOURCES = API_SERVICE_TEMPLATE["Resources"]
 

@@ -44,6 +44,7 @@ def create_engine_components(
                 DynamoDBScriptGenerator(region=region),
                 K6Runner(),
             )
+
         case "documentdb":
             from src.agents.load_test.documentdb import (
                 DocumentDBProvisioner,
@@ -57,6 +58,21 @@ def create_engine_components(
                 DocumentDBSeeder(region=region),
                 DocumentDBScriptGenerator(region=region),
                 K6Runner(),
+            )
+
+        case "elasticache":
+            from src.agents.load_test.elasticache import (
+                ElastiCacheProvisioner,
+                ElastiCacheScriptGenerator,
+                ElastiCacheSeeder,
+                ValkeyRunner,
+            )
+
+            return (
+                ElastiCacheProvisioner(region=region),
+                ElastiCacheSeeder(region=region),
+                ElastiCacheScriptGenerator(region=region),
+                ValkeyRunner(),
             )
         case _:
             raise ValueError(f"Unsupported engine: {target_engine}")
@@ -73,6 +89,26 @@ def _get_testable_patterns(schema_output: dict) -> list[dict]:
         for ap in schema_output.get("access_patterns", [])
         if ap.get("in_scope", True) and ap.get("design_rps", 0) > 0
     ]
+
+
+def _enrich_elasticache_patterns(schema_output: dict, query_map: dict) -> list[dict]:
+    """Enrich ElastiCache access patterns with design_rps from collector CPS.
+
+    ElastiCache schema designs don't include design_rps — derive it from
+    the max calls_per_second of the source queries for each pattern.
+    """
+    enriched = []
+    for ap in schema_output.get("access_patterns", []):
+        source_qids = ap.get("source_query_ids") or []
+        max_cps = max(
+            (query_map.get(qid, {}).get("calls_per_second", 0) or 0 for qid in source_qids),
+            default=0,
+        )
+        # Only include patterns with meaningful throughput
+        if max_cps > 0:
+            enriched_ap = {**ap, "design_rps": max(1, int(max_cps)), "in_scope": True}
+            enriched.append(enriched_ap)
+    return enriched
 
 
 def _resolve_aws_credentials() -> dict[str, str]:
@@ -112,8 +148,8 @@ def run_load_test(
     base = _base_path(database_name, job_id, schema_version, target_engine)
     log = logger.bind(job_id=job_id, run_id=run_id, target_engine=target_engine)
 
-    # DynamoDB and DocumentDB are implemented; other engines fall through to skip
-    SUPPORTED_ENGINES = {"dynamodb", "documentdb"}
+    # Only DynamoDB, ElastiCache and DocumentDB are implemented currently
+    SUPPORTED_ENGINES = {"dynamodb", "documentdb", "elasticache"}
     if target_engine not in SUPPORTED_ENGINES:
         log.info("load_test_skipped", reason=f"not implemented for {target_engine}")
         store.write_json(
@@ -144,6 +180,11 @@ def run_load_test(
 
     # 2. Filter testable patterns
     access_patterns = _get_testable_patterns(schema_output)
+
+    # For ElastiCache: access patterns don't have design_rps — derive from collector CPS
+    if not access_patterns and target_engine == "elasticache":
+        access_patterns = _enrich_elasticache_patterns(schema_output, query_map)
+
     log.info("testable_patterns", count=len(access_patterns))
 
     # 3. Create engine components
@@ -181,6 +222,14 @@ def run_load_test(
                     "replica_count", 0
                 )
 
+        # 4b. Inject provisioned ElastiCache endpoint into schema_output for seeder/generator
+        for resource in manifest.resources:
+            if resource.resource_type == "AWS::ElastiCache::ReplicationGroup":
+                schema_output["_cluster_endpoint"] = resource.configuration.get(
+                    "endpoint_address", ""
+                )
+                schema_output["_cluster_port"] = resource.configuration.get("endpoint_port", 6379)
+
         # 5. Seed
         seed_manifest = seeder.seed(schema_output, max_items_per_table=10_000)
         log.info("seeded", total_items=seed_manifest.total_items)
@@ -194,6 +243,11 @@ def run_load_test(
         # 7. Resolve env vars
         env_vars = _resolve_aws_credentials()
         env_vars["AWS_REGION"] = region
+
+        # Inject ElastiCache endpoint for k6 scripts
+        if schema_output.get("_cluster_endpoint"):
+            env_vars["ELASTICACHE_ENDPOINT"] = schema_output["_cluster_endpoint"]
+            env_vars["ELASTICACHE_PORT"] = str(schema_output.get("_cluster_port", 6379))
 
         # 8. Dry-run
         if not runner.dry_run(scripts_dir, env_vars):
@@ -281,27 +335,50 @@ def _build_pattern_results(
     results: list[PatternResult] = []
     seen: set[str] = set()
 
+    # Build query_id → scenario index mapping
+    # Each access pattern corresponds to one scenario (scenario_0, scenario_1, ...)
+    qid_to_scenario: dict[str, str] = {}
+    for i, ap in enumerate(access_patterns):
+        scenario_name = f"scenario_{i}"
+        for qid in ap.get("query_ids", []) or ap.get("source_query_ids", []):
+            qid_to_scenario[qid] = scenario_name
+
     for ap in access_patterns:
-        for qid in ap.get("query_ids", []):
+        for qid in ap.get("query_ids", []) or ap.get("source_query_ids", []):
             if qid in seen or qid not in query_map:
                 continue
             seen.add(qid)
 
             collector_query = query_map[qid]
-            source_p50 = float(collector_query.get("execution_time_ms_p50") or 1.0)
+            source_p50_raw = float(collector_query.get("execution_time_ms_p50") or 1.0)
+
+            # Add estimated network overhead to source latency for fair comparison.
+            # Collector metrics are database-internal execution time only (no network).
+            # Application-observed latency includes: TCP round-trip, protocol overhead,
+            # connection pool checkout, and TLS handshake amortization.
+            # Typical same-VPC overhead: 0.5–1.5ms for MySQL/PostgreSQL.
+            source_network_overhead_ms = 1.0
+            source_p50 = source_p50_raw + source_network_overhead_ms
 
             source_latency = LatencyPercentiles(
                 p50=source_p50,
-                p90=float(collector_query.get("execution_time_ms_p90") or source_p50 * 1.5),
-                p95=float(collector_query.get("execution_time_ms_p95") or source_p50 * 2.0),
-                p99=float(collector_query.get("execution_time_ms_p99") or source_p50 * 3.0),
-                p999=float(collector_query.get("execution_time_ms_p999") or source_p50 * 5.0),
-                min=float(collector_query.get("execution_time_ms_min") or source_p50 * 0.3),
-                max=float(collector_query.get("execution_time_ms_max") or source_p50 * 10.0),
+                p90=float(collector_query.get("execution_time_ms_p90") or source_p50_raw * 1.5)
+                + source_network_overhead_ms,
+                p95=float(collector_query.get("execution_time_ms_p95") or source_p50_raw * 2.0)
+                + source_network_overhead_ms,
+                p99=float(collector_query.get("execution_time_ms_p99") or source_p50_raw * 3.0)
+                + source_network_overhead_ms,
+                p999=float(collector_query.get("execution_time_ms_p999") or source_p50_raw * 5.0)
+                + source_network_overhead_ms,
+                min=float(collector_query.get("execution_time_ms_min") or source_p50_raw * 0.3)
+                + source_network_overhead_ms,
+                max=float(collector_query.get("execution_time_ms_max") or source_p50_raw * 10.0)
+                + source_network_overhead_ms,
             )
 
-            target_latency = runner.extract_scenario_latency(summary, qid)
-            total_requests = runner.extract_scenario_iterations(summary, qid)
+            scenario_name = qid_to_scenario.get(qid, qid)
+            target_latency = runner.extract_scenario_latency(summary, scenario_name)
+            total_requests = runner.extract_scenario_iterations(summary, scenario_name)
 
             target_p50 = target_latency.p50
             improvement = (source_p50 / target_p50) if target_p50 > 0 else 0.0
@@ -364,6 +441,8 @@ def _build_output(
         ),
         pattern_results=pattern_results,
         assumptions=[
+            "Source latency includes +1.0ms network overhead estimate (collector reports in-engine execution time only).",
+            "Target latency is the full application-observed round-trip (EC2 → ElastiCache → EC2).",
             "Source latency estimated from collector when percentiles unavailable.",
             "Uniform distribution for all keys.",
             f"First {test_config.warmup_seconds}s excluded (warmup).",
