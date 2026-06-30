@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import time
 
+from src.graph.schema import initialize_schema
 from src.graph.store import GraphStore
+from src.storage.artifact_store import ArtifactStore
 
 
 def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
@@ -305,3 +308,100 @@ def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
                 "MERGE (r)-[:IMPACTS]->(st)",
                 {"rid": risk_id, "tid": table_id},
             )
+
+
+def rebuild_graph(
+    db_name: str,
+    job_id: str,
+    artifact_store: ArtifactStore,
+    graph_store: GraphStore,
+) -> dict:
+    """Full rebuild: clear graph, initialize schema, read all artifacts, populate in order.
+
+    Skips any artifact that doesn't exist yet (partial pipeline runs).
+    Returns stats: {"nodes_created": int, "edges_created": int, "duration_ms": int}
+    """
+    start = time.time()
+    graph_store.clear()
+    initialize_schema(graph_store)
+
+    prefix = f"{db_name}/{job_id}"
+
+    def _read_safe(path: str) -> dict | None:
+        try:
+            return artifact_store.read_json(path)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # 1. Collector
+    collector = _read_safe(f"{prefix}/collector/output.json")
+    if collector:
+        populate_from_collector(collector, graph_store)
+
+    # 2. Triage
+    triage = _read_safe(f"{prefix}/referee-triage/triage.json")
+    if triage:
+        populate_from_triage(triage, graph_store)
+
+    # 3. Analysis (multiple engines)
+    for engine in [
+        "dynamodb",
+        "documentdb",
+        "opensearch",
+        "elasticache",
+        "aurora_postgresql",
+        "aurora_mysql",
+    ]:
+        analysis = _read_safe(f"{prefix}/analysis-{engine}/analysis.json")
+        if analysis:
+            populate_from_analysis(analysis, engine, graph_store)
+
+    # 4. Assignment (latest version)
+    assignment = None
+    for v in range(10, 0, -1):
+        assignment = _read_safe(f"{prefix}/assignment/v{v}/assignment.json")
+        if assignment:
+            break
+    if assignment:
+        populate_from_assignment(assignment, graph_store)
+
+    # 5. Reality check
+    reality = _read_safe(f"{prefix}/reality-check/output.json")
+    if reality:
+        populate_from_reality_check(reality, graph_store)
+
+    # 6. Schema design (multiple engines, latest version)
+    for engine in ["dynamodb", "documentdb", "opensearch", "elasticache"]:
+        for v in range(10, 0, -1):
+            schema = _read_safe(f"{prefix}/schema-{engine}/v{v}/schema_output.json")
+            if schema:
+                populate_from_schema_design(schema, engine, graph_store)
+                break
+
+    # 7. Post-schema router
+    router = _read_safe(f"{prefix}/post-schema-router/router_output.json")
+    if router:
+        populate_from_post_schema_router(router, graph_store)
+
+    # 8. Load test (multiple engines)
+    for engine in ["dynamodb", "documentdb", "opensearch", "elasticache"]:
+        lt = _read_safe(f"{prefix}/load-test/{engine}/output.json")
+        if lt:
+            populate_from_load_test(lt, engine, graph_store)
+
+    # 9. Synthesis (latest version)
+    for v in range(10, 0, -1):
+        synthesis = _read_safe(f"{prefix}/synthesis/v{v}/report.json")
+        if synthesis:
+            populate_from_synthesis(synthesis, graph_store)
+            break
+
+    duration_ms = int((time.time() - start) * 1000)
+    node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
+    edge_count = graph_store.query("MATCH ()-[r]->() RETURN COUNT(r) AS c")[0]["c"]
+
+    return {
+        "nodes_created": node_count,
+        "edges_created": edge_count,
+        "duration_ms": duration_ms,
+    }
