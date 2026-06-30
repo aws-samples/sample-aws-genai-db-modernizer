@@ -15,7 +15,7 @@ dependencies = [
 
     # Web Framework & API
     "fastapi>=0.104.1",
-    "uvicorn[standard]>=0.24.0",
+    "uvicorn[standard]>=0.49.0",
 
     # Database Connectors
     "mysql-connector-python>=9.1.0",
@@ -60,7 +60,7 @@ dev = [
     "pre-commit>=3.0.0",
     "detect-secrets>=1.4.0",
     "cfn-lint>=0.83.0",
-    "moto[s3,stepfunctions,logs]>=5.0.0",
+    "moto[s3,stepfunctions,logs]>=5.2.2",
 ]
 
 [build-system]
