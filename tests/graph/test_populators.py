@@ -4,7 +4,11 @@ from src.graph.populators import (
     populate_from_analysis,
     populate_from_assignment,
     populate_from_collector,
+    populate_from_load_test,
+    populate_from_post_schema_router,
     populate_from_reality_check,
+    populate_from_schema_design,
+    populate_from_synthesis,
     populate_from_triage,
 )
 
@@ -119,3 +123,69 @@ def test_populate_from_reality_check_creates_consolidation_decisions(
     decisions = graph_store.query("MATCH (d:Decision) RETURN d.category, d.description")
     assert len(decisions) == 1
     assert decisions[0]["d.category"] == "consolidation"
+
+
+def test_populate_from_schema_design_creates_trade_off_decisions(
+    graph_store, sample_collector_output, sample_schema_design_output
+):
+    """Schema design produces Decision nodes (trade_off) linked to queries."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_schema_design(sample_schema_design_output, "documentdb", graph_store)
+    decisions = graph_store.query(
+        "MATCH (d:Decision {category: 'trade_off'}) RETURN d.id, d.description"
+    )
+    assert len(decisions) == 1
+    informed = graph_store.query("MATCH (d:Decision)-[:INFORMED_BY]->(q:Query) RETURN q.id")
+    assert len(informed) == 1
+    assert informed[0]["q.id"] == "q2"
+
+
+def test_populate_from_post_schema_router_creates_reroute_decisions(
+    graph_store, sample_collector_output, sample_assignment, sample_router_output
+):
+    """Post-schema router produces Decision nodes (reroute)."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_assignment(sample_assignment, graph_store)
+    populate_from_post_schema_router(sample_router_output, graph_store)
+    decisions = graph_store.query("MATCH (d:Decision {category: 'reroute'}) RETURN d.description")
+    assert len(decisions) == 1
+
+
+def test_populate_from_load_test_creates_runs(
+    graph_store, sample_collector_output, sample_load_test_output
+):
+    """Load test produces LoadTestRun nodes with TESTED_IN edges."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_load_test(sample_load_test_output, "dynamodb", graph_store)
+    runs = graph_store.query("MATCH (lt:LoadTestRun) RETURN lt.query_id, lt.improvement_factor")
+    assert len(runs) == 1
+    assert runs[0]["lt.improvement_factor"] == 15.0
+    tested = graph_store.query("MATCH (q:Query)-[:TESTED_IN]->(lt:LoadTestRun) RETURN q.id")
+    assert len(tested) == 1
+    assert tested[0]["q.id"] == "q1"
+
+
+def test_populate_from_synthesis_creates_risks(
+    graph_store, sample_collector_output, sample_synthesis_output
+):
+    """Synthesis produces Risk nodes linked to source tables."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_synthesis(sample_synthesis_output, graph_store)
+    risks = graph_store.query("MATCH (r:Risk) RETURN r.id, r.severity")
+    assert len(risks) == 1
+    assert risks[0]["r.severity"] == "MEDIUM"
+    impacts = graph_store.query(
+        "MATCH (r:Risk)-[:IMPACTS]->(st:SourceTable) RETURN st.id ORDER BY st.id"
+    )
+    assert len(impacts) == 2
+
+
+def test_rebuild_is_idempotent(graph_store, sample_collector_output, sample_triage_output):
+    """Running populators twice produces the same node count."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_triage(sample_triage_output, graph_store)
+    count1 = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_triage(sample_triage_output, graph_store)
+    count2 = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
+    assert count1 == count2

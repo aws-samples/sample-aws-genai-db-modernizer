@@ -162,3 +162,85 @@ def sample_reality_check_output():
             }
         ]
     }
+
+
+@pytest.fixture
+def sample_schema_design_output():
+    """Minimal schema design with 1 trade-off."""
+    return {
+        "trade_offs": [
+            {
+                "description": "Denormalized customer data into orders collection",
+                "impact": "Faster reads, stale data risk on customer updates",
+                "source_tables": ["orders", "customers"],
+                "target_tables": ["orders-collection"],
+                "query_ids": ["q2"],
+                "engine": "documentdb",
+            }
+        ],
+        "access_patterns": [
+            {
+                "query_ids": ["q1", "q3"],
+                "source_table": "orders",
+                "destination_table": "orders-by-customer",
+                "operation": "GetItem / PutItem",
+            }
+        ],
+    }
+
+
+@pytest.fixture
+def sample_router_output():
+    """Minimal post-schema router output with 1 reroute."""
+    return {
+        "routings": [
+            {
+                "query_id": "q2",
+                "from_engine": "documentdb",
+                "to_engine": "aurora_mysql",
+                "reason": "Complex aggregation not supported in DocumentDB schema",
+                "cascade_depth": 0,
+            }
+        ],
+        "terminal_queries": [],
+    }
+
+
+@pytest.fixture
+def sample_load_test_output():
+    """Minimal load test output with 1 pattern result."""
+    return {
+        "pattern_results": [
+            {
+                "query_id": "q1",
+                "operation_type": "GetItem",
+                "source_latency_ms": 45.0,
+                "target_latency_ms": 3.0,
+                "improvement_factor": 15.0,
+                "throughput_rps": 12000.0,
+                "error_rate_pct": 0.01,
+                "cost_per_operation_usd": 0.0000012,
+            }
+        ],
+        "total_cost_usd": 0.05,
+    }
+
+
+@pytest.fixture
+def sample_synthesis_output():
+    """Minimal synthesis output with 1 risk."""
+    return {
+        "risk_assessment": {
+            "overall_risk_level": "MEDIUM",
+            "risks": [
+                {
+                    "risk_id": "risk-1",
+                    "risk_type": "DATA_CONSISTENCY",
+                    "severity": "MEDIUM",
+                    "description": "Cross-table transactions on orders+customers cannot be atomic in DynamoDB",
+                    "affected_tables": ["orders", "customers"],
+                    "mitigation": "Use DynamoDB transactions or implement saga pattern",
+                }
+            ],
+        }
+    }

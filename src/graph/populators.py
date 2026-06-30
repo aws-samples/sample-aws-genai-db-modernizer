@@ -187,3 +187,121 @@ def populate_from_reality_check(reality_check_output: dict, store: GraphStore) -
                 "meta": json.dumps(metadata),
             },
         )
+
+
+def populate_from_schema_design(schema_output: dict, engine: str, store: GraphStore) -> None:
+    """Create Decision nodes (trade_off) from schema design output."""
+    trade_offs = schema_output.get("trade_offs", [])
+
+    for i, trade_off in enumerate(trade_offs):
+        if not isinstance(trade_off, dict):
+            continue
+        decision_id = f"trade_off-{engine}-{i}"
+        store.execute(
+            "MERGE (d:Decision {id: $id}) "
+            "SET d.category = 'trade_off', d.description = $description, "
+            "d.rationale = $impact, d.phase = 'SCHEMA_DESIGN', "
+            "d.metadata = $meta",
+            {
+                "id": decision_id,
+                "description": trade_off.get("description", ""),
+                "impact": trade_off.get("impact", ""),
+                "meta": json.dumps({"engine": engine}),
+            },
+        )
+        for query_id in trade_off.get("query_ids", []):
+            store.execute(
+                "MATCH (d:Decision {id: $did}), (q:Query {id: $qid}) "
+                "MERGE (d)-[:INFORMED_BY]->(q)",
+                {"did": decision_id, "qid": query_id},
+            )
+
+
+def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> None:
+    """Create Decision nodes (reroute) from post-schema router output."""
+    routings = router_output.get("routings", [])
+
+    for i, routing in enumerate(routings):
+        decision_id = f"reroute-{i}"
+        metadata = {
+            "from_engine": routing["from_engine"],
+            "to_engine": routing.get("to_engine"),
+            "cascade_depth": routing.get("cascade_depth", 0),
+        }
+        description_text = (
+            f"Rerouted {routing['query_id']} from {routing['from_engine']} "
+            f"to {routing.get('to_engine', 'application-layer')}"
+        )
+        store.execute(
+            "MERGE (d:Decision {id: $id}) "
+            "SET d.category = 'reroute', "
+            "d.description = $description, d.rationale = $rationale, "
+            "d.phase = 'POST_SCHEMA_ROUTER', d.metadata = $meta",
+            {
+                "id": decision_id,
+                "description": description_text,
+                "rationale": routing["reason"],
+                "meta": json.dumps(metadata),
+            },
+        )
+        store.execute(
+            "MATCH (d:Decision {id: $did}), (q:Query {id: $qid}) " "MERGE (d)-[:INFORMED_BY]->(q)",
+            {"did": decision_id, "qid": routing["query_id"]},
+        )
+
+
+def populate_from_load_test(load_test_output: dict, engine: str, store: GraphStore) -> None:
+    """Create LoadTestRun nodes and TESTED_IN/VALIDATES edges from load test output."""
+    pattern_results = load_test_output.get("pattern_results", [])
+
+    for result in pattern_results:
+        run_id = f"lt-{engine}-{result['query_id']}"
+        store.execute(
+            "MERGE (lt:LoadTestRun {id: $id}) "
+            "SET lt.timestamp = '', lt.query_id = $qid, "
+            "lt.source_latency_ms = $slat, lt.target_latency_ms = $tlat, "
+            "lt.improvement_factor = $imp, lt.throughput_rps = $thr, "
+            "lt.error_rate_pct = $err, lt.cost_per_operation_usd = $cost",
+            {
+                "id": run_id,
+                "qid": result["query_id"],
+                "slat": result.get("source_latency_ms", 0),
+                "tlat": result.get("target_latency_ms", 0),
+                "imp": result.get("improvement_factor", 0),
+                "thr": result.get("throughput_rps", 0),
+                "err": result.get("error_rate_pct", 0),
+                "cost": result.get("cost_per_operation_usd", 0),
+            },
+        )
+        store.execute(
+            "MATCH (q:Query {id: $qid}), (lt:LoadTestRun {id: $ltid}) "
+            "MERGE (q)-[:TESTED_IN]->(lt)",
+            {"qid": result["query_id"], "ltid": run_id},
+        )
+
+
+def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
+    """Create Risk nodes and IMPACTS/EVIDENCED_BY edges from synthesis output."""
+    risk_assessment = synthesis_output.get("risk_assessment", {})
+    risks = risk_assessment.get("risks", [])
+
+    for risk in risks:
+        risk_id = risk.get("risk_id", f"risk-{risks.index(risk)}")
+        store.execute(
+            "MERGE (r:Risk {id: $id}) "
+            "SET r.risk_type = $type, r.severity = $sev, "
+            "r.description = $description, r.mitigation = $mitigation",
+            {
+                "id": risk_id,
+                "type": risk.get("risk_type", ""),
+                "sev": risk.get("severity", ""),
+                "description": risk.get("description", ""),
+                "mitigation": risk.get("mitigation", ""),
+            },
+        )
+        for table_id in risk.get("affected_tables") or []:
+            store.execute(
+                "MATCH (r:Risk {id: $rid}), (st:SourceTable {id: $tid}) "
+                "MERGE (r)-[:IMPACTS]->(st)",
+                {"rid": risk_id, "tid": table_id},
+            )
