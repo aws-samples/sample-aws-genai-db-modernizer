@@ -45,6 +45,8 @@ from src.contracts.collector_output import (
     SourceDatabase,
     Table,
     Trigger,
+    TriggerEventType,
+    TriggerTiming,
     View,
 )
 from src.tools.aws.credentials import AWSCredentialManager
@@ -389,11 +391,28 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     if native_waits and queries.query_patterns:
         from src.contracts.collector_output import WaitEvent
 
+        # Compute the total wait time across all events so we can fall back
+        # to a computed percent when the SQL script hasn't provided one.
+        # The previous code used `avg_wait_ms` directly as `wait_time_percent`
+        # which is a units mismatch (ms vs percent) and produced values >100
+        # for any workload with mean wait latency >100ms.
+        total_wait_ms = sum(float(w.get("time_waited_ms") or 0) for w in native_waits) or 1.0
+
+        def _wait_percent(w: dict) -> float:
+            # Prefer the script-provided `wait_time_percent` field when
+            # present (added to collect-oracle.sql / collect-sqlserver.sql).
+            # Otherwise, derive percent = time_waited_ms / total_wait_ms * 100.
+            explicit = w.get("wait_time_percent")
+            if explicit is not None:
+                return min(100.0, max(0.0, float(explicit)))
+            time_ms = float(w.get("time_waited_ms") or 0)
+            return min(100.0, max(0.0, (time_ms / total_wait_ms) * 100))
+
         wait_list = [
             WaitEvent(
                 event_name=w.get("event", ""),
                 wait_time_ms=float(w.get("time_waited_ms") or 0),
-                wait_time_percent=float(w.get("avg_wait_ms") or 0),
+                wait_time_percent=_wait_percent(w),
             )
             for w in native_waits[:5]
         ]
@@ -580,9 +599,19 @@ def _collect_aws_raw(inp, cred_mgr) -> dict:
 
 def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
     tables = []
+    skipped_empty = 0
     for t in schema_raw:
         name = t["table_name"]
         columns = _build_columns(t["columns"])
+        # Defensive: skip tables that end up with zero columns after the
+        # column-join step. This can happen with Oracle internal metadata
+        # tables (SYS_IOT_OVER_*, HS_PARTITION_COL_*) which appear in
+        # ALL_TABLES but have no rows in ALL_TAB_COLUMNS. The Table contract
+        # requires min_length=1 on columns, so we filter them here rather
+        # than propagate a validation failure.
+        if not columns:
+            skipped_empty += 1
+            continue
         indexes = [
             Index(
                 index_name=i["index_name"],
@@ -618,6 +647,12 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 foreign_keys=fks,
                 sample_data=t.get("sample_data"),
             )
+        )
+    if skipped_empty:
+        logger.warning(
+            "Skipped %d table(s) with zero columns after join "
+            "(commonly Oracle internal metadata: SYS_IOT_OVER_*, HS_PARTITION_COL_*)",
+            skipped_empty,
         )
     return tables
 
@@ -1049,17 +1084,68 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
 def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
     if not raw:
         return None
-    return [
-        Trigger(
-            trigger_id=t.get("trigger_name", ""),
-            trigger_name=t.get("trigger_name", ""),
-            table_id=t.get("table_name", ""),
-            event_type=t.get("event_type", "INSERT"),
-            timing=t.get("timing", "AFTER"),
-            definition=t.get("definition"),
+
+    triggers = []
+    skipped = 0
+    for t in raw:
+        # Trim whitespace (Oracle sometimes emits trailing spaces on
+        # TRIGGERING_EVENT) and uppercase for enum matching.
+        event_raw = str(t.get("event_type") or "").strip().upper()
+        timing_raw = str(t.get("timing") or "").strip().upper()
+        table = t.get("table_name") or ""
+
+        # Contract enum: event_type ∈ {INSERT, UPDATE, DELETE}.
+        # Filter out non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.)
+        # For compound DML triggers (e.g. Oracle 'INSERT OR UPDATE'),
+        # normalize to the first matching event.
+        if "INSERT" in event_raw:
+            event = "INSERT"
+        elif "UPDATE" in event_raw:
+            event = "UPDATE"
+        elif "DELETE" in event_raw:
+            event = "DELETE"
+        else:
+            skipped += 1
+            continue
+
+        # Contract enum: timing ∈ {BEFORE, AFTER, INSTEAD OF}.
+        # Oracle emits values like 'BEFORE EACH ROW', 'AFTER STATEMENT',
+        # 'AFTER EVENT' — normalize by taking the prefix.
+        if timing_raw.startswith("INSTEAD OF"):
+            timing = "INSTEAD OF"
+        elif timing_raw.startswith("BEFORE"):
+            timing = "BEFORE"
+        elif timing_raw.startswith("AFTER"):
+            timing = "AFTER"
+        else:
+            skipped += 1
+            continue
+
+        # DB-level triggers have no table_name and cannot map to the
+        # Trigger.table_id field.
+        if not table:
+            skipped += 1
+            continue
+
+        triggers.append(
+            Trigger(
+                trigger_id=t.get("trigger_name", ""),
+                trigger_name=t.get("trigger_name", ""),
+                table_id=table,
+                event_type=TriggerEventType(event),
+                timing=TriggerTiming(timing),
+                definition=t.get("definition"),
+            )
         )
-        for t in raw
-    ]
+
+    if skipped:
+        logger.warning(
+            "Skipped %d non-DML or DB-level trigger(s) "
+            "(LOGON/DDL/STARTUP/DROP, TRUNCATE, or events without table_name)",
+            skipped,
+        )
+
+    return triggers or None
 
 
 # ---------------------------------------------------------------------------

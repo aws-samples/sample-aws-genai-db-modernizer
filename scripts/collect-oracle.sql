@@ -107,6 +107,10 @@ BEGIN
 
     -- ===================================================================
     -- 3. Tables
+    -- Filter to tables with at least one column entry — excludes Oracle
+    -- internal metadata tables (SYS_IOT_OVER_*, HS_PARTITION_COL_*, etc.)
+    -- which appear in ALL_TABLES but have no rows in ALL_TAB_COLUMNS and
+    -- would fail Table.columns min_length=1 validation downstream.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"tables": [');
     FOR rec IN (
@@ -123,6 +127,10 @@ BEGIN
             GROUP BY OWNER, SEGMENT_NAME
         ) s ON s.OWNER = t.OWNER AND s.SEGMENT_NAME = t.TABLE_NAME
         WHERE t.OWNER = v_owner
+          AND EXISTS (
+              SELECT 1 FROM ALL_TAB_COLUMNS c
+              WHERE c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
+          )
         ORDER BY t.TABLE_NAME
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
@@ -168,9 +176,15 @@ BEGIN
             'column_name' VALUE LOWER(ic.COLUMN_NAME),
             'non_unique' VALUE CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 0 ELSE 1 END,
             'index_type' VALUE CASE
-                WHEN i.INDEX_TYPE LIKE '%FUNCTION%' THEN 'functional'
-                WHEN i.INDEX_TYPE LIKE '%BITMAP%' THEN 'bitmap'
-                ELSE 'btree'
+                -- Contract enum: btree|hash|gist|gin|fulltext|spatial|other
+                -- Map Oracle's INDEX_TYPE values into it.
+                WHEN i.INDEX_TYPE LIKE '%FUNCTION%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%BITMAP%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE 'IOT%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%CLUSTER%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%DOMAIN%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE 'NORMAL%' THEN 'btree'
+                ELSE 'other'
             END
         ) AS j
         FROM ALL_INDEXES i
@@ -266,6 +280,13 @@ BEGIN
 
     -- ===================================================================
     -- 10. Triggers
+    -- Filter to DML triggers (INSERT/UPDATE/DELETE) with a non-null
+    -- table_name. Non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.) are
+    -- DB-level and can't map to Trigger.table_id + Trigger.event_type
+    -- contract enums.
+    -- Normalize compound events like 'INSERT OR UPDATE OR DELETE' to the
+    -- first matching keyword. Normalize TRIGGER_TYPE like 'BEFORE EACH ROW'
+    -- or 'AFTER STATEMENT' to the BEFORE/AFTER/INSTEAD OF prefix.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"triggers": [');
     FOR rec IN (
@@ -273,10 +294,26 @@ BEGIN
             'trigger_name' VALUE LOWER(TRIGGER_NAME),
             'table_name' VALUE LOWER(TABLE_NAME),
             'schema_name' VALUE LOWER(OWNER),
-            'timing' VALUE TRIGGER_TYPE,
-            'event_type' VALUE TRIGGERING_EVENT
+            'timing' VALUE CASE
+                WHEN TRIGGER_TYPE LIKE 'INSTEAD OF%' THEN 'INSTEAD OF'
+                WHEN TRIGGER_TYPE LIKE 'BEFORE%' THEN 'BEFORE'
+                WHEN TRIGGER_TYPE LIKE 'AFTER%' THEN 'AFTER'
+                ELSE 'AFTER'
+            END,
+            'event_type' VALUE CASE
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%INSERT%' THEN 'INSERT'
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%' THEN 'UPDATE'
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%DELETE%' THEN 'DELETE'
+            END
         ) AS j
-        FROM ALL_TRIGGERS WHERE OWNER = v_owner ORDER BY TABLE_NAME, TRIGGER_NAME
+        FROM ALL_TRIGGERS
+        WHERE OWNER = v_owner
+          AND TABLE_NAME IS NOT NULL
+          AND TRIGGER_TYPE NOT LIKE '%EVENT%'
+          AND (   UPPER(TRIGGERING_EVENT) LIKE '%INSERT%'
+               OR UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%'
+               OR UPPER(TRIGGERING_EVENT) LIKE '%DELETE%')
+        ORDER BY TABLE_NAME, TRIGGER_NAME
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
     END LOOP;
@@ -336,6 +373,10 @@ BEGIN
     -- ===================================================================
     -- 13. Wait Events (NEW — replaces Performance Insights on-prem)
     -- Top 10 wait events by time waited
+    -- The `wait_time_percent` field is emitted as an explicit percent-of-total
+    -- so the parser doesn't have to derive it from `avg_wait_ms` (which is a
+    -- millisecond value, not a percent — this used to cause validation
+    -- errors for any workload with mean wait latency >100ms).
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"wait_events": [');
     FOR rec IN (
@@ -344,6 +385,8 @@ BEGIN
             'total_waits' VALUE TOTAL_WAITS,
             'time_waited_ms' VALUE ROUND(TIME_WAITED_MICRO / 1000, 2),
             'avg_wait_ms' VALUE ROUND(TIME_WAITED_MICRO / GREATEST(TOTAL_WAITS, 1) / 1000, 3),
+            'wait_time_percent' VALUE ROUND(
+                100.0 * TIME_WAITED_MICRO / NULLIF(SUM(TIME_WAITED_MICRO) OVER (), 0), 3),
             'wait_class' VALUE WAIT_CLASS
         ) AS j
         FROM (
