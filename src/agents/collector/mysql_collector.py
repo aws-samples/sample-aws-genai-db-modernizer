@@ -28,6 +28,7 @@ from src.contracts.collector_output import (
     DeploymentType,
     ForeignKey,
     Index,
+    IndexType,
     Metadata,
     Metrics,
     MetricStats,
@@ -100,6 +101,60 @@ _TYPE_MAP: dict[str, NormalizedDataType] = {
     "time": NormalizedDataType.string,
     "year": NormalizedDataType.integer,
 }
+
+
+# Cross-engine normalization for index_type values received in offline JSON.
+# Contract enum: btree|hash|gist|gin|fulltext|spatial|other.
+# Oracle emits 'FUNCTION-BASED NORMAL', 'BITMAP', 'IOT - TOP', 'CLUSTER',
+# 'DOMAIN', 'NORMAL' via ALL_INDEXES.INDEX_TYPE — all get mapped here.
+# Older Oracle collections (before the collect-oracle.sql fix) may emit
+# lowercase 'functional'; keep both spellings covered.
+_INDEX_TYPE_NORMALIZE = {
+    "functional": "other",
+    "function-based": "other",
+    "bitmap": "other",
+    "cluster": "other",
+    "domain": "other",
+    "iot": "other",
+    "normal": "btree",
+}
+_VALID_INDEX_TYPES = {"btree", "hash", "gist", "gin", "fulltext", "spatial", "other"}
+
+# Truthy-string variants accepted for boolean-ish fields across engines.
+# MySQL/PostgreSQL emit 'YES'/'NO' for is_nullable; Oracle emits single-letter
+# 'Y'/'N'. Some engines / DDL variants use 'true'/'false' or 1/0.
+_TRUTHY_STRS = {"yes", "y", "true", "1"}
+
+
+def _normalize_index_type(raw) -> IndexType | None:
+    """Coerce a raw index_type value into the contract enum.
+
+    None passes through (contract allows Optional[IndexType]).
+    Known Oracle values map via _INDEX_TYPE_NORMALIZE. Anything else
+    that isn't a valid enum falls back to 'other' rather than crashing.
+    """
+    if raw is None:
+        return None
+    lower = str(raw).lower().strip()
+    if lower in _VALID_INDEX_TYPES:
+        return IndexType(lower)
+    for prefix, target in _INDEX_TYPE_NORMALIZE.items():
+        if lower.startswith(prefix):
+            return IndexType(target)
+    return IndexType.other
+
+
+def _is_truthy(val) -> bool:
+    """Return True for Y/YES/y/yes/TRUE/true/1 across engine conventions.
+
+    Handles Oracle single-letter 'Y'/'N', MySQL/PostgreSQL 'YES'/'NO',
+    Python bool passthrough, and numeric 1/0.
+    """
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    return str(val).lower().strip() in _TRUTHY_STRS
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +673,7 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
-                index_type=i.get("index_type", "btree"),
+                index_type=_normalize_index_type(i.get("index_type", "btree")),
             )
             for i in t.get("indexes", [])
         ] or None
@@ -667,7 +722,7 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
-                index_type=i.get("index_type", "btree"),
+                index_type=_normalize_index_type(i.get("index_type", "btree")),
             )
             for i in t.get("indexes", [])
         ] or None
@@ -706,9 +761,19 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             data_type=c.get("column_type") or c.get("data_type", ""),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
-            nullable=c.get("is_nullable", "YES") == "YES",
+            # Cross-engine boolean coercion:
+            # MySQL/PostgreSQL emit 'YES'/'NO'; Oracle emits 'Y'/'N'.
+            # Previously only matched 'YES' exactly, so Oracle 'Y' columns
+            # (nullable) were silently marked NOT NULL — silent data
+            # corruption on ~82% of a typical Oracle schema.
+            nullable=_is_truthy(c.get("is_nullable", "YES")),
             default_value=c.get("column_default"),
-            is_auto_increment="auto_increment" in (c.get("extra") or ""),
+            # Auto-increment detection: MySQL uses `extra='auto_increment'`,
+            # Oracle 12c+ emits `is_identity: YES` for IDENTITY columns.
+            # Accept either source.
+            is_auto_increment=(
+                _is_truthy(c.get("is_identity")) or "auto_increment" in (c.get("extra") or "")
+            ),
         )
         for c in raw
     ]

@@ -7,7 +7,13 @@ on hardening changes from the Oracle production JSON test run.
 
 import logging
 
-from src.agents.collector.mysql_collector import _build_tables, _build_triggers
+from src.agents.collector.mysql_collector import (
+    _build_columns,
+    _build_tables,
+    _build_triggers,
+    _is_truthy,
+    _normalize_index_type,
+)
 
 # ---------------------------------------------------------------------------
 # _build_tables: skip tables with zero columns
@@ -492,3 +498,316 @@ class TestWaitTimePercentComputation:
             return float(min(100.0, max(0.0, (time_ms / total) * 100)))
 
         assert _wait_percent(events[0]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _normalize_index_type: Oracle → contract enum mapping
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeIndexType:
+    """Bug caught on production Oracle data — the customer's JSON had 35
+    indexes with index_type='functional' (Oracle FUNCTION-BASED NORMAL
+    lower-cased by the collect-oracle.sql script). The Index Pydantic
+    contract rejects any value not in
+    {btree,hash,gist,gin,fulltext,spatial,other}, crashing the collector.
+
+    The parser-side normalizer maps Oracle-specific values into the
+    contract enum, providing backward compatibility for JSON captured
+    with the pre-fix version of the SQL script.
+    """
+
+    def test_none_passes_through(self):
+        assert _normalize_index_type(None) is None
+
+    def test_valid_btree_unchanged(self):
+        assert _normalize_index_type("btree").value == "btree"
+
+    def test_valid_other_unchanged(self):
+        assert _normalize_index_type("other").value == "other"
+
+    def test_case_insensitive(self):
+        assert _normalize_index_type("BTREE").value == "btree"
+        assert _normalize_index_type("BtRee").value == "btree"
+
+    def test_whitespace_stripped(self):
+        assert _normalize_index_type("  btree  ").value == "btree"
+
+    def test_oracle_functional_lowercase(self):
+        """The exact value that crashed on the customer's Oracle 19c JSON."""
+        assert _normalize_index_type("functional").value == "other"
+
+    def test_oracle_function_based_normal(self):
+        """Oracle's ALL_INDEXES.INDEX_TYPE raw value (with prefix match)."""
+        assert _normalize_index_type("FUNCTION-BASED NORMAL").value == "other"
+
+    def test_oracle_bitmap(self):
+        assert _normalize_index_type("BITMAP").value == "other"
+
+    def test_oracle_iot_top(self):
+        assert _normalize_index_type("IOT - TOP").value == "other"
+
+    def test_oracle_cluster(self):
+        assert _normalize_index_type("CLUSTER").value == "other"
+
+    def test_oracle_domain(self):
+        assert _normalize_index_type("DOMAIN").value == "other"
+
+    def test_oracle_normal_maps_to_btree(self):
+        assert _normalize_index_type("NORMAL").value == "btree"
+
+    def test_oracle_normal_rev(self):
+        """Oracle reverse-key indexes: 'NORMAL/REV'."""
+        assert _normalize_index_type("NORMAL/REV").value == "btree"
+
+    def test_unknown_defaults_to_other(self):
+        """Any unrecognized value falls back to 'other' rather than crashing."""
+        assert _normalize_index_type("hyperbolic-quantum-index").value == "other"
+
+    def test_empty_string_defaults_to_other(self):
+        assert _normalize_index_type("").value == "other"
+
+
+# ---------------------------------------------------------------------------
+# _is_truthy: cross-engine boolean-ish string coercion
+# ---------------------------------------------------------------------------
+
+
+class TestIsTruthy:
+    """Bug caught on production Oracle data — 90,414 of the customer's
+    110,091 columns had is_nullable='Y' (Oracle single-letter convention),
+    but the collector's `nullable=c.get("is_nullable", "YES") == "YES"`
+    check only accepted the full-word MySQL/PostgreSQL form. Result:
+    every nullable Oracle column silently got marked NOT NULL.
+
+    _is_truthy accepts both spellings plus true/1 for defense-in-depth
+    against DDL parser output.
+    """
+
+    def test_yes_returns_true(self):
+        assert _is_truthy("YES") is True
+
+    def test_y_returns_true(self):
+        """Oracle single-letter — the exact case we missed."""
+        assert _is_truthy("Y") is True
+
+    def test_lowercase_yes(self):
+        assert _is_truthy("yes") is True
+
+    def test_lowercase_y(self):
+        assert _is_truthy("y") is True
+
+    def test_true_string(self):
+        assert _is_truthy("true") is True
+
+    def test_TRUE_string(self):
+        assert _is_truthy("TRUE") is True
+
+    def test_one_string(self):
+        assert _is_truthy("1") is True
+
+    def test_whitespace_stripped(self):
+        assert _is_truthy(" Y ") is True
+        assert _is_truthy(" YES ") is True
+
+    def test_no_returns_false(self):
+        assert _is_truthy("NO") is False
+
+    def test_n_returns_false(self):
+        """Oracle single-letter negative."""
+        assert _is_truthy("N") is False
+
+    def test_lowercase_no(self):
+        assert _is_truthy("no") is False
+
+    def test_false_string(self):
+        assert _is_truthy("false") is False
+
+    def test_zero_string(self):
+        assert _is_truthy("0") is False
+
+    def test_none_returns_false(self):
+        assert _is_truthy(None) is False
+
+    def test_empty_string_returns_false(self):
+        assert _is_truthy("") is False
+
+    def test_python_true_passthrough(self):
+        assert _is_truthy(True) is True
+
+    def test_python_false_passthrough(self):
+        assert _is_truthy(False) is False
+
+    def test_unknown_string_returns_false(self):
+        """Only strict positive spellings are truthy."""
+        assert _is_truthy("maybe") is False
+        assert _is_truthy("2") is False
+
+
+# ---------------------------------------------------------------------------
+# _build_columns: Oracle nullability + identity handling
+# ---------------------------------------------------------------------------
+
+
+class TestBuildColumnsOracleFields:
+    """The customer's Oracle JSON has is_nullable='Y'/'N' (not YES/NO)
+    and is_identity='YES'/'NO' string (not boolean). Verify the builder
+    produces correct Pydantic Column objects for both engine conventions.
+    """
+
+    @staticmethod
+    def _base(**overrides) -> dict:
+        base = {
+            "column_name": "id",
+            "ordinal_position": 1,
+            "data_type": "number",
+            "is_nullable": "N",
+            "column_default": None,
+            "is_identity": "NO",
+        }
+        base.update(overrides)
+        return base
+
+    # -- Oracle Y/N convention ------------------------------------------------
+
+    def test_oracle_y_becomes_nullable_true(self):
+        columns = _build_columns([self._base(is_nullable="Y")])
+        assert columns[0].nullable is True
+
+    def test_oracle_n_becomes_nullable_false(self):
+        columns = _build_columns([self._base(is_nullable="N")])
+        assert columns[0].nullable is False
+
+    def test_oracle_lowercase_y(self):
+        columns = _build_columns([self._base(is_nullable="y")])
+        assert columns[0].nullable is True
+
+    # -- MySQL/PG YES/NO convention (backward compat) -------------------------
+
+    def test_mysql_yes_returns_nullable_true(self):
+        columns = _build_columns([self._base(is_nullable="YES")])
+        assert columns[0].nullable is True
+
+    def test_mysql_no_returns_nullable_false(self):
+        columns = _build_columns([self._base(is_nullable="NO")])
+        assert columns[0].nullable is False
+
+    # -- Auto-increment detection ---------------------------------------------
+
+    def test_mysql_extra_auto_increment_detected(self):
+        c = self._base(is_identity=None, extra="auto_increment")
+        columns = _build_columns([c])
+        assert columns[0].is_auto_increment is True
+
+    def test_oracle_is_identity_yes_detected(self):
+        """Oracle 12c+ IDENTITY column: is_identity='YES' should map."""
+        columns = _build_columns([self._base(is_identity="YES")])
+        assert columns[0].is_auto_increment is True
+
+    def test_oracle_is_identity_no_returns_false(self):
+        columns = _build_columns([self._base(is_identity="NO")])
+        assert columns[0].is_auto_increment is False
+
+    def test_missing_is_identity_and_extra_returns_false(self):
+        c = self._base(is_identity=None)
+        # No 'extra' key at all
+        columns = _build_columns([c])
+        assert columns[0].is_auto_increment is False
+
+    # -- Mixed customer-JSON shape --------------------------------------------
+
+    def test_customer_oracle_row_shape(self):
+        """Exact shape observed in the customer's Oracle 19c JSON."""
+        raw = [
+            {
+                "table_name": "access$",
+                "column_name": "d_obj#",
+                "ordinal_position": 1,
+                "data_type": "number",
+                "max_length": 22,
+                "char_used": None,
+                "data_precision": None,
+                "data_scale": None,
+                "is_nullable": "N",
+                "column_default": None,
+                "is_identity": "NO",
+            }
+        ]
+        columns = _build_columns(raw)
+        c = columns[0]
+        assert c.column_name == "d_obj#"
+        assert c.nullable is False  # N → not null
+        assert c.is_auto_increment is False  # NO
+
+
+# ---------------------------------------------------------------------------
+# _build_tables: index_type normalization end-to-end
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTablesIndexTypeNormalization:
+    """Verify that Oracle's 'functional' index_type flows through
+    _build_tables correctly after normalization.
+    """
+
+    @staticmethod
+    def _table(indexes: list[dict]) -> dict:
+        return {
+            "table_name": "orders",
+            "columns": [
+                {
+                    "column_name": "id",
+                    "ordinal_position": 1,
+                    "data_type": "number",
+                    "is_nullable": "N",
+                }
+            ],
+            "indexes": indexes,
+            "foreign_keys": [],
+        }
+
+    def test_oracle_functional_index_normalized(self):
+        table_dict = self._table(
+            [
+                {
+                    "index_name": "idx_upper_email",
+                    "columns": ["email"],
+                    "is_unique": False,
+                    "is_primary": False,
+                    "index_type": "functional",
+                }
+            ]
+        )
+        tables = _build_tables([table_dict], "db")
+        assert len(tables) == 1
+        assert tables[0].indexes[0].index_type.value == "other"
+
+    def test_multiple_index_types_all_normalized(self):
+        table_dict = self._table(
+            [
+                {
+                    "index_name": "idx1",
+                    "columns": ["a"],
+                    "is_unique": True,
+                    "is_primary": False,
+                    "index_type": "btree",
+                },
+                {
+                    "index_name": "idx2",
+                    "columns": ["b"],
+                    "is_unique": False,
+                    "is_primary": False,
+                    "index_type": "functional",
+                },
+                {
+                    "index_name": "idx3",
+                    "columns": ["c"],
+                    "is_unique": False,
+                    "is_primary": False,
+                    "index_type": "BITMAP",
+                },
+            ]
+        )
+        tables = _build_tables([table_dict], "db")
+        types = [i.index_type.value for i in tables[0].indexes]
+        assert types == ["btree", "other", "other"]
