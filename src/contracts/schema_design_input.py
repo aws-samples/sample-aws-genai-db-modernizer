@@ -64,6 +64,10 @@ class ForeignKeyAction(str, Enum):
 
 
 class QueryLogSource(str, Enum):
+    # NOTE: keep in sync with src/contracts/collector_output.py::QueryLogSource.
+    # This is a local duplicate to keep this contract standalone; drift here
+    # causes schema-design agents to crash on the re-cast at line ~435.
+    # When adding a new source, add it in both places.
     performance_insights = "performance_insights"
     performance_schema = "performance_schema"
     pg_stat_statements = "pg_stat_statements"
@@ -71,6 +75,7 @@ class QueryLogSource(str, Enum):
     general_log = "general_log"
     query_store = "query_store"
     dmv_query_stats = "dmv_query_stats"
+    v_dollar_sql = "v_dollar_sql"
 
 
 class Confidence(str, Enum):
