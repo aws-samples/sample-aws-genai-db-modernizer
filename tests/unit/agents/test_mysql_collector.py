@@ -12,6 +12,7 @@ from src.agents.collector.mysql_collector import (
     _build_tables,
     _build_triggers,
     _is_truthy,
+    _normalize_datetime_str,
     _normalize_index_type,
 )
 
@@ -811,3 +812,57 @@ class TestBuildTablesIndexTypeNormalization:
         tables = _build_tables([table_dict], "db")
         types = [i.index_type.value for i in tables[0].indexes]
         assert types == ["btree", "other", "other"]
+
+
+# ---------------------------------------------------------------------------
+# _normalize_datetime_str: repair malformed SQL Server offline datetimes
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeDatetimeStr:
+    """Bug caught on production SQL Server data (job 5cd8d882, 2026-07-04).
+    The SQL Server offline JSON contained 2 datetime values (out of 1320)
+    where the space between date and time was missing:
+
+        '2026-06-1706:58:18.890'   (bad, len 22)
+        '2026-06-17 06:58:18.890'  (good, len 23)
+
+    Pydantic's datetime validator rejects the malformed form, crashing the
+    collector at _build_queries. The helper detects the specific bad shape
+    and inserts the missing space.
+    """
+
+    def test_none_passes_through(self):
+        assert _normalize_datetime_str(None) is None
+
+    def test_non_string_passes_through(self):
+        assert _normalize_datetime_str(1234) == 1234
+
+    def test_well_formed_datetime_unchanged(self):
+        assert _normalize_datetime_str("2026-06-18 21:58:27.567") == "2026-06-18 21:58:27.567"
+
+    def test_iso_t_separator_unchanged(self):
+        assert _normalize_datetime_str("2026-06-18T21:58:27.567") == "2026-06-18T21:58:27.567"
+
+    def test_malformed_missing_space_repaired(self):
+        """The exact value that crashed on the customer's SQL Server JSON."""
+        assert _normalize_datetime_str("2026-06-1706:58:18.890") == "2026-06-17 06:58:18.890"
+
+    def test_malformed_at_boundary(self):
+        assert _normalize_datetime_str("2026-01-0100:00:00.000") == "2026-01-01 00:00:00.000"
+
+    def test_date_only_unchanged(self):
+        """Just a date should pass through — no time portion to repair."""
+        assert _normalize_datetime_str("2026-06-18") == "2026-06-18"
+
+    def test_empty_string_unchanged(self):
+        assert _normalize_datetime_str("") == ""
+
+    def test_random_string_unchanged(self):
+        """Doesn't mangle non-datetime strings."""
+        assert _normalize_datetime_str("not-a-datetime") == "not-a-datetime"
+
+    def test_length_22_but_not_datetime_shape(self):
+        """Only triggers on the specific YYYY-MM-DDHH:MM:SS shape."""
+        # Length 22 but doesn't have '-' at positions 4 and 7 → not touched
+        assert _normalize_datetime_str("abcdefghij1234567890zx") == "abcdefghij1234567890zx"

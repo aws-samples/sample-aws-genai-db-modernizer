@@ -157,6 +157,32 @@ def _is_truthy(val) -> bool:
     return str(val).lower().strip() in _TRUTHY_STRS
 
 
+def _normalize_datetime_str(val):
+    """Repair malformed datetime strings from offline collection JSONs.
+
+    SQL Server FOR JSON PATH sometimes emits datetime values with the space
+    between date and time missing (e.g. '2026-06-1706:58:18.890' instead of
+    '2026-06-17 06:58:18.890'). Pydantic's datetime validator rejects these,
+    crashing the collector at _build_queries / _dict_to_query_pattern.
+
+    Detection: value is a string of length 22 where character at index 10
+    is a digit (not a space or 'T'). Insert a space at position 10.
+
+    Well-formed values, ISO 8601 'T'-separated values, None, and non-strings
+    all pass through unchanged.
+
+    First hit: SQL Server offline JSON for job 5cd8d882 (2026-07-04), affecting
+    2 of 1320 datetime values sourced from the customer's dmv_query_stats
+    export on 2026-06-17.
+    """
+    if val is None or not isinstance(val, str):
+        return val
+    # Format check: '2026-06-1706:58:18.890' has length 22 with digit at [10]
+    if len(val) == 22 and val[10].isdigit() and val[4] == "-" and val[7] == "-":
+        return val[:10] + " " + val[10:]
+    return val
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint helpers
 # ---------------------------------------------------------------------------
@@ -834,8 +860,8 @@ def _build_queries(
             has_time_range_filter=p.get("has_time_range_filter"),
             errors=p.get("errors"),
             warnings=p.get("warnings"),
-            first_seen=p.get("first_seen"),
-            last_seen=p.get("last_seen"),
+            first_seen=_normalize_datetime_str(p.get("first_seen")),
+            last_seen=_normalize_datetime_str(p.get("last_seen")),
         )
         for p in raw
     ]
@@ -928,8 +954,8 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         text_search_type=d.get("text_search_type") or _detect_text_search_type(query_text),
         has_time_range_filter=d.get("has_time_range_filter") or _detect_time_range(query_text),
         # Timestamps + counters
-        first_seen=d.get("first_seen"),
-        last_seen=d.get("last_seen"),
+        first_seen=_normalize_datetime_str(d.get("first_seen")),
+        last_seen=_normalize_datetime_str(d.get("last_seen")),
         errors=d.get("errors"),
         warnings=d.get("warnings"),
         # PI-only
