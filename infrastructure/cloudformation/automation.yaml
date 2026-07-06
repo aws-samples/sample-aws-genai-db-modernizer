@@ -286,6 +286,15 @@ Resources:
           ACCEPT_EULA=Y dnf install -y -q mssql-tools18 unixODBC-devel 2>/dev/null || \
             echo "WARN: mssql-tools18 install failed — SQL Server collection unavailable"
 
+          # mssql-tools18 installs binaries to /opt/mssql-tools18/bin, which is
+          # NOT on the default PATH. SSM Run Command uses non-interactive shells
+          # that don't source /etc/profile.d, so PATH-based discovery would fail.
+          # Symlink into /usr/local/bin so binaries resolve everywhere.
+          if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then
+            ln -sf /opt/mssql-tools18/bin/sqlcmd /usr/local/bin/sqlcmd
+            ln -sf /opt/mssql-tools18/bin/bcp /usr/local/bin/bcp
+          fi
+
           # Ensure python3 + boto3
           dnf install -y -q python3-pip
           pip3 install -q boto3

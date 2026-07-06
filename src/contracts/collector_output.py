@@ -43,6 +43,7 @@ class QueryLogSource(str, Enum):
     general_log = "general_log"
     query_store = "query_store"
     dmv_query_stats = "dmv_query_stats"
+    v_dollar_sql = "v_dollar_sql"
 
 
 class NormalizedDataType(str, Enum):
@@ -423,14 +424,16 @@ class QueryPattern(BaseModel):
         None, ge=0, description="Temporary blocks written (PostgreSQL)"
     )
     avg_logical_reads: float | None = Field(
-        None, ge=0, description="Average logical reads (SQL Server)"
+        None, ge=0, description="Average logical reads (SQL Server / Oracle)"
     )
     avg_physical_reads: float | None = Field(
-        None, ge=0, description="Average physical reads (SQL Server)"
+        None, ge=0, description="Average physical reads (SQL Server / Oracle)"
     )
-    avg_cpu_time_ms: float | None = Field(None, ge=0, description="Average CPU time (SQL Server)")
+    avg_cpu_time_ms: float | None = Field(
+        None, ge=0, description="Average CPU time (SQL Server / Oracle)"
+    )
     read_write_ratio_pct: float | None = Field(
-        None, ge=0, le=100, description="Read/write ratio (SQL Server)"
+        None, ge=0, le=100, description="Read/write ratio (SQL Server / Oracle)"
     )
     errors: int | None = Field(None, ge=0, description="Number of errors encountered")
     warnings: int | None = Field(None, ge=0, description="Number of warnings generated")
