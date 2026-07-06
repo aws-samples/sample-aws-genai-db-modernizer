@@ -74,6 +74,15 @@ SET @queries = (
         ROUND(qs.total_worker_time / 1000.0 / qs.execution_count, 3) AS avg_cpu_time_ms,
         ROUND(qs.total_logical_reads * 1.0 / qs.execution_count, 3) AS avg_logical_reads,
         ROUND(qs.total_physical_reads * 1.0 / qs.execution_count, 3) AS avg_physical_reads,
+        -- NOTE: Style 121 is ODBC canonical ('YYYY-MM-DD HH:MM:SS.mmm', 23 chars).
+        -- Observed on SQL Server 2019 Express (customer job 4372c723, Jul 04 2026):
+        -- FOR JSON PATH occasionally emits these values with the space between
+        -- date and time missing (2/1320 values, all from a single collection day).
+        -- Root cause unclear — likely a SQL Server build-specific quirk in
+        -- FOR JSON PATH serialization of CONVERT(varchar, ..., 121). The parser
+        -- (src/agents/collector/mysql_collector.py::_normalize_datetime_str)
+        -- detects and repairs this shape defensively. Style 121 kept as-is
+        -- for backward compatibility with existing customer JSONs.
         CONVERT(VARCHAR(30), qs.creation_time, 121) AS first_seen,
         CONVERT(VARCHAR(30), qs.last_execution_time, 121) AS last_seen
     FROM sys.dm_exec_query_stats qs
