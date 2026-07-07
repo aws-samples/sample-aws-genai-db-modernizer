@@ -157,9 +157,15 @@ def _build_sql_command(
             f"-d {database} -s $'\\t' -W -k 1 -C -Q '{safe_sql}'"
         )
     elif engine == "oracle":
+        # sqlplus requires SET commands to produce parseable tab-separated output.
+        # Newline separates SET commands from the user SQL.
+        oracle_preamble = (
+            "SET PAGESIZE 50000\\nSET LINESIZE 32767\\nSET FEEDBACK OFF\\n"
+            "SET HEADING ON\\nSET TRIMSPOOL ON\\nSET TRIMOUT ON\\n"
+        )
         return (
             f"{cred_fetch} && "
-            f'echo \'{safe_sql}\' | sqlplus -S "$DB_USER"/"$DB_PASS"@'
+            f'printf \'{oracle_preamble}{safe_sql}\\n\' | sqlplus -S "$DB_USER"/"$DB_PASS"@'
             f"'(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={host})(PORT={port}))"
             f"(CONNECT_DATA=(SERVICE_NAME={database})))'"
         )
@@ -169,31 +175,97 @@ def _build_sql_command(
 
 def _parse_tabular_output(raw: str) -> list[dict]:
     """
-    Parse tab-separated output from CLI tools into list of dicts.
+    Parse delimited output from CLI tools into list of dicts.
     First line = headers (lowercased), remaining lines = data.
+
+    Supports two formats:
+    1. Tab-delimited (MySQL, PostgreSQL, SQL Server) — splits by '\\t'
+    2. Fixed-width with dashes separator (Oracle sqlplus) — uses separator
+       line to determine column positions
 
     Strips engine-specific noise:
       - PostgreSQL footer: '(5 rows)'
       - SQL Server footer: '(5 rows affected)'
-      - SQL Server separator: dashes line printed between headers and data
     """
     lines = [line for line in raw.strip().split("\n") if line.strip()]
 
-    # Strip row-count footers (PostgreSQL and SQL Server)
+    # Strip row-count footers
     lines = [line for line in lines if not re.match(r"^\(\d+ rows?( affected)?\)$", line.strip())]
-
-    # Strip SQL Server's dashes separator line (between headers and data).
-    # Format: "-------\t-------\t-------" (alternating dashes and tabs/spaces)
-    lines = [line for line in lines if not re.match(r"^[-\s]+$", line)]
 
     if len(lines) < 2:
         return []
 
-    headers = [h.strip().lower() for h in lines[0].split("\t")]
+    # Detect format by looking for a dashes separator line.
+    # Oracle fixed-width: separator has SPACES between dash groups (no tabs in separator)
+    # SQL Server tab-delimited: separator has TABS between dash groups
+    separator_idx = None
+    for i, line in enumerate(lines):
+        if re.match(r"^[-\s\t]+$", line) and "-" in line:
+            separator_idx = i
+            break
+
+    if separator_idx is not None and "\t" not in lines[separator_idx]:
+        # Oracle fixed-width: separator uses spaces only between column groups
+        return _parse_fixed_width(lines, separator_idx)
+
+    # Tab-delimited or pipe-delimited (MySQL, PG, SQL Server)
+    # Strip dashes separator lines (SQL Server puts them between header and data)
+    lines = [line for line in lines if not re.match(r"^[-\t\s]+$", line)]
+    if len(lines) < 2:
+        return []
+    header_line = lines[0]
+    delimiter = "|" if "|" in header_line else "\t"
+    headers = [h.strip().lower() for h in header_line.split(delimiter)]
     rows = []
     for line in lines[1:]:
-        values = [v.strip() for v in line.split("\t")]
+        values = [v.strip() for v in line.split(delimiter)]
         if len(values) == len(headers):
+            row = {}
+            for h, v in zip(headers, values, strict=False):
+                row[h] = _coerce_value(v)
+            rows.append(row)
+    return rows
+
+
+def _parse_fixed_width(lines: list[str], separator_idx: int) -> list[dict]:
+    """Parse Oracle sqlplus fixed-width output using the dashes separator line."""
+    if separator_idx < 1:
+        return []
+
+    # Expand tabs to spaces (8-space tab stops) for consistent positioning
+    sep_line = lines[separator_idx].expandtabs(8)
+    header_line = lines[separator_idx - 1].expandtabs(8)
+
+    # Find column boundaries from separator: each column is a run of dashes
+    col_ranges: list[tuple[int, int]] = []
+    i = 0
+    while i < len(sep_line):
+        if sep_line[i] == "-":
+            start = i
+            while i < len(sep_line) and sep_line[i] == "-":
+                i += 1
+            col_ranges.append((start, i))
+        else:
+            i += 1
+
+    if not col_ranges:
+        return []
+
+    # Extract headers using column positions
+    headers = []
+    for start, end in col_ranges:
+        h = header_line[start:end].strip().lower() if start < len(header_line) else ""
+        headers.append(h)
+
+    # Parse data lines (everything after separator)
+    rows = []
+    for line in lines[separator_idx + 1 :]:
+        expanded = line.expandtabs(8)
+        values = []
+        for start, end in col_ranges:
+            v = expanded[start:end].strip() if start < len(expanded) else ""
+            values.append(v)
+        if any(values):  # skip fully empty lines
             row = {}
             for h, v in zip(headers, values, strict=False):
                 row[h] = _coerce_value(v)

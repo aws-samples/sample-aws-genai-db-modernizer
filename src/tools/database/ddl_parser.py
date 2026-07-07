@@ -267,8 +267,13 @@ def _parse_column(part: str, ordinal: int) -> dict | None:
     # Auto-increment detection across dialects:
     # - MySQL/MariaDB: AUTO_INCREMENT
     # - SQL Server (T-SQL): IDENTITY(seed, increment) or just IDENTITY
+    # - Oracle 12c+: GENERATED [ALWAYS|BY DEFAULT [ON NULL]] AS IDENTITY
     upper_part = part.upper()
-    auto_inc = "AUTO_INCREMENT" in upper_part or re.search(r"\bIDENTITY\b", upper_part) is not None
+    auto_inc = (
+        "AUTO_INCREMENT" in upper_part
+        or re.search(r"\bIDENTITY\b", upper_part) is not None
+        or re.search(r"\bGENERATED\s+(?:ALWAYS|BY\s+DEFAULT)\s+", upper_part) is not None
+    )
     is_primary = "PRIMARY KEY" in upper_part
 
     # Default value

@@ -100,5 +100,9 @@ def _dispatch_collect(engine: str, input_contract: CollectorInput) -> CollectorO
         from src.agents.collector.sqlserver_collector import collect as ss_collect
 
         return ss_collect(input_contract)
+    elif engine == "oracle":
+        from src.agents.collector.oracle_collector import collect as ora_collect
+
+        return ora_collect(input_contract)
     else:
         raise ValueError(f"Unsupported engine: {engine}")

@@ -179,4 +179,4 @@ class TestHandlerDispatch:
         from src.agents.collector.handler import _dispatch_collect
 
         with pytest.raises(ValueError, match="Unsupported engine"):
-            _dispatch_collect("oracle", MagicMock())
+            _dispatch_collect("db2", MagicMock())
