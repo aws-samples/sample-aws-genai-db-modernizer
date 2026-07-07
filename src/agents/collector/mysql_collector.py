@@ -28,6 +28,7 @@ from src.contracts.collector_output import (
     DeploymentType,
     ForeignKey,
     Index,
+    IndexType,
     Metadata,
     Metrics,
     MetricStats,
@@ -45,6 +46,8 @@ from src.contracts.collector_output import (
     SourceDatabase,
     Table,
     Trigger,
+    TriggerEventType,
+    TriggerTiming,
     View,
 )
 from src.tools.aws.credentials import AWSCredentialManager
@@ -98,6 +101,86 @@ _TYPE_MAP: dict[str, NormalizedDataType] = {
     "time": NormalizedDataType.string,
     "year": NormalizedDataType.integer,
 }
+
+
+# Cross-engine normalization for index_type values received in offline JSON.
+# Contract enum: btree|hash|gist|gin|fulltext|spatial|other.
+# Oracle emits 'FUNCTION-BASED NORMAL', 'BITMAP', 'IOT - TOP', 'CLUSTER',
+# 'DOMAIN', 'NORMAL' via ALL_INDEXES.INDEX_TYPE — all get mapped here.
+# Older Oracle collections (before the collect-oracle.sql fix) may emit
+# lowercase 'functional'; keep both spellings covered.
+_INDEX_TYPE_NORMALIZE = {
+    "functional": "other",
+    "function-based": "other",
+    "bitmap": "other",
+    "cluster": "other",
+    "domain": "other",
+    "iot": "other",
+    "normal": "btree",
+}
+_VALID_INDEX_TYPES = {"btree", "hash", "gist", "gin", "fulltext", "spatial", "other"}
+
+# Truthy-string variants accepted for boolean-ish fields across engines.
+# MySQL/PostgreSQL emit 'YES'/'NO' for is_nullable; Oracle emits single-letter
+# 'Y'/'N'. Some engines / DDL variants use 'true'/'false' or 1/0.
+_TRUTHY_STRS = {"yes", "y", "true", "1"}
+
+
+def _normalize_index_type(raw) -> IndexType | None:
+    """Coerce a raw index_type value into the contract enum.
+
+    None passes through (contract allows Optional[IndexType]).
+    Known Oracle values map via _INDEX_TYPE_NORMALIZE. Anything else
+    that isn't a valid enum falls back to 'other' rather than crashing.
+    """
+    if raw is None:
+        return None
+    lower = str(raw).lower().strip()
+    if lower in _VALID_INDEX_TYPES:
+        return IndexType(lower)
+    for prefix, target in _INDEX_TYPE_NORMALIZE.items():
+        if lower.startswith(prefix):
+            return IndexType(target)
+    return IndexType.other
+
+
+def _is_truthy(val) -> bool:
+    """Return True for Y/YES/y/yes/TRUE/true/1 across engine conventions.
+
+    Handles Oracle single-letter 'Y'/'N', MySQL/PostgreSQL 'YES'/'NO',
+    Python bool passthrough, and numeric 1/0.
+    """
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    return str(val).lower().strip() in _TRUTHY_STRS
+
+
+def _normalize_datetime_str(val):
+    """Repair malformed datetime strings from offline collection JSONs.
+
+    SQL Server FOR JSON PATH sometimes emits datetime values with the space
+    between date and time missing (e.g. '2026-06-1706:58:18.890' instead of
+    '2026-06-17 06:58:18.890'). Pydantic's datetime validator rejects these,
+    crashing the collector at _build_queries / _dict_to_query_pattern.
+
+    Detection: value is a string of length 22 where character at index 10
+    is a digit (not a space or 'T'). Insert a space at position 10.
+
+    Well-formed values, ISO 8601 'T'-separated values, None, and non-strings
+    all pass through unchanged.
+
+    First hit: SQL Server offline JSON for job 5cd8d882 (2026-07-04), affecting
+    2 of 1320 datetime values sourced from the customer's dmv_query_stats
+    export on 2026-06-17.
+    """
+    if val is None or not isinstance(val, str):
+        return val
+    # Format check: '2026-06-1706:58:18.890' has length 22 with digit at [10]
+    if len(val) == 22 and val[10].isdigit() and val[4] == "-" and val[7] == "-":
+        return val[:10] + " " + val[10:]
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -382,9 +465,53 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")
     _enrich_patterns_from_pi_and_cw(queries, pi_counters, cw_raw, em_data)
+
+    # On-prem enrichment: if no CloudWatch, use native io_stats/wait_events
+    io_stats = parsed.get("io_stats", {})
+    native_waits = parsed.get("wait_events", [])
+    if native_waits and queries.query_patterns:
+        from src.contracts.collector_output import WaitEvent
+
+        # Compute the total wait time across all events so we can fall back
+        # to a computed percent when the SQL script hasn't provided one.
+        # The previous code used `avg_wait_ms` directly as `wait_time_percent`
+        # which is a units mismatch (ms vs percent) and produced values >100
+        # for any workload with mean wait latency >100ms.
+        total_wait_ms = sum(float(w.get("time_waited_ms") or 0) for w in native_waits) or 1.0
+
+        def _wait_percent(w: dict) -> float:
+            # Prefer the script-provided `wait_time_percent` field when
+            # present (added to collect-oracle.sql / collect-sqlserver.sql).
+            # Otherwise, derive percent = time_waited_ms / total_wait_ms * 100.
+            explicit = w.get("wait_time_percent")
+            if explicit is not None:
+                return min(100.0, max(0.0, float(explicit)))
+            time_ms = float(w.get("time_waited_ms") or 0)
+            return min(100.0, max(0.0, (time_ms / total_wait_ms) * 100))
+
+        wait_list = [
+            WaitEvent(
+                event_name=w.get("event", ""),
+                wait_time_ms=float(w.get("time_waited_ms") or 0),
+                wait_time_percent=_wait_percent(w),
+            )
+            for w in native_waits[:5]
+        ]
+        for p in queries.query_patterns:
+            if not p.wait_events:
+                p.wait_events = wait_list
+
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
+
+    # Enrich metrics from native io_stats when CloudWatch unavailable
+    if io_stats and metrics.performance_metrics:
+        perf = metrics.performance_metrics
+        if not perf.read_iops_avg and io_stats.get("physical_reads_per_sec"):
+            perf.read_iops_avg = float(io_stats["physical_reads_per_sec"])
+        if not perf.write_iops_avg and io_stats.get("physical_writes_per_sec"):
+            perf.write_iops_avg = float(io_stats["physical_writes_per_sec"])
 
     offline_meta = parsed.get("metadata", {})
     return _build_output(
@@ -553,16 +680,26 @@ def _collect_aws_raw(inp, cred_mgr) -> dict:
 
 def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
     tables = []
+    skipped_empty = 0
     for t in schema_raw:
         name = t["table_name"]
         columns = _build_columns(t["columns"])
+        # Defensive: skip tables that end up with zero columns after the
+        # column-join step. This can happen with Oracle internal metadata
+        # tables (SYS_IOT_OVER_*, HS_PARTITION_COL_*) which appear in
+        # ALL_TABLES but have no rows in ALL_TAB_COLUMNS. The Table contract
+        # requires min_length=1 on columns, so we filter them here rather
+        # than propagate a validation failure.
+        if not columns:
+            skipped_empty += 1
+            continue
         indexes = [
             Index(
                 index_name=i["index_name"],
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
-                index_type=i.get("index_type", "btree"),
+                index_type=_normalize_index_type(i.get("index_type", "btree")),
             )
             for i in t.get("indexes", [])
         ] or None
@@ -592,6 +729,12 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 sample_data=t.get("sample_data"),
             )
         )
+    if skipped_empty:
+        logger.warning(
+            "Skipped %d table(s) with zero columns after join "
+            "(commonly Oracle internal metadata: SYS_IOT_OVER_*, HS_PARTITION_COL_*)",
+            skipped_empty,
+        )
     return tables
 
 
@@ -605,7 +748,7 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
-                index_type=i.get("index_type", "btree"),
+                index_type=_normalize_index_type(i.get("index_type", "btree")),
             )
             for i in t.get("indexes", [])
         ] or None
@@ -644,9 +787,19 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             data_type=c.get("column_type") or c.get("data_type", ""),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
-            nullable=c.get("is_nullable", "YES") == "YES",
+            # Cross-engine boolean coercion:
+            # MySQL/PostgreSQL emit 'YES'/'NO'; Oracle emits 'Y'/'N'.
+            # Previously only matched 'YES' exactly, so Oracle 'Y' columns
+            # (nullable) were silently marked NOT NULL — silent data
+            # corruption on ~82% of a typical Oracle schema.
+            nullable=_is_truthy(c.get("is_nullable", "YES")),
             default_value=c.get("column_default"),
-            is_auto_increment="auto_increment" in (c.get("extra") or ""),
+            # Auto-increment detection: MySQL uses `extra='auto_increment'`,
+            # Oracle 12c+ emits `is_identity: YES` for IDENTITY columns.
+            # Accept either source.
+            is_auto_increment=(
+                _is_truthy(c.get("is_identity")) or "auto_increment" in (c.get("extra") or "")
+            ),
         )
         for c in raw
     ]
@@ -707,8 +860,8 @@ def _build_queries(
             has_time_range_filter=p.get("has_time_range_filter"),
             errors=p.get("errors"),
             warnings=p.get("warnings"),
-            first_seen=p.get("first_seen"),
-            last_seen=p.get("last_seen"),
+            first_seen=_normalize_datetime_str(p.get("first_seen")),
+            last_seen=_normalize_datetime_str(p.get("last_seen")),
         )
         for p in raw
     ]
@@ -801,8 +954,8 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         text_search_type=d.get("text_search_type") or _detect_text_search_type(query_text),
         has_time_range_filter=d.get("has_time_range_filter") or _detect_time_range(query_text),
         # Timestamps + counters
-        first_seen=d.get("first_seen"),
-        last_seen=d.get("last_seen"),
+        first_seen=_normalize_datetime_str(d.get("first_seen")),
+        last_seen=_normalize_datetime_str(d.get("last_seen")),
         errors=d.get("errors"),
         warnings=d.get("warnings"),
         # PI-only
@@ -1022,17 +1175,68 @@ def _build_procedures(raw: list[dict]) -> list[Procedure] | None:
 def _build_triggers(raw: list[dict]) -> list[Trigger] | None:
     if not raw:
         return None
-    return [
-        Trigger(
-            trigger_id=t.get("trigger_name", ""),
-            trigger_name=t.get("trigger_name", ""),
-            table_id=t.get("table_name", ""),
-            event_type=t.get("event_type", "INSERT"),
-            timing=t.get("timing", "AFTER"),
-            definition=t.get("definition"),
+
+    triggers = []
+    skipped = 0
+    for t in raw:
+        # Trim whitespace (Oracle sometimes emits trailing spaces on
+        # TRIGGERING_EVENT) and uppercase for enum matching.
+        event_raw = str(t.get("event_type") or "").strip().upper()
+        timing_raw = str(t.get("timing") or "").strip().upper()
+        table = t.get("table_name") or ""
+
+        # Contract enum: event_type ∈ {INSERT, UPDATE, DELETE}.
+        # Filter out non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.)
+        # For compound DML triggers (e.g. Oracle 'INSERT OR UPDATE'),
+        # normalize to the first matching event.
+        if "INSERT" in event_raw:
+            event = "INSERT"
+        elif "UPDATE" in event_raw:
+            event = "UPDATE"
+        elif "DELETE" in event_raw:
+            event = "DELETE"
+        else:
+            skipped += 1
+            continue
+
+        # Contract enum: timing ∈ {BEFORE, AFTER, INSTEAD OF}.
+        # Oracle emits values like 'BEFORE EACH ROW', 'AFTER STATEMENT',
+        # 'AFTER EVENT' — normalize by taking the prefix.
+        if timing_raw.startswith("INSTEAD OF"):
+            timing = "INSTEAD OF"
+        elif timing_raw.startswith("BEFORE"):
+            timing = "BEFORE"
+        elif timing_raw.startswith("AFTER"):
+            timing = "AFTER"
+        else:
+            skipped += 1
+            continue
+
+        # DB-level triggers have no table_name and cannot map to the
+        # Trigger.table_id field.
+        if not table:
+            skipped += 1
+            continue
+
+        triggers.append(
+            Trigger(
+                trigger_id=t.get("trigger_name", ""),
+                trigger_name=t.get("trigger_name", ""),
+                table_id=table,
+                event_type=TriggerEventType(event),
+                timing=TriggerTiming(timing),
+                definition=t.get("definition"),
+            )
         )
-        for t in raw
-    ]
+
+    if skipped:
+        logger.warning(
+            "Skipped %d non-DML or DB-level trigger(s) "
+            "(LOGON/DDL/STARTUP/DROP, TRUNCATE, or events without table_name)",
+            skipped,
+        )
+
+    return triggers or None
 
 
 # ---------------------------------------------------------------------------

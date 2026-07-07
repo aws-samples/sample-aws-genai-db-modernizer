@@ -171,3 +171,47 @@ class TestProjectionFunction:
         )
         assert ctx.growth_multiplier == 5.0
         assert ctx.peak_to_avg_ratio == 3.0  # default preserved
+
+
+class TestQueryLogSourceEnumSync:
+    """Guard against drift between the two QueryLogSource enums.
+
+    schema_design_input.py has a local copy of QueryLogSource for contract
+    independence. project_schema_design_input() at line ~435 re-casts values
+    from collector_output.QueryLogSource → schema_design_input.QueryLogSource.
+    Any value present in the source that's missing from the target crashes
+    the schema-design agent with a `ValueError: '{value}' is not a valid
+    QueryLogSource`.
+
+    First hit: Oracle collector emits `v_dollar_sql` but only the source
+    enum had the value. All Oracle offline-mode jobs crashed at schema
+    design as a result (job 617caa6e on 2026-07-04).
+    """
+
+    def test_all_collector_values_are_in_schema_design_enum(self):
+        from src.contracts.collector_output import QueryLogSource as CollectorEnum
+        from src.contracts.schema_design_input import QueryLogSource as SchemaEnum
+
+        collector_values = {m.value for m in CollectorEnum}
+        schema_values = {m.value for m in SchemaEnum}
+
+        missing = collector_values - schema_values
+        assert not missing, (
+            f"schema_design_input.QueryLogSource is missing values from "
+            f"collector_output.QueryLogSource: {sorted(missing)}. "
+            f"Add them to the SchemaEnum at src/contracts/schema_design_input.py, "
+            f"otherwise the schema-design agents will crash re-casting collector "
+            f"queries. See job 617caa6e (2026-07-04) for the first occurrence."
+        )
+
+    def test_v_dollar_sql_is_valid(self):
+        """Explicit test for the Oracle value that hit this bug first."""
+        from src.contracts.schema_design_input import QueryLogSource as SchemaEnum
+
+        assert SchemaEnum("v_dollar_sql") == SchemaEnum.v_dollar_sql
+
+    def test_dmv_query_stats_is_valid(self):
+        """Regression: SQL Server value should also work (proved OK earlier)."""
+        from src.contracts.schema_design_input import QueryLogSource as SchemaEnum
+
+        assert SchemaEnum("dmv_query_stats") == SchemaEnum.dmv_query_stats

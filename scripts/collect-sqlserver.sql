@@ -30,6 +30,9 @@ DECLARE @metadata NVARCHAR(MAX);
 DECLARE @tables NVARCHAR(MAX);
 DECLARE @columns NVARCHAR(MAX);
 DECLARE @indexes NVARCHAR(MAX);
+DECLARE @io_stats NVARCHAR(MAX);
+DECLARE @wait_events NVARCHAR(MAX);
+DECLARE @os_stats NVARCHAR(MAX);
 DECLARE @foreign_keys NVARCHAR(MAX);
 DECLARE @primary_keys NVARCHAR(MAX);
 DECLARE @views NVARCHAR(MAX);
@@ -71,6 +74,15 @@ SET @queries = (
         ROUND(qs.total_worker_time / 1000.0 / qs.execution_count, 3) AS avg_cpu_time_ms,
         ROUND(qs.total_logical_reads * 1.0 / qs.execution_count, 3) AS avg_logical_reads,
         ROUND(qs.total_physical_reads * 1.0 / qs.execution_count, 3) AS avg_physical_reads,
+        -- NOTE: Style 121 is ODBC canonical ('YYYY-MM-DD HH:MM:SS.mmm', 23 chars).
+        -- Observed on SQL Server 2019 Express (customer job 4372c723, Jul 04 2026):
+        -- FOR JSON PATH occasionally emits these values with the space between
+        -- date and time missing (2/1320 values, all from a single collection day).
+        -- Root cause unclear — likely a SQL Server build-specific quirk in
+        -- FOR JSON PATH serialization of CONVERT(varchar, ..., 121). The parser
+        -- (src/agents/collector/mysql_collector.py::_normalize_datetime_str)
+        -- detects and repairs this shape defensively. Style 121 kept as-is
+        -- for backward compatibility with existing customer JSONs.
         CONVERT(VARCHAR(30), qs.creation_time, 121) AS first_seen,
         CONVERT(VARCHAR(30), qs.last_execution_time, 121) AS last_seen
     FROM sys.dm_exec_query_stats qs
@@ -345,7 +357,63 @@ SET @global_stats = (
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 );
 
--- ===================== 12. Assemble Final JSON =====================
+-- ===================== 12. I/O Stats (NEW — on-prem) =====================
+-- Aggregate file-level I/O from sys.dm_io_virtual_file_stats.
+-- Provides read/write IOPS and latency without CloudWatch.
+DECLARE @uptime_sec BIGINT = (SELECT CASE WHEN DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) > 1 THEN DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) ELSE 1 END FROM sys.dm_os_sys_info);
+SET @io_stats = (
+    SELECT
+        ROUND(SUM(num_of_reads) * 1.0 / @uptime_sec, 2) AS physical_reads_per_sec,
+        ROUND(SUM(num_of_writes) * 1.0 / @uptime_sec, 2) AS physical_writes_per_sec,
+        ROUND(SUM(num_of_bytes_read) * 1.0 / @uptime_sec, 2) AS read_bytes_per_sec,
+        ROUND(SUM(num_of_bytes_written) * 1.0 / @uptime_sec, 2) AS write_bytes_per_sec,
+        ROUND(SUM(io_stall_read_ms) * 1.0 / CASE WHEN SUM(num_of_reads) > 1 THEN SUM(num_of_reads) ELSE 1 END, 3) AS avg_read_latency_ms,
+        ROUND(SUM(io_stall_write_ms) * 1.0 / CASE WHEN SUM(num_of_writes) > 1 THEN SUM(num_of_writes) ELSE 1 END, 3) AS avg_write_latency_ms
+    FROM sys.dm_io_virtual_file_stats(DB_ID(), NULL)
+    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+);
+
+-- ===================== 13. Wait Events (NEW — on-prem) =====================
+-- Top 10 non-idle wait types by cumulative wait time.
+-- Replaces Performance Insights wait data for self-managed instances.
+SET @wait_events = (
+    SELECT TOP 10
+        wait_type AS event,
+        waiting_tasks_count AS total_waits,
+        ROUND(wait_time_ms, 2) AS time_waited_ms,
+        ROUND(wait_time_ms * 1.0 / CASE WHEN waiting_tasks_count > 1 THEN waiting_tasks_count ELSE 1 END, 3) AS avg_wait_ms,
+        'System' AS wait_class
+    FROM sys.dm_os_wait_stats
+    WHERE wait_type NOT LIKE '%SLEEP%'
+      AND wait_type NOT LIKE 'BROKER%'
+      AND wait_type NOT LIKE 'LAZYWRITER%'
+      AND wait_type NOT LIKE 'XE%'
+      AND wait_type NOT IN (
+        'CLR_SEMAPHORE', 'CLR_AUTO_EVENT', 'REQUEST_FOR_DEADLOCK_SEARCH',
+        'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'SQLTRACE_BUFFER_FLUSH',
+        'SP_SERVER_DIAGNOSTICS_SLEEP', 'DIRTY_PAGE_POLL',
+        'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'LOGMGR_QUEUE',
+        'CHECKPOINT_QUEUE', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
+        'WAITFOR', 'TRACEWRITE', 'FT_IFTS_SCHEDULER_IDLE_WAIT',
+        'ONDEMAND_TASK_QUEUE', 'DISPATCHER_QUEUE_SEMAPHORE'
+      )
+    ORDER BY wait_time_ms DESC
+    FOR JSON PATH
+);
+
+-- ===================== 14. OS Stats (NEW — on-prem) =====================
+-- CPU count, memory, uptime — replaces RDS instance metadata.
+SET @os_stats = (
+    SELECT
+        cpu_count,
+        ROUND(physical_memory_kb / 1024.0 / 1024.0, 2) AS physical_memory_gb,
+        ROUND(committed_kb / 1024.0 / 1024.0, 2) AS committed_memory_gb,
+        DATEDIFF(HOUR, sqlserver_start_time, GETDATE()) AS db_uptime_hours
+    FROM sys.dm_os_sys_info
+    FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+);
+
+-- ===================== 15. Assemble Final JSON =====================
 SELECT
     '{"collection_version":"1.0",' +
     '"collected_at":"' + CONVERT(VARCHAR(30), GETUTCDATE(), 127) + 'Z",' +
@@ -359,5 +427,8 @@ SELECT
     '"procedures":' + ISNULL(@procedures, '[]') + ',' +
     '"triggers":' + ISNULL(@triggers, '[]') + ',' +
     '"queries":' + ISNULL(@queries, '[]') + ',' +
-    '"global_stats":' + ISNULL(@global_stats, '{}') +
+    '"global_stats":' + ISNULL(@global_stats, '{}') + ',' +
+    '"io_stats":' + ISNULL(@io_stats, '{}') + ',' +
+    '"wait_events":' + ISNULL(@wait_events, '[]') + ',' +
+    '"os_stats":' + ISNULL(@os_stats, '{}') +
     '}' AS collection_output;

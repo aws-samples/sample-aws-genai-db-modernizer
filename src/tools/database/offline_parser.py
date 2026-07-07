@@ -8,6 +8,7 @@ existing _build_tables, _build_queries, etc. work unchanged.
 
 import json
 import logging
+import re
 
 import boto3
 
@@ -24,6 +25,26 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     # when run without the -N flag (e.g. "collection_output\n{...}")
     if not content.startswith("{") and "\n" in content:
         content = content[content.index("\n") + 1 :]
+
+    # Oracle 19c JSON_OBJECT doesn't escape control chars in string values.
+    # Strip them (except newlines which are line separators in the JSON).
+    content = "".join(c if ord(c) >= 32 or c == "\n" else " " for c in content)
+
+    # Remove sentinel objects used for trailing-comma handling in PL/SQL scripts.
+    # The regex handles three real-world cases produced by DBMS_OUTPUT.PUT_LINE:
+    #   [item, item, {"_sentinel":true}]               inline emission
+    #   [\nitem,\n{"_sentinel": true}\n]               multi-line emission
+    #   [\n{"_sentinel": true}\n]                      empty-array case (no comma)
+    # A lookahead `(?=\s*\])` restricts matches to sentinels that immediately
+    # precede an array-close bracket, so a nested object with a legitimate
+    # `_sentinel:true` field elsewhere in the JSON is preserved.
+    # Previous two literal `.replace()` calls handled only the first case,
+    # which caused parse failures on real Oracle customer data.
+    content = re.sub(
+        r'(?:,\s*)?\{\s*"_sentinel"\s*:\s*true\s*\}(?=\s*\])',
+        "",
+        content,
+    )
 
     result: dict = json.loads(content)
     return result
@@ -126,6 +147,9 @@ def parse_offline_collection(data: dict) -> dict:
         "triggers": data.get("triggers", []),
         "queries": _transform_queries(data.get("queries", []), db_name, known_table_names),
         "global_stats": global_stats,
+        "io_stats": data.get("io_stats", {}),
+        "wait_events": data.get("wait_events", []),
+        "os_stats": data.get("os_stats", {}),
     }
 
 

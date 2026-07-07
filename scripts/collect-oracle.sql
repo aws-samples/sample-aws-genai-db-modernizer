@@ -5,21 +5,23 @@
 -- that the collector agent can ingest in "offline" mode. No IAM permissions,
 -- no EC2 automation instance, no AWS API calls required.
 --
+-- Works for: RDS Oracle, EC2 self-managed, on-premises Oracle.
+--
+-- Field names follow MySQL convention for offline_parser compatibility.
+-- The script performs the Oracle→MySQL field name translation inline.
+--
 -- Requirements:
---   Oracle 12c+ (uses JSON_OBJECT/JSON_ARRAYAGG)
---   User needs SELECT on V$SQL, ALL_* catalog views, DBA_SEGMENTS
---   Grant SELECT_CATALOG_ROLE for full visibility, or minimum:
---     GRANT SELECT ON V$SQL TO <user>;
---     GRANT SELECT ON V$SESSION TO <user>;
---     GRANT SELECT ON V$SYSSTAT TO <user>;
---     GRANT SELECT ON DBA_SEGMENTS TO <user>;
+--   Oracle 12.2+ (12c Release 2 or later — uses JSON_OBJECT, FETCH FIRST N ROWS ONLY)
+--   Does NOT work on 11g or 12.1 (12c R1) — JSON_OBJECT requires 12.2.
+--   For 11g/12.1 support, a separate script using string concatenation would be needed.
+--   User needs SELECT on V$SQL, V$SESSION, V$SYSSTAT, V$SYSTEM_EVENT,
+--   V$OSSTAT, ALL_* catalog views, DBA_SEGMENTS.
+--   Grant SELECT_CATALOG_ROLE for full visibility.
 --
 -- Usage:
 --   sqlplus -S <user>/<pass>@<host>:<port>/<service> @collect-oracle.sql > collection.json
 --
---   Or via SSM/script: set the variables below and pipe through sqlplus.
---
--- Output: Single JSON object with sections matching offline_parser expectations.
+-- Output: Single JSON object matching offline_parser expectations.
 -- ==========================================================================
 
 SET PAGESIZE 0
@@ -31,45 +33,52 @@ SET HEADING OFF
 SET TRIMSPOOL ON
 SET TRIMOUT ON
 SET VERIFY OFF
+SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
 
--- Use DBMS_OUTPUT for unlimited-length JSON output
 DECLARE
-    v_owner VARCHAR2(128);
-    v_clob  CLOB;
-    v_line  VARCHAR2(32767);
-    v_pos   INTEGER := 1;
-    v_len   INTEGER;
+    v_owner       VARCHAR2(128);
+    v_total_elapsed NUMBER := 0;
 BEGIN
-    -- Determine schema to collect
     v_owner := SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA');
 
-    -- Build JSON output into a CLOB using DBMS_OUTPUT
+    -- Pre-compute total elapsed for db_load_contribution_percent
+    SELECT NVL(SUM(ELAPSED_TIME), 1) INTO v_total_elapsed
+    FROM V$SQL
+    WHERE EXECUTIONS >= 10 AND PARSING_SCHEMA_NAME = v_owner;
+
     DBMS_OUTPUT.PUT_LINE('{');
 
     -- ===================================================================
-    -- 1. Query Patterns (run FIRST — same rationale as SQL Server: avoid
-    --    cache pollution from catalog queries displacing user workload)
+    -- 1. Query Patterns (FIRST — avoid cache pollution from catalog queries)
+    -- Field names: MySQL offline_parser convention
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"queries": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
             'digest' VALUE SQL_ID,
-            'query_text' VALUE DBMS_LOB.SUBSTR(SQL_FULLTEXT, 4000, 1),
-            'total_count' VALUE EXECUTIONS,
-            'total_time_us' VALUE ELAPSED_TIME,
+            'query_text' VALUE REGEXP_REPLACE(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1), '[[:cntrl:]]', ' '),
+            'execution_count' VALUE EXECUTIONS,
+            'total_time_ms' VALUE ROUND(ELAPSED_TIME / 1000, 3),
+            'avg_time_ms' VALUE ROUND(ELAPSED_TIME / GREATEST(EXECUTIONS, 1) / 1000, 3),
+            'min_time_ms' VALUE 0,
+            'max_time_ms' VALUE 0,
             'total_rows_sent' VALUE ROWS_PROCESSED,
             'total_rows_examined' VALUE BUFFER_GETS,
-            'total_cpu_time_us' VALUE CPU_TIME,
+            'total_rows_affected' VALUE 0,
+            'lock_time_ms' VALUE ROUND(APPLICATION_WAIT_TIME / 1000, 3),
+            'total_cpu_time_ms' VALUE ROUND(CPU_TIME / 1000, 3),
             'total_logical_reads' VALUE BUFFER_GETS,
             'total_physical_reads' VALUE DISK_READS,
-            'first_seen' VALUE FIRST_LOAD_TIME,
+            'db_load_contribution_percent' VALUE ROUND(ELAPSED_TIME / v_total_elapsed * 100, 2),
+            'first_seen' VALUE REPLACE(FIRST_LOAD_TIME, '/', ' '),
             'last_seen' VALUE TO_CHAR(LAST_ACTIVE_TIME, 'YYYY-MM-DD HH24:MI:SS')
+            RETURNING CLOB
         ) AS json_row
         FROM (
             SELECT SQL_ID, SQL_FULLTEXT, EXECUTIONS, ELAPSED_TIME,
                    ROWS_PROCESSED, BUFFER_GETS, CPU_TIME, DISK_READS,
-                   FIRST_LOAD_TIME, LAST_ACTIVE_TIME
+                   APPLICATION_WAIT_TIME, FIRST_LOAD_TIME, LAST_ACTIVE_TIME
             FROM V$SQL
             WHERE EXECUTIONS >= 10
               AND PARSING_SCHEMA_NAME = v_owner
@@ -79,14 +88,13 @@ BEGIN
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.json_row || ',');
     END LOOP;
-    -- Remove trailing comma via a sentinel
     DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
     DBMS_OUTPUT.PUT_LINE('],');
 
     -- ===================================================================
     -- 2. Metadata
     -- ===================================================================
-    DBMS_OUTPUT.PUT_LINE('"metadata": {');
+    DBMS_OUTPUT.PUT_LINE('"metadata": ');
     FOR rec IN (
         SELECT JSON_OBJECT(
             'version' VALUE BANNER,
@@ -94,12 +102,15 @@ BEGIN
             'current_schema' VALUE v_owner
         ) AS j FROM V$VERSION WHERE ROWNUM = 1
     ) LOOP
-        DBMS_OUTPUT.PUT_LINE(rec.j);
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
     END LOOP;
-    DBMS_OUTPUT.PUT_LINE('},');
 
     -- ===================================================================
     -- 3. Tables
+    -- Filter to tables with at least one column entry — excludes Oracle
+    -- internal metadata tables (SYS_IOT_OVER_*, HS_PARTITION_COL_*, etc.)
+    -- which appear in ALL_TABLES but have no rows in ALL_TAB_COLUMNS and
+    -- would fail Table.columns min_length=1 validation downstream.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"tables": [');
     FOR rec IN (
@@ -116,6 +127,10 @@ BEGIN
             GROUP BY OWNER, SEGMENT_NAME
         ) s ON s.OWNER = t.OWNER AND s.SEGMENT_NAME = t.TABLE_NAME
         WHERE t.OWNER = v_owner
+          AND EXISTS (
+              SELECT 1 FROM ALL_TAB_COLUMNS c
+              WHERE c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
+          )
         ORDER BY t.TABLE_NAME
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
@@ -138,7 +153,7 @@ BEGIN
             'data_precision' VALUE DATA_PRECISION,
             'data_scale' VALUE DATA_SCALE,
             'is_nullable' VALUE NULLABLE,
-            'column_default' VALUE DATA_DEFAULT,
+            'column_default' VALUE NULL,
             'is_identity' VALUE IDENTITY_COLUMN
         ) AS j
         FROM ALL_TAB_COLUMNS
@@ -151,18 +166,26 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('],');
 
     -- ===================================================================
-    -- 5. Indexes
+    -- 5. Indexes (MySQL-compatible field names)
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"indexes": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
             'table_name' VALUE LOWER(i.TABLE_NAME),
-            'index_name' VALUE LOWER(i.INDEX_NAME),
+            'index_name' VALUE CASE WHEN c.CONSTRAINT_TYPE = 'P' THEN 'PRIMARY' ELSE LOWER(i.INDEX_NAME) END,
             'column_name' VALUE LOWER(ic.COLUMN_NAME),
-            'column_position' VALUE ic.COLUMN_POSITION,
-            'uniqueness' VALUE i.UNIQUENESS,
-            'index_type' VALUE i.INDEX_TYPE,
-            'is_primary' VALUE CASE WHEN c.CONSTRAINT_TYPE = 'P' THEN 'YES' ELSE 'NO' END
+            'non_unique' VALUE CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 0 ELSE 1 END,
+            'index_type' VALUE CASE
+                -- Contract enum: btree|hash|gist|gin|fulltext|spatial|other
+                -- Map Oracle's INDEX_TYPE values into it.
+                WHEN i.INDEX_TYPE LIKE '%FUNCTION%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%BITMAP%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE 'IOT%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%CLUSTER%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE '%DOMAIN%' THEN 'other'
+                WHEN i.INDEX_TYPE LIKE 'NORMAL%' THEN 'btree'
+                ELSE 'other'
+            END
         ) AS j
         FROM ALL_INDEXES i
         JOIN ALL_IND_COLUMNS ic ON i.OWNER = ic.INDEX_OWNER AND i.INDEX_NAME = ic.INDEX_NAME
@@ -176,7 +199,7 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('],');
 
     -- ===================================================================
-    -- 6. Foreign Keys
+    -- 6. Foreign Keys (MySQL-compatible field names)
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"foreign_keys": [');
     FOR rec IN (
@@ -184,9 +207,8 @@ BEGIN
             'table_name' VALUE LOWER(a.TABLE_NAME),
             'constraint_name' VALUE LOWER(a.CONSTRAINT_NAME),
             'column_name' VALUE LOWER(ac.COLUMN_NAME),
-            'position' VALUE ac.POSITION,
-            'referenced_table' VALUE LOWER(rc.TABLE_NAME),
-            'referenced_column' VALUE LOWER(rcc.COLUMN_NAME),
+            'referenced_table_name' VALUE LOWER(rc.TABLE_NAME),
+            'referenced_column_name' VALUE LOWER(rcc.COLUMN_NAME),
             'delete_rule' VALUE a.DELETE_RULE
         ) AS j
         FROM ALL_CONSTRAINTS a
@@ -258,6 +280,13 @@ BEGIN
 
     -- ===================================================================
     -- 10. Triggers
+    -- Filter to DML triggers (INSERT/UPDATE/DELETE) with a non-null
+    -- table_name. Non-DML triggers (LOGON, DDL, STARTUP, DROP, etc.) are
+    -- DB-level and can't map to Trigger.table_id + Trigger.event_type
+    -- contract enums.
+    -- Normalize compound events like 'INSERT OR UPDATE OR DELETE' to the
+    -- first matching keyword. Normalize TRIGGER_TYPE like 'BEFORE EACH ROW'
+    -- or 'AFTER STATEMENT' to the BEFORE/AFTER/INSTEAD OF prefix.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"triggers": [');
     FOR rec IN (
@@ -265,10 +294,26 @@ BEGIN
             'trigger_name' VALUE LOWER(TRIGGER_NAME),
             'table_name' VALUE LOWER(TABLE_NAME),
             'schema_name' VALUE LOWER(OWNER),
-            'timing' VALUE TRIGGER_TYPE,
-            'event_type' VALUE TRIGGERING_EVENT
+            'timing' VALUE CASE
+                WHEN TRIGGER_TYPE LIKE 'INSTEAD OF%' THEN 'INSTEAD OF'
+                WHEN TRIGGER_TYPE LIKE 'BEFORE%' THEN 'BEFORE'
+                WHEN TRIGGER_TYPE LIKE 'AFTER%' THEN 'AFTER'
+                ELSE 'AFTER'
+            END,
+            'event_type' VALUE CASE
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%INSERT%' THEN 'INSERT'
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%' THEN 'UPDATE'
+                WHEN UPPER(TRIGGERING_EVENT) LIKE '%DELETE%' THEN 'DELETE'
+            END
         ) AS j
-        FROM ALL_TRIGGERS WHERE OWNER = v_owner ORDER BY TABLE_NAME, TRIGGER_NAME
+        FROM ALL_TRIGGERS
+        WHERE OWNER = v_owner
+          AND TABLE_NAME IS NOT NULL
+          AND TRIGGER_TYPE NOT LIKE '%EVENT%'
+          AND (   UPPER(TRIGGERING_EVENT) LIKE '%INSERT%'
+               OR UPPER(TRIGGERING_EVENT) LIKE '%UPDATE%'
+               OR UPPER(TRIGGERING_EVENT) LIKE '%DELETE%')
+        ORDER BY TABLE_NAME, TRIGGER_NAME
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j || ',');
     END LOOP;
@@ -276,16 +321,99 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('],');
 
     -- ===================================================================
-    -- 11. Global Stats
+    -- 11. Global Stats (MySQL-compatible field names)
+    -- Maps Oracle V$SYSSTAT to InnoDB-equivalent naming for parser compat
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"global_stats": ');
     FOR rec IN (
         SELECT JSON_OBJECT(
+            'innodb_buffer_pool_read_requests' VALUE (
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'db block gets') +
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'consistent gets')
+            ),
+            'innodb_buffer_pool_reads' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical reads'),
+            'created_tmp_disk_tables' VALUE 0,
+            'created_tmp_tables' VALUE 0,
             'active_connections' VALUE (SELECT COUNT(*) FROM V$SESSION WHERE TYPE = 'USER'),
-            'db_block_gets' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'db block gets'),
-            'consistent_gets' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'consistent gets'),
-            'physical_reads' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical reads'),
-            'user_commits' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'user commits')
+            'total_transactions' VALUE (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'user commits')
+        ) AS j FROM DUAL
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
+    END LOOP;
+
+    -- ===================================================================
+    -- 12. I/O Stats (NEW — enables on-prem without CloudWatch)
+    -- ===================================================================
+    DBMS_OUTPUT.PUT_LINE('"io_stats": ');
+    FOR rec IN (
+        SELECT JSON_OBJECT(
+            'physical_reads_per_sec' VALUE ROUND(
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical reads') /
+                GREATEST((SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) FROM V$INSTANCE), 1), 2),
+            'physical_writes_per_sec' VALUE ROUND(
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical writes') /
+                GREATEST((SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) FROM V$INSTANCE), 1), 2),
+            'read_bytes_per_sec' VALUE ROUND(
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical read bytes') /
+                GREATEST((SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) FROM V$INSTANCE), 1), 2),
+            'write_bytes_per_sec' VALUE ROUND(
+                (SELECT VALUE FROM V$SYSSTAT WHERE NAME = 'physical write bytes') /
+                GREATEST((SELECT ROUND((SYSDATE - STARTUP_TIME) * 86400) FROM V$INSTANCE), 1), 2),
+            'avg_read_latency_ms' VALUE (
+                SELECT ROUND(NVL(TIME_WAITED_MICRO / GREATEST(TOTAL_WAITS, 1) / 1000, 0), 3)
+                FROM V$SYSTEM_EVENT WHERE EVENT = 'db file sequential read'),
+            'avg_write_latency_ms' VALUE (
+                SELECT ROUND(NVL(TIME_WAITED_MICRO / GREATEST(TOTAL_WAITS, 1) / 1000, 0), 3)
+                FROM V$SYSTEM_EVENT WHERE EVENT = 'log file sync')
+        ) AS j FROM DUAL
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
+    END LOOP;
+
+    -- ===================================================================
+    -- 13. Wait Events (NEW — replaces Performance Insights on-prem)
+    -- Top 10 wait events by time waited
+    -- The `wait_time_percent` field is emitted as an explicit percent-of-total
+    -- so the parser doesn't have to derive it from `avg_wait_ms` (which is a
+    -- millisecond value, not a percent — this used to cause validation
+    -- errors for any workload with mean wait latency >100ms).
+    -- ===================================================================
+    DBMS_OUTPUT.PUT_LINE('"wait_events": [');
+    FOR rec IN (
+        SELECT JSON_OBJECT(
+            'event' VALUE EVENT,
+            'total_waits' VALUE TOTAL_WAITS,
+            'time_waited_ms' VALUE ROUND(TIME_WAITED_MICRO / 1000, 2),
+            'avg_wait_ms' VALUE ROUND(TIME_WAITED_MICRO / GREATEST(TOTAL_WAITS, 1) / 1000, 3),
+            'wait_time_percent' VALUE ROUND(
+                100.0 * TIME_WAITED_MICRO / NULLIF(SUM(TIME_WAITED_MICRO) OVER (), 0), 3),
+            'wait_class' VALUE WAIT_CLASS
+        ) AS j
+        FROM (
+            SELECT EVENT, TOTAL_WAITS, TIME_WAITED_MICRO, WAIT_CLASS
+            FROM V$SYSTEM_EVENT
+            WHERE WAIT_CLASS != 'Idle'
+            ORDER BY TIME_WAITED_MICRO DESC
+            FETCH FIRST 10 ROWS ONLY
+        )
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE(rec.j || ',');
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('{"_sentinel": true}');
+    DBMS_OUTPUT.PUT_LINE('],');
+
+    -- ===================================================================
+    -- 14. OS Stats (NEW — replaces RDS instance metadata on-prem)
+    -- ===================================================================
+    DBMS_OUTPUT.PUT_LINE('"os_stats": ');
+    FOR rec IN (
+        SELECT JSON_OBJECT(
+            'cpu_count' VALUE (SELECT VALUE FROM V$OSSTAT WHERE STAT_NAME = 'NUM_CPUS'),
+            'physical_memory_gb' VALUE ROUND(
+                (SELECT VALUE FROM V$OSSTAT WHERE STAT_NAME = 'PHYSICAL_MEMORY_BYTES') / 1024/1024/1024, 2),
+            'sga_size_gb' VALUE (SELECT ROUND(SUM(VALUE)/1024/1024/1024, 2) FROM V$SGA),
+            'pga_allocated_gb' VALUE (SELECT ROUND(VALUE/1024/1024/1024, 2) FROM V$PGASTAT WHERE NAME = 'total PGA allocated'),
+            'db_uptime_hours' VALUE (SELECT ROUND((SYSDATE - STARTUP_TIME) * 24, 1) FROM V$INSTANCE)
         ) AS j FROM DUAL
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.j);
