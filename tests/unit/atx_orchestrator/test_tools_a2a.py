@@ -140,8 +140,12 @@ class TestToolsRegistered:
         assert "run_collect" in tool_names
         assert "run_triage" in tool_names
 
-    def test_pipeline_tools_count_increased(self) -> None:
-        """PIPELINE_TOOLS grew by exactly 2 (a2a variants) from the prior 10."""
+    def test_a2a_tools_added_at_least_two(self) -> None:
+        """Registration added at least the 2 A2A variants on top of the prior tools.
+
+        Total-count assertion lives in ``test_discover_subagents.py`` so this
+        test survives future additions (e.g. more subagent phases).
+        """
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
-        assert len(PIPELINE_TOOLS) == 12
+        assert len(PIPELINE_TOOLS) >= 12

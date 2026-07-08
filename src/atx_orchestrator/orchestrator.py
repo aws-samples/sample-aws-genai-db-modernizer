@@ -12,6 +12,9 @@ The 3-phase AWS Transform workflow (Negotiate → Confirm → Execute) maps to:
 from __future__ import annotations
 
 from agent_builder_sdk.orchestrator_strands.base_orchestrator import AsyncBaseOrchestrator
+from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import (
+    SubagentRegistryTools,
+)
 
 from src.atx_orchestrator.tools import (
     get_job_status,
@@ -27,6 +30,12 @@ from src.atx_orchestrator.tools import (
     run_triage,
     run_triage_via_a2a,
 )
+
+# Instantiate the SDK-provided subagent registry tools once at module load.
+# The init is trivial (only logs); the actual API call happens when
+# discover_subagents is invoked.
+_subagent_registry = SubagentRegistryTools()
+discover_subagents = _subagent_registry.discover_subagents
 
 SYSTEM_PROMPT = """\
 You are a Database Modernization Assessment coordinator for AWS Transform.
@@ -54,8 +63,16 @@ Two invocation paths are available for Collect and Triage:
       run_collect_via_a2a, run_triage_via_a2a — send an A2A message to a
       deployed subagent and poll for completion. These require a
       subagent_instance_id argument (agentInstanceId of the deployed
-      subagent). If you have subagent discovery available, list registered
-      subagents first to obtain the instance id.
+      subagent).
+
+Subagent discovery:
+  discover_subagents — list subagents registered in the AWS Transform Agent
+  Registry with their capabilities and versions. Use this to describe what
+  subagents are available. Note that the returned entries describe agent
+  VERSIONS (registered capability profiles) — the concrete
+  subagent_instance_id used to invoke a deployed subagent is provided by
+  the customer or the AWS Transform runtime context, not by
+  discover_subagents.
 
 Workflow:
   - When a customer starts a new assessment, ask for: job_id and database_name.
@@ -85,6 +102,7 @@ PIPELINE_TOOLS = [
     run_full_assessment,
     get_job_status,
     get_synthesis_report,
+    discover_subagents,
 ]
 
 
