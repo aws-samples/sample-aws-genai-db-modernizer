@@ -37,17 +37,21 @@ try:
         run_assignment,
         run_collect,
         run_collect_and_triage,
+        run_collect_via_a2a,
         run_full_assessment,
         run_reality_check,
         run_schema_design,
         run_synthesis,
         run_triage,
+        run_triage_via_a2a,
     )
 
     tools = [
         run_collect,
         run_triage,
         run_collect_and_triage,
+        run_collect_via_a2a,
+        run_triage_via_a2a,
         run_assignment,
         run_reality_check,
         run_schema_design,
@@ -75,8 +79,8 @@ try:
     check("DBModernizationOrchestrator imported", True)
     check(
         "PIPELINE_TOOLS count",
-        len(PIPELINE_TOOLS) == 10,
-        f"expected 10, got {len(PIPELINE_TOOLS)}",
+        len(PIPELINE_TOOLS) == 12,
+        f"expected 12, got {len(PIPELINE_TOOLS)}",
     )
 except ImportError as e:
     check("DBModernizationOrchestrator imported", False, str(e))

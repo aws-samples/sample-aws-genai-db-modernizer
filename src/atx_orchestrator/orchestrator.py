@@ -19,11 +19,13 @@ from src.atx_orchestrator.tools import (
     run_assignment,
     run_collect,
     run_collect_and_triage,
+    run_collect_via_a2a,
     run_full_assessment,
     run_reality_check,
     run_schema_design,
     run_synthesis,
     run_triage,
+    run_triage_via_a2a,
 )
 
 SYSTEM_PROMPT = """\
@@ -41,6 +43,19 @@ You have access to a fully deterministic assessment pipeline:
   6. run_full_assessment      — run all phases end-to-end in one call
   7. get_job_status           — check current phase progression
   8. get_synthesis_report     — read the completed report
+
+Two invocation paths are available for Collect and Triage:
+
+  * IN-PROCESS (default for local dev / demos):
+      run_collect, run_triage, run_collect_and_triage — run the phase inside
+      this orchestrator container. Fast, no A2A round-trip.
+
+  * A2A (default when running under AWS Transform with deployed subagents):
+      run_collect_via_a2a, run_triage_via_a2a — send an A2A message to a
+      deployed subagent and poll for completion. These require a
+      subagent_instance_id argument (agentInstanceId of the deployed
+      subagent). If you have subagent discovery available, list registered
+      subagents first to obtain the instance id.
 
 Workflow:
   - When a customer starts a new assessment, ask for: job_id and database_name.
@@ -61,6 +76,8 @@ PIPELINE_TOOLS = [
     run_collect,
     run_triage,
     run_collect_and_triage,
+    run_collect_via_a2a,
+    run_triage_via_a2a,
     run_assignment,
     run_reality_check,
     run_schema_design,
