@@ -28,12 +28,20 @@ RUN pip install --no-cache-dir \
 
 # Register botocore service models (REQUIRED — without this the agent fails at
 # startup with "Unknown service: 'transformagenticservice'")
+# NOTE: `aws configure add-model` writes to $HOME/.aws/models/. This RUN
+# executes as root so models land in /root/.aws/models/, which is 700 and
+# unreadable by the non-root appuser we drop to below. Copy them to a
+# world-readable location and set AWS_DATA_PATH so boto3 finds them
+# regardless of who's running the container.
 RUN pip install --no-cache-dir awscli && \
     SDK_MODELS=$(python -c "from importlib.resources import files; print(files('agent_builder_sdk').joinpath('botocore_models'))") && \
     aws configure add-model --service-name atxagentregistryexternal \
       --service-model "file://${SDK_MODELS}/atxagentregistryexternal/2022-07-26/service-2.json" && \
     aws configure add-model --service-name transformagenticservice \
-      --service-model "file://${SDK_MODELS}/transformagenticservice/2018-05-10/service-2.json"
+      --service-model "file://${SDK_MODELS}/transformagenticservice/2018-05-10/service-2.json" && \
+    mkdir -p /opt/botocore-models && \
+    cp -r /root/.aws/models/* /opt/botocore-models/ && \
+    chmod -R a+r /opt/botocore-models
 
 # ── Project deps ────────────────────────────────────────────────────────────
 COPY src/atx_orchestrator/requirements.txt /app/requirements.txt
@@ -64,6 +72,7 @@ USER appuser
 ENV ARTIFACT_DIR=/app/artifacts \
     LLM_MODE=none \
     AWS_REGION=us-east-1 \
+    AWS_DATA_PATH=/opt/botocore-models \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8080
