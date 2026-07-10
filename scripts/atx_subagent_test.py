@@ -132,19 +132,29 @@ if nt != rt or nq != rq:
 ok(f"Collector content matches reference ({nt} tables, {nq} queries)")
 
 # ---------------------------------------------------------------------------
-# 2. Triage core: runs against collector output, matches reference
+# 2. Triage subagent: message parsing + work
 # ---------------------------------------------------------------------------
-print("\n2. Triage (separate phase, against collector output)")
-from src.atx_orchestrator.core import run_triage_core
+print("\n2. Triage subagent (via A2A-parsed message)")
+from src.atx_orchestrator.triage_subagent import _work as triage_work
+
+triage_a2a_msg = {
+    "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],
+    "role": "user",
+}
+triage_text = extract_text(type("Req", (), {"message": triage_a2a_msg})())
+triage_parsed = parse_invocation(triage_text)
+if triage_parsed["job_id"] != job_id or triage_parsed["database_name"] != db_name:
+    fail(f"Triage JSON parse failed: {triage_parsed}")
+ok("Parsed A2A JSON message for triage")
 
 try:
-    triage_summary = run_triage_core(job_id, db_name)
+    triage_summary = triage_work(triage_parsed)
 except Exception as e:  # noqa: BLE001
     import traceback
 
     traceback.print_exc()
-    fail(f"triage raised: {e}")
-ok(f"Triage returned: {triage_summary}")
+    fail(f"triage subagent work raised: {e}")
+ok(f"Triage subagent returned: {triage_summary}")
 
 triage_key = f"{db_name}/{job_id}/referee-triage/triage.json"
 from src.contracts.triage_output import TriageOutputContract
