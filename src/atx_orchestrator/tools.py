@@ -443,6 +443,7 @@ def run_collect_via_a2a(
     try:
         payload = invoke_and_wait(agent_id, message)
     except A2AError as e:
+        logger.error("ATX collect FAILED: %s: %s", type(e).__name__, e)
         return json.dumps(
             {
                 "error": f"A2A collect failed: {e}",
@@ -495,6 +496,7 @@ def run_triage_via_a2a(
     try:
         payload = invoke_and_wait(agent_id, message)
     except A2AError as e:
+        logger.error("ATX triage FAILED: %s: %s", type(e).__name__, e)
         return json.dumps(
             {
                 "error": f"A2A triage failed: {e}",

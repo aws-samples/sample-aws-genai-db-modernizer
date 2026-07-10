@@ -79,8 +79,8 @@ try:
     check("DBModernizationOrchestrator imported", True)
     check(
         "PIPELINE_TOOLS count",
-        len(PIPELINE_TOOLS) == 10,
-        f"expected 10, got {len(PIPELINE_TOOLS)}",
+        len(PIPELINE_TOOLS) == 9,
+        f"expected 9, got {len(PIPELINE_TOOLS)}",
     )
 except ImportError as e:
     check("DBModernizationOrchestrator imported", False, str(e))

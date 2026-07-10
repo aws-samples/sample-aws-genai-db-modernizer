@@ -216,7 +216,17 @@ def invoke_and_wait(
             requestContext=request_context,
             agentFilter={"requesterAgentInstanceId": own_instance_id},
         )
+        logger.info(
+            "A2A list_agent_instances OK: requester=%s returned %d summaries",
+            own_instance_id,
+            len(_summaries_of(list_resp)),
+        )
     except Exception as e:
+        logger.exception(
+            "A2A list_agent_instances FAILED for agent_id=%s requester=%s",
+            agent_id,
+            own_instance_id,
+        )
         raise A2AError(
             f"list_agent_instances failed while looking for agent_id={agent_id!r}: {e}"
         ) from e
@@ -224,6 +234,15 @@ def invoke_and_wait(
     subagent_instance_id = _find_subagent_by_agent_id(list_resp, agent_id)
     if not subagent_instance_id:
         summaries = _summaries_of(list_resp)
+        # Verbose log — Strands eats tool errors so this is our only diagnostic.
+        logger.error(
+            "A2A DISCOVERY FAILED: no SUB_AGENT match for agent_id=%s. "
+            "requester=%s returned %d summaries: %s",
+            agent_id,
+            own_instance_id,
+            len(summaries),
+            summaries,
+        )
         raise A2AError(
             f"No pre-provisioned SUB_AGENT instance found with agentId={agent_id!r}. "
             f"Check orchestrator Registry entry's Agent Dependencies extension. "

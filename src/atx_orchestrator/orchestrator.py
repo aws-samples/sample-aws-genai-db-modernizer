@@ -58,13 +58,10 @@ and message dispatch. Later phases run in-process for now.
   8. get_job_status            — check current phase progression.
   9. get_synthesis_report      — read the completed report.
 
-Subagent discovery:
-  discover_subagents — list subagents registered in the AWS Transform Agent
-  Registry with their capabilities and versions. Useful for describing what
-  subagents are available. Note that you never need to pass instance IDs
-  yourself — the A2A tools resolve subagents BY NAME (e.g.
-  "db-modernization-collector") and the AWS Transform runtime spawns instances
-  transparently.
+Subagent invocation:
+  The A2A tools resolve subagents BY NAME (e.g. "db-modernization-collector")
+  and the AWS Transform runtime spawns instances transparently — you never
+  need to look up instance IDs yourself.
 
 Workflow:
   - When a customer starts a new assessment, ask for: job_id and database_name.
@@ -93,7 +90,11 @@ PIPELINE_TOOLS = [
     run_full_assessment,
     get_job_status,
     get_synthesis_report,
-    discover_subagents,
+    # NOTE: discover_subagents omitted intentionally. As of SDK v1.0.2 it
+    # returns a hardcoded MOCK ("dynamic-showcase-subagent" weather agent),
+    # which caused the LLM to mis-conclude that our real subagents weren't
+    # deployed when a2a discovery failed for other reasons.
+    # Re-add when the SDK ships the real registry-backed implementation.
 ]
 
 

@@ -172,8 +172,8 @@ class TestToolsRegistered:
         assert "run_triage" not in tool_names
         assert "run_collect_and_triage" not in tool_names
 
-    def test_pipeline_tools_count_is_ten(self) -> None:
-        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status + 1 discovery = 10."""
+    def test_pipeline_tools_count_is_nine(self) -> None:
+        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status = 9 (discover_subagents removed — SDK mock)."""
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
-        assert len(PIPELINE_TOOLS) == 10
+        assert len(PIPELINE_TOOLS) == 9

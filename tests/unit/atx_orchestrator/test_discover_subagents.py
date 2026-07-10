@@ -1,11 +1,16 @@
-"""Unit tests for subagent discovery integration.
+"""Unit tests for subagent discovery wiring.
 
-Verifies that ``discover_subagents`` (from the SDK's ``SubagentRegistryTools``)
-is instantiated and registered in ``PIPELINE_TOOLS``. As of SDK v1.0.2 this
-method is a mock that returns hardcoded sample data — see
-``agent_builder_sdk/orchestrator_strands/tools/subagent_registry_tools.py``.
-When the SDK replaces the mock with a real registry API call, this wiring
-will light up automatically without changes on our side.
+Note (Y-3): ``discover_subagents`` is INTENTIONALLY not in ``PIPELINE_TOOLS``.
+As of SDK v1.0.2 this method is a hardcoded mock returning a
+"dynamic-showcase-subagent" (weather agent), which caused the LLM to
+mis-conclude our real subagents weren't deployed when unrelated A2A errors
+occurred. The function stays imported for future re-enablement when the SDK
+ships a real registry-backed implementation.
+
+See:
+- ``agent_builder_sdk/orchestrator_strands/tools/subagent_registry_tools.py``
+  (SDK source with the mock)
+- ATX_POC_STATE.md F8 for the F8 fix context
 """
 
 from __future__ import annotations
@@ -16,22 +21,28 @@ from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS, discover_subagents
 
 
 class TestDiscoverSubagentsRegistration:
-    def test_discover_subagents_in_pipeline_tools(self) -> None:
+    def test_discover_subagents_NOT_in_pipeline_tools(self) -> None:
+        """Y-3 fix: intentionally unregistered because the SDK mock misleads the LLM."""
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
-        assert "discover_subagents" in tool_names
+        assert "discover_subagents" not in tool_names
 
-    def test_pipeline_tools_count_is_10(self) -> None:
-        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status + 1 discovery = 10."""
-        assert len(PIPELINE_TOOLS) == 10
+    def test_pipeline_tools_count_is_9(self) -> None:
+        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status = 9 (discover_subagents removed)."""
+        assert len(PIPELINE_TOOLS) == 9
+
+    def test_discover_subagents_still_importable(self) -> None:
+        """The function itself remains available for future re-enablement."""
+        assert discover_subagents is not None
 
 
 class TestDiscoverSubagentsCallable:
-    """Async invocation via the SDK's mock — proves the wiring reaches the tool."""
+    """Async invocation via the SDK's mock — proves the wiring is intact (even
+    though we've unregistered it from PIPELINE_TOOLS to protect the LLM from
+    the mock's misleading output).
+    """
 
     @pytest.mark.asyncio
     async def test_returns_list_of_agent_versions(self) -> None:
-        # discover_subagents is a bound method decorated with @tool.
-        # DecoratedFunctionTool exposes the underlying async callable.
         result = await discover_subagents()
         assert isinstance(result, list)
         assert len(result) >= 1
@@ -41,7 +52,6 @@ class TestDiscoverSubagentsCallable:
         """SDK mock returns GetAgentVersionOutput with version+metadata+configuration."""
         result = await discover_subagents()
         first = result[0]
-        # Access via attribute (Pydantic model, not dict)
         assert getattr(first, "version", None) is not None
         assert getattr(first, "metadata", None) is not None
         assert getattr(first, "configuration", None) is not None
