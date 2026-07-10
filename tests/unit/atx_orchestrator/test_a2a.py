@@ -540,7 +540,8 @@ class TestInvokeAndWaitDiscoveryFailures:
         client = StubAgenticApiClient(
             list_agent_instances_response={"agentInstanceSummaries": []},
             invoke_agent_instance_id="spawned-instance-1",
-            status_sequence=["COMPLETED"],
+            # RUNNING for wait_for_ready, then COMPLETED for wait_for_completion
+            status_sequence=["RUNNING", "COMPLETED"],
             terminal_payload={"ok": True},
         )
         payload = invoke_and_wait(
@@ -548,6 +549,7 @@ class TestInvokeAndWaitDiscoveryFailures:
             "x",
             client=client,
             poll_interval=FAST_POLL,
+            post_ready_dwell=0.0,
         )
         # invoke_agent called once with the right agent id
         assert len(client.invoke_calls) == 1
@@ -561,13 +563,14 @@ class TestInvokeAndWaitDiscoveryFailures:
         """A subagent for a different agent_id doesn't count as 'existing'."""
         client = _stub_with_subagents()  # has collector + triage
         client.invoke_agent_instance_id = "analysis-spawned-1"
-        client.status_sequence = ["COMPLETED"]
+        client.status_sequence = ["RUNNING", "COMPLETED"]  # ready then done
         client.terminal_payload = {"done": True}
         invoke_and_wait(
             "db-modernization-analysis",  # not in the pre-provisioned list
             "x",
             client=client,
             poll_interval=FAST_POLL,
+            post_ready_dwell=0.0,
         )
         assert len(client.invoke_calls) == 1
         assert client.invoke_calls[0]["agentId"] == "db-modernization-analysis"
@@ -581,12 +584,13 @@ class TestInvokeAndWaitDiscoveryFailures:
             "agentInstanceStatus"
         ] = "SHUTDOWN"
         client.invoke_agent_instance_id = "triage-fresh-1"
-        client.status_sequence = ["COMPLETED"]
+        client.status_sequence = ["RUNNING", "COMPLETED"]
         invoke_and_wait(
             "db-modernization-triage",
             "x",
             client=client,
             poll_interval=FAST_POLL,
+            post_ready_dwell=0.0,
         )
         # Fresh invoke happened
         assert len(client.invoke_calls) == 1
@@ -600,6 +604,7 @@ class TestInvokeAndWaitDiscoveryFailures:
                 "x",
                 client=client,
                 poll_interval=FAST_POLL,
+                post_ready_dwell=0.0,
             )
 
     def test_invoke_agent_error_wrapped(self) -> None:

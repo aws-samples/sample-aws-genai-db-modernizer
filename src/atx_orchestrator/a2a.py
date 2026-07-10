@@ -155,6 +155,7 @@ def invoke_and_wait(
     *,
     timeout: float = 300.0,
     poll_interval: float = 2.0,
+    post_ready_dwell: float = 15.0,
     client: Any = None,
     request_context: dict[str, Any] | None = None,
     tolerate_send_errors: bool = True,
@@ -267,6 +268,28 @@ def invoke_and_wait(
             agent_id,
             subagent_instance_id,
         )
+
+        # 2b. Wait for the freshly-spawned instance to reach RUNNING/IDLE state
+        #     before sending. SendMessage returns ValidationException
+        #     "Agent instance status is not RUNNING or IDLE" if called too
+        #     soon after invoke_agent (per Agentic API validation).
+        _wait_for_ready(
+            client,
+            subagent_instance_id,
+            request_context,
+            agent_id=agent_id,
+            timeout=60.0,
+            poll_interval=poll_interval,
+        )
+        # 2c. Additional dwell — the Agentic API reports RUNNING as soon as
+        #     the container slot is allocated, BEFORE the app inside finishes
+        #     booting (Python import + Uvicorn on port 8080). Empirically the
+        #     Uvicorn "listening" log appears ~4-5 seconds after the RUNNING
+        #     status transition. Without this dwell, send_message succeeds
+        #     but AgentCore then can't route the actual HTTP call to the
+        #     not-yet-listening container, and the instance transitions
+        #     RUNNING → FAILED.
+        _dwell_after_ready(post_ready_dwell)
     else:
         logger.info(
             "A2A found existing subagent: agent_id=%s instance=%s (requester=%s)",
@@ -276,11 +299,16 @@ def invoke_and_wait(
         )
 
     # 3. Dispatch the A2A message with the SDK's canonical envelope.
+    # Match send_message_tools.py exactly — include metadata + extensions
+    # so the SDK's message router doesn't strip anything unexpectedly.
+    a2a_source_ext = "ATX_A2A.SourceInformation"
     a2a_message = {
         "role": "agent",
         "parts": [{"kind": "text", "text": message}],
         "messageId": str(uuid.uuid4()),
         "kind": "message",
+        "metadata": {a2a_source_ext: {"senderAgentInstanceId": own_instance_id}},
+        "extensions": [a2a_source_ext],
     }
     try:
         client.send_message(
@@ -443,6 +471,88 @@ def _extract_instance_id(response: Any) -> str:
     if isinstance(response, dict):
         return str(response.get("agentInstanceId", "") or "")
     return str(getattr(response, "agentInstanceId", "") or "")
+
+
+# States acceptable for send_message dispatch.
+_READY_STATUSES = frozenset({"RUNNING", "IDLE"})
+
+
+def _dwell_after_ready(dwell_seconds: float) -> None:
+    """Block for ``dwell_seconds`` after subagent status becomes RUNNING/IDLE.
+
+    Empirically necessary — see A16.9 discovery: AgentCore reports RUNNING
+    when the container slot is allocated, but the Python app inside takes
+    another ~4-5 seconds to import + start Uvicorn. Sending too early
+    causes the instance to transition RUNNING → FAILED because AgentCore
+    can't route the HTTP call to the not-yet-listening container.
+    """
+    if dwell_seconds > 0:
+        logger.info(
+            "A2A dwelling %.1fs after RUNNING to let subagent app finish booting",
+            dwell_seconds,
+        )
+        time.sleep(dwell_seconds)
+
+
+def _wait_for_ready(
+    client: Any,
+    instance_id: str,
+    request_context: dict[str, Any],
+    *,
+    agent_id: str,
+    timeout: float = 60.0,
+    poll_interval: float = 2.0,
+) -> None:
+    """Poll get_agent_instance until the subagent reaches RUNNING or IDLE.
+
+    Required after invoke_agent — the just-spawned instance starts in
+    STARTING state, and send_message returns ValidationException
+    "Agent instance status is not RUNNING or IDLE" until the container
+    finishes boot + handshake.
+
+    Raises:
+        A2AError: instance never reached READY within ``timeout``.
+    """
+    start = time.monotonic()
+    last_status = ""
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed > timeout:
+            raise A2AError(
+                f"Subagent {agent_id} (instance={instance_id}) did not reach "
+                f"RUNNING/IDLE state within {timeout}s (last status={last_status!r})"
+            )
+        try:
+            resp = client.get_agent_instance(
+                agentInstanceId=instance_id,
+                requestContext=request_context,
+            )
+        except Exception as e:
+            raise A2AError(f"get_agent_instance failed while waiting for ready: {e}") from e
+        status = _extract_status(resp)
+        last_status = status
+        if status in _READY_STATUSES:
+            logger.info(
+                "A2A subagent ready: agent_id=%s instance=%s status=%s (waited %.1fs)",
+                agent_id,
+                instance_id,
+                status,
+                elapsed,
+            )
+            return
+        if status in _UNUSABLE_STATUSES:
+            raise A2AError(
+                f"Subagent {agent_id} (instance={instance_id}) reached "
+                f"terminal-unusable status {status!r} while waiting to become ready"
+            )
+        logger.debug(
+            "Waiting for %s (instance=%s) to become ready — status=%s, waited %.1fs",
+            agent_id,
+            instance_id,
+            status,
+            elapsed,
+        )
+        time.sleep(poll_interval)
 
 
 # Terminal / unusable states — a subagent in one of these can't accept new work.
