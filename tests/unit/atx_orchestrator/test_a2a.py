@@ -445,12 +445,12 @@ class TestInvokeAndWaitHappyPath:
         )
         assert payload == {"job_id": "j1", "signals": 5}
 
-    def test_no_invoke_agent_call_ever(self) -> None:
-        """invoke_and_wait now uses list+send, not invoke_agent."""
+    def test_no_invoke_agent_when_existing_instance_found(self) -> None:
+        """When list_agent_instances returns a matching subagent, skip invoke_agent."""
         client = _stub_with_subagents()
         client.status_sequence = ["COMPLETED"]
         invoke_and_wait("db-modernization-triage", "x", client=client, poll_interval=FAST_POLL)
-        assert client.invoke_calls == []  # invoke_agent must NOT be called
+        assert client.invoke_calls == []  # invoke_agent skipped — existing instance used
 
     def test_discovers_subagent_by_agent_id(self) -> None:
         client = _stub_with_subagents(collector_id="collector-99", triage_id="triage-88")
@@ -533,38 +533,68 @@ class TestInvokeAndWaitHappyPath:
 
 
 class TestInvokeAndWaitDiscoveryFailures:
-    """No matching subagent, unusable status, list_agent_instances error."""
+    """list_agent_instances error, invoke_agent fallback path errors."""
 
-    def test_empty_list_raises(self) -> None:
+    def test_empty_list_falls_back_to_invoke_agent(self) -> None:
+        """When list returns empty, invoke_agent is called to spawn a new instance."""
         client = StubAgenticApiClient(
             list_agent_instances_response={"agentInstanceSummaries": []},
+            invoke_agent_instance_id="spawned-instance-1",
+            status_sequence=["COMPLETED"],
+            terminal_payload={"ok": True},
         )
-        with pytest.raises(A2AError, match="No pre-provisioned SUB_AGENT instance found"):
-            invoke_and_wait(
-                "db-modernization-triage",
-                "x",
-                client=client,
-                poll_interval=FAST_POLL,
-            )
+        payload = invoke_and_wait(
+            "db-modernization-triage",
+            "x",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        # invoke_agent called once with the right agent id
+        assert len(client.invoke_calls) == 1
+        assert client.invoke_calls[0]["agentId"] == "db-modernization-triage"
+        # send_message + poll target the SPAWNED instance
+        assert client.send_calls[0]["agentInstanceId"] == "spawned-instance-1"
+        assert all(p == "spawned-instance-1" for p in client.poll_calls)
+        assert payload == {"ok": True}
 
-    def test_wrong_agent_id_raises(self) -> None:
-        client = _stub_with_subagents()
-        with pytest.raises(A2AError, match="db-modernization-analysis"):
-            invoke_and_wait(
-                "db-modernization-analysis",  # not in the list
-                "x",
-                client=client,
-                poll_interval=FAST_POLL,
-            )
+    def test_wrong_agent_id_still_falls_back_to_invoke(self) -> None:
+        """A subagent for a different agent_id doesn't count as 'existing'."""
+        client = _stub_with_subagents()  # has collector + triage
+        client.invoke_agent_instance_id = "analysis-spawned-1"
+        client.status_sequence = ["COMPLETED"]
+        client.terminal_payload = {"done": True}
+        invoke_and_wait(
+            "db-modernization-analysis",  # not in the pre-provisioned list
+            "x",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        assert len(client.invoke_calls) == 1
+        assert client.invoke_calls[0]["agentId"] == "db-modernization-analysis"
+        assert client.send_calls[0]["agentInstanceId"] == "analysis-spawned-1"
 
-    def test_unusable_status_skipped(self) -> None:
-        """A subagent in SHUTDOWN state should NOT be picked."""
+    def test_unusable_status_treated_as_missing(self) -> None:
+        """A subagent in SHUTDOWN state should trigger a fresh invoke_agent."""
         client = _stub_with_subagents()
         # Mutate — set triage to SHUTDOWN
         client.list_agent_instances_response["agentInstanceSummaries"][1][
             "agentInstanceStatus"
         ] = "SHUTDOWN"
-        with pytest.raises(A2AError, match="No pre-provisioned SUB_AGENT instance"):
+        client.invoke_agent_instance_id = "triage-fresh-1"
+        client.status_sequence = ["COMPLETED"]
+        invoke_and_wait(
+            "db-modernization-triage",
+            "x",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        # Fresh invoke happened
+        assert len(client.invoke_calls) == 1
+        assert client.send_calls[0]["agentInstanceId"] == "triage-fresh-1"
+
+    def test_list_agent_instances_error_wrapped(self) -> None:
+        client = StubAgenticApiClient(list_side_effect=RuntimeError("boom"))
+        with pytest.raises(A2AError, match="list_agent_instances failed"):
             invoke_and_wait(
                 "db-modernization-triage",
                 "x",
@@ -572,9 +602,26 @@ class TestInvokeAndWaitDiscoveryFailures:
                 poll_interval=FAST_POLL,
             )
 
-    def test_list_agent_instances_error_wrapped(self) -> None:
-        client = StubAgenticApiClient(list_side_effect=RuntimeError("boom"))
-        with pytest.raises(A2AError, match="list_agent_instances failed"):
+    def test_invoke_agent_error_wrapped(self) -> None:
+        client = StubAgenticApiClient(
+            list_agent_instances_response={"agentInstanceSummaries": []},
+            invoke_side_effect=RuntimeError("agent create failed"),
+        )
+        with pytest.raises(A2AError, match="invoke_agent failed"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_invoke_agent_missing_instance_id(self) -> None:
+        """invoke_agent returned no agentInstanceId → error."""
+        client = StubAgenticApiClient(
+            list_agent_instances_response={"agentInstanceSummaries": []},
+            invoke_agent_instance_id="",  # simulate empty response
+        )
+        with pytest.raises(A2AError, match="did not return"):
             invoke_and_wait(
                 "db-modernization-triage",
                 "x",

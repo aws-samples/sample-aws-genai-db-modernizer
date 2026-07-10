@@ -210,7 +210,7 @@ def invoke_and_wait(
     request_context = _resolve_request_context(request_context)
     own_instance_id = request_context.get("agentInstanceId") or ""
 
-    # 1. Discover pre-provisioned subagent instance by name.
+    # 1. Check for existing pre-provisioned subagent instance.
     try:
         list_resp = client.list_agent_instances(
             requestContext=request_context,
@@ -232,31 +232,50 @@ def invoke_and_wait(
         ) from e
 
     subagent_instance_id = _find_subagent_by_agent_id(list_resp, agent_id)
+
+    # 2. If no existing instance, spawn one via invoke_agent (SDK canonical pattern
+    #    per prompts/test_orchestrator_prompt.md: "first check ... if not, invoke
+    #    an instance ... then send a message to it").
     if not subagent_instance_id:
-        summaries = _summaries_of(list_resp)
-        # Verbose log — Strands eats tool errors so this is our only diagnostic.
-        logger.error(
-            "A2A DISCOVERY FAILED: no SUB_AGENT match for agent_id=%s. "
-            "requester=%s returned %d summaries: %s",
+        logger.info(
+            "A2A no existing instance for agent_id=%s — spawning via invoke_agent",
             agent_id,
+        )
+        try:
+            invoke_resp = client.invoke_agent(
+                agentId=agent_id,
+                agentType="SUB_AGENT",
+                requestContext=request_context,
+            )
+        except Exception as e:
+            logger.exception("A2A invoke_agent FAILED for agent_id=%s", agent_id)
+            raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
+
+        subagent_instance_id = _extract_instance_id(invoke_resp)
+        if not subagent_instance_id:
+            logger.error(
+                "A2A invoke_agent returned no agentInstanceId for agent_id=%s: response=%r",
+                agent_id,
+                invoke_resp,
+            )
+            raise A2AError(
+                f"invoke_agent for agent_id={agent_id!r} did not return "
+                f"agentInstanceId; response={invoke_resp!r}"
+            )
+        logger.info(
+            "A2A spawned new instance: agent_id=%s instance=%s",
+            agent_id,
+            subagent_instance_id,
+        )
+    else:
+        logger.info(
+            "A2A found existing subagent: agent_id=%s instance=%s (requester=%s)",
+            agent_id,
+            subagent_instance_id,
             own_instance_id,
-            len(summaries),
-            summaries,
-        )
-        raise A2AError(
-            f"No pre-provisioned SUB_AGENT instance found with agentId={agent_id!r}. "
-            f"Check orchestrator Registry entry's Agent Dependencies extension. "
-            f"Available: {summaries}"
         )
 
-    logger.info(
-        "A2A discovered subagent: agent_id=%s instance=%s (requester=%s)",
-        agent_id,
-        subagent_instance_id,
-        own_instance_id,
-    )
-
-    # 2. Dispatch the A2A message with the SDK's canonical envelope.
+    # 3. Dispatch the A2A message with the SDK's canonical envelope.
     a2a_message = {
         "role": "agent",
         "parts": [{"kind": "text", "text": message}],
@@ -269,6 +288,11 @@ def invoke_and_wait(
             params={"message": a2a_message},
             requestContext=request_context,
         )
+        logger.info(
+            "A2A send_message OK: agent_id=%s instance=%s",
+            agent_id,
+            subagent_instance_id,
+        )
     except Exception as e:
         if tolerate_send_errors and _is_expected_send_error(e):
             logger.info(
@@ -279,6 +303,11 @@ def invoke_and_wait(
                 e,
             )
         else:
+            logger.exception(
+                "A2A send_message FAILED: agent_id=%s instance=%s",
+                agent_id,
+                subagent_instance_id,
+            )
             raise A2AError(
                 f"send_message to {agent_id} (instance={subagent_instance_id}) failed: {e}"
             ) from e
