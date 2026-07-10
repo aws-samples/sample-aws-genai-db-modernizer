@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -152,29 +153,37 @@ def invoke_and_wait(
     agent_id: str,
     message: str,
     *,
-    agent_type: str = "SUB_AGENT",
     timeout: float = 300.0,
     poll_interval: float = 2.0,
     client: Any = None,
     request_context: dict[str, Any] | None = None,
+    tolerate_send_errors: bool = True,
 ) -> dict[str, Any]:
-    """Invoke a subagent BY NAME (spawns instance atomically) and poll for terminal payload.
+    """Discover a pre-provisioned subagent BY NAME, send a message, and poll for terminal payload.
 
-    Differs from :func:`send_and_wait`: caller does not need a pre-existing
-    ``agentInstanceId``. Uses the Agentic API's ``invoke_agent`` primitive
-    which spawns a subagent instance AND delivers the initial message in one
-    atomic call.
+    The AWS Transform runtime auto-provisions subagent instances alongside
+    the orchestrator when a job is created — provided the orchestrator's
+    Registry entry declares the subagents in the ``Agent Dependencies``
+    extension. This helper discovers those pre-provisioned instances by
+    ``agentId`` (registered agent NAME) and dispatches an A2A message to
+    the matching instance.
 
     This is the primary A2A entry point for orchestrator LLM tools — the LLM
     knows subagent NAMES (from the tool's docstring), never instance IDs.
-    Instance ID resolution happens inside this helper.
+    Instance ID resolution happens inside this helper via
+    ``list_agent_instances``.
+
+    Note: this replaces an earlier (broken) implementation that used
+    ``invoke_agent``. The Agentic API's ``invoke_agent`` returns an
+    ``agentInstanceId`` but doesn't dispatch to a running container — it's
+    only valid for orchestrator/test scenarios where the runtime has
+    pre-provisioned instances via the ``agentDependencies`` mechanism.
 
     Args:
         agent_id: Registered agent name (e.g. ``"db-modernization-triage"``).
+            Must appear in the orchestrator's Registry ``agentDependencies``.
         message: JSON-serialised message text that the subagent's
             ``parse_invocation`` in ``subagent_base.py`` recognises.
-        agent_type: ``"SUB_AGENT"`` (default) or ``"ORCHESTRATOR_AGENT"`` —
-            matches the AgentType enum on the Agentic API.
         timeout: Max seconds to wait for a terminal status. Default 300s.
         poll_interval: Seconds between ``get_agent_instance`` polls.
         client: Injectable Agentic API client (mainly for tests). When
@@ -182,13 +191,16 @@ def invoke_and_wait(
         request_context: Optional requestContext dict. When None, resolves
             ``get_agent_context_from_env().to_dict()``; falls back to
             ``{}`` if the SDK env vars aren't set (e.g. local tests).
+        tolerate_send_errors: If True, ignore ``-32603`` (JSON-RPC
+            "Internal error") on ``send_message``. This is normal for
+            long-running subagents.
 
     Returns:
         Parsed dict from ``agentOutput.serializedPayload``.
 
     Raises:
-        A2AError: ``invoke_agent`` failed OR the response omitted
-            ``agentInstanceId``.
+        A2AError: ``list_agent_instances`` failed, no matching subagent
+            found, or ``send_message`` failed with an unexpected error.
         A2ATimeoutError: Terminal status not reached within ``timeout``.
         A2AFailedError: Subagent reported ``"FAILED"`` status.
         A2APayloadError: ``agentOutput.serializedPayload`` is missing,
@@ -196,33 +208,63 @@ def invoke_and_wait(
     """
     client = _resolve_client(client)
     request_context = _resolve_request_context(request_context)
+    own_instance_id = request_context.get("agentInstanceId") or ""
 
-    # 1. Spawn instance + deliver initial message atomically.
+    # 1. Discover pre-provisioned subagent instance by name.
     try:
-        response = client.invoke_agent(
-            agentId=agent_id,
-            agentType=agent_type,
-            inputPayload={"serializedPayload": message},
+        list_resp = client.list_agent_instances(
             requestContext=request_context,
+            agentFilter={"requesterAgentInstanceId": own_instance_id},
         )
     except Exception as e:
-        raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
-
-    subagent_instance_id = _extract_instance_id(response)
-    if not subagent_instance_id:
         raise A2AError(
-            f"invoke_agent for agent_id={agent_id!r} did not return "
-            f"agentInstanceId; response={response!r}"
+            f"list_agent_instances failed while looking for agent_id={agent_id!r}: {e}"
+        ) from e
+
+    subagent_instance_id = _find_subagent_by_agent_id(list_resp, agent_id)
+    if not subagent_instance_id:
+        summaries = _summaries_of(list_resp)
+        raise A2AError(
+            f"No pre-provisioned SUB_AGENT instance found with agentId={agent_id!r}. "
+            f"Check orchestrator Registry entry's Agent Dependencies extension. "
+            f"Available: {summaries}"
         )
 
     logger.info(
-        "A2A invoke: agent_id=%s spawned instance=%s",
+        "A2A discovered subagent: agent_id=%s instance=%s (requester=%s)",
         agent_id,
         subagent_instance_id,
+        own_instance_id,
     )
 
-    # 2. Poll get_agent_instance until COMPLETED or FAILED.
-    #    (Same loop as send_and_wait — small dup kept for isolation.)
+    # 2. Dispatch the A2A message with the SDK's canonical envelope.
+    a2a_message = {
+        "role": "agent",
+        "parts": [{"kind": "text", "text": message}],
+        "messageId": str(uuid.uuid4()),
+        "kind": "message",
+    }
+    try:
+        client.send_message(
+            agentInstanceId=subagent_instance_id,
+            params={"message": a2a_message},
+            requestContext=request_context,
+        )
+    except Exception as e:
+        if tolerate_send_errors and _is_expected_send_error(e):
+            logger.info(
+                "send_message to %s (instance=%s) returned expected -32603 "
+                "(long-running subagent, continuing to poll): %s",
+                agent_id,
+                subagent_instance_id,
+                e,
+            )
+        else:
+            raise A2AError(
+                f"send_message to {agent_id} (instance={subagent_instance_id}) failed: {e}"
+            ) from e
+
+    # 3. Poll get_agent_instance until COMPLETED or FAILED.
     start = time.monotonic()
     while True:
         elapsed = time.monotonic() - start
@@ -355,6 +397,46 @@ def _extract_instance_id(response: Any) -> str:
     return str(getattr(response, "agentInstanceId", "") or "")
 
 
+# Terminal / unusable states — a subagent in one of these can't accept new work.
+_UNUSABLE_STATUSES = frozenset({"SHUTDOWN", "FAILED", "STOPPED", "STOPPING"})
+
+
+def _summaries_of(list_response: Any) -> list[dict[str, Any]]:
+    """Return the ``agentInstanceSummaries`` list from a ``list_agent_instances`` response."""
+    if isinstance(list_response, dict):
+        result = list_response.get("agentInstanceSummaries") or []
+    else:
+        result = getattr(list_response, "agentInstanceSummaries", None) or []
+    return list(result)
+
+
+def _find_subagent_by_agent_id(list_response: Any, agent_id: str) -> str:
+    """Return the ``agentInstanceId`` of a matching SUB_AGENT from list_agent_instances.
+
+    Filters ``agentInstanceSummaries`` for entries where:
+      * ``agentType == "SUB_AGENT"``
+      * ``agentId == agent_id``  (the registered agent NAME)
+      * ``agentInstanceStatus`` is NOT in ``_UNUSABLE_STATUSES``
+
+    Returns empty string if no match. Multiple matches → returns first
+    (deterministic since Agentic API returns in a stable order per response).
+    """
+    for summary in _summaries_of(list_response):
+        if not isinstance(summary, dict):
+            continue
+        if summary.get("agentType") != "SUB_AGENT":
+            continue
+        if summary.get("agentId") != agent_id:
+            continue
+        status = str(summary.get("agentInstanceStatus", "") or "").upper()
+        if status in _UNUSABLE_STATUSES:
+            continue
+        instance_id = summary.get("agentInstanceId")
+        if instance_id:
+            return str(instance_id)
+    return ""
+
+
 def _parse_payload(response: Any) -> dict[str, Any]:
     """Extract and parse ``agentOutput.serializedPayload`` as a JSON object."""
     if isinstance(response, dict):
@@ -418,9 +500,12 @@ class StubAgenticApiClient:
     send_side_effect: BaseException | None = None
     invoke_side_effect: BaseException | None = None
     invoke_agent_instance_id: str = "stub-instance-abc123"
+    list_agent_instances_response: dict[str, Any] = field(default_factory=dict)
+    list_side_effect: BaseException | None = None
     send_calls: list[dict[str, Any]] = field(default_factory=list)
     poll_calls: list[str] = field(default_factory=list)
     invoke_calls: list[dict[str, Any]] = field(default_factory=list)
+    list_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def send_message(
         self,
@@ -448,10 +533,11 @@ class StubAgenticApiClient:
         inputPayload: dict[str, Any] | None = None,
         requestContext: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Stub of the Agentic API's ``invoke_agent`` used by :func:`invoke_and_wait`.
+        """Stub of the Agentic API's ``invoke_agent``.
 
-        Records the call and returns ``{"agentInstanceId": ...}``. Raise
-        via ``invoke_side_effect`` to simulate failure paths.
+        Note: our production code no longer uses this (see :func:`invoke_and_wait`
+        which uses ``list_agent_instances`` + ``send_message``). Retained on the
+        stub for backward compatibility with older tests and diagnostic scripts.
         """
         self.invoke_calls.append(
             {
@@ -464,6 +550,33 @@ class StubAgenticApiClient:
         if self.invoke_side_effect is not None:
             raise self.invoke_side_effect
         return {"agentInstanceId": self.invoke_agent_instance_id}
+
+    def list_agent_instances(
+        self,
+        *,
+        requestContext: dict[str, Any] | None = None,
+        agentFilter: dict[str, Any] | None = None,
+        maxResults: int | None = None,
+        nextToken: str | None = None,
+    ) -> dict[str, Any]:
+        """Stub of the Agentic API's ``list_agent_instances``.
+
+        Returns ``list_agent_instances_response`` (typically shaped like
+        ``{"agentInstanceSummaries": [{"agentInstanceId","agentId","agentType",
+        "agentInstanceStatus"}, ...]}``). Tests configure this to simulate
+        pre-provisioned subagent instances.
+        """
+        self.list_calls.append(
+            {
+                "requestContext": requestContext,
+                "agentFilter": agentFilter,
+                "maxResults": maxResults,
+                "nextToken": nextToken,
+            }
+        )
+        if self.list_side_effect is not None:
+            raise self.list_side_effect
+        return dict(self.list_agent_instances_response)
 
     def get_agent_instance(
         self,

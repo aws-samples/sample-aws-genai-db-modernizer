@@ -391,18 +391,52 @@ class TestParsePayload:
 
 
 # =============================================================================
-# invoke_and_wait — the F8 fix (Y-3) primitive
+# invoke_and_wait — F8 (Y-3) primitive using discover + send pattern
+#
+# NOTE: earlier iteration used ``invoke_agent`` which returned a "phantom"
+# agentInstanceId that never routed to a running container. We now use the
+# canonical SDK pattern: ``list_agent_instances`` to discover pre-provisioned
+# subagents (auto-created by ATX runtime when the orchestrator's Registry
+# entry declares the subagents in its ``agentDependencies`` extension),
+# then ``send_message`` to dispatch work.
 # =============================================================================
 
 
+def _stub_with_subagents(
+    *,
+    collector_id: str = "sub-collector-1",
+    triage_id: str = "sub-triage-1",
+    other_agents: list[dict[str, Any]] | None = None,
+) -> StubAgenticApiClient:
+    """Helper: pre-configured stub with collector + triage in list_agent_instances."""
+    summaries: list[dict[str, Any]] = [
+        {
+            "agentInstanceId": collector_id,
+            "agentId": "db-modernization-collector",
+            "agentType": "SUB_AGENT",
+            "agentInstanceStatus": "RUNNING",
+        },
+        {
+            "agentInstanceId": triage_id,
+            "agentId": "db-modernization-triage",
+            "agentType": "SUB_AGENT",
+            "agentInstanceStatus": "RUNNING",
+        },
+    ]
+    if other_agents:
+        summaries.extend(other_agents)
+    return StubAgenticApiClient(
+        list_agent_instances_response={"agentInstanceSummaries": summaries},
+    )
+
+
 class TestInvokeAndWaitHappyPath:
-    """invoke_agent + poll happy paths (immediate + delayed completion)."""
+    """Discover + send + poll → terminal payload."""
 
     def test_immediate_completion_returns_payload(self) -> None:
-        client = StubAgenticApiClient(
-            status_sequence=["COMPLETED"],
-            terminal_payload={"job_id": "j1", "signals": 5},
-        )
+        client = _stub_with_subagents()
+        client.status_sequence = ["COMPLETED"]
+        client.terminal_payload = {"job_id": "j1", "signals": 5}
         payload = invoke_and_wait(
             "db-modernization-triage",
             '{"kind":"triage","job_id":"j1"}',
@@ -410,18 +444,68 @@ class TestInvokeAndWaitHappyPath:
             poll_interval=FAST_POLL,
         )
         assert payload == {"job_id": "j1", "signals": 5}
-        assert len(client.invoke_calls) == 1
-        assert client.invoke_calls[0]["agentId"] == "db-modernization-triage"
-        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"
-        assert client.invoke_calls[0]["inputPayload"] == {
-            "serializedPayload": '{"kind":"triage","job_id":"j1"}',
+
+    def test_no_invoke_agent_call_ever(self) -> None:
+        """invoke_and_wait now uses list+send, not invoke_agent."""
+        client = _stub_with_subagents()
+        client.status_sequence = ["COMPLETED"]
+        invoke_and_wait("db-modernization-triage", "x", client=client, poll_interval=FAST_POLL)
+        assert client.invoke_calls == []  # invoke_agent must NOT be called
+
+    def test_discovers_subagent_by_agent_id(self) -> None:
+        client = _stub_with_subagents(collector_id="collector-99", triage_id="triage-88")
+        client.status_sequence = ["COMPLETED"]
+        invoke_and_wait("db-modernization-triage", "x", client=client, poll_interval=FAST_POLL)
+        # list_agent_instances called once with the orchestrator's own id as filter
+        assert len(client.list_calls) == 1
+        # send_message + poll target the DISCOVERED triage instance id
+        assert len(client.send_calls) == 1
+        assert client.send_calls[0]["agentInstanceId"] == "triage-88"
+        assert all(pid == "triage-88" for pid in client.poll_calls)
+
+    def test_sends_canonical_a2a_message_envelope(self) -> None:
+        client = _stub_with_subagents()
+        client.status_sequence = ["COMPLETED"]
+        invoke_and_wait(
+            "db-modernization-collector",
+            "hello",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        msg = client.send_calls[0]["params"]["message"]
+        assert msg["role"] == "agent"
+        assert msg["kind"] == "message"
+        assert msg["parts"] == [{"kind": "text", "text": "hello"}]
+        # messageId is a fresh UUID string
+        assert isinstance(msg["messageId"], str)
+        assert len(msg["messageId"]) >= 32
+
+    def test_request_context_threaded_to_list_send_poll(self) -> None:
+        ctx = {
+            "workspaceId": "ws-1",
+            "jobId": "j-1",
+            "authorizationToken": "tok",
+            "agentInstanceId": "orchestrator-me",
         }
+        client = _stub_with_subagents()
+        client.status_sequence = ["COMPLETED"]
+        invoke_and_wait(
+            "db-modernization-triage",
+            "x",
+            client=client,
+            request_context=ctx,
+            poll_interval=FAST_POLL,
+        )
+        assert client.list_calls[0]["requestContext"] == ctx
+        assert client.list_calls[0]["agentFilter"] == {
+            "requesterAgentInstanceId": "orchestrator-me"
+        }
+        assert client.send_calls[0]["requestContext"] == ctx
 
     def test_delayed_completion_polls_multiple_times(self) -> None:
-        client = StubAgenticApiClient(
-            status_sequence=["STARTING", "RUNNING", "RUNNING", "COMPLETED"],
-            terminal_payload={"done": True},
-        )
+        client = _stub_with_subagents()
+        client.status_sequence = ["STARTING", "RUNNING", "RUNNING", "COMPLETED"]
+        client.terminal_payload = {"done": True}
         payload = invoke_and_wait(
             "db-modernization-triage",
             "hello",
@@ -430,64 +514,32 @@ class TestInvokeAndWaitHappyPath:
         )
         assert payload == {"done": True}
         assert len(client.poll_calls) == 4
-        # All polls address the SAME agentInstanceId that invoke_agent returned
-        assert all(pid == client.invoke_agent_instance_id for pid in client.poll_calls)
 
-    def test_no_send_message_call_ever(self) -> None:
-        """invoke_and_wait uses invoke_agent, not send_message."""
-        client = StubAgenticApiClient(
-            status_sequence=["COMPLETED"],
-            terminal_payload={},
+    def test_send_error_minus32603_tolerated(self) -> None:
+        """The -32603 error on send_message is normal for long-running subagents."""
+        client = _stub_with_subagents()
+        client.status_sequence = ["COMPLETED"]
+        client.send_side_effect = RuntimeError(
+            "JSON-RPC error code: -32603, message: Internal error"
         )
-        invoke_and_wait("db-modernization-collector", "x", client=client, poll_interval=FAST_POLL)
-        assert client.send_calls == []  # send_message never called
-
-    def test_agent_type_override(self) -> None:
-        client = StubAgenticApiClient(
-            status_sequence=["COMPLETED"],
-            terminal_payload={"ok": True},
-        )
-        invoke_and_wait(
-            "db-modernization-orchestrator",
-            "x",
-            agent_type="ORCHESTRATOR_AGENT",
-            client=client,
-            poll_interval=FAST_POLL,
-        )
-        assert client.invoke_calls[0]["agentType"] == "ORCHESTRATOR_AGENT"
-
-    def test_default_agent_type_is_sub_agent(self) -> None:
-        client = StubAgenticApiClient(
-            status_sequence=["COMPLETED"],
-            terminal_payload={},
-        )
-        invoke_and_wait("db-modernization-triage", "x", client=client, poll_interval=FAST_POLL)
-        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"
-
-    def test_request_context_threaded_to_invoke_and_poll(self) -> None:
-        ctx = {"workspaceId": "ws-1", "jobId": "j-1", "authorizationToken": "tok"}
-        client = StubAgenticApiClient(
-            status_sequence=["COMPLETED"],
-            terminal_payload={},
-        )
-        invoke_and_wait(
+        payload = invoke_and_wait(
             "db-modernization-triage",
             "x",
             client=client,
-            request_context=ctx,
             poll_interval=FAST_POLL,
         )
-        assert client.invoke_calls[0]["requestContext"] == ctx
+        # Even though send raised, we continued to poll and got the payload
+        assert payload == {}
 
 
-class TestInvokeAndWaitFailurePaths:
-    """invoke_agent errors, missing instance id, subagent FAILED, timeout."""
+class TestInvokeAndWaitDiscoveryFailures:
+    """No matching subagent, unusable status, list_agent_instances error."""
 
-    def test_invoke_agent_raises_wrapped_as_a2a_error(self) -> None:
-        client = StubAgenticApiClient(invoke_side_effect=RuntimeError("boom"))
-        with pytest.raises(
-            A2AError, match="invoke_agent failed for agent_id='db-modernization-triage'"
-        ):
+    def test_empty_list_raises(self) -> None:
+        client = StubAgenticApiClient(
+            list_agent_instances_response={"agentInstanceSummaries": []},
+        )
+        with pytest.raises(A2AError, match="No pre-provisioned SUB_AGENT instance found"):
             invoke_and_wait(
                 "db-modernization-triage",
                 "x",
@@ -495,21 +547,72 @@ class TestInvokeAndWaitFailurePaths:
                 poll_interval=FAST_POLL,
             )
 
-    def test_invoke_agent_missing_instance_id_raises(self) -> None:
-        client = StubAgenticApiClient(invoke_agent_instance_id="")
-        with pytest.raises(A2AError, match="did not return agentInstanceId"):
+    def test_wrong_agent_id_raises(self) -> None:
+        client = _stub_with_subagents()
+        with pytest.raises(A2AError, match="db-modernization-analysis"):
+            invoke_and_wait(
+                "db-modernization-analysis",  # not in the list
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_unusable_status_skipped(self) -> None:
+        """A subagent in SHUTDOWN state should NOT be picked."""
+        client = _stub_with_subagents()
+        # Mutate — set triage to SHUTDOWN
+        client.list_agent_instances_response["agentInstanceSummaries"][1][
+            "agentInstanceStatus"
+        ] = "SHUTDOWN"
+        with pytest.raises(A2AError, match="No pre-provisioned SUB_AGENT instance"):
             invoke_and_wait(
                 "db-modernization-triage",
                 "x",
                 client=client,
                 poll_interval=FAST_POLL,
+            )
+
+    def test_list_agent_instances_error_wrapped(self) -> None:
+        client = StubAgenticApiClient(list_side_effect=RuntimeError("boom"))
+        with pytest.raises(A2AError, match="list_agent_instances failed"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+
+class TestInvokeAndWaitDispatchFailures:
+    """send_message failure, FAILED status, timeout, poll error."""
+
+    def test_send_message_unexpected_error_wrapped(self) -> None:
+        client = _stub_with_subagents()
+        client.send_side_effect = RuntimeError("network unreachable")
+        with pytest.raises(A2AError, match="send_message .* failed"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_send_error_intolerance_flag(self) -> None:
+        client = _stub_with_subagents()
+        client.send_side_effect = RuntimeError("code: -32603")
+        with pytest.raises(A2AError, match="send_message"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+                tolerate_send_errors=False,
             )
 
     def test_failed_status_raises_with_reason(self) -> None:
-        client = StubAgenticApiClient(
-            status_sequence=["FAILED"],
-            failure_reason="downstream error",
-        )
+        client = _stub_with_subagents()
+        client.status_sequence = ["FAILED"]
+        client.failure_reason = "downstream error"
         with pytest.raises(A2AFailedError, match="downstream error"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -519,7 +622,8 @@ class TestInvokeAndWaitFailurePaths:
             )
 
     def test_failed_status_without_reason(self) -> None:
-        client = StubAgenticApiClient(status_sequence=["FAILED"], failure_reason="")
+        client = _stub_with_subagents()
+        client.status_sequence = ["FAILED"]
         with pytest.raises(A2AFailedError, match="<no reason>"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -529,7 +633,8 @@ class TestInvokeAndWaitFailurePaths:
             )
 
     def test_timeout_when_status_never_terminal(self) -> None:
-        client = StubAgenticApiClient(status_sequence=["RUNNING"])  # repeats forever
+        client = _stub_with_subagents()
+        client.status_sequence = ["RUNNING"]  # repeats forever
         with pytest.raises(A2ATimeoutError, match="did not reach terminal status"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -539,12 +644,23 @@ class TestInvokeAndWaitFailurePaths:
                 poll_interval=FAST_POLL,
             )
 
-    def test_get_agent_instance_error_wrapped_as_a2a_error(self) -> None:
-        class BrokenClient(StubAgenticApiClient):
+    def test_get_agent_instance_error_wrapped(self) -> None:
+        class BrokenPollClient(StubAgenticApiClient):
             def get_agent_instance(self, **_kw):
                 raise RuntimeError("network broken")
 
-        client = BrokenClient(status_sequence=["COMPLETED"])
+        client = BrokenPollClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    {
+                        "agentInstanceId": "sub-1",
+                        "agentId": "db-modernization-triage",
+                        "agentType": "SUB_AGENT",
+                        "agentInstanceStatus": "RUNNING",
+                    }
+                ]
+            },
+        )
         with pytest.raises(A2AError, match="get_agent_instance failed"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -555,14 +671,25 @@ class TestInvokeAndWaitFailurePaths:
 
 
 class TestInvokeAndWaitPayloadParsing:
-    """Payload validation edge cases (missing / malformed)."""
+    """Payload validation edge cases (missing / malformed / non-dict)."""
 
     def test_missing_payload_raises(self) -> None:
         class SparseClient(StubAgenticApiClient):
             def get_agent_instance(self, **_kw):
                 return {"agentInstanceStatus": "COMPLETED", "agentOutput": {}}
 
-        client = SparseClient()
+        client = SparseClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    {
+                        "agentInstanceId": "sub-1",
+                        "agentId": "db-modernization-triage",
+                        "agentType": "SUB_AGENT",
+                        "agentInstanceStatus": "RUNNING",
+                    }
+                ]
+            }
+        )
         with pytest.raises(A2APayloadError, match="missing or empty"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -579,7 +706,18 @@ class TestInvokeAndWaitPayloadParsing:
                     "agentOutput": {"serializedPayload": "{not json"},
                 }
 
-        client = BadJsonClient()
+        client = BadJsonClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    {
+                        "agentInstanceId": "sub-1",
+                        "agentId": "db-modernization-triage",
+                        "agentType": "SUB_AGENT",
+                        "agentInstanceStatus": "RUNNING",
+                    }
+                ]
+            }
+        )
         with pytest.raises(A2APayloadError, match="not valid JSON"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -596,7 +734,18 @@ class TestInvokeAndWaitPayloadParsing:
                     "agentOutput": {"serializedPayload": json.dumps([1, 2, 3])},
                 }
 
-        client = ListPayloadClient()
+        client = ListPayloadClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    {
+                        "agentInstanceId": "sub-1",
+                        "agentId": "db-modernization-triage",
+                        "agentType": "SUB_AGENT",
+                        "agentInstanceStatus": "RUNNING",
+                    }
+                ]
+            }
+        )
         with pytest.raises(A2APayloadError, match="must be a JSON object"):
             invoke_and_wait(
                 "db-modernization-triage",
@@ -606,8 +755,84 @@ class TestInvokeAndWaitPayloadParsing:
             )
 
 
+class TestFindSubagentByAgentId:
+    """Unit tests for _find_subagent_by_agent_id + _summaries_of."""
+
+    def test_finds_matching_subagent(self) -> None:
+        resp = {
+            "agentInstanceSummaries": [
+                {
+                    "agentInstanceId": "sub-1",
+                    "agentId": "db-modernization-collector",
+                    "agentType": "SUB_AGENT",
+                    "agentInstanceStatus": "RUNNING",
+                }
+            ]
+        }
+        from src.atx_orchestrator.a2a import _find_subagent_by_agent_id
+
+        assert _find_subagent_by_agent_id(resp, "db-modernization-collector") == "sub-1"
+
+    def test_returns_empty_when_no_match(self) -> None:
+        from src.atx_orchestrator.a2a import _find_subagent_by_agent_id
+
+        assert _find_subagent_by_agent_id({"agentInstanceSummaries": []}, "any") == ""
+
+    def test_skips_orchestrator_type(self) -> None:
+        """Even if agentId matches, non-SUB_AGENT types are ignored."""
+        from src.atx_orchestrator.a2a import _find_subagent_by_agent_id
+
+        resp = {
+            "agentInstanceSummaries": [
+                {
+                    "agentInstanceId": "orch-1",
+                    "agentId": "db-modernization-collector",
+                    "agentType": "ORCHESTRATOR_AGENT",
+                    "agentInstanceStatus": "RUNNING",
+                }
+            ]
+        }
+        assert _find_subagent_by_agent_id(resp, "db-modernization-collector") == ""
+
+    def test_skips_shutdown_status(self) -> None:
+        from src.atx_orchestrator.a2a import _find_subagent_by_agent_id
+
+        resp = {
+            "agentInstanceSummaries": [
+                {
+                    "agentInstanceId": "sub-dead",
+                    "agentId": "db-modernization-collector",
+                    "agentType": "SUB_AGENT",
+                    "agentInstanceStatus": "SHUTDOWN",
+                }
+            ]
+        }
+        assert _find_subagent_by_agent_id(resp, "db-modernization-collector") == ""
+
+    def test_returns_first_match_when_multiple(self) -> None:
+        from src.atx_orchestrator.a2a import _find_subagent_by_agent_id
+
+        resp = {
+            "agentInstanceSummaries": [
+                {
+                    "agentInstanceId": "sub-a",
+                    "agentId": "db-modernization-collector",
+                    "agentType": "SUB_AGENT",
+                    "agentInstanceStatus": "RUNNING",
+                },
+                {
+                    "agentInstanceId": "sub-b",
+                    "agentId": "db-modernization-collector",
+                    "agentType": "SUB_AGENT",
+                    "agentInstanceStatus": "RUNNING",
+                },
+            ]
+        }
+        assert _find_subagent_by_agent_id(resp, "db-modernization-collector") == "sub-a"
+
+
 class TestExtractInstanceId:
-    """_extract_instance_id: dict + object accessors."""
+    """_extract_instance_id: dict + object accessors (still used defensively)."""
 
     def test_dict_with_key(self) -> None:
         assert _extract_instance_id({"agentInstanceId": "abc"}) == "abc"
@@ -618,46 +843,29 @@ class TestExtractInstanceId:
     def test_dict_with_none_value(self) -> None:
         assert _extract_instance_id({"agentInstanceId": None}) == ""
 
-    def test_object_with_attr(self) -> None:
-        class Resp:
-            agentInstanceId = "xyz"
 
-        assert _extract_instance_id(Resp()) == "xyz"
+class TestStubListAgentInstances:
+    """Stub-level tests for the new list_agent_instances method."""
 
-    def test_object_without_attr(self) -> None:
-        class Resp:
-            pass
-
-        assert _extract_instance_id(Resp()) == ""
-
-
-class TestStubAgenticApiClientInvokeAgent:
-    """Stub-level tests for the new invoke_agent method."""
-
-    def test_records_invoke_call_with_all_params(self) -> None:
-        client = StubAgenticApiClient(invoke_agent_instance_id="fake-id-1")
-        resp = client.invoke_agent(
-            agentId="agent-x",
-            agentType="SUB_AGENT",
-            inputPayload={"serializedPayload": "hi"},
-            requestContext={"workspaceId": "w1"},
+    def test_records_call(self) -> None:
+        client = StubAgenticApiClient(
+            list_agent_instances_response={"agentInstanceSummaries": [{"agentInstanceId": "x"}]}
         )
-        assert resp == {"agentInstanceId": "fake-id-1"}
-        assert client.invoke_calls == [
+        resp = client.list_agent_instances(
+            requestContext={"workspaceId": "w1"},
+            agentFilter={"requesterAgentInstanceId": "o1"},
+        )
+        assert resp == {"agentInstanceSummaries": [{"agentInstanceId": "x"}]}
+        assert client.list_calls == [
             {
-                "agentId": "agent-x",
-                "agentType": "SUB_AGENT",
-                "inputPayload": {"serializedPayload": "hi"},
                 "requestContext": {"workspaceId": "w1"},
+                "agentFilter": {"requesterAgentInstanceId": "o1"},
+                "maxResults": None,
+                "nextToken": None,
             }
         ]
 
-    def test_invoke_side_effect_raises(self) -> None:
-        client = StubAgenticApiClient(invoke_side_effect=ValueError("bad"))
+    def test_side_effect_raises(self) -> None:
+        client = StubAgenticApiClient(list_side_effect=ValueError("bad"))
         with pytest.raises(ValueError, match="bad"):
-            client.invoke_agent(agentId="a", inputPayload={"serializedPayload": ""})
-
-    def test_default_agent_type_when_not_provided(self) -> None:
-        client = StubAgenticApiClient()
-        client.invoke_agent(agentId="a", inputPayload={"serializedPayload": ""})
-        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"
+            client.list_agent_instances()
