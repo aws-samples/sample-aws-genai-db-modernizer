@@ -17,10 +17,12 @@ from src.atx_orchestrator.a2a import (
     A2APayloadError,
     A2ATimeoutError,
     StubAgenticApiClient,
+    _extract_instance_id,
     _extract_reason,
     _extract_status,
     _is_expected_send_error,
     _parse_payload,
+    invoke_and_wait,
     send_and_wait,
 )
 
@@ -386,3 +388,276 @@ class TestParsePayload:
             agentOutput = Out()
 
         assert _parse_payload(Resp()) == {"k": 1}
+
+
+# =============================================================================
+# invoke_and_wait — the F8 fix (Y-3) primitive
+# =============================================================================
+
+
+class TestInvokeAndWaitHappyPath:
+    """invoke_agent + poll happy paths (immediate + delayed completion)."""
+
+    def test_immediate_completion_returns_payload(self) -> None:
+        client = StubAgenticApiClient(
+            status_sequence=["COMPLETED"],
+            terminal_payload={"job_id": "j1", "signals": 5},
+        )
+        payload = invoke_and_wait(
+            "db-modernization-triage",
+            '{"kind":"triage","job_id":"j1"}',
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        assert payload == {"job_id": "j1", "signals": 5}
+        assert len(client.invoke_calls) == 1
+        assert client.invoke_calls[0]["agentId"] == "db-modernization-triage"
+        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"
+        assert client.invoke_calls[0]["inputPayload"] == {
+            "serializedPayload": '{"kind":"triage","job_id":"j1"}',
+        }
+
+    def test_delayed_completion_polls_multiple_times(self) -> None:
+        client = StubAgenticApiClient(
+            status_sequence=["STARTING", "RUNNING", "RUNNING", "COMPLETED"],
+            terminal_payload={"done": True},
+        )
+        payload = invoke_and_wait(
+            "db-modernization-triage",
+            "hello",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        assert payload == {"done": True}
+        assert len(client.poll_calls) == 4
+        # All polls address the SAME agentInstanceId that invoke_agent returned
+        assert all(pid == client.invoke_agent_instance_id for pid in client.poll_calls)
+
+    def test_no_send_message_call_ever(self) -> None:
+        """invoke_and_wait uses invoke_agent, not send_message."""
+        client = StubAgenticApiClient(
+            status_sequence=["COMPLETED"],
+            terminal_payload={},
+        )
+        invoke_and_wait("db-modernization-collector", "x", client=client, poll_interval=FAST_POLL)
+        assert client.send_calls == []  # send_message never called
+
+    def test_agent_type_override(self) -> None:
+        client = StubAgenticApiClient(
+            status_sequence=["COMPLETED"],
+            terminal_payload={"ok": True},
+        )
+        invoke_and_wait(
+            "db-modernization-orchestrator",
+            "x",
+            agent_type="ORCHESTRATOR_AGENT",
+            client=client,
+            poll_interval=FAST_POLL,
+        )
+        assert client.invoke_calls[0]["agentType"] == "ORCHESTRATOR_AGENT"
+
+    def test_default_agent_type_is_sub_agent(self) -> None:
+        client = StubAgenticApiClient(
+            status_sequence=["COMPLETED"],
+            terminal_payload={},
+        )
+        invoke_and_wait("db-modernization-triage", "x", client=client, poll_interval=FAST_POLL)
+        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"
+
+    def test_request_context_threaded_to_invoke_and_poll(self) -> None:
+        ctx = {"workspaceId": "ws-1", "jobId": "j-1", "authorizationToken": "tok"}
+        client = StubAgenticApiClient(
+            status_sequence=["COMPLETED"],
+            terminal_payload={},
+        )
+        invoke_and_wait(
+            "db-modernization-triage",
+            "x",
+            client=client,
+            request_context=ctx,
+            poll_interval=FAST_POLL,
+        )
+        assert client.invoke_calls[0]["requestContext"] == ctx
+
+
+class TestInvokeAndWaitFailurePaths:
+    """invoke_agent errors, missing instance id, subagent FAILED, timeout."""
+
+    def test_invoke_agent_raises_wrapped_as_a2a_error(self) -> None:
+        client = StubAgenticApiClient(invoke_side_effect=RuntimeError("boom"))
+        with pytest.raises(
+            A2AError, match="invoke_agent failed for agent_id='db-modernization-triage'"
+        ):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_invoke_agent_missing_instance_id_raises(self) -> None:
+        client = StubAgenticApiClient(invoke_agent_instance_id="")
+        with pytest.raises(A2AError, match="did not return agentInstanceId"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_failed_status_raises_with_reason(self) -> None:
+        client = StubAgenticApiClient(
+            status_sequence=["FAILED"],
+            failure_reason="downstream error",
+        )
+        with pytest.raises(A2AFailedError, match="downstream error"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_failed_status_without_reason(self) -> None:
+        client = StubAgenticApiClient(status_sequence=["FAILED"], failure_reason="")
+        with pytest.raises(A2AFailedError, match="<no reason>"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_timeout_when_status_never_terminal(self) -> None:
+        client = StubAgenticApiClient(status_sequence=["RUNNING"])  # repeats forever
+        with pytest.raises(A2ATimeoutError, match="did not reach terminal status"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                timeout=0.05,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_get_agent_instance_error_wrapped_as_a2a_error(self) -> None:
+        class BrokenClient(StubAgenticApiClient):
+            def get_agent_instance(self, **_kw):
+                raise RuntimeError("network broken")
+
+        client = BrokenClient(status_sequence=["COMPLETED"])
+        with pytest.raises(A2AError, match="get_agent_instance failed"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+
+class TestInvokeAndWaitPayloadParsing:
+    """Payload validation edge cases (missing / malformed)."""
+
+    def test_missing_payload_raises(self) -> None:
+        class SparseClient(StubAgenticApiClient):
+            def get_agent_instance(self, **_kw):
+                return {"agentInstanceStatus": "COMPLETED", "agentOutput": {}}
+
+        client = SparseClient()
+        with pytest.raises(A2APayloadError, match="missing or empty"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_malformed_json_payload_raises(self) -> None:
+        class BadJsonClient(StubAgenticApiClient):
+            def get_agent_instance(self, **_kw):
+                return {
+                    "agentInstanceStatus": "COMPLETED",
+                    "agentOutput": {"serializedPayload": "{not json"},
+                }
+
+        client = BadJsonClient()
+        with pytest.raises(A2APayloadError, match="not valid JSON"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+    def test_non_dict_payload_raises(self) -> None:
+        class ListPayloadClient(StubAgenticApiClient):
+            def get_agent_instance(self, **_kw):
+                return {
+                    "agentInstanceStatus": "COMPLETED",
+                    "agentOutput": {"serializedPayload": json.dumps([1, 2, 3])},
+                }
+
+        client = ListPayloadClient()
+        with pytest.raises(A2APayloadError, match="must be a JSON object"):
+            invoke_and_wait(
+                "db-modernization-triage",
+                "x",
+                client=client,
+                poll_interval=FAST_POLL,
+            )
+
+
+class TestExtractInstanceId:
+    """_extract_instance_id: dict + object accessors."""
+
+    def test_dict_with_key(self) -> None:
+        assert _extract_instance_id({"agentInstanceId": "abc"}) == "abc"
+
+    def test_dict_without_key(self) -> None:
+        assert _extract_instance_id({}) == ""
+
+    def test_dict_with_none_value(self) -> None:
+        assert _extract_instance_id({"agentInstanceId": None}) == ""
+
+    def test_object_with_attr(self) -> None:
+        class Resp:
+            agentInstanceId = "xyz"
+
+        assert _extract_instance_id(Resp()) == "xyz"
+
+    def test_object_without_attr(self) -> None:
+        class Resp:
+            pass
+
+        assert _extract_instance_id(Resp()) == ""
+
+
+class TestStubAgenticApiClientInvokeAgent:
+    """Stub-level tests for the new invoke_agent method."""
+
+    def test_records_invoke_call_with_all_params(self) -> None:
+        client = StubAgenticApiClient(invoke_agent_instance_id="fake-id-1")
+        resp = client.invoke_agent(
+            agentId="agent-x",
+            agentType="SUB_AGENT",
+            inputPayload={"serializedPayload": "hi"},
+            requestContext={"workspaceId": "w1"},
+        )
+        assert resp == {"agentInstanceId": "fake-id-1"}
+        assert client.invoke_calls == [
+            {
+                "agentId": "agent-x",
+                "agentType": "SUB_AGENT",
+                "inputPayload": {"serializedPayload": "hi"},
+                "requestContext": {"workspaceId": "w1"},
+            }
+        ]
+
+    def test_invoke_side_effect_raises(self) -> None:
+        client = StubAgenticApiClient(invoke_side_effect=ValueError("bad"))
+        with pytest.raises(ValueError, match="bad"):
+            client.invoke_agent(agentId="a", inputPayload={"serializedPayload": ""})
+
+    def test_default_agent_type_when_not_provided(self) -> None:
+        client = StubAgenticApiClient()
+        client.invoke_agent(agentId="a", inputPayload={"serializedPayload": ""})
+        assert client.invoke_calls[0]["agentType"] == "SUB_AGENT"

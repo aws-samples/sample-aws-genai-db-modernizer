@@ -148,6 +148,118 @@ def send_and_wait(
         time.sleep(poll_interval)
 
 
+def invoke_and_wait(
+    agent_id: str,
+    message: str,
+    *,
+    agent_type: str = "SUB_AGENT",
+    timeout: float = 300.0,
+    poll_interval: float = 2.0,
+    client: Any = None,
+    request_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Invoke a subagent BY NAME (spawns instance atomically) and poll for terminal payload.
+
+    Differs from :func:`send_and_wait`: caller does not need a pre-existing
+    ``agentInstanceId``. Uses the Agentic API's ``invoke_agent`` primitive
+    which spawns a subagent instance AND delivers the initial message in one
+    atomic call.
+
+    This is the primary A2A entry point for orchestrator LLM tools — the LLM
+    knows subagent NAMES (from the tool's docstring), never instance IDs.
+    Instance ID resolution happens inside this helper.
+
+    Args:
+        agent_id: Registered agent name (e.g. ``"db-modernization-triage"``).
+        message: JSON-serialised message text that the subagent's
+            ``parse_invocation`` in ``subagent_base.py`` recognises.
+        agent_type: ``"SUB_AGENT"`` (default) or ``"ORCHESTRATOR_AGENT"`` —
+            matches the AgentType enum on the Agentic API.
+        timeout: Max seconds to wait for a terminal status. Default 300s.
+        poll_interval: Seconds between ``get_agent_instance`` polls.
+        client: Injectable Agentic API client (mainly for tests). When
+            None, resolves ``get_agentic_api_client()`` from the SDK.
+        request_context: Optional requestContext dict. When None, resolves
+            ``get_agent_context_from_env().to_dict()``; falls back to
+            ``{}`` if the SDK env vars aren't set (e.g. local tests).
+
+    Returns:
+        Parsed dict from ``agentOutput.serializedPayload``.
+
+    Raises:
+        A2AError: ``invoke_agent`` failed OR the response omitted
+            ``agentInstanceId``.
+        A2ATimeoutError: Terminal status not reached within ``timeout``.
+        A2AFailedError: Subagent reported ``"FAILED"`` status.
+        A2APayloadError: ``agentOutput.serializedPayload`` is missing,
+            empty, invalid JSON, or not a JSON object.
+    """
+    client = _resolve_client(client)
+    request_context = _resolve_request_context(request_context)
+
+    # 1. Spawn instance + deliver initial message atomically.
+    try:
+        response = client.invoke_agent(
+            agentId=agent_id,
+            agentType=agent_type,
+            inputPayload={"serializedPayload": message},
+            requestContext=request_context,
+        )
+    except Exception as e:
+        raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
+
+    subagent_instance_id = _extract_instance_id(response)
+    if not subagent_instance_id:
+        raise A2AError(
+            f"invoke_agent for agent_id={agent_id!r} did not return "
+            f"agentInstanceId; response={response!r}"
+        )
+
+    logger.info(
+        "A2A invoke: agent_id=%s spawned instance=%s",
+        agent_id,
+        subagent_instance_id,
+    )
+
+    # 2. Poll get_agent_instance until COMPLETED or FAILED.
+    #    (Same loop as send_and_wait — small dup kept for isolation.)
+    start = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed > timeout:
+            raise A2ATimeoutError(
+                f"Subagent {agent_id} (instance={subagent_instance_id}) "
+                f"did not reach terminal status within {timeout}s (waited {elapsed:.1f}s)"
+            )
+
+        try:
+            resp = client.get_agent_instance(
+                agentInstanceId=subagent_instance_id,
+                requestContext=request_context,
+            )
+        except Exception as e:
+            raise A2AError(f"get_agent_instance failed: {e}") from e
+
+        status = _extract_status(resp)
+        if status == "COMPLETED":
+            return _parse_payload(resp)
+        if status == "FAILED":
+            reason = _extract_reason(resp)
+            raise A2AFailedError(
+                f"Subagent {agent_id} (instance={subagent_instance_id}) "
+                f"FAILED: {reason or '<no reason>'}"
+            )
+
+        logger.debug(
+            "Subagent %s (instance=%s) status=%s, waited %.1fs — continuing to poll",
+            agent_id,
+            subagent_instance_id,
+            status,
+            elapsed,
+        )
+        time.sleep(poll_interval)
+
+
 # =============================================================================
 # Internal helpers (extracted for readability + focused testing)
 
@@ -236,6 +348,13 @@ def _extract_reason(response: Any) -> str:
     return str(getattr(response, "statusReason", "") or "")
 
 
+def _extract_instance_id(response: Any) -> str:
+    """Get ``agentInstanceId`` from ``invoke_agent`` response (dict or object)."""
+    if isinstance(response, dict):
+        return str(response.get("agentInstanceId", "") or "")
+    return str(getattr(response, "agentInstanceId", "") or "")
+
+
 def _parse_payload(response: Any) -> dict[str, Any]:
     """Extract and parse ``agentOutput.serializedPayload`` as a JSON object."""
     if isinstance(response, dict):
@@ -297,8 +416,11 @@ class StubAgenticApiClient:
     terminal_payload: dict[str, Any] = field(default_factory=dict)
     failure_reason: str = ""
     send_side_effect: BaseException | None = None
+    invoke_side_effect: BaseException | None = None
+    invoke_agent_instance_id: str = "stub-instance-abc123"
     send_calls: list[dict[str, Any]] = field(default_factory=list)
     poll_calls: list[str] = field(default_factory=list)
+    invoke_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def send_message(
         self,
@@ -317,6 +439,31 @@ class StubAgenticApiClient:
         if self.send_side_effect is not None:
             raise self.send_side_effect
         return {"messageId": "stub-msg-1"}
+
+    def invoke_agent(
+        self,
+        *,
+        agentId: str,
+        agentType: str = "SUB_AGENT",
+        inputPayload: dict[str, Any] | None = None,
+        requestContext: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Stub of the Agentic API's ``invoke_agent`` used by :func:`invoke_and_wait`.
+
+        Records the call and returns ``{"agentInstanceId": ...}``. Raise
+        via ``invoke_side_effect`` to simulate failure paths.
+        """
+        self.invoke_calls.append(
+            {
+                "agentId": agentId,
+                "agentType": agentType,
+                "inputPayload": inputPayload,
+                "requestContext": requestContext,
+            }
+        )
+        if self.invoke_side_effect is not None:
+            raise self.invoke_side_effect
+        return {"agentInstanceId": self.invoke_agent_instance_id}
 
     def get_agent_instance(
         self,
