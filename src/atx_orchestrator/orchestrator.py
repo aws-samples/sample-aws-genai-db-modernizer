@@ -20,14 +20,11 @@ from src.atx_orchestrator.tools import (
     get_job_status,
     get_synthesis_report,
     run_assignment,
-    run_collect,
-    run_collect_and_triage,
     run_collect_via_a2a,
     run_full_assessment,
     run_reality_check,
     run_schema_design,
     run_synthesis,
-    run_triage,
     run_triage_via_a2a,
 )
 
@@ -43,36 +40,31 @@ You are a Database Modernization Assessment coordinator for AWS Transform.
 Your job is to help customers understand which AWS-native databases are the best fit
 for their existing relational workloads, and to produce a detailed migration plan.
 
-You have access to a fully deterministic assessment pipeline:
-  1. run_collect_and_triage   — parse schema + queries, detect workload signals
-  2. run_assignment           — score queries against candidate engines
-  3. run_reality_check        — eliminate redundant engines, detect architectural patterns
-  4. run_schema_design        — design target schemas per engine
-  5. run_synthesis            — produce final report with TCO and recommendations
-  6. run_full_assessment      — run all phases end-to-end in one call
-  7. get_job_status           — check current phase progression
-  8. get_synthesis_report     — read the completed report
+You have access to a fully deterministic assessment pipeline. The Collector and
+Triage phases run in DEPLOYED SUBAGENTS via the AWS Transform A2A (agent-to-agent)
+protocol — you invoke them by name, and the runtime handles instance spawning
+and message dispatch. Later phases run in-process for now.
 
-Two invocation paths are available for Collect and Triage:
-
-  * IN-PROCESS (default for local dev / demos):
-      run_collect, run_triage, run_collect_and_triage — run the phase inside
-      this orchestrator container. Fast, no A2A round-trip.
-
-  * A2A (default when running under AWS Transform with deployed subagents):
-      run_collect_via_a2a, run_triage_via_a2a — send an A2A message to a
-      deployed subagent and poll for completion. These require a
-      subagent_instance_id argument (agentInstanceId of the deployed
-      subagent).
+  1. run_collect_via_a2a       — invokes the db-modernization-collector subagent
+                                 to parse schema + queries from an offline JSON.
+  2. run_triage_via_a2a        — invokes the db-modernization-triage subagent
+                                 to detect workload signals + select candidate engines.
+  3. run_assignment            — score queries against candidate engines.
+  4. run_reality_check         — eliminate redundant engines, detect architectural
+                                 patterns.
+  5. run_schema_design         — design target schemas per engine.
+  6. run_synthesis             — produce final report with TCO and recommendations.
+  7. run_full_assessment       — run all phases end-to-end in one call.
+  8. get_job_status            — check current phase progression.
+  9. get_synthesis_report      — read the completed report.
 
 Subagent discovery:
   discover_subagents — list subagents registered in the AWS Transform Agent
-  Registry with their capabilities and versions. Use this to describe what
-  subagents are available. Note that the returned entries describe agent
-  VERSIONS (registered capability profiles) — the concrete
-  subagent_instance_id used to invoke a deployed subagent is provided by
-  the customer or the AWS Transform runtime context, not by
-  discover_subagents.
+  Registry with their capabilities and versions. Useful for describing what
+  subagents are available. Note that you never need to pass instance IDs
+  yourself — the A2A tools resolve subagents BY NAME (e.g.
+  "db-modernization-collector") and the AWS Transform runtime spawns instances
+  transparently.
 
 Workflow:
   - When a customer starts a new assessment, ask for: job_id and database_name.
@@ -84,15 +76,14 @@ Workflow:
 
 Key points:
   - The pipeline is deterministic — no LLM decisions are made inside it.
-  - Schema + query data must already be collected into the artifact store before
-    you start. If it's not there, tell the customer to run the collector first.
+  - Schema + query data must already be uploaded to the customer's artifact
+    store before you start (an ``offline-collection.json`` file in S3). The
+    Collector subagent ingests this file. If it's not there, tell the
+    customer to upload it first.
   - Always surface the synthesis report at the end.
 """
 
 PIPELINE_TOOLS = [
-    run_collect,
-    run_triage,
-    run_collect_and_triage,
     run_collect_via_a2a,
     run_triage_via_a2a,
     run_assignment,

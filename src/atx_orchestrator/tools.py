@@ -4,17 +4,17 @@ Each tool maps to a phase (or a group of phases) in the LocalOrchestrator.
 The orchestrator LLM calls these — no Bedrock happens inside the pipeline
 itself unless the project's own LLM-optional phases are enabled.
 
-Two invocation paths are provided for the Collect and Triage phases:
+Y-3 (F8 fix): The Collect and Triage phases run in DEPLOYED SUBAGENTS via
+the AWS Transform A2A protocol. The LLM invokes ``run_collect_via_a2a`` /
+``run_triage_via_a2a`` and the tools resolve the subagent BY NAME using
+``a2a.invoke_and_wait`` — no ``subagent_instance_id`` is needed at the LLM
+layer.
 
-- ``run_collect`` / ``run_triage`` — in-process (calls ``core.run_*_core``
-  directly). Fast, no A2A round-trip, good for local dev + regression tests.
-- ``run_collect_via_a2a`` / ``run_triage_via_a2a`` — send a message to a
-  deployed subagent over the AWS Transform Agentic API and poll for
-  completion. This is the "true" multi-agent architecture — use it when
-  running under AWS Transform with deployed subagents.
-
-The A2A variants require a ``subagent_instance_id`` (typically obtained via
-``discover_subagents``) and rely on ``src.atx_orchestrator.a2a.send_and_wait``.
+The in-process helpers ``run_collect`` / ``run_triage`` /
+``run_collect_and_triage`` remain defined for direct programmatic use by
+``scripts/atx_*_test.py`` local tests, but they are NOT registered in
+``PIPELINE_TOOLS`` and are therefore invisible to the LLM. This prevents
+silent fallback to the monolithic path when a deployed subagent misbehaves.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import logging
 
 from strands.tools import tool
 
-from src.atx_orchestrator.a2a import A2AError, send_and_wait
+from src.atx_orchestrator.a2a import A2AError, invoke_and_wait
 from src.atx_orchestrator.core import ingest_offline_collection as _ingest_offline_collection
 from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
@@ -389,32 +389,35 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
 
 # =============================================================================
 # A2A-wired variants — invoke deployed subagents over the AWS Transform Agentic
-# API instead of running the pipeline in-process. These require the subagent
-# to already be deployed to Bedrock AgentCore and registered in the AWS
-# Transform Agent Registry. Use ``discover_subagents`` to obtain the
-# ``subagent_instance_id`` argument. Payload shape matches what
-# ``subagent_base.parse_invocation`` accepts (a JSON object).
+# API. Under Y-3 (F8 fix), these are the ONLY variants registered in
+# PIPELINE_TOOLS. The LLM invokes them by phase name (``run_collect_via_a2a`` /
+# ``run_triage_via_a2a``); the tools resolve the subagent BY NAME
+# (``db-modernization-collector`` / ``db-modernization-triage``) via
+# ``a2a.invoke_and_wait``. Subagents must already be deployed to Bedrock
+# AgentCore and registered in the AWS Transform Agent Registry with matching
+# names. Payload shape matches what ``subagent_base.parse_invocation`` accepts.
 
 
 @tool
 def run_collect_via_a2a(
-    subagent_instance_id: str,
     job_id: str,
     database_name: str,
     input_key: str = "",
 ) -> str:
     """Run the Collector phase by invoking a deployed collector subagent over A2A.
 
-    Sends a JSON-encoded instruction to the subagent and polls the AWS Transform
-    Agentic API until the subagent reports COMPLETED (or FAILED). The subagent's
-    ``agent_output`` payload is returned as a JSON string.
+    Uses the AWS Transform Agentic API's ``invoke_agent`` primitive to spawn
+    a fresh collector subagent instance BY NAME and deliver the initial
+    message atomically. Polls until the subagent reports COMPLETED (or
+    FAILED). The subagent's ``agent_output`` payload is returned as a JSON
+    string.
 
-    Prefer this over ``run_collect`` when running under AWS Transform with the
-    collector subagent deployed. Use ``discover_subagents`` first to obtain
-    ``subagent_instance_id``.
+    This is the ONLY collector tool available to the orchestrator — the
+    in-process variant was removed to prevent silent fallback. The subagent
+    must be deployed and its registered NAME must be
+    ``db-modernization-collector``.
 
     Args:
-        subagent_instance_id: agentInstanceId of the deployed collector subagent.
         job_id: Unique job identifier.
         database_name: Source database name used to namespace artifacts.
         input_key: Optional ArtifactStore key of the raw offline collection JSON.
@@ -423,9 +426,10 @@ def run_collect_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed (timeout, FAILED status, network, etc.).
     """
+    agent_id = "db-modernization-collector"
     logger.info(
-        "ATX: collect via A2A subagent=%s job_id=%s db=%s",
-        subagent_instance_id,
+        "ATX: collect via A2A agent=%s job_id=%s db=%s",
+        agent_id,
         job_id,
         database_name,
     )
@@ -437,14 +441,14 @@ def run_collect_via_a2a(
         }
     )
     try:
-        payload = send_and_wait(subagent_instance_id, message)
+        payload = invoke_and_wait(agent_id, message)
     except A2AError as e:
         return json.dumps(
             {
                 "error": f"A2A collect failed: {e}",
                 "error_type": type(e).__name__,
                 "job_id": job_id,
-                "subagent_instance_id": subagent_instance_id,
+                "agent_id": agent_id,
             }
         )
     return json.dumps(payload)
@@ -452,7 +456,6 @@ def run_collect_via_a2a(
 
 @tool
 def run_triage_via_a2a(
-    subagent_instance_id: str,
     job_id: str,
     database_name: str,
 ) -> str:
@@ -460,14 +463,15 @@ def run_triage_via_a2a(
 
     Requires the Collector phase to have run first (so the subagent can read
     ``collector/output.json`` from shared artifact storage — S3 in the deployed
-    case). Sends a JSON-encoded instruction and polls until terminal status.
+    case). Uses ``invoke_agent`` to spawn a fresh triage subagent instance
+    BY NAME and deliver the initial message atomically. Polls until terminal
+    status.
 
-    Prefer this over ``run_triage`` when running under AWS Transform with the
-    triage subagent deployed. Use ``discover_subagents`` first to obtain
-    ``subagent_instance_id``.
+    This is the ONLY triage tool available to the orchestrator — the in-process
+    variant was removed to prevent silent fallback. The subagent must be
+    deployed and its registered NAME must be ``db-modernization-triage``.
 
     Args:
-        subagent_instance_id: agentInstanceId of the deployed triage subagent.
         job_id: Unique job identifier.
         database_name: Source database name.
 
@@ -475,9 +479,10 @@ def run_triage_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed.
     """
+    agent_id = "db-modernization-triage"
     logger.info(
-        "ATX: triage via A2A subagent=%s job_id=%s db=%s",
-        subagent_instance_id,
+        "ATX: triage via A2A agent=%s job_id=%s db=%s",
+        agent_id,
         job_id,
         database_name,
     )
@@ -488,14 +493,14 @@ def run_triage_via_a2a(
         }
     )
     try:
-        payload = send_and_wait(subagent_instance_id, message)
+        payload = invoke_and_wait(agent_id, message)
     except A2AError as e:
         return json.dumps(
             {
                 "error": f"A2A triage failed: {e}",
                 "error_type": type(e).__name__,
                 "job_id": job_id,
-                "subagent_instance_id": subagent_instance_id,
+                "agent_id": agent_id,
             }
         )
     return json.dumps(payload)

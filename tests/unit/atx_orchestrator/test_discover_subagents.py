@@ -20,9 +20,9 @@ class TestDiscoverSubagentsRegistration:
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
         assert "discover_subagents" in tool_names
 
-    def test_pipeline_tools_count_is_13(self) -> None:
-        """10 in-process + 2 A2A + 1 discovery = 13 tools total."""
-        assert len(PIPELINE_TOOLS) == 13
+    def test_pipeline_tools_count_is_10(self) -> None:
+        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status + 1 discovery = 10."""
+        assert len(PIPELINE_TOOLS) == 10
 
 
 class TestDiscoverSubagentsCallable:
