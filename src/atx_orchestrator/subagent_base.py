@@ -23,13 +23,52 @@ logger = logging.getLogger(__name__)
 
 
 def extract_text(message) -> str:
-    """Extract user text from a ProcessMessageRequest or A2A dict/str."""
+    """Extract user text from a ProcessMessageRequest or A2A dict/str.
+
+    Handles multiple delivery shapes empirically observed:
+    - ``ProcessMessageRequest.message`` is a raw string with our text → return it
+    - ``ProcessMessageRequest.message`` is a JSON string of a list like
+      ``[{"text": "<inner>", "type": "text"}]`` — the SDK's serialized form of
+      an A2A message's ``parts`` array. Unwrap and return the inner ``text``.
+    - ``message`` (or ``.message``) is a dict with ``parts=[{"text": ..., "kind": "text"}]``
+      — original A2A form. Return ``parts[0]["text"]``.
+    - Anything else → ``str(msg)``.
+    """
+    # DIAG A16.10: log the RAW incoming message to see what the SDK actually
+    # delivers when the orchestrator's invoke_and_wait -> send_message flow
+    # is used. Test-8 + test-9 showed parse_invocation gets empty job_id
+    # despite our envelope having the right text.
+    logger.info("DIAG extract_text got message type=%s repr=%r", type(message).__name__, message)
     msg = getattr(message, "message", message)
+    logger.info("DIAG after getattr .message: type=%s repr=%r", type(msg).__name__, msg)
+
+    if isinstance(msg, str):
+        # SDK sometimes delivers the parts array as a JSON string. Try to
+        # unwrap `[{"text": "<payload>", "type": "text"}]` shape.
+        try:
+            parsed = json.loads(msg)
+            if isinstance(parsed, list) and parsed:
+                first = parsed[0]
+                if isinstance(first, dict) and "text" in first:
+                    inner = str(first["text"])
+                    logger.info(
+                        "DIAG unwrapped JSON-list-string shape → inner text=%r",
+                        inner[:500],
+                    )
+                    return inner
+        except json.JSONDecodeError:
+            pass
+        logger.info("DIAG non-JSON string, returning msg[:500]=%r", msg[:500])
+        return msg
+
     if isinstance(msg, dict):
         parts = msg.get("parts") or [{}]
         first = parts[0] if parts else {}
         text = first.get("text", json.dumps(msg))
+        logger.info("DIAG dict path: parts=%r first=%r text=%r", parts, first, text)
         return str(text)
+
+    logger.info("DIAG fallback str(msg)=%r", str(msg)[:500])
     return str(msg)
 
 
@@ -38,6 +77,7 @@ def parse_invocation(text: str) -> dict:
 
     Accepts a JSON object embedded in the text, or 'key: value' / 'key=value' lines.
     """
+    logger.info("DIAG parse_invocation received text=%r", text[:1000] if text else text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         try:
@@ -109,7 +149,25 @@ def make_subagent_factory(
                     summary = work_fn(params)
                     payload = json.dumps({"response": summary})
                     if manager and instance_id:
-                        manager.update_status(instance_id, "COMPLETED", agent_output=payload)
+                        # SDK's manager.update_status() passes agent_output as a
+                        # plain string, but the Agentic API's update_agent_instance
+                        # requires agentOutput to be a STRUCTURE with a
+                        # serializedPayload field. Bypass update_status and call
+                        # update_agent_instance directly with the correct shape.
+                        try:
+                            req = manager._inject_request_context(
+                                {
+                                    "agentInstanceId": instance_id,
+                                    "agentInstanceStatus": "COMPLETED",
+                                    "agentOutput": {"serializedPayload": payload},
+                                }
+                            )
+                            manager.client.update_agent_instance(**req)
+                        except Exception:  # noqa: BLE001
+                            logger.exception(
+                                "Failed to report COMPLETED status for instance=%s",
+                                instance_id,
+                            )
                     logger.info("Subagent COMPLETED: %s", summary)
                     return payload
                 except Exception as e:  # noqa: BLE001
