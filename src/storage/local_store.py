@@ -30,6 +30,16 @@ class LocalArtifactStore(ArtifactStore):
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_bytes(data)
 
+    def read_text(self, path: str) -> str:
+        return (self.base_dir / path).read_text()
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        # content_type is ignored for filesystem writes — kept for interface parity
+        del content_type
+        full_path = self.base_dir / path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content)
+
     def exists(self, path: str) -> bool:
         return (self.base_dir / path).exists()
 

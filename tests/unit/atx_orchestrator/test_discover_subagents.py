@@ -26,9 +26,10 @@ class TestDiscoverSubagentsRegistration:
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
         assert "discover_subagents" not in tool_names
 
-    def test_pipeline_tools_count_is_9(self) -> None:
-        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status = 9 (discover_subagents removed)."""
-        assert len(PIPELINE_TOOLS) == 9
+    def test_pipeline_tools_count_is_10(self) -> None:
+        """Post-A8 tool count: 3 A2A (collect + triage + analysis-dynamodb) +
+        5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
+        assert len(PIPELINE_TOOLS) == 10
 
     def test_discover_subagents_still_importable(self) -> None:
         """The function itself remains available for future re-enablement."""

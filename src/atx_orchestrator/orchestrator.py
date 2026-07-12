@@ -19,6 +19,7 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 from src.atx_orchestrator.tools import (
     get_job_status,
     get_synthesis_report,
+    run_analysis_dynamodb_via_a2a,
     run_assignment,
     run_collect_via_a2a,
     run_full_assessment,
@@ -40,23 +41,27 @@ You are a Database Modernization Assessment coordinator for AWS Transform.
 Your job is to help customers understand which AWS-native databases are the best fit
 for their existing relational workloads, and to produce a detailed migration plan.
 
-You have access to a fully deterministic assessment pipeline. The Collector and
-Triage phases run in DEPLOYED SUBAGENTS via the AWS Transform A2A (agent-to-agent)
-protocol — you invoke them by name, and the runtime handles instance spawning
-and message dispatch. Later phases run in-process for now.
+You have access to a fully deterministic assessment pipeline. The Collector,
+Triage, and DynamoDB Analysis phases run in DEPLOYED SUBAGENTS via the AWS
+Transform A2A (agent-to-agent) protocol — you invoke them by name, and the
+runtime handles instance spawning and message dispatch. Later phases run
+in-process for now.
 
-  1. run_collect_via_a2a       — invokes the db-modernization-collector subagent
-                                 to parse schema + queries from an offline JSON.
-  2. run_triage_via_a2a        — invokes the db-modernization-triage subagent
-                                 to detect workload signals + select candidate engines.
-  3. run_assignment            — score queries against candidate engines.
-  4. run_reality_check         — eliminate redundant engines, detect architectural
-                                 patterns.
-  5. run_schema_design         — design target schemas per engine.
-  6. run_synthesis             — produce final report with TCO and recommendations.
-  7. run_full_assessment       — run all phases end-to-end in one call.
-  8. get_job_status            — check current phase progression.
-  9. get_synthesis_report      — read the completed report.
+  1. run_collect_via_a2a          — invokes the db-modernization-collector subagent
+                                    to parse schema + queries from an offline JSON.
+  2. run_triage_via_a2a           — invokes the db-modernization-triage subagent
+                                    to detect workload signals + select candidate engines.
+  3. run_analysis_dynamodb_via_a2a — invokes the db-modernization-analysis-dynamodb
+                                    subagent to score every table against DynamoDB
+                                    patterns and produce cost + design recommendations.
+  4. run_assignment               — score queries against candidate engines.
+  5. run_reality_check            — eliminate redundant engines, detect architectural
+                                    patterns.
+  6. run_schema_design            — design target schemas per engine.
+  7. run_synthesis                — produce final report with TCO and recommendations.
+  8. run_full_assessment          — run all phases end-to-end in one call.
+  9. get_job_status               — check current phase progression.
+ 10. get_synthesis_report         — read the completed report.
 
 Subagent invocation:
   The A2A tools resolve subagents BY NAME (e.g. "db-modernization-collector")
@@ -83,6 +88,7 @@ Key points:
 PIPELINE_TOOLS = [
     run_collect_via_a2a,
     run_triage_via_a2a,
+    run_analysis_dynamodb_via_a2a,
     run_assignment,
     run_reality_check,
     run_schema_design,

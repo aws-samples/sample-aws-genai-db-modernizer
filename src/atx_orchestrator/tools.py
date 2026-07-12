@@ -506,3 +506,70 @@ def run_triage_via_a2a(
             }
         )
     return json.dumps(payload)
+
+
+@tool
+def run_analysis_dynamodb_via_a2a(
+    job_id: str,
+    database_name: str,
+) -> str:
+    """Run DynamoDB analysis by invoking a deployed analysis subagent over A2A.
+
+    Requires the Collector phase to have run first (so the subagent can read
+    ``collector/output.json`` from shared artifact storage — S3 in the deployed
+    case). Triage is NOT a hard prerequisite — analysis reads from collector
+    output directly and produces recommendations independently.
+
+    Uses ``invoke_agent`` to spawn a fresh analysis-dynamodb subagent instance
+    BY NAME and deliver the initial message atomically. Polls until terminal
+    status. The subagent writes 3 artifacts to S3:
+
+      - ``<db>/<job>/analysis-dynamodb/analysis.json``      — recommendations
+      - ``<db>/<job>/analysis-dynamodb/decision-trace.json`` — per-query trace
+      - ``<db>/<job>/analysis-dynamodb/er-diagram.mmd``      — Mermaid ER diagram
+
+    This is the ONLY DynamoDB analysis tool available to the orchestrator —
+    no in-process variant exists (matches the pattern from A14). The subagent
+    must be deployed and its registered NAME must be
+    ``db-modernization-analysis-dynamodb``.
+
+    Args:
+        job_id: Unique job identifier.
+        database_name: Source database name.
+
+    Returns:
+        JSON string with the subagent's completion payload (tables_analyzed,
+        confidence-band counts, estimated cost, artifact keys), or an error
+        dict if the A2A round-trip failed.
+    """
+    agent_id = "db-modernization-analysis-dynamodb"
+    logger.info(
+        "ATX: analysis-dynamodb via A2A agent=%s job_id=%s db=%s",
+        agent_id,
+        job_id,
+        database_name,
+    )
+    message = json.dumps(
+        {
+            "job_id": job_id,
+            "database_name": database_name,
+        }
+    )
+    try:
+        # 90-minute timeout: DynamoDB LLM Advisor runs Bedrock Opus 4.8 across
+        # groups of ~30 queries (~60-90 sec/group). For a 1600-query workload
+        # like Discourse that's ~55 groups → ~55-80 min end-to-end. The default
+        # 300s timeout is fine for collector/triage but far too short for the
+        # LLM-heavy analysis path.
+        payload = invoke_and_wait(agent_id, message, timeout=5400.0)
+    except A2AError as e:
+        logger.error("ATX analysis-dynamodb FAILED: %s: %s", type(e).__name__, e)
+        return json.dumps(
+            {
+                "error": f"A2A analysis-dynamodb failed: {e}",
+                "error_type": type(e).__name__,
+                "job_id": job_id,
+                "agent_id": agent_id,
+            }
+        )
+    return json.dumps(payload)

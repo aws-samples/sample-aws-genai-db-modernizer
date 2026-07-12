@@ -41,6 +41,18 @@ class S3ArtifactStore(ArtifactStore):
             ContentType="application/octet-stream",
         )
 
+    def read_text(self, path: str) -> str:
+        response = self.s3.get_object(Bucket=self.bucket, Key=path)
+        return response["Body"].read().decode("utf-8")  # type: ignore[no-any-return]
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=path,
+            Body=content.encode("utf-8"),
+            ContentType=content_type,
+        )
+
     def exists(self, path: str) -> bool:
         try:
             self.s3.head_object(Bucket=self.bucket, Key=path)

@@ -14,6 +14,7 @@ CRITICAL SDK patterns (see steering/subagent-patterns.md):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -146,7 +147,24 @@ def make_subagent_factory(
                             "Invocation must include 'job_id' and 'database_name'. "
                             f"Parsed: {params}"
                         )
-                    summary = work_fn(params)
+                    logger.info(
+                        "Subagent starting work: job_id=%s database=%s",
+                        params.get("job_id"),
+                        params.get("database_name"),
+                    )
+                    # F3 fix (F16): offload the (potentially long) sync work_fn
+                    # to a thread pool so it does NOT block Uvicorn's async
+                    # event loop. Without this, LLM-heavy work_fn calls
+                    # (analysis subagents doing 30-60min of Bedrock work) block
+                    # the /ping healthcheck endpoint for minutes, causing
+                    # AgentCore to SIGKILL the container as unresponsive.
+                    # See claude.md §97 for the full diagnostic + ATX_POC_STATE §F16.
+                    summary = await asyncio.to_thread(work_fn, params)
+                    logger.info(
+                        "Subagent work_fn returned: type=%s keys=%s",
+                        type(summary).__name__,
+                        list(summary.keys()) if isinstance(summary, dict) else "n/a",
+                    )
                     payload = json.dumps({"response": summary})
                     if manager and instance_id:
                         # SDK's manager.update_status() passes agent_output as a

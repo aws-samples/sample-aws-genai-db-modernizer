@@ -242,3 +242,104 @@ def run_collect_triage_core(
         "selected_engines": selected_engines,
         "signal_count": signal_count,
     }
+
+
+def run_analysis_dynamodb_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run DynamoDB analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-dynamodb'. Reads the collector
+    output from the ArtifactStore, constructs AnalysisInput, invokes
+    analyze_for_dynamodb, and writes 3 S3 artifacts:
+      - analysis.json         (AnalysisOutputContract, JSON)
+      - decision-trace.json   (per-query decision trace, JSON)
+      - er-diagram.mmd        (Mermaid ER diagram, plain text)
+
+    LLM mode is controlled by the LLM_MODE env var:
+      - "bedrock"  (default): calls LlmAdvisor when ENABLE_LLM_ADVISOR=true
+      - "none":               deterministic only, no Bedrock calls
+      - "external":           deterministic only, marks output as awaiting
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    # Deferred imports — avoid loading heavy analysis modules at core.py import time.
+    from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.dynamodb,
+    )
+
+    llm_mode = os.environ.get("LLM_MODE", "bedrock")
+    logger.info(
+        "ATX analysis-dynamodb starting: job_id=%s db=%s llm_mode=%s",
+        job_id,
+        database_name,
+        llm_mode,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_dynamodb(
+        analysis_input, llm_mode=llm_mode
+    )
+
+    prefix = f"{database_name}/{job_id}/analysis-dynamodb"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+    mermaid_key = f"{prefix}/er-diagram.mmd"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+    store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    # Aggregate table-recommendation counts by confidence band.
+    # Thresholds per shared scoring layer (src/tools/analysis/scoring.py):
+    #   >=80 HIGHLY_SUITABLE, >=60 SUITABLE, >=40 MARGINAL, <40 NOT_SUITABLE
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    llm_status = "unknown"
+    if isinstance(decision_trace, dict):
+        llm_status = decision_trace.get("llm_advisor", {}).get("status", "unknown")
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "dynamodb",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": llm_status,
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }

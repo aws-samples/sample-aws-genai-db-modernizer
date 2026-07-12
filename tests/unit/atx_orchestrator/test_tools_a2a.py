@@ -151,12 +151,13 @@ class TestRunTriageViaA2AErrorPaths:
 
 class TestToolsRegistered:
     def test_a2a_tools_in_pipeline_tools(self) -> None:
-        """Both A2A tools are registered."""
+        """All A2A tools are registered."""
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
         assert "run_collect_via_a2a" in tool_names
         assert "run_triage_via_a2a" in tool_names
+        assert "run_analysis_dynamodb_via_a2a" in tool_names
 
     def test_in_process_tools_removed_from_pipeline(self) -> None:
         """Y-3 refactor: in-process ``run_collect`` / ``run_triage`` /
@@ -172,8 +173,9 @@ class TestToolsRegistered:
         assert "run_triage" not in tool_names
         assert "run_collect_and_triage" not in tool_names
 
-    def test_pipeline_tools_count_is_nine(self) -> None:
-        """Post-Y-3 tool count: 2 A2A + 5 pipeline + 2 status = 9 (discover_subagents removed — SDK mock)."""
+    def test_pipeline_tools_count_is_ten(self) -> None:
+        """Post-A8 tool count: 3 A2A (collect + triage + analysis-dynamodb) +
+        5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
-        assert len(PIPELINE_TOOLS) == 9
+        assert len(PIPELINE_TOOLS) == 10

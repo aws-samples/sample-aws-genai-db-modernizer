@@ -72,7 +72,7 @@ def send_and_wait(
     subagent_instance_id: str,
     message: str,
     *,
-    timeout: float = 300.0,
+    timeout: float = 1800.0,
     poll_interval: float = 2.0,
     client: Any = None,
     request_context: dict[str, Any] | None = None,
@@ -85,7 +85,7 @@ def send_and_wait(
         message: Natural-language message text (typically a JSON blob that
             the subagent's ``parse_invocation`` in ``subagent_base.py``
             recognises).
-        timeout: Max seconds to wait for a terminal status. Default 300s.
+        timeout: Max seconds to wait for a terminal status. Default 1800s (30 min). LLM-heavy subagents (analysis, schema-design) should pass higher explicit values.
         poll_interval: Seconds between ``get_agent_instance`` polls.
         client: Injectable Agentic API client (mainly for tests). When
             None, resolves ``get_agentic_api_client()`` from the SDK.
@@ -153,7 +153,7 @@ def invoke_and_wait(
     agent_id: str,
     message: str,
     *,
-    timeout: float = 300.0,
+    timeout: float = 1800.0,
     poll_interval: float = 2.0,
     post_ready_dwell: float = 15.0,
     client: Any = None,
@@ -185,7 +185,7 @@ def invoke_and_wait(
             Must appear in the orchestrator's Registry ``agentDependencies``.
         message: JSON-serialised message text that the subagent's
             ``parse_invocation`` in ``subagent_base.py`` recognises.
-        timeout: Max seconds to wait for a terminal status. Default 300s.
+        timeout: Max seconds to wait for a terminal status. Default 1800s (30 min). LLM-heavy subagents (analysis, schema-design) should pass higher explicit values.
         poll_interval: Seconds between ``get_agent_instance`` polls.
         client: Injectable Agentic API client (mainly for tests). When
             None, resolves ``get_agentic_api_client()`` from the SDK.
