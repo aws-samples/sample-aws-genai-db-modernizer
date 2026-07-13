@@ -29,7 +29,7 @@ class TestDiscoverSubagentsRegistration:
     def test_pipeline_tools_count_is_10(self) -> None:
         """Post-A8 tool count: 3 A2A (collect + triage + analysis-dynamodb) +
         5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
-        assert len(PIPELINE_TOOLS) == 10
+        assert len(PIPELINE_TOOLS) == 16
 
     def test_discover_subagents_still_importable(self) -> None:
         """The function itself remains available for future re-enablement."""

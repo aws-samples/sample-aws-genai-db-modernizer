@@ -178,4 +178,4 @@ class TestToolsRegistered:
         5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
-        assert len(PIPELINE_TOOLS) == 10
+        assert len(PIPELINE_TOOLS) == 16

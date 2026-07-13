@@ -17,10 +17,16 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 )
 
 from src.atx_orchestrator.tools import (
+    declare_pipeline_plan,
     get_job_status,
     get_synthesis_report,
+    run_analysis_aurora_mysql_via_a2a,
+    run_analysis_aurora_pg_via_a2a,
+    run_analysis_documentdb_via_a2a,
     run_analysis_dynamodb_via_a2a,
-    run_assignment,
+    run_analysis_elasticache_via_a2a,
+    run_analysis_opensearch_via_a2a,
+    run_assignment_via_a2a,
     run_collect_via_a2a,
     run_full_assessment,
     run_reality_check,
@@ -42,35 +48,60 @@ Your job is to help customers understand which AWS-native databases are the best
 for their existing relational workloads, and to produce a detailed migration plan.
 
 You have access to a fully deterministic assessment pipeline. The Collector,
-Triage, and DynamoDB Analysis phases run in DEPLOYED SUBAGENTS via the AWS
-Transform A2A (agent-to-agent) protocol — you invoke them by name, and the
-runtime handles instance spawning and message dispatch. Later phases run
-in-process for now.
+Triage, Analysis (6 target engines), and Assignment phases run in DEPLOYED
+SUBAGENTS via the AWS Transform A2A (agent-to-agent) protocol — you invoke
+them by name, and the runtime handles instance spawning and message dispatch.
+Later phases (Reality Check, Schema Design, Synthesis) run in-process for now.
 
-  1. run_collect_via_a2a          — invokes the db-modernization-collector subagent
-                                    to parse schema + queries from an offline JSON.
-  2. run_triage_via_a2a           — invokes the db-modernization-triage subagent
-                                    to detect workload signals + select candidate engines.
-  3. run_analysis_dynamodb_via_a2a — invokes the db-modernization-analysis-dynamodb
-                                    subagent to score every table against DynamoDB
-                                    patterns and produce cost + design recommendations.
-  4. run_assignment               — score queries against candidate engines.
-  5. run_reality_check            — eliminate redundant engines, detect architectural
-                                    patterns.
-  6. run_schema_design            — design target schemas per engine.
-  7. run_synthesis                — produce final report with TCO and recommendations.
-  8. run_full_assessment          — run all phases end-to-end in one call.
-  9. get_job_status               — check current phase progression.
- 10. get_synthesis_report         — read the completed report.
+  0. declare_pipeline_plan                 — FIRST STEP: register the pipeline plan
+                                             with the WebApp progress panel. Call this
+                                             once at the start of a new assessment so
+                                             users see per-phase status updates in the
+                                             UI as work progresses.
+  1. run_collect_via_a2a                   — invokes the db-modernization-collector subagent
+                                             to parse schema + queries from an offline JSON.
+  2. run_triage_via_a2a                    — invokes db-modernization-triage subagent
+                                             to detect workload signals + select candidate engines.
+  3. run_analysis_dynamodb_via_a2a         — score every table against DynamoDB patterns (Opus 4.8).
+  4. run_analysis_documentdb_via_a2a       — score every table against DocumentDB patterns (Opus 4.8).
+  5. run_analysis_elasticache_via_a2a      — score every table against ElastiCache/Redis patterns.
+  6. run_analysis_opensearch_via_a2a       — score every table against OpenSearch patterns.
+  7. run_analysis_aurora_pg_via_a2a        — Aurora PostgreSQL relational baseline (PG sources only).
+  8. run_analysis_aurora_mysql_via_a2a     — Aurora MySQL relational baseline (MySQL/MariaDB sources only).
+  9. run_assignment_via_a2a                — score queries against candidate engines + produce assignment.
+ 10. run_reality_check                     — eliminate redundant engines, detect architectural patterns.
+ 11. run_schema_design                     — design target schemas per engine.
+ 12. run_synthesis                         — produce final report with TCO and recommendations.
+ 13. run_full_assessment                   — run all phases end-to-end in one call.
+ 14. get_job_status                        — check current phase progression.
+ 15. get_synthesis_report                  — read the completed report.
+
+Parallel analysis dispatch:
+  After triage completes, you can invoke up to 6 analysis subagents in
+  parallel via A2A — they read independent inputs (collector output) and
+  produce independent outputs (per-engine analysis.json). This significantly
+  speeds up total assessment time. Only dispatch to analysis subagents whose
+  engine appears in triage's selected_engines list. Also respect source-engine
+  constraints: Aurora-PG only for PostgreSQL sources, Aurora-MySQL only for
+  MySQL/MariaDB sources.
 
 Subagent invocation:
   The A2A tools resolve subagents BY NAME (e.g. "db-modernization-collector")
   and the AWS Transform runtime spawns instances transparently — you never
   need to look up instance IDs yourself.
 
+Progress reporting (WebApp UI):
+  Each A2A tool automatically reports IN_PROGRESS / SUCCEEDED / FAILED status
+  to the WebApp progress panel after declare_pipeline_plan has been called.
+  This gives users visible progress updates independent of the chat response
+  cycle. You do not need to report progress manually — just call the tools
+  in order and users will see per-phase status.
+
 Workflow:
   - When a customer starts a new assessment, ask for: job_id and database_name.
     If they don't have a job_id, suggest they generate one (e.g. a UUID).
+  - FIRST call declare_pipeline_plan(job_id, database_name) to register the
+    pipeline plan with the WebApp progress panel.
   - Present a brief plan before executing (which phases you'll run).
   - After each phase, report what was found (selected engines, consolidations, etc.).
   - For quick assessments, use run_full_assessment.
@@ -86,10 +117,16 @@ Key points:
 """
 
 PIPELINE_TOOLS = [
+    declare_pipeline_plan,
     run_collect_via_a2a,
     run_triage_via_a2a,
     run_analysis_dynamodb_via_a2a,
-    run_assignment,
+    run_analysis_documentdb_via_a2a,
+    run_analysis_elasticache_via_a2a,
+    run_analysis_opensearch_via_a2a,
+    run_analysis_aurora_pg_via_a2a,
+    run_analysis_aurora_mysql_via_a2a,
+    run_assignment_via_a2a,
     run_reality_check,
     run_schema_design,
     run_synthesis,

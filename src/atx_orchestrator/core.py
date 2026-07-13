@@ -343,3 +343,534 @@ def run_analysis_dynamodb_core(
         "decision_trace_artifact": trace_key,
         "er_diagram_artifact": mermaid_key,
     }
+
+
+def run_analysis_documentdb_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run DocumentDB analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-documentdb'. Reads the collector
+    output from the ArtifactStore, constructs AnalysisInput, invokes
+    analyze_for_documentdb, and writes 3 S3 artifacts:
+      - analysis.json         (AnalysisOutputContract, JSON)
+      - decision-trace.json   (per-query decision trace, JSON)
+      - er-diagram.mmd        (Mermaid ER diagram, plain text)
+
+    LLM mode is controlled by the LLM_MODE env var:
+      - "bedrock"  (default): calls LlmDocumentDBAdvisor when ENABLE_LLM_ADVISOR=true
+      - "none":               deterministic only, no Bedrock calls
+      - "external":           deterministic only, marks output as awaiting
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    # Deferred imports — avoid loading heavy analysis modules at core.py import time.
+    from src.agents.analysis.documentdb_analysis_agent import analyze_for_documentdb
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.documentdb,
+    )
+
+    llm_mode = os.environ.get("LLM_MODE", "bedrock")
+    logger.info(
+        "ATX analysis-documentdb starting: job_id=%s db=%s llm_mode=%s",
+        job_id,
+        database_name,
+        llm_mode,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_documentdb(
+        analysis_input, llm_mode=llm_mode
+    )
+
+    prefix = f"{database_name}/{job_id}/analysis-documentdb"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+    mermaid_key = f"{prefix}/er-diagram.mmd"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+    store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    # Aggregate table-recommendation counts by confidence band.
+    # Thresholds per shared scoring layer (src/tools/analysis/scoring.py):
+    #   >=80 HIGHLY_SUITABLE, >=60 SUITABLE, >=40 MARGINAL, <40 NOT_SUITABLE
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    llm_status = "unknown"
+    if isinstance(decision_trace, dict):
+        llm_status = decision_trace.get("llm_advisor", {}).get("status", "unknown")
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "documentdb",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": llm_status,
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }
+
+
+def run_analysis_elasticache_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run ElastiCache (Redis) analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-elasticache'. Deterministic — no LLM
+    invocation. Reads the collector output from the ArtifactStore, constructs
+    AnalysisInput, invokes analyze_for_elasticache, and writes 2-3 S3 artifacts:
+      - analysis.json         (AnalysisOutputContract, JSON)
+      - decision-trace.json   (per-query decision trace, JSON)
+      - er-diagram.mmd        (Mermaid ER diagram, optional — only if produced)
+
+    ElastiCache/Redis analysis is purely pattern-based (caching, session store,
+    leaderboards, time-series). No LLM advisor, no llm_mode parameter.
+    Mermaid diagram is optional — the analyze_for_elasticache function may
+    return None for it.
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.elasticache,
+    )
+
+    logger.info(
+        "ATX analysis-elasticache starting: job_id=%s db=%s",
+        job_id,
+        database_name,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_elasticache(analysis_input)
+
+    prefix = f"{database_name}/{job_id}/analysis-elasticache"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+
+    # Mermaid diagram is optional for ElastiCache — analyze_for_elasticache may
+    # return None. Only write the artifact if we actually got content.
+    mermaid_key: str | None = None
+    if mermaid_diagram:
+        mermaid_key = f"{prefix}/er-diagram.mmd"
+        store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    # Aggregate table-recommendation counts by confidence band.
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "elasticache",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": "not_applicable",
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }
+
+
+def run_analysis_opensearch_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run OpenSearch analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-opensearch'. Deterministic — no LLM
+    invocation. Reads the collector output from the ArtifactStore, constructs
+    AnalysisInput, invokes analyze_for_opensearch, and writes 2 S3 artifacts
+    (OpenSearch doesn't produce an ER diagram — indexes are independent):
+      - analysis.json         (AnalysisOutputContract, JSON)
+      - decision-trace.json   (per-query decision trace, JSON)
+
+    OpenSearch analysis detects full-text, wildcard, time-series, and log
+    analytics patterns. No LLM advisor, no llm_mode parameter. The function
+    returns "" (empty string) for mermaid_diagram; we skip writing that
+    artifact.
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    from src.agents.analysis.opensearch_analysis_agent import analyze_for_opensearch
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.opensearch,
+    )
+
+    logger.info(
+        "ATX analysis-opensearch starting: job_id=%s db=%s",
+        job_id,
+        database_name,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_opensearch(analysis_input)
+
+    prefix = f"{database_name}/{job_id}/analysis-opensearch"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+
+    # OpenSearch returns "" (empty string) for mermaid — no ER diagram artifact.
+    # (Guard the None case too, for defensive symmetry with ElastiCache.)
+    mermaid_key: str | None = None
+    if mermaid_diagram:
+        mermaid_key = f"{prefix}/er-diagram.mmd"
+        store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    # Aggregate table-recommendation counts by confidence band.
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "opensearch",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": "not_applicable",
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }
+
+
+def run_analysis_aurora_pg_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run Aurora PostgreSQL analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-aurora-pg'. Deterministic — no LLM
+    invocation (Aurora agent's "bedrock" LLM mode is not yet implemented).
+    Reads the collector output, invokes analyze_for_aurora_pg with LLM_MODE=none,
+    and writes 2 S3 artifacts (Aurora doesn't produce an ER diagram):
+      - analysis.json         (AnalysisOutputContract, JSON)
+      - decision-trace.json   (per-query decision trace, JSON)
+
+    Aurora PG analysis is the relational baseline — used when other engines
+    don't fit or when the workload wants to stay relational. Only invoke this
+    subagent if the source engine is PostgreSQL.
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.aurora_postgresql,
+    )
+
+    logger.info(
+        "ATX analysis-aurora-pg starting: job_id=%s db=%s",
+        job_id,
+        database_name,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_aurora_pg(
+        analysis_input, llm_mode="none"
+    )
+
+    prefix = f"{database_name}/{job_id}/analysis-aurora_postgresql"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+
+    # Aurora returns "" for mermaid — no ER diagram artifact written.
+    mermaid_key: str | None = None
+    if mermaid_diagram:
+        mermaid_key = f"{prefix}/er-diagram.mmd"
+        store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "aurora_postgresql",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": "not_applicable",
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }
+
+
+def run_analysis_aurora_mysql_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run Aurora MySQL analysis for a completed collector run. Returns a summary dict.
+
+    Maps one-to-one to AGENT_TYPE='analysis-aurora-mysql'. Deterministic — no LLM
+    invocation. Same shape as Aurora PG; only invoke when source engine is MySQL
+    or MariaDB.
+
+    Raises FileNotFoundError if the collector output is missing.
+    """
+    store = store or make_store()
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(
+            f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
+        )
+
+    collector_output = store.read_json(collector_key)
+
+    from src.agents.analysis.aurora_mysql_analysis_agent import analyze_for_aurora_mysql
+    from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+
+    analysis_input = AnalysisInput(
+        job_id=job_id,
+        collector_output=collector_output,
+        target_database=TargetDatabase.aurora_mysql,
+    )
+
+    logger.info(
+        "ATX analysis-aurora-mysql starting: job_id=%s db=%s",
+        job_id,
+        database_name,
+    )
+    contract, decision_trace, mermaid_diagram = analyze_for_aurora_mysql(
+        analysis_input, llm_mode="none"
+    )
+
+    prefix = f"{database_name}/{job_id}/analysis-aurora_mysql"
+    analysis_key = f"{prefix}/analysis.json"
+    trace_key = f"{prefix}/decision-trace.json"
+
+    store.write_json(analysis_key, contract.model_dump(mode="json"))
+    store.write_json(trace_key, decision_trace)
+
+    mermaid_key: str | None = None
+    if mermaid_diagram:
+        mermaid_key = f"{prefix}/er-diagram.mmd"
+        store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+
+    level_counts: dict[str, int] = {
+        "HIGHLY_SUITABLE": 0,
+        "SUITABLE": 0,
+        "MARGINAL": 0,
+        "NOT_SUITABLE": 0,
+    }
+    for tr in contract.table_recommendations:
+        score = tr.confidence_score
+        if score >= 80:
+            level_counts["HIGHLY_SUITABLE"] += 1
+        elif score >= 60:
+            level_counts["SUITABLE"] += 1
+        elif score >= 40:
+            level_counts["MARGINAL"] += 1
+        else:
+            level_counts["NOT_SUITABLE"] += 1
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_database": "aurora_mysql",
+        "tables_analyzed": len(contract.table_recommendations),
+        "highly_suitable_count": level_counts["HIGHLY_SUITABLE"],
+        "suitable_count": level_counts["SUITABLE"],
+        "marginal_count": level_counts["MARGINAL"],
+        "not_suitable_count": level_counts["NOT_SUITABLE"],
+        "estimated_monthly_cost_usd": contract.cost_estimate.monthly_cost_usd,
+        "llm_advisor_status": "not_applicable",
+        "analysis_artifact": analysis_key,
+        "decision_trace_artifact": trace_key,
+        "er_diagram_artifact": mermaid_key,
+    }
+
+
+def run_assignment_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+) -> dict:
+    """Run assignment for a completed collector + triage + analysis pipeline.
+
+    Maps one-to-one to AGENT_TYPE='assignment'. Deterministic — no LLM invocation.
+    Scores every query against selected candidate engines (from triage output)
+    using each engine's analysis output, producing a per-query assignment
+    mapping. Writes to S3:
+
+      - <db>/<job>/assignment/v1/assignment.json (query -> engine mapping)
+
+    Prerequisites: collector/output.json + referee-triage/triage.json + at least
+    one analysis-<engine>/analysis.json must exist. If those are missing,
+    assignment_resolver will raise.
+    """
+    store = store or make_store()
+
+    # Verify collector + triage prerequisites (analysis outputs are checked by
+    # the resolver itself).
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    for key in (collector_key, triage_key):
+        if not store.exists(key):
+            raise FileNotFoundError(
+                f"Prerequisite artifact missing: '{key}'. Run collector + triage first."
+            )
+
+    from src.agents.referee.assignment_handler import run_assignment_resolver
+
+    logger.info(
+        "ATX assignment starting: job_id=%s db=%s",
+        job_id,
+        database_name,
+    )
+    run_assignment_resolver(job_id, database_name, store)
+
+    # Summarize the produced assignment
+    assignment_key = f"{database_name}/{job_id}/assignment/v1/assignment.json"
+    engine_counts: dict[str, int] = {}
+    total_queries = 0
+    if store.exists(assignment_key):
+        assignment = store.read_json(assignment_key)
+        for qa in assignment.get("query_assignments", []):
+            e = qa.get("assigned_engine", "unknown")
+            engine_counts[e] = engine_counts.get(e, 0) + 1
+            total_queries += 1
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "assignment_version": 1,
+        "total_queries": total_queries,
+        "queries_per_engine": engine_counts,
+        "assignment_artifact": assignment_key,
+    }
