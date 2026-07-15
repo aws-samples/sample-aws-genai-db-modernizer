@@ -67,3 +67,7 @@ docs/examples/**/*.json
 
 # Asciinema recordings (large binary files)
 *.cast
+
+# Superpowers scratch and local specs/plans (never committed)
+.superpowers/
+docs/superpowers/
