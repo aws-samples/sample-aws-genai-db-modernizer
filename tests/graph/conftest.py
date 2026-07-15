@@ -214,12 +214,30 @@ def sample_router_output():
 def sample_load_test_output():
     """Minimal load test output with 1 pattern result."""
     return {
+        "target_engine": "dynamodb",
+        "version": 1,
         "pattern_results": [
             {
                 "query_id": "q1",
                 "operation_type": "GetItem",
-                "source_latency_ms": 45.0,
-                "target_latency_ms": 3.0,
+                "source_latency_ms": {
+                    "p50": 45.0,
+                    "p90": 66.0,
+                    "p95": 88.0,
+                    "p99": 132.0,
+                    "p999": 220.0,
+                    "min": 13.0,
+                    "max": 440.0,
+                },
+                "target_latency_ms": {
+                    "p50": 3.0,
+                    "p90": 4.5,
+                    "p95": 6.0,
+                    "p99": 9.0,
+                    "p999": 15.0,
+                    "min": 1.0,
+                    "max": 30.0,
+                },
                 "improvement_factor": 15.0,
                 "throughput_rps": 12000.0,
                 "error_rate_pct": 0.01,

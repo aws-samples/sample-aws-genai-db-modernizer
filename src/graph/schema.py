@@ -37,7 +37,11 @@ NODE_TABLES = [
     )""",
     """CREATE NODE TABLE IF NOT EXISTS LoadTestRun (
         id STRING, timestamp STRING, query_id STRING,
-        source_latency_ms DOUBLE, target_latency_ms DOUBLE,
+        engine STRING, schema_version INT64,
+        source_p50 DOUBLE, source_p90 DOUBLE, source_p95 DOUBLE,
+        source_p99 DOUBLE, source_p999 DOUBLE, source_min DOUBLE, source_max DOUBLE,
+        target_p50 DOUBLE, target_p90 DOUBLE, target_p95 DOUBLE,
+        target_p99 DOUBLE, target_p999 DOUBLE, target_min DOUBLE, target_max DOUBLE,
         improvement_factor DOUBLE, throughput_rps DOUBLE,
         error_rate_pct DOUBLE, cost_per_operation_usd DOUBLE,
         PRIMARY KEY (id)

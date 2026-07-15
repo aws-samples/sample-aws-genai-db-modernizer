@@ -206,13 +206,47 @@ def test_populate_from_load_test_creates_runs(
 ):
     """Load test produces LoadTestRun nodes with TESTED_IN edges."""
     populate_from_collector(sample_collector_output, graph_store)
-    populate_from_load_test(sample_load_test_output, "dynamodb", graph_store)
+    populate_from_load_test(sample_load_test_output, "dynamodb", 1, graph_store)
     runs = graph_store.query("MATCH (lt:LoadTestRun) RETURN lt.query_id, lt.improvement_factor")
     assert len(runs) == 1
     assert runs[0]["lt.improvement_factor"] == 15.0
     tested = graph_store.query("MATCH (q:Query)-[:TESTED_IN]->(lt:LoadTestRun) RETURN q.id")
     assert len(tested) == 1
     assert tested[0]["q.id"] == "q1"
+
+
+def test_populate_from_load_test_stores_latency_percentiles(
+    graph_store, sample_collector_output, sample_load_test_output
+):
+    """Latency percentiles persist as flattened DOUBLE columns per source/target."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_load_test(sample_load_test_output, "dynamodb", 1, graph_store)
+    runs = graph_store.query(
+        "MATCH (lt:LoadTestRun) RETURN lt.engine, lt.schema_version, "
+        "lt.source_p50, lt.source_p99, lt.source_max, lt.target_p50, lt.target_p90"
+    )
+    assert len(runs) == 1
+    assert runs[0]["lt.engine"] == "dynamodb"
+    assert runs[0]["lt.schema_version"] == 1
+    assert runs[0]["lt.source_p50"] == 45.0
+    assert runs[0]["lt.source_p99"] == 132.0
+    assert runs[0]["lt.source_max"] == 440.0
+    assert runs[0]["lt.target_p50"] == 3.0
+    assert runs[0]["lt.target_p90"] == 4.5
+
+
+def test_populate_from_load_test_creates_validates_edge(
+    graph_store, sample_collector_output, sample_assignment, sample_load_test_output
+):
+    """A LoadTestRun VALIDATES the destination its query migrates to."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_assignment(sample_assignment, graph_store)
+    populate_from_load_test(sample_load_test_output, "dynamodb", 1, graph_store)
+    validated = graph_store.query(
+        "MATCH (lt:LoadTestRun)-[:VALIDATES]->(d:Destination) RETURN d.id"
+    )
+    assert len(validated) == 1
+    assert validated[0]["d.id"] == "orders-dynamodb"
 
 
 def test_populate_from_synthesis_creates_risks(

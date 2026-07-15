@@ -38,7 +38,7 @@ def populated_graph(
     populate_from_analysis(sample_analysis_output, "dynamodb", store)
     populate_from_assignment(sample_assignment, store)
     populate_from_reality_check(sample_reality_check_output, store)
-    populate_from_load_test(sample_load_test_output, "dynamodb", store)
+    populate_from_load_test(sample_load_test_output, "dynamodb", 1, store)
     populate_from_synthesis(sample_synthesis_output, store)
     yield store
     store.close()
@@ -117,7 +117,7 @@ def test_load_test_performance(populated_graph):
     """What improvement did the load test show?"""
     results = populated_graph.query(
         "MATCH (q:Query)-[:TESTED_IN]->(lt:LoadTestRun) "
-        "RETURN q.id, lt.source_latency_ms, lt.target_latency_ms, lt.improvement_factor"
+        "RETURN q.id, lt.source_p50, lt.target_p50, lt.improvement_factor"
     )
     assert len(results) == 1
     assert results[0]["lt.improvement_factor"] == 15.0

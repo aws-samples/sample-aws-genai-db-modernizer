@@ -295,33 +295,67 @@ def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> 
         )
 
 
-def populate_from_load_test(load_test_output: dict, engine: str, store: GraphStore) -> None:
+_LATENCY_PERCENTILES = ("p50", "p90", "p95", "p99", "p999", "min", "max")
+
+
+def _flatten_latency(latency: dict, prefix: str) -> dict[str, float]:
+    """Expand a percentile dict into {prefix}_{p50..max} params.
+
+    LadybugDB reformats strings that look like maps, so latency objects can't be
+    stored as JSON. Flattening to DOUBLE columns keeps the values native and
+    queryable. Missing percentiles default to 0.0.
+    """
+    latency = latency or {}
+    return {f"{prefix}_{p}": float(latency.get(p, 0) or 0) for p in _LATENCY_PERCENTILES}
+
+
+def populate_from_load_test(
+    load_test_output: dict, engine: str, schema_version: int, store: GraphStore
+) -> None:
     """Create LoadTestRun nodes and TESTED_IN/VALIDATES edges from load test output."""
     pattern_results = load_test_output.get("pattern_results", [])
 
     for result in pattern_results:
-        run_id = f"lt-{engine}-{result['query_id']}"
+        run_id = f"lt-{engine}-v{schema_version}-{result['query_id']}"
+        params = {
+            "id": run_id,
+            "qid": result["query_id"],
+            "engine": engine,
+            "ver": schema_version,
+            "imp": result.get("improvement_factor", 0),
+            "thr": result.get("throughput_rps", 0),
+            "err": result.get("error_rate_pct", 0),
+            "cost": result.get("cost_per_operation_usd", 0),
+        }
+        params.update(_flatten_latency(result.get("source_latency_ms", {}), "source"))
+        params.update(_flatten_latency(result.get("target_latency_ms", {}), "target"))
         store.execute(
             "MERGE (lt:LoadTestRun {id: $id}) "
             "SET lt.timestamp = '', lt.query_id = $qid, "
-            "lt.source_latency_ms = $slat, lt.target_latency_ms = $tlat, "
+            "lt.engine = $engine, lt.schema_version = $ver, "
+            "lt.source_p50 = $source_p50, lt.source_p90 = $source_p90, "
+            "lt.source_p95 = $source_p95, lt.source_p99 = $source_p99, "
+            "lt.source_p999 = $source_p999, lt.source_min = $source_min, "
+            "lt.source_max = $source_max, "
+            "lt.target_p50 = $target_p50, lt.target_p90 = $target_p90, "
+            "lt.target_p95 = $target_p95, lt.target_p99 = $target_p99, "
+            "lt.target_p999 = $target_p999, lt.target_min = $target_min, "
+            "lt.target_max = $target_max, "
             "lt.improvement_factor = $imp, lt.throughput_rps = $thr, "
             "lt.error_rate_pct = $err, lt.cost_per_operation_usd = $cost",
-            {
-                "id": run_id,
-                "qid": result["query_id"],
-                "slat": result.get("source_latency_ms", 0),
-                "tlat": result.get("target_latency_ms", 0),
-                "imp": result.get("improvement_factor", 0),
-                "thr": result.get("throughput_rps", 0),
-                "err": result.get("error_rate_pct", 0),
-                "cost": result.get("cost_per_operation_usd", 0),
-            },
+            params,
         )
         store.execute(
             "MATCH (q:Query {id: $qid}), (lt:LoadTestRun {id: $ltid}) "
             "MERGE (q)-[:TESTED_IN]->(lt)",
             {"qid": result["query_id"], "ltid": run_id},
+        )
+        # VALIDATES: the run validates every destination the query migrates to.
+        store.execute(
+            "MATCH (lt:LoadTestRun {id: $ltid}), "
+            "(q:Query {id: $qid})-[:MIGRATES_TO]->(d:Destination) "
+            "MERGE (lt)-[:VALIDATES]->(d)",
+            {"ltid": run_id, "qid": result["query_id"]},
         )
 
 
@@ -425,11 +459,13 @@ def rebuild_graph(
     if router:
         populate_from_post_schema_router(router, graph_store)
 
-    # 8. Load test (multiple engines)
+    # 8. Load test (multiple engines, latest version)
     for engine in ["dynamodb", "documentdb", "opensearch", "elasticache"]:
-        lt = _read_safe(f"{prefix}/load-test/{engine}/output.json")
-        if lt:
-            populate_from_load_test(lt, engine, graph_store)
+        for v in range(10, 0, -1):
+            lt = _read_safe(f"{prefix}/load-test-{engine}/v{v}/results/summary.json")
+            if lt:
+                populate_from_load_test(lt, engine, v, graph_store)
+                break
 
     # 9. Synthesis (latest version)
     for v in range(10, 0, -1):
