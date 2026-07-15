@@ -5,7 +5,7 @@ from src.graph.store import GraphStore
 
 
 def test_initialize_schema_creates_all_node_tables(tmp_path):
-    """Schema init creates all 10 node tables."""
+    """Schema init creates all 11 node tables."""
     store = GraphStore(str(tmp_path / "test.lbug"))
     initialize_schema(store)
     for table in [
@@ -19,6 +19,7 @@ def test_initialize_schema_creates_all_node_tables(tmp_path):
         "LoadTestRun",
         "AntiPattern",
         "Risk",
+        "AccessPattern",
     ]:
         rows = store.query(f"MATCH (n:{table}) RETURN COUNT(n) AS c")
         assert rows[0]["c"] == 0
@@ -26,7 +27,7 @@ def test_initialize_schema_creates_all_node_tables(tmp_path):
 
 
 def test_initialize_schema_creates_all_rel_tables(tmp_path):
-    """Schema init creates all 14 relationship tables."""
+    """Schema init creates all 15 relationship tables."""
     store = GraphStore(str(tmp_path / "test.lbug"))
     initialize_schema(store)
     # Verify by inserting and querying a relationship
@@ -40,6 +41,32 @@ def test_initialize_schema_creates_all_rel_tables(tmp_path):
     )
     results = store.query("MATCH (q:Query)-[:READS_FROM]->(st:SourceTable) RETURN q.id, st.id")
     assert len(results) == 1
+    store.close()
+
+
+def test_initialize_schema_creates_part_of_edge(tmp_path):
+    """PART_OF links a Query to an AccessPattern node."""
+    store = GraphStore(str(tmp_path / "test.lbug"))
+    initialize_schema(store)
+    store.execute(
+        "CREATE (q:Query {id: 'q1', sql_text: '', calls_per_second: 1.0,"
+        " operation_type: 'SELECT', in_scope: true})"
+    )
+    store.execute(
+        "CREATE (ap:AccessPattern {id: 'DDB-AP-1', engine: 'dynamodb', schema_version: 1,"
+        " description: '', pattern_group: '', operation: 'GetItem', design_rps: 10.0,"
+        " in_scope: true})"
+    )
+    store.execute(
+        "MATCH (q:Query {id: 'q1'}), (ap:AccessPattern {id: 'DDB-AP-1'})"
+        " CREATE (q)-[:PART_OF]->(ap)"
+    )
+    results = store.query(
+        "MATCH (q:Query)-[:PART_OF]->(ap:AccessPattern) RETURN q.id, ap.id, ap.engine"
+    )
+    assert len(results) == 1
+    assert results[0]["ap.id"] == "DDB-AP-1"
+    assert results[0]["ap.engine"] == "dynamodb"
     store.close()
 
 

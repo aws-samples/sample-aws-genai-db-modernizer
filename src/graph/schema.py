@@ -52,6 +52,12 @@ NODE_TABLES = [
         description STRING, mitigation STRING,
         PRIMARY KEY (id)
     )""",
+    """CREATE NODE TABLE IF NOT EXISTS AccessPattern (
+        id STRING, engine STRING, schema_version INT64,
+        description STRING, pattern_group STRING, operation STRING,
+        design_rps DOUBLE, in_scope BOOLEAN,
+        PRIMARY KEY (id)
+    )""",
 ]
 
 REL_TABLES = [
@@ -69,6 +75,7 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS OBSERVED_IN_TABLE (FROM AntiPattern TO SourceTable)",
     "CREATE REL TABLE IF NOT EXISTS IMPACTS (FROM Risk TO SourceTable)",
     "CREATE REL TABLE IF NOT EXISTS EVIDENCED_BY (FROM Risk TO Query)",
+    "CREATE REL TABLE IF NOT EXISTS PART_OF (FROM Query TO AccessPattern)",
 ]
 
 
