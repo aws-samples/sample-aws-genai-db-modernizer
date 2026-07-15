@@ -467,12 +467,10 @@ def rebuild_graph(
                 populate_from_load_test(lt, engine, v, graph_store)
                 break
 
-    # 9. Synthesis (latest version)
-    for v in range(10, 0, -1):
-        synthesis = _read_safe(f"{prefix}/synthesis/v{v}/report.json")
-        if synthesis:
-            populate_from_synthesis(synthesis, graph_store)
-            break
+    # 9. Synthesis
+    synthesis = _read_safe(f"{prefix}/referee-synthesis/report.json")
+    if synthesis:
+        populate_from_synthesis(synthesis, graph_store)
 
     duration_ms = int((time.time() - start) * 1000)
     node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]

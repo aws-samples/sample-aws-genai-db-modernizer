@@ -63,3 +63,49 @@ def test_rebuild_graph_skips_missing_artifacts(artifact_dir):
     stats = rebuild_graph(db_name, job_id, store, graph_store)
     assert stats["nodes_created"] > 0
     graph_store.close()
+
+
+def test_rebuild_graph_reads_real_pipeline_paths(
+    artifact_dir,
+    sample_schema_design_output,
+    sample_load_test_output,
+    sample_synthesis_output,
+):
+    """rebuild_graph reads schema, load-test, and synthesis at the paths the pipeline writes.
+
+    Regression guard: these three populators used to read paths that did not
+    match what the pipeline emits, so they were silent no-ops. This test writes
+    artifacts at the real paths and asserts their nodes land in the graph.
+    """
+    base, db_name, job_id = artifact_dir
+
+    def _write(path, data):
+        full = base / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(json.dumps(data))
+
+    _write(
+        f"{db_name}/{job_id}/schema-dynamodb/v1/schema_output.json",
+        sample_schema_design_output,
+    )
+    _write(
+        f"{db_name}/{job_id}/load-test-dynamodb/v1/results/summary.json",
+        sample_load_test_output,
+    )
+    _write(f"{db_name}/{job_id}/referee-synthesis/report.json", sample_synthesis_output)
+
+    store = LocalArtifactStore(str(base))
+    graph_path = str(base / db_name / job_id / "graph" / "context.lbug")
+    Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+    graph_store = GraphStore(graph_path)
+    initialize_schema(graph_store)
+
+    rebuild_graph(db_name, job_id, store, graph_store)
+
+    access_patterns = graph_store.query("MATCH (ap:AccessPattern) RETURN COUNT(ap) AS c")
+    assert access_patterns[0]["c"] == 1
+    runs = graph_store.query("MATCH (lt:LoadTestRun) RETURN COUNT(lt) AS c")
+    assert runs[0]["c"] == 1
+    risks = graph_store.query("MATCH (r:Risk) RETURN COUNT(r) AS c")
+    assert risks[0]["c"] == 1
+    graph_store.close()
