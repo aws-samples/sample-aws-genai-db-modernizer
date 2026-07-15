@@ -156,7 +156,7 @@ def test_populate_from_schema_design_creates_trade_off_decisions(
 ):
     """Schema design produces Decision nodes (trade_off) linked to queries."""
     populate_from_collector(sample_collector_output, graph_store)
-    populate_from_schema_design(sample_schema_design_output, "documentdb", graph_store)
+    populate_from_schema_design(sample_schema_design_output, "documentdb", 1, graph_store)
     decisions = graph_store.query(
         "MATCH (d:Decision {category: 'trade_off'}) RETURN d.id, d.description"
     )
@@ -164,6 +164,30 @@ def test_populate_from_schema_design_creates_trade_off_decisions(
     informed = graph_store.query("MATCH (d:Decision)-[:INFORMED_BY]->(q:Query) RETURN q.id")
     assert len(informed) == 1
     assert informed[0]["q.id"] == "q2"
+
+
+def test_populate_from_schema_design_creates_access_patterns(
+    graph_store, sample_collector_output, sample_schema_design_output
+):
+    """Schema design produces AccessPattern nodes and PART_OF edges from queries."""
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_schema_design(sample_schema_design_output, "dynamodb", 1, graph_store)
+
+    patterns = graph_store.query(
+        "MATCH (ap:AccessPattern) RETURN ap.id, ap.engine, ap.schema_version, "
+        "ap.pattern_group, ap.design_rps"
+    )
+    assert len(patterns) == 1
+    assert patterns[0]["ap.id"] == "DDB-AP-1"
+    assert patterns[0]["ap.engine"] == "dynamodb"
+    assert patterns[0]["ap.schema_version"] == 1
+    assert patterns[0]["ap.pattern_group"] == "Order reads"
+
+    part_of = graph_store.query(
+        "MATCH (q:Query)-[:PART_OF]->(ap:AccessPattern {id: 'DDB-AP-1'}) "
+        "RETURN q.id ORDER BY q.id"
+    )
+    assert [r["q.id"] for r in part_of] == ["q1", "q3"]
 
 
 def test_populate_from_post_schema_router_creates_reroute_decisions(

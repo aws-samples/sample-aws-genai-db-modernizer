@@ -203,8 +203,10 @@ def populate_from_reality_check(reality_check_output: dict, store: GraphStore) -
         )
 
 
-def populate_from_schema_design(schema_output: dict, engine: str, store: GraphStore) -> None:
-    """Create Decision nodes (trade_off) from schema design output."""
+def populate_from_schema_design(
+    schema_output: dict, engine: str, schema_version: int, store: GraphStore
+) -> None:
+    """Create Decision (trade_off) and AccessPattern nodes from schema design output."""
     trade_offs = schema_output.get("trade_offs", [])
 
     for i, trade_off in enumerate(trade_offs):
@@ -228,6 +230,35 @@ def populate_from_schema_design(schema_output: dict, engine: str, store: GraphSt
                 "MATCH (d:Decision {id: $did}), (q:Query {id: $qid}) "
                 "MERGE (d)-[:INFORMED_BY]->(q)",
                 {"did": decision_id, "qid": query_id},
+            )
+
+    for ap in schema_output.get("access_patterns", []):
+        pattern_id = ap.get("pattern_id")
+        if not pattern_id:
+            continue
+        store.execute(
+            "MERGE (ap:AccessPattern {id: $id}) "
+            "SET ap.engine = $engine, ap.schema_version = $ver, "
+            "ap.description = $description, ap.pattern_group = $pattern_group, "
+            "ap.operation = $op, ap.design_rps = $rps, ap.in_scope = $in_scope",
+            {
+                "id": pattern_id,
+                "engine": engine,
+                "ver": schema_version,
+                "description": ap.get("description", ""),
+                "pattern_group": ap.get("pattern_group", ""),
+                "op": ap.get("operation", ""),
+                "rps": float(ap.get("design_rps", 0) or 0),
+                "in_scope": ap.get("in_scope", True),
+            },
+        )
+        # DynamoDB/OpenSearch use query_ids; DocumentDB/ElastiCache use source_query_ids.
+        query_ids = ap.get("query_ids") or ap.get("source_query_ids") or []
+        for qid in query_ids:
+            store.execute(
+                "MATCH (q:Query {id: $qid}), (ap:AccessPattern {id: $pid}) "
+                "MERGE (q)-[:PART_OF]->(ap)",
+                {"qid": qid, "pid": pattern_id},
             )
 
 
@@ -386,7 +417,7 @@ def rebuild_graph(
         for v in range(10, 0, -1):
             schema = _read_safe(f"{prefix}/schema-{engine}/v{v}/schema_output.json")
             if schema:
-                populate_from_schema_design(schema, engine, graph_store)
+                populate_from_schema_design(schema, engine, v, graph_store)
                 break
 
     # 7. Post-schema router

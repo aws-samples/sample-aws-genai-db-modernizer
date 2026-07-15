@@ -180,10 +180,14 @@ def sample_schema_design_output():
         ],
         "access_patterns": [
             {
+                "pattern_id": "DDB-AP-1",
+                "pattern_group": "Order reads",
                 "query_ids": ["q1", "q3"],
-                "source_table": "orders",
-                "destination_table": "orders-by-customer",
-                "operation": "GetItem / PutItem",
+                "description": "Fetch orders by customer",
+                "operation": "GetItem / Query",
+                "table_name": "orders-by-customer",
+                "design_rps": 1200.0,
+                "in_scope": True,
             }
         ],
     }
