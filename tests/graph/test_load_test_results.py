@@ -1,7 +1,5 @@
 """Tests for the load-test-results endpoint (grouped by access pattern)."""
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -39,25 +37,18 @@ def populated_store(
 
 
 @pytest.fixture(autouse=True)
-def mock_services(populated_store):
-    """Inject a mock sfn + a cache that returns the pre-populated store."""
-    sfn = MagicMock()
-    sfn.describe_execution.return_value = {
-        "status": "SUCCEEDED",
-        "input": {"database_name": "test_db"},
-    }
-    cache = MagicMock()
-    cache.get.return_value = populated_store
+def override_graph(populated_store):
+    """Override the graph dependency so the route sees the populated store.
 
-    graph_routes.sfn_service = sfn
-    graph_routes.artifact_store = MagicMock()
-    graph_routes.graph_cache = cache
-
+    Uses app.dependency_overrides rather than patching module globals, so the
+    test is immune to import order and to other tests mutating shared state.
+    """
+    app.dependency_overrides[graph_routes.get_graph_for_job] = lambda: (
+        populated_store,
+        "test_db",
+    )
     yield
-
-    graph_routes.sfn_service = None
-    graph_routes.artifact_store = None
-    graph_routes.graph_cache = None
+    app.dependency_overrides.pop(graph_routes.get_graph_for_job, None)
 
 
 class TestLoadTestResults:

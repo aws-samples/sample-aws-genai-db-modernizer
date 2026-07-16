@@ -1,6 +1,8 @@
 """Graph query routes — Cypher execution and rebuild trigger."""
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from src.graph import GraphStoreCache
@@ -50,10 +52,19 @@ def _get_graph(job_id: str):
     return store, db_name
 
 
+def get_graph_for_job(job_id: str):
+    """FastAPI dependency wrapper around _get_graph.
+
+    Exposed as a dependency so tests can override it via
+    app.dependency_overrides without patching module globals.
+    """
+    return _get_graph(job_id)
+
+
 @router.post("/{job_id}/graph/query")
-async def query_graph(job_id: str, request: CypherRequest):
+async def query_graph(job_id: str, request: CypherRequest, graph: Any = Depends(get_graph_for_job)):
     """Execute a Cypher query against the assessment's graph."""
-    store, _ = _get_graph(job_id)
+    store, _ = graph
 
     try:
         results = store.query(request.cypher, request.params)
@@ -93,6 +104,7 @@ async def load_test_results(
     engine: str | None = Query(default=None),
     version: int | None = Query(default=None),
     prefix: str | None = Query(default=None),
+    graph: Any = Depends(get_graph_for_job),
 ):
     """Load test results grouped by the solution-generated access-pattern id.
 
@@ -100,7 +112,7 @@ async def load_test_results(
     target latency percentiles. When version is omitted, every populated
     version is returned (the graph holds only the latest per engine).
     """
-    store, _ = _get_graph(job_id)
+    store, _ = graph
 
     rows = store.query(
         "MATCH (ap:AccessPattern)<-[:PART_OF]-(q:Query)-[:TESTED_IN]-(lt:LoadTestRun) "
