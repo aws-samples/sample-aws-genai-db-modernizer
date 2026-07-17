@@ -91,64 +91,77 @@ def populate_from_triage(triage_output: dict, store: GraphStore) -> None:
 
 def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
     """Create Destination, Engine, CoDependencyGroup nodes and edges from assignment."""
-    engines_seen: set[str] = set()
-    for qa in assignment["query_assignments"]:
-        engine = qa["assigned_engine"]
-        if engine not in engines_seen:
-            engines_seen.add(engine)
-            display = engine.replace("_", " ").title()
-            store.execute(
-                "MERGE (e:Engine {id: $id}) SET e.display_name = $name",
-                {"id": engine, "name": f"Amazon {display}"},
-            )
+    qas = assignment["query_assignments"]
 
-    for qa in assignment["query_assignments"]:
+    def _dest_id(qa: dict) -> str:
+        tables = qa.get("source_tables", [])
         engine = qa["assigned_engine"]
-        source_tables = qa.get("source_tables", [])
-        dest_id = f"{source_tables[0]}-{engine}" if source_tables else f"unknown-{engine}"
+        return f"{tables[0]}-{engine}" if tables else f"unknown-{engine}"
+
+    engine_rows = [
+        {"id": e, "name": f"Amazon {e.replace('_', ' ').title()}"}
+        for e in {qa["assigned_engine"] for qa in qas}
+    ]
+    if engine_rows:
         store.execute(
-            "MERGE (d:Destination {id: $id}) "
-            "SET d.engine = $engine, d.artifact_type = 'table', d.artifact_name = $id",
-            {"id": dest_id, "engine": engine},
+            "UNWIND $rows AS r MERGE (e:Engine {id: r.id}) SET e.display_name = r.name",
+            {"rows": engine_rows},
+        )
+
+    dest_rows = [{"id": _dest_id(qa), "engine": qa["assigned_engine"]} for qa in qas]
+    if dest_rows:
+        store.execute(
+            "UNWIND $rows AS r MERGE (d:Destination {id: r.id}) "
+            "SET d.engine = r.engine, d.artifact_type = 'table', d.artifact_name = r.id",
+            {"rows": dest_rows},
         )
         store.execute(
-            "MATCH (d:Destination {id: $did}), (e:Engine {id: $eid}) "
+            "UNWIND $rows AS r MATCH (d:Destination {id: r.id}), (e:Engine {id: r.engine}) "
             "MERGE (d)-[:HOSTED_ON]->(e)",
-            {"did": dest_id, "eid": engine},
-        )
-        store.execute(
-            "MATCH (q:Query {id: $qid}), (d:Destination {id: $did}) "
-            "MERGE (q)-[:MIGRATES_TO {confidence: $conf, assignment_reason: $reason}]->(d)",
-            {
-                "qid": qa["query_id"],
-                "did": dest_id,
-                "conf": qa["confidence"],
-                "reason": qa["assignment_reason"],
-            },
+            {"rows": dest_rows},
         )
 
+    migrate_rows = [
+        {
+            "qid": qa["query_id"],
+            "did": _dest_id(qa),
+            "conf": qa["confidence"],
+            "reason": qa["assignment_reason"],
+        }
+        for qa in qas
+    ]
+    if migrate_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (d:Destination {id: r.did}) "
+            "MERGE (q)-[:MIGRATES_TO {confidence: r.conf, assignment_reason: r.reason}]->(d)",
+            {"rows": migrate_rows},
+        )
+
+    group_rows: list[dict] = []
+    member_rows: list[dict] = []
     for i, group in enumerate(assignment.get("co_dependency_groups", [])):
         # A group is either a dict ({group_id, query_ids, reason}) or a bare
         # list of query ids. Normalize both to an id, reason, and query ids.
         if isinstance(group, dict):
-            group_id = group.get("group_id", f"group-{i}")
+            gid = group.get("group_id", f"group-{i}")
             reason = group.get("reason", "")
-            query_ids = group.get("query_ids", [])
+            qids = group.get("query_ids", [])
         else:
-            group_id = f"group-{i}"
-            reason = ""
-            query_ids = group
+            gid, reason, qids = f"group-{i}", "", group
+        group_rows.append({"id": gid, "reason": reason})
+        member_rows.extend({"qid": qid, "gid": gid} for qid in qids)
 
+    if group_rows:
         store.execute(
-            "MERGE (g:CoDependencyGroup {id: $id}) SET g.reason = $reason",
-            {"id": group_id, "reason": reason},
+            "UNWIND $rows AS r MERGE (g:CoDependencyGroup {id: r.id}) SET g.reason = r.reason",
+            {"rows": group_rows},
         )
-        for query_id in query_ids:
-            store.execute(
-                "MATCH (q:Query {id: $qid}), (g:CoDependencyGroup {id: $gid}) "
-                "MERGE (q)-[:MEMBER_OF]->(g)",
-                {"qid": query_id, "gid": group_id},
-            )
+    if member_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (g:CoDependencyGroup {id: r.gid}) "
+            "MERGE (q)-[:MEMBER_OF]->(g)",
+            {"rows": member_rows},
+        )
 
 
 def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore) -> None:
@@ -156,60 +169,78 @@ def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore
     workload = analysis_output.get("workload_analysis", {})
     anti_patterns = workload.get("anti_patterns_detected") or []
 
-    for ap in anti_patterns:
+    node_rows = [
+        {
+            "id": ap["anti_pattern_id"],
+            "type": ap["anti_pattern_type"],
+            "sev": ap.get("severity_weight", 0.5),
+            "description": ap.get("description", ""),
+            "rec": ap.get("recommendation", ""),
+        }
+        for ap in anti_patterns
+    ]
+    if node_rows:
         store.execute(
-            "MERGE (ap:AntiPattern {id: $id}) "
-            "SET ap.anti_pattern_type = $type, ap.severity_weight = $sev, "
-            "ap.description = $description, ap.recommendation = $rec",
-            {
-                "id": ap["anti_pattern_id"],
-                "type": ap["anti_pattern_type"],
-                "sev": ap.get("severity_weight", 0.5),
-                "description": ap.get("description", ""),
-                "rec": ap.get("recommendation", ""),
-            },
+            "UNWIND $rows AS r MERGE (ap:AntiPattern {id: r.id}) "
+            "SET ap.anti_pattern_type = r.type, ap.severity_weight = r.sev, "
+            "ap.description = r.description, ap.recommendation = r.rec",
+            {"rows": node_rows},
         )
-        for query_id in ap.get("query_ids") or []:
-            store.execute(
-                "MATCH (ap:AntiPattern {id: $apid}), (q:Query {id: $qid}) "
-                "MERGE (ap)-[:OBSERVED_IN_QUERY]->(q)",
-                {"apid": ap["anti_pattern_id"], "qid": query_id},
-            )
-        for table_id in ap.get("table_ids") or []:
-            store.execute(
-                "MATCH (ap:AntiPattern {id: $apid}), (st:SourceTable {id: $tid}) "
-                "MERGE (ap)-[:OBSERVED_IN_TABLE]->(st)",
-                {"apid": ap["anti_pattern_id"], "tid": table_id},
-            )
+
+    q_edges = [
+        {"apid": ap["anti_pattern_id"], "qid": qid}
+        for ap in anti_patterns
+        for qid in (ap.get("query_ids") or [])
+    ]
+    if q_edges:
+        store.execute(
+            "UNWIND $rows AS r MATCH (ap:AntiPattern {id: r.apid}), (q:Query {id: r.qid}) "
+            "MERGE (ap)-[:OBSERVED_IN_QUERY]->(q)",
+            {"rows": q_edges},
+        )
+
+    t_edges = [
+        {"apid": ap["anti_pattern_id"], "tid": tid}
+        for ap in anti_patterns
+        for tid in (ap.get("table_ids") or [])
+    ]
+    if t_edges:
+        store.execute(
+            "UNWIND $rows AS r MATCH (ap:AntiPattern {id: r.apid}), (st:SourceTable {id: r.tid}) "
+            "MERGE (ap)-[:OBSERVED_IN_TABLE]->(st)",
+            {"rows": t_edges},
+        )
 
 
 def populate_from_reality_check(reality_check_output: dict, store: GraphStore) -> None:
     """Create Decision nodes (consolidation) from reality check output."""
     consolidations = reality_check_output.get("consolidations", [])
 
+    rows: list[dict] = []
     for i, cons in enumerate(consolidations):
-        decision_id = f"consolidation-{i}"
         metadata = {
             "from_engine": cons["from_engine"],
             "to_engine": cons["to_engine"],
             "saved_cost_estimate": cons.get("saved_cost_estimate", 0),
             "action": cons.get("action", "full"),
         }
-        description_text = (
-            f"Consolidated {cons['query_count']} queries "
-            f"from {cons['from_engine']} to {cons['to_engine']}"
-        )
-        store.execute(
-            "MERGE (d:Decision {id: $id}) "
-            "SET d.category = 'consolidation', "
-            "d.description = $description, d.rationale = $rationale, "
-            "d.phase = 'REALITY_CHECK', d.metadata = $meta",
+        rows.append(
             {
-                "id": decision_id,
-                "description": description_text,
+                "id": f"consolidation-{i}",
+                "description": (
+                    f"Consolidated {cons['query_count']} queries "
+                    f"from {cons['from_engine']} to {cons['to_engine']}"
+                ),
                 "rationale": cons["reason"],
                 "meta": json.dumps(metadata),
-            },
+            }
+        )
+    if rows:
+        store.execute(
+            "UNWIND $rows AS r MERGE (d:Decision {id: r.id}) "
+            "SET d.category = 'consolidation', d.description = r.description, "
+            "d.rationale = r.rationale, d.phase = 'REALITY_CHECK', d.metadata = r.meta",
+            {"rows": rows},
         )
 
 
