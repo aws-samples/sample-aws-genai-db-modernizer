@@ -17,8 +17,12 @@ from src.api.main import app
 
 
 def _router_modules():
+    # mod.name is discovered from the src.api.routes package via pkgutil, not
+    # from user input, so the dynamic import is safe.
     for mod in pkgutil.iter_modules(src.api.routes.__path__):
-        module = importlib.import_module(f"src.api.routes.{mod.name}")
+        module = importlib.import_module(  # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+            f"src.api.routes.{mod.name}"
+        )
         if hasattr(module, "router"):
             yield mod.name, module.router
 
