@@ -1,9 +1,9 @@
 """Tests for the load-test-results endpoint (grouped by access pattern)."""
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.main import app
 from src.api.routes import graph as graph_routes
 from src.graph.populators import (
     populate_from_assignment,
@@ -13,8 +13,6 @@ from src.graph.populators import (
 )
 from src.graph.schema import initialize_schema
 from src.graph.store import GraphStore
-
-client = TestClient(app)
 
 
 @pytest.fixture
@@ -36,25 +34,29 @@ def populated_store(
     store.close()
 
 
-@pytest.fixture(autouse=True)
-def override_graph(populated_store):
-    """Override the graph dependency so the route sees the populated store.
+@pytest.fixture
+def client(populated_store):
+    """A TestClient over a dedicated app that mounts only the graph router.
 
-    Uses app.dependency_overrides rather than patching module globals, so the
-    test is immune to import order and to other tests mutating shared state.
+    Building a fresh app (rather than importing src.api.main.app) keeps this
+    test independent of the main app's import-time service wiring and of any
+    other test mutating that shared app. The graph dependency is overridden to
+    return the pre-populated store.
     """
+    app = FastAPI()
+    app.include_router(graph_routes.router)
     app.dependency_overrides[graph_routes.get_graph_for_job] = lambda: (
         populated_store,
         "test_db",
     )
-    yield
-    app.dependency_overrides.pop(graph_routes.get_graph_for_job, None)
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
 class TestLoadTestResults:
     """GET /api/v1/assessments/{job_id}/load-test-results."""
 
-    def test_groups_by_pattern_with_nested_latency(self):
+    def test_groups_by_pattern_with_nested_latency(self, client):
         """Results group under pattern_id with nested source/target latency objects."""
         resp = client.get("/api/v1/assessments/job-1/load-test-results")
         assert resp.status_code == 200
@@ -75,31 +77,31 @@ class TestLoadTestResults:
         assert query["target_latency"]["p50"] == 3.0
         assert query["improvement_factor"] == 15.0
 
-    def test_engine_filter_matches(self):
+    def test_engine_filter_matches(self, client):
         """engine=dynamodb returns the pattern."""
         resp = client.get("/api/v1/assessments/job-1/load-test-results?engine=dynamodb")
         assert resp.status_code == 200
         assert len(resp.json()["results"]) == 1
 
-    def test_engine_filter_excludes(self):
+    def test_engine_filter_excludes(self, client):
         """A non-matching engine returns no results."""
         resp = client.get("/api/v1/assessments/job-1/load-test-results?engine=documentdb")
         assert resp.status_code == 200
         assert resp.json()["results"] == []
 
-    def test_prefix_filter_matches(self):
+    def test_prefix_filter_matches(self, client):
         """prefix=DDB- returns the DynamoDB pattern."""
         resp = client.get("/api/v1/assessments/job-1/load-test-results?prefix=DDB-")
         assert resp.status_code == 200
         assert len(resp.json()["results"]) == 1
 
-    def test_prefix_filter_excludes(self):
+    def test_prefix_filter_excludes(self, client):
         """A non-matching prefix returns no results."""
         resp = client.get("/api/v1/assessments/job-1/load-test-results?prefix=DOC-")
         assert resp.status_code == 200
         assert resp.json()["results"] == []
 
-    def test_version_filter_matches(self):
+    def test_version_filter_matches(self, client):
         """version=1 returns the pattern; a missing version returns nothing."""
         assert (
             len(
