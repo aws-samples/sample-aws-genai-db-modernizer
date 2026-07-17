@@ -59,6 +59,14 @@ if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "HEAD" ]; then
   exit 1
 fi
 
+# Map the source branch to the target branch name.
+# The target (GitLab) only builds feat/* branches, so exp/* branches are
+# translated to feat/* on the target. All other branches map unchanged.
+TARGET_BRANCH="$BRANCH"
+if [[ "$BRANCH" == exp/* ]]; then
+  TARGET_BRANCH="feat/${BRANCH#exp/}"
+fi
+
 SYNC_CONFIG="${SYNC_CONFIG:-$TARGET_REPO_PATH/.sync-config}"
 DRY_RUN="${SYNC_DRY_RUN:-false}"
 
@@ -70,6 +78,7 @@ fi
 
 echo "==> Source repo: $SOURCE_REPO_PATH (branch: $BRANCH)"
 echo "==> Target repo: $TARGET_REPO_PATH"
+[ "$TARGET_BRANCH" != "$BRANCH" ] && echo "==> Target branch: $TARGET_BRANCH (mapped from $BRANCH)"
 echo "==> Config: $SYNC_CONFIG"
 [ "$DRY_RUN" = "true" ] && echo "==> DRY RUN MODE (no changes will be applied)"
 echo ""
@@ -162,8 +171,8 @@ fi
 echo "==> Creating commit in target repo..."
 cd "$TARGET_REPO_PATH"
 
-# Create or switch to the branch
-git checkout -B "$BRANCH"
+# Create or switch to the target branch
+git checkout -B "$TARGET_BRANCH"
 
 # Stage all changes
 git add -A
@@ -186,12 +195,12 @@ if ! git commit -m "chore: sync changes from source branch ${BRANCH}" 2>/dev/nul
 fi
 
 echo "==> Pushing to target remote..."
-if ! git push origin "$BRANCH" --force-with-lease; then
+if ! git push origin "$TARGET_BRANCH" --force-with-lease; then
   echo ""
   echo "Error: Push failed. You may need to re-authenticate."
   exit 1
 fi
 
 echo ""
-echo "Done! Branch '$BRANCH' synced to target repo."
+echo "Done! Source branch '$BRANCH' synced to target branch '$TARGET_BRANCH'."
 echo "CI pipeline should trigger automatically."
