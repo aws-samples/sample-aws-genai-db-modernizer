@@ -250,38 +250,43 @@ def populate_from_schema_design(
     """Create Decision (trade_off) and AccessPattern nodes from schema design output."""
     trade_offs = schema_output.get("trade_offs", [])
 
+    decision_rows: list[dict] = []
+    informed_rows: list[dict] = []
     for i, trade_off in enumerate(trade_offs):
         if not isinstance(trade_off, dict):
             continue
-        decision_id = f"trade_off-{engine}-{i}"
-        store.execute(
-            "MERGE (d:Decision {id: $id}) "
-            "SET d.category = 'trade_off', d.description = $description, "
-            "d.rationale = $impact, d.phase = 'SCHEMA_DESIGN', "
-            "d.metadata = $meta",
+        did = f"trade_off-{engine}-{i}"
+        decision_rows.append(
             {
-                "id": decision_id,
+                "id": did,
                 "description": trade_off.get("description", ""),
                 "impact": trade_off.get("impact", ""),
                 "meta": json.dumps({"engine": engine}),
-            },
+            }
         )
-        for query_id in trade_off.get("query_ids", []):
-            store.execute(
-                "MATCH (d:Decision {id: $did}), (q:Query {id: $qid}) "
-                "MERGE (d)-[:INFORMED_BY]->(q)",
-                {"did": decision_id, "qid": query_id},
-            )
+        informed_rows.extend({"did": did, "qid": qid} for qid in trade_off.get("query_ids", []))
 
+    if decision_rows:
+        store.execute(
+            "UNWIND $rows AS r MERGE (d:Decision {id: r.id}) "
+            "SET d.category = 'trade_off', d.description = r.description, "
+            "d.rationale = r.impact, d.phase = 'SCHEMA_DESIGN', d.metadata = r.meta",
+            {"rows": decision_rows},
+        )
+    if informed_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (d:Decision {id: r.did}), (q:Query {id: r.qid}) "
+            "MERGE (d)-[:INFORMED_BY]->(q)",
+            {"rows": informed_rows},
+        )
+
+    ap_rows: list[dict] = []
+    part_of_rows: list[dict] = []
     for ap in schema_output.get("access_patterns", []):
         pattern_id = ap.get("pattern_id")
         if not pattern_id:
             continue
-        store.execute(
-            "MERGE (ap:AccessPattern {id: $id}) "
-            "SET ap.engine = $engine, ap.schema_version = $ver, "
-            "ap.description = $description, ap.pattern_group = $pattern_group, "
-            "ap.operation = $op, ap.design_rps = $rps, ap.in_scope = $in_scope",
+        ap_rows.append(
             {
                 "id": pattern_id,
                 "engine": engine,
@@ -291,48 +296,66 @@ def populate_from_schema_design(
                 "op": ap.get("operation", ""),
                 "rps": float(ap.get("design_rps", 0) or 0),
                 "in_scope": ap.get("in_scope", True),
-            },
+            }
         )
         # DynamoDB/OpenSearch use query_ids; DocumentDB/ElastiCache use source_query_ids.
-        query_ids = ap.get("query_ids") or ap.get("source_query_ids") or []
-        for qid in query_ids:
-            store.execute(
-                "MATCH (q:Query {id: $qid}), (ap:AccessPattern {id: $pid}) "
-                "MERGE (q)-[:PART_OF]->(ap)",
-                {"qid": qid, "pid": pattern_id},
-            )
+        qids = ap.get("query_ids") or ap.get("source_query_ids") or []
+        part_of_rows.extend({"qid": qid, "pid": pattern_id} for qid in qids)
+
+    if ap_rows:
+        store.execute(
+            "UNWIND $rows AS r MERGE (ap:AccessPattern {id: r.id}) "
+            "SET ap.engine = r.engine, ap.schema_version = r.ver, "
+            "ap.description = r.description, ap.pattern_group = r.pattern_group, "
+            "ap.operation = r.op, ap.design_rps = r.rps, ap.in_scope = r.in_scope",
+            {"rows": ap_rows},
+        )
+    if part_of_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (ap:AccessPattern {id: r.pid}) "
+            "MERGE (q)-[:PART_OF]->(ap)",
+            {"rows": part_of_rows},
+        )
 
 
 def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> None:
     """Create Decision nodes (reroute) from post-schema router output."""
     routings = router_output.get("routings", [])
 
+    decision_rows: list[dict] = []
+    informed_rows: list[dict] = []
     for i, routing in enumerate(routings):
-        decision_id = f"reroute-{i}"
+        did = f"reroute-{i}"
         metadata = {
             "from_engine": routing["from_engine"],
             "to_engine": routing.get("to_engine"),
             "cascade_depth": routing.get("cascade_depth", 0),
         }
-        description_text = (
-            f"Rerouted {routing['query_id']} from {routing['from_engine']} "
-            f"to {routing.get('to_engine', 'application-layer')}"
-        )
-        store.execute(
-            "MERGE (d:Decision {id: $id}) "
-            "SET d.category = 'reroute', "
-            "d.description = $description, d.rationale = $rationale, "
-            "d.phase = 'POST_SCHEMA_ROUTER', d.metadata = $meta",
+        decision_rows.append(
             {
-                "id": decision_id,
-                "description": description_text,
+                "id": did,
+                "description": (
+                    f"Rerouted {routing['query_id']} from {routing['from_engine']} "
+                    f"to {routing.get('to_engine', 'application-layer')}"
+                ),
                 "rationale": routing["reason"],
                 "meta": json.dumps(metadata),
-            },
+            }
         )
+        informed_rows.append({"did": did, "qid": routing["query_id"]})
+
+    if decision_rows:
         store.execute(
-            "MATCH (d:Decision {id: $did}), (q:Query {id: $qid}) " "MERGE (d)-[:INFORMED_BY]->(q)",
-            {"did": decision_id, "qid": routing["query_id"]},
+            "UNWIND $rows AS r MERGE (d:Decision {id: r.id}) "
+            "SET d.category = 'reroute', d.description = r.description, "
+            "d.rationale = r.rationale, d.phase = 'POST_SCHEMA_ROUTER', d.metadata = r.meta",
+            {"rows": decision_rows},
+        )
+    if informed_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (d:Decision {id: r.did}), (q:Query {id: r.qid}) "
+            "MERGE (d)-[:INFORMED_BY]->(q)",
+            {"rows": informed_rows},
         )
 
 
@@ -356,9 +379,11 @@ def populate_from_load_test(
     """Create LoadTestRun nodes and TESTED_IN/VALIDATES edges from load test output."""
     pattern_results = load_test_output.get("pattern_results", [])
 
+    run_rows: list[dict] = []
+    edge_rows: list[dict] = []
     for result in pattern_results:
         run_id = f"lt-{engine}-v{schema_version}-{result['query_id']}"
-        params = {
+        row = {
             "id": run_id,
             "qid": result["query_id"],
             "engine": engine,
@@ -368,35 +393,40 @@ def populate_from_load_test(
             "err": result.get("error_rate_pct", 0),
             "cost": result.get("cost_per_operation_usd", 0),
         }
-        params.update(_flatten_latency(result.get("source_latency_ms", {}), "source"))
-        params.update(_flatten_latency(result.get("target_latency_ms", {}), "target"))
+        row.update(_flatten_latency(result.get("source_latency_ms", {}), "source"))
+        row.update(_flatten_latency(result.get("target_latency_ms", {}), "target"))
+        run_rows.append(row)
+        edge_rows.append({"qid": result["query_id"], "ltid": run_id})
+
+    if run_rows:
         store.execute(
-            "MERGE (lt:LoadTestRun {id: $id}) "
-            "SET lt.timestamp = '', lt.query_id = $qid, "
-            "lt.engine = $engine, lt.schema_version = $ver, "
-            "lt.source_p50 = $source_p50, lt.source_p90 = $source_p90, "
-            "lt.source_p95 = $source_p95, lt.source_p99 = $source_p99, "
-            "lt.source_p999 = $source_p999, lt.source_min = $source_min, "
-            "lt.source_max = $source_max, "
-            "lt.target_p50 = $target_p50, lt.target_p90 = $target_p90, "
-            "lt.target_p95 = $target_p95, lt.target_p99 = $target_p99, "
-            "lt.target_p999 = $target_p999, lt.target_min = $target_min, "
-            "lt.target_max = $target_max, "
-            "lt.improvement_factor = $imp, lt.throughput_rps = $thr, "
-            "lt.error_rate_pct = $err, lt.cost_per_operation_usd = $cost",
-            params,
+            "UNWIND $rows AS r MERGE (lt:LoadTestRun {id: r.id}) "
+            "SET lt.timestamp = '', lt.query_id = r.qid, "
+            "lt.engine = r.engine, lt.schema_version = r.ver, "
+            "lt.source_p50 = r.source_p50, lt.source_p90 = r.source_p90, "
+            "lt.source_p95 = r.source_p95, lt.source_p99 = r.source_p99, "
+            "lt.source_p999 = r.source_p999, lt.source_min = r.source_min, "
+            "lt.source_max = r.source_max, "
+            "lt.target_p50 = r.target_p50, lt.target_p90 = r.target_p90, "
+            "lt.target_p95 = r.target_p95, lt.target_p99 = r.target_p99, "
+            "lt.target_p999 = r.target_p999, lt.target_min = r.target_min, "
+            "lt.target_max = r.target_max, "
+            "lt.improvement_factor = r.imp, lt.throughput_rps = r.thr, "
+            "lt.error_rate_pct = r.err, lt.cost_per_operation_usd = r.cost",
+            {"rows": run_rows},
         )
+    if edge_rows:
         store.execute(
-            "MATCH (q:Query {id: $qid}), (lt:LoadTestRun {id: $ltid}) "
+            "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (lt:LoadTestRun {id: r.ltid}) "
             "MERGE (q)-[:TESTED_IN]->(lt)",
-            {"qid": result["query_id"], "ltid": run_id},
+            {"rows": edge_rows},
         )
         # VALIDATES: the run validates every destination the query migrates to.
         store.execute(
-            "MATCH (lt:LoadTestRun {id: $ltid}), "
-            "(q:Query {id: $qid})-[:MIGRATES_TO]->(d:Destination) "
+            "UNWIND $rows AS r MATCH (lt:LoadTestRun {id: r.ltid}), "
+            "(q:Query {id: r.qid})-[:MIGRATES_TO]->(d:Destination) "
             "MERGE (lt)-[:VALIDATES]->(d)",
-            {"ltid": run_id, "qid": result["query_id"]},
+            {"rows": edge_rows},
         )
 
 
@@ -405,26 +435,36 @@ def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
     risk_assessment = synthesis_output.get("risk_assessment", {})
     risks = risk_assessment.get("risks", [])
 
-    for risk in risks:
-        risk_id = risk.get("risk_id", f"risk-{risks.index(risk)}")
-        store.execute(
-            "MERGE (r:Risk {id: $id}) "
-            "SET r.risk_type = $type, r.severity = $sev, "
-            "r.description = $description, r.mitigation = $mitigation",
+    node_rows: list[dict] = []
+    impact_rows: list[dict] = []
+    for i, risk in enumerate(risks):
+        risk_id = risk.get("risk_id", f"risk-{i}")
+        node_rows.append(
             {
                 "id": risk_id,
                 "type": risk.get("risk_type", ""),
                 "sev": risk.get("severity", ""),
                 "description": risk.get("description", ""),
                 "mitigation": risk.get("mitigation", ""),
-            },
+            }
         )
-        for table_id in risk.get("affected_tables") or []:
-            store.execute(
-                "MATCH (r:Risk {id: $rid}), (st:SourceTable {id: $tid}) "
-                "MERGE (r)-[:IMPACTS]->(st)",
-                {"rid": risk_id, "tid": table_id},
-            )
+        impact_rows.extend(
+            {"rid": risk_id, "tid": tid} for tid in (risk.get("affected_tables") or [])
+        )
+
+    if node_rows:
+        store.execute(
+            "UNWIND $rows AS r MERGE (rk:Risk {id: r.id}) "
+            "SET rk.risk_type = r.type, rk.severity = r.sev, "
+            "rk.description = r.description, rk.mitigation = r.mitigation",
+            {"rows": node_rows},
+        )
+    if impact_rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (rk:Risk {id: r.rid}), (st:SourceTable {id: r.tid}) "
+            "MERGE (rk)-[:IMPACTS]->(st)",
+            {"rows": impact_rows},
+        )
 
 
 def rebuild_graph(
