@@ -165,6 +165,7 @@ query_journeys.artifact_store = _artifact_store
 
 # Wire graph route
 from src.graph import GraphStoreCache  # noqa: E402
+from src.graph.persistence import GraphPersistence  # noqa: E402
 
 graph.artifact_store = _artifact_store
 graph.graph_cache = GraphStoreCache(
@@ -173,6 +174,7 @@ graph.graph_cache = GraphStoreCache(
         str(_artifact_store.base_dir) if hasattr(_artifact_store, "base_dir") else "./artifacts"
     ),
 )
+graph.graph_persistence = GraphPersistence(_artifact_store)
 graph.sfn_service = _sfn
 
 if STATE_MACHINE_ARN:

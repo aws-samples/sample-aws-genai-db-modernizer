@@ -1,14 +1,18 @@
 """Graph query routes — Cypher execution and rebuild trigger."""
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from src.graph import GraphStoreCache
+from src.graph.persistence import GraphPersistence
 from src.graph.populators import rebuild_graph
 from src.graph.schema import initialize_schema
 from src.storage.artifact_store import ArtifactStore
+
+logger = logging.getLogger(__name__)
 
 # Latency percentiles are flattened into source_{p}/target_{p} columns on
 # LoadTestRun (LadybugDB cannot round-trip JSON strings). The endpoint
@@ -19,6 +23,7 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["graph"])
 
 artifact_store: ArtifactStore | None = None
 graph_cache: GraphStoreCache | None = None
+graph_persistence: GraphPersistence | None = None
 sfn_service = None
 
 
@@ -37,17 +42,40 @@ def _get_database_name(job_id: str) -> str:
     return execution.get("input", {}).get("database_name", "")
 
 
+def _resolve_db_name(job_id: str) -> str:
+    """Resolve the database name for a job (patchable indirection for tests)."""
+    return _get_database_name(job_id)
+
+
 def _get_graph(job_id: str):
-    """Get a populated graph store for this job, building lazily if needed."""
-    if not graph_cache or not artifact_store:
+    """Return a populated graph store: local cache -> store download -> build+upload."""
+    if not graph_cache or not artifact_store or not graph_persistence:
         raise HTTPException(status_code=503, detail="Services not configured")
 
-    db_name = _get_database_name(job_id)
+    db_name = _resolve_db_name(job_id)
     store = graph_cache.get(db_name, job_id)
 
-    if not store.is_populated():
-        initialize_schema(store)
-        rebuild_graph(db_name, job_id, artifact_store, store)
+    if store.is_populated():
+        return store, db_name
+
+    # Try the persisted copy from the store before rebuilding.
+    local_path = graph_cache.local_path(db_name, job_id)
+    if graph_persistence.download_if_exists(db_name, job_id, local_path):
+        try:
+            store = graph_cache.reopen(db_name, job_id)
+            if store.is_populated():
+                return store, db_name
+        except Exception as exc:  # corrupt/unreadable download → fall through to rebuild
+            logger.warning("downloaded graph unusable for %s/%s: %s", db_name, job_id, exc)
+            store = graph_cache.get(db_name, job_id)
+
+    # Cache miss or unusable download: build fresh, then upload (self-healing).
+    initialize_schema(store)
+    rebuild_graph(db_name, job_id, artifact_store, store)
+    try:
+        graph_persistence.upload(db_name, job_id, local_path)
+    except Exception as exc:  # upload failure must not break the response
+        logger.warning("graph upload failed for %s/%s: %s", db_name, job_id, exc)
 
     return store, db_name
 
