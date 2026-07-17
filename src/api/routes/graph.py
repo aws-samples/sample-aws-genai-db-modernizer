@@ -109,14 +109,19 @@ async def query_graph(job_id: str, request: CypherRequest, graph: Any = Depends(
 
 @router.post("/{job_id}/graph/rebuild")
 async def rebuild_assessment_graph(job_id: str):
-    """Force rebuild the graph from S3 artifacts."""
-    if not graph_cache or not artifact_store:
+    """Force rebuild the graph from S3 artifacts and persist it to the store."""
+    if not graph_cache or not artifact_store or not graph_persistence:
         raise HTTPException(status_code=503, detail="Services not configured")
 
     db_name = _get_database_name(job_id)
     store = graph_cache.get(db_name, job_id)
     initialize_schema(store)
     stats = rebuild_graph(db_name, job_id, artifact_store, store)
+
+    try:
+        graph_persistence.upload(db_name, job_id, graph_cache.local_path(db_name, job_id))
+    except Exception as exc:  # upload failure must not break the response
+        logger.warning("graph upload failed for %s/%s: %s", db_name, job_id, exc)
 
     return {"status": "rebuilt", **stats}
 
