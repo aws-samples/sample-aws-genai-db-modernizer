@@ -1321,8 +1321,11 @@ Resources:
                     },
                     "TimeoutSeconds": 1800,
                     "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
-                    "End": true
-                  }
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "LoadTestEngineFailed", "ResultPath": "$.engine_error"}],
+                    "Next": "LoadTestEngineSucceeded"
+                  },
+                  "LoadTestEngineSucceeded": {"Type": "Pass", "End": true},
+                  "LoadTestEngineFailed": {"Type": "Pass", "End": true}
                 }
               },
               "ResultPath": "$.load_test_results",
