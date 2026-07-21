@@ -6,6 +6,8 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 0
     versioning-strategy: "lockfile-only"
+    cooldown:
+      default-days: 7
     groups:
       all-js:
         patterns: ["*"]
@@ -16,6 +18,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 7
     groups:
       all-python:
         patterns: ["*"]

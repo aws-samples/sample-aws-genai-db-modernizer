@@ -29,6 +29,18 @@ class S3ArtifactStore(ArtifactStore):
             ContentType="application/json",
         )
 
+    def read_bytes(self, path: str) -> bytes:
+        response = self.s3.get_object(Bucket=self.bucket, Key=path)
+        return response["Body"].read()  # type: ignore[no-any-return]
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=path,
+            Body=data,
+            ContentType="application/octet-stream",
+        )
+
     def exists(self, path: str) -> bool:
         try:
             self.s3.head_object(Bucket=self.bucket, Key=path)

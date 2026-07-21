@@ -1,6 +1,7 @@
 """DynamoDB k6 script generator using per-operation Jinja templates."""
 
 import math
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,18 @@ from src.contracts.load_test_models import TestConfig
 logger = structlog.get_logger()
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def sanitize_metric_id(query_id: str) -> str:
+    """Turn a query id into a valid k6 metric-name / JS-identifier token.
+
+    k6 metric names and JS identifiers allow only letters, numbers, and
+    underscores. Source query ids can be negative (e.g. -7551067248247426933),
+    whose leading '-' is illegal in both. Replace any non-word character with
+    an underscore. The handler applies the SAME transform when reading metrics
+    back by name, so the two sides stay in lockstep.
+    """
+    return re.sub(r"\W", "_", query_id)
 
 
 class DynamoDBScriptGenerator(BaseScriptGenerator):
@@ -43,8 +56,10 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
         pk = table_def["partition_key"]
         sk = table_def.get("sort_key")
 
+        query_id = access_pattern.get("query_ids", ["unknown"])[0]
         context = {
-            "query_id": access_pattern.get("query_ids", ["unknown"])[0],
+            "query_id": query_id,
+            "metric_id": sanitize_metric_id(query_id),
             "description": access_pattern.get("description", ""),
             "table_name": seed_info["table_name"],
             "pk_attr": pk["attribute_name"],
@@ -77,9 +92,11 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
 
         for i, s in enumerate(scenarios):
             rps = max(1, math.ceil(s.get("design_rps", 1)))
-            # Create a safe JS identifier: prefix with 'q' and use first 8 chars + index
+            # Create a safe JS identifier: prefix with 'q', use first 8 chars + index,
+            # and replace any non-identifier character (e.g. the '-' in negative source
+            # query ids like -7551067248247426933) so the generated JS stays valid.
             qid = s.get("query_id", f"unknown_{i}")
-            safe_id = f"q{qid[:8]}_{i}"
+            safe_id = f"q{sanitize_metric_id(qid[:8])}_{i}"
             max_vus = max(10, math.ceil(rps * 2 * scale))
             enriched.append(
                 {

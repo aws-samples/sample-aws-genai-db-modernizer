@@ -667,6 +667,25 @@ Resources:
                   - secretsmanager:TagResource  # pragma: allowlist secret
                 Resource:
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:LoadTest_DocumentDB_*'  # pragma: allowlist secret
+              - Sid: ElastiCacheProvisioning
+                Effect: Allow
+                Action:
+                  - elasticache:CreateReplicationGroup
+                  - elasticache:DeleteReplicationGroup
+                  - elasticache:AddTagsToResource
+                Resource:
+                  # CreateReplicationGroup authorizes against the replication group AND
+                  # the parameter/subnet/user groups it references (the default parameter
+                  # group is 'default.*', so a loadtest-* scope alone is insufficient).
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:replicationgroup:loadtest-*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:parametergroup:*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:subnetgroup:*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:usergroup:*'
+              - Sid: ElastiCacheDescribe
+                Effect: Allow
+                Action:
+                  - elasticache:DescribeReplicationGroups
+                Resource: '*'
               - Sid: StsGetCallerIdentity
                 Effect: Allow
                 Action:
@@ -1308,8 +1327,11 @@ Resources:
                     },
                     "TimeoutSeconds": 1800,
                     "Retry": [{"ErrorEquals": ["States.TaskFailed"], "MaxAttempts": 1, "BackoffRate": 2}],
-                    "End": true
-                  }
+                    "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "LoadTestEngineFailed", "ResultPath": "$.engine_error"}],
+                    "Next": "LoadTestEngineSucceeded"
+                  },
+                  "LoadTestEngineSucceeded": {"Type": "Pass", "End": true},
+                  "LoadTestEngineFailed": {"Type": "Pass", "End": true}
                 }
               },
               "ResultPath": "$.load_test_results",

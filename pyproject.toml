@@ -43,6 +43,9 @@ dependencies = [
 
     # ElastiCache/Valkey load test driver — used by load_test.elasticache.seeder
     "redis>=5.0.0",
+
+    # Embedded graph database (context graph layer)
+    "ladybug>=0.17.1",
 ]
 
 [project.optional-dependencies]

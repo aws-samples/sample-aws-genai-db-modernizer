@@ -22,6 +22,14 @@ class LocalArtifactStore(ArtifactStore):
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(json.dumps(data, indent=2, default=str))
 
+    def read_bytes(self, path: str) -> bytes:
+        return (self.base_dir / path).read_bytes()
+
+    def write_bytes(self, path: str, data: bytes) -> None:
+        full_path = self.base_dir / path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_bytes(data)
+
     def exists(self, path: str) -> bool:
         return (self.base_dir / path).exists()
 

@@ -19,6 +19,16 @@ class ArtifactStore(ABC):
         ...
 
     @abstractmethod
+    def read_bytes(self, path: str) -> bytes:
+        """Read a binary artifact and return its raw bytes."""
+        ...
+
+    @abstractmethod
+    def write_bytes(self, path: str, data: bytes) -> None:
+        """Write raw bytes as a binary artifact."""
+        ...
+
+    @abstractmethod
     def exists(self, path: str) -> bool:
         """Return True if the artifact at *path* exists."""
         ...
