@@ -674,7 +674,13 @@ Resources:
                   - elasticache:DeleteReplicationGroup
                   - elasticache:AddTagsToResource
                 Resource:
+                  # CreateReplicationGroup authorizes against the replication group AND
+                  # the parameter/subnet/user groups it references (the default parameter
+                  # group is 'default.*', so a loadtest-* scope alone is insufficient).
                   - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:replicationgroup:loadtest-*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:parametergroup:*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:subnetgroup:*'
+                  - !Sub 'arn:aws:elasticache:${AWS::Region}:${AWS::AccountId}:usergroup:*'
               - Sid: ElastiCacheDescribe
                 Effect: Allow
                 Action:
