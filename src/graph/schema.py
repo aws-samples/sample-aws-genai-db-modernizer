@@ -62,6 +62,10 @@ NODE_TABLES = [
         design_rps DOUBLE, in_scope BOOLEAN,
         PRIMARY KEY (id)
     )""",
+    """CREATE NODE TABLE IF NOT EXISTS Agent (
+        id STRING, name STRING, phase STRING,
+        PRIMARY KEY (id)
+    )""",
 ]
 
 REL_TABLES = [
@@ -80,6 +84,14 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS IMPACTS (FROM Risk TO SourceTable)",
     "CREATE REL TABLE IF NOT EXISTS EVIDENCED_BY (FROM Risk TO Query)",
     "CREATE REL TABLE IF NOT EXISTS PART_OF (FROM Query TO AccessPattern)",
+    """CREATE REL TABLE IF NOT EXISTS PRODUCED_BY (
+        FROM Decision TO Agent,
+        FROM Signal TO Agent,
+        FROM AntiPattern TO Agent,
+        FROM AccessPattern TO Agent,
+        FROM LoadTestRun TO Agent,
+        FROM Risk TO Agent
+    )""",
 ]
 
 
