@@ -63,6 +63,35 @@ Required IAM permissions for deployment and runtime:
 - `elasticloadbalancing:*`
 - `iam:PassRole`, `iam:CreateRole` (with `CAPABILITY_NAMED_IAM`)
 
+### Load Test Prerequisites (one-time, per account)
+
+The load test agent provisions real target-engine infrastructure. Some of that
+requires account-level setup that the deployment stacks do **not** create for
+you and that the load-test task role cannot self-provision (by design — it runs
+least-privilege). Complete these once per AWS account before running load tests.
+
+**ElastiCache — service-linked role (required for the ElastiCache engine).**
+`CreateReplicationGroup` fails with `ServiceLinkedRoleNotFoundFault` unless the
+ElastiCache service-linked role exists in the account. The AWS Console creates it
+automatically on first use, but a direct API call (which the agent makes) does
+not. Create it once:
+
+```bash
+aws iam create-service-linked-role --aws-service-name elasticache.amazonaws.com
+# If it already exists, AWS returns an error you can safely ignore:
+#   "Service role name AWSServiceRoleForElastiCache has been taken in this account"
+```
+
+This role persists for the life of the account; you only do this once.
+
+**DocumentDB — VPC subnet group + security group (required for the DocumentDB
+engine).** The DocumentDB load-test provisioner expects a pre-existing DocDB
+subnet group and security group, passed to the load-test task via the
+`DOCDB_DB_SUBNET_GROUP_NAME` and `DOCDB_VPC_SECURITY_GROUP_IDS` environment
+variables. These are not yet created or wired by the deployment stacks. Until
+that is added, the DocumentDB load-test engine will fail at provisioning. Track
+this as open deployment work before enabling the DocumentDB engine.
+
 ### Domain and Certificate Requirement
 
 > **Cloud deployment requires a custom domain with an ACM certificate.**
