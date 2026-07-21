@@ -61,8 +61,38 @@ class TestDynamoDBScriptGenerator:
 
         assert "LoadTest_WpPosts" in script
         assert "GetItem" in script
-        assert "ID" in script
-        assert "createPatternMetrics('q1')" in script
+
+    def test_scenario_metric_name_valid_for_negative_query_id(
+        self, generator, seed_info_numeric_pk
+    ):
+        """Negative/hyphenated query ids must not produce invalid k6 metric names.
+
+        k6 metric names allow only letters, numbers, and underscores. A raw id
+        like -7551067248247426933 yields 'latency_-7551067...', which k6 rejects
+        at runtime (createPatternMetrics).
+        """
+        import re
+
+        access_pattern = {
+            "pattern_id": "AP-1",
+            "query_ids": ["-7551067248247426933"],
+            "operation": "GetItem",
+            "table_name": "WpPosts",
+            "key_condition": "PK=ID",
+            "design_rps": 100,
+        }
+        table_def = {
+            "table_name": "WpPosts",
+            "partition_key": {"attribute_name": "ID", "attribute_type": "N"},
+            "sort_key": None,
+        }
+        script = generator.generate_scenario(access_pattern, table_def, seed_info_numeric_pk)
+
+        # Every createPatternMetrics(...) argument must be a valid k6 metric token.
+        matches = re.findall(r"createPatternMetrics\('([^']*)'\)", script)
+        assert matches, "no createPatternMetrics call found in generated scenario"
+        for arg in matches:
+            assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg), f"invalid metric id: {arg!r}"
 
     def test_generate_query_with_begins_with(self, generator, seed_info_with_sk):
         access_pattern = {

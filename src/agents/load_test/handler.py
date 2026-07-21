@@ -7,6 +7,7 @@ import boto3
 import structlog
 
 from src.agents.load_test.base import BaseProvisioner, BaseRunner, BaseScriptGenerator, BaseSeeder
+from src.agents.load_test.dynamodb.script_generator import sanitize_metric_id
 from src.agents.load_test.models import RunResult
 from src.agents.query_journey_materializer import materialize_load_test
 from src.contracts.load_test_models import (
@@ -335,19 +336,16 @@ def _build_pattern_results(
     results: list[PatternResult] = []
     seen: set[str] = set()
 
-    # Build query_id → scenario index mapping
-    # Each access pattern corresponds to one scenario (scenario_0, scenario_1, ...)
-    qid_to_scenario: dict[str, str] = {}
-    for i, ap in enumerate(access_patterns):
-        scenario_name = f"scenario_{i}"
-        for qid in ap.get("query_ids", []) or ap.get("source_query_ids", []):
-            qid_to_scenario[qid] = scenario_name
-
     for ap in access_patterns:
         for qid in ap.get("query_ids", []) or ap.get("source_query_ids", []):
             if qid in seen or qid not in query_map:
                 continue
             seen.add(qid)
+
+            # k6 emits per-pattern metrics keyed by the sanitized query id
+            # (latency_<metric_id>, requests_<metric_id>, consumed_rcu_<metric_id>,
+            # etc.). Read them back with the same transform so the keys match.
+            metric_id = sanitize_metric_id(qid)
 
             collector_query = query_map[qid]
             source_p50_raw = float(collector_query.get("execution_time_ms_p50") or 1.0)
@@ -376,20 +374,21 @@ def _build_pattern_results(
                 + source_network_overhead_ms,
             )
 
-            scenario_name = qid_to_scenario.get(qid, qid)
-            target_latency = runner.extract_scenario_latency(summary, scenario_name)
-            total_requests = runner.extract_scenario_iterations(summary, scenario_name)
+            target_latency = runner.extract_scenario_latency(summary, metric_id)
+            total_requests = runner.extract_scenario_iterations(summary, metric_id)
 
             target_p50 = target_latency.p50
             improvement = (source_p50 / target_p50) if target_p50 > 0 else 0.0
 
             rcu_avg = float(
-                metrics.get(f"consumed_rcu_{qid}", {}).get("values", {}).get("avg", 0.0)
+                metrics.get(f"consumed_rcu_{metric_id}", {}).get("values", {}).get("avg", 0.0)
             )
             wcu_avg = float(
-                metrics.get(f"consumed_wcu_{qid}", {}).get("values", {}).get("avg", 0.0)
+                metrics.get(f"consumed_wcu_{metric_id}", {}).get("values", {}).get("avg", 0.0)
             )
-            error_count = int(metrics.get(f"errors_{qid}", {}).get("values", {}).get("count", 0))
+            error_count = int(
+                metrics.get(f"errors_{metric_id}", {}).get("values", {}).get("count", 0)
+            )
             error_rate = (error_count / total_requests * 100.0) if total_requests > 0 else 0.0
 
             results.append(

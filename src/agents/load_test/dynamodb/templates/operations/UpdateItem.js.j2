@@ -2,7 +2,7 @@
 import { dynamoRequest } from '../helpers/aws-client.js';
 import { createPatternMetrics } from '../helpers/metrics-collector.js';
 
-const metrics = createPatternMetrics('{{ query_id }}');
+const metrics = createPatternMetrics('{{ metric_id }}');
 
 const TABLE_NAME = '{{ table_name }}';
 const PK_ATTR = '{{ pk_attr }}';
