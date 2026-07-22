@@ -54,3 +54,37 @@ class RiskHotspot(BaseModel):
 
 class RiskHotspotsResponse(BaseModel):
     hotspots: list[RiskHotspot]
+
+
+class LatencyPercentilesModel(BaseModel):
+    p50: float
+    p90: float
+    p95: float
+    p99: float
+    p999: float
+    min: float
+    max: float
+
+
+class LoadTestQuery(BaseModel):
+    query_id: str
+    source_latency: LatencyPercentilesModel
+    target_latency: LatencyPercentilesModel
+    improvement_factor: float | None = None
+    throughput_rps: float | None = None
+    error_rate_pct: float | None = None
+
+
+class LoadTestPattern(BaseModel):
+    pattern_id: str
+    engine: str
+    schema_version: int
+    description: str
+    pattern_group: str
+    design_rps: float
+    queries: list[LoadTestQuery]
+
+
+class LoadTestResultsResponse(BaseModel):
+    job_id: str
+    results: list[LoadTestPattern]
