@@ -6,7 +6,7 @@ from src.graph.populators import (
     populate_from_reality_check,
     populate_from_schema_design,
 )
-from src.graph.queries import query_provenance, table_impact
+from src.graph.queries import engine_detail, query_provenance, risk_hotspots, table_impact
 
 
 def test_table_impact_lists_affected_queries(
@@ -42,3 +42,19 @@ def test_query_provenance_includes_agent(
     assert result.query_id == qid
     assert isinstance(result.signals, list)
     assert isinstance(result.decisions, list)
+
+
+def test_engine_detail_lists_destinations(graph_store, sample_collector_output, sample_assignment):
+    populate_from_collector(sample_collector_output, graph_store)
+    populate_from_assignment(sample_assignment, graph_store)
+    result = engine_detail(graph_store, "dynamodb")
+    assert result.engine == "dynamodb"
+    assert isinstance(result.destinations, list)
+    assert result.destinations, "expected at least one dynamodb destination"
+
+
+def test_risk_hotspots_returns_list(graph_store, sample_collector_output):
+    populate_from_collector(sample_collector_output, graph_store)
+    result = risk_hotspots(graph_store)
+    # no synthesis/analysis run → no risk or anti-pattern hotspots
+    assert result.hotspots == []

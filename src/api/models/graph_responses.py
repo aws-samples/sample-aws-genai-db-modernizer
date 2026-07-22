@@ -31,3 +31,26 @@ class QueryProvenanceResponse(BaseModel):
     assignment_reason: str | None = None
     signals: list[str]
     decisions: list[ProvenanceDecision]
+
+
+class EngineDestination(BaseModel):
+    destination_id: str
+    source_tables: list[str]
+    access_patterns: list[str]
+    query_count: int
+
+
+class EngineDetailResponse(BaseModel):
+    engine: str
+    destinations: list[EngineDestination]
+
+
+class RiskHotspot(BaseModel):
+    table_id: str
+    total_calls_per_second: float
+    risk_count: int
+    anti_pattern_count: int
+
+
+class RiskHotspotsResponse(BaseModel):
+    hotspots: list[RiskHotspot]

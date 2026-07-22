@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from src.api.models.graph_responses import (
     AffectedQuery,
+    EngineDestination,
+    EngineDetailResponse,
     ProvenanceDecision,
     QueryProvenanceResponse,
+    RiskHotspot,
+    RiskHotspotsResponse,
     TableImpactResponse,
 )
 from src.graph.store import GraphStore
@@ -84,3 +88,52 @@ def query_provenance(store: GraphStore, query_id: str) -> QueryProvenanceRespons
         signals=signals,
         decisions=decisions,
     )
+
+
+def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
+    """Destinations for an engine, with their source tables and access patterns."""
+    rows = store.query(
+        "MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: $engine}) "
+        "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
+        "OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) "
+        "RETURN d.id AS destination_id, "
+        "  COLLECT(DISTINCT st.id) AS source_tables, "
+        "  COLLECT(DISTINCT ap.id) AS access_patterns, "
+        "  COUNT(DISTINCT q) AS query_count "
+        "ORDER BY query_count DESC",
+        {"engine": engine},
+    )
+    dests = [
+        EngineDestination(
+            destination_id=r["destination_id"],
+            source_tables=[x for x in (r.get("source_tables") or []) if x is not None],
+            access_patterns=[x for x in (r.get("access_patterns") or []) if x is not None],
+            query_count=r.get("query_count") or 0,
+        )
+        for r in rows
+    ]
+    return EngineDetailResponse(engine=engine, destinations=dests)
+
+
+def risk_hotspots(store: GraphStore) -> RiskHotspotsResponse:
+    """Tables carrying risk and/or anti-patterns, weighted by query traffic."""
+    rows = store.query(
+        "MATCH (st:SourceTable)<-[:READS_FROM]-(q:Query) "
+        "OPTIONAL MATCH (r:Risk)-[:IMPACTS]->(st) "
+        "OPTIONAL MATCH (a:AntiPattern)-[:OBSERVED_IN_TABLE]->(st) "
+        "WITH st, SUM(q.calls_per_second) AS total_cps, "
+        "  COUNT(DISTINCT r) AS risks, COUNT(DISTINCT a) AS anti_patterns "
+        "WHERE risks > 0 OR anti_patterns > 0 "
+        "RETURN st.id AS table_id, total_cps, risks, anti_patterns "
+        "ORDER BY total_cps DESC",
+    )
+    hotspots = [
+        RiskHotspot(
+            table_id=r["table_id"],
+            total_calls_per_second=r.get("total_cps") or 0.0,
+            risk_count=r.get("risks") or 0,
+            anti_pattern_count=r.get("anti_patterns") or 0,
+        )
+        for r in rows
+    ]
+    return RiskHotspotsResponse(hotspots=hotspots)
