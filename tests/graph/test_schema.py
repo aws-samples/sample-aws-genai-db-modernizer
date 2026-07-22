@@ -5,7 +5,7 @@ from src.graph.store import GraphStore
 
 
 def test_initialize_schema_creates_all_node_tables(tmp_path):
-    """Schema init creates all 11 node tables."""
+    """Schema init creates all 12 node tables."""
     store = GraphStore(str(tmp_path / "test.lbug"))
     initialize_schema(store)
     for table in [
@@ -20,6 +20,7 @@ def test_initialize_schema_creates_all_node_tables(tmp_path):
         "AntiPattern",
         "Risk",
         "AccessPattern",
+        "Agent",
     ]:
         rows = store.query(f"MATCH (n:{table}) RETURN COUNT(n) AS c")
         assert rows[0]["c"] == 0
@@ -27,7 +28,7 @@ def test_initialize_schema_creates_all_node_tables(tmp_path):
 
 
 def test_initialize_schema_creates_all_rel_tables(tmp_path):
-    """Schema init creates all 15 relationship tables."""
+    """Schema init creates all 16 relationship tables."""
     store = GraphStore(str(tmp_path / "test.lbug"))
     initialize_schema(store)
     # Verify by inserting and querying a relationship
@@ -67,6 +68,31 @@ def test_initialize_schema_creates_part_of_edge(tmp_path):
     assert len(results) == 1
     assert results[0]["ap.id"] == "DDB-AP-1"
     assert results[0]["ap.engine"] == "dynamodb"
+    store.close()
+
+
+def test_initialize_schema_creates_agent_and_produced_by(tmp_path):
+    """Agent is a NODE table and PRODUCED_BY links a Decision to an Agent."""
+    store = GraphStore(str(tmp_path / "test.lbug"))
+    initialize_schema(store)
+    store.execute(
+        "CREATE (d:Decision {id: 'dec-1', category: 'trade_off', description: '',"
+        " rationale: '', phase: 'SCHEMA_DESIGN', metadata: ''})"
+    )
+    store.execute(
+        "CREATE (a:Agent {id: 'schema-dynamodb', name: 'Schema dynamodb',"
+        " phase: 'SCHEMA_DESIGN'})"
+    )
+    store.execute(
+        "MATCH (d:Decision {id: 'dec-1'}), (a:Agent {id: 'schema-dynamodb'})"
+        " CREATE (d)-[:PRODUCED_BY]->(a)"
+    )
+    rows = store.query(
+        "MATCH (d:Decision)-[:PRODUCED_BY]->(a:Agent) RETURN a.id AS aid, a.phase AS phase"
+    )
+    assert len(rows) == 1
+    assert rows[0]["aid"] == "schema-dynamodb"
+    assert rows[0]["phase"] == "SCHEMA_DESIGN"
     store.close()
 
 

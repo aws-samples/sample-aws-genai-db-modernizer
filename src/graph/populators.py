@@ -10,6 +10,34 @@ from src.graph.store import GraphStore
 from src.storage.artifact_store import ArtifactStore
 
 
+def _stamp_agent(
+    store: GraphStore,
+    agent_id: str,
+    agent_name: str,
+    phase: str,
+    from_label: str,
+    node_ids: list[str],
+) -> None:
+    """MERGE the producing Agent and link each node to it via PRODUCED_BY.
+
+    from_label is the source node label (Decision, Signal, AntiPattern,
+    AccessPattern, LoadTestRun, Risk) — a module constant, never user input.
+    node_ids are the ids of the just-created nodes of that label. PRODUCED_BY
+    is a single multi-pair rel table.
+    """
+    if not node_ids:
+        return
+    store.execute(
+        "MERGE (a:Agent {id: $id}) SET a.name = $name, a.phase = $phase",
+        {"id": agent_id, "name": agent_name, "phase": phase},
+    )
+    store.execute(  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query
+        f"UNWIND $rows AS r MATCH (n:{from_label} {{id: r.nid}}), (a:Agent {{id: $aid}}) "
+        "MERGE (n)-[:PRODUCED_BY]->(a)",
+        {"rows": [{"nid": nid} for nid in node_ids], "aid": agent_id},
+    )
+
+
 def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
     """Create Query and SourceTable nodes, READS_FROM edges from collector output."""
     patterns = collector_output["queries"]["query_patterns"]
@@ -74,6 +102,14 @@ def populate_from_triage(triage_output: dict, store: GraphStore) -> None:
             "UNWIND $rows AS r MERGE (s:Signal {id: r.id}) "
             "SET s.category = r.cat, s.description = r.description",
             {"rows": signal_rows},
+        )
+        _stamp_agent(
+            store,
+            "triage",
+            "Triage",
+            "TRIAGE",
+            "Signal",
+            [r["id"] for r in signal_rows],
         )
 
     edge_rows = [
@@ -186,6 +222,14 @@ def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore
             "ap.description = r.description, ap.recommendation = r.rec",
             {"rows": node_rows},
         )
+        _stamp_agent(
+            store,
+            f"analysis-{engine}",
+            f"Analysis {engine}",
+            "ANALYSIS",
+            "AntiPattern",
+            [r["id"] for r in node_rows],
+        )
 
     q_edges = [
         {"apid": ap["anti_pattern_id"], "qid": qid}
@@ -242,6 +286,14 @@ def populate_from_reality_check(reality_check_output: dict, store: GraphStore) -
             "d.rationale = r.rationale, d.phase = 'REALITY_CHECK', d.metadata = r.meta",
             {"rows": rows},
         )
+        _stamp_agent(
+            store,
+            "reality-check",
+            "Reality Check",
+            "REALITY_CHECK",
+            "Decision",
+            [r["id"] for r in rows],
+        )
 
 
 def populate_from_schema_design(
@@ -272,6 +324,14 @@ def populate_from_schema_design(
             "SET d.category = 'trade_off', d.description = r.description, "
             "d.rationale = r.impact, d.phase = 'SCHEMA_DESIGN', d.metadata = r.meta",
             {"rows": decision_rows},
+        )
+        _stamp_agent(
+            store,
+            f"schema-{engine}",
+            f"Schema {engine}",
+            "SCHEMA_DESIGN",
+            "Decision",
+            [r["id"] for r in decision_rows],
         )
     if informed_rows:
         store.execute(
@@ -309,6 +369,14 @@ def populate_from_schema_design(
             "ap.description = r.description, ap.pattern_group = r.pattern_group, "
             "ap.operation = r.op, ap.design_rps = r.rps, ap.in_scope = r.in_scope",
             {"rows": ap_rows},
+        )
+        _stamp_agent(
+            store,
+            f"schema-{engine}",
+            f"Schema {engine}",
+            "SCHEMA_DESIGN",
+            "AccessPattern",
+            [r["id"] for r in ap_rows],
         )
     if part_of_rows:
         store.execute(
@@ -350,6 +418,14 @@ def populate_from_post_schema_router(router_output: dict, store: GraphStore) -> 
             "SET d.category = 'reroute', d.description = r.description, "
             "d.rationale = r.rationale, d.phase = 'POST_SCHEMA_ROUTER', d.metadata = r.meta",
             {"rows": decision_rows},
+        )
+        _stamp_agent(
+            store,
+            "post-schema-router",
+            "Post-Schema Router",
+            "POST_SCHEMA_ROUTER",
+            "Decision",
+            [r["id"] for r in decision_rows],
         )
     if informed_rows:
         store.execute(
@@ -415,6 +491,14 @@ def populate_from_load_test(
             "lt.error_rate_pct = r.err, lt.cost_per_operation_usd = r.cost",
             {"rows": run_rows},
         )
+        _stamp_agent(
+            store,
+            f"load-test-{engine}",
+            f"Load Test {engine}",
+            "LOAD_TEST",
+            "LoadTestRun",
+            [r["id"] for r in run_rows],
+        )
     if edge_rows:
         store.execute(
             "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (lt:LoadTestRun {id: r.ltid}) "
@@ -458,6 +542,14 @@ def populate_from_synthesis(synthesis_output: dict, store: GraphStore) -> None:
             "SET rk.risk_type = r.type, rk.severity = r.sev, "
             "rk.description = r.description, rk.mitigation = r.mitigation",
             {"rows": node_rows},
+        )
+        _stamp_agent(
+            store,
+            "referee-synthesis",
+            "Referee Synthesis",
+            "SYNTHESIS",
+            "Risk",
+            [r["id"] for r in node_rows],
         )
     if impact_rows:
         store.execute(

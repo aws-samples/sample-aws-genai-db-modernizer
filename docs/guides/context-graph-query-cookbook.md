@@ -31,6 +31,29 @@ artifacts, then persisted and reused. If a query returns no rows, the
 corresponding pipeline stage may not have produced artifacts yet (see
 [Empty results](#empty-results)).
 
+## Curated endpoints (preferred)
+
+For the highest-value questions there are typed `GET` endpoints that return
+purpose-shaped JSON, so you don't hand-write Cypher. Prefer these; use raw
+`POST /graph/query` for anything not covered.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/v1/assessments/{job_id}/graph/tables/{table_id}/impact` | Queries affected if the table changes (blast radius), with destinations, access patterns, anti-patterns |
+| `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/provenance` | Why a query migrated where it did, plus the producing agent/phase |
+| `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | Destinations and source tables migrating to an engine |
+| `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying risk and anti-patterns, weighted by traffic |
+| `GET /api/v1/assessments/{job_id}/graph/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
+
+Unknown ids and not-yet-run stages return `200` with empty collections, not
+`404`, so consumers distinguish "no data" from an error.
+
+**Adding a curated view later** is a repeatable three-step pattern: add a pure
+function to `src/graph/queries.py` (Cypher + shaping), a Pydantic model to
+`src/api/models/graph_responses.py`, and a thin handler in
+`src/api/routes/graph.py` using `Depends(get_graph_for_job)` and
+`response_model=`.
+
 ## Graph model
 
 Node types: `Query`, `SourceTable`, `Destination`, `Engine`, `Signal`,
