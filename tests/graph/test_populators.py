@@ -151,6 +151,18 @@ def test_populate_from_reality_check_creates_consolidation_decisions(
     assert decisions[0]["d.category"] == "consolidation"
 
 
+def test_reality_check_stamps_produced_by_agent(graph_store, sample_reality_check_output):
+    """Reality-check decisions are stamped with a reality-check Agent."""
+    populate_from_reality_check(sample_reality_check_output, graph_store)
+    rows = graph_store.query(
+        "MATCH (d:Decision)-[:PRODUCED_BY]->(a:Agent) "
+        "RETURN DISTINCT a.id AS aid, a.phase AS phase"
+    )
+    assert rows, "no PRODUCED_BY edge created"
+    assert rows[0]["aid"] == "reality-check"
+    assert rows[0]["phase"] == "REALITY_CHECK"
+
+
 def test_populate_from_schema_design_creates_trade_off_decisions(
     graph_store, sample_collector_output, sample_schema_design_output
 ):

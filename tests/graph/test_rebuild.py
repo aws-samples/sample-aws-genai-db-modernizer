@@ -108,4 +108,8 @@ def test_rebuild_graph_reads_real_pipeline_paths(
     assert runs[0]["c"] == 1
     risks = graph_store.query("MATCH (r:Risk) RETURN COUNT(r) AS c")
     assert risks[0]["c"] == 1
+    agents = graph_store.query("MATCH (a:Agent) RETURN COUNT(a) AS c")
+    assert agents[0]["c"] > 0
+    produced = graph_store.query("MATCH ()-[:PRODUCED_BY]->(:Agent) RETURN COUNT(*) AS c")
+    assert produced[0]["c"] > 0
     graph_store.close()
