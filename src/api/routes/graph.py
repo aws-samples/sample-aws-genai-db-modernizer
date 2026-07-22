@@ -6,9 +6,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from src.api.models.graph_responses import (
+    EngineDetailResponse,
+    QueryProvenanceResponse,
+    RiskHotspotsResponse,
+    TableImpactResponse,
+)
 from src.graph import GraphStoreCache
 from src.graph.persistence import GraphPersistence
 from src.graph.populators import rebuild_graph
+from src.graph.queries import engine_detail, query_provenance, risk_hotspots, table_impact
 from src.graph.schema import initialize_schema
 from src.storage.artifact_store import ArtifactStore
 
@@ -198,3 +205,36 @@ async def load_test_results(
         )
 
     return {"job_id": job_id, "results": results}
+
+
+@router.get("/{job_id}/graph/tables/{table_id}/impact", response_model=TableImpactResponse)
+async def graph_table_impact(job_id: str, table_id: str, graph: Any = Depends(get_graph_for_job)):
+    """Queries affected if the given source table changes."""
+    store, _ = graph
+    return table_impact(store, table_id)
+
+
+@router.get(
+    "/{job_id}/graph/queries/{query_id}/provenance",
+    response_model=QueryProvenanceResponse,
+)
+async def graph_query_provenance(
+    job_id: str, query_id: str, graph: Any = Depends(get_graph_for_job)
+):
+    """Why a query migrated where it did, and which agent decided it."""
+    store, _ = graph
+    return query_provenance(store, query_id)
+
+
+@router.get("/{job_id}/graph/engines/{engine}", response_model=EngineDetailResponse)
+async def graph_engine_detail(job_id: str, engine: str, graph: Any = Depends(get_graph_for_job)):
+    """Destinations and source tables migrating to a given engine."""
+    store, _ = graph
+    return engine_detail(store, engine)
+
+
+@router.get("/{job_id}/graph/risks", response_model=RiskHotspotsResponse)
+async def graph_risks(job_id: str, graph: Any = Depends(get_graph_for_job)):
+    """Tables carrying risk and anti-patterns, weighted by traffic."""
+    store, _ = graph
+    return risk_hotspots(store)
