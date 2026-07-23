@@ -129,6 +129,18 @@ external repo, or to drive the deployed API, later.
 
 ## References
 
-- Related: ADR-023 (Context Graph Layer) — its provenance data (`PRODUCED_BY`,
-  decision rationale) could later power explainable scoring.
+This ADR introduces a new capability; it does not supersede or rewrite any
+existing ADR. Distinctions from adjacent ADRs, to avoid confusion:
+
+- **ADR-017 (Analysis Agent Scoring Framework)** — that is the *runtime* scoring
+  the tool uses to **produce** recommendations (per-query engine scoring inside
+  the agents). ADR-024 is the opposite direction: it **evaluates** whether those
+  recommendations were good, against human ground truth. ADR-017 is the thing
+  being measured; ADR-024 is the measuring stick. They are complementary.
+- **ADR-009 (Testing Infrastructure)** — unit/integration testing of code
+  correctness. ADR-024 measures *output quality*, a separate concern from
+  code-correctness tests (though the deterministic assignment benchmark can run
+  in CI like a regression test).
+- **ADR-023 (Context Graph Layer)** — related: its provenance data
+  (`PRODUCED_BY`, decision rationale) could later power explainable scoring.
 - Design detail and implementation plan tracked separately (working docs).
