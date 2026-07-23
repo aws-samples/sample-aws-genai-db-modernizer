@@ -1,0 +1,50 @@
+{
+  "job_id": "kv-lookup-clean",
+  "database_schema": {
+    "tables": [
+      { "table_id": "users", "table_name": "users" },
+      { "table_id": "sessions", "table_name": "sessions" },
+      { "table_id": "carts", "table_name": "carts" }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "q_get_by_pk",
+        "query_text": "SELECT * FROM users WHERE user_id = ?",
+        "query_type": "SELECT",
+        "tables_accessed": ["users"],
+        "calls_per_second": 850.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "rows_returned_avg": 1
+      },
+      {
+        "query_id": "q_get_cart",
+        "query_text": "SELECT * FROM carts WHERE cart_id = ?",
+        "query_type": "SELECT",
+        "tables_accessed": ["carts"],
+        "calls_per_second": 610.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "rows_returned_avg": 1
+      },
+      {
+        "query_id": "q_session_get",
+        "query_text": "SELECT * FROM sessions WHERE session_id = ?",
+        "query_type": "SELECT",
+        "tables_accessed": ["sessions"],
+        "calls_per_second": 1200.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "rows_returned_avg": 1
+      }
+    ]
+  }
+}

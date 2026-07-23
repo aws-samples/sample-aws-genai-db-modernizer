@@ -1,0 +1,16 @@
+{
+  "selected_agents": [
+    { "agent_type": "dynamodb" },
+    { "agent_type": "elasticache" }
+  ],
+  "signals": [
+    {
+      "signal": "session_store",
+      "targets": ["elasticache"],
+      "evidence": "session lookup by session_id, ephemeral/TTL-friendly access pattern",
+      "query_ids": ["q_session_get"],
+      "table_ids": ["sessions"],
+      "query_count": 1
+    }
+  ]
+}

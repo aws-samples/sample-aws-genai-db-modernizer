@@ -1,0 +1,77 @@
+{
+  "job_id": "wordpress-trimmed",
+  "database_schema": {
+    "tables": [
+      { "table_id": "wp_options", "table_name": "wp_options" },
+      { "table_id": "wp_postmeta", "table_name": "wp_postmeta" },
+      { "table_id": "wp_terms", "table_name": "wp_terms" },
+      { "table_id": "wp_term_taxonomy", "table_name": "wp_term_taxonomy" },
+      { "table_id": "wp_woocommerce_api_keys", "table_name": "wp_woocommerce_api_keys" },
+      { "table_id": "wp_posts", "table_name": "wp_posts" }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "q_option_get",
+        "query_text": "SELECT `option_value` FROM `wp_options` WHERE `option_name` = ? LIMIT ?",
+        "query_type": "SELECT",
+        "tables_accessed": ["wp_options"],
+        "calls_per_second": 1820.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "execution_count": 6552059
+      },
+      {
+        "query_id": "q_postmeta_point",
+        "query_text": "SELECT `meta_id` FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+        "query_type": "SELECT",
+        "tables_accessed": ["wp_postmeta"],
+        "calls_per_second": 349.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "execution_count": 1257183
+      },
+      {
+        "query_id": "q_term_join",
+        "query_text": "SELECT DISTINCTROW `t`.`term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t`.`term_id` = `tt`.`term_id` WHERE `tt`.`taxonomy` IN (...)",
+        "query_type": "SELECT",
+        "tables_accessed": ["wp_terms", "wp_term_taxonomy"],
+        "calls_per_second": 306.0,
+        "has_joins": true,
+        "join_count": 1,
+        "has_aggregation": false,
+        "filter_tables": ["wp_term_taxonomy"],
+        "execution_count": 1100995
+      },
+      {
+        "query_id": "q_api_key_update",
+        "query_text": "UPDATE `wp_woocommerce_api_keys` SET `last_access` = ? WHERE `key_id` = ?",
+        "query_type": "UPDATE",
+        "tables_accessed": ["wp_woocommerce_api_keys"],
+        "calls_per_second": 199.0,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": false,
+        "filter_tables": [],
+        "execution_count": 715089
+      },
+      {
+        "query_id": "q_agg_group_by",
+        "query_text": "SELECT `post_status`, COUNT(*) AS `num_posts` FROM `wp_posts` WHERE `post_type` = ? GROUP BY `post_status`",
+        "query_type": "SELECT",
+        "tables_accessed": ["wp_posts"],
+        "calls_per_second": 1.05,
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregation": true,
+        "filter_tables": [],
+        "execution_count": 3778
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "table_recommendations": [
+    { "table_id": "wp_options", "confidence_score": 88 },
+    { "table_id": "wp_postmeta", "confidence_score": 85 },
+    { "table_id": "wp_woocommerce_api_keys", "confidence_score": 80 },
+    { "table_id": "wp_terms", "confidence_score": 40 },
+    { "table_id": "wp_term_taxonomy", "confidence_score": 40 },
+    { "table_id": "wp_posts", "confidence_score": 35 }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [],
+    "anti_patterns_detected": [
+      {
+        "anti_pattern_id": "ap-ddb-1",
+        "anti_pattern_type": "complex-aggregation",
+        "severity_weight": 0.6,
+        "description": "GROUP BY aggregation over post_status is not a DynamoDB-native operation",
+        "query_ids": ["q_agg_group_by"],
+        "table_ids": ["wp_posts"],
+        "recommendation": "Keep aggregation queries on a relational engine or pre-compute with DynamoDB Streams"
+      },
+      {
+        "anti_pattern_id": "ap-ddb-2",
+        "anti_pattern_type": "multi-index-joins",
+        "severity_weight": 0.4,
+        "description": "Taxonomy join across wp_terms and wp_term_taxonomy requires a secondary-index join DynamoDB cannot perform natively",
+        "query_ids": ["q_term_join"],
+        "table_ids": ["wp_terms", "wp_term_taxonomy"],
+        "recommendation": "Keep taxonomy joins on a relational or document engine"
+      }
+    ]
+  }
+}

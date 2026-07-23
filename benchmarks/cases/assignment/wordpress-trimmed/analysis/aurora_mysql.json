@@ -1,0 +1,24 @@
+{
+  "table_recommendations": [
+    { "table_id": "wp_terms", "confidence_score": 82 },
+    { "table_id": "wp_term_taxonomy", "confidence_score": 82 },
+    { "table_id": "wp_posts", "confidence_score": 78 },
+    { "table_id": "wp_options", "confidence_score": 45 },
+    { "table_id": "wp_postmeta", "confidence_score": 45 },
+    { "table_id": "wp_woocommerce_api_keys", "confidence_score": 45 }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [],
+    "anti_patterns_detected": [
+      {
+        "anti_pattern_id": "ap-aur-1",
+        "anti_pattern_type": "high-frequency-pk-lookup",
+        "severity_weight": 0.5,
+        "description": "High-frequency single-row point lookups/updates by primary key are better served by a purpose-built key-value engine at this call volume",
+        "query_ids": ["q_option_get", "q_postmeta_point", "q_api_key_update"],
+        "table_ids": ["wp_options", "wp_postmeta", "wp_woocommerce_api_keys"],
+        "recommendation": "Move high-frequency PK lookups/updates to DynamoDB or ElastiCache"
+      }
+    ]
+  }
+}
