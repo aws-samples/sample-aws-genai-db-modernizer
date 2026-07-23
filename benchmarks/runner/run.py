@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -30,7 +32,11 @@ def run_benchmark(stage_dir: Path, work_root: Path | None = None, tags=None) -> 
             runs.append(CaseRun(case.case_id, Outcome.SKIPPED, None))
             continue
         try:
-            actual = run_assignment_case(case, work_root / case.case_id)
+            # The agent prints diagnostic '[assignment] ...' lines to stdout.
+            # Redirect them to stderr so stdout stays clean for the report
+            # (--json must emit only valid JSON). Logs remain visible on stderr.
+            with contextlib.redirect_stdout(sys.stderr):
+                actual = run_assignment_case(case, work_root / case.case_id)
         except Exception as exc:  # noqa: BLE001 — categorize, never let one case abort the batch
             outcome = Outcome.THROTTLED if _is_throttle(exc) else Outcome.ERRORED
             runs.append(CaseRun(case.case_id, outcome, None))
@@ -55,11 +61,14 @@ def main() -> None:
     stage_dir = Path(args.cases_dir) / args.stage
     report = run_benchmark(stage_dir, tags=args.tags)
 
-    if report["banner"]:
-        print(report["banner"] + "\n")
     if args.json:
+        # stdout is reserved for machine-readable JSON; banner goes to stderr.
+        if report["banner"]:
+            print(report["banner"] + "\n", file=sys.stderr)
         print(json.dumps(report, indent=2))
     else:
+        if report["banner"]:
+            print(report["banner"] + "\n")
         print(f"stage={args.stage}  complete={report['complete']}")
         print(
             f"scored={report['scored_cases']}  throttled={report['throttled_cases']}  "
