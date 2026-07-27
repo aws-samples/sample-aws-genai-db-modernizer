@@ -88,6 +88,30 @@ Resources:
         - Key: CostCenter
           Value: Engineering
 
+  # Allow ECS tasks to reach ElastiCache/Valkey clusters provisioned with
+  # the same security group (self-referencing ingress on port 6379).
+  EcsSelfIngressValkey:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref EcsSecurityGroup
+      Description: Allow ECS tasks to reach ElastiCache load test clusters (TLS)
+
+  # Allow ECS tasks outbound to Valkey port (self-SG, needed because egress is
+  # restricted to 443 only by default).
+  EcsSelfEgressValkey:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      DestinationSecurityGroupId: !Ref EcsSecurityGroup
+      Description: Allow ECS tasks outbound to ElastiCache load test clusters
+
   # ============================================================
   # IAM Role for ECS Task Execution (shared)
   # ============================================================

@@ -522,6 +522,26 @@ Resources:
         - Key: AgentType
           Value: reality-check
 
+  # ============================================================
+  # ElastiCache Subnet Group (places clusters in same VPC as ECS tasks)
+  # ============================================================
+  LoadTestCacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Condition: HasLoadTestImage
+    Properties:
+      CacheSubnetGroupName: !Sub '${ProjectName}-${Environment}-loadtest-cache'
+      Description: Subnet group for load test ElastiCache clusters
+      SubnetIds:
+        - !Ref PrivateAppSubnet1Id
+        - !Ref PrivateAppSubnet2Id
+      Tags:
+        - Key: Project
+          Value: Database Modernizer Assessment
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
   LoadTestTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Condition: HasLoadTestImage
@@ -554,6 +574,10 @@ Resources:
               Value: !Ref NotificationEventBus
             - Name: S3_BUCKET
               Value: !Ref S3BucketName
+            - Name: ELASTICACHE_SUBNET_GROUP_NAME
+              Value: !Ref LoadTestCacheSubnetGroup
+            - Name: ELASTICACHE_SECURITY_GROUP_IDS
+              Value: !Ref EcsSecurityGroupId
       Tags:
         - Key: Project
           Value: Database Modernizer Assessment
