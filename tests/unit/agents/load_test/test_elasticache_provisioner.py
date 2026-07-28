@@ -13,6 +13,8 @@ Mocks boto3 (elasticache, sts) and verifies:
   - Teardown deletes replication group
   - Teardown is idempotent: ReplicationGroupNotFoundFault is swallowed
   - Tags are forwarded to the AWS API call
+
+  V1.0 funknor 07-28-2026 06:28
 """
 
 from typing import Any
