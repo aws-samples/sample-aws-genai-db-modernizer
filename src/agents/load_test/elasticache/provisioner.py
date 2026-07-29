@@ -2,8 +2,16 @@
 
 Creates a Valkey replication group with cluster mode enabled,
 using the instance type identified by the ElastiCache analysis.
+
+Network placement is controlled via environment variables:
+
+  - ``ELASTICACHE_SUBNET_GROUP_NAME`` — pre-existing ElastiCache subnet group
+  - ``ELASTICACHE_SECURITY_GROUP_IDS`` — comma-separated security group IDs
+
+These must place the cluster in the same VPC as the ECS task.
 """
 
+import os
 import time
 
 import boto3
@@ -18,7 +26,9 @@ DEFAULT_NODE_TYPE = "cache.r7g.large"
 DEFAULT_ENGINE_VERSION = "9.0"
 REPLICATION_GROUP_PREFIX = "loadtest-modernizer"
 
-# commit tracker funknor 07-27 16:48
+ENV_SUBNET_GROUP = "ELASTICACHE_SUBNET_GROUP_NAME"
+ENV_SECURITY_GROUPS = "ELASTICACHE_SECURITY_GROUP_IDS"
+
 
 class ElastiCacheProvisioner(BaseProvisioner):
     """Provisions and tears down an ElastiCache Valkey replication group."""
@@ -41,19 +51,31 @@ class ElastiCacheProvisioner(BaseProvisioner):
         )
 
         try:
-            response = self.client.create_replication_group(
-                ReplicationGroupId=replication_group_id,
-                ReplicationGroupDescription="Database Modernizer load test Valkey cluster",
-                Engine="valkey",
-                EngineVersion=DEFAULT_ENGINE_VERSION,
-                CacheNodeType=node_type,
-                NumNodeGroups=num_node_groups,
-                ReplicasPerNodeGroup=1,
-                MultiAZEnabled=True,
-                AutomaticFailoverEnabled=True,
-                TransitEncryptionEnabled=True,
-                Tags=[{"Key": k, "Value": v} for k, v in tags.items()],
-            )
+            create_kwargs: dict = {
+                "ReplicationGroupId": replication_group_id,
+                "ReplicationGroupDescription": "Database Modernizer load test Valkey cluster",
+                "Engine": "valkey",
+                "EngineVersion": DEFAULT_ENGINE_VERSION,
+                "CacheNodeType": node_type,
+                "NumNodeGroups": num_node_groups,
+                "ReplicasPerNodeGroup": 1,
+                "MultiAZEnabled": True,
+                "AutomaticFailoverEnabled": True,
+                "TransitEncryptionEnabled": True,
+                "Tags": [{"Key": k, "Value": v} for k, v in tags.items()],
+            }
+
+            # Place in the same VPC as the ECS task (required for connectivity)
+            subnet_group = os.environ.get(ENV_SUBNET_GROUP)
+            if subnet_group:
+                create_kwargs["CacheSubnetGroupName"] = subnet_group
+
+            sg_ids_raw = os.environ.get(ENV_SECURITY_GROUPS, "")
+            sg_ids = [s.strip() for s in sg_ids_raw.split(",") if s.strip()]
+            if sg_ids:
+                create_kwargs["SecurityGroupIds"] = sg_ids
+
+            response = self.client.create_replication_group(**create_kwargs)
             status = response["ReplicationGroup"]["Status"]
             logger.info("replication_group_creating", status=status)
         except self.client.exceptions.ReplicationGroupAlreadyExistsFault:
