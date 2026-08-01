@@ -112,6 +112,30 @@ Resources:
       DestinationSecurityGroupId: !Ref EcsSecurityGroup
       Description: Allow ECS tasks outbound to ElastiCache load test clusters
 
+  # Allow ECS tasks to reach DocumentDB clusters provisioned with the same
+  # security group (self-referencing ingress on port 27017).
+  EcsSelfIngressDocDb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      SourceSecurityGroupId: !Ref EcsSecurityGroup
+      Description: Allow ECS tasks to reach DocumentDB load test clusters (TLS)
+
+  # Allow ECS tasks outbound to DocumentDB port (self-SG, needed because egress
+  # is restricted to 443 only by default).
+  EcsSelfEgressDocDb:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EcsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      DestinationSecurityGroupId: !Ref EcsSecurityGroup
+      Description: Allow ECS tasks outbound to DocumentDB load test clusters
+
   # ============================================================
   # IAM Role for ECS Task Execution (shared)
   # ============================================================

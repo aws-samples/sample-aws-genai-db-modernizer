@@ -542,6 +542,26 @@ Resources:
         - Key: ManagedBy
           Value: CloudFormation
 
+  # ============================================================
+  # DocumentDB Subnet Group (places clusters in same VPC as ECS tasks)
+  # ============================================================
+  LoadTestDocDbSubnetGroup:
+    Type: AWS::DocDB::DBSubnetGroup
+    Condition: HasLoadTestImage
+    Properties:
+      DBSubnetGroupName: !Sub '${ProjectName}-${Environment}-loadtest-docdb'
+      DBSubnetGroupDescription: Subnet group for load test DocumentDB clusters
+      SubnetIds:
+        - !Ref PrivateAppSubnet1Id
+        - !Ref PrivateAppSubnet2Id
+      Tags:
+        - Key: Project
+          Value: Database Modernizer Assessment
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
   LoadTestTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Condition: HasLoadTestImage
@@ -577,6 +597,10 @@ Resources:
             - Name: ELASTICACHE_SUBNET_GROUP_NAME
               Value: !Ref LoadTestCacheSubnetGroup
             - Name: ELASTICACHE_SECURITY_GROUP_IDS
+              Value: !Ref EcsSecurityGroupId
+            - Name: DOCDB_DB_SUBNET_GROUP_NAME
+              Value: !Ref LoadTestDocDbSubnetGroup
+            - Name: DOCDB_VPC_SECURITY_GROUP_IDS
               Value: !Ref EcsSecurityGroupId
       Tags:
         - Key: Project
