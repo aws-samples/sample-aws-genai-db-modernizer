@@ -5,10 +5,75 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agents.load_test.handler import (
+    _build_output,
     _get_testable_patterns,
     create_engine_components,
     run_load_test,
 )
+
+
+def _pattern_result(query_id: str, total_requests: int, error_rate_pct: float):
+    """Build a minimal PatternResult for pass/fail accounting tests."""
+    from src.contracts.load_test_models import LatencyPercentiles, PatternResult
+
+    lat = LatencyPercentiles(p50=1.0, p90=1.0, p95=1.0, p99=1.0, p999=1.0, min=1.0, max=1.0)
+    return PatternResult(
+        query_id=query_id,
+        access_pattern_description="",
+        original_query_text="",
+        operation_type="search",
+        steps=["search"],
+        source_latency_ms=lat,
+        target_latency_ms=lat,
+        improvement_factor=1.0,
+        throughput_rps=1.0,
+        total_requests=total_requests,
+        error_count=0,
+        error_rate_pct=error_rate_pct,
+        throttle_count=0,
+        cost_per_operation_usd=0.0,
+        consumed_capacity_avg=0.0,
+        code_artifact_path="x.js",
+    )
+
+
+class TestBuildOutputPassFail:
+    """A pattern that received no traffic must count as failed, not passed.
+
+    Regression guard for the false-pass where error_rate = errors/requests
+    evaluates to 0% when total_requests == 0.
+    """
+
+    def _output(self, pattern_results):
+        from src.agents.load_test.models import SeedManifest
+        from src.contracts.load_test_models import (
+            InfrastructureManifest,
+            TestConfig,
+        )
+
+        return _build_output(
+            run_id="r",
+            schema_version=1,
+            target_engine="opensearch",
+            test_config=TestConfig(duration_minutes=1, warmup_seconds=10),
+            manifest=InfrastructureManifest(resources=[], tags={}),
+            seed_manifest=SeedManifest(resources={}, total_items=0, duration_seconds=0.0),
+            pattern_results=pattern_results,
+        )
+
+    def test_zero_request_pattern_counts_as_failed(self):
+        out = self._output([_pattern_result("q1", total_requests=0, error_rate_pct=0.0)])
+        assert out.patterns_failed == 1
+        assert out.patterns_passed == 0
+
+    def test_pattern_with_traffic_and_low_errors_passes(self):
+        out = self._output([_pattern_result("q1", total_requests=500, error_rate_pct=0.0)])
+        assert out.patterns_passed == 1
+        assert out.patterns_failed == 0
+
+    def test_high_error_rate_counts_as_failed(self):
+        out = self._output([_pattern_result("q1", total_requests=500, error_rate_pct=5.0)])
+        assert out.patterns_failed == 1
 
 
 class TestCreateEngineComponents:

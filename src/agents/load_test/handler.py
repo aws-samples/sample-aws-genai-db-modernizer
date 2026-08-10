@@ -466,7 +466,12 @@ def _build_output(
     run_id, schema_version, target_engine, test_config, manifest, seed_manifest, pattern_results
 ) -> LoadTestOutput:
     total_cost = sum(r.cost_per_operation_usd for r in pattern_results)
-    patterns_failed = sum(1 for r in pattern_results if r.error_rate_pct > 1.0)
+    # A pattern that received zero requests is a failure, not a pass: error_rate
+    # is error_count/total_requests, which is 0% when nothing ran — that would
+    # otherwise let a broken run (no traffic reached the target) report green.
+    patterns_failed = sum(
+        1 for r in pattern_results if r.total_requests == 0 or r.error_rate_pct > 1.0
+    )
 
     return LoadTestOutput(
         run_id=run_id,

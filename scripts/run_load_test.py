@@ -145,7 +145,8 @@ def main():
             print(f"  Total cost (USD): ${output.total_cost_usd:.6f}")
             print("\n  Per-pattern results:")
             for pr in output.pattern_results:
-                status = "✓" if pr.error_rate_pct <= 1.0 else "✗"
+                # 0 requests => the pattern never actually ran; treat as failed.
+                status = "✓" if (pr.total_requests > 0 and pr.error_rate_pct <= 1.0) else "✗"
                 if pr.improvement_factor >= 1.0:
                     improvement_str = f"{pr.improvement_factor:.1f}x faster"
                 else:
@@ -158,7 +159,8 @@ def main():
                     f"cost=${pr.cost_per_operation_usd:.8f}"
                 )
             print(
-                f"\n  Artifacts: ./artifacts/{args.database_name}/{args.job_id}/load-test/v{schema_version}/"
+                f"\n  Artifacts: ./artifacts/{args.database_name}/{args.job_id}/"
+                f"load-test-{args.engine}/v{schema_version}/"
             )
 
             if args.teardown and args.engine == "opensearch":
