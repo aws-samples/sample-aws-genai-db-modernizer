@@ -118,13 +118,20 @@ class OpenSearchRunner(BaseRunner):
     def extract_scenario_latency(self, summary: dict, scenario_name: str) -> LatencyPercentiles:
         """Extract latency percentiles for a specific scenario.
 
-        k6 http_req_duration is in milliseconds. Per-scenario metrics appear as:
-          "http_req_duration{scenario:scenario_0}"
+        The handler passes a query_id. Resolution order:
+          1. custom per-query Trend "latency_{query_id}" (preferred — this is
+             what the scripts emit and what maps 1:1 to an access pattern)
+          2. per-scenario tag "http_req_duration{scenario:...}"
+          3. global "http_req_duration" (fallback)
+        All values are milliseconds.
         """
         metrics = summary.get("metrics", {})
 
+        custom_key = f"latency_{scenario_name}"
         scenario_key = f"http_req_duration{{scenario:{scenario_name}}}"
-        if scenario_key in metrics:
+        if custom_key in metrics:
+            values = self._get_metric_values(metrics[custom_key])
+        elif scenario_key in metrics:
             values = self._get_metric_values(metrics[scenario_key])
         else:
             values = {}
@@ -146,7 +153,11 @@ class OpenSearchRunner(BaseRunner):
         )
 
     def extract_scenario_iterations(self, summary: dict, scenario_name: str) -> int:
-        """Extract iteration count for a specific scenario."""
+        """Extract request count for a scenario.
+
+        Prefers the custom "requests_{query_id}" Counter (emitted by the
+        scripts), then the per-scenario http_req_duration tag, then the global.
+        """
         metrics = summary.get("metrics", {})
 
         requests_key = f"requests_{scenario_name}"

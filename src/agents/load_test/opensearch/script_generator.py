@@ -42,6 +42,7 @@ class OpenSearchScriptGenerator(BaseScriptGenerator):
             opensearch_dsl=opensearch_dsl,
             design_rps=design_rps,
             max_doc_id=docs_seeded,
+            metric_id=(access_pattern.get("query_ids") or [pattern_id])[0],
         )
 
     def generate_main(self, scenarios: list, duration_minutes: int, warmup_seconds: int) -> str:
@@ -75,6 +76,9 @@ import {{ textSummary }} from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 {chr(10).join(imports)}
 
 export const options = {{
+  // Emit the full percentile set (k6's default omits p99/p99.9) so per-query
+  // Trend metrics carry p(99) and p(99.9) into the summary.
+  summaryTrendStats: ["min", "med", "avg", "p(90)", "p(95)", "p(99)", "p(99.9)", "max", "count"],
   scenarios: {{
 {chr(10).join(scenario_configs)}
   }},
@@ -117,6 +121,9 @@ export function handleSummary(data) {{
                 opensearch_dsl=ap.get("opensearch_dsl", "{}"),
                 design_rps=ap.get("design_rps", 1),
                 max_doc_id=seed_info.get("docs_seeded", 1000),
+                # Custom metrics are keyed by query_id so the engine-agnostic
+                # handler can look them up (latency_/requests_/errors_{query_id}).
+                metric_id=(ap.get("query_ids") or [f"scenario_{i}"])[0],
             )
 
             (scripts_path / f"scenario_{i}.js").write_text(scenario_js)
@@ -142,9 +149,17 @@ export function handleSummary(data) {{
         opensearch_dsl: str,
         design_rps: float,
         max_doc_id: int,
+        metric_id: str | None = None,
     ) -> str:
-        """Build a single k6 scenario script for an OpenSearch operation."""
-        safe_id = pattern_id.replace("-", "_").replace(".", "_")
+        """Build a single k6 scenario script for an OpenSearch operation.
+
+        The exported function name is derived from ``pattern_id`` (an ordinal
+        like ``scenario_0``) so ``main.js`` imports resolve. The custom metric
+        names are derived from ``metric_id`` (the query_id) so the
+        engine-agnostic handler can look up latency_/requests_/errors_{query_id}.
+        """
+        fn_name = pattern_id.replace("-", "_").replace(".", "_")
+        metric_key = (metric_id or pattern_id).replace("-", "_").replace(".", "_")
 
         # Parse DSL to inject randomization where needed
         dsl_for_js = self._prepare_dsl_for_k6(opensearch_dsl, max_doc_id)
@@ -156,9 +171,9 @@ import http from "k6/http";
 import {{ check }} from "k6";
 import {{ Counter, Trend }} from "k6/metrics";
 
-const latency_{safe_id} = new Trend("latency_{safe_id}", true);
-const requests_{safe_id} = new Counter("requests_{safe_id}");
-const errors_{safe_id} = new Counter("errors_{safe_id}");
+const latency_{metric_key} = new Trend("latency_{metric_key}", true);
+const requests_{metric_key} = new Counter("requests_{metric_key}");
+const errors_{metric_key} = new Counter("errors_{metric_key}");
 
 const ENDPOINT = __ENV.OPENSEARCH_ENDPOINT || "localhost";
 const AUTH = __ENV.OPENSEARCH_AUTH || "loadtest_admin:password";
@@ -173,14 +188,14 @@ const params = {{
   timeout: "30s",
 }};
 
-export function {safe_id}() {{
+export function {fn_name}() {{
   const docId = Math.floor(Math.random() * MAX_DOC_ID) + 1;
 {request_code}
-  latency_{safe_id}.add(res.timings.duration);
-  requests_{safe_id}.add(1);
+  latency_{metric_key}.add(res.timings.duration);
+  requests_{metric_key}.add(1);
   const ok = check(res, {{ "status 2xx": (r) => r.status >= 200 && r.status < 300 }});
   if (!ok) {{
-    errors_{safe_id}.add(1);
+    errors_{metric_key}.add(1);
   }}
 }}
 """

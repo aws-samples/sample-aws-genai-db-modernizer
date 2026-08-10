@@ -67,6 +67,21 @@ def k6_summary() -> dict:
             },
             "requests_scenario_0": {"values": {"count": 5000}},
             "requests_scenario_1": {"values": {"count": 5000}},
+            # Per-query custom metrics (keyed by query_id) — the naming the
+            # engine-agnostic handler actually looks up.
+            "latency_q1": {
+                "values": {
+                    "med": 3.5,
+                    "p(90)": 6.0,
+                    "p(95)": 9.0,
+                    "p(99)": 18.0,
+                    "p(99.9)": 35.0,
+                    "min": 0.8,
+                    "max": 80.0,
+                    "count": 5000,
+                }
+            },
+            "requests_q1": {"values": {"count": 5000}},
         }
     }
 
@@ -195,6 +210,17 @@ class TestExtractScenarioLatency:
         assert latency.min == 0.8
         assert latency.max == 80.0
 
+    def test_extracts_latency_by_query_id_custom_metric(
+        self, runner: OpenSearchRunner, k6_summary: dict
+    ) -> None:
+        """The handler passes query_id; latency_{query_id} must resolve to the
+        per-query Trend, not the global http_req_duration fallback."""
+        latency = runner.extract_scenario_latency(k6_summary, "q1")
+
+        assert latency.p50 == 3.5
+        assert latency.p99 == 18.0
+        assert latency.p999 == 35.0
+
     def test_falls_back_to_global_when_scenario_not_found(
         self, runner: OpenSearchRunner, k6_summary: dict
     ) -> None:
@@ -207,6 +233,13 @@ class TestExtractScenarioLatency:
 class TestExtractScenarioIterations:
     def test_extracts_per_scenario_count(self, runner: OpenSearchRunner, k6_summary: dict) -> None:
         count = runner.extract_scenario_iterations(k6_summary, "scenario_0")
+        assert count == 5000
+
+    def test_extracts_count_by_query_id_custom_metric(
+        self, runner: OpenSearchRunner, k6_summary: dict
+    ) -> None:
+        """requests_{query_id} counter must resolve for the handler's qid lookup."""
+        count = runner.extract_scenario_iterations(k6_summary, "q1")
         assert count == 5000
 
     def test_falls_back_to_http_req_duration_count(

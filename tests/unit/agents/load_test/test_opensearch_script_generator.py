@@ -171,6 +171,29 @@ class TestGenerateAll:
         s2 = (scripts_path / "scenario_2.js").read_text()
         assert "_doc/" in s2
 
+    def test_scenario_metrics_keyed_by_query_id(
+        self,
+        access_patterns: list[dict],
+        schema_output: dict,
+        seed_manifest: SeedManifest,
+        test_config: TestConfig,
+    ) -> None:
+        """Custom metrics must be named by query_id so the engine-agnostic
+        handler (which looks up latency_/requests_/errors_{query_id}) can find
+        per-pattern results. The exported function stays ordinal-based because
+        main.js imports it as scenario_{i}."""
+        from pathlib import Path
+
+        gen = OpenSearchScriptGenerator(region="us-east-1")
+        scripts_dir = gen.generate_all(access_patterns, schema_output, seed_manifest, test_config)
+
+        s0 = (Path(scripts_dir) / "scenario_0.js").read_text()
+        assert 'new Trend("latency_q1"' in s0
+        assert 'new Counter("requests_q1"' in s0
+        assert 'new Counter("errors_q1"' in s0
+        # Function/export name remains ordinal so main.js imports resolve.
+        assert "export function scenario_0()" in s0
+
 
 class TestPrepareDslForK6:
     def test_valid_json_is_passed_through(self) -> None:
