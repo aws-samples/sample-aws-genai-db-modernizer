@@ -241,3 +241,35 @@ class TestGenerateRequestCode:
         gen = OpenSearchScriptGenerator()
         code = gen._generate_request_code("unknown_op", "products", '{"query":{}}')
         assert "/_search" in code
+
+
+class TestQueryManifest:
+    """generate_all writes a query_manifest.json so the dry-run can replay and
+    validate each query against the provisioned domain before the full k6 run."""
+
+    def test_generate_all_writes_query_manifest(
+        self,
+        access_patterns: list[dict],
+        schema_output: dict,
+        seed_manifest: SeedManifest,
+        test_config: TestConfig,
+    ) -> None:
+        import json
+        from pathlib import Path
+
+        gen = OpenSearchScriptGenerator()
+        scripts_dir = gen.generate_all(access_patterns, schema_output, seed_manifest, test_config)
+
+        manifest_path = Path(scripts_dir) / "query_manifest.json"
+        assert manifest_path.exists(), "generate_all must write query_manifest.json"
+
+        manifest = json.loads(manifest_path.read_text())
+        assert len(manifest) == len(access_patterns)
+
+        first = manifest[0]
+        assert first["scenario"] == "scenario_0"
+        assert first["query_id"] == "q1"
+        assert first["index"] == "products"
+        assert first["operation"] == "search"
+        # DSL preserved verbatim so the validator can replay the real request
+        assert first["dsl"] == '{"query": {"match": {"title": "laptop"}}}'

@@ -110,29 +110,46 @@ export function handleSummary(data) {{
         scripts_path = Path(scripts_dir)
 
         scenarios = []
+        query_manifest = []
         for i, ap in enumerate(access_patterns):
             index_or_stream = ap.get("index_or_stream", "default")
             seed_info = seed_manifest.resources.get(index_or_stream, {"docs_seeded": 1000})
+            operation = ap.get("operation", "search")
+            opensearch_dsl = ap.get("opensearch_dsl", "{}")
+            query_id = (ap.get("query_ids") or [f"scenario_{i}"])[0]
 
             scenario_js = self._build_scenario_js(
                 pattern_id=f"scenario_{i}",
-                operation=ap.get("operation", "search"),
+                operation=operation,
                 index_or_stream=index_or_stream,
-                opensearch_dsl=ap.get("opensearch_dsl", "{}"),
+                opensearch_dsl=opensearch_dsl,
                 design_rps=ap.get("design_rps", 1),
                 max_doc_id=seed_info.get("docs_seeded", 1000),
                 # Custom metrics are keyed by query_id so the engine-agnostic
                 # handler can look them up (latency_/requests_/errors_{query_id}).
-                metric_id=(ap.get("query_ids") or [f"scenario_{i}"])[0],
+                metric_id=query_id,
             )
 
             (scripts_path / f"scenario_{i}.js").write_text(scenario_js)
             scenarios.append(ap)
+            # Manifest lets the runner replay each query once during the dry-run
+            # to catch DSL rejected by OpenSearch (e.g. a top-level inner_hits →
+            # HTTP 400) before committing to a full k6 pass.
+            query_manifest.append(
+                {
+                    "scenario": f"scenario_{i}",
+                    "query_id": query_id,
+                    "index": index_or_stream,
+                    "operation": operation,
+                    "dsl": opensearch_dsl,
+                }
+            )
 
         main_js = self.generate_main(
             scenarios, test_config.duration_minutes, test_config.warmup_seconds
         )
         (scripts_path / "main.js").write_text(main_js)
+        (scripts_path / "query_manifest.json").write_text(json.dumps(query_manifest, indent=2))
 
         logger.info(
             "scripts_generated",

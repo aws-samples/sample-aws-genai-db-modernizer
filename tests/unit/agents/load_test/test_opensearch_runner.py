@@ -268,3 +268,159 @@ class TestNormalizeSummaryExport:
         raw = {"metrics": {"http_req_duration": {"values": {"med": 5.0, "p(90)": 8.0}}}}
         normalized = runner._normalize_summary_export(raw)
         assert normalized["metrics"]["http_req_duration"]["values"]["med"] == 5.0
+
+
+class TestValidateQueries:
+    """dry-run replays each query once against the domain so invalid DSL
+    (e.g. a top-level inner_hits → HTTP 400) fails fast with the real error
+    instead of running a full k6 pass of all-erroring requests."""
+
+    def _manifest_dir(self, entries: list[dict]) -> str:
+        d = tempfile.mkdtemp(prefix="lt_validate_")
+        (Path(d) / "query_manifest.json").write_text(json.dumps(entries))
+        return d
+
+    def test_flags_query_rejected_by_opensearch(self, runner: OpenSearchRunner) -> None:
+        scripts_dir = self._manifest_dir(
+            [
+                {
+                    "scenario": "scenario_0",
+                    "query_id": "q1",
+                    "index": "wp-users",
+                    "operation": "search",
+                    "dsl": '{"query":{"terms":{"id":["x"]}},"inner_hits":{"path":{}}}',
+                }
+            ]
+        )
+
+        def fake_post(url: str, headers: dict, body: str) -> tuple[int, str]:
+            return (
+                400,
+                '{"error":{"reason":"Unknown key for a START_OBJECT in [inner_hits]."},'
+                '"status":400}',
+            )
+
+        failures = runner.validate_queries(
+            scripts_dir,
+            {"OPENSEARCH_ENDPOINT": "ep", "OPENSEARCH_AUTH_B64": "x"},
+            http_post=fake_post,
+        )
+        assert len(failures) == 1
+        assert failures[0]["query_id"] == "q1"
+        assert failures[0]["status"] == 400
+        assert "inner_hits" in failures[0]["error"]
+
+    def test_no_failures_when_all_2xx(self, runner: OpenSearchRunner) -> None:
+        scripts_dir = self._manifest_dir(
+            [
+                {
+                    "scenario": "scenario_0",
+                    "query_id": "q1",
+                    "index": "wp-users",
+                    "operation": "search",
+                    "dsl": '{"query":{"match_all":{}}}',
+                },
+                {
+                    "scenario": "scenario_1",
+                    "query_id": "q2",
+                    "index": "wp-users",
+                    "operation": "aggregate",
+                    "dsl": '{"aggs":{"c":{"value_count":{"field":"id"}}}}',
+                },
+            ]
+        )
+
+        def fake_post(url: str, headers: dict, body: str) -> tuple[int, str]:
+            return (200, '{"hits":{"total":{"value":0}}}')
+
+        failures = runner.validate_queries(
+            scripts_dir,
+            {"OPENSEARCH_ENDPOINT": "ep", "OPENSEARCH_AUTH_B64": "x"},
+            http_post=fake_post,
+        )
+        assert failures == []
+
+    def test_skips_non_search_operations(self, runner: OpenSearchRunner) -> None:
+        """get_by_id / bulk_index carry no query DSL to validate via _search."""
+        calls: list[str] = []
+        scripts_dir = self._manifest_dir(
+            [
+                {
+                    "scenario": "scenario_0",
+                    "query_id": "q3",
+                    "index": "wp-users",
+                    "operation": "get_by_id",
+                    "dsl": "{}",
+                }
+            ]
+        )
+
+        def fake_post(url: str, headers: dict, body: str) -> tuple[int, str]:
+            calls.append(url)
+            return (200, "{}")
+
+        failures = runner.validate_queries(
+            scripts_dir,
+            {"OPENSEARCH_ENDPOINT": "ep", "OPENSEARCH_AUTH_B64": "x"},
+            http_post=fake_post,
+        )
+        assert failures == []
+        assert calls == []
+
+    def test_missing_manifest_is_noop(self, runner: OpenSearchRunner) -> None:
+        empty_dir = tempfile.mkdtemp(prefix="lt_validate_empty_")
+        failures = runner.validate_queries(
+            empty_dir,
+            {"OPENSEARCH_ENDPOINT": "ep", "OPENSEARCH_AUTH_B64": "x"},
+            http_post=lambda *a: (200, ""),
+        )
+        assert failures == []
+
+    def test_noop_without_endpoint(self, runner: OpenSearchRunner) -> None:
+        scripts_dir = self._manifest_dir(
+            [
+                {
+                    "scenario": "scenario_0",
+                    "query_id": "q1",
+                    "index": "wp-users",
+                    "operation": "search",
+                    "dsl": '{"query":{"match_all":{}}}',
+                }
+            ]
+        )
+
+        def fail_if_called(url: str, headers: dict, body: str) -> tuple[int, str]:
+            raise AssertionError("should not POST without an endpoint")
+
+        failures = runner.validate_queries(scripts_dir, {}, http_post=fail_if_called)
+        assert failures == []
+
+
+class TestDryRunValidatesQueries:
+    @patch("src.agents.load_test.opensearch.runner.subprocess.run")
+    def test_dry_run_fails_when_query_invalid(
+        self, mock_run: MagicMock, runner: OpenSearchRunner
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+        scripts_dir = tempfile.mkdtemp(prefix="lt_dryrun_")
+        (Path(scripts_dir) / "main.js").write_text("// main")
+
+        with patch.object(
+            runner,
+            "validate_queries",
+            return_value=[
+                {"scenario": "scenario_0", "query_id": "q1", "status": 400, "error": "inner_hits"}
+            ],
+        ):
+            assert runner.dry_run(scripts_dir, {"OPENSEARCH_ENDPOINT": "ep"}) is False
+
+    @patch("src.agents.load_test.opensearch.runner.subprocess.run")
+    def test_dry_run_passes_when_all_valid(
+        self, mock_run: MagicMock, runner: OpenSearchRunner
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+        scripts_dir = tempfile.mkdtemp(prefix="lt_dryrun_")
+        (Path(scripts_dir) / "main.js").write_text("// main")
+
+        with patch.object(runner, "validate_queries", return_value=[]):
+            assert runner.dry_run(scripts_dir, {"OPENSEARCH_ENDPOINT": "ep"}) is True
