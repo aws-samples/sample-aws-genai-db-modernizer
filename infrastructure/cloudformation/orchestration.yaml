@@ -710,6 +710,33 @@ Resources:
                 Action:
                   - elasticache:DescribeReplicationGroups
                 Resource: '*'
+              - Sid: OpenSearchProvisioning
+                Effect: Allow
+                Action:
+                  # boto3 opensearch client calls create_domain / describe_domain /
+                  # delete_domain (with TagList). The es service authorizes each API
+                  # against both the OpenSearch and legacy Elasticsearch action names.
+                  - es:CreateDomain
+                  - es:CreateElasticsearchDomain
+                  - es:DescribeDomain
+                  - es:DescribeElasticsearchDomain
+                  - es:DeleteDomain
+                  - es:DeleteElasticsearchDomain
+                  - es:AddTags
+                Resource:
+                  - !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/loadtest-*'
+              - Sid: OpenSearchServiceLinkedRole
+                Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/opensearchservice.amazonaws.com/AWSServiceRoleForAmazonOpenSearchService*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/es.amazonaws.com/AWSServiceRoleForAmazonElasticsearchService*'
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - opensearchservice.amazonaws.com
+                      - es.amazonaws.com
               - Sid: StsGetCallerIdentity
                 Effect: Allow
                 Action:
