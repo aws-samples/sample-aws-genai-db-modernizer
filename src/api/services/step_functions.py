@@ -56,17 +56,28 @@ class StepFunctionsService:
         from Step Functions execution history events.
         """
         execution_arn = self._execution_arn(job_id)
+        # Paginate: a full multi-engine run emits more events than a single page
+        # holds, and the final stage (referee-synthesis) exits on the last page.
+        # Reading only the first page leaves it stuck "in-progress" forever.
+        events: list[dict] = []
+        params: dict = {
+            "executionArn": execution_arn,
+            "maxResults": 1000,
+            "reverseOrder": False,
+        }
         try:
-            response = self.client.get_execution_history(
-                executionArn=execution_arn,
-                maxResults=200,
-                reverseOrder=False,
-            )
+            while True:
+                response = self.client.get_execution_history(**params)
+                events.extend(response.get("events", []))
+                if "nextToken" in response:
+                    params["nextToken"] = response["nextToken"]
+                else:
+                    break
         except self.client.exceptions.ExecutionDoesNotExist:
             return []
 
         stages: dict[str, dict] = {}
-        for event in response.get("events", []):
+        for event in events:
             event_type = event.get("type", "")
             timestamp = event.get("timestamp", datetime.now(UTC)).isoformat()
 
