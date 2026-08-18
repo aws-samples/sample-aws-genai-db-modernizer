@@ -1,0 +1,24 @@
+{
+  "case_id": "kv-lookup-clean",
+  "stage": "assignment",
+  "intent": "Point-lookup KV workload (single-table PK reads, no joins, high calls_per_second); DynamoDB ideal for the general PK reads, ElastiCache ideal for the ephemeral session read, and each engine is an acceptable fallback for the other's queries.",
+  "authored_by": "human",
+  "reviewed": true,
+  "expected": {
+    "q_get_by_pk": {
+      "acceptable": ["dynamodb", "elasticache"],
+      "ideal": "dynamodb",
+      "rationale": "Single-table PK point read on users, high RPS — canonical DynamoDB shape."
+    },
+    "q_get_cart": {
+      "acceptable": ["dynamodb", "elasticache"],
+      "ideal": "dynamodb",
+      "rationale": "Single-table PK point read on carts, high RPS — canonical DynamoDB shape."
+    },
+    "q_session_get": {
+      "acceptable": ["elasticache", "dynamodb"],
+      "ideal": "elasticache",
+      "rationale": "Ephemeral session lookup by session_id — canonical ElastiCache shape."
+    }
+  }
+}
