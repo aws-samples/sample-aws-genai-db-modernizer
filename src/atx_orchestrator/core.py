@@ -969,15 +969,44 @@ def run_synthesis_core(
     # assignment, cannot find the versioned schema output, and emits a report
     # whose recommended_architecture / table_mappings / query_groups are all
     # empty and whose rationale reads "Insufficient data to recommend a specific
-    # architecture." The builders are fine; they were starved of input. Fail
-    # loudly here rather than publishing that report as if it were an answer.
+    # architecture." The builders are fine; they were starved of input.
+    #
+    # Measured 2026-08-21 against job webapp-test-24 at version 1: an empty
+    # recommended_architecture has TWO distinct causes, and blaming the version
+    # for both sends the reader after the wrong one.
+    #
+    #   a) wrong assignment_version -> the assignment is never read, so
+    #      assignment_summary is absent as well. That is the version signature.
+    #   b) schema-design never ran -> build_table_mappings derives mappings from
+    #      schema_design output, not from the assignment, so table_mappings and
+    #      query_groups are empty and build_architecture_recommendation skips
+    #      every engine via `if not tables and not schema_design_available`.
+    #      The assignment IS read and assignment_summary IS populated.
+    #
+    # (b) is a legitimate state for a pipeline that stopped at assignment, so it
+    # is reported as a distinct, actionable error rather than a version error.
     if ranking and not databases:
+        assignment_was_read = bool(report.get("assignment_summary"))
+        any_schema_design = any(r.get("schema_design_available") for r in ranking)
+        if assignment_was_read and not any_schema_design:
+            raise ValueError(
+                f"Synthesis ranked {len(ranking)} engine(s) and read the assignment "
+                f"(version {assignment_version}) successfully, but no engine has "
+                f"schema-design output, so recommended_architecture.databases, "
+                f"table_mappings and query_groups are all empty. "
+                f"build_table_mappings derives mappings from schema_design, not from "
+                f"the assignment. Run schema-design before synthesis, or accept a "
+                f"report without table-level mapping. This is NOT an "
+                f"assignment_version problem."
+            )
         raise ValueError(
             f"Synthesis ranked {len(ranking)} engine(s) but recommended_architecture "
-            f"is empty. This is the signature of a wrong assignment_version — it was "
-            f"{assignment_version}. At version 0 the assignment is never read and the "
-            f"schema design is looked up at an unversioned path that does not exist. "
-            f"Pass the version that the assignment agent actually produced."
+            f"is empty, and the assignment was "
+            f"{'read' if assignment_was_read else 'NOT read'}. This is the signature "
+            f"of a wrong assignment_version — it was {assignment_version}. At version "
+            f"0 the assignment is never read and the schema design is looked up at an "
+            f"unversioned path that does not exist. Pass the version that the "
+            f"assignment agent actually produced."
         )
 
     return {
@@ -991,6 +1020,8 @@ def run_synthesis_core(
         "table_mappings": len(report.get("table_mappings") or []),
         "query_groups": len(report.get("query_groups") or []),
         "overall_risk_level": risk,
-        "has_executive_summary": bool(report.get("executive_summary")),
+        # The report key is "summary" (LLM) with "summary_deterministic" alongside
+        # it; there is no "executive_summary" key. Measured on webapp-test-24.
+        "has_executive_summary": bool(report.get("summary")),
         "report_artifact": report_key,
     }
