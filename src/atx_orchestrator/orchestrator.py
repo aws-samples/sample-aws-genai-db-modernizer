@@ -32,6 +32,7 @@ from src.atx_orchestrator.tools import (
     run_reality_check,
     run_schema_design,
     run_synthesis,
+    run_synthesis_via_a2a,
     run_triage_via_a2a,
 )
 
@@ -127,6 +128,7 @@ PIPELINE_TOOLS = [
     run_analysis_aurora_pg_via_a2a,
     run_analysis_aurora_mysql_via_a2a,
     run_assignment_via_a2a,
+    run_synthesis_via_a2a,
     run_reality_check,
     run_schema_design,
     run_synthesis,

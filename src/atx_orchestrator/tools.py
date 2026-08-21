@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from strands.tools import tool
 
@@ -39,6 +40,16 @@ from src.atx_orchestrator.job_plan import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Subagent naming. Every A2A tool resolves its target as
+# f"{_AGENT_PREFIX}-<phase>", so one image can drive either generation:
+#   v1 (deployed):  db-modernization-<phase>          — the default
+#   v2:             db-modernization-v2-<phase>       — set AGENT_NAME_PREFIX
+# This matters for more than tidiness. The v1 analysis-dynamodb and
+# analysis-documentdb runtimes carry LLM_MODE=bedrock, so a v2 orchestrator
+# calling v1 subagents would silently reintroduce the 38-minute and ~63-minute
+# Opus advisor passes that step 2b removed.
+_AGENT_PREFIX = os.environ.get("AGENT_NAME_PREFIX", "db-modernization")
 
 
 @tool
@@ -550,7 +561,7 @@ def run_collect_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed (timeout, FAILED status, network, etc.).
     """
-    agent_id = "db-modernization-collector"
+    agent_id = f"{_AGENT_PREFIX}-collector"
     logger.info(
         "ATX: collect via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -607,7 +618,7 @@ def run_triage_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed.
     """
-    agent_id = "db-modernization-triage"
+    agent_id = f"{_AGENT_PREFIX}-triage"
     logger.info(
         "ATX: triage via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -672,7 +683,7 @@ def run_analysis_dynamodb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = "db-modernization-analysis-dynamodb"
+    agent_id = f"{_AGENT_PREFIX}-analysis-dynamodb"
     logger.info(
         "ATX: analysis-dynamodb via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -742,7 +753,7 @@ def run_analysis_documentdb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = "db-modernization-analysis-documentdb"
+    agent_id = f"{_AGENT_PREFIX}-analysis-documentdb"
     logger.info(
         "ATX: analysis-documentdb via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -803,7 +814,7 @@ def run_analysis_elasticache_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = "db-modernization-analysis-elasticache"
+    agent_id = f"{_AGENT_PREFIX}-analysis-elasticache"
     logger.info(
         "ATX: analysis-elasticache via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -860,7 +871,7 @@ def run_analysis_opensearch_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = "db-modernization-analysis-opensearch"
+    agent_id = f"{_AGENT_PREFIX}-analysis-opensearch"
     logger.info(
         "ATX: analysis-opensearch via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -910,7 +921,7 @@ def run_analysis_aurora_pg_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = "db-modernization-analysis-aurora-pg"
+    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-pg"
     logger.info(
         "ATX: analysis-aurora-pg via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -959,7 +970,7 @@ def run_analysis_aurora_mysql_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = "db-modernization-analysis-aurora-mysql"
+    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-mysql"
     logger.info(
         "ATX: analysis-aurora-mysql via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -1014,7 +1025,7 @@ def run_assignment_via_a2a(
         JSON string with the subagent's completion payload
         (total_queries, queries_per_engine, assignment_artifact).
     """
-    agent_id = "db-modernization-assignment"
+    agent_id = f"{_AGENT_PREFIX}-assignment"
     logger.info(
         "ATX: assignment via A2A agent=%s job_id=%s db=%s",
         agent_id,
@@ -1043,4 +1054,77 @@ def run_assignment_via_a2a(
             }
         )
     mark_step_succeeded("assignment")
+    return json.dumps(payload)
+
+
+@tool
+def run_synthesis_via_a2a(
+    job_id: str,
+    database_name: str,
+    assignment_version: int = 1,
+) -> str:
+    """Run Referee-Synthesis by invoking a deployed subagent over A2A.
+
+    Requires Collector + Triage + at least one Analysis + Assignment to have run
+    first. Reality-check and schema-design are optional enrichments, not
+    prerequisites — synthesis proceeds without them, though ``query_groups`` will
+    be empty until schema-design has run, since those are built from the schema
+    output's access patterns.
+
+    Produces the consolidated report a customer actually reads: engine ranking,
+    table mappings, TCO comparison, risk assessment, and a recommended
+    architecture. Deterministic-first, then one Bedrock call for the executive
+    summary — matching core-modernizer, which invokes ``run_synthesis`` without
+    an ``llm_mode`` argument and so takes its ``"bedrock"`` default.
+
+    Writes 1 artifact, at a key that depends on the version:
+
+      - ``<db>/<job>/synthesis/v<N>/report.json``    when assignment_version > 0
+      - ``<db>/<job>/referee-synthesis/report.json`` when assignment_version = 0
+
+    Args:
+        job_id: Unique job identifier.
+        database_name: Source database name.
+        assignment_version: Version the assignment agent produced. Defaults to 1
+            because ``run_assignment_core`` writes ``assignment/v1/``. Do not
+            pass 0 — at version 0 synthesis never reads the assignment at all and
+            emits a report whose recommended architecture, table mappings and
+            query groups are all empty.
+
+    Returns:
+        JSON string with the subagent's completion payload (engines_ranked,
+        top_engine, architecture_type, recommended_databases, table_mappings,
+        query_groups, overall_risk_level, has_executive_summary,
+        report_artifact).
+    """
+    agent_id = f"{_AGENT_PREFIX}-synthesis"
+    logger.info(
+        "ATX: synthesis via A2A agent=%s job_id=%s db=%s assignment_version=%s",
+        agent_id,
+        job_id,
+        database_name,
+        assignment_version,
+    )
+    message = json.dumps(
+        {
+            "job_id": job_id,
+            "database_name": database_name,
+            "assignment_version": assignment_version,
+        }
+    )
+    mark_step_running("synthesis")
+    try:
+        payload = invoke_and_wait(agent_id, message)
+    except A2AError as e:
+        logger.error("ATX synthesis FAILED: %s: %s", type(e).__name__, e)
+        mark_step_failed("synthesis", str(e))
+        return json.dumps(
+            {
+                "error": f"A2A synthesis failed: {e}",
+                "error_type": type(e).__name__,
+                "job_id": job_id,
+                "agent_id": agent_id,
+            }
+        )
+    mark_step_succeeded("synthesis")
     return json.dumps(payload)

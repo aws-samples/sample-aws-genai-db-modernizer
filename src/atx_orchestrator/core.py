@@ -284,7 +284,12 @@ def run_analysis_dynamodb_core(
         target_database=TargetDatabase.dynamodb,
     )
 
-    llm_mode = os.environ.get("LLM_MODE", "bedrock")
+    # Matches core-modernizer: run_analysis() passes llm_mode="none" explicitly,
+    # which overrides analyze_for_dynamodb's own "bedrock" default. Hardcoded
+    # rather than env-driven so container configuration cannot re-enable the LLM
+    # advisor pass — measured at 2293.88s (38.2 min) on the test-24 trace. Same
+    # discipline the aurora_pg / aurora_mysql siblings already apply.
+    llm_mode = "none"
     logger.info(
         "ATX analysis-dynamodb starting: job_id=%s db=%s llm_mode=%s",
         job_id,
@@ -385,7 +390,12 @@ def run_analysis_documentdb_core(
         target_database=TargetDatabase.documentdb,
     )
 
-    llm_mode = os.environ.get("LLM_MODE", "bedrock")
+    # Matches core-modernizer: run_analysis() passes llm_mode="none" explicitly,
+    # which overrides analyze_for_documentdb's own "bedrock" default. Hardcoded
+    # rather than env-driven so container configuration cannot re-enable the LLM
+    # advisor pass — measured at ~63 min on the test-24 trace. Same discipline
+    # the aurora_pg / aurora_mysql siblings already apply.
+    llm_mode = "none"
     logger.info(
         "ATX analysis-documentdb starting: job_id=%s db=%s llm_mode=%s",
         job_id,
@@ -873,4 +883,114 @@ def run_assignment_core(
         "total_queries": total_queries,
         "queries_per_engine": engine_counts,
         "assignment_artifact": assignment_key,
+    }
+
+
+def run_synthesis_core(
+    job_id: str,
+    database_name: str,
+    assignment_version: int = 0,
+    store=None,
+) -> dict:
+    """Run referee-synthesis for a completed analysis + assignment pipeline.
+
+    Maps one-to-one to AGENT_TYPE='referee-synthesis'. Deterministic-first: all
+    builders run without an LLM, then a single Bedrock call generates the
+    executive summary. This matches core-modernizer, whose ``entrypoint.py``
+    calls ``run_synthesis(...)`` without an ``llm_mode`` argument and therefore
+    takes its ``"bedrock"`` default. Unlike the analysis phases — where
+    core-modernizer passes ``llm_mode="none"`` via ``run_analysis`` — synthesis
+    is genuinely LLM-assisted upstream, so parity means keeping it.
+
+    Writes to S3, at a key that depends on ``assignment_version``:
+      - assignment_version > 0:  <db>/<job>/synthesis/v<N>/report.json
+      - assignment_version == 0: <db>/<job>/referee-synthesis/report.json
+
+    ``assignment_version`` controls three separate behaviours, and passing it
+    correctly is the single most important input to this phase:
+      1. whether the assignment is read at all (at 0 it is skipped entirely);
+      2. which schema-design path is loaded (versioned vs unversioned);
+      3. where this report is written (above).
+
+    Prerequisites: collector/output.json, referee-triage/triage.json, and at
+    least one analysis-<engine>/analysis.json. When assignment_version > 0 the
+    matching assignment/v<N>/assignment.json must also exist.
+    """
+    store = store or make_store()
+
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    for key in (collector_key, triage_key):
+        if not store.exists(key):
+            raise FileNotFoundError(
+                f"Prerequisite artifact missing: '{key}'. Run collector + triage first."
+            )
+
+    if assignment_version > 0:
+        assignment_key = (
+            f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
+        )
+        if not store.exists(assignment_key):
+            raise FileNotFoundError(
+                f"Prerequisite artifact missing: '{assignment_key}'. "
+                f"Either run the assignment agent to produce version "
+                f"{assignment_version}, or pass the version that exists — "
+                f"synthesis silently produces an empty report when the "
+                f"assignment cannot be found."
+            )
+
+    from src.agents.referee.synthesis_handler import run_synthesis
+
+    logger.info(
+        "ATX referee-synthesis starting: job_id=%s db=%s assignment_version=%s",
+        job_id,
+        database_name,
+        assignment_version,
+    )
+    run_synthesis(job_id, database_name, store, assignment_version=assignment_version)
+
+    if assignment_version > 0:
+        report_key = f"{database_name}/{job_id}/synthesis/v{assignment_version}/report.json"
+    else:
+        report_key = f"{database_name}/{job_id}/referee-synthesis/report.json"
+
+    if not store.exists(report_key):
+        raise FileNotFoundError(f"Synthesis completed but no report was written at '{report_key}'.")
+
+    report = store.read_json(report_key)
+    ranking = report.get("ranking") or []
+    architecture = report.get("recommended_architecture") or {}
+    databases = architecture.get("databases") or []
+    risk = (report.get("risk_assessment") or {}).get("overall_risk_level")
+
+    # Guard against the failure mode that went unnoticed for a month in
+    # core-modernizer: referee-synthesis is not passed ASSIGNMENT_VERSION by the
+    # deployed Step Functions, so it runs at version 0, never reads the
+    # assignment, cannot find the versioned schema output, and emits a report
+    # whose recommended_architecture / table_mappings / query_groups are all
+    # empty and whose rationale reads "Insufficient data to recommend a specific
+    # architecture." The builders are fine; they were starved of input. Fail
+    # loudly here rather than publishing that report as if it were an answer.
+    if ranking and not databases:
+        raise ValueError(
+            f"Synthesis ranked {len(ranking)} engine(s) but recommended_architecture "
+            f"is empty. This is the signature of a wrong assignment_version — it was "
+            f"{assignment_version}. At version 0 the assignment is never read and the "
+            f"schema design is looked up at an unversioned path that does not exist. "
+            f"Pass the version that the assignment agent actually produced."
+        )
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "assignment_version": assignment_version,
+        "engines_ranked": len(ranking),
+        "top_engine": ranking[0].get("target") if ranking else None,
+        "architecture_type": architecture.get("architecture_type"),
+        "recommended_databases": [d.get("service") for d in databases],
+        "table_mappings": len(report.get("table_mappings") or []),
+        "query_groups": len(report.get("query_groups") or []),
+        "overall_risk_level": risk,
+        "has_executive_summary": bool(report.get("executive_summary")),
+        "report_artifact": report_key,
     }
