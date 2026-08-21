@@ -55,10 +55,15 @@ report does not contain.
 def _work(params: dict) -> dict:
     from src.atx_orchestrator.core import run_synthesis_core
 
+    # Default to 1, matching run_synthesis_via_a2a, because run_assignment_core
+    # writes assignment/v1/. Never default to 0: at version 0 synthesis skips the
+    # assignment entirely and emits a report with an empty architecture.
+    # Defaulting rather than requiring the key means a caller that omits it gets
+    # the correct behaviour instead of a KeyError mid-pipeline.
     return run_synthesis_core(
         job_id=params["job_id"],
         database_name=params["database_name"],
-        assignment_version=int(params["assignment_version"]),
+        assignment_version=int(params.get("assignment_version", 1)),
     )
 
 

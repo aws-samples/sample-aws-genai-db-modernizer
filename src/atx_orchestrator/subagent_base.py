@@ -74,9 +74,21 @@ def extract_text(message) -> str:
 
 
 def parse_invocation(text: str) -> dict:
-    """Parse job_id / database_name / input_key from invocation text.
+    """Parse an invocation payload from text.
 
     Accepts a JSON object embedded in the text, or 'key: value' / 'key=value' lines.
+
+    Guarantees ``job_id``, ``database_name`` and ``input_key`` are present as
+    stripped strings, because the wrapper validates the first two and every
+    subagent reads them.
+
+    **Every other key in the JSON is preserved as sent.** Until 2026-08-21 this
+    returned a hardcoded three-key dict, so any additional parameter was silently
+    discarded. referee-synthesis was the first phase to need a fourth
+    (``assignment_version``), and the drop surfaced as ``KeyError:
+    'assignment_version'`` inside the subagent rather than as a bad payload at the
+    caller — which pointed at the wrong side of the contract. Types are preserved
+    too, so an int stays an int.
     """
     logger.info("DIAG parse_invocation received text=%r", text[:1000] if text else text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -84,19 +96,25 @@ def parse_invocation(text: str) -> dict:
         try:
             data = json.loads(match.group(0))
             if isinstance(data, dict):
-                return {
-                    "job_id": str(data.get("job_id", "")).strip(),
-                    "database_name": str(data.get("database_name", "")).strip(),
-                    "input_key": str(data.get("input_key", "")).strip(),
-                }
+                parsed = dict(data)
+                for key in ("job_id", "database_name", "input_key"):
+                    parsed[key] = str(data.get(key, "")).strip()
+                return parsed
         except json.JSONDecodeError:
             pass
 
+    # Fallback for human- or LLM-typed text rather than a JSON payload.
     result = {"job_id": "", "database_name": "", "input_key": ""}
     for key in result:
         m = re.search(rf"{key}\s*[:=]\s*([^\s,;]+)", text, re.IGNORECASE)
         if m:
             result[key] = m.group(1).strip().strip("\"'")
+    # Optional numeric parameters some phases accept. Only set when present, so
+    # the consumer's own default still applies when they are absent.
+    for key in ("assignment_version",):
+        m = re.search(rf"{key}\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+        if m:
+            result[key] = m.group(1)
     return result
 
 
