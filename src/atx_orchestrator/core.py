@@ -991,9 +991,12 @@ def run_synthesis_core(
     # executive summary. A guard that runs after the artifact is durable must not
     # raise on a state the pipeline is expected to reach.
     warnings: list[str] = []
+    # Hoisted out of the guard below because the deliverable renderer also needs it:
+    # when no schema design exists, the generated executive summary cannot be
+    # trusted to describe it. See artifacts.render_synthesis_markdown.
+    any_schema_design = any(r.get("schema_design_available") for r in ranking)
     if ranking and not databases:
         assignment_was_read = bool(report.get("assignment_summary"))
-        any_schema_design = any(r.get("schema_design_available") for r in ranking)
         if not assignment_was_read:
             raise ValueError(
                 f"Synthesis ranked {len(ranking)} engine(s) but never read the "
@@ -1016,6 +1019,38 @@ def run_synthesis_core(
                 f"fields. This is a known pipeline gap, not a failure."
             )
 
+    # Register the report with the platform so it appears in the WebApp Artifacts
+    # panel. The S3 copy above is the system of record and is already durable; this
+    # is the download surface (constraint C2). Publishing never raises — see
+    # artifacts.publish — because a phase whose real work succeeded must not fail
+    # over a registration call.
+    from src.atx_orchestrator import artifacts as _artifacts
+
+    report_md = _artifacts.render_synthesis_markdown(
+        report, warnings, trust_generated_summary=any_schema_design
+    )
+    published = _artifacts.publish(
+        [
+            # The human deliverable. CUSTOMER_OUTPUT is what C2 calls for — the
+            # customer downloads this from the WebApp. The working reference used
+            # AGENT_OUTPUT, so if CUSTOMER_OUTPUT is refused from the agent side the
+            # per-item warning will name it and the JSON below still publishes.
+            (
+                report_md.encode("utf-8"),
+                "MARKDOWN",
+                f"Database Modernization Assessment: {database_name}",
+                "CUSTOMER_OUTPUT",
+            ),
+            # The machine artifact, for downstream tooling rather than reading.
+            (
+                json.dumps(report, indent=2).encode("utf-8"),
+                "JSON",
+                f"Assessment report data ({database_name})",
+                "AGENT_OUTPUT",
+            ),
+        ]
+    )
+
     return {
         "job_id": job_id,
         "database_name": database_name,
@@ -1032,4 +1067,8 @@ def run_synthesis_core(
         "has_executive_summary": bool(report.get("summary")),
         "warnings": warnings,
         "report_artifact": report_key,
+        # Platform artifact ids, keyed by the label the customer sees. Empty when
+        # running outside the ATX runtime or when publishing failed; the report is
+        # still at report_artifact either way.
+        "published_artifacts": published,
     }
