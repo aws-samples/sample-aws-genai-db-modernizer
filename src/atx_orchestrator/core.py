@@ -963,51 +963,58 @@ def run_synthesis_core(
     databases = architecture.get("databases") or []
     risk = (report.get("risk_assessment") or {}).get("overall_risk_level")
 
-    # Guard against the failure mode that went unnoticed for a month in
-    # core-modernizer: referee-synthesis is not passed ASSIGNMENT_VERSION by the
-    # deployed Step Functions, so it runs at version 0, never reads the
-    # assignment, cannot find the versioned schema output, and emits a report
-    # whose recommended_architecture / table_mappings / query_groups are all
-    # empty and whose rationale reads "Insufficient data to recommend a specific
-    # architecture." The builders are fine; they were starved of input.
+    # An empty recommended_architecture has TWO distinct causes, and they warrant
+    # different treatment. Measured against webapp-test-24 and v2-e2e-01 on
+    # 2026-08-21.
     #
-    # Measured 2026-08-21 against job webapp-test-24 at version 1: an empty
-    # recommended_architecture has TWO distinct causes, and blaming the version
-    # for both sends the reader after the wrong one.
+    #   a) wrong assignment_version -> the assignment is never read at all, so
+    #      assignment_summary is absent too. The report is genuinely worthless:
+    #      no ranking input, no workload distribution, and a rationale reading
+    #      "Insufficient data to recommend a specific architecture." This is the
+    #      defect that went unnoticed for a month in core-modernizer, where the
+    #      deployed Step Functions does not pass ASSIGNMENT_VERSION to
+    #      referee-synthesis. RAISE — publishing it would misinform.
     #
-    #   a) wrong assignment_version -> the assignment is never read, so
-    #      assignment_summary is absent as well. That is the version signature.
     #   b) schema-design never ran -> build_table_mappings derives mappings from
-    #      schema_design output, not from the assignment, so table_mappings and
-    #      query_groups are empty and build_architecture_recommendation skips
-    #      every engine via `if not tables and not schema_design_available`.
-    #      The assignment IS read and assignment_summary IS populated.
+    #      schema_design output rather than from the assignment, so table_mappings
+    #      and query_groups are empty and build_architecture_recommendation skips
+    #      every engine via `if not tables and not schema_design_available`. The
+    #      assignment IS read and everything else populates: ranking, workload
+    #      split, architecture_type, risk assessment, executive summary.
+    #      WARN — the report is a real answer with two documented gaps.
     #
-    # (b) is a legitimate state for a pipeline that stopped at assignment, so it
-    # is reported as a distinct, actionable error rather than a version error.
+    # (b) was originally also a raise. That was wrong, and the way it was wrong is
+    # worth remembering: the exception fired AFTER _write_synthesis_report had
+    # already persisted a valid 48 KB report, so it converted a partial success
+    # into a total phase failure and left the orchestrator telling the customer
+    # "no report was produced" while the report sat in S3 with a 1,483-character
+    # executive summary. A guard that runs after the artifact is durable must not
+    # raise on a state the pipeline is expected to reach.
+    warnings: list[str] = []
     if ranking and not databases:
         assignment_was_read = bool(report.get("assignment_summary"))
         any_schema_design = any(r.get("schema_design_available") for r in ranking)
-        if assignment_was_read and not any_schema_design:
+        if not assignment_was_read:
             raise ValueError(
-                f"Synthesis ranked {len(ranking)} engine(s) and read the assignment "
-                f"(version {assignment_version}) successfully, but no engine has "
-                f"schema-design output, so recommended_architecture.databases, "
-                f"table_mappings and query_groups are all empty. "
-                f"build_table_mappings derives mappings from schema_design, not from "
-                f"the assignment. Run schema-design before synthesis, or accept a "
-                f"report without table-level mapping. This is NOT an "
-                f"assignment_version problem."
+                f"Synthesis ranked {len(ranking)} engine(s) but never read the "
+                f"assignment, so recommended_architecture is empty. This is the "
+                f"signature of a wrong assignment_version — it was "
+                f"{assignment_version}. At version 0 the assignment is skipped "
+                f"entirely and the schema design is looked up at an unversioned path "
+                f"that does not exist. Pass the version the assignment agent actually "
+                f"produced."
             )
-        raise ValueError(
-            f"Synthesis ranked {len(ranking)} engine(s) but recommended_architecture "
-            f"is empty, and the assignment was "
-            f"{'read' if assignment_was_read else 'NOT read'}. This is the signature "
-            f"of a wrong assignment_version — it was {assignment_version}. At version "
-            f"0 the assignment is never read and the schema design is looked up at an "
-            f"unversioned path that does not exist. Pass the version that the "
-            f"assignment agent actually produced."
-        )
+        if not any_schema_design:
+            warnings.append(
+                f"No engine has schema-design output, so table_mappings, query_groups "
+                f"and recommended_architecture.databases are empty. The assignment "
+                f"(version {assignment_version}) was read correctly and every other "
+                f"section is populated: engine ranking, workload distribution, "
+                f"architecture type, risk assessment and executive summary. "
+                f"table_mappings is derived from schema-design output, not from the "
+                f"assignment, so running schema-design is what fills these three "
+                f"fields. This is a known pipeline gap, not a failure."
+            )
 
     return {
         "job_id": job_id,
@@ -1023,5 +1030,6 @@ def run_synthesis_core(
         # The report key is "summary" (LLM) with "summary_deterministic" alongside
         # it; there is no "executive_summary" key. Measured on webapp-test-24.
         "has_executive_summary": bool(report.get("summary")),
+        "warnings": warnings,
         "report_artifact": report_key,
     }
