@@ -26,10 +26,40 @@ class TestDiscoverSubagentsRegistration:
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
         assert "discover_subagents" not in tool_names
 
-    def test_pipeline_tools_count_is_10(self) -> None:
-        """Post-A8 tool count: 3 A2A (collect + triage + analysis-dynamodb) +
-        5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
-        assert len(PIPELINE_TOOLS) == 16
+    def test_pipeline_tools_registry_is_exactly_as_expected(self) -> None:
+        """Assert the registry by name, not by count.
+
+        This test previously asserted a bare integer and its name drifted out of
+        step with the value twice (named ``_is_10`` while asserting 16, against a
+        real registry of 17). Comparing the name set instead makes a change fail
+        with the tool that caused it, and documents what is registered.
+        """
+        expected = {
+            # plan declaration
+            "declare_pipeline_plan",
+            # A2A pipeline phases, in execution order
+            "run_collect_via_a2a",
+            "run_triage_via_a2a",
+            "run_analysis_dynamodb_via_a2a",
+            "run_analysis_documentdb_via_a2a",
+            "run_analysis_elasticache_via_a2a",
+            "run_analysis_opensearch_via_a2a",
+            "run_analysis_aurora_pg_via_a2a",
+            "run_analysis_aurora_mysql_via_a2a",
+            "run_assignment_via_a2a",
+            "run_synthesis_via_a2a",
+            # in-process legacy paths — registered but the system prompt directs
+            # the LLM never to call them (no subagent exists for the first two)
+            "run_reality_check",
+            "run_schema_design",
+            "run_synthesis",
+            "run_full_assessment",
+            # status / read-only
+            "get_job_status",
+            "get_synthesis_report",
+        }
+        actual = {getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS}
+        assert actual == expected
 
     def test_discover_subagents_still_importable(self) -> None:
         """The function itself remains available for future re-enablement."""

@@ -173,9 +173,15 @@ class TestToolsRegistered:
         assert "run_triage" not in tool_names
         assert "run_collect_and_triage" not in tool_names
 
-    def test_pipeline_tools_count_is_ten(self) -> None:
-        """Post-A8 tool count: 3 A2A (collect + triage + analysis-dynamodb) +
-        5 pipeline + 2 status = 10 (discover_subagents excluded — SDK mock)."""
+    def test_synthesis_a2a_tool_is_registered(self) -> None:
+        """The synthesis phase must be reachable over A2A.
+
+        Replaces an earlier bare-count assertion whose name and value had drifted
+        apart. The exhaustive registry check lives in
+        ``test_discover_subagents.py::test_pipeline_tools_registry_is_exactly_as_expected``;
+        this one guards the specific tool this module is about.
+        """
         from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS
 
-        assert len(PIPELINE_TOOLS) == 16
+        names = {getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS}
+        assert "run_synthesis_via_a2a" in names
