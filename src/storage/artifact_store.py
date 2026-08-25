@@ -29,22 +29,6 @@ class ArtifactStore(ABC):
         ...
 
     @abstractmethod
-    def read_text(self, path: str) -> str:
-        """Read a plain-text artifact and return its content."""
-        ...
-
-    @abstractmethod
-    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
-        """Write a string as a plain-text artifact.
-
-        Used for non-JSON outputs (Mermaid diagrams, CDK templates,
-        SDK code samples, etc.). Optional content_type helps S3 serve
-        the file with the correct MIME (e.g. "text/x-mermaid",
-        "application/x-yaml", "text/x-python").
-        """
-        ...
-
-    @abstractmethod
     def exists(self, path: str) -> bool:
         """Return True if the artifact at *path* exists."""
         ...

@@ -18,10 +18,17 @@ logger = logging.getLogger(__name__)
 
 
 def make_store():
-    """Create an ArtifactStore using env vars (same factory as the rest of the project)."""
+    """Create a text-capable ArtifactStore using the project's own factory.
+
+    core-modernizer's ``create_artifact_store()`` decides S3-vs-local from env;
+    ``upgrade_store`` re-homes that choice onto the Transform subclass that adds
+    ``write_text``. See src/atx_orchestrator/store.py for why that capability is
+    not on the shared ABC.
+    """
+    from src.atx_orchestrator.store import upgrade_store
     from src.storage import create_artifact_store
 
-    return create_artifact_store()
+    return upgrade_store(create_artifact_store())
 
 
 def make_orchestrator(store=None):
