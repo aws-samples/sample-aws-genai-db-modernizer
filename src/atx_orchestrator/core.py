@@ -1090,6 +1090,34 @@ _SAME_FAMILY: dict[str, set[str]] = {
 }
 
 
+# Each schema designer names its output after the target's own vocabulary, so
+# there is no single field that means "a design exists". Values are
+# (artifact field, human-readable unit).
+#
+# Upstream's ``schema_design_available`` normalises ``collections`` and
+# ``index_designs`` into a common count but not ``key_designs``, so an
+# ElastiCache design reads as absent in the synthesis report. That is
+# core-modernizer's to fix and is on the list for their team; we report
+# accurately on our side regardless.
+_DESIGN_SHAPE: dict[str, tuple[str, str]] = {
+    "dynamodb": ("table_definitions", "target tables"),
+    "documentdb": ("collections", "collections"),
+    "elasticache": ("key_designs", "key designs"),
+    "opensearch": ("index_designs", "index designs"),
+}
+
+# Aurora targets have no designer upstream, so they have no design field either.
+# Fall back to the DynamoDB name rather than guessing: a relational target that
+# ever gains a designer will most plausibly emit table definitions, and the
+# fallback only has to be empty-or-present, not exhaustive.
+_DESIGN_SHAPE_DEFAULT: tuple[str, str] = ("table_definitions", "target tables")
+
+
+def _design_shape(target_type: str) -> tuple[str, str]:
+    """Return (artifact field, unit label) holding the design for one target."""
+    return _DESIGN_SHAPE.get(target_type, _DESIGN_SHAPE_DEFAULT)
+
+
 def _source_engine(store, job_id: str, database_name: str) -> str:
     """Read the source engine from the collector output's metadata.
 
@@ -1179,7 +1207,8 @@ def run_schema_design_core(
     output = store.read_json(output_key)
 
     status = str(output.get("status") or "completed")
-    table_definitions = output.get("table_definitions") or []
+    design_field, design_units = _design_shape(target_type)
+    designs = output.get(design_field) or []
     access_patterns = output.get("access_patterns") or []
 
     # Upstream dispatches on target_type alone and has designers for dynamodb,
@@ -1189,9 +1218,18 @@ def run_schema_design_core(
     # report simply does not cover. Reported as informational in the first case
     # and as a warning in the second, so that a warning always means the reader
     # needs to act.
+    #
+    # "Did a design happen" is asked of the engine's own field, not of
+    # ``table_definitions``. Only DynamoDB uses that name; DocumentDB produces
+    # ``collections``, ElastiCache ``key_designs``, OpenSearch ``index_designs``.
+    # Testing ``table_definitions`` universally made three engines that had
+    # designed 20 collections, 10 key structures and 5 index mappings look like
+    # they had produced nothing, and emitted a warning telling the reader a
+    # separate schema conversion assessment was needed for designs that were
+    # already in the artifact. See §13 Step 19.
     notes: list[str] = []
     warnings: list[str] = []
-    if not table_definitions:
+    if not designs:
         src = _source_engine(store, job_id, database_name)
         if target_type in _SAME_FAMILY.get(src, set()):
             notes.append(
@@ -1219,7 +1257,12 @@ def run_schema_design_core(
         "target_type": target_type,
         "assignment_version": assignment_version,
         "status": status,
-        "table_definitions": len(table_definitions),
+        # Reported under a neutral name with the engine's own unit alongside,
+        # because "table_definitions: 0" for DocumentDB read as a failed design
+        # when 20 collections had in fact been produced. The orchestrator relays
+        # this into the chat, so the label is customer-visible.
+        "designs": len(designs),
+        "design_unit": design_units,
         "access_patterns": len(access_patterns),
         "unsupported_patterns": len(output.get("unsupported_patterns") or []),
         "schema_artifact": output_key,
@@ -1230,10 +1273,11 @@ def run_schema_design_core(
         summary["warnings"] = warnings
 
     logger.info(
-        "[schema-design/%s] status=%s table_definitions=%d access_patterns=%d",
+        "[schema-design/%s] status=%s %s=%d access_patterns=%d",
         target_type,
         status,
-        len(table_definitions),
+        design_field,
+        len(designs),
         len(access_patterns),
     )
     return summary

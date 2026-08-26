@@ -171,7 +171,7 @@ class TestMissingSourceEngine:
             patch.object(store, "read_json", side_effect=boom),
         ):
             s = run_schema_design_core(JOB, DB, "aurora_postgresql", 1, store=store)
-        assert s["table_definitions"] == 0
+        assert s["designs"] == 0
 
 
 class TestRealDesign:
@@ -191,7 +191,8 @@ class TestRealDesign:
                 },
             ),
         )
-        assert s["table_definitions"] == 2
+        assert s["designs"] == 2
+        assert s["design_unit"] == "target tables"
         assert s["access_patterns"] == 3
         assert s["unsupported_patterns"] == 1
         assert "notes" not in s
@@ -245,3 +246,58 @@ class TestAgentTypeMapping:
         from src.atx_orchestrator.schema_subagent import SCHEMA_TARGETS
 
         assert set(SCHEMA_TARGETS) <= set(_AGENTS)
+
+
+class TestNonTabularEngineIsNotMistakenForNoDesign:
+    """The regression that shipped: a DynamoDB-shaped test on four engine shapes.
+
+    DocumentDB, ElastiCache and OpenSearch never emit ``table_definitions``. On
+    job ``v2-e2e-08`` they produced 20 collections, 10 key designs and 5 index
+    designs and were each reported as needing "a separate schema conversion
+    assessment", attributed to the PostgreSQL source — while those designs were in
+    the artifacts the same report was built from.
+    """
+
+    @pytest.mark.parametrize(
+        "target,field,count,unit",
+        [
+            ("documentdb", "collections", 20, "collections"),
+            ("elasticache", "key_designs", 10, "key designs"),
+            ("opensearch", "index_designs", 5, "index designs"),
+        ],
+    )
+    def test_design_in_engine_field_produces_no_warning(
+        self, target: str, field: str, count: int, unit: str
+    ) -> None:
+        s = _run(
+            target,
+            _store(
+                "postgresql",
+                {
+                    "target_type": target,
+                    "status": "completed",
+                    field: [{"name": f"n{i}"} for i in range(count)],
+                    "access_patterns": [{"id": 1}],
+                },
+            ),
+        )
+        assert s["designs"] == count
+        assert s["design_unit"] == unit
+        assert "warnings" not in s, (
+            f"{target} designed {count} {unit} and must not be reported as "
+            f"needing a separate schema conversion assessment"
+        )
+        assert "notes" not in s
+
+    def test_aurora_still_warns_when_source_family_differs(self) -> None:
+        """The warning must keep firing where it is true — this is what it is for."""
+        s = _run(
+            "aurora_postgresql",
+            _store(
+                "oracle",
+                {"target_type": "aurora_postgresql", "status": "not_implemented"},
+            ),
+        )
+        assert s["designs"] == 0
+        assert "warnings" in s
+        assert "separate schema conversion assessment" in s["warnings"][0]
