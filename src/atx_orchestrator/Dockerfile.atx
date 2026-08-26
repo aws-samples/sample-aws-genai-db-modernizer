@@ -103,14 +103,18 @@ RUN mkdir -p /tmp/agent_queue /app/artifacts \
 # ── Non-root user (security) ─────────────────────────────────────────────────
 # Note: AgentCore documents that filesystem permissions are stored but not
 # enforced within a session, so this is defence in depth rather than a boundary.
+#
+# The directory list is derived from the mkdir above rather than repeated here.
+# Repeating it cost a failed deployment once: the six schema_* dirs were added to
+# the mkdir and not to the chown, so those containers started as appuser against
+# root-owned directories and died with PermissionError on
+# /tmp/<agent>_agent/queue while the SDK was constructing its request queue. The
+# runtime never left INVOKING and the orchestrator reported a 60s timeout, which
+# points at dispatch rather than at the container.
 RUN useradd --create-home --uid 1000 appuser && \
-    chown -R appuser:appuser /app /tmp/agent_queue /app/artifacts \
-      /tmp/orchestrator_agent /tmp/collector_agent /tmp/triage_agent \
-      /tmp/analysis_dynamodb_agent /tmp/analysis_documentdb_agent \
-      /tmp/analysis_elasticache_agent /tmp/analysis_opensearch_agent \
-      /tmp/analysis_aurora_pg_agent /tmp/analysis_aurora_mysql_agent \
-      /tmp/assignment_agent /tmp/synthesis_agent \
-      /home/amazon/AgentBuilderAgenticMCP
+    chown -R appuser:appuser /app /app/artifacts /home/amazon/AgentBuilderAgenticMCP && \
+    find /tmp -maxdepth 1 -type d \( -name '*_agent' -o -name 'agent_queue' \) \
+      -exec chown -R appuser:appuser {} +
 USER appuser
 
 # ── Environment defaults ─────────────────────────────────────────────────────
