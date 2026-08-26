@@ -118,6 +118,94 @@ def parse_invocation(text: str) -> dict:
     return result
 
 
+class _SubagentResult:
+    """Minimal stand-in for a Strands ``AgentResult``.
+
+    ``AsyncBaseSubagent.process_message_async`` is annotated ``-> AgentResult``,
+    and the SDK's queue handler consumes the return value like one:
+
+        extracted_text = extract_text_from_strands_agent_response(result)
+        force_stop_text = result.state.get("force_stop_response") if result.state else None
+
+    That reads exactly two attributes: ``message["content"]``, a list of blocks
+    each carrying a ``text`` key, and ``state``. The remaining five fields on the
+    real dataclass (``stop_reason``, ``metrics``, ``interrupts``,
+    ``structured_output``, ``checkpoint``) are never touched on this path.
+
+    These subagents are deterministic, so a real ``AgentResult`` would mean
+    inventing a ``stop_reason`` and an empty ``EventLoopMetrics`` that describe no
+    actual model loop. This supplies the two attributes that are read and nothing
+    more. If a future SDK reads further, the failure names the missing attribute.
+
+    Returning a bare JSON string here instead — as this module previously did —
+    raises ``'str' object has no attribute 'message'`` inside the handler on every
+    invocation, which marks the task ``failed`` even though the work succeeded.
+    """
+
+    __slots__ = ("message", "state")
+
+    def __init__(self, text: str):
+        self.message = {"role": "assistant", "content": [{"text": text}]}
+        self.state: dict = {}
+
+
+def _summary_line(summary: dict) -> str:
+    """Render a work_fn summary dict as one human-readable line.
+
+    The SDK stores this as the task's response, so it is what a person sees in the
+    WebApp rather than something the orchestrator parses. The orchestrator reads
+    the machine-readable payload from ``agentOutput.serializedPayload``.
+
+    Keys are filtered to scalars: nested dicts and lists (``warnings``,
+    ``published_artifacts``, per-engine rankings) would swamp a single line.
+    """
+    if not isinstance(summary, dict):
+        return str(summary)
+    parts = [
+        f"{k}={v}"
+        for k, v in summary.items()
+        if not isinstance(v, (dict, list)) and v is not None and v != ""
+    ]
+    return ", ".join(parts) if parts else "completed"
+
+
+def _report_completed(manager, instance_id: str, payload: str) -> None:
+    """Write COMPLETED plus the machine-readable payload to the agent instance.
+
+    This is the channel the orchestrator reads (see ``a2a.py``, which pulls
+    ``agentOutput.serializedPayload``). It is separate from the SDK's own
+    request/task status, which is driven by the value returned from
+    ``process_message_async``.
+
+    Why the direct client call rather than ``manager.update_status(...)``:
+
+    ``update_status`` forwards ``agent_output`` to the API unchanged, so passing
+    ``{"serializedPayload": ...}`` through it does work today. But its signature
+    annotates that parameter ``Optional[str]``, which contradicts its own
+    behaviour, so which side is authoritative is unsettled. If the annotation is
+    ever enforced, our dict would be coerced to its ``repr`` and the orchestrator
+    would fail to find ``serializedPayload`` several layers away from the cause.
+    Calling the client directly states the wire shape we depend on.
+
+    The cost is ``_inject_request_context``, a private method — though a
+    one-liner that merges in ``requestContext``. If it disappears, the except
+    below logs, ``agentOutput`` is never written, and the orchestrator raises
+    ``A2APayloadError`` on the next step: loud, immediate, and pointing here.
+    That is the better failure of the two.
+    """
+    try:
+        req = manager._inject_request_context(
+            {
+                "agentInstanceId": instance_id,
+                "agentInstanceStatus": "COMPLETED",
+                "agentOutput": {"serializedPayload": payload},
+            }
+        )
+        manager.client.update_agent_instance(**req)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to report COMPLETED status for instance=%s", instance_id)
+
+
 def make_subagent_factory(
     system_prompt: str,
     work_fn: Callable[[dict], dict],
@@ -185,27 +273,12 @@ def make_subagent_factory(
                     )
                     payload = json.dumps({"response": summary})
                     if manager and instance_id:
-                        # SDK's manager.update_status() passes agent_output as a
-                        # plain string, but the Agentic API's update_agent_instance
-                        # requires agentOutput to be a STRUCTURE with a
-                        # serializedPayload field. Bypass update_status and call
-                        # update_agent_instance directly with the correct shape.
-                        try:
-                            req = manager._inject_request_context(
-                                {
-                                    "agentInstanceId": instance_id,
-                                    "agentInstanceStatus": "COMPLETED",
-                                    "agentOutput": {"serializedPayload": payload},
-                                }
-                            )
-                            manager.client.update_agent_instance(**req)
-                        except Exception:  # noqa: BLE001
-                            logger.exception(
-                                "Failed to report COMPLETED status for instance=%s",
-                                instance_id,
-                            )
+                        _report_completed(manager, instance_id, payload)
                     logger.info("Subagent COMPLETED: %s", summary)
-                    return payload
+                    # Must be AgentResult-shaped, not a bare string — see
+                    # _SubagentResult. The orchestrator does not read this; it
+                    # reads agentOutput.serializedPayload written just above.
+                    return _SubagentResult(_summary_line(summary))
                 except Exception as e:  # noqa: BLE001
                     logger.exception("Subagent FAILED")
                     if manager and instance_id:
