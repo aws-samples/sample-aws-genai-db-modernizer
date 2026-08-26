@@ -142,6 +142,50 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "stepName": "Route Queries to Engines",
             "description": "Route each query to the best-fit AWS engine.",
         },
+        # Schema design, one per target engine. These produce the table
+        # definitions and access patterns that synthesis turns into
+        # table_mappings, query_groups and the recommended architecture.
+        {
+            "stepLabel": "schema_dynamodb",
+            "stepName": "Design DynamoDB Schema",
+            "description": "Design tables and access patterns for the DynamoDB target.",
+        },
+        {
+            "stepLabel": "schema_documentdb",
+            "stepName": "Design DocumentDB Schema",
+            "description": "Design collections and access patterns for the DocumentDB target.",
+        },
+        {
+            "stepLabel": "schema_elasticache",
+            "stepName": "Design ElastiCache Schema",
+            "description": "Design key structures and access patterns for the ElastiCache target.",
+        },
+        {
+            "stepLabel": "schema_opensearch",
+            "stepName": "Design OpenSearch Schema",
+            "description": "Design index mappings and access patterns for the OpenSearch target.",
+        },
+        {
+            "stepLabel": "schema_aurora_postgresql",
+            "stepName": "Design Aurora PostgreSQL Schema",
+            "description": "Assess schema design coverage for the Aurora PostgreSQL target.",
+        },
+        {
+            "stepLabel": "schema_aurora_mysql",
+            "stepName": "Design Aurora MySQL Schema",
+            "description": "Assess schema design coverage for the Aurora MySQL target.",
+        },
+        # Synthesis was absent from this list until 2026-08-26, so its
+        # mark_step_* calls resolved to an unregistered phase and were dropped
+        # silently. The phase ran; only its progress was invisible.
+        {
+            "stepLabel": "synthesis",
+            "stepName": "Produce the Assessment Report",
+            "description": (
+                "Rank engines, map tables, group queries, compare cost, assess risk, "
+                "and recommend a target architecture."
+            ),
+        },
     ]
 
     mappings = put_job_plan(steps)
@@ -1128,3 +1172,150 @@ def run_synthesis_via_a2a(
         )
     mark_step_succeeded("synthesis")
     return json.dumps(payload)
+
+
+# Target engine per schema-design agent, keyed by the suffix used in both the
+# agent id and the plan step. Mirrors SCHEMA_TARGETS in schema_subagent.py; the
+# two differ because agent ids use hyphens while artifact keys and upstream's
+# dispatch use the engine's own identifier.
+_SCHEMA_ENGINES: dict[str, str] = {
+    "dynamodb": "dynamodb",
+    "documentdb": "documentdb",
+    "elasticache": "elasticache",
+    "opensearch": "opensearch",
+    "aurora-pg": "aurora_postgresql",
+    "aurora-mysql": "aurora_mysql",
+}
+
+
+def _run_schema_design_via_a2a(
+    suffix: str,
+    job_id: str,
+    database_name: str,
+    assignment_version: int = 1,
+) -> str:
+    """Shared body for the six schema-design A2A tools."""
+    agent_id = f"{_AGENT_PREFIX}-schema-{suffix}"
+    # Plan step labels use the engine's own identifier with underscores
+    # (schema_aurora_postgresql), while agent ids use hyphens
+    # (schema-aurora-pg). A mismatch here is silent: mark_step_* ignores an
+    # unregistered phase name, so progress would simply never appear.
+    step = f"schema_{_SCHEMA_ENGINES[suffix]}"
+    logger.info(
+        "ATX: schema-design via A2A agent=%s job_id=%s db=%s assignment_version=%s",
+        agent_id,
+        job_id,
+        database_name,
+        assignment_version,
+    )
+    message = json.dumps(
+        {
+            "job_id": job_id,
+            "database_name": database_name,
+            "assignment_version": assignment_version,
+        }
+    )
+    mark_step_running(step)
+    try:
+        payload = invoke_and_wait(agent_id, message)
+    except A2AError as e:
+        logger.error("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
+        mark_step_failed(step, str(e))
+        return json.dumps(
+            {
+                "error": f"A2A schema-design failed: {e}",
+                "error_type": type(e).__name__,
+                "job_id": job_id,
+                "agent_id": agent_id,
+            }
+        )
+    mark_step_succeeded(step)
+    return json.dumps(payload)
+
+
+_SCHEMA_DOC = """Design the {label} target schema by invoking a deployed subagent over A2A.
+
+    Requires Collector, Triage, the matching Analysis, and Assignment to have run
+    first. Produces the table definitions and access patterns that synthesis turns
+    into ``table_mappings``, ``query_groups`` and
+    ``recommended_architecture.databases`` — three fields that stay empty in the
+    report until this has run for at least one engine.
+
+    Call this for every engine triage selected, in parallel with the other
+    schema-design tools, after assignment and before synthesis. A substantive
+    design takes roughly ten to fifteen minutes, so running them sequentially
+    would exceed the response window.
+
+    Writes 1 artifact: ``<db>/<job>/schema-{engine}/v<N>/schema_output.json``.
+
+    Args:
+        job_id: Unique job identifier.
+        database_name: Source database name.
+        assignment_version: Version the assignment agent produced. Defaults to 1
+            because ``run_assignment_core`` writes ``assignment/v1/``. Do not pass
+            0 — at version 0 every query is passed to every engine rather than the
+            ones assigned to it, and the output is written to a key synthesis does
+            not read.
+
+    Returns:
+        JSON string with status, the counts of table_definitions, access_patterns
+        and unsupported_patterns, the artifact key, and either ``notes`` or
+        ``warnings`` when no design was produced. Relay those strings verbatim.
+    """
+
+
+@tool
+def run_schema_design_dynamodb_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("dynamodb", job_id, database_name, assignment_version)
+
+
+@tool
+def run_schema_design_documentdb_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("documentdb", job_id, database_name, assignment_version)
+
+
+@tool
+def run_schema_design_elasticache_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("elasticache", job_id, database_name, assignment_version)
+
+
+@tool
+def run_schema_design_opensearch_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("opensearch", job_id, database_name, assignment_version)
+
+
+@tool
+def run_schema_design_aurora_pg_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("aurora-pg", job_id, database_name, assignment_version)
+
+
+@tool
+def run_schema_design_aurora_mysql_via_a2a(
+    job_id: str, database_name: str, assignment_version: int = 1
+) -> str:
+    return _run_schema_design_via_a2a("aurora-mysql", job_id, database_name, assignment_version)
+
+
+# Docstrings are assigned rather than written inline so the six tools cannot drift
+# apart. The LLM reads these as the tool descriptions, so a divergence between
+# them would be a behavioural difference, not a cosmetic one.
+for _fn, _label, _engine in (
+    (run_schema_design_dynamodb_via_a2a, "DynamoDB", "dynamodb"),
+    (run_schema_design_documentdb_via_a2a, "DocumentDB", "documentdb"),
+    (run_schema_design_elasticache_via_a2a, "ElastiCache", "elasticache"),
+    (run_schema_design_opensearch_via_a2a, "OpenSearch", "opensearch"),
+    (run_schema_design_aurora_pg_via_a2a, "Aurora PostgreSQL", "aurora_postgresql"),
+    (run_schema_design_aurora_mysql_via_a2a, "Aurora MySQL", "aurora_mysql"),
+):
+    _target = getattr(_fn, "__wrapped__", _fn)
+    _target.__doc__ = _SCHEMA_DOC.format(label=_label, engine=_engine)

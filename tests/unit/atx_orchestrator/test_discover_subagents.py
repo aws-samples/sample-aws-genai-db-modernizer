@@ -47,9 +47,19 @@ class TestDiscoverSubagentsRegistration:
             "run_analysis_aurora_pg_via_a2a",
             "run_analysis_aurora_mysql_via_a2a",
             "run_assignment_via_a2a",
+            # schema design, one per target engine, run in parallel between
+            # assignment and synthesis
+            "run_schema_design_dynamodb_via_a2a",
+            "run_schema_design_documentdb_via_a2a",
+            "run_schema_design_elasticache_via_a2a",
+            "run_schema_design_opensearch_via_a2a",
+            "run_schema_design_aurora_pg_via_a2a",
+            "run_schema_design_aurora_mysql_via_a2a",
             "run_synthesis_via_a2a",
             # in-process legacy paths — registered but the system prompt directs
-            # the LLM never to call them (no subagent exists for the first two)
+            # the LLM never to call them. run_schema_design and run_synthesis are
+            # superseded by the _via_a2a tools above; run_reality_check has no
+            # deployed subagent.
             "run_reality_check",
             "run_schema_design",
             "run_synthesis",
