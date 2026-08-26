@@ -13,6 +13,7 @@ Prerequisites:
   - AWS credentials configured (for DynamoDB provisioning)
   - Completed schema design artifacts in ./artifacts/<db>/<job>/schema-<engine>/v<N>/
 """
+
 import argparse
 import os
 import sys
@@ -64,6 +65,11 @@ def main():
         "--skip-provision",
         action="store_true",
         help="Skip provisioning (table already exists)",
+    )
+    parser.add_argument(
+        "--teardown",
+        action="store_true",
+        help="Delete infrastructure after test (default: keep for reuse)",
     )
     args = parser.parse_args()
 
@@ -139,7 +145,8 @@ def main():
             print(f"  Total cost (USD): ${output.total_cost_usd:.6f}")
             print("\n  Per-pattern results:")
             for pr in output.pattern_results:
-                status = "✓" if pr.error_rate_pct <= 1.0 else "✗"
+                # 0 requests => the pattern never actually ran; treat as failed.
+                status = "✓" if (pr.total_requests > 0 and pr.error_rate_pct <= 1.0) else "✗"
                 if pr.improvement_factor >= 1.0:
                     improvement_str = f"{pr.improvement_factor:.1f}x faster"
                 else:
@@ -152,8 +159,31 @@ def main():
                     f"cost=${pr.cost_per_operation_usd:.8f}"
                 )
             print(
-                f"\n  Artifacts: ./artifacts/{args.database_name}/{args.job_id}/load-test/v{schema_version}/"
+                f"\n  Artifacts: ./artifacts/{args.database_name}/{args.job_id}/"
+                f"load-test-{args.engine}/v{schema_version}/"
             )
+
+            if args.teardown and args.engine == "opensearch":
+                print("\n  Tearing down OpenSearch domain...")
+                from src.agents.load_test.opensearch.provisioner import OpenSearchProvisioner
+
+                provisioner = OpenSearchProvisioner(region=args.region)
+                from src.contracts.load_test_models import DeployedResource, InfrastructureManifest
+
+                manifest = InfrastructureManifest(
+                    resources=[
+                        DeployedResource(
+                            resource_type="AWS::OpenSearchService::Domain",
+                            resource_arn="",
+                            configuration={
+                                "domain_name": f"loadtest-mod-{args.job_id[:12]}-os"[:28],
+                            },
+                        )
+                    ],
+                    tags={},
+                )
+                provisioner.teardown_force(manifest)
+                print("  ✓ Domain deleted")
 
         except Exception as e:
             print(f"\nERROR: Load test failed: {e}")
