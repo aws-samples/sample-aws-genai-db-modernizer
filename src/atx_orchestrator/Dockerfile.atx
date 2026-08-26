@@ -92,7 +92,13 @@ RUN mkdir -p /tmp/agent_queue /app/artifacts \
     /tmp/analysis_aurora_pg_agent \
     /tmp/analysis_aurora_mysql_agent \
     /tmp/assignment_agent \
-    /tmp/synthesis_agent
+    /tmp/synthesis_agent \
+    /tmp/schema_dynamodb_agent \
+    /tmp/schema_documentdb_agent \
+    /tmp/schema_elasticache_agent \
+    /tmp/schema_opensearch_agent \
+    /tmp/schema_aurora_pg_agent \
+    /tmp/schema_aurora_mysql_agent
 
 # ── Non-root user (security) ─────────────────────────────────────────────────
 # Note: AgentCore documents that filesystem permissions are stored but not

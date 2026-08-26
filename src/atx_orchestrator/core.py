@@ -1079,3 +1079,161 @@ def run_synthesis_core(
         # still at report_artifact either way.
         "published_artifacts": published,
     }
+
+
+# Target engines that share a family with a relational source, keyed by the
+# source engine reported in the collector's metadata. Used to tell "no schema
+# redesign is required" apart from "this report does not cover that conversion".
+_SAME_FAMILY: dict[str, set[str]] = {
+    "postgresql": {"aurora_postgresql"},
+    "mysql": {"aurora_mysql"},
+}
+
+
+def _source_engine(store, job_id: str, database_name: str) -> str:
+    """Read the source engine from the collector output's metadata.
+
+    Returns "" when absent rather than raising: the classification this feeds is
+    advisory, and a missing engine should not fail a phase whose real work has
+    already completed.
+    """
+    try:
+        collector = store.read_json(f"{database_name}/{job_id}/collector/output.json")
+        engine = collector.get("metadata", {}).get("source_database", {}).get("engine")
+        return str(engine or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not read source engine from collector metadata", exc_info=True)
+        return ""
+
+
+def run_schema_design_core(
+    job_id: str,
+    database_name: str,
+    target_type: str,
+    assignment_version: int = 1,
+    store=None,
+) -> dict:
+    """Design the target schema for one engine. Returns a summary dict.
+
+    Maps to AGENT_TYPE='schema-<engine>'. One call per engine, because
+    core-modernizer's ``run_schema_design`` is parameterised by ``target_type``
+    rather than iterating engines itself.
+
+    Writes ``<db>/<job>/schema-<target_type>/v<N>/schema_output.json``, which is
+    the exact key ``synthesis_data.py`` reads at the same version. Synthesis
+    derives ``table_mappings``, ``query_groups`` and
+    ``recommended_architecture.databases`` from that file, so this phase is what
+    populates three fields that are otherwise empty in every report.
+
+    ``assignment_version`` defaults to 1 and must match the version the
+    assignment agent produced. At 0 the handler passes every query to every
+    engine instead of the ones assigned to it, and writes to a different key than
+    synthesis reads.
+
+    This phase is LLM-driven and there is no deterministic mode: upstream's
+    ``llm_mode`` only branches on ``"external"``, which writes the prepared model
+    input and designs nothing. That is the opposite of the analysis phases, where
+    ``llm_mode="none"`` is a full deterministic path. Model selection is left to
+    ``SCHEMA_AGENT_MODEL_ID`` in the runtime environment so it is a deployment
+    decision rather than an inherited library default.
+
+    Prerequisites: collector/output.json and assignment/v<N>/assignment.json.
+    """
+    store = store or make_store()
+    prefix = f"{database_name}/{job_id}"
+
+    collector_key = f"{prefix}/collector/output.json"
+    if not store.exists(collector_key):
+        raise FileNotFoundError(f"Collector output not found at {collector_key}")
+
+    assignment_key = f"{prefix}/assignment/v{assignment_version}/assignment.json"
+    if assignment_version > 0 and not store.exists(assignment_key):
+        raise FileNotFoundError(
+            f"Assignment not found at {assignment_key}. Schema design filters queries "
+            f"by assignment; run the assignment phase first."
+        )
+
+    logger.info(
+        "ATX schema-design starting: job_id=%s db=%s target=%s assignment_version=%s",
+        job_id,
+        database_name,
+        target_type,
+        assignment_version,
+    )
+
+    from src.agents.schema_design.handler import run_schema_design
+
+    run_schema_design(
+        job_id=job_id,
+        database_name=database_name,
+        target_type=target_type,
+        store=store,
+        assignment_version=assignment_version,
+    )
+
+    output_key = f"{prefix}/schema-{target_type}/v{assignment_version}/schema_output.json"
+    if not store.exists(output_key):
+        raise FileNotFoundError(
+            f"Schema design reported success but no output exists at {output_key}"
+        )
+    output = store.read_json(output_key)
+
+    status = str(output.get("status") or "completed")
+    table_definitions = output.get("table_definitions") or []
+    access_patterns = output.get("access_patterns") or []
+
+    # Upstream dispatches on target_type alone and has designers for dynamodb,
+    # documentdb, opensearch and elasticache; other targets take a default branch
+    # that writes a placeholder. The source engine — which upstream does not
+    # consult — is what distinguishes a target needing no redesign from one this
+    # report simply does not cover. Reported as informational in the first case
+    # and as a warning in the second, so that a warning always means the reader
+    # needs to act.
+    notes: list[str] = []
+    warnings: list[str] = []
+    if not table_definitions:
+        src = _source_engine(store, job_id, database_name)
+        if target_type in _SAME_FAMILY.get(src, set()):
+            notes.append(
+                f"{target_type}: no schema design required. Source and target are both "
+                f"{src}, so the existing schema carries over unchanged."
+            )
+        elif status == "skipped":
+            notes.append(
+                f"{target_type}: {output.get('reason') or 'no queries or tables assigned'}."
+            )
+        else:
+            warnings.append(
+                f"{target_type}: schema design not included in this report."
+                + (
+                    f" The source engine is {src}, so type and object mappings for this "
+                    f"target would need a separate schema conversion assessment."
+                    if src
+                    else " Type and object mappings for this target are not covered here."
+                )
+            )
+
+    summary = {
+        "job_id": job_id,
+        "database_name": database_name,
+        "target_type": target_type,
+        "assignment_version": assignment_version,
+        "status": status,
+        "table_definitions": len(table_definitions),
+        "access_patterns": len(access_patterns),
+        "unsupported_patterns": len(output.get("unsupported_patterns") or []),
+        "schema_artifact": output_key,
+    }
+    if notes:
+        summary["notes"] = notes
+    if warnings:
+        summary["warnings"] = warnings
+
+    logger.info(
+        "[schema-design/%s] status=%s table_definitions=%d access_patterns=%d",
+        target_type,
+        status,
+        len(table_definitions),
+        len(access_patterns),
+    )
+    return summary
