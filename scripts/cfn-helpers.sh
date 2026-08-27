@@ -91,6 +91,44 @@ deploy_stack() {
   echo ""
 }
 
+# Fully empty an S3 bucket, including noncurrent versions and delete markers
+#
+# 'aws s3 rm --recursive' only removes current object versions. On a
+# versioned bucket it leaves noncurrent versions and delete markers behind,
+# so the bucket is not truly empty and CloudFormation cannot delete it. This
+# purges everything in batches (paging until empty) so teardown is idempotent
+# for versioned buckets.
+#
+# Usage: empty_bucket <bucket-name> [region]
+empty_bucket() {
+  local bucket="$1"
+  local region="${2:-${AWS_DEFAULT_REGION:-us-east-1}}"
+
+  # Fast path: remove current object versions
+  aws s3 rm "s3://${bucket}" --recursive --region "$region" 2>/dev/null || true
+
+  # Purge remaining versions and delete markers in batches. delete-objects
+  # accepts at most 1000 keys per call, so cap each page at 500 (which bounds
+  # the combined versions + delete markers list well under that limit).
+  while true; do
+    local batch
+    batch=$(aws s3api list-object-versions \
+      --bucket "$bucket" --region "$region" \
+      --max-items 500 \
+      --query '{Objects: [Versions[].{Key:Key,VersionId:VersionId}, DeleteMarkers[].{Key:Key,VersionId:VersionId}][]}' \
+      --output json 2>/dev/null || echo '{"Objects": null}')
+
+    # Nothing left to delete
+    if ! echo "$batch" | grep -q '"Key"'; then
+      break
+    fi
+
+    aws s3api delete-objects \
+      --bucket "$bucket" --region "$region" \
+      --delete "$batch" >/dev/null 2>&1 || true
+  done
+}
+
 # Delete a CloudFormation stack if it exists, wait for completion
 #
 # Usage: delete_stack_if_exists <stack-name>

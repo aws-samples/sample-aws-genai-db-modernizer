@@ -63,8 +63,8 @@ echo ""
 echo "=== Emptying S3 buckets ==="
 for BUCKET_NAME in "${FEATURE_STACK}-storage-bucket" "${FEATURE_STACK}-logs-bucket"; do
   if aws s3api head-bucket --bucket "$BUCKET_NAME" --region "$REGION" 2>/dev/null; then
-    echo "  Emptying s3://${BUCKET_NAME}..."
-    aws s3 rm "s3://${BUCKET_NAME}" --recursive --region "$REGION" 2>/dev/null || true
+    echo "  Emptying s3://${BUCKET_NAME} (including versions and delete markers)..."
+    empty_bucket "$BUCKET_NAME" "$REGION"
     echo "  Done: ${BUCKET_NAME}"
   else
     echo "  Bucket ${BUCKET_NAME} not found (skipping)"
