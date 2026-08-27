@@ -84,13 +84,13 @@ aws iam create-service-linked-role --aws-service-name elasticache.amazonaws.com
 
 This role persists for the life of the account; you only do this once.
 
-**DocumentDB — VPC subnet group + security group (required for the DocumentDB
-engine).** The DocumentDB load-test provisioner expects a pre-existing DocDB
-subnet group and security group, passed to the load-test task via the
+**DocumentDB — no manual setup.** The DocumentDB load-test engine relies on a
+DocDB subnet group in the same VPC as the ECS task, plus port 27017 ingress on
+the shared ECS security group. Both are provisioned automatically by
+`orchestration.yaml` (`LoadTestDocDbSubnetGroup`) and `ecs-infrastructure.yaml`
+(`EcsSelfIngress/EgressDocDb`), and passed to the load-test task via the
 `DOCDB_DB_SUBNET_GROUP_NAME` and `DOCDB_VPC_SECURITY_GROUP_IDS` environment
-variables. These are not yet created or wired by the deployment stacks. Until
-that is added, the DocumentDB load-test engine will fail at provisioning. Track
-this as open deployment work before enabling the DocumentDB engine.
+variables. No account-level setup is needed.
 
 ### Domain and Certificate Requirement
 
