@@ -1171,7 +1171,73 @@ def run_synthesis_via_a2a(
             }
         )
     mark_step_succeeded("synthesis")
+    _publish_synthesis_deliverables(job_id, database_name, payload)
     return json.dumps(payload)
+
+
+def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
+    """Render the two audience-shaped reports from the synthesis report.json and
+    publish all three deliverables as CUSTOMER_OUTPUT.
+
+    The orchestrator owns this, not the subagent, because it owns the synthesis
+    plan step. Three artifacts reach the WebApp Artifacts panel: Decision Report
+    (executive HTML), Engineering Report (build-team Markdown) and Assessment
+    Data (the raw report JSON). Each rendered report is also written to our own
+    S3 bucket, which is the system of record and survives the customer stopping
+    the job; report.json is already there (the subagent wrote it).
+
+    Entirely non-fatal: a synthesis whose report is durable in S3 must not fail
+    over a rendering or registration call. ``artifacts.publish`` never raises on
+    its own; this guard covers the render and the S3 writes.
+    """
+    report_key = payload.get("report_artifact")
+    if not report_key:
+        logger.warning("ATX synthesis: payload has no report_artifact; skipping deliverables")
+        return
+    try:
+        from src.atx_orchestrator import artifacts as _artifacts
+
+        store = _make_store()
+        report = store.read_json(report_key)
+        base = report_key.rsplit("/", 1)[0]
+        trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
+
+        decision_html = _artifacts.render_decision_report_html(
+            report, trust_generated_summary=trust
+        )
+        engineering_md = _artifacts.render_engineering_report_md(report)
+
+        # S3-first: our bucket is the system of record (survives job stop).
+        store.write_text(f"{base}/decision-report-{database_name}.html", decision_html, "text/html")
+        store.write_text(
+            f"{base}/engineering-report-{database_name}.md", engineering_md, "text/markdown"
+        )
+
+        # Register all three in the WebApp panel. CUSTOMER_OUTPUT is accepted from
+        # the agent side (constraint C2, verified 2026-08-24).
+        _artifacts.publish(
+            [
+                (decision_html.encode("utf-8"), "HTML", "Decision Report", "CUSTOMER_OUTPUT"),
+                (
+                    engineering_md.encode("utf-8"),
+                    "MARKDOWN",
+                    "Engineering Report",
+                    "CUSTOMER_OUTPUT",
+                ),
+                (
+                    json.dumps(report, indent=2).encode("utf-8"),
+                    "JSON",
+                    "Assessment Data",
+                    "CUSTOMER_OUTPUT",
+                ),
+            ]
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "ATX synthesis deliverables skipped (report is durable in S3): %s: %s",
+            type(e).__name__,
+            e,
+        )
 
 
 # Target engine per schema-design agent, keyed by the suffix used in both the

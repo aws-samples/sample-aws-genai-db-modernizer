@@ -29,7 +29,6 @@ either, so it is unproven and left as follow-up.
 from __future__ import annotations
 
 import html as _html
-import json
 import logging
 from typing import Any, Literal
 
@@ -116,149 +115,6 @@ def publish(items: list[tuple[bytes, FileType, str, CategoryType]]) -> dict[str,
         # runs and tests. Also catches SDK or client construction failure.
         logger.warning("Artifact publishing unavailable, S3 copies still written: %s", exc)
     return published
-
-
-def render_synthesis_markdown(
-    report: dict[str, Any],
-    warnings: list[str],
-    trust_generated_summary: bool = True,
-) -> str:
-    """Render a synthesis report as Markdown a customer can actually read.
-
-    The JSON is the machine artifact. This is the human one. It deliberately
-    reports only what the report contains and states the gaps outright rather than
-    leaving a reader to wonder why a section is empty — the same discipline the
-    synthesis system prompt applies to narration.
-
-    Args:
-        trust_generated_summary: When False, use ``summary_deterministic`` instead
-            of the generated ``summary`` and say why.
-
-            This exists because of a measured failure, not a hypothetical one. On
-            job v2-e2e-01 the generated summary asserted *"The schema design I
-            produced resolves every flagged capability gap"* and *"The schema work
-            is done, the access patterns are mapped, and the team is ready to
-            build"* — on a run where schema-design never executed. The risk
-            entries say "0% of queries resolved by schema design", and the model
-            narrated that as completed work.
-
-            The exec-summary prompt lives upstream in core-modernizer's
-            ``run_synthesis``, so this cannot be fixed from here. What can be
-            fixed is refusing to put an unsupported claim about deliverables in
-            front of a customer. The generated text is still preserved verbatim in
-            the JSON artifact; only the human-readable deliverable substitutes it.
-    """
-    db = report.get("database_name", "?")
-    job = report.get("job_id", "?")
-    arch = report.get("recommended_architecture") or {}
-    risk = report.get("risk_assessment") or {}
-    ranking = report.get("ranking") or []
-    assignment = report.get("assignment_summary") or {}
-
-    out: list[str] = [
-        f"# Database Modernization Assessment: {db}",
-        "",
-        f"Job `{job}`  |  architecture **{arch.get('architecture_type', 'not determined')}**"
-        f"  |  overall risk **{risk.get('overall_risk_level', 'not assessed')}**",
-        "",
-    ]
-
-    if trust_generated_summary:
-        summary = report.get("summary") or report.get("summary_deterministic")
-        if summary:
-            out += ["## Executive summary", "", summary.strip(), ""]
-    else:
-        deterministic = report.get("summary_deterministic")
-        if deterministic:
-            out += ["## Summary", "", deterministic.strip(), ""]
-        out += [
-            "> The generated narrative summary was withheld from this document "
-            "because it referenced schema design work that this run did not "
-            "perform. The measured figures above and below are unaffected. The "
-            "generated text is retained in the JSON artifact for reference.",
-            "",
-        ]
-
-    if ranking:
-        out += [
-            "## Engine ranking",
-            "",
-            "| Engine | Confidence | Queries | Share | Tables analysed | Est. monthly |",
-            "|---|---|---|---|---|---|",
-        ]
-        for e in ranking:
-            cost = e.get("monthly_cost_usd")
-            out.append(
-                f"| {e.get('target', '?')} "
-                f"| {e.get('confidence_score', '-')} "
-                f"| {e.get('assigned_queries', '-')} "
-                f"| {e.get('workload_percent', '-')}% "
-                f"| {e.get('tables_analyzed', '-')} "
-                f"| {'$' + format(cost, ',.2f') if isinstance(cost, (int, float)) else '-'} |"
-            )
-        out.append("")
-
-    if assignment:
-        out += [
-            "## Query assignment",
-            "",
-            f"Assignment version {assignment.get('version', '?')}, "
-            f"{assignment.get('query_count', '?')} queries "
-            f"({assignment.get('in_scope_count', '?')} in scope), "
-            f"{assignment.get('co_dependency_groups', '?')} co-dependency groups.",
-            "",
-        ]
-
-    risks = risk.get("risks") or []
-    if risks:
-        out += [f"## Risks ({len(risks)})", ""]
-        for r in risks:
-            if isinstance(r, dict):
-                sev = r.get("severity") or r.get("level") or ""
-                desc = r.get("description") or r.get("risk") or json.dumps(r)[:200]
-                out.append(f"- **{sev}** {desc}" if sev else f"- {desc}")
-            else:
-                out.append(f"- {r}")
-        out.append("")
-
-    if warnings:
-        out += ["## Known gaps in this report", ""]
-        out += [f"- {w}" for w in warnings]
-        out.append("")
-
-    out += [
-        "---",
-        "",
-        "Engine and query assignments in this report are produced deterministically. "
-        "No language model decides which engine a table or query goes to. The "
-        "executive summary is written over already-computed results and cannot change "
-        "a recommendation.",
-        "",
-    ]
-    return "\n".join(out)
-
-
-# ---------------------------------------------------------------------------
-# Decision Report (HTML) and Engineering Report (Markdown)
-#
-# Two audience-shaped renderings of the synthesis report, both pure functions
-# of the report dict (no I/O). The caller owns S3 persistence and platform
-# publishing; these only turn a report into bytes a human reads.
-#
-# Everything both reports need is already in the synthesis report:
-#   recommended_architecture.databases  -> the recommendation (service, table_count, rationale)
-#   tco_analysis.cost_breakdown          -> per-engine monthly cost
-#   trade_offs                           -> cross-cutting migration guidance
-#   risk_assessment.{risks,mitigation_strategies,overall_risk_level}
-#   table_mappings                       -> source table -> target engine
-#   query_groups                         -> co-dependency groups
-#   schema_designs[engine]               -> per-engine target design summary
-#
-# The panel renders neither mermaid nor inline images (verified 2026-08-27), so
-# the Decision Report is HTML with an inline <svg> (renders in any browser,
-# offline, no CDN) and the Engineering Report is Markdown with mermaid fences
-# (engineers open it in tooling that renders them).
-# ---------------------------------------------------------------------------
 
 
 def _fmt_usd(x: Any) -> str:
@@ -564,9 +420,10 @@ def render_decision_report_html(
     template while inlining every style so a stakeholder opening the download
     offline or behind a strict CSP still gets the full layout.
 
-    See ``render_synthesis_markdown`` for the ``trust_generated_summary``
-    rationale — when False the generated narrative is withheld because it claimed
-    schema work that did not run, and the deterministic summary is used instead.
+    ``trust_generated_summary``: when False, the caller has determined that no
+    schema design ran, so the generated narrative summary (which on such runs can
+    claim schema work that never happened) is withheld and the deterministic
+    summary is used instead.
     """
 
     def esc(s: Any) -> str:

@@ -998,9 +998,10 @@ def run_synthesis_core(
     # executive summary. A guard that runs after the artifact is durable must not
     # raise on a state the pipeline is expected to reach.
     warnings: list[str] = []
-    # Hoisted out of the guard below because the deliverable renderer also needs it:
-    # when no schema design exists, the generated executive summary cannot be
-    # trusted to describe it. See artifacts.render_synthesis_markdown.
+    # Hoisted above the guard below: when no schema design exists, the generated
+    # executive summary cannot be trusted to describe it, so the guard downgrades
+    # to a warning rather than failing. The orchestrator recomputes this from the
+    # report when it renders the customer deliverables.
     any_schema_design = any(r.get("schema_design_available") for r in ranking)
     if ranking and not databases:
         assignment_was_read = bool(report.get("assignment_summary"))
@@ -1026,37 +1027,13 @@ def run_synthesis_core(
                 f"fields. This is a known pipeline gap, not a failure."
             )
 
-    # Register the report with the platform so it appears in the WebApp Artifacts
-    # panel. The S3 copy above is the system of record and is already durable; this
-    # is the download surface (constraint C2). Publishing never raises — see
-    # artifacts.publish — because a phase whose real work succeeded must not fail
-    # over a registration call.
-    from src.atx_orchestrator import artifacts as _artifacts
-
-    report_md = _artifacts.render_synthesis_markdown(
-        report, warnings, trust_generated_summary=any_schema_design
-    )
-    published = _artifacts.publish(
-        [
-            # The human deliverable. CUSTOMER_OUTPUT is what C2 calls for — the
-            # customer downloads this from the WebApp. The working reference used
-            # AGENT_OUTPUT, so if CUSTOMER_OUTPUT is refused from the agent side the
-            # per-item warning will name it and the JSON below still publishes.
-            (
-                report_md.encode("utf-8"),
-                "MARKDOWN",
-                f"Database Modernization Assessment: {database_name}",
-                "CUSTOMER_OUTPUT",
-            ),
-            # The machine artifact, for downstream tooling rather than reading.
-            (
-                json.dumps(report, indent=2).encode("utf-8"),
-                "JSON",
-                f"Assessment report data ({database_name})",
-                "AGENT_OUTPUT",
-            ),
-        ]
-    )
+    # The customer-facing deliverables (Decision Report HTML, Engineering Report
+    # MD) and their publication now live on the orchestrator, which owns the
+    # synthesis plan step -- see tools._publish_synthesis_deliverables. The
+    # subagent's contract ends at writing report.json to S3 above (the system of
+    # record, already durable). published_artifacts stays here for payload-shape
+    # stability; the orchestrator populates the panel, not this subagent.
+    published: dict[str, str] = {}
 
     return {
         "job_id": job_id,
