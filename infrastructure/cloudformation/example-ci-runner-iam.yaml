@@ -470,6 +470,30 @@ Resources:
               - secretsmanager:UntagResource  # pragma: allowlist secret
             Resource:
               - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectPrefix}/*'
+          # DocumentDB load-test clusters live in the ECS VPC, so the deploy
+          # creates a shared DocumentDB subnet group (AWS::DocDB::DBSubnetGroup,
+          # which is the RDS API namespace). CreateDBSubnetGroup validates the
+          # referenced subnets via ec2:DescribeSubnets, already granted in the
+          # networking policy.
+          - Sid: DocumentDbSubnetGroupManage
+            Effect: Allow
+            Action:
+              - rds:CreateDBSubnetGroup
+              - rds:DeleteDBSubnetGroup
+              - rds:ModifyDBSubnetGroup
+              - rds:AddTagsToResource
+              - rds:RemoveTagsFromResource
+              - rds:ListTagsForResource
+            Resource:
+              - !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:subgrp:${ProjectPrefix}-*'
+          # DescribeDBSubnetGroups does not support resource-level permissions,
+          # so it must be granted on '*' (used by CloudFormation on the
+          # describe/rollback path).
+          - Sid: DocumentDbSubnetGroupDescribe
+            Effect: Allow
+            Action:
+              - rds:DescribeDBSubnetGroups
+            Resource: '*'
           - Sid: ELBDescribe
             Effect: Allow
             Action:

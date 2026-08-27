@@ -715,6 +715,25 @@ Resources:
                   - secretsmanager:TagResource  # pragma: allowlist secret
                 Resource:
                   - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:LoadTest_DocumentDB_*'  # pragma: allowlist secret
+              # DocumentDB clusters are created with StorageEncrypted=True using
+              # the account's default aws/rds KMS key. Creating an encrypted
+              # cluster requires the caller to create a grant on that key. The
+              # kms:ViaService condition restricts these actions to calls made
+              # through RDS/DocumentDB, so the task role cannot use the key
+              # directly. Resource is '*' because the default key ARN is not
+              # known at template time.
+              - Sid: DocumentDbEncryptionKey
+                Effect: Allow
+                Action:
+                  - kms:CreateGrant
+                  - kms:DescribeKey
+                  - kms:GenerateDataKey
+                  - kms:GenerateDataKeyWithoutPlaintext
+                  - kms:Decrypt
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 'rds.${AWS::Region}.amazonaws.com'
               - Sid: ElastiCacheProvisioning
                 Effect: Allow
                 Action:
