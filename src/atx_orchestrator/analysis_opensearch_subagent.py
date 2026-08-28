@@ -34,9 +34,10 @@ trace are written to S3 as separate artifacts.
 
 
 def _work(params: dict) -> dict:
-    from src.atx_orchestrator.core import run_analysis_opensearch_core
+    from src.atx_orchestrator.core import run_analysis_core
 
-    return run_analysis_opensearch_core(
+    return run_analysis_core(
+        "opensearch",
         job_id=params["job_id"],
         database_name=params["database_name"],
     )

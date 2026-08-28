@@ -32,9 +32,10 @@ trace are written to S3 as separate artifacts.
 
 
 def _work(params: dict) -> dict:
-    from src.atx_orchestrator.core import run_analysis_aurora_mysql_core
+    from src.atx_orchestrator.core import run_analysis_core
 
-    return run_analysis_aurora_mysql_core(
+    return run_analysis_core(
+        "aurora_mysql",
         job_id=params["job_id"],
         database_name=params["database_name"],
     )
