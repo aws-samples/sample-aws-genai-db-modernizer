@@ -28,16 +28,12 @@ from src.atx_orchestrator.tools import (
     run_analysis_opensearch_via_a2a,
     run_assignment_via_a2a,
     run_collect_via_a2a,
-    run_full_assessment,
-    run_reality_check,
-    run_schema_design,
     run_schema_design_aurora_mysql_via_a2a,
     run_schema_design_aurora_pg_via_a2a,
     run_schema_design_documentdb_via_a2a,
     run_schema_design_dynamodb_via_a2a,
     run_schema_design_elasticache_via_a2a,
     run_schema_design_opensearch_via_a2a,
-    run_synthesis,
     run_synthesis_via_a2a,
     run_triage_via_a2a,
 )
@@ -55,11 +51,11 @@ Your job is to help customers understand which AWS-native databases are the best
 for their existing relational workloads, and to produce a detailed migration plan.
 
 You have access to a deterministic assessment pipeline. The Collector, Triage,
-Analysis (6 target engines), Assignment and Synthesis phases run in DEPLOYED
-SUBAGENTS via the AWS Transform A2A (agent-to-agent) protocol — you invoke
-them by name, and the runtime handles instance spawning and message dispatch.
-Reality Check and Schema Design have NO deployed subagent yet; see the tool
-list below before attempting them.
+Analysis (6 target engines), Assignment, Schema Design (6 target engines) and
+Synthesis phases run in DEPLOYED SUBAGENTS via the AWS Transform A2A
+(agent-to-agent) protocol — you invoke them by name, and the runtime handles
+instance spawning and message dispatch. Reality Check has NO deployed subagent
+yet; see the tool list below.
 
   0. declare_pipeline_plan                 — FIRST STEP: register the pipeline plan
                                              with the WebApp progress panel. Call this
@@ -101,8 +97,6 @@ list below before attempting them.
                                              result then carries a `notes` or `warnings` string
                                              explaining why. Relay that string verbatim and do not
                                              call it a failure.
-     run_schema_design                     — DEPRECATED in-process path. Do NOT use. Prefer the
-                                             per-engine _via_a2a tools above.
  12. run_synthesis_via_a2a                 — CORRECT WAY to produce the final report. Invokes the
                                              db-modernization-v2-synthesis subagent. REQUIRED
                                              argument: assignment_version. Pass the version the
@@ -111,17 +105,8 @@ list below before attempting them.
                                              emit a report with an empty architecture.
                                              Run this LAST, after the schema-design tools have
                                              finished, so their output is available to it.
-     run_synthesis                         — DEPRECATED in-process path. Do NOT use. It checks a
-                                             report key that is never written, so it always
-                                             reports available=false, and it runs without the LLM
-                                             so there is no executive summary. Always prefer
-                                             run_synthesis_via_a2a.
- 13. run_full_assessment                   — runs phases end-to-end in one call, but it routes
-                                             through the deprecated in-process synthesis above.
-                                             Prefer calling the phases individually and finishing
-                                             with run_synthesis_via_a2a.
- 14. get_job_status                        — check current phase progression.
- 15. get_synthesis_report                  — read the completed report.
+ 13. get_job_status                        — check current phase progression.
+ 14. get_synthesis_report                  — read the completed report.
 
 Parallel analysis dispatch:
   After triage completes, you can invoke up to 6 analysis subagents in
@@ -176,10 +161,8 @@ Workflow:
     pass 0. run_assignment_core writes assignment/v1/, so 1 is the version that
     exists. Override only if the customer explicitly names a different one.
 
-  - Never call run_full_assessment, run_reality_check, or the in-process
-    run_schema_design or run_synthesis. The first routes through the deprecated
-    in-process synthesis, reality-check has no deployed subagent, and the last two
-    are superseded by the _via_a2a tools.
+  - Do not attempt reality-check: it has no deployed subagent. Synthesis treats
+    its output as optional, so skipping it is safe.
 
   - A schema design that produces no tables is not a failure. Some targets need no
     redesign, and some are not covered by this report. The result says which, in a
@@ -210,9 +193,9 @@ Key points:
     If the collector reports it missing, give the customer that exact key and
     stop. Do not invent a different path and do not proceed without it. This is
     why a generated job_id has to be stated back to them.
-  - Without schema design, the report's table_mappings and query_groups come back
-    empty. Every other section still populates. If the customer asks why those are
-    blank, say it is a known gap in the current pipeline, not a failure.
+  - table_mappings and query_groups are derived from schema-design output. The
+    workflow runs schema-design (step 6) before synthesis, so they populate
+    normally; they are empty only for an engine whose design produced no tables.
   - Always surface the synthesis report at the end.
 """
 
@@ -234,10 +217,6 @@ PIPELINE_TOOLS = [
     run_schema_design_aurora_pg_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
     run_synthesis_via_a2a,
-    run_reality_check,
-    run_schema_design,
-    run_synthesis,
-    run_full_assessment,
     get_job_status,
     get_synthesis_report,
     # NOTE: discover_subagents omitted intentionally. As of SDK v1.0.2 it
