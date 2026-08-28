@@ -1,0 +1,76 @@
+# AWS Transform ElastiCache Analysis Subagent (one agent per image)
+#
+# Deterministic pattern-matching subagent — NO LLM invocation. Reads collector
+# output from artifact store, writes analysis.json + decision-trace.json
+# (+ optional er-diagram.mmd) to S3.
+#
+# Build for linux/arm64 (Bedrock AgentCore runs on Graviton):
+#   finch build --platform linux/arm64 \
+#     -t db-modernization-analysis-elasticache:latest \
+#     -f src/atx_orchestrator/Dockerfile.analysis-elasticache .
+
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.11-slim
+
+WORKDIR /app
+
+# ── System deps ────────────────────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── AWS Transform SDK ───────────────────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    "agent-builder-sdk-aws-transform>=1.0.0" \
+    "agent-builder-agentic-mcp-aws-transform>=1.0.0" \
+    "agent-builder-types-aws-transform>=1.0.0" \
+    "agent-builder-mcp-client-aws-transform>=1.0.0"
+
+# Register botocore service models (REQUIRED — Agentic API + Agent Registry API)
+# F5 fix (claude.md §87): copy models to world-readable path + set AWS_DATA_PATH
+RUN pip install --no-cache-dir awscli && \
+    SDK_MODELS=$(python -c "from importlib.resources import files; print(files('agent_builder_sdk').joinpath('botocore_models'))") && \
+    aws configure add-model --service-name atxagentregistryexternal \
+      --service-model "file://${SDK_MODELS}/atxagentregistryexternal/2022-07-26/service-2.json" && \
+    aws configure add-model --service-name transformagenticservice \
+      --service-model "file://${SDK_MODELS}/transformagenticservice/2018-05-10/service-2.json" && \
+    mkdir -p /opt/botocore-models && \
+    cp -r /root/.aws/models/* /opt/botocore-models/ && \
+    chmod -R a+r /opt/botocore-models
+
+# ── Project deps ────────────────────────────────────────────────────────────
+COPY src/atx_orchestrator/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ── MCP server shim ─────────────────────────────────────────────────────────
+RUN mkdir -p /home/amazon/AgentBuilderAgenticMCP/bin && \
+    printf '#!/bin/bash\npython -m agent_builder_agentic_mcp "$@"\n' \
+      > /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp && \
+    chmod +x /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp
+
+# ── Application source ──────────────────────────────────────────────────────
+COPY src/ /app/src/
+
+# ── Runtime dirs ────────────────────────────────────────────────────────────
+RUN mkdir -p /tmp/agent_queue /tmp/analysis_elasticache_agent /app/artifacts
+
+# ── Non-root user (security) ─────────────────────────────────────────────────
+RUN useradd --create-home --uid 1000 appuser && \
+    chown -R appuser:appuser /app /tmp/agent_queue /tmp/analysis_elasticache_agent \
+      /home/amazon/AgentBuilderAgenticMCP
+USER appuser
+
+# ── Environment defaults ─────────────────────────────────────────────────────
+# LLM_MODE=none — deterministic subagent, no Bedrock invocation
+# MODEL_ID unset intentionally — not used by analyze_for_elasticache
+ENV ARTIFACT_DIR=/app/artifacts \
+    LLM_MODE=none \
+    AWS_REGION=us-east-1 \
+    AWS_DATA_PATH=/opt/botocore-models \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/ping || exit 1
+
+ENTRYPOINT ["python", "-m", "src.atx_orchestrator.analysis_elasticache_app"]

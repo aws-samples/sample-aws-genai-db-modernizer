@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  IAM roles required for AWS Transform modernization agent deployment.
+  - AgentCoreExecutionRole: Used by Bedrock AgentCore to run agent containers
+  - AWSTransformAgentInvokeRole: Used by AWS Transform to invoke agents
+
+Parameters:
+  ArtifactBucketName:
+    Type: String
+    Description: >
+      Name of the S3 bucket holding offline collection inputs and pipeline
+      artifacts. The AgentCoreExecutionRole is granted read/write on this bucket.
+
+Resources:
+
+  # -----------------------------------------------------------------------
+  # AgentCoreExecutionRole
+  # Assumed by: bedrock-agentcore.amazonaws.com
+  # Used by Bedrock AgentCore to pull ECR images, run agent containers,
+  # write CloudWatch logs, invoke Bedrock models, and call Agentic API.
+  # -----------------------------------------------------------------------
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AgentCoreExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AgentCoreExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock-runtime:Converse
+                  - bedrock-runtime:InvokeModel
+                Resource: "*"
+              - Sid: TransformAgentsApiPolicy
+                Effect: Allow
+                Action:
+                  - transform-agents:*
+                Resource: "*"
+              - Sid: ECRImageAccess
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+              - Sid: S3ArtifactAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactBucketName}"
+                  - !Sub "arn:aws:s3:::${ArtifactBucketName}/*"
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Sid: XRayTracing
+                Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
+
+  # -----------------------------------------------------------------------
+  # AWSTransformAgentInvokeRole
+  # Assumed by: AWS Transform compute service (prod.us-east-1)
+  # Used to invoke Bedrock AgentCore runtimes on behalf of AWS Transform.
+  # CRITICAL: The trust principal must match your deployment region.
+  # -----------------------------------------------------------------------
+  AWSTransformAgentInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AWSTransformAgentInvokeRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - prod.us-east-1.compute.elastic-gumby.aws.internal
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ATXAgentInvokePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ATXAgentCoreRuntimePermissions
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetAgentRuntime
+                  - bedrock-agentcore:GetAgentRuntimeEndpoint
+                  - bedrock-agentcore:InvokeAgentRuntime
+                  - bedrock-agentcore:ListAgentRuntimeEndpoints
+                  - bedrock-agentcore:ListAgentRuntimeVersions
+                  - bedrock-agentcore:ListAgentRuntimes
+                  - bedrock-agentcore:StopRuntimeSession
+                Resource: "*"
+              - Sid: TransformAgentsAPI
+                Effect: Allow
+                Action:
+                  - transform-agents:*
+                Resource: "*"
+
+Outputs:
+  AgentCoreExecutionRoleArn:
+    Description: ARN of the Bedrock AgentCore execution role
+    Value: !GetAtt AgentCoreExecutionRole.Arn
+    Export:
+      Name: AWSTransform-AgentCoreExecutionRoleArn
+
+  AWSTransformAgentInvokeRoleArn:
+    Description: ARN of the AWS Transform agent invoke role
+    Value: !GetAtt AWSTransformAgentInvokeRole.Arn
+    Export:
+      Name: AWSTransform-AWSTransformAgentInvokeRoleArn

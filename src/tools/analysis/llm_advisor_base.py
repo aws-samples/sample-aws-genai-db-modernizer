@@ -50,25 +50,32 @@ class LlmAdvisorBase(ABC):
             if enabled is not None
             else os.environ.get("ENABLE_LLM_ADVISOR", "true").lower() == "true"
         )
-        self._agent = None
         self.attempts_made = 0
 
     def _get_agent(self):
-        """Lazily create the Strands Agent on first use."""
-        if self._agent is None:
-            from strands import Agent
-            from strands.models.bedrock import BedrockModel
+        """Create a FRESH Strands Agent per call.
 
-            model_id = os.environ.get("ANALYSIS_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
-            model = BedrockModel(model_id=model_id)
-            self._agent = Agent(
-                model=model,
-                system_prompt=self.system_prompt,
-                tools=[],
-                structured_output_model=self._output_model(),
-                callback_handler=None,
-            )
-        return self._agent
+        We deliberately do NOT cache the Agent instance. Strands Agents
+        maintain conversation history internally — reusing the same Agent
+        across N groups of a large workload causes the accumulated context
+        to overflow the model's context window (observed 2026-07-11:
+        DynamoDB analysis on Discourse workload with 56 groups hit Opus
+        4.8's context limit at group 11 with error `bedrock threw context
+        window overflow error`, killing the container). Creating a fresh
+        Agent per group ensures each call is stateless.
+        """
+        from strands import Agent
+        from strands.models.bedrock import BedrockModel
+
+        model_id = os.environ.get("ANALYSIS_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+        model = BedrockModel(model_id=model_id)
+        return Agent(
+            model=model,
+            system_prompt=self.system_prompt,
+            tools=[],
+            structured_output_model=self._output_model(),
+            callback_handler=None,
+        )
 
     @abstractmethod
     def _output_model(self) -> type[BaseModel]:

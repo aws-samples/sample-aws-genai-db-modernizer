@@ -1,0 +1,22 @@
+# AWS Transform Agent SDK (pinned to avoid the v0.0.1 placeholder)
+agent-builder-sdk-aws-transform>=1.0.0
+agent-builder-agentic-mcp-aws-transform>=1.0.0
+agent-builder-types-aws-transform>=1.0.0
+agent-builder-mcp-client-aws-transform>=1.0.0
+
+# Project core dependencies (subset needed inside the container)
+# Full list lives in pyproject.toml — only runtime deps are listed here.
+strands-agents>=1.0.0
+pydantic>=2.7.2
+boto3>=1.34.0
+python-dotenv>=1.0.0
+structlog>=23.2.0
+pyyaml>=6.0.1
+jinja2>=3.1.0
+
+# Database connectors (needed by collector agent)
+mysql-connector-python>=9.1.0
+psycopg2-binary>=2.9.10
+
+# DocumentDB load test (optional — comment out if not needed)
+pymongo[aws]>=4.6.0

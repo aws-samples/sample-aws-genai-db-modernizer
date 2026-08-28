@@ -1,0 +1,139 @@
+# AWS Transform DB Modernization — modernizer-atx-v2, single image for all agents
+#
+# One image serves every agent. Which one it becomes is decided at runtime by the
+# AGENT_TYPE environment variable, resolved by src/atx_orchestrator/atx_entrypoint.py.
+# This replaces the ten near-identical Dockerfiles on the v1 path, which differed
+# only in ENTRYPOINT and one /tmp directory name.
+#
+# AGENT_TYPE is REQUIRED and deliberately has no default here. An unset or
+# unrecognised value makes the container log the valid set and exit non-zero,
+# rather than silently starting the wrong agent. Set it per AgentCore runtime —
+# runtimes carry containerUri and environmentVariables as independent fields, so
+# N runtimes share this one image with different AGENT_TYPE values.
+#
+# MUST be linux/arm64 — AgentCore Runtime only supports arm64 (Graviton).
+#
+# Build (only finch is installed locally; docker/podman/nerdctl are absent):
+#   finch vm start                       # VM is often Stopped
+#   finch build --platform linux/arm64 \
+#     -t modernizer-dev-agent-atx:latest \
+#     -f src/atx_orchestrator/Dockerfile.atx .
+#
+# Interim measure: this builds from the upstream Python base rather than from
+# core-modernizer's GitLab-built agent image, because that image is amd64 and a
+# child layer cannot change architecture. Once the GitLab pipeline emits an arm64
+# variant (plan OQ1 — a CI-config change, no Dockerfile edit needed, since the
+# pinned base digest is already a multi-arch index), this can become a thin
+# derived layer instead.
+
+FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.11-slim
+
+WORKDIR /app
+
+# ── System deps ────────────────────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── AWS Transform SDK ───────────────────────────────────────────────────────
+# Install SDK first so botocore models can be registered before other deps.
+RUN pip install --no-cache-dir \
+    "agent-builder-sdk-aws-transform>=1.0.0" \
+    "agent-builder-agentic-mcp-aws-transform>=1.0.0" \
+    "agent-builder-types-aws-transform>=1.0.0" \
+    "agent-builder-mcp-client-aws-transform>=1.0.0"
+
+# Register botocore service models (REQUIRED — without this the agent fails at
+# startup with "Unknown service: 'transformagenticservice'")
+# NOTE: `aws configure add-model` writes to $HOME/.aws/models/. This RUN
+# executes as root so models land in /root/.aws/models/, which is 700 and
+# unreadable by the non-root appuser we drop to below. Copy them to a
+# world-readable location and set AWS_DATA_PATH so boto3 finds them
+# regardless of who's running the container.
+RUN pip install --no-cache-dir awscli && \
+    SDK_MODELS=$(python -c "from importlib.resources import files; print(files('agent_builder_sdk').joinpath('botocore_models'))") && \
+    aws configure add-model --service-name atxagentregistryexternal \
+      --service-model "file://${SDK_MODELS}/atxagentregistryexternal/2022-07-26/service-2.json" && \
+    aws configure add-model --service-name transformagenticservice \
+      --service-model "file://${SDK_MODELS}/transformagenticservice/2018-05-10/service-2.json" && \
+    mkdir -p /opt/botocore-models && \
+    cp -r /root/.aws/models/* /opt/botocore-models/ && \
+    chmod -R a+r /opt/botocore-models
+
+# ── Project deps ────────────────────────────────────────────────────────────
+COPY src/atx_orchestrator/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ── MCP server shim ─────────────────────────────────────────────────────────
+# AgentRuntimeServer looks for this exact binary path at startup. Needed by
+# every agent, orchestrator and subagent alike.
+RUN mkdir -p /home/amazon/AgentBuilderAgenticMCP/bin && \
+    printf '#!/bin/bash\npython -m agent_builder_agentic_mcp "$@"\n' \
+      > /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp && \
+    chmod +x /home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp
+
+# ── Application source ──────────────────────────────────────────────────────
+# Copy the full src/ tree so existing pipeline modules resolve correctly. This
+# also means src/agents/ and src/tools/ are present, which is what lets the ATX
+# layer call core-modernizer's handlers directly rather than reimplementing them.
+COPY src/ /app/src/
+
+# ── Runtime dirs ────────────────────────────────────────────────────────────
+# One directory per AGENT_TYPE. Must stay in step with the dispatch table in
+# atx_entrypoint.py — a missing directory surfaces at server start, not build.
+RUN mkdir -p /tmp/agent_queue /app/artifacts \
+    /tmp/orchestrator_agent \
+    /tmp/collector_agent \
+    /tmp/triage_agent \
+    /tmp/analysis_dynamodb_agent \
+    /tmp/analysis_documentdb_agent \
+    /tmp/analysis_elasticache_agent \
+    /tmp/analysis_opensearch_agent \
+    /tmp/analysis_aurora_pg_agent \
+    /tmp/analysis_aurora_mysql_agent \
+    /tmp/assignment_agent \
+    /tmp/synthesis_agent \
+    /tmp/schema_dynamodb_agent \
+    /tmp/schema_documentdb_agent \
+    /tmp/schema_elasticache_agent \
+    /tmp/schema_opensearch_agent \
+    /tmp/schema_aurora_pg_agent \
+    /tmp/schema_aurora_mysql_agent
+
+# ── Non-root user (security) ─────────────────────────────────────────────────
+# Note: AgentCore documents that filesystem permissions are stored but not
+# enforced within a session, so this is defence in depth rather than a boundary.
+#
+# The directory list is derived from the mkdir above rather than repeated here.
+# Repeating it cost a failed deployment once: the six schema_* dirs were added to
+# the mkdir and not to the chown, so those containers started as appuser against
+# root-owned directories and died with PermissionError on
+# /tmp/<agent>_agent/queue while the SDK was constructing its request queue. The
+# runtime never left INVOKING and the orchestrator reported a 60s timeout, which
+# points at dispatch rather than at the container.
+RUN useradd --create-home --uid 1000 appuser && \
+    chown -R appuser:appuser /app /app/artifacts /home/amazon/AgentBuilderAgenticMCP && \
+    find /tmp -maxdepth 1 -type d \( -name '*_agent' -o -name 'agent_queue' \) \
+      -exec chown -R appuser:appuser {} +
+USER appuser
+
+# ── Environment defaults ─────────────────────────────────────────────────────
+# Deliberately NOT set here:
+#   AGENT_TYPE  — required, per-runtime, no safe default (see header).
+#   LLM_MODE    — the v1 images set this, but it is now inert where it mattered:
+#                 the analysis engines hardcode llm_mode="none" in core.py to
+#                 match core-modernizer, and referee-synthesis takes upstream's
+#                 own "bedrock" default. Leaving it out avoids implying it is
+#                 still the control.
+#   MODEL_ID    — set per runtime; app.py already defaults to Sonnet 4.5.
+ENV ARTIFACT_DIR=/app/artifacts \
+    AWS_REGION=us-east-1 \
+    AWS_DATA_PATH=/opt/botocore-models \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/ping || exit 1
+
+ENTRYPOINT ["python", "-m", "src.atx_orchestrator.atx_entrypoint"]
