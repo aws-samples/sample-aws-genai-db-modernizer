@@ -16,6 +16,7 @@ the subagent by hard-coded name via the ``invoke_agent`` API.
 from __future__ import annotations
 
 import json
+from importlib.util import find_spec
 from unittest.mock import patch
 
 import pytest
@@ -149,6 +150,10 @@ class TestRunTriageViaA2AErrorPaths:
 # Registration
 
 
+@pytest.mark.skipif(
+    find_spec("agent_builder_sdk") is None,
+    reason="orchestrator import requires the AWS Transform SDK (absent in CI)",
+)
 class TestToolsRegistered:
     def test_a2a_tools_in_pipeline_tools(self) -> None:
         """All A2A tools are registered."""
