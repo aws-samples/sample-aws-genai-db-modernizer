@@ -5,21 +5,19 @@ run-to-completion batch agents on ``AGENT_TYPE``. This module does the same for
 long-running A2A/AgentCore servers: read ``AGENT_TYPE``, resolve the matching
 agent factory, and hand it to :func:`subagent_base.run_server`.
 
-Replaces the ten near-identical per-agent entrypoints (nine ``*_app.py`` files
-plus ``app.py::main``). Those files are left in place so the currently deployed
-images keep building unchanged; only the v2 image points here.
+This is the single entry point for every agent. It replaced ten near-identical
+per-agent entrypoints (nine ``*_app.py`` files plus ``app.py::main``), which have
+been removed. ``app.py`` remains only for ``build_agent_factory`` — the
+orchestrator factory this module calls.
 
 Why one entrypoint is safe
 --------------------------
-``run_server()`` and ``app.py::main()`` were the same function, duplicated:
-identical argparse defaults (host ``0.0.0.0``, port 8080, the agentic MCP binary
-path), identical ``AgentRuntimeServer`` construction, identical
-``delayed_timeout=3600``, identical ``server.start()``. Across all ten
-entrypoints exactly two things varied — which factory, and which ``/tmp``
-directory.
-
-Collapsing them also removes a live drift hazard: ``delayed_timeout=3600`` was
-written in two places with nothing enforcing that they agree.
+The old ``app.py::main()`` and the nine per-agent ``*_app.py`` mains were the
+same function, duplicated: identical argparse defaults (host ``0.0.0.0``, port
+8080, the agentic MCP binary path), identical ``AgentRuntimeServer``
+construction, identical ``delayed_timeout=3600``, identical ``server.start()``.
+They varied in exactly two things — which factory, and which ``/tmp`` directory —
+both of which this module now derives from ``AGENT_TYPE``.
 
 Dispatch style
 --------------
