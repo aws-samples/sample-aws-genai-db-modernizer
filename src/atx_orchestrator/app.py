@@ -24,7 +24,7 @@ def build_agent_factory():
     # Override via MODEL_ID env var if needed.
     model_id = os.environ.get(
         "MODEL_ID",
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "us.anthropic.claude-sonnet-4-6",
     )
 
     def agent_factory(mcp_client, storage_dir=None):

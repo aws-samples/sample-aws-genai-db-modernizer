@@ -62,7 +62,7 @@ deterministically.
 | `AGENT_TYPE` | (required) | Which agent this container serves; no default |
 | `ARTIFACT_DIR` | `/app/artifacts` | Local artifact dir (used when `S3_BUCKET` unset) |
 | `S3_BUCKET` | (unset) | Set to use S3 instead of local filesystem |
-| `MODEL_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Orchestrator/subagent LLM (cross-region profile) |
+| `MODEL_ID` | `us.anthropic.claude-sonnet-4-6` | Orchestrator/subagent LLM (cross-region profile) |
 | `AWS_REGION` | `us-east-1` | AWS region |
 
 ## Build (ARM64 — required for Bedrock AgentCore / Graviton)
