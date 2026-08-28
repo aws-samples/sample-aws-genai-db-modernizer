@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 
 from strands.tools import tool
 
@@ -272,6 +273,57 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
 # names. Payload shape matches what ``subagent_base.parse_invocation`` accepts.
 
 
+def _run_phase_via_a2a(
+    agent_suffix: str,
+    step: str,
+    label: str,
+    job_id: str,
+    database_name: str,
+    message: str,
+    timeout: float | None = None,
+    on_success: Callable[[dict], None] | None = None,
+) -> str:
+    """Shared invoke/mark/error body for the phase A2A tools.
+
+    Resolves the subagent as ``f"{_AGENT_PREFIX}-{agent_suffix}"``, marks the
+    plan ``step`` running/succeeded/failed around ``invoke_and_wait``, and turns
+    any ``A2AError`` into the standard ``{"error": ...}`` JSON dict rather than
+    raising. ``label`` is the human phase word used in the log and error text.
+    ``timeout`` is passed through only when set (the two LLM-heavy analyses need
+    a longer ceiling). ``on_success`` runs with the completion payload before the
+    JSON is returned — synthesis uses it to publish its rendered deliverables.
+    """
+    agent_id = f"{_AGENT_PREFIX}-{agent_suffix}"
+    logger.info(
+        "ATX: %s via A2A agent=%s job_id=%s db=%s",
+        label,
+        agent_id,
+        job_id,
+        database_name,
+    )
+    mark_step_running(step)
+    try:
+        if timeout is None:
+            payload = invoke_and_wait(agent_id, message)
+        else:
+            payload = invoke_and_wait(agent_id, message, timeout=timeout)
+    except A2AError as e:
+        logger.error("ATX %s FAILED: %s: %s", label, type(e).__name__, e)
+        mark_step_failed(step, str(e))
+        return json.dumps(
+            {
+                "error": f"A2A {label} failed: {e}",
+                "error_type": type(e).__name__,
+                "job_id": job_id,
+                "agent_id": agent_id,
+            }
+        )
+    mark_step_succeeded(step)
+    if on_success is not None:
+        on_success(payload)
+    return json.dumps(payload)
+
+
 @tool
 def run_collect_via_a2a(
     job_id: str,
@@ -300,13 +352,6 @@ def run_collect_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed (timeout, FAILED status, network, etc.).
     """
-    agent_id = f"{_AGENT_PREFIX}-collector"
-    logger.info(
-        "ATX: collect via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
     # Resolve the raw offline collection here, in the orchestrator, rather than in
     # the collector subagent: the orchestrator reliably holds the customer's
     # Transform job context (workspace_id + platform job UUID), so it can find the
@@ -332,22 +377,14 @@ def run_collect_via_a2a(
             "input_key": input_key,
         }
     )
-    mark_step_running("collector")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX collect FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("collector", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A collect failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("collector")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="collector",
+        step="collector",
+        label="collect",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
 
 
 @tool
@@ -375,35 +412,53 @@ def run_triage_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-triage"
-    logger.info(
-        "ATX: triage via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
             "database_name": database_name,
         }
     )
-    mark_step_running("triage")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX triage FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("triage", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A triage failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("triage")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="triage",
+        step="triage",
+        label="triage",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
+
+
+# Analysis over A2A is uniform except for two things: the plan step label and,
+# for the two Bedrock-LLM engines, a longer timeout. Keyed by the suffix that
+# appears in both the agent id (analysis-<suffix>) and the log/error label.
+_ANALYSIS_A2A_STEPS: dict[str, str] = {
+    "dynamodb": "analysis_dynamodb",
+    "documentdb": "analysis_documentdb",
+    "elasticache": "analysis_elasticache",
+    "opensearch": "analysis_opensearch",
+    "aurora-pg": "analysis_aurora_postgresql",
+    "aurora-mysql": "analysis_aurora_mysql",
+}
+# DynamoDB and DocumentDB run the Bedrock Opus advisor; a Discourse-scale
+# workload can take 55-80 min, so they get a 90-min ceiling. The four
+# deterministic engines fall back to invoke_and_wait's default timeout.
+_ANALYSIS_A2A_TIMEOUT: dict[str, float] = {
+    "dynamodb": 5400.0,
+    "documentdb": 5400.0,
+}
+
+
+def _run_analysis_via_a2a(suffix: str, job_id: str, database_name: str) -> str:
+    """Shared body for the six analysis A2A tools."""
+    return _run_phase_via_a2a(
+        agent_suffix=f"analysis-{suffix}",
+        step=_ANALYSIS_A2A_STEPS[suffix],
+        label=f"analysis-{suffix}",
+        job_id=job_id,
+        database_name=database_name,
+        message=json.dumps({"job_id": job_id, "database_name": database_name}),
+        timeout=_ANALYSIS_A2A_TIMEOUT.get(suffix),
+    )
 
 
 @tool
@@ -440,40 +495,7 @@ def run_analysis_dynamodb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-dynamodb"
-    logger.info(
-        "ATX: analysis-dynamodb via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_dynamodb")
-    try:
-        # 90-minute timeout: DynamoDB LLM Advisor runs Bedrock Opus 4.8 across
-        # groups of ~30 queries (~60-90 sec/group). For a 1600-query workload
-        # like Discourse that's ~55 groups → ~55-80 min end-to-end. The default
-        # 300s timeout is fine for collector/triage but far too short for the
-        # LLM-heavy analysis path.
-        payload = invoke_and_wait(agent_id, message, timeout=5400.0)
-    except A2AError as e:
-        logger.error("ATX analysis-dynamodb FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_dynamodb", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-dynamodb failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_dynamodb")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("dynamodb", job_id, database_name)
 
 
 @tool
@@ -510,39 +532,7 @@ def run_analysis_documentdb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-documentdb"
-    logger.info(
-        "ATX: analysis-documentdb via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_documentdb")
-    try:
-        # 90-minute timeout: DocumentDB LlmAdvisor runs Bedrock Opus 4.8 for
-        # embedding-vs-reference trade-off analysis. Uses same 5400s ceiling
-        # as DynamoDB — Discourse-scale workloads can hit similar tail latency
-        # across the LlmAdvisor's chunked query groups.
-        payload = invoke_and_wait(agent_id, message, timeout=5400.0)
-    except A2AError as e:
-        logger.error("ATX analysis-documentdb FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_documentdb", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-documentdb failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_documentdb")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("documentdb", job_id, database_name)
 
 
 @tool
@@ -571,36 +561,7 @@ def run_analysis_elasticache_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-elasticache"
-    logger.info(
-        "ATX: analysis-elasticache via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_elasticache")
-    try:
-        # Deterministic path — 30-min default timeout is plenty. No Bedrock calls.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-elasticache FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_elasticache", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-elasticache failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_elasticache")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("elasticache", job_id, database_name)
 
 
 @tool
@@ -628,36 +589,7 @@ def run_analysis_opensearch_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-opensearch"
-    logger.info(
-        "ATX: analysis-opensearch via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_opensearch")
-    try:
-        # Deterministic path — 30-min default timeout is plenty.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-opensearch FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_opensearch", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-opensearch failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_opensearch")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("opensearch", job_id, database_name)
 
 
 @tool
@@ -678,35 +610,7 @@ def run_analysis_aurora_pg_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-pg"
-    logger.info(
-        "ATX: analysis-aurora-pg via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_aurora_postgresql")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-aurora-pg FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_aurora_postgresql", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-aurora-pg failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_aurora_postgresql")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("aurora-pg", job_id, database_name)
 
 
 @tool
@@ -727,35 +631,7 @@ def run_analysis_aurora_mysql_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-mysql"
-    logger.info(
-        "ATX: analysis-aurora-mysql via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_aurora_mysql")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-aurora-mysql FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_aurora_mysql", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-aurora-mysql failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_aurora_mysql")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("aurora-mysql", job_id, database_name)
 
 
 @tool
@@ -782,36 +658,20 @@ def run_assignment_via_a2a(
         JSON string with the subagent's completion payload
         (total_queries, queries_per_engine, assignment_artifact).
     """
-    agent_id = f"{_AGENT_PREFIX}-assignment"
-    logger.info(
-        "ATX: assignment via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
             "database_name": database_name,
         }
     )
-    mark_step_running("assignment")
-    try:
-        # Deterministic path — 30-min default timeout is plenty.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX assignment FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("assignment", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A assignment failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("assignment")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="assignment",
+        step="assignment",
+        label="assignment",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
 
 
 @tool
@@ -854,14 +714,6 @@ def run_synthesis_via_a2a(
         query_groups, overall_risk_level, has_executive_summary,
         report_artifact).
     """
-    agent_id = f"{_AGENT_PREFIX}-synthesis"
-    logger.info(
-        "ATX: synthesis via A2A agent=%s job_id=%s db=%s assignment_version=%s",
-        agent_id,
-        job_id,
-        database_name,
-        assignment_version,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
@@ -869,23 +721,15 @@ def run_synthesis_via_a2a(
             "assignment_version": assignment_version,
         }
     )
-    mark_step_running("synthesis")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX synthesis FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("synthesis", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A synthesis failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("synthesis")
-    _publish_synthesis_deliverables(job_id, database_name, payload)
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="synthesis",
+        step="synthesis",
+        label="synthesis",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+        on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
+    )
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
