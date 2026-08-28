@@ -612,6 +612,24 @@ def run_collect_via_a2a(
         job_id,
         database_name,
     )
+    # Resolve the raw offline collection here, in the orchestrator, rather than in
+    # the collector subagent: the orchestrator reliably holds the customer's
+    # Transform job context (workspace_id + platform job UUID), so it can find the
+    # WebApp upload under that job's "User Uploads/" prefix and hand the collector an
+    # explicit key. When no key is passed and no upload exists, input_key stays "" and
+    # the collector falls back to the seed key (dev/reference workloads). An ambiguous
+    # upload (more than one candidate JSON) raises with a clear message rather than
+    # picking arbitrarily.
+    if not input_key:
+        # Local import: keeps this discovery helper out of the module-level import
+        # block (matches the codebase's lazy-import pattern and sidesteps an
+        # isort/ruff disagreement over grouping the underscore-prefixed name).
+        from src.atx_orchestrator.core import _discover_uploaded_input
+
+        discovered = _discover_uploaded_input(_make_store())
+        if discovered:
+            logger.info("ATX collect: using customer upload %s", discovered)
+            input_key = discovered
     message = json.dumps(
         {
             "job_id": job_id,

@@ -49,6 +49,80 @@ def default_input_key(job_id: str, database_name: str) -> str:
     return f"{database_name}/{job_id}/uploads/collector-output.json"
 
 
+def _discover_uploaded_input(store) -> str | None:
+    """Locate a customer's WebApp-uploaded offline collection.
+
+    The WebApp writes uploads to
+    ``AWSTransform/Workspaces/{workspace_id}/Jobs/{transform_job_id}/User Uploads/``,
+    keyed by the PLATFORM job UUID from the agent context -- which is distinct from
+    the pipeline ``job_id`` that drives the ``{db}/{job}/`` output tree. The job's
+    free-text objective is auto-written into that same prefix as a CUSTOMER_INPUT
+    JSON named ``job_objective``, so it is excluded by name.
+
+    Returns the S3 key of the single uploaded collection JSON, ``None`` when not
+    running in the ATX runtime (local/test) or nothing was uploaded, and raises if
+    the upload is ambiguous (more than one candidate JSON).
+    """
+    try:
+        from agent_builder_sdk.env_var import get_agent_context_from_env
+
+        ctx = get_agent_context_from_env()
+    except Exception:  # noqa: BLE001 -- not in the ATX runtime; no upload to discover
+        return None
+
+    prefix = f"AWSTransform/Workspaces/{ctx.workspace_id}/Jobs/{ctx.job_id}/User Uploads/"
+    candidates: list[str] = [
+        k
+        for k in store.list_prefix(prefix)
+        if k.endswith(".json") and not k.endswith("/job_objective")
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        names = sorted(k.rsplit("/", 1)[-1] for k in candidates)
+        raise ValueError(
+            f"Expected exactly one uploaded offline-collection JSON under {prefix!r}, "
+            f"found {len(candidates)}: {names}. The pipeline cannot choose among "
+            "multiple uploads without a naming convention."
+        )
+    return None
+
+
+def _resolve_collector_input(store, job_id: str, database_name: str, input_key: str) -> str:
+    """Resolve where the collector reads the raw offline collection.
+
+    Discovery of a customer's WebApp upload happens in the orchestrator
+    (``run_collect_via_a2a``), which reliably holds the customer's Transform job
+    context and passes the resolved key here as ``input_key`` -- see
+    ``_discover_uploaded_input``. The collector itself only chooses between an
+    explicit key and the seed, so it never depends on its own subagent context
+    matching the customer's job:
+
+      1. an explicit ``input_key`` (from the orchestrator or the reference harness);
+      2. the seed key ``{db}/{job}/uploads/collector-output.json`` (dev/reference
+         workloads stage it there).
+
+    Raises FileNotFoundError if neither is present. The raw input's location does
+    not affect the pipeline's ``{db}/{job}/`` output tree: that tree is created by
+    the collector writing ``{db}/{job}/collector/output.json`` and by every
+    subsequent phase's own writes, not by where the input was read from.
+    """
+    if input_key:
+        if not store.exists(input_key):
+            raise FileNotFoundError(f"Offline collection input not found at '{input_key}'.")
+        return input_key
+
+    seed = default_input_key(job_id, database_name)
+    if store.exists(seed):
+        return seed
+
+    raise FileNotFoundError(
+        f"No offline collection found for job '{job_id}': no input_key was passed and "
+        f"no seed exists at '{seed}'. The orchestrator resolves customer uploads and "
+        "passes the key; for dev/reference runs, stage the collection at the seed key."
+    )
+
+
 def ingest_offline_collection(store, job_id: str, database_name: str, raw_input: dict) -> dict:
     """Build a collector output contract from a raw offline collection dict.
 
@@ -144,14 +218,7 @@ def run_collect_core(job_id: str, database_name: str, input_key: str = "", store
     Raises FileNotFoundError if the offline input is missing.
     """
     store = store or make_store()
-    key = input_key or default_input_key(job_id, database_name)
-
-    if not store.exists(key):
-        raise FileNotFoundError(
-            f"Offline collection input not found at '{key}'. "
-            "Upload the collection JSON to the artifact store first."
-        )
-
+    key = _resolve_collector_input(store, job_id, database_name, input_key)
     raw_input = store.read_json(key)
     collector_data = ingest_offline_collection(store, job_id, database_name, raw_input)
 
@@ -211,14 +278,7 @@ def run_collect_triage_core(
     Raises FileNotFoundError if the offline input is missing.
     """
     store = store or make_store()
-    key = input_key or default_input_key(job_id, database_name)
-
-    if not store.exists(key):
-        raise FileNotFoundError(
-            f"Offline collection input not found at '{key}'. "
-            "Upload the collection JSON to the artifact store first."
-        )
-
+    key = _resolve_collector_input(store, job_id, database_name, input_key)
     raw_input = store.read_json(key)
 
     # Phase 1a: ingest collection (mirrors run_assessment.phase_collect)
