@@ -328,48 +328,43 @@ def _run_phase_via_a2a(
 def run_collect_via_a2a(
     job_id: str,
     database_name: str,
-    input_key: str = "",
 ) -> str:
     """Run the Collector phase by invoking a deployed collector subagent over A2A.
 
-    Uses the AWS Transform Agentic API's ``invoke_agent`` primitive to spawn
-    a fresh collector subagent instance BY NAME and deliver the initial
-    message atomically. Polls until the subagent reports COMPLETED (or
-    FAILED). The subagent's ``agent_output`` payload is returned as a JSON
-    string.
+    Spawns the collector subagent BY NAME, delivers the initial message, and polls
+    until COMPLETED (or FAILED). The subagent's ``agent_output`` payload is returned
+    as a JSON string.
 
-    This is the ONLY collector tool available to the orchestrator — the
-    in-process variant was removed to prevent silent fallback. The subagent
-    must be deployed and its registered NAME must be
-    ``db-modernization-collector``.
+    The customer's uploaded offline collection is located AUTOMATICALLY: this tool
+    discovers the file the customer uploaded through the WebApp (it lands in the
+    artifact store under the job's ``User Uploads/`` prefix) and hands the collector
+    its key. You do NOT pass, construct, or ask for a storage path — there is no
+    path parameter. Just call this with job_id and database_name.
+
+    This is the ONLY collector tool available to the orchestrator. The subagent
+    must be deployed and its registered NAME must be ``<prefix>-collector``.
 
     Args:
         job_id: Unique job identifier.
         database_name: Source database name used to namespace artifacts.
-        input_key: Optional ArtifactStore key of the raw offline collection JSON.
 
     Returns:
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed (timeout, FAILED status, network, etc.).
     """
-    # Resolve the raw offline collection here, in the orchestrator, rather than in
-    # the collector subagent: the orchestrator reliably holds the customer's
-    # Transform job context (workspace_id + platform job UUID), so it can find the
-    # WebApp upload under that job's "User Uploads/" prefix and hand the collector an
-    # explicit key. When no key is passed and no upload exists, input_key stays "" and
-    # the collector falls back to the seed key (dev/reference workloads). An ambiguous
-    # upload (more than one candidate JSON) raises with a clear message rather than
-    # picking arbitrarily.
-    if not input_key:
-        # Local import: keeps this discovery helper out of the module-level import
-        # block (matches the codebase's lazy-import pattern and sidesteps an
-        # isort/ruff disagreement over grouping the underscore-prefixed name).
-        from src.atx_orchestrator.core import _discover_uploaded_input
+    # Resolve the customer's uploaded offline collection here, in the orchestrator:
+    # it reliably holds the Transform job context (workspace_id + platform job UUID),
+    # so _discover_uploaded_input can find the WebApp upload under the job's
+    # "User Uploads/" prefix and hand the collector an explicit key. Discovery is the
+    # single source of truth for the path — the LLM never supplies one. Outside the
+    # ATX runtime (dev/reference harness) discovery returns None, input_key stays "",
+    # and the collector falls back to its seed key. An ambiguous upload (more than one
+    # candidate JSON) raises with a clear message rather than picking arbitrarily.
+    from src.atx_orchestrator.core import _discover_uploaded_input
 
-        discovered = _discover_uploaded_input(_make_store())
-        if discovered:
-            logger.info("ATX collect: using customer upload %s", discovered)
-            input_key = discovered
+    input_key = _discover_uploaded_input(_make_store()) or ""
+    if input_key:
+        logger.info("ATX collect: using customer upload %s", input_key)
     message = json.dumps(
         {
             "job_id": job_id,
