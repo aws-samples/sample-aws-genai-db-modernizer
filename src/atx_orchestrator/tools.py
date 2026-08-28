@@ -27,7 +27,7 @@ from strands.tools import tool
 from src.atx_orchestrator.a2a import A2AError, invoke_and_wait
 from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
-from src.atx_orchestrator.job_plan import (
+from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     mark_step_failed,
     mark_step_running,
@@ -753,7 +753,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         logger.warning("ATX synthesis: payload has no report_artifact; skipping deliverables")
         return
     try:
-        from src.atx_orchestrator import artifacts as _artifacts
+        from src.atx_orchestrator.runtime import artifacts as _artifacts
 
         store = _make_store()
         report = store.read_json(report_key)

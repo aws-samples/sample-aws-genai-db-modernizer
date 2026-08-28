@@ -14,7 +14,7 @@ Only meaningful for MySQL/MariaDB source engines.
 
 from __future__ import annotations
 
-from src.atx_orchestrator.subagent_base import make_subagent_factory
+from src.atx_orchestrator.subagents.base import make_subagent_factory
 
 SYSTEM_PROMPT = """\
 You are the Aurora MySQL Analysis subagent for database modernization assessments.

@@ -27,7 +27,7 @@ def make_store():
     ``write_text``. See src/atx_orchestrator/store.py for why that capability is
     not on the shared ABC.
     """
-    from src.atx_orchestrator.store import upgrade_store
+    from src.atx_orchestrator.runtime.store import upgrade_store
     from src.storage import create_artifact_store
 
     return upgrade_store(create_artifact_store())

@@ -18,7 +18,7 @@ import json
 import pytest
 from agent_builder_sdk.utils import extract_text_from_strands_agent_response
 
-from src.atx_orchestrator.subagent_base import _SubagentResult, _summary_line
+from src.atx_orchestrator.subagents.base import _SubagentResult, _summary_line
 
 SUMMARY = {
     "job_id": "v2-e2e-03",

@@ -34,7 +34,7 @@ instead.
 
 from __future__ import annotations
 
-from src.atx_orchestrator.subagent_base import make_subagent_factory
+from src.atx_orchestrator.subagents.base import make_subagent_factory
 
 # AGENT_TYPE suffix -> the target_type upstream expects. The two differ: agent
 # types use hyphens to match the rest of the fleet's naming, while artifact keys

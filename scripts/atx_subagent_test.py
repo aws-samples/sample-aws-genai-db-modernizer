@@ -77,8 +77,8 @@ ok("Seeded offline input")
 # 1. Collector subagent: message parsing + work
 # ---------------------------------------------------------------------------
 print("\n1. Collector subagent")
-from src.atx_orchestrator.collector_subagent import _work as collector_work
-from src.atx_orchestrator.subagent_base import extract_text, parse_invocation
+from src.atx_orchestrator.subagents.base import extract_text, parse_invocation
+from src.atx_orchestrator.subagents.collector import _work as collector_work
 
 a2a_msg = {
     "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],
@@ -135,7 +135,7 @@ ok(f"Collector content matches reference ({nt} tables, {nq} queries)")
 # 2. Triage subagent: message parsing + work
 # ---------------------------------------------------------------------------
 print("\n2. Triage subagent (via A2A-parsed message)")
-from src.atx_orchestrator.triage_subagent import _work as triage_work
+from src.atx_orchestrator.subagents.triage import _work as triage_work
 
 triage_a2a_msg = {
     "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],

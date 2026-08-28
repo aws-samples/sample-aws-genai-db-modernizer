@@ -229,7 +229,7 @@ class TestAgentTypeMapping:
     """Six agent types, each mapping to the target_type upstream expects."""
 
     def test_all_six_targets_present_and_correct(self) -> None:
-        from src.atx_orchestrator.schema_subagent import SCHEMA_TARGETS
+        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS
 
         assert SCHEMA_TARGETS == {
             "schema-dynamodb": "dynamodb",
@@ -243,7 +243,7 @@ class TestAgentTypeMapping:
     def test_every_target_is_in_the_entrypoint_table(self) -> None:
         """A target with no _AGENTS row could never be deployed."""
         from src.atx_orchestrator.atx_entrypoint import _AGENTS
-        from src.atx_orchestrator.schema_subagent import SCHEMA_TARGETS
+        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS
 
         assert set(SCHEMA_TARGETS) <= set(_AGENTS)
 
