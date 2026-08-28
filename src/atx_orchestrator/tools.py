@@ -1208,7 +1208,13 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
     over a rendering or registration call. ``artifacts.publish`` never raises on
     its own; this guard covers the render and the S3 writes.
     """
-    report_key = payload.get("report_artifact")
+    # The subagent wraps its return dict under a "response" key before serialising
+    # it to agentOutput.serializedPayload (subagent_base ~L274), so report_artifact
+    # is nested there, not at the top level of what invoke_and_wait returns. Fall
+    # back to a flat shape defensively.
+    resp = payload.get("response")
+    inner = resp if isinstance(resp, dict) else payload
+    report_key = inner.get("report_artifact")
     if not report_key:
         logger.warning("ATX synthesis: payload has no report_artifact; skipping deliverables")
         return

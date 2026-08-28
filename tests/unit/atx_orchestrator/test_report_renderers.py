@@ -163,7 +163,7 @@ class TestSynthesisDeliverables:
     KEY = "discourse/job-x/synthesis/v1/report.json"
 
     def test_writes_two_files_and_publishes_three(self, report: dict) -> None:
-        payload = {"report_artifact": self.KEY, "engines_ranked": 5}
+        payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
         store = _FakeStore({self.KEY: report})
         captured: dict = {}
         with (
@@ -177,7 +177,7 @@ class TestSynthesisDeliverables:
             out = run_synthesis_via_a2a("job-x", "discourse", assignment_version=1)
 
         # payload flows through unchanged
-        assert json.loads(out)["report_artifact"] == self.KEY
+        assert json.loads(out)["response"]["report_artifact"] == self.KEY
 
         # exactly the two rendered deliverables written to S3 (report.json untouched)
         keys = list(store.text_writes)
@@ -196,17 +196,17 @@ class TestSynthesisDeliverables:
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 
     def test_non_fatal_when_report_unreadable(self) -> None:
-        payload = {"report_artifact": "missing/key.json"}
+        payload = {"response": {"report_artifact": "missing/key.json"}}
         store = _FakeStore({})  # read_json raises KeyError
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
         ):
             out = run_synthesis_via_a2a("job-x", "discourse", assignment_version=1)
-        assert json.loads(out)["report_artifact"] == "missing/key.json"
+        assert json.loads(out)["response"]["report_artifact"] == "missing/key.json"
 
     def test_non_fatal_when_no_report_artifact(self) -> None:
-        payload = {"engines_ranked": 5}
+        payload = {"response": {"engines_ranked": 5}}
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
             patch("src.atx_orchestrator.tools._make_store") as make_store,
