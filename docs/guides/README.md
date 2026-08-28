@@ -25,6 +25,7 @@ See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-
 | [storage-architecture-guide.md](storage-architecture-guide.md) | Storage abstraction layer patterns | Developers |
 | [api-development-guide.md](api-development-guide.md) | FastAPI REST API and WebSocket | Developers |
 | [context-graph-query-cookbook.md](context-graph-query-cookbook.md) | Ready-to-run Cypher queries for the context graph | Developers, Solutions Architects |
+| [aws-transform-integration.md](aws-transform-integration.md) | Running the pipeline on AWS Transform (subagents + A2A) | Developers, Solutions Architects |
 
 ## Strands SDK Architecture
 

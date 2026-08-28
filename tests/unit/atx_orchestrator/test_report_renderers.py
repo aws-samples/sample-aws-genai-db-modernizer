@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.atx_orchestrator import artifacts
+from src.atx_orchestrator.runtime import artifacts
 from src.atx_orchestrator.tools import run_synthesis_via_a2a
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
@@ -170,7 +170,7 @@ class TestSynthesisDeliverables:
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
             patch(
-                "src.atx_orchestrator.artifacts.publish",
+                "src.atx_orchestrator.runtime.artifacts.publish",
                 side_effect=lambda items: captured.update({"items": items}) or {},
             ),
         ):

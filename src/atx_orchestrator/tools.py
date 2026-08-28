@@ -10,11 +10,9 @@ the AWS Transform A2A protocol. The LLM invokes ``run_collect_via_a2a`` /
 ``a2a.invoke_and_wait`` — no ``subagent_instance_id`` is needed at the LLM
 layer.
 
-The in-process helpers ``run_collect`` / ``run_triage`` /
-``run_collect_and_triage`` remain defined for direct programmatic use by
-``scripts/atx_*_test.py`` local tests, but they are NOT registered in
-``PIPELINE_TOOLS`` and are therefore invisible to the LLM. This prevents
-silent fallback to the monolithic path when a deployed subagent misbehaves.
+Every pipeline phase runs in a DEPLOYED SUBAGENT over A2A; there are no
+in-process phase tools. The only non-A2A tools here are ``get_job_status``
+and ``get_synthesis_report``, which read progression and artifacts directly.
 """
 
 from __future__ import annotations
@@ -22,15 +20,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 
 from strands.tools import tool
 
 from src.atx_orchestrator.a2a import A2AError, invoke_and_wait
-from src.atx_orchestrator.core import ingest_offline_collection as _ingest_offline_collection
 from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
-from src.atx_orchestrator.core import run_collect_core, run_collect_triage_core, run_triage_core
-from src.atx_orchestrator.job_plan import (
+from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     mark_step_failed,
     mark_step_running,
@@ -213,307 +210,6 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
 
 
 @tool
-def run_collect(job_id: str, database_name: str, input_key: str = "") -> str:
-    """Run the Collector phase: ingest the offline collection into the artifact store.
-
-    Reads the raw offline collection JSON through the ArtifactStore (local dir or
-    S3, controlled by env vars) and writes the collector output contract. Does not
-    run triage. Storage-agnostic.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name used to namespace artifacts.
-        input_key: ArtifactStore key of the raw offline collection JSON.
-            Defaults to "{database_name}/{job_id}/uploads/collector-output.json".
-
-    Returns:
-        JSON string with table/query counts and the collector artifact path.
-    """
-    logger.info("ATX: collect job_id=%s db=%s", job_id, database_name)
-    try:
-        return json.dumps(run_collect_core(job_id, database_name, input_key))
-    except FileNotFoundError as e:
-        return json.dumps({"error": str(e), "job_id": job_id})
-
-
-@tool
-def run_triage(job_id: str, database_name: str) -> str:
-    """Run the Triage phase: select candidate engines from existing collector output.
-
-    Requires the Collector phase to have run first (reads collector/output.json
-    from the ArtifactStore). Pure deterministic pattern matching.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with selected engines and signal count.
-    """
-    logger.info("ATX: triage job_id=%s db=%s", job_id, database_name)
-    try:
-        return json.dumps(run_triage_core(job_id, database_name))
-    except FileNotFoundError as e:
-        return json.dumps({"error": str(e), "job_id": job_id})
-
-
-@tool
-def run_collect_and_triage(job_id: str, database_name: str, input_key: str = "") -> str:
-    """Convenience: run Collector then Triage in sequence.
-
-    Equivalent to run_collect followed by run_triage. Useful for a single-shot
-    Phase 1 when you don't need a review gate between collection and triage.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-        input_key: Optional ArtifactStore key of the raw offline collection JSON.
-
-    Returns:
-        JSON string with triage results summary (selected engines + signal count).
-    """
-    logger.info("ATX: collect+triage job_id=%s db=%s", job_id, database_name)
-    try:
-        summary = run_collect_triage_core(job_id, database_name, input_key)
-    except FileNotFoundError as e:
-        return json.dumps({"error": str(e), "job_id": job_id})
-    return json.dumps(summary)
-
-
-@tool
-def run_assignment(job_id: str, database_name: str) -> str:
-    """Run Phase 3: score all queries against selected engines and produce an assignment.
-
-    Requires collect+triage and analysis to be complete first.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with assignment summary (query count per engine).
-    """
-    store = _make_store()
-    orch = _make_orchestrator(store)
-
-    logger.info("ATX: running assignment job_id=%s db=%s", job_id, database_name)
-    from src.contracts.phase_models import Phase
-
-    orch.resume_lenient(job_id, Phase.ASSIGNMENT)
-
-    # Summarise assignment
-    assignment_key = f"{database_name}/{job_id}/assignment/v1/assignment.json"
-    engine_counts: dict[str, int] = {}
-    total_queries = 0
-    if store.exists(assignment_key):
-        assignment = store.read_json(assignment_key)
-        for qa in assignment.get("query_assignments", []):
-            e = qa.get("assigned_engine", "unknown")
-            engine_counts[e] = engine_counts.get(e, 0) + 1
-            total_queries += 1
-
-    return json.dumps(
-        {
-            "job_id": job_id,
-            "assignment_version": 1,
-            "total_queries": total_queries,
-            "queries_per_engine": engine_counts,
-        }
-    )
-
-
-@tool
-def run_reality_check(job_id: str, database_name: str) -> str:
-    """Run Phase 4: CTO-level engine consolidation and architectural pattern detection.
-
-    Eliminates redundant engines, identifies CQRS / Materialized View / Event Sourcing patterns.
-    Requires assignment to be complete first.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with consolidation decisions and recommended architectural patterns.
-    """
-    store = _make_store()
-    orch = _make_orchestrator(store)
-
-    logger.info("ATX: running reality-check job_id=%s db=%s", job_id, database_name)
-    from src.contracts.phase_models import Phase
-
-    orch.resume_lenient(job_id, Phase.REALITY_CHECK)
-
-    reality_key = f"{database_name}/{job_id}/reality-check/output.json"
-    consolidations: list[str] = []
-    patterns: list[str] = []
-    if store.exists(reality_key):
-        rc = store.read_json(reality_key)
-        consolidations = [
-            f"{c.get('from_engine')} → {c.get('to_engine')}: {c.get('reason', '')}"
-            for c in rc.get("consolidations", [])
-        ]
-        patterns = [p.get("name", "") for p in rc.get("architectural_patterns", [])]
-
-    return json.dumps(
-        {
-            "job_id": job_id,
-            "consolidations": consolidations,
-            "architectural_patterns": patterns,
-        }
-    )
-
-
-@tool
-def run_schema_design(job_id: str, database_name: str) -> str:
-    """Run Phase 5: design target schemas for each assigned engine.
-
-    Produces DynamoDB table definitions, DocumentDB collections, OpenSearch index
-    mappings, ElastiCache data structures, and Aurora DDL as appropriate.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string listing engines for which schema output was produced.
-    """
-    store = _make_store()
-    orch = _make_orchestrator(store)
-
-    logger.info("ATX: running schema-design job_id=%s db=%s", job_id, database_name)
-    from src.contracts.phase_models import Phase
-
-    orch.resume_lenient(job_id, Phase.SCHEMA_DESIGN)
-    orch.confirm_schema_design(job_id)
-
-    # Discover which engines have schema output
-    engines_designed: list[str] = []
-    for engine in [
-        "dynamodb",
-        "documentdb",
-        "opensearch",
-        "elasticache",
-        "aurora_postgresql",
-        "aurora_mysql",
-    ]:
-        key = f"{database_name}/{job_id}/schema-{engine}/v1/schema_output.json"
-        if store.exists(key):
-            engines_designed.append(engine)
-
-    return json.dumps(
-        {
-            "job_id": job_id,
-            "engines_with_schema": engines_designed,
-        }
-    )
-
-
-@tool
-def run_synthesis(job_id: str, database_name: str) -> str:
-    """Run Phase 6: synthesise a final migration report with TCO, risk, and recommendations.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the artifact path for the synthesis report.
-    """
-    store = _make_store()
-    orch = _make_orchestrator(store)
-
-    logger.info("ATX: running synthesis job_id=%s db=%s", job_id, database_name)
-    from src.contracts.phase_models import Phase
-
-    orch.resume_lenient(job_id, Phase.SYNTHESIS)
-
-    report_key = f"{database_name}/{job_id}/synthesis/report.json"
-    return json.dumps(
-        {
-            "job_id": job_id,
-            "report_artifact": report_key,
-            "available": store.exists(report_key),
-        }
-    )
-
-
-@tool
-def run_full_assessment(job_id: str, database_name: str) -> str:
-    """Run the complete DB modernization assessment pipeline end-to-end.
-
-    Executes all phases in order:
-      Collect+Triage → Analysis (fan-out) → Assignment → Reality Check
-      → Schema Design (fan-out) → Synthesis
-
-    Use this for a single-shot assessment. Use the individual phase tools
-    if you need to pause between phases for human review.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with per-phase status and the synthesis report artifact path.
-    """
-    store = _make_store()
-    orch = _make_orchestrator(store)
-
-    logger.info("ATX: running full assessment job_id=%s db=%s", job_id, database_name)
-    from src.contracts.phase_models import Phase
-
-    # Phase 1: ingest collection + triage via the storage-agnostic path
-    # (do NOT use start_job — that calls the boto3 ECS collector handler).
-    key = f"{database_name}/{job_id}/uploads/collector-output.json"
-    if not store.exists(key):
-        return json.dumps(
-            {
-                "error": f"Offline collection input not found at '{key}'.",
-                "job_id": job_id,
-            }
-        )
-    raw_input = store.read_json(key)
-    _ingest_offline_collection(store, job_id, database_name, raw_input)
-
-    from src.agents.referee.triage_handler import run_triage as _run_triage_handler
-
-    _run_triage_handler(job_id, database_name, store)
-
-    # Mark COLLECT_TRIAGE complete in progression so resume() prerequisites pass.
-    from src.contracts.phase_models import PhaseStatus
-
-    progression = orch.get_progression(job_id)
-    orch._set_phase_status(progression, Phase.COLLECT_TRIAGE, PhaseStatus.COMPLETED)
-    orch._save_progression(progression)
-
-    # Phase 2–6: resume each remaining phase (analysis through synthesis)
-    for phase in [
-        Phase.ANALYSIS,
-        Phase.ASSIGNMENT,
-        Phase.REALITY_CHECK,
-        Phase.SCHEMA_DESIGN,
-        Phase.SYNTHESIS,
-    ]:
-        orch.resume_lenient(job_id, phase)
-        if phase == Phase.SCHEMA_DESIGN:
-            orch.confirm_schema_design(job_id)
-
-    progression = orch.get_progression(job_id)
-    phase_statuses = {p.value: progression.phases[p].status.value for p in Phase}
-
-    report_key = f"{database_name}/{job_id}/synthesis/report.json"
-    return json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-            "phase_statuses": phase_statuses,
-            "report_artifact": report_key,
-            "report_available": store.exists(report_key),
-        }
-    )
-
-
-@tool
 def get_job_status(job_id: str, database_name: str) -> str:
     """Get the current phase progression status for a job.
 
@@ -577,59 +273,98 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
 # names. Payload shape matches what ``subagent_base.parse_invocation`` accepts.
 
 
+def _run_phase_via_a2a(
+    agent_suffix: str,
+    step: str,
+    label: str,
+    job_id: str,
+    database_name: str,
+    message: str,
+    timeout: float | None = None,
+    on_success: Callable[[dict], None] | None = None,
+) -> str:
+    """Shared invoke/mark/error body for the phase A2A tools.
+
+    Resolves the subagent as ``f"{_AGENT_PREFIX}-{agent_suffix}"``, marks the
+    plan ``step`` running/succeeded/failed around ``invoke_and_wait``, and turns
+    any ``A2AError`` into the standard ``{"error": ...}`` JSON dict rather than
+    raising. ``label`` is the human phase word used in the log and error text.
+    ``timeout`` is passed through only when set (the two LLM-heavy analyses need
+    a longer ceiling). ``on_success`` runs with the completion payload before the
+    JSON is returned — synthesis uses it to publish its rendered deliverables.
+    """
+    agent_id = f"{_AGENT_PREFIX}-{agent_suffix}"
+    logger.info(
+        "ATX: %s via A2A agent=%s job_id=%s db=%s",
+        label,
+        agent_id,
+        job_id,
+        database_name,
+    )
+    mark_step_running(step)
+    try:
+        if timeout is None:
+            payload = invoke_and_wait(agent_id, message)
+        else:
+            payload = invoke_and_wait(agent_id, message, timeout=timeout)
+    except A2AError as e:
+        logger.error("ATX %s FAILED: %s: %s", label, type(e).__name__, e)
+        mark_step_failed(step, str(e))
+        return json.dumps(
+            {
+                "error": f"A2A {label} failed: {e}",
+                "error_type": type(e).__name__,
+                "job_id": job_id,
+                "agent_id": agent_id,
+            }
+        )
+    mark_step_succeeded(step)
+    if on_success is not None:
+        on_success(payload)
+    return json.dumps(payload)
+
+
 @tool
 def run_collect_via_a2a(
     job_id: str,
     database_name: str,
-    input_key: str = "",
 ) -> str:
     """Run the Collector phase by invoking a deployed collector subagent over A2A.
 
-    Uses the AWS Transform Agentic API's ``invoke_agent`` primitive to spawn
-    a fresh collector subagent instance BY NAME and deliver the initial
-    message atomically. Polls until the subagent reports COMPLETED (or
-    FAILED). The subagent's ``agent_output`` payload is returned as a JSON
-    string.
+    Spawns the collector subagent BY NAME, delivers the initial message, and polls
+    until COMPLETED (or FAILED). The subagent's ``agent_output`` payload is returned
+    as a JSON string.
 
-    This is the ONLY collector tool available to the orchestrator — the
-    in-process variant was removed to prevent silent fallback. The subagent
-    must be deployed and its registered NAME must be
-    ``db-modernization-collector``.
+    The customer's uploaded offline collection is located AUTOMATICALLY: this tool
+    discovers the file the customer uploaded through the WebApp (it lands in the
+    artifact store under the job's ``User Uploads/`` prefix) and hands the collector
+    its key. You do NOT pass, construct, or ask for a storage path — there is no
+    path parameter. Just call this with job_id and database_name.
+
+    This is the ONLY collector tool available to the orchestrator. The subagent
+    must be deployed and its registered NAME must be ``<prefix>-collector``.
 
     Args:
         job_id: Unique job identifier.
         database_name: Source database name used to namespace artifacts.
-        input_key: Optional ArtifactStore key of the raw offline collection JSON.
 
     Returns:
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed (timeout, FAILED status, network, etc.).
     """
-    agent_id = f"{_AGENT_PREFIX}-collector"
-    logger.info(
-        "ATX: collect via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    # Resolve the raw offline collection here, in the orchestrator, rather than in
-    # the collector subagent: the orchestrator reliably holds the customer's
-    # Transform job context (workspace_id + platform job UUID), so it can find the
-    # WebApp upload under that job's "User Uploads/" prefix and hand the collector an
-    # explicit key. When no key is passed and no upload exists, input_key stays "" and
-    # the collector falls back to the seed key (dev/reference workloads). An ambiguous
-    # upload (more than one candidate JSON) raises with a clear message rather than
-    # picking arbitrarily.
-    if not input_key:
-        # Local import: keeps this discovery helper out of the module-level import
-        # block (matches the codebase's lazy-import pattern and sidesteps an
-        # isort/ruff disagreement over grouping the underscore-prefixed name).
-        from src.atx_orchestrator.core import _discover_uploaded_input
+    # Resolve the customer's uploaded offline collection here, in the orchestrator:
+    # it reliably holds the Transform job context (workspace_id + platform job UUID),
+    # so _discover_uploaded_input can find the WebApp upload under the job's
+    # "User Uploads/" prefix and hand the collector an explicit key. Discovery is the
+    # single source of truth for the path — the LLM never supplies one. Outside the
+    # ATX runtime (dev/reference harness) discovery returns None, input_key stays "",
+    # and the collector falls back to its seed key. An ambiguous upload (more than one
+    # candidate JSON) raises with a clear message rather than picking arbitrarily.
+    from src.atx_orchestrator.core import _discover_uploaded_input
 
-        discovered = _discover_uploaded_input(_make_store())
-        if discovered:
-            logger.info("ATX collect: using customer upload %s", discovered)
-            input_key = discovered
+    input_key = _discover_uploaded_input(_make_store()) or ""
+    if input_key:
+        logger.info("ATX collect: using customer upload %s", input_key)
     message = json.dumps(
         {
             "job_id": job_id,
@@ -637,22 +372,14 @@ def run_collect_via_a2a(
             "input_key": input_key,
         }
     )
-    mark_step_running("collector")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX collect FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("collector", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A collect failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("collector")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="collector",
+        step="collector",
+        label="collect",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
 
 
 @tool
@@ -680,35 +407,53 @@ def run_triage_via_a2a(
         JSON string with the subagent's completion payload, or an error dict
         if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-triage"
-    logger.info(
-        "ATX: triage via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
             "database_name": database_name,
         }
     )
-    mark_step_running("triage")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX triage FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("triage", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A triage failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("triage")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="triage",
+        step="triage",
+        label="triage",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
+
+
+# Analysis over A2A is uniform except for two things: the plan step label and,
+# for the two Bedrock-LLM engines, a longer timeout. Keyed by the suffix that
+# appears in both the agent id (analysis-<suffix>) and the log/error label.
+_ANALYSIS_A2A_STEPS: dict[str, str] = {
+    "dynamodb": "analysis_dynamodb",
+    "documentdb": "analysis_documentdb",
+    "elasticache": "analysis_elasticache",
+    "opensearch": "analysis_opensearch",
+    "aurora-pg": "analysis_aurora_postgresql",
+    "aurora-mysql": "analysis_aurora_mysql",
+}
+# DynamoDB and DocumentDB run the Bedrock Opus advisor; a Discourse-scale
+# workload can take 55-80 min, so they get a 90-min ceiling. The four
+# deterministic engines fall back to invoke_and_wait's default timeout.
+_ANALYSIS_A2A_TIMEOUT: dict[str, float] = {
+    "dynamodb": 5400.0,
+    "documentdb": 5400.0,
+}
+
+
+def _run_analysis_via_a2a(suffix: str, job_id: str, database_name: str) -> str:
+    """Shared body for the six analysis A2A tools."""
+    return _run_phase_via_a2a(
+        agent_suffix=f"analysis-{suffix}",
+        step=_ANALYSIS_A2A_STEPS[suffix],
+        label=f"analysis-{suffix}",
+        job_id=job_id,
+        database_name=database_name,
+        message=json.dumps({"job_id": job_id, "database_name": database_name}),
+        timeout=_ANALYSIS_A2A_TIMEOUT.get(suffix),
+    )
 
 
 @tool
@@ -745,40 +490,7 @@ def run_analysis_dynamodb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-dynamodb"
-    logger.info(
-        "ATX: analysis-dynamodb via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_dynamodb")
-    try:
-        # 90-minute timeout: DynamoDB LLM Advisor runs Bedrock Opus 4.8 across
-        # groups of ~30 queries (~60-90 sec/group). For a 1600-query workload
-        # like Discourse that's ~55 groups → ~55-80 min end-to-end. The default
-        # 300s timeout is fine for collector/triage but far too short for the
-        # LLM-heavy analysis path.
-        payload = invoke_and_wait(agent_id, message, timeout=5400.0)
-    except A2AError as e:
-        logger.error("ATX analysis-dynamodb FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_dynamodb", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-dynamodb failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_dynamodb")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("dynamodb", job_id, database_name)
 
 
 @tool
@@ -815,39 +527,7 @@ def run_analysis_documentdb_via_a2a(
         confidence-band counts, estimated cost, artifact keys), or an error
         dict if the A2A round-trip failed.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-documentdb"
-    logger.info(
-        "ATX: analysis-documentdb via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_documentdb")
-    try:
-        # 90-minute timeout: DocumentDB LlmAdvisor runs Bedrock Opus 4.8 for
-        # embedding-vs-reference trade-off analysis. Uses same 5400s ceiling
-        # as DynamoDB — Discourse-scale workloads can hit similar tail latency
-        # across the LlmAdvisor's chunked query groups.
-        payload = invoke_and_wait(agent_id, message, timeout=5400.0)
-    except A2AError as e:
-        logger.error("ATX analysis-documentdb FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_documentdb", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-documentdb failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_documentdb")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("documentdb", job_id, database_name)
 
 
 @tool
@@ -876,36 +556,7 @@ def run_analysis_elasticache_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-elasticache"
-    logger.info(
-        "ATX: analysis-elasticache via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_elasticache")
-    try:
-        # Deterministic path — 30-min default timeout is plenty. No Bedrock calls.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-elasticache FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_elasticache", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-elasticache failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_elasticache")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("elasticache", job_id, database_name)
 
 
 @tool
@@ -933,36 +584,7 @@ def run_analysis_opensearch_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-opensearch"
-    logger.info(
-        "ATX: analysis-opensearch via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_opensearch")
-    try:
-        # Deterministic path — 30-min default timeout is plenty.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-opensearch FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_opensearch", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-opensearch failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_opensearch")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("opensearch", job_id, database_name)
 
 
 @tool
@@ -983,35 +605,7 @@ def run_analysis_aurora_pg_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-pg"
-    logger.info(
-        "ATX: analysis-aurora-pg via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_aurora_postgresql")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-aurora-pg FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_aurora_postgresql", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-aurora-pg failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_aurora_postgresql")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("aurora-pg", job_id, database_name)
 
 
 @tool
@@ -1032,35 +626,7 @@ def run_analysis_aurora_mysql_via_a2a(
     Returns:
         JSON string with the subagent's completion payload, or an error dict.
     """
-    agent_id = f"{_AGENT_PREFIX}-analysis-aurora-mysql"
-    logger.info(
-        "ATX: analysis-aurora-mysql via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    mark_step_running("analysis_aurora_mysql")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX analysis-aurora-mysql FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("analysis_aurora_mysql", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A analysis-aurora-mysql failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("analysis_aurora_mysql")
-    return json.dumps(payload)
+    return _run_analysis_via_a2a("aurora-mysql", job_id, database_name)
 
 
 @tool
@@ -1087,36 +653,20 @@ def run_assignment_via_a2a(
         JSON string with the subagent's completion payload
         (total_queries, queries_per_engine, assignment_artifact).
     """
-    agent_id = f"{_AGENT_PREFIX}-assignment"
-    logger.info(
-        "ATX: assignment via A2A agent=%s job_id=%s db=%s",
-        agent_id,
-        job_id,
-        database_name,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
             "database_name": database_name,
         }
     )
-    mark_step_running("assignment")
-    try:
-        # Deterministic path — 30-min default timeout is plenty.
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX assignment FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("assignment", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A assignment failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("assignment")
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="assignment",
+        step="assignment",
+        label="assignment",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+    )
 
 
 @tool
@@ -1159,14 +709,6 @@ def run_synthesis_via_a2a(
         query_groups, overall_risk_level, has_executive_summary,
         report_artifact).
     """
-    agent_id = f"{_AGENT_PREFIX}-synthesis"
-    logger.info(
-        "ATX: synthesis via A2A agent=%s job_id=%s db=%s assignment_version=%s",
-        agent_id,
-        job_id,
-        database_name,
-        assignment_version,
-    )
     message = json.dumps(
         {
             "job_id": job_id,
@@ -1174,23 +716,15 @@ def run_synthesis_via_a2a(
             "assignment_version": assignment_version,
         }
     )
-    mark_step_running("synthesis")
-    try:
-        payload = invoke_and_wait(agent_id, message)
-    except A2AError as e:
-        logger.error("ATX synthesis FAILED: %s: %s", type(e).__name__, e)
-        mark_step_failed("synthesis", str(e))
-        return json.dumps(
-            {
-                "error": f"A2A synthesis failed: {e}",
-                "error_type": type(e).__name__,
-                "job_id": job_id,
-                "agent_id": agent_id,
-            }
-        )
-    mark_step_succeeded("synthesis")
-    _publish_synthesis_deliverables(job_id, database_name, payload)
-    return json.dumps(payload)
+    return _run_phase_via_a2a(
+        agent_suffix="synthesis",
+        step="synthesis",
+        label="synthesis",
+        job_id=job_id,
+        database_name=database_name,
+        message=message,
+        on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
+    )
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
@@ -1219,7 +753,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         logger.warning("ATX synthesis: payload has no report_artifact; skipping deliverables")
         return
     try:
-        from src.atx_orchestrator import artifacts as _artifacts
+        from src.atx_orchestrator.runtime import artifacts as _artifacts
 
         store = _make_store()
         report = store.read_json(report_key)

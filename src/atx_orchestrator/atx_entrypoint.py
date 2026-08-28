@@ -5,21 +5,19 @@ run-to-completion batch agents on ``AGENT_TYPE``. This module does the same for
 long-running A2A/AgentCore servers: read ``AGENT_TYPE``, resolve the matching
 agent factory, and hand it to :func:`subagent_base.run_server`.
 
-Replaces the ten near-identical per-agent entrypoints (nine ``*_app.py`` files
-plus ``app.py::main``). Those files are left in place so the currently deployed
-images keep building unchanged; only the v2 image points here.
+This is the single entry point for every agent. It replaced ten near-identical
+per-agent entrypoints (nine ``*_app.py`` files plus ``app.py::main``), which have
+been removed. ``app.py`` remains only for ``build_agent_factory`` — the
+orchestrator factory this module calls.
 
 Why one entrypoint is safe
 --------------------------
-``run_server()`` and ``app.py::main()`` were the same function, duplicated:
-identical argparse defaults (host ``0.0.0.0``, port 8080, the agentic MCP binary
-path), identical ``AgentRuntimeServer`` construction, identical
-``delayed_timeout=3600``, identical ``server.start()``. Across all ten
-entrypoints exactly two things varied — which factory, and which ``/tmp``
-directory.
-
-Collapsing them also removes a live drift hazard: ``delayed_timeout=3600`` was
-written in two places with nothing enforcing that they agree.
+The old ``app.py::main()`` and the nine per-agent ``*_app.py`` mains were the
+same function, duplicated: identical argparse defaults (host ``0.0.0.0``, port
+8080, the agentic MCP binary path), identical ``AgentRuntimeServer``
+construction, identical ``delayed_timeout=3600``, identical ``server.start()``.
+They varied in exactly two things — which factory, and which ``/tmp`` directory —
+both of which this module now derives from ``AGENT_TYPE``.
 
 Dispatch style
 --------------
@@ -129,43 +127,43 @@ def _resolve_factory(agent_type: str):
 
         return build_agent_factory()
     if agent_type == "collector":
-        from src.atx_orchestrator.collector_subagent import agent_factory
+        from src.atx_orchestrator.subagents.collector import agent_factory
 
         return agent_factory
     if agent_type == "referee-triage":
-        from src.atx_orchestrator.triage_subagent import agent_factory
+        from src.atx_orchestrator.subagents.triage import agent_factory
 
         return agent_factory
     if agent_type == "analysis-dynamodb":
-        from src.atx_orchestrator.analysis_dynamodb_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.dynamodb import agent_factory
 
         return agent_factory
     if agent_type == "analysis-documentdb":
-        from src.atx_orchestrator.analysis_documentdb_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.documentdb import agent_factory
 
         return agent_factory
     if agent_type == "analysis-elasticache":
-        from src.atx_orchestrator.analysis_elasticache_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.elasticache import agent_factory
 
         return agent_factory
     if agent_type == "analysis-opensearch":
-        from src.atx_orchestrator.analysis_opensearch_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.opensearch import agent_factory
 
         return agent_factory
     if agent_type == "analysis-aurora-pg":
-        from src.atx_orchestrator.analysis_aurora_pg_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.aurora_pg import agent_factory
 
         return agent_factory
     if agent_type == "analysis-aurora-mysql":
-        from src.atx_orchestrator.analysis_aurora_mysql_subagent import agent_factory
+        from src.atx_orchestrator.subagents.analysis.aurora_mysql import agent_factory
 
         return agent_factory
     if agent_type == "assignment-resolver":
-        from src.atx_orchestrator.assignment_subagent import agent_factory
+        from src.atx_orchestrator.subagents.assignment import agent_factory
 
         return agent_factory
     if agent_type == "referee-synthesis":
-        from src.atx_orchestrator.synthesis_subagent import agent_factory
+        from src.atx_orchestrator.subagents.synthesis import agent_factory
 
         return agent_factory
     # One branch for all six schema-design targets: upstream's run_schema_design
@@ -173,7 +171,7 @@ def _resolve_factory(agent_type: str):
     # single module rather than imported from six near-identical ones. Routed on
     # the prefix to keep the subagent import lazy like the branches above.
     if agent_type.startswith("schema-"):
-        from src.atx_orchestrator.schema_subagent import SCHEMA_TARGETS, make_schema_agent_factory
+        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS, make_schema_agent_factory
 
         if agent_type not in SCHEMA_TARGETS:
             # schema-split and schema-merge are separate phases, not design
@@ -202,7 +200,7 @@ def main() -> None:
 
     factory = _resolve_factory(agent_type)
 
-    from src.atx_orchestrator.subagent_base import run_server
+    from src.atx_orchestrator.subagents.base import run_server
 
     logger.info("Starting agent: %s", agent_type)
     run_server(factory, default_storage_dir=storage_dir)

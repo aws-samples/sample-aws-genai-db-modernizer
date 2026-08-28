@@ -1,11 +1,11 @@
 # ruff: noqa: E402 — imports are intentionally placed after env setup and banners
-"""End-to-end test of the ATX `run_collect_and_triage` tool.
+"""End-to-end test of the ATX `run_collect_triage_core` shared function.
 
-This exercises the EXACT code path AWS Transform will invoke — the tool reads
-the offline collection through the ArtifactStore, ingests it, runs triage, and
-writes artifacts. We then diff the triage decision against the committed
-reference job discourse/15e6403d to prove the contract + determinism hold
-through the real tool (not just the raw handlers).
+This exercises the EXACT code path the collector and triage subagents invoke —
+it reads the offline collection through the ArtifactStore, ingests it, runs
+triage, and writes artifacts. We then diff the triage decision against the
+committed reference job discourse/15e6403d to prove the contract + determinism
+hold through the shared core.
 
 No DB, no AWS, no boto3 — pure ArtifactStore (local dir).
 
@@ -50,7 +50,7 @@ def ok(msg):
     print(f"  ✅  {msg}")
 
 
-print("\n── ATX run_collect_and_triage End-to-End Test ──\n")
+print("\n── ATX run_collect_triage_core End-to-End Test ──\n")
 
 # Scratch artifact dir — the ArtifactStore points here via ARTIFACT_DIR.
 scratch = Path(tempfile.mkdtemp(prefix="atx_tool_"))
@@ -78,27 +78,18 @@ ok(f"Seeded offline input at {input_key} (LocalArtifactStore)")
 # ---------------------------------------------------------------------------
 # Run the ACTUAL ATX tool
 # ---------------------------------------------------------------------------
-print("\n1. Invoke run_collect_and_triage tool")
-from src.atx_orchestrator.tools import run_collect_and_triage
-
-# Strands @tool wraps the function; call the underlying callable directly.
-fn = getattr(run_collect_and_triage, "__wrapped__", None)
-if fn is None:
-    # Fallback: tool objects expose the original via .func or are callable
-    fn = getattr(run_collect_and_triage, "func", run_collect_and_triage)
+print("\n1. Invoke run_collect_triage_core")
+from src.atx_orchestrator.core import run_collect_triage_core
 
 try:
-    result_json = fn(job_id, db_name)
+    result = run_collect_triage_core(job_id, db_name)
 except Exception as e:  # noqa: BLE001
     import traceback
 
     traceback.print_exc()
-    fail(f"Tool raised: {e}")
+    fail(f"Core raised: {e}")
 
-result = json.loads(result_json)
-if "error" in result:
-    fail(f"Tool returned error: {result['error']}")
-ok(f"Tool returned: {result}")
+ok(f"Core returned: {result}")
 
 # ---------------------------------------------------------------------------
 # Verify artifacts written + contracts valid

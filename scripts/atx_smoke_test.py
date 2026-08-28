@@ -32,31 +32,21 @@ print("\n── AWS Transform Orchestrator Smoke Test ──\n")
 print("1. Tool imports")
 try:
     from src.atx_orchestrator.tools import (
+        declare_pipeline_plan,
         get_job_status,
         get_synthesis_report,
-        run_assignment,
-        run_collect,
-        run_collect_and_triage,
+        run_assignment_via_a2a,
         run_collect_via_a2a,
-        run_full_assessment,
-        run_reality_check,
-        run_schema_design,
-        run_synthesis,
-        run_triage,
+        run_synthesis_via_a2a,
         run_triage_via_a2a,
     )
 
     tools = [
-        run_collect,
-        run_triage,
-        run_collect_and_triage,
+        declare_pipeline_plan,
         run_collect_via_a2a,
         run_triage_via_a2a,
-        run_assignment,
-        run_reality_check,
-        run_schema_design,
-        run_synthesis,
-        run_full_assessment,
+        run_assignment_via_a2a,
+        run_synthesis_via_a2a,
         get_job_status,
         get_synthesis_report,
     ]
@@ -79,8 +69,8 @@ try:
     check("DBModernizationOrchestrator imported", True)
     check(
         "PIPELINE_TOOLS count",
-        len(PIPELINE_TOOLS) == 16,
-        f"expected 16, got {len(PIPELINE_TOOLS)}",
+        len(PIPELINE_TOOLS) == 19,
+        f"expected 19, got {len(PIPELINE_TOOLS)}",
     )
 except ImportError as e:
     check("DBModernizationOrchestrator imported", False, str(e))

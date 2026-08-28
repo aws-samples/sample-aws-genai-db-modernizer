@@ -50,13 +50,17 @@ class TestRunCollectViaA2AHappyPath:
         assert agent_id == "db-modernization-collector"
 
     def test_constructs_correct_message_envelope(self) -> None:
-        """The tool sends a JSON blob containing job_id, database_name, input_key."""
-        with patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m:
-            run_collect_via_a2a(
-                job_id="job-42",
-                database_name="mydb",
-                input_key="path/to/uploads/collector-output.json",
-            )
+        """The tool sends a JSON blob with job_id, database_name, and the
+        auto-discovered input_key (never an LLM-supplied path)."""
+        discovered = "AWSTransform/Workspaces/ws/Jobs/uuid/User Uploads/mydb.json"
+        with (
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
+            patch(
+                "src.atx_orchestrator.core._discover_uploaded_input",
+                return_value=discovered,
+            ),
+        ):
+            run_collect_via_a2a(job_id="job-42", database_name="mydb")
 
         # invoke_and_wait(agent_id, message)
         args, _ = m.call_args
@@ -66,7 +70,7 @@ class TestRunCollectViaA2AHappyPath:
         assert parsed == {
             "job_id": "job-42",
             "database_name": "mydb",
-            "input_key": "path/to/uploads/collector-output.json",
+            "input_key": discovered,
         }
 
     def test_empty_input_key_defaults_correctly(self) -> None:

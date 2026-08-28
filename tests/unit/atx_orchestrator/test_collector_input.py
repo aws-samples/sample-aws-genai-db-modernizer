@@ -132,15 +132,6 @@ class TestOrchestratorPassesDiscoveredKey:
         message = json.loads(m.call_args[0][1])
         assert message["input_key"] == key
 
-    def test_explicit_key_skips_discovery(self) -> None:
-        with (
-            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
-            patch("src.atx_orchestrator.core._discover_uploaded_input") as disc,
-        ):
-            run_collect_via_a2a(job_id="job", database_name="db", input_key="explicit/key.json")
-        disc.assert_not_called()
-        assert json.loads(m.call_args[0][1])["input_key"] == "explicit/key.json"
-
     def test_no_upload_leaves_key_empty_for_seed_fallback(self) -> None:
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,

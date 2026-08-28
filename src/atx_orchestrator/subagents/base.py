@@ -285,7 +285,7 @@ def make_subagent_factory(
                         manager.update_status(instance_id, "FAILED", status_reason=str(e)[:1024])
                     raise
 
-        model_id = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+        model_id = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
         return _Subagent(
             system_prompt=system_prompt,
             mcp_clients=[mcp_client] if mcp_client is not None else None,

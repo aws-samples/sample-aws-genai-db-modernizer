@@ -16,7 +16,7 @@ Deterministic subagent — NO LLM invocation.
 
 from __future__ import annotations
 
-from src.atx_orchestrator.subagent_base import make_subagent_factory
+from src.atx_orchestrator.subagents.base import make_subagent_factory
 
 SYSTEM_PROMPT = """\
 You are the OpenSearch Analysis subagent for database modernization assessments.
@@ -34,9 +34,10 @@ trace are written to S3 as separate artifacts.
 
 
 def _work(params: dict) -> dict:
-    from src.atx_orchestrator.core import run_analysis_opensearch_core
+    from src.atx_orchestrator.core import run_analysis_core
 
-    return run_analysis_opensearch_core(
+    return run_analysis_core(
+        "opensearch",
         job_id=params["job_id"],
         database_name=params["database_name"],
     )

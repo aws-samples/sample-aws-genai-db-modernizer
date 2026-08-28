@@ -13,7 +13,7 @@ so this subagent always runs with LLM_MODE=none regardless of container config.
 
 from __future__ import annotations
 
-from src.atx_orchestrator.subagent_base import make_subagent_factory
+from src.atx_orchestrator.subagents.base import make_subagent_factory
 
 SYSTEM_PROMPT = """\
 You are the Aurora PostgreSQL Analysis subagent for database modernization assessments.
@@ -31,9 +31,10 @@ trace are written to S3 as separate artifacts.
 
 
 def _work(params: dict) -> dict:
-    from src.atx_orchestrator.core import run_analysis_aurora_pg_core
+    from src.atx_orchestrator.core import run_analysis_core
 
-    return run_analysis_aurora_pg_core(
+    return run_analysis_core(
+        "aurora_pg",
         job_id=params["job_id"],
         database_name=params["database_name"],
     )

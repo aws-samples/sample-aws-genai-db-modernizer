@@ -1,23 +1,26 @@
 """A2A (agent-to-agent) wiring for the AWS Transform PoC.
 
-Provides the fire-and-forget + poll primitive used by orchestrator tools to
-invoke deployed subagents over the AWS Transform Agentic API.
+Provides ``invoke_and_wait`` — the discover-or-spawn, send, and poll primitive
+that orchestrator tools use to drive deployed subagents over the AWS Transform
+Agentic API.
 
-The pattern (per Esteban's handoff §7):
+The pattern:
 
-    1. Call ``client.send_message(agentInstanceId, params={"message": ...})``.
-       Expected to return error ``-32603`` (JSON-RPC "Internal error") after
-       ~25s for long-running subagents. This is NORMAL — the subagent is
-       still processing on the server. Do not treat it as failure.
-    2. Poll ``client.get_agent_instance(agentInstanceId)`` until
-       ``agentInstanceStatus`` is either ``"COMPLETED"`` or ``"FAILED"``.
-    3. Parse ``agentOutput.serializedPayload`` (JSON string) into a dict and
-       return.
+    1. Discover a pre-provisioned subagent instance by its registered NAME via
+       ``client.list_agent_instances(...)``. If none exists, spawn one with
+       ``client.invoke_agent(...)`` and wait for it to reach RUNNING/IDLE.
+    2. Dispatch the work with ``client.send_message(agentInstanceId, ...)``.
+       A ``-32603`` (JSON-RPC "Internal error") after ~25s is NORMAL for
+       long-running subagents — the container is still processing, so keep
+       polling rather than treating it as a failure.
+    3. Poll ``client.get_agent_instance(agentInstanceId)`` until
+       ``agentInstanceStatus`` is either ``"COMPLETED"`` or ``"FAILED"``, then
+       parse ``agentOutput.serializedPayload`` (JSON string) into a dict.
 
 Testing:
     ``StubAgenticApiClient`` — hand-rolled mock that can be primed with a
     status sequence and terminal payload. Inject via the ``client`` parameter
-    of ``send_and_wait()``. No moto or heavy fixtures needed.
+    of ``invoke_and_wait()``. No moto or heavy fixtures needed.
 """
 
 from __future__ import annotations
@@ -66,87 +69,6 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"COMPLETED", "FAILED"})
 
 # =============================================================================
 # Primitive
-
-
-def send_and_wait(
-    subagent_instance_id: str,
-    message: str,
-    *,
-    timeout: float = 1800.0,
-    poll_interval: float = 2.0,
-    client: Any = None,
-    request_context: dict[str, Any] | None = None,
-    tolerate_send_errors: bool = True,
-) -> dict[str, Any]:
-    """Send an A2A message to a subagent and poll for its terminal payload.
-
-    Args:
-        subagent_instance_id: agentInstanceId of the deployed subagent.
-        message: Natural-language message text (typically a JSON blob that
-            the subagent's ``parse_invocation`` in ``subagent_base.py``
-            recognises).
-        timeout: Max seconds to wait for a terminal status. Default 1800s (30 min). LLM-heavy subagents (analysis, schema-design) should pass higher explicit values.
-        poll_interval: Seconds between ``get_agent_instance`` polls.
-        client: Injectable Agentic API client (mainly for tests). When
-            None, resolves ``get_agentic_api_client()`` from the SDK.
-        request_context: Optional requestContext dict. When None, resolves
-            ``get_agent_context_from_env().to_dict()``; falls back to
-            ``{}`` if the SDK env vars aren't set (e.g. local tests).
-        tolerate_send_errors: If True, ignore ``-32603`` (JSON-RPC
-            "Internal error") on send. This is normal for long-running
-            subagents. Any other send error surfaces immediately.
-
-    Returns:
-        Parsed dict from ``agentOutput.serializedPayload``.
-
-    Raises:
-        A2ATimeoutError: Terminal status not reached within ``timeout``.
-        A2AFailedError: Subagent reported ``"FAILED"`` status.
-        A2APayloadError: ``agentOutput.serializedPayload`` is missing,
-            empty, invalid JSON, or not a JSON object.
-        A2AError: Any other send/poll failure.
-    """
-    client = _resolve_client(client)
-    request_context = _resolve_request_context(request_context)
-
-    # 1. Fire-and-forget send. Tolerate the expected -32603 error.
-    _send(client, subagent_instance_id, message, request_context, tolerate_send_errors)
-
-    # 2. Poll get_agent_instance until COMPLETED or FAILED.
-    start = time.monotonic()
-    while True:
-        elapsed = time.monotonic() - start
-        if elapsed > timeout:
-            raise A2ATimeoutError(
-                f"Subagent {subagent_instance_id} did not reach terminal status "
-                f"within {timeout}s (waited {elapsed:.1f}s)"
-            )
-
-        try:
-            resp = client.get_agent_instance(
-                agentInstanceId=subagent_instance_id,
-                requestContext=request_context,
-            )
-        except Exception as e:
-            raise A2AError(f"get_agent_instance failed: {e}") from e
-
-        status = _extract_status(resp)
-        if status == "COMPLETED":
-            return _parse_payload(resp)
-        if status == "FAILED":
-            reason = _extract_reason(resp)
-            raise A2AFailedError(
-                f"Subagent {subagent_instance_id} FAILED: {reason or '<no reason>'}"
-            )
-
-        # Any other status is intermediate (STARTING, RUNNING, etc.).
-        logger.debug(
-            "Subagent %s status=%s, waited %.1fs — continuing to poll",
-            subagent_instance_id,
-            status,
-            elapsed,
-        )
-        time.sleep(poll_interval)
 
 
 def invoke_and_wait(
@@ -404,36 +326,6 @@ def _resolve_request_context(context: dict[str, Any] | None) -> dict[str, Any]:
     except Exception as exc:
         logger.debug("Falling back to empty request_context (no ATX env): %s", exc)
         return {}
-
-
-def _send(
-    client: Any,
-    subagent_instance_id: str,
-    message: str,
-    request_context: dict[str, Any],
-    tolerate_send_errors: bool,
-) -> None:
-    """Fire-and-forget send. Tolerates -32603 by default."""
-    try:
-        client.send_message(
-            agentInstanceId=subagent_instance_id,
-            params={
-                "message": {
-                    "role": "agent",
-                    "parts": [{"kind": "text", "text": message}],
-                }
-            },
-            requestContext=request_context,
-        )
-    except Exception as e:
-        if tolerate_send_errors and _is_expected_send_error(e):
-            logger.info(
-                "send_message returned expected -32603 (long-running subagent, "
-                "continuing to poll): %s",
-                e,
-            )
-            return
-        raise A2AError(f"send_message failed: {e}") from e
 
 
 def _is_expected_send_error(err: BaseException) -> bool:

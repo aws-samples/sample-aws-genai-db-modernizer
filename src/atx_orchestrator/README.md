@@ -1,77 +1,79 @@
 # AWS Transform Integration (`atx_orchestrator`)
 
 Wraps the existing deterministic DB modernization pipeline so it can run on
-AWS Transform as an orchestrator coordinating purpose-built subagents.
+AWS Transform: an LLM orchestrator coordinates each pipeline phase as a subagent
+over A2A, while the analysis stays deterministic and auditable.
 
 - **Owner / contact:** `wwso-database-modernizer`
-- **Status:** PoC, experimental branch. Collector subagent + orchestrator built
-  and verified locally. **Not yet deployed to AWS** (account allowlisting pending).
 
 ## Architecture
 
-One agent per image, mirroring the existing `AGENT_TYPE` boundaries:
+**One image, dispatched by `AGENT_TYPE`.** A single container image
+(`Dockerfile.atx`) can run any agent; `atx_entrypoint.py` reads `AGENT_TYPE` at
+startup and serves the matching factory. The AWS Transform runtime provisions one
+instance per agent, and the orchestrator invokes the others over A2A.
 
 ```
 AWS Transform WebApp
      │  MCP / A2A
      ▼
-DBModernizationOrchestrator        (image: db-modernization-orchestrator)
-     │  invokes subagents via A2A (Agentic API)
-     ├─────────────► Collector subagent   (image: db-modernization-collector)
-     │                    │ ingest offline collection → collector/output.json
-     ├─────────────► Triage subagent      (future image)
-     │                    │ collector/output.json → referee-triage/triage.json
-     └─────────────► (analysis, assignment, reality-check, schema-design, synthesis — future)
+orchestrator (AGENT_TYPE=orchestrator)
+     │  invokes subagents by name over A2A (Agentic API)
+     ├─► collector            → collector/output.json
+     ├─► referee-triage       → referee-triage/triage.json
+     ├─► analysis-<engine>    (dynamodb, documentdb, elasticache, opensearch, aurora-pg, aurora-mysql)
+     ├─► assignment-resolver  → assignment/v1/assignment.json
+     ├─► schema-<engine>      (six targets) → schema-<engine>/v1/schema_output.json
+     └─► referee-synthesis    → synthesis/v1/report.json (+ Decision & Engineering reports)
 
 All agents read/write through the ArtifactStore abstraction:
   - local dir  (ARTIFACT_DIR)  for testing
   - S3 bucket  (S3_BUCKET)     for cloud
 ```
 
-The pipeline logic is **unchanged** — these wrappers call the existing handlers
-(`run_collector`, `run_triage`, …) via shared functions in `core.py`. The whole
-deterministic path (collect → triage → assignment → reality-check) is byte-for-byte
-reproducible; only the orchestrator LLM's *routing* is non-deterministic.
+The deterministic pipeline logic is **unchanged** — these wrappers call the
+existing handlers via shared functions in `core.py`. Only the orchestrator LLM's
+routing is non-deterministic; every engine and query recommendation is produced
+deterministically.
 
 ## Files
 
 | File | Purpose |
 |---|---|
+| `atx_entrypoint.py` | Single container entry point; dispatches on `AGENT_TYPE` |
+| `Dockerfile.atx` | The one image for every agent (ARM64 / Graviton) |
 | `core.py` | Shared, storage-agnostic phase functions (single source of truth) |
-| `subagent_base.py` | Shared A2A message parsing + status management; one factory per agent |
-| `collector_subagent.py` | Collector subagent (`AGENT_TYPE='collector'`) |
-| `collector_app.py` | Collector container entry point |
-| `Dockerfile.collector` | Collector image |
-| `orchestrator.py` | Orchestrator class + tool registration |
-| `app.py` | Orchestrator container entry point |
-| `Dockerfile` | Orchestrator image |
-| `tools.py` | Orchestrator tools (`run_collect`, `run_triage`, `run_assignment`, …) |
+| `orchestrator.py` | Orchestrator class, tool registration, system prompt |
+| `app.py` | `build_agent_factory` for the orchestrator agent |
+| `tools.py` | Orchestrator A2A tools (`run_*_via_a2a`) |
+| `a2a.py` | A2A invoke-and-poll primitive |
+| `subagent_base.py` | Shared subagent factory (A2A message parsing + status management) |
+| `collector_subagent.py`, `triage_subagent.py`, `analysis_*_subagent.py`, `assignment_subagent.py`, `synthesis_subagent.py` | Per-phase subagents (one `AGENT_TYPE` each) |
+| `schema_subagent.py` | Schema-design subagents (six targets, one parametrized factory) |
+| `job_plan.py` | WebApp progress-panel updates |
+| `artifacts.py` | Artifacts-panel publishing + Decision/Engineering report renderers |
+| `store.py` | Transform storage subclasses (adds `write_text`) |
 | `requirements.txt` | Container Python deps (SDK + project runtime deps) |
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
+| `AGENT_TYPE` | (required) | Which agent this container serves; no default |
 | `ARTIFACT_DIR` | `/app/artifacts` | Local artifact dir (used when `S3_BUCKET` unset) |
 | `S3_BUCKET` | (unset) | Set to use S3 instead of local filesystem |
-| `OFFLINE_S3_BUCKET` / `OFFLINE_S3_KEY` | (unset) | Only needed if using the legacy ECS collector handler (not the ATX path) |
-| `LLM_MODE` | `none` | `none` keeps everything deterministic; `bedrock` enables optional LLM phases |
-| `MODEL_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Orchestrator/subagent LLM (cross-region profile) |
+| `MODEL_ID` | `us.anthropic.claude-sonnet-4-6` | Orchestrator/subagent LLM (cross-region profile) |
 | `AWS_REGION` | `us-east-1` | AWS region |
 
 ## Build (ARM64 — required for Bedrock AgentCore / Graviton)
 
 ```bash
-# Orchestrator
-docker build --platform linux/arm64 \
-  -t db-modernization-orchestrator:latest \
-  -f src/atx_orchestrator/Dockerfile .
-
-# Collector subagent
-docker build --platform linux/arm64 \
-  -t db-modernization-collector:latest \
-  -f src/atx_orchestrator/Dockerfile.collector .
+finch build --platform linux/arm64 \
+  -t db-modernization-atx:latest \
+  -f src/atx_orchestrator/Dockerfile.atx .
 ```
+
+`AGENT_TYPE` is set per AgentCore runtime, so this one image backs every agent.
 
 ## Local tests (no AWS, no Docker required)
 
@@ -79,10 +81,9 @@ docker build --platform linux/arm64 \
 uv run python scripts/atx_smoke_test.py       # imports + wiring
 uv run python scripts/atx_contract_test.py    # raw handlers reproduce reference
 uv run python scripts/atx_tool_test.py        # orchestrator tool reproduces reference
-uv run python scripts/atx_subagent_test.py    # collector|triage split reproduces reference
+uv run python scripts/atx_subagent_test.py    # collector | triage split reproduces reference
 ```
 
 ## Deploy
 
-See `docs/aws-transform-handoff.md` for the full deployment runbook, including the
-allowlisting prerequisite and the `deploy_agent_full_pipeline` invocations.
+See `docs/aws-transform-handoff.md` for the deployment runbook.

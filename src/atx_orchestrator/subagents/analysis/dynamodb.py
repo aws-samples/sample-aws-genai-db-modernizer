@@ -23,7 +23,7 @@ ATX_POC_STATE.md §10).
 
 from __future__ import annotations
 
-from src.atx_orchestrator.subagent_base import make_subagent_factory
+from src.atx_orchestrator.subagents.base import make_subagent_factory
 
 SYSTEM_PROMPT = """\
 You are the DynamoDB Analysis subagent for database modernization assessments.
@@ -42,9 +42,10 @@ written to S3 as separate artifacts.
 
 
 def _work(params: dict) -> dict:
-    from src.atx_orchestrator.core import run_analysis_dynamodb_core
+    from src.atx_orchestrator.core import run_analysis_core
 
-    return run_analysis_dynamodb_core(
+    return run_analysis_core(
+        "dynamodb",
         job_id=params["job_id"],
         database_name=params["database_name"],
     )
