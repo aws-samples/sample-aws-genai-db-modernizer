@@ -7,15 +7,16 @@ script is the reproducible, environment-prefixed form of what has been done by
 hand until now (the v2 runtimes reached version 16 through manual updates).
 
 Self-contained: boto3 + AWS CLI + a container builder (finch/docker) only. No
-Kiro/MCP dependency, so it ports directly into a CI/CD pipeline. It is NOT part
-of this repo's committed history; treat it as tooling to port to the deploy repo.
+Kiro/MCP dependency, so it runs the same way from the GitLab deploy pipeline and
+from a laptop (personal alias fleets).
 
 Verbs
 -----
   build    Build + push the ARM64 image, print the image URI (with digest).
   apply    Create-or-update each agent's runtime for an environment prefix, and
-           register/publish/enable it on first creation. Idempotent: re-running
-           after a code change just updates the runtimes (registry untouched).
+           register/publish/enable it. Re-running after a code change updates the
+           runtime in place and publishes a new (patch-bumped) registry version,
+           so refreshed agentCard metadata is what the platform serves.
   destroy  Deregister each agent and delete its runtime for an environment prefix.
   status   Show runtime + registry state for an environment prefix.
 
@@ -31,7 +32,7 @@ Examples
 
   # Stand up a 3-agent slice to prove the A2A path, using the just-built image
   ./atx_deploy.py apply --env estserna --agents orchestrator,collector,triage \
-      --image-uri 754955336423.dkr.ecr.us-east-1.amazonaws.com/modernizer-dev-agent-atx@sha256:...
+      --image-uri 754955336423.dkr.ecr.us-east-1.amazonaws.com/modernizer-dev-atx@sha256:...
 
   # Later, after another code change: rebuild + update the same slice in place
   ./atx_deploy.py build && ./atx_deploy.py apply --env estserna \
@@ -63,7 +64,7 @@ from botocore.exceptions import ClientError
 
 REGION = "us-east-1"
 REGISTRY_ENDPOINT = "https://iad.prod.agent-registry-external.elastic-gumby.ai.aws.dev"
-ECR_REPO = "modernizer-dev-agent-atx"
+ECR_REPO = "modernizer-dev-atx"
 DOCKERFILE = "src/atx_orchestrator/Dockerfile.atx"
 EXECUTION_ROLE = "AgentCoreExecutionRole"
 INVOKE_ROLE = "AWSTransformAgentInvokeRole"
@@ -74,6 +75,11 @@ DEFAULT_STAGE = "prod"
 OWNER_NAME = "wwso-database-modernizer"
 OWNER_CONTACT = "wwso-database-modernizer"
 BASE_CHAT_LABEL = "DB Modernization Assessment"
+
+# The registry serves the most recently published version (there is no
+# promote/set-current API), so every apply publishes a fresh, patch-bumped version
+# to push updated agentCard metadata. New agents start here.
+INITIAL_VERSION = "1.0.0"
 
 # Fleet name prefix. Deliberately short ("dbmod", not "db-modernization"): AgentCore
 # runtime names are capped at 48 chars, and the prefix + env + longest agent suffix
@@ -353,12 +359,12 @@ def _upsert_runtime(acc, name: str, image_uri: str, role_arn: str, env: dict[str
 # --------------------------------------------------------------------------- #
 
 
-def _agent_card(name: str, account: str, dependencies: list[str]) -> dict:
+def _agent_card(name: str, account: str, dependencies: list[str], version: str) -> dict:
     return {
         "id": name,
         "name": name,
         "description": f"ATX agent: {name}",
-        "version": "1.0.0",
+        "version": version,
         "capabilities": {
             "restartable": True,
             "a2aSupported": True,
@@ -392,6 +398,30 @@ def _agent_card(name: str, account: str, dependencies: list[str]) -> dict:
     }
 
 
+def _bump_patch(version: str) -> str:
+    """Return ``version`` with its patch component incremented.
+
+    The InvokeAgent version pattern only accepts numeric ``major.minor.patch``
+    (optionally a ``-dev-<alnum>`` suffix), so any suffix is dropped and the patch
+    is bumped. Falls back to the initial version if the input is not parseable.
+    """
+    parts = version.split("-", 1)[0].split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return INITIAL_VERSION
+    parts[-1] = str(int(parts[-1]) + 1)
+    return ".".join(parts)
+
+
+def _next_version(reg, name: str) -> str:
+    """Next version to publish for ``name``: current patch + 1, or the initial
+    version if the agent has no published version yet."""
+    try:
+        current = reg.get_agent_version(name=name).get("version")
+    except ClientError:
+        return INITIAL_VERSION
+    return _bump_patch(current) if current else INITIAL_VERSION
+
+
 def _register_and_publish(
     reg, agent: Agent, name: str, runtime_arn: str, account: str, chat_label: str, deps: list[str]
 ) -> None:
@@ -422,6 +452,8 @@ def _register_and_publish(
         else:
             raise
 
+    version = _next_version(reg, name)
+    agent_card = _agent_card(name, account, deps, version)
     config = {
         "shortDescription": f"ATX agent: {name}",
         "computeConfiguration": {
@@ -433,7 +465,7 @@ def _register_and_publish(
                 }
             }
         },
-        "agentCard": _agent_card(name, account, deps),
+        "agentCard": agent_card,
         "inputPayloadSchema": {"type": "object"},
         "outputPayloadSchema": {"type": "object"},
         "monitoringType": "HEALTHCHECK",
@@ -444,14 +476,20 @@ def _register_and_publish(
             "agentRecoveryConfiguration": {"recoveryWaitTimeSeconds": 60},
         },
     }
-    try:
-        reg.publish_agent_version(name=name, version="1.0.0", configuration=config)
-        print(f"  published {name} v1.0.0")
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ConflictException":
-            print(f"  version 1.0.0 already published for {name} (runtime updated in place)")
-        else:
+    for _ in range(8):
+        try:
+            reg.publish_agent_version(name=name, version=version, configuration=config)
+            print(f"  published {name} v{version}")
+            break
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConflictException":
+                # Version already exists (repeat/concurrent publish). Step past it.
+                version = _bump_patch(version)
+                agent_card["version"] = version
+                continue
             raise
+    else:
+        raise SystemExit(f"could not publish a new version for {name} after retries")
 
     reg.update_publisher_access_control(
         agentName=name, customerAccountId=account, accessControl="ENABLED"
