@@ -1,6 +1,6 @@
 [project]
 name = "database-modernizer"
-version = "1.0.0"
+version = "0.1.0b1"
 description = "AI-powered database modernization analysis and recommendation system"
 authors = [
     {name = "Amazon Web Services"}
