@@ -307,7 +307,7 @@ def _wait_ready(acc, runtime_id: str, timeout: float = 600.0) -> None:
         time.sleep(5)
 
 
-def _wait_deregistered(reg, name: str, timeout: float = 120.0) -> bool:
+def _wait_deregistered(reg, name: str, timeout: float = 300.0) -> bool:
     """Poll until the registry entry for ``name`` is gone.
 
     Deregistration is asynchronous. Deleting the runtime before it finalizes
@@ -605,11 +605,20 @@ def cmd_destroy(args, clients) -> None:
                 print(f"  not registered ({e.response['Error']['Code']}); skipping deregister")
             else:
                 raise
-        # Let the async deregistration finalize while the runtime still exists;
-        # deleting it first orphans the workflow and the entry gets stuck. The
-        # agent is already deprecated, so a slow finalize is not user-visible.
+        # Let the async deregistration finalize while the runtime still exists.
+        # The runtime is the anchor the registry uses to stop instances/fail the
+        # job; deleting it before deregistration completes orphans that workflow
+        # and wedges the entry permanently (a later force-deregister cannot
+        # finish it because the runtime is gone). So only delete the runtime once
+        # the agent is confirmed gone. On timeout, leave the runtime in place —
+        # the agent is already deprecated (hidden), and re-running destroy will
+        # delete the runtime once deregistration has finalized.
         if deregistering and not _wait_deregistered(reg, name):
-            print("  deregistration still in progress; agent is deprecated so it stays hidden")
+            print(
+                "  deregistration still in progress after wait; leaving the runtime "
+                f"{rt_name} in place (re-run destroy to delete it once the agent is gone)"
+            )
+            continue
         rid = _find_runtime(acc, rt_name)
         if rid:
             acc.delete_agent_runtime(agentRuntimeId=rid)
