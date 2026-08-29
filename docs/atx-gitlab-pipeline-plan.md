@@ -42,10 +42,18 @@ Deploy (`.gitlab/ci/deploy-dev.yml`, `deploy-branches.yml`):
   `db_modernization_feat_<slug>_orchestrator` stays under AgentCore's 48-char
   runtime-name limit.
 
-Prod + cleanup (`scripts/promote-images.sh`, `.gitlab/ci/cleanup.yml`):
+Prod + cleanup (`scripts/promote-images.sh`, `.gitlab/ci/deploy-prod.yml`,
+`.gitlab/ci/cleanup.yml`):
 
 - `promote-images.sh` `SERVICES` includes `atx` (skopeo `copy --all` carries the
-  arm64 manifest to `modernizer-prod-atx`).
+  arm64 manifest to `modernizer-prod-atx`). It now skips a service whose prod repo
+  does not exist yet (warn + continue), so a newly added service can't hard-fail
+  the shared promote job before its prod repo is created.
+- `deploy-agent-atx-prod` (main, `ATX_ENV=prod` -> `dbmod-prod`): mirror of
+  `deploy-agent-atx`, manual like `deploy-production`. Deploys the promoted,
+  immutable prod image `modernizer-prod-atx:<tag>` (fails fast if that tag is
+  missing). AgentCore roles and runner Policy 8 are account-level, shared with
+  dev, so no prod-specific IAM.
 - `cleanup-agent-atx-on-merge` (main): detects the merged feature branch (message
   parse + squash-merge API fallback) and full-fleet-destroys its fleet.
 
@@ -134,9 +142,10 @@ separate import exercise if desired.
 
 ## Remaining / follow-ups
 
-- **Prod ATX deploy job** is not built. `promote-images.sh` copies the image to
-  `modernizer-prod-atx`, but there is no job that runs `atx_deploy.py apply --env
-  prod` against the prod image (the mirror of `deploy-prod.yml`).
+- **Prod atx ECR repo bootstrap.** `modernizer-prod-atx` does not exist until prod
+  core-infra is deployed (defined in `core-infra.yaml`; `deploy-production` creates
+  it). Until then `promote-to-prod` skips atx and `deploy-agent-atx-prod` fails
+  fast on the missing image. Deploy prod core-infra once to activate the prod path.
 - **Full 16-agent fleet.** The pipeline defaults to the orchestrator/collector/
   triage subset (`ATX_AGENTS`). Scaling to the full fleet is a variable change;
   watch the 48-char runtime-name limit for longer suffixes on non-`dev` envs.
