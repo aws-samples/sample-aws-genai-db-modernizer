@@ -21,6 +21,7 @@ Resources:
   # -----------------------------------------------------------------------
   AgentCoreExecutionRole:
     Type: AWS::IAM::Role
+    # checkov:skip=CKV_AWS_111: Bedrock model invocation is scoped to model/inference-profile ARNs above. The remaining wildcards are actions with no resource-level support: xray:Put* (trace ingestion), logs:Create*/PutLogEvents (AgentCore creates its own /aws/bedrock-agentcore/* log groups), ecr auth token, and the AWS Transform Agentic API (transform-agents).
     Properties:
       RoleName: AgentCoreExecutionRole
       AssumeRolePolicyDocument:
@@ -42,7 +43,14 @@ Resources:
                   - bedrock:InvokeModelWithResponseStream
                   - bedrock-runtime:Converse
                   - bedrock-runtime:InvokeModel
-                Resource: "*"
+                # Scoped to foundation models and cross-region inference profiles
+                # (the agents invoke inference-profile IDs such as
+                # us.anthropic.claude-sonnet-4-6). Mirrors the proven pattern in
+                # infrastructure/cloudformation/orchestration.yaml.
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/*"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*"
+                  - "arn:aws:bedrock:us-*::foundation-model/*"
               - Sid: TransformAgentsApiPolicy
                 Effect: Allow
                 Action:
