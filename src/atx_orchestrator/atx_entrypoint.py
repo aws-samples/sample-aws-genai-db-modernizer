@@ -81,12 +81,9 @@ _AGENTS: dict[str, str] = {
     # mapping differences.
     "collector": "/tmp/collector_agent",  # nosec B108
     "referee-triage": "/tmp/triage_agent",  # nosec B108
-    "analysis-dynamodb": "/tmp/analysis_dynamodb_agent",  # nosec B108
-    "analysis-documentdb": "/tmp/analysis_documentdb_agent",  # nosec B108
-    "analysis-elasticache": "/tmp/analysis_elasticache_agent",  # nosec B108
-    "analysis-opensearch": "/tmp/analysis_opensearch_agent",  # nosec B108
-    "analysis-aurora-pg": "/tmp/analysis_aurora_pg_agent",  # nosec B108
-    "analysis-aurora-mysql": "/tmp/analysis_aurora_mysql_agent",  # nosec B108
+    # One consolidated analysis agent runs every triage-selected engine in-process
+    # (see ADR-024); it replaced six per-engine analysis-<engine> agents.
+    "analysis": "/tmp/analysis_agent",  # nosec B108
     "assignment-resolver": "/tmp/assignment_agent",  # nosec B108
     "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108
     # Schema design, one per target engine. Upstream exposes a single
@@ -134,28 +131,10 @@ def _resolve_factory(agent_type: str):
         from src.atx_orchestrator.subagents.triage import agent_factory
 
         return agent_factory
-    if agent_type == "analysis-dynamodb":
-        from src.atx_orchestrator.subagents.analysis.dynamodb import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis-documentdb":
-        from src.atx_orchestrator.subagents.analysis.documentdb import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis-elasticache":
-        from src.atx_orchestrator.subagents.analysis.elasticache import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis-opensearch":
-        from src.atx_orchestrator.subagents.analysis.opensearch import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis-aurora-pg":
-        from src.atx_orchestrator.subagents.analysis.aurora_pg import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis-aurora-mysql":
-        from src.atx_orchestrator.subagents.analysis.aurora_mysql import agent_factory
+    if agent_type == "analysis":
+        # One consolidated agent runs every triage-selected engine in-process
+        # (ADR-024), replacing the six per-engine analysis-<engine> branches.
+        from src.atx_orchestrator.subagents.analysis import agent_factory
 
         return agent_factory
     if agent_type == "assignment-resolver":

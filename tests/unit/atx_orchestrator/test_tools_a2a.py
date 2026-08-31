@@ -166,7 +166,7 @@ class TestToolsRegistered:
         tool_names = [getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS]
         assert "run_collect_via_a2a" in tool_names
         assert "run_triage_via_a2a" in tool_names
-        assert "run_analysis_dynamodb_via_a2a" in tool_names
+        assert "run_analysis_via_a2a" in tool_names
 
     def test_in_process_tools_removed_from_pipeline(self) -> None:
         """Y-3 refactor: in-process ``run_collect`` / ``run_triage`` /

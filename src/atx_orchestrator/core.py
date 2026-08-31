@@ -524,6 +524,88 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
     }
 
 
+def _selected_engines_from_triage(job_id: str, database_name: str, store) -> list[str]:
+    """Read triage's selected engines. Raises FileNotFoundError if triage is missing.
+
+    Triage already encodes source-engine constraints (a MySQL source yields
+    aurora_mysql, not aurora_pg), so the consolidated analysis agent trusts this
+    list rather than re-deriving it.
+    """
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    if not store.exists(triage_key):
+        raise FileNotFoundError(f"Triage output not found at '{triage_key}'. Run triage first.")
+    triage = store.read_json(triage_key)
+    engines: list[str] = []
+    for a in triage.get("selected_agents", []):
+        engine = a["agent_type"] if isinstance(a, dict) else a
+        if engine:
+            engines.append(str(engine))
+    return engines
+
+
+def run_all_analyses(
+    job_id: str,
+    database_name: str,
+    engines: list[str] | None = None,
+    store=None,
+    on_engine_start: Callable[[str, str], None] | None = None,
+    on_engine_done: Callable[[str, str, dict], None] | None = None,
+    on_engine_error: Callable[[str, str, str], None] | None = None,
+) -> dict:
+    """Run every triage-selected engine's analysis in one process.
+
+    The consolidated form of the six per-engine analysis subagents (see ADR-024).
+    Analysis is deterministic and millisecond-scale, so engines run sequentially:
+    a plain loop over the unchanged :func:`run_analysis_core`, which writes the
+    same ``analysis-<engine>/analysis.json`` artifacts the Assign phase reads.
+    Because the durable contract is those artifacts, nothing downstream changes.
+
+    ``engines`` defaults to triage's selected engines. Unknown tokens are skipped
+    with a warning. The optional callbacks report per-engine progress (the WebApp
+    job-plan sub-steps); each receives the engine key and the plan step label
+    ``analysis_<target_database>``. A single engine's failure is recorded and
+    reported but does not abort the rest (Assign tolerates partial analysis);
+    only an all-engines failure raises.
+    """
+    store = store or make_store()
+    if engines is None:
+        engines = _selected_engines_from_triage(job_id, database_name, store)
+
+    known = [e for e in engines if e in _ANALYSIS_ENGINES]
+    unknown = [e for e in engines if e not in _ANALYSIS_ENGINES]
+    if unknown:
+        logger.warning("run_all_analyses: skipping unknown engines %s", unknown)
+
+    results: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for engine in known:
+        phase = f"analysis_{_ANALYSIS_ENGINES[engine].target_database}"
+        if on_engine_start is not None:
+            on_engine_start(engine, phase)
+        try:
+            summary = run_analysis_core(engine, job_id, database_name, store=store)
+            results[engine] = summary
+            if on_engine_done is not None:
+                on_engine_done(engine, phase, summary)
+        except Exception as exc:  # noqa: BLE001 - record per-engine, keep going
+            logger.exception("run_all_analyses: engine %s failed", engine)
+            errors[engine] = str(exc)
+            if on_engine_error is not None:
+                on_engine_error(engine, phase, str(exc))
+
+    if known and not results:
+        raise RuntimeError(f"All {len(known)} analysis engines failed: {errors}")
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "engines_requested": list(engines),
+        "engines_analyzed": list(results.keys()),
+        "engines_failed": list(errors.keys()),
+        "per_engine": results,
+    }
+
+
 def run_assignment_core(
     job_id: str,
     database_name: str,

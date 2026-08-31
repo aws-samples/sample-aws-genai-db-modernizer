@@ -115,7 +115,9 @@ _SCHEMA = _ANALYSIS
 _SUBAGENTS: list[Agent] = [
     Agent("collector", "collector"),
     Agent("triage", "referee-triage"),
-    *[Agent(f"analysis-{e}", f"analysis-{e}") for e in _ANALYSIS],
+    # One consolidated analysis agent runs every selected engine in-process
+    # (ADR-024); it replaced six per-engine analysis-<engine> runtimes.
+    Agent("analysis", "analysis"),
     Agent("assignment", "assignment-resolver"),
     *[Agent(f"schema-{e}", f"schema-{e}") for e in _SCHEMA],
     Agent("synthesis", "referee-synthesis"),

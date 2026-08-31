@@ -40,12 +40,9 @@ class TestDiscoverSubagentsRegistration:
             # A2A pipeline phases, in execution order
             "run_collect_via_a2a",
             "run_triage_via_a2a",
-            "run_analysis_dynamodb_via_a2a",
-            "run_analysis_documentdb_via_a2a",
-            "run_analysis_elasticache_via_a2a",
-            "run_analysis_opensearch_via_a2a",
-            "run_analysis_aurora_pg_via_a2a",
-            "run_analysis_aurora_mysql_via_a2a",
+            # One consolidated analysis tool (ADR-024) replaced the six
+            # per-engine run_analysis_<engine>_via_a2a tools.
+            "run_analysis_via_a2a",
             "run_assignment_via_a2a",
             # schema design, one per target engine, run in parallel between
             # assignment and synthesis

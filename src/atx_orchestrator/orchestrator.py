@@ -20,12 +20,7 @@ from src.atx_orchestrator.tools import (
     declare_pipeline_plan,
     get_job_status,
     get_synthesis_report,
-    run_analysis_aurora_mysql_via_a2a,
-    run_analysis_aurora_pg_via_a2a,
-    run_analysis_documentdb_via_a2a,
-    run_analysis_dynamodb_via_a2a,
-    run_analysis_elasticache_via_a2a,
-    run_analysis_opensearch_via_a2a,
+    run_analysis_via_a2a,
     run_assignment_via_a2a,
     run_collect_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
@@ -68,16 +63,14 @@ yet; see the tool list below.
                                              uploads; pass only job_id + database_name, never a path.
   2. run_triage_via_a2a                    — invokes db-modernization-triage subagent
                                              to detect workload signals + select candidate engines.
-  3. run_analysis_dynamodb_via_a2a         — score every table against DynamoDB patterns.
-                                             Deterministic: no LLM. The optional Opus advisor
-                                             is disabled, which is why this now takes minutes
-                                             rather than the 38 it once did.
-  4. run_analysis_documentdb_via_a2a       — score every table against DocumentDB patterns.
-                                             Deterministic: no LLM, same as DynamoDB above.
-  5. run_analysis_elasticache_via_a2a      — score every table against ElastiCache/Redis patterns.
-  6. run_analysis_opensearch_via_a2a       — score every table against OpenSearch patterns.
-  7. run_analysis_aurora_pg_via_a2a        — Aurora PostgreSQL relational baseline (PG sources only).
-  8. run_analysis_aurora_mysql_via_a2a     — Aurora MySQL relational baseline (MySQL/MariaDB sources only).
+  3. run_analysis_via_a2a                  — run analysis for every engine triage selected.
+                                             ONE call runs all selected engines in one
+                                             consolidated subagent (deterministic, no LLM),
+                                             reporting per-engine sub-steps under the Analysis
+                                             box. Call it ONCE after triage — never once per
+                                             engine. Engine selection and source-engine
+                                             constraints are handled inside the agent from
+                                             triage's output.
   9. run_assignment_via_a2a                — score queries against candidate engines + produce assignment.
  10. run_reality_check                     — NOT AVAILABLE. No deployed subagent exists for this
                                              phase yet. Do not call it. Synthesis treats
@@ -110,14 +103,13 @@ yet; see the tool list below.
  13. get_job_status                        — check current phase progression.
  14. get_synthesis_report                  — read the completed report.
 
-Parallel analysis dispatch:
-  After triage completes, you can invoke up to 6 analysis subagents in
-  parallel via A2A — they read independent inputs (collector output) and
-  produce independent outputs (per-engine analysis.json). This significantly
-  speeds up total assessment time. Only dispatch to analysis subagents whose
-  engine appears in triage's selected_engines list. Also respect source-engine
-  constraints: Aurora-PG only for PostgreSQL sources, Aurora-MySQL only for
-  MySQL/MariaDB sources.
+Analysis dispatch:
+  Analysis is a SINGLE call. run_analysis_via_a2a runs every engine triage
+  selected inside one consolidated subagent, which reads triage's output to
+  pick engines and respect source-engine constraints (Aurora-PG only for
+  PostgreSQL sources, Aurora-MySQL only for MySQL/MariaDB) internally. You no
+  longer dispatch one analysis call per engine; the agent reports per-engine
+  progress as sub-steps under the Analysis box.
 
 Subagent invocation:
   The A2A tools resolve subagents BY NAME (e.g. "db-modernization-collector")
@@ -154,9 +146,9 @@ Workflow:
       1. declare_pipeline_plan(job_id, database_name)
       2. run_collect_via_a2a
       3. run_triage_via_a2a
-      4. the analysis tools for the engines triage selected, dispatched in
-         parallel, respecting the source-engine constraints (Aurora-PG only for
-         PostgreSQL sources, Aurora-MySQL only for MySQL/MariaDB)
+      4. run_analysis_via_a2a — a single call runs analysis for every engine
+         triage selected (engine selection and source-engine constraints are
+         handled inside the agent from triage's output)
       5. run_assignment_via_a2a
       6. the schema-design tools for the same engines triage selected, dispatched
          in parallel — run_schema_design_<engine>_via_a2a with
@@ -212,12 +204,7 @@ PIPELINE_TOOLS = [
     declare_pipeline_plan,
     run_collect_via_a2a,
     run_triage_via_a2a,
-    run_analysis_dynamodb_via_a2a,
-    run_analysis_documentdb_via_a2a,
-    run_analysis_elasticache_via_a2a,
-    run_analysis_opensearch_via_a2a,
-    run_analysis_aurora_pg_via_a2a,
-    run_analysis_aurora_mysql_via_a2a,
+    run_analysis_via_a2a,
     run_assignment_via_a2a,
     run_schema_design_dynamodb_via_a2a,
     run_schema_design_documentdb_via_a2a,
