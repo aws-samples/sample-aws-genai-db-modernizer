@@ -110,6 +110,12 @@ empty_bucket() {
   # Purge remaining versions and delete markers in batches. delete-objects
   # accepts at most 1000 keys per call, so cap each page at 500 (which bounds
   # the combined versions + delete markers list well under that limit).
+  #
+  # Guard against spinning forever: if a delete-objects call fails to make
+  # progress (e.g. missing s3:DeleteObjectVersion permission), list-object-
+  # versions keeps returning the same keys. Bail out after too many no-progress
+  # passes so the caller's emptiness check can fail fast instead of hanging.
+  local stall=0
   while true; do
     local batch
     batch=$(aws s3api list-object-versions \
@@ -123,9 +129,17 @@ empty_bucket() {
       break
     fi
 
-    aws s3api delete-objects \
+    if aws s3api delete-objects \
       --bucket "$bucket" --region "$region" \
-      --delete "$batch" >/dev/null 2>&1 || true
+      --delete "$batch" >/dev/null 2>&1; then
+      stall=0
+    else
+      stall=$((stall + 1))
+      if [ "$stall" -ge 3 ]; then
+        echo "empty_bucket: delete-objects made no progress on ${bucket}; aborting purge loop" >&2
+        break
+      fi
+    fi
   done
 }
 
