@@ -58,25 +58,41 @@ if [ -n "$POOL_ID" ] && [ -n "$POOL_CLIENT" ] && [ -n "$DOMAIN" ]; then
     "$POOL_ID" "$POOL_CLIENT" "$CALLBACK" 2>/dev/null || true
 fi
 
-# Empty S3 buckets before deleting storage stack
-echo ""
-echo "=== Emptying S3 buckets ==="
-for BUCKET_NAME in "${FEATURE_STACK}-storage-bucket" "${FEATURE_STACK}-logs-bucket"; do
-  if aws s3api head-bucket --bucket "$BUCKET_NAME" --region "$REGION" 2>/dev/null; then
-    echo "  Emptying s3://${BUCKET_NAME} (including versions and delete markers)..."
-    empty_bucket "$BUCKET_NAME" "$REGION"
-    echo "  Done: ${BUCKET_NAME}"
-  else
-    echo "  Bucket ${BUCKET_NAME} not found (skipping)"
-  fi
-done
-
 # Delete stacks in reverse dependency order
 echo ""
 echo "=== Deleting stacks ==="
 delete_stack_if_exists "${FEATURE_STACK}-ui"
 delete_stack_if_exists "${FEATURE_STACK}-api-service"
 delete_stack_if_exists "${FEATURE_STACK}-orchestration"
+
+# Empty S3 buckets before deleting the storage stack that owns them.
+# CloudFormation cannot delete a non-empty bucket, so this must run
+# immediately before the storage stack teardown.
+echo ""
+echo "=== Emptying S3 buckets ==="
+for BUCKET_NAME in "${FEATURE_STACK}-storage-bucket" "${FEATURE_STACK}-logs-bucket"; do
+  if aws s3api head-bucket --bucket "$BUCKET_NAME" --region "$REGION" 2>/dev/null; then
+    echo "  Emptying s3://${BUCKET_NAME} (including versions and delete markers)..."
+    empty_bucket "$BUCKET_NAME" "$REGION"
+
+    # Verify the bucket is truly empty. CloudFormation cannot delete a
+    # non-empty bucket, so fail fast here with a clear message rather than
+    # letting the storage-stack delete below hang in DELETE_IN_PROGRESS.
+    REMAINING=$(aws s3api list-object-versions \
+      --bucket "$BUCKET_NAME" --region "$REGION" --max-items 1 \
+      --query 'length([Versions[], DeleteMarkers[]][])' \
+      --output text 2>/dev/null || echo "0")
+    if [ "$REMAINING" != "0" ] && [ "$REMAINING" != "None" ]; then
+      echo "  ERROR: ${BUCKET_NAME} still has objects after emptying." >&2
+      echo "  Aborting before storage-stack delete to avoid a stuck teardown." >&2
+      exit 1
+    fi
+    echo "  Done: ${BUCKET_NAME} (empty)"
+  else
+    echo "  Bucket ${BUCKET_NAME} not found (skipping)"
+  fi
+done
+
 delete_stack_if_exists "${FEATURE_STACK}-storage"
 delete_stack_if_exists "${FEATURE_STACK}-ecs-infra"
 
