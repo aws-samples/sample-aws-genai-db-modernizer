@@ -19,6 +19,7 @@ locally and in CI where ``agent_builder_sdk`` is absent.
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -28,13 +29,17 @@ from src.atx_orchestrator.core import _ANALYSIS_ENGINES, ingest_offline_collecti
 from src.atx_orchestrator.runtime.store import upgrade_store
 from src.storage.local_store import LocalArtifactStore
 
-SAMPLE = Path(__file__).resolve().parents[3] / "docs/examples/wordpress/wordpress-collection.json"
+# Only the .zip is committed (the README has you unzip it), so read the sample
+# straight from the archive — the unzipped .json is not present in a fresh checkout.
+SAMPLE_ZIP = Path(__file__).resolve().parents[3] / "docs/examples/wordpress/wordpress.zip"
+SAMPLE_MEMBER = "wordpress-collection.json"
 
 
 def _load_sample() -> dict:
-    """Load the offline-collection sample, stripping its ``collection_output``
-    header line (the file is a header line followed by the JSON body)."""
-    content = SAMPLE.read_text().strip()
+    """Load the offline-collection sample from the committed zip, stripping its
+    ``collection_output`` header line (a header line followed by the JSON body)."""
+    with zipfile.ZipFile(SAMPLE_ZIP) as zf:
+        content = zf.read(SAMPLE_MEMBER).decode("utf-8").strip()
     if not content.startswith("{") and "\n" in content:
         content = content[content.index("\n") + 1 :]
     data = json.loads(content)
