@@ -88,7 +88,7 @@ def _has_context(request_context: dict[str, Any]) -> bool:
 
 
 def put_job_plan(
-    steps: list[dict[str, str]],
+    steps: list[dict[str, object]],
     request_context: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Declare the job plan; returns dict mapping ``stepLabel`` -> ``stepId``.
@@ -217,6 +217,56 @@ def update_job_plan_step(
         return False
 
 
+def list_job_plan_steps(
+    parent_step_id: str | None = None,
+    request_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """List the job plan's steps (best-effort). Returns [] outside the runtime.
+
+    Each item carries at least ``stepId``, ``stepLabel``, ``status`` and
+    ``parentStepId``. Pass ``parent_step_id`` to list only the children of a
+    step (e.g. the analysis parent's per-engine sub-steps). Paginates.
+
+    Used by consolidated subagents to resolve their own sub-step ids across
+    process boundaries: the orchestrator declares the plan (and holds the
+    in-process registry), but a subagent runs in a different runtime, so it
+    reads the step ids back from the server instead.
+    """
+    ctx = _resolve_request_context(request_context)
+    if not _has_context(ctx):
+        logger.debug("list_job_plan_steps: no ATX context — skipping")
+        return []
+
+    client = _get_client()
+    if client is None:
+        logger.debug("list_job_plan_steps: no client — skipping")
+        return []
+
+    steps: list[dict[str, Any]] = []
+    next_token: str | None = None
+    try:
+        while True:
+            kwargs: dict[str, Any] = {"requestContext": ctx}
+            if parent_step_id:
+                kwargs["parentStepId"] = parent_step_id
+            if next_token:
+                kwargs["nextToken"] = next_token
+            response = client.list_job_plan_steps(**kwargs)
+            steps.extend(response.get("steps") or [])
+            next_token = response.get("nextToken")
+            if not next_token:
+                break
+        logger.info("ATX list_job_plan_steps OK: %d steps", len(steps))
+        return steps
+    except Exception as exc:
+        logger.warning(
+            "ATX list_job_plan_steps FAILED (best-effort): %s: %s",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        return []
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Module-level step registry
 # ═════════════════════════════════════════════════════════════════════════════
@@ -256,6 +306,25 @@ def clear_step_registry() -> None:
     _step_registry = {}
 
 
+def register_steps_from_server(parent_step_id: str | None = None) -> dict[str, str]:
+    """Populate the registry from the server's plan (for out-of-process agents).
+
+    Lists the plan via :func:`list_job_plan_steps`, builds a
+    ``stepLabel -> stepId`` map, registers it, and returns it. Empty outside the
+    ATX runtime. Lets a consolidated subagent resolve the sub-step ids the
+    orchestrator declared in a different process, so its ``mark_step_*`` calls
+    land on the right steps.
+    """
+    mappings = {
+        s["stepLabel"]: s["stepId"]
+        for s in list_job_plan_steps(parent_step_id)
+        if s.get("stepLabel") and s.get("stepId")
+    }
+    if mappings:
+        register_steps(mappings)
+    return mappings
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Convenience helpers — keeps A2A tools clean (2 lines added per phase)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -285,3 +354,18 @@ def mark_step_failed(phase_name: str, reason: str = "") -> None:
         # Truncate reason to keep the API payload small.
         desc = reason[:200] if reason else None
         update_job_plan_step(step_id, STATUS_FAILED, description=desc)
+
+
+def mark_step_skipped(phase_name: str, reason: str = "") -> None:
+    """Mark a phase STOPPED (not analyzed) by phase_name lookup, carrying the reason.
+
+    Used for candidate engines triage deliberately did not analyze (e.g. the
+    non-matching Aurora variant for a given source engine). STOPPED is the closest
+    terminal status to "considered but not run"; NOT_STARTED renders as still
+    pending. The reason rides along as the step description so the WebApp can show
+    why the engine was skipped. Safe if unregistered.
+    """
+    step_id = get_step_id(phase_name)
+    if step_id:
+        desc = reason[:200] if reason else None
+        update_job_plan_step(step_id, STATUS_STOPPED, description=desc)

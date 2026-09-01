@@ -85,12 +85,7 @@ RUN mkdir -p /tmp/agent_queue /app/artifacts \
     /tmp/orchestrator_agent \
     /tmp/collector_agent \
     /tmp/triage_agent \
-    /tmp/analysis_dynamodb_agent \
-    /tmp/analysis_documentdb_agent \
-    /tmp/analysis_elasticache_agent \
-    /tmp/analysis_opensearch_agent \
-    /tmp/analysis_aurora_pg_agent \
-    /tmp/analysis_aurora_mysql_agent \
+    /tmp/analysis_agent \
     /tmp/assignment_agent \
     /tmp/synthesis_agent \
     /tmp/schema_dynamodb_agent \

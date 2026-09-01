@@ -93,7 +93,9 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     # Reset any prior registry (new pipeline session).
     clear_step_registry()
 
-    steps = [
+    # dict[str, object] (not str): the "analysis" node carries a nested subSteps
+    # list, so values are no longer all strings.
+    steps: list[dict[str, object]] = [
         {
             "stepLabel": "collector",
             "stepName": "Collect Database Schema and Queries",
@@ -104,35 +106,46 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "stepName": "Triage: Select Candidate Engines",
             "description": "Identify candidate AWS database engines based on the workload's patterns.",
         },
+        # One consolidated analysis agent (ADR-024) runs every selected engine
+        # in-process and ticks these per-engine sub-steps as it goes, so the
+        # WebApp shows a nested checklist inside the Analysis box. Sub-step labels
+        # match core's analysis_<target_database> phase names.
         {
-            "stepLabel": "analysis_dynamodb",
-            "stepName": "Analyze for DynamoDB",
-            "description": "Score tables and queries for DynamoDB suitability.",
-        },
-        {
-            "stepLabel": "analysis_documentdb",
-            "stepName": "Analyze for DocumentDB",
-            "description": "Score tables and queries for DocumentDB suitability.",
-        },
-        {
-            "stepLabel": "analysis_elasticache",
-            "stepName": "Analyze for ElastiCache",
-            "description": "Score cache-suitable workload patterns.",
-        },
-        {
-            "stepLabel": "analysis_opensearch",
-            "stepName": "Analyze for OpenSearch",
-            "description": "Score search-suitable workload patterns.",
-        },
-        {
-            "stepLabel": "analysis_aurora_postgresql",
-            "stepName": "Analyze for Aurora PostgreSQL",
-            "description": "Score relational workloads for Aurora PostgreSQL.",
-        },
-        {
-            "stepLabel": "analysis_aurora_mysql",
-            "stepName": "Analyze for Aurora MySQL",
-            "description": "Score relational workloads for Aurora MySQL.",
+            "stepLabel": "analysis",
+            "stepName": "Analyze Candidate Engines",
+            "description": "Score tables and queries against each selected AWS engine.",
+            "subSteps": [
+                {
+                    "stepLabel": "analysis_dynamodb",
+                    "stepName": "Analyze for DynamoDB",
+                    "description": "Score tables and queries for DynamoDB suitability.",
+                },
+                {
+                    "stepLabel": "analysis_documentdb",
+                    "stepName": "Analyze for DocumentDB",
+                    "description": "Score tables and queries for DocumentDB suitability.",
+                },
+                {
+                    "stepLabel": "analysis_elasticache",
+                    "stepName": "Analyze for ElastiCache",
+                    "description": "Score cache-suitable workload patterns.",
+                },
+                {
+                    "stepLabel": "analysis_opensearch",
+                    "stepName": "Analyze for OpenSearch",
+                    "description": "Score search-suitable workload patterns.",
+                },
+                {
+                    "stepLabel": "analysis_aurora_postgresql",
+                    "stepName": "Analyze for Aurora PostgreSQL",
+                    "description": "Score relational workloads for Aurora PostgreSQL.",
+                },
+                {
+                    "stepLabel": "analysis_aurora_mysql",
+                    "stepName": "Analyze for Aurora MySQL",
+                    "description": "Score relational workloads for Aurora MySQL.",
+                },
+            ],
         },
         {
             "stepLabel": "assignment",
@@ -423,210 +436,44 @@ def run_triage_via_a2a(
     )
 
 
-# Analysis over A2A is uniform except for two things: the plan step label and,
-# for the two Bedrock-LLM engines, a longer timeout. Keyed by the suffix that
-# appears in both the agent id (analysis-<suffix>) and the log/error label.
-_ANALYSIS_A2A_STEPS: dict[str, str] = {
-    "dynamodb": "analysis_dynamodb",
-    "documentdb": "analysis_documentdb",
-    "elasticache": "analysis_elasticache",
-    "opensearch": "analysis_opensearch",
-    "aurora-pg": "analysis_aurora_postgresql",
-    "aurora-mysql": "analysis_aurora_mysql",
-}
-# DynamoDB and DocumentDB run the Bedrock Opus advisor; a Discourse-scale
-# workload can take 55-80 min, so they get a 90-min ceiling. The four
-# deterministic engines fall back to invoke_and_wait's default timeout.
-_ANALYSIS_A2A_TIMEOUT: dict[str, float] = {
-    "dynamodb": 5400.0,
-    "documentdb": 5400.0,
-}
+@tool
+def run_analysis_via_a2a(
+    job_id: str,
+    database_name: str,
+) -> str:
+    """Run analysis for every triage-selected engine via one consolidated subagent.
 
+    Requires Collector + Triage to have run first. The single ``analysis``
+    subagent (ADR-024) reads triage's selected engines and runs each engine's
+    deterministic analysis in-process, writing the same per-engine artifacts the
+    Assignment phase reads:
 
-def _run_analysis_via_a2a(suffix: str, job_id: str, database_name: str) -> str:
-    """Shared body for the six analysis A2A tools."""
+      - ``<db>/<job>/analysis-<engine>/analysis.json``      — recommendations
+      - ``<db>/<job>/analysis-<engine>/decision-trace.json`` — per-query trace
+      - ``<db>/<job>/analysis-<engine>/er-diagram.mmd``      — DynamoDB/DocumentDB
+
+    It replaced the six per-engine analysis tools: call this ONCE, after triage.
+    The agent ticks the per-engine sub-steps under the "analysis" plan step, so
+    the WebApp shows a nested checklist inside the Analysis box. Subagent NAME:
+    ``<prefix>-analysis``.
+
+    Args:
+        job_id: Unique job identifier.
+        database_name: Source database name.
+
+    Returns:
+        JSON string with the merged completion payload (engines_analyzed,
+        engines_failed, per_engine summaries), or an error dict if the A2A
+        round-trip failed.
+    """
     return _run_phase_via_a2a(
-        agent_suffix=f"analysis-{suffix}",
-        step=_ANALYSIS_A2A_STEPS[suffix],
-        label=f"analysis-{suffix}",
+        agent_suffix="analysis",
+        step="analysis",
+        label="analysis",
         job_id=job_id,
         database_name=database_name,
         message=json.dumps({"job_id": job_id, "database_name": database_name}),
-        timeout=_ANALYSIS_A2A_TIMEOUT.get(suffix),
     )
-
-
-@tool
-def run_analysis_dynamodb_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run DynamoDB analysis by invoking a deployed analysis subagent over A2A.
-
-    Requires the Collector phase to have run first (so the subagent can read
-    ``collector/output.json`` from shared artifact storage — S3 in the deployed
-    case). Triage is NOT a hard prerequisite — analysis reads from collector
-    output directly and produces recommendations independently.
-
-    Uses ``invoke_agent`` to spawn a fresh analysis-dynamodb subagent instance
-    BY NAME and deliver the initial message atomically. Polls until terminal
-    status. The subagent writes 3 artifacts to S3:
-
-      - ``<db>/<job>/analysis-dynamodb/analysis.json``      — recommendations
-      - ``<db>/<job>/analysis-dynamodb/decision-trace.json`` — per-query trace
-      - ``<db>/<job>/analysis-dynamodb/er-diagram.mmd``      — Mermaid ER diagram
-
-    This is the ONLY DynamoDB analysis tool available to the orchestrator —
-    no in-process variant exists (matches the pattern from A14). The subagent
-    must be deployed and its registered NAME must be
-    ``db-modernization-analysis-dynamodb``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload (tables_analyzed,
-        confidence-band counts, estimated cost, artifact keys), or an error
-        dict if the A2A round-trip failed.
-    """
-    return _run_analysis_via_a2a("dynamodb", job_id, database_name)
-
-
-@tool
-def run_analysis_documentdb_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run DocumentDB analysis by invoking a deployed analysis subagent over A2A.
-
-    Requires the Collector phase to have run first (so the subagent can read
-    ``collector/output.json`` from shared artifact storage — S3 in the deployed
-    case). Triage is NOT a hard prerequisite — analysis reads from collector
-    output directly and produces recommendations independently.
-
-    Uses ``invoke_agent`` to spawn a fresh analysis-documentdb subagent instance
-    BY NAME and deliver the initial message atomically. Polls until terminal
-    status. The subagent writes 3 artifacts to S3:
-
-      - ``<db>/<job>/analysis-documentdb/analysis.json``      — recommendations
-      - ``<db>/<job>/analysis-documentdb/decision-trace.json`` — per-query trace
-      - ``<db>/<job>/analysis-documentdb/er-diagram.mmd``      — Mermaid ER diagram
-
-    This is the ONLY DocumentDB analysis tool available to the orchestrator —
-    no in-process variant exists (matches the pattern from A14 / Phase A Half 2).
-    The subagent must be deployed and its registered NAME must be
-    ``db-modernization-analysis-documentdb``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload (tables_analyzed,
-        confidence-band counts, estimated cost, artifact keys), or an error
-        dict if the A2A round-trip failed.
-    """
-    return _run_analysis_via_a2a("documentdb", job_id, database_name)
-
-
-@tool
-def run_analysis_elasticache_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run ElastiCache/Redis analysis by invoking a deployed analysis subagent over A2A.
-
-    Requires the Collector phase to have run first. Deterministic — no LLM
-    invocation. Uses ``invoke_agent`` to spawn a fresh analysis-elasticache
-    subagent instance BY NAME. Polls until terminal status. The subagent
-    writes 2-3 artifacts to S3:
-
-      - ``<db>/<job>/analysis-elasticache/analysis.json``      — recommendations
-      - ``<db>/<job>/analysis-elasticache/decision-trace.json`` — per-query trace
-      - ``<db>/<job>/analysis-elasticache/er-diagram.mmd``      — optional (only if produced)
-
-    The subagent must be deployed and its registered NAME must be
-    ``db-modernization-analysis-elasticache``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload, or an error dict.
-    """
-    return _run_analysis_via_a2a("elasticache", job_id, database_name)
-
-
-@tool
-def run_analysis_opensearch_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run OpenSearch analysis by invoking a deployed analysis subagent over A2A.
-
-    Requires the Collector phase to have run first. Deterministic — no LLM
-    invocation. Uses ``invoke_agent`` to spawn a fresh analysis-opensearch
-    subagent instance BY NAME. Polls until terminal status. The subagent
-    writes 2 artifacts to S3 (no ER diagram for OpenSearch):
-
-      - ``<db>/<job>/analysis-opensearch/analysis.json``      — recommendations
-      - ``<db>/<job>/analysis-opensearch/decision-trace.json`` — per-query trace
-
-    The subagent must be deployed and its registered NAME must be
-    ``db-modernization-analysis-opensearch``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload, or an error dict.
-    """
-    return _run_analysis_via_a2a("opensearch", job_id, database_name)
-
-
-@tool
-def run_analysis_aurora_pg_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run Aurora PostgreSQL analysis by invoking a deployed subagent over A2A.
-
-    Requires the Collector phase to have run first. Deterministic — no LLM
-    invocation. Only meaningful for PostgreSQL source engines. Subagent name:
-    ``db-modernization-analysis-aurora-pg``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload, or an error dict.
-    """
-    return _run_analysis_via_a2a("aurora-pg", job_id, database_name)
-
-
-@tool
-def run_analysis_aurora_mysql_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run Aurora MySQL analysis by invoking a deployed subagent over A2A.
-
-    Requires the Collector phase to have run first. Deterministic — no LLM
-    invocation. Only meaningful for MySQL/MariaDB source engines. Subagent
-    name: ``db-modernization-analysis-aurora-mysql``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload, or an error dict.
-    """
-    return _run_analysis_via_a2a("aurora-mysql", job_id, database_name)
 
 
 @tool
