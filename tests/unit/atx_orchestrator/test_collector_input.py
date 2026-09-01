@@ -10,8 +10,9 @@ Two behaviours are pinned here:
   the platform job UUID from the agent context, excluding the auto-written
   ``job_objective``.
 
-The orchestrator wiring test confirms ``run_collect_via_a2a`` discovers the
-upload and passes its key to the collector as ``input_key``.
+The orchestrator wiring test confirms ``run_deterministic_core_via_a2a``
+discovers the upload and passes its key to the deterministic-core agent as
+``input_key`` (the agent's collect step then falls back to the seed when empty).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from unittest.mock import patch
 import pytest
 
 from src.atx_orchestrator import core
-from src.atx_orchestrator.tools import run_collect_via_a2a
+from src.atx_orchestrator.tools import run_deterministic_core_via_a2a
 
 
 class _FakeStore:
@@ -117,7 +118,7 @@ class TestDiscoverUploadedInput:
 
 
 # =============================================================================
-# orchestrator wiring: run_collect_via_a2a discovers + passes the key
+# orchestrator wiring: run_deterministic_core_via_a2a discovers + passes the key
 
 
 class TestOrchestratorPassesDiscoveredKey:
@@ -128,7 +129,7 @@ class TestOrchestratorPassesDiscoveredKey:
             patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
             patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=key),
         ):
-            run_collect_via_a2a(job_id="job", database_name="db")
+            run_deterministic_core_via_a2a(job_id="job", database_name="db")
         message = json.loads(m.call_args[0][1])
         assert message["input_key"] == key
 
@@ -138,6 +139,6 @@ class TestOrchestratorPassesDiscoveredKey:
             patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
             patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None),
         ):
-            run_collect_via_a2a(job_id="job", database_name="db")
-        # empty input_key -> collector falls back to the seed key
+            run_deterministic_core_via_a2a(job_id="job", database_name="db")
+        # empty input_key -> collect step falls back to the seed key
         assert json.loads(m.call_args[0][1])["input_key"] == ""

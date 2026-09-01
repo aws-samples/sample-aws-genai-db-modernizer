@@ -113,12 +113,11 @@ _ANALYSIS = ("dynamodb", "documentdb", "elasticache", "opensearch", "aurora-pg",
 _SCHEMA = _ANALYSIS
 
 _SUBAGENTS: list[Agent] = [
-    Agent("collector", "collector"),
-    Agent("triage", "referee-triage"),
-    # One consolidated analysis agent runs every selected engine in-process
-    # (ADR-024); it replaced six per-engine analysis-<engine> runtimes.
-    Agent("analysis", "analysis"),
-    Agent("assignment", "assignment-resolver"),
+    # One consolidated deterministic-core agent runs the whole deterministic
+    # front-half in-process (ADR-025): Collect -> Triage -> Analyze (every
+    # selected engine) -> Assign. It replaced four runtimes (collector, triage,
+    # analysis, assignment). Analysis was itself already consolidated per ADR-024.
+    Agent("deterministic-core", "deterministic-core"),
     *[Agent(f"schema-{e}", f"schema-{e}") for e in _SCHEMA],
     Agent("synthesis", "referee-synthesis"),
 ]

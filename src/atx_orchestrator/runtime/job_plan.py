@@ -333,18 +333,28 @@ def register_steps_from_server(parent_step_id: str | None = None) -> dict[str, s
 # update_job_plan_step, so calls are always safe.
 
 
-def mark_step_running(phase_name: str) -> None:
-    """Mark a phase IN_PROGRESS by phase_name lookup. Safe if unregistered."""
+def mark_step_running(phase_name: str, detail: str = "") -> None:
+    """Mark a phase IN_PROGRESS by phase_name lookup. Safe if unregistered.
+
+    ``detail``, when given, is attached as the step description (truncated) so the
+    WebApp panel can show a live note for the running phase.
+    """
     step_id = get_step_id(phase_name)
     if step_id:
-        update_job_plan_step(step_id, STATUS_IN_PROGRESS)
+        desc = detail[:200] if detail else None
+        update_job_plan_step(step_id, STATUS_IN_PROGRESS, description=desc)
 
 
-def mark_step_succeeded(phase_name: str) -> None:
-    """Mark a phase SUCCEEDED by phase_name lookup. Safe if unregistered."""
+def mark_step_succeeded(phase_name: str, detail: str = "") -> None:
+    """Mark a phase SUCCEEDED by phase_name lookup. Safe if unregistered.
+
+    ``detail``, when given, is attached as the step description (truncated) so the
+    WebApp panel can show what the phase found (e.g. triage's detected signals).
+    """
     step_id = get_step_id(phase_name)
     if step_id:
-        update_job_plan_step(step_id, STATUS_SUCCEEDED)
+        desc = detail[:200] if detail else None
+        update_job_plan_step(step_id, STATUS_SUCCEEDED, description=desc)
 
 
 def mark_step_failed(phase_name: str, reason: str = "") -> None:

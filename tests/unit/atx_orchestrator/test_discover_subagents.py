@@ -37,15 +37,13 @@ class TestDiscoverSubagentsRegistration:
         expected = {
             # plan declaration
             "declare_pipeline_plan",
-            # A2A pipeline phases, in execution order
-            "run_collect_via_a2a",
-            "run_triage_via_a2a",
-            # One consolidated analysis tool (ADR-024) replaced the six
-            # per-engine run_analysis_<engine>_via_a2a tools.
-            "run_analysis_via_a2a",
-            "run_assignment_via_a2a",
+            # A2A pipeline phases, in execution order. One consolidated
+            # deterministic-core tool (ADR-025) replaced the four separate
+            # run_collect / run_triage / run_analysis / run_assignment _via_a2a
+            # tools; it runs Collect -> Triage -> Analyze -> Assign in one agent.
+            "run_deterministic_core_via_a2a",
             # schema design, one per target engine, run in parallel between
-            # assignment and synthesis
+            # the deterministic core and synthesis
             "run_schema_design_dynamodb_via_a2a",
             "run_schema_design_documentdb_via_a2a",
             "run_schema_design_elasticache_via_a2a",

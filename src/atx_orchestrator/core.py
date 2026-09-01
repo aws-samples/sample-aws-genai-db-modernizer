@@ -744,6 +744,179 @@ def run_assignment_core(
     }
 
 
+def _triage_signals(store, job_id: str, database_name: str) -> list[str]:
+    """Return the names of the workload signals triage detected, or [] if absent.
+
+    Reads ``referee-triage/triage.json``. Best-effort: missing file or malformed
+    entries yield an empty list rather than raising, because this feeds progress
+    detail and chat narration, not control flow.
+    """
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    if not store.exists(triage_key):
+        return []
+    triage = store.read_json(triage_key)
+    names: list[str] = []
+    for s in triage.get("signals", []):
+        if isinstance(s, dict) and s.get("signal"):
+            names.append(str(s["signal"]))
+    return names
+
+
+def _triage_signal_summary(store, job_id: str, database_name: str, max_signals: int = 6) -> str:
+    """One-line summary of triage's detected signals and selected engines.
+
+    Used as the Triage plan step's description so the WebApp progress panel shows
+    what triage found, mirroring the web interface. Returns "" when triage output
+    is unavailable.
+    """
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    if not store.exists(triage_key):
+        return ""
+    triage = store.read_json(triage_key)
+    signals = _triage_signals(store, job_id, database_name)
+    selected = [
+        a["agent_type"] if isinstance(a, dict) else a for a in triage.get("selected_agents", [])
+    ]
+    parts: list[str] = []
+    if signals:
+        shown = ", ".join(signals[:max_signals])
+        extra = len(signals) - max_signals
+        if extra > 0:
+            shown += f" (+{extra} more)"
+        parts.append(f"Signals: {shown}")
+    if selected:
+        parts.append(f"Selected: {', '.join(str(e) for e in selected)}")
+    return ". ".join(parts)
+
+
+def run_deterministic_core(
+    job_id: str,
+    database_name: str,
+    input_key: str = "",
+    store=None,
+    on_phase_start: Callable[[str], None] | None = None,
+    on_phase_done: Callable[[str, dict, str], None] | None = None,
+    on_phase_error: Callable[[str, str], None] | None = None,
+    on_engine_start: Callable[[str, str], None] | None = None,
+    on_engine_done: Callable[[str, str, dict], None] | None = None,
+    on_engine_error: Callable[[str, str, str], None] | None = None,
+    on_engine_skipped: Callable[[str, str, str], None] | None = None,
+) -> dict:
+    """Run the whole deterministic front-half in one process (ADR-025).
+
+    Composes the existing single-source cores in DAG order:
+    ``run_collect_core`` -> ``run_triage_core`` -> ``run_all_analyses`` ->
+    ``run_assignment_core``. Each phase writes the same artifacts it always has
+    (``collector/output.json``, ``referee-triage/triage.json``,
+    ``analysis-<engine>/analysis.json`` and friends, ``assignment/v1/assignment.json``),
+    so Schema Design, Synthesis, and every downstream reader are unaffected. This
+    is the single deterministic-core agent that replaces the four separate
+    collector/triage/analysis/assignment runtimes; consolidation is safe because
+    analysis runs in-process, satisfying the analysis -> assignment dependency
+    sequentially without a cross-agent wait.
+
+    Progress callbacks drive the WebApp job-plan panel. ``on_phase_*`` fire for the
+    four top-level plan steps (``collector``, ``triage``, ``analysis``,
+    ``assignment``); ``on_phase_done`` carries a short human-readable ``detail``
+    string (e.g. triage's detected signals) for the step description. The
+    ``on_engine_*`` callbacks are forwarded to :func:`run_all_analyses` and tick
+    the nested per-engine ``analysis_<target_database>`` sub-steps, including skip
+    reasons for engines triage did not select.
+
+    Failures propagate: a phase that raises stops the chain (downstream phases
+    depend on its artifacts), after reporting the error through ``on_phase_error``.
+    Returns a merged summary with each phase's result plus a compact
+    ``summary_for_chat`` block the orchestrator can narrate.
+    """
+    store = store or make_store()
+
+    def _run_phase(label: str, fn: Callable[[], dict]) -> dict:
+        if on_phase_start is not None:
+            on_phase_start(label)
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
+            logger.exception("run_deterministic_core: phase %s failed", label)
+            if on_phase_error is not None:
+                on_phase_error(label, str(exc))
+            raise
+
+    # 1. Collect
+    collect_summary = _run_phase(
+        "collector",
+        lambda: run_collect_core(job_id, database_name, input_key=input_key, store=store),
+    )
+    if on_phase_done is not None:
+        on_phase_done(
+            "collector",
+            collect_summary,
+            f"{collect_summary.get('tables', 0)} tables, "
+            f"{collect_summary.get('queries', 0)} queries",
+        )
+
+    # 2. Triage
+    triage_summary = _run_phase(
+        "triage", lambda: run_triage_core(job_id, database_name, store=store)
+    )
+    if on_phase_done is not None:
+        on_phase_done(
+            "triage", triage_summary, _triage_signal_summary(store, job_id, database_name)
+        )
+
+    # 3. Analyze — parent step plus nested per-engine sub-steps via run_all_analyses.
+    if on_phase_start is not None:
+        on_phase_start("analysis")
+    try:
+        analysis_summary = run_all_analyses(
+            job_id,
+            database_name,
+            store=store,
+            on_engine_start=on_engine_start,
+            on_engine_done=on_engine_done,
+            on_engine_error=on_engine_error,
+            on_engine_skipped=on_engine_skipped,
+        )
+    except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
+        logger.exception("run_deterministic_core: phase analysis failed")
+        if on_phase_error is not None:
+            on_phase_error("analysis", str(exc))
+        raise
+    if on_phase_done is not None:
+        analyzed = analysis_summary.get("engines_analyzed", [])
+        on_phase_done("analysis", analysis_summary, f"{len(analyzed)} engines analyzed")
+
+    # 4. Assign
+    assign_summary = _run_phase(
+        "assignment", lambda: run_assignment_core(job_id, database_name, store=store)
+    )
+    if on_phase_done is not None:
+        qpe = assign_summary.get("queries_per_engine", {})
+        detail = f"{assign_summary.get('total_queries', 0)} queries routed"
+        if qpe:
+            detail += ": " + ", ".join(f"{k} {v}" for k, v in qpe.items())
+        on_phase_done("assignment", assign_summary, detail)
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "collector": collect_summary,
+        "triage": triage_summary,
+        "analysis": analysis_summary,
+        "assignment": assign_summary,
+        # A compact, ready-to-narrate view for the orchestrator's post-core chat
+        # summary (signals picked up, engines selected, query distribution).
+        "summary_for_chat": {
+            "tables": collect_summary.get("tables"),
+            "queries": collect_summary.get("queries"),
+            "signals": _triage_signals(store, job_id, database_name),
+            "selected_engines": triage_summary.get("selected_engines", []),
+            "engines_analyzed": analysis_summary.get("engines_analyzed", []),
+            "engines_skipped": analysis_summary.get("engines_skipped", {}),
+            "queries_per_engine": assign_summary.get("queries_per_engine", {}),
+        },
+    }
+
+
 def run_synthesis_core(
     job_id: str,
     database_name: str,
