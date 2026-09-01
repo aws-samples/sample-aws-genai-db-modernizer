@@ -354,3 +354,18 @@ def mark_step_failed(phase_name: str, reason: str = "") -> None:
         # Truncate reason to keep the API payload small.
         desc = reason[:200] if reason else None
         update_job_plan_step(step_id, STATUS_FAILED, description=desc)
+
+
+def mark_step_skipped(phase_name: str, reason: str = "") -> None:
+    """Mark a phase STOPPED (not analyzed) by phase_name lookup, carrying the reason.
+
+    Used for candidate engines triage deliberately did not analyze (e.g. the
+    non-matching Aurora variant for a given source engine). STOPPED is the closest
+    terminal status to "considered but not run"; NOT_STARTED renders as still
+    pending. The reason rides along as the step description so the WebApp can show
+    why the engine was skipped. Safe if unregistered.
+    """
+    step_id = get_step_id(phase_name)
+    if step_id:
+        desc = reason[:200] if reason else None
+        update_job_plan_step(step_id, STATUS_STOPPED, description=desc)

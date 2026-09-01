@@ -47,6 +47,7 @@ def _work_all(params: dict) -> dict:
     from src.atx_orchestrator.runtime.job_plan import (
         mark_step_failed,
         mark_step_running,
+        mark_step_skipped,
         mark_step_succeeded,
         register_steps_from_server,
     )
@@ -65,12 +66,18 @@ def _work_all(params: dict) -> dict:
     def _error(_engine: str, phase: str, reason: str) -> None:
         mark_step_failed(phase, reason)
 
+    def _skipped(_engine: str, phase: str, reason: str) -> None:
+        # Engine triage chose not to analyze (e.g. non-matching Aurora variant).
+        # Mark the sub-step STOPPED with the reason so the WebApp can explain why.
+        mark_step_skipped(phase, reason)
+
     return run_all_analyses(
         job_id=params["job_id"],
         database_name=params["database_name"],
         on_engine_start=_start,
         on_engine_done=_done,
         on_engine_error=_error,
+        on_engine_skipped=_skipped,
     )
 
 

@@ -113,3 +113,48 @@ def test_missing_triage_raises_when_engines_not_supplied(tmp_path) -> None:
 
     with pytest.raises(FileNotFoundError):
         run_all_analyses("j", "wordpress", store=store)
+
+
+def test_resolves_aurora_postgresql_token_to_engine_key(prepared_store) -> None:
+    """Regression: triage emits the ``target_database`` token ("aurora_postgresql"),
+    but ``_ANALYSIS_ENGINES`` is keyed "aurora_pg". The token must resolve to the
+    engine key and run, not be dropped as unknown (which silently skipped Aurora
+    PostgreSQL analysis for PostgreSQL sources)."""
+    store, job, db = prepared_store
+
+    summary = run_all_analyses(job, db, engines=["aurora_postgresql"], store=store)
+
+    assert summary["engines_analyzed"] == ["aurora_pg"]
+    assert store.exists(f"{db}/{job}/analysis-aurora_postgresql/analysis.json")
+
+
+def test_reports_triage_skips_with_reasons(prepared_store) -> None:
+    """When engines come from triage, each candidate engine triage chose not to
+    analyze is reported via ``on_engine_skipped`` and in ``engines_skipped`` with
+    triage's reason. The WordPress sample is MySQL, so Aurora PostgreSQL is skipped
+    as the non-matching Aurora variant."""
+    store, job, db = prepared_store
+    skips: list[tuple[str, str, str]] = []
+
+    summary = run_all_analyses(
+        job,
+        db,
+        store=store,
+        on_engine_skipped=lambda e, p, r: skips.append((e, p, r)),
+    )
+
+    # Aurora PostgreSQL is the non-matching variant for a MySQL source.
+    assert "aurora_pg" in summary["engines_skipped"]
+    assert (
+        summary["engines_skipped"]["aurora_pg"]
+        == "Source engine does not match this Aurora variant"
+    )
+    # It is not among the analyzed engines.
+    assert "aurora_pg" not in summary["engines_analyzed"]
+
+    # The callback fired with the analysis_<target_database> label and the reason.
+    skipped_engines = {e for e, _, _ in skips}
+    assert "aurora_pg" in skipped_engines
+    for engine, phase, reason in skips:
+        assert phase == f"analysis_{_ANALYSIS_ENGINES[engine].target_database}"
+        assert reason
