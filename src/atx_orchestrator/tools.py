@@ -152,38 +152,56 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "stepName": "Route Queries to Engines",
             "description": "Route each query to the best-fit AWS engine.",
         },
-        # Schema design, one per target engine. These produce the table
-        # definitions and access patterns that synthesis turns into
-        # table_mappings, query_groups and the recommended architecture.
+        # Schema design, one per target engine. VISUAL GROUPING ONLY: the six
+        # engines stay separate parallel LLM subagents (see ADR-025), but the
+        # plan nests them as sub-steps under one "Design Target Schemas" box so
+        # the panel shows a collapsible checklist, mirroring "Analyze Candidate
+        # Engines". The sub-step labels (schema_<engine>) are unchanged, so the
+        # per-engine schema tools keep ticking them. The parent "schema" step is
+        # marked running by any schema tool on entry and succeeded by the
+        # synthesis tool (which only runs once every schema agent has finished).
         {
-            "stepLabel": "schema_dynamodb",
-            "stepName": "Design DynamoDB Schema",
-            "description": "Design tables and access patterns for the DynamoDB target.",
-        },
-        {
-            "stepLabel": "schema_documentdb",
-            "stepName": "Design DocumentDB Schema",
-            "description": "Design collections and access patterns for the DocumentDB target.",
-        },
-        {
-            "stepLabel": "schema_elasticache",
-            "stepName": "Design ElastiCache Schema",
-            "description": "Design key structures and access patterns for the ElastiCache target.",
-        },
-        {
-            "stepLabel": "schema_opensearch",
-            "stepName": "Design OpenSearch Schema",
-            "description": "Design index mappings and access patterns for the OpenSearch target.",
-        },
-        {
-            "stepLabel": "schema_aurora_postgresql",
-            "stepName": "Design Aurora PostgreSQL Schema",
-            "description": "Assess schema design coverage for the Aurora PostgreSQL target.",
-        },
-        {
-            "stepLabel": "schema_aurora_mysql",
-            "stepName": "Design Aurora MySQL Schema",
-            "description": "Assess schema design coverage for the Aurora MySQL target.",
+            "stepLabel": "schema",
+            "stepName": "Design Target Schemas",
+            "description": "Design tables and access patterns for each selected AWS engine.",
+            "subSteps": [
+                {
+                    "stepLabel": "schema_dynamodb",
+                    "stepName": "Design DynamoDB Schema",
+                    "description": "Design tables and access patterns for the DynamoDB target.",
+                },
+                {
+                    "stepLabel": "schema_documentdb",
+                    "stepName": "Design DocumentDB Schema",
+                    "description": (
+                        "Design collections and access patterns for the DocumentDB target."
+                    ),
+                },
+                {
+                    "stepLabel": "schema_elasticache",
+                    "stepName": "Design ElastiCache Schema",
+                    "description": (
+                        "Design key structures and access patterns for the ElastiCache target."
+                    ),
+                },
+                {
+                    "stepLabel": "schema_opensearch",
+                    "stepName": "Design OpenSearch Schema",
+                    "description": (
+                        "Design index mappings and access patterns for the OpenSearch target."
+                    ),
+                },
+                {
+                    "stepLabel": "schema_aurora_postgresql",
+                    "stepName": "Design Aurora PostgreSQL Schema",
+                    "description": "Assess schema design coverage for the Aurora PostgreSQL target.",
+                },
+                {
+                    "stepLabel": "schema_aurora_mysql",
+                    "stepName": "Design Aurora MySQL Schema",
+                    "description": "Assess schema design coverage for the Aurora MySQL target.",
+                },
+            ],
         },
         # Synthesis was absent from this list until 2026-08-26, so its
         # mark_step_* calls resolved to an unregistered phase and were dropped
@@ -462,6 +480,11 @@ def run_synthesis_via_a2a(
             "assignment_version": assignment_version,
         }
     )
+    # Synthesis only runs once every schema-design agent has finished, so this is
+    # the deterministic point to close out the parent "Design Target Schemas" box
+    # (the six engines run as separate parallel agents with no single owner to
+    # mark the parent, unlike the in-process analysis phase).
+    mark_step_succeeded("schema")
     return _run_phase_via_a2a(
         agent_suffix="synthesis",
         step="synthesis",
@@ -585,6 +608,10 @@ def _run_schema_design_via_a2a(
             "assignment_version": assignment_version,
         }
     )
+    # Flip the parent "schema" box to in-progress as soon as any engine's design
+    # starts. Idempotent across the parallel schema tools; the synthesis tool
+    # marks the parent succeeded once every schema agent has finished.
+    mark_step_running("schema")
     mark_step_running(step)
     try:
         payload = invoke_and_wait(agent_id, message)
