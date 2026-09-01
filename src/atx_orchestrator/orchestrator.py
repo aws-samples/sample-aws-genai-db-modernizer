@@ -150,19 +150,25 @@ Workflow:
       1. declare_pipeline_plan(job_id, database_name)
       2. run_deterministic_core_via_a2a — one call runs Collect, Triage, Analyze
          (every engine triage selected) and Assign
-      3. the schema-design tools for the same engines triage selected, dispatched
+      3. STOP and write the deterministic-core summary to the customer in chat (see
+         the REQUIRED chat summary rule below). Do this as its own assistant
+         message BEFORE calling any schema-design tool.
+      4. the schema-design tools for the same engines triage selected, dispatched
          in parallel — run_schema_design_<engine>_via_a2a with
-         assignment_version=1. Wait for all of them before step 4. Each takes
+         assignment_version=1. Wait for all of them before step 5. Each takes
          roughly 10-15 minutes, so tell the customer this is the long phase and
          say what it produces.
-      4. run_synthesis_via_a2a(job_id, database_name, assignment_version=1)
+      5. run_synthesis_via_a2a(job_id, database_name, assignment_version=1)
 
-  - After run_deterministic_core_via_a2a returns, post a SHORT chat update from its
-    `summary_for_chat` block, just enough to keep the customer informed, not a full
-    report: the workload signals triage picked up, which engines were selected (and
-    briefly why an engine was skipped if one was, e.g. the non-matching Aurora
-    variant for the source), and how the queries distributed across engines. Two or
-    three sentences. Then proceed to schema design.
+  - REQUIRED chat summary (step 3). When run_deterministic_core_via_a2a returns you
+    MUST reply to the customer with a short chat message BEFORE calling any other
+    tool. Do not go straight from the deterministic-core tool call into the
+    schema-design tool calls in the same turn: emit the summary as its own
+    assistant message first, then continue. Keep it to two or three sentences drawn
+    from the returned `summary_for_chat` block: the workload signals triage picked
+    up, which engines were selected (and briefly why one was skipped if so, e.g.
+    the non-matching Aurora variant for the source), and how the queries
+    distributed across engines. This is not optional and not a full report.
 
   - assignment_version is ALWAYS 1. Do not ask about it, do not vary it, never
     pass 0. The assignment step writes assignment/v1/, so 1 is the version that
@@ -203,7 +209,7 @@ Key points:
     JSON to this job's file uploads, then retry. Do not quote an S3 key, and do not
     attempt to copy or re-upload the file yourself.
   - table_mappings and query_groups are derived from schema-design output. The
-    workflow runs schema-design (step 3) before synthesis, so they populate
+    workflow runs schema-design (step 4) before synthesis, so they populate
     normally; they are empty only for an engine whose design produced no tables.
   - Always surface the synthesis report at the end.
 """
