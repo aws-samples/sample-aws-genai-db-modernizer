@@ -76,6 +76,24 @@ OWNER_NAME = "wwso-database-modernizer"
 OWNER_CONTACT = "wwso-database-modernizer"
 BASE_CHAT_LABEL = "DB Modernization Assessment"
 
+# Objective-negotiation prompt for the orchestrator. Set on the orchestrator's
+# published configuration so the WebApp opens a new job with a proactive greeting
+# instead of an empty chat that waits for the customer to type first. Kept concise
+# and consistent with the orchestrator SYSTEM_PROMPT opening turn; the detailed
+# workflow lives in that prompt. Subagents leave this empty (they never chat).
+ORCHESTRATOR_NEGOTIATION_PROMPT = (
+    "Open every new job proactively, without waiting for the customer to send the "
+    "first message. Greet them, say in one line that you assess which AWS databases "
+    "best fit their relational workload, then ask them to do three things: (1) run "
+    "the read-only collection script for their source engine to produce a collection "
+    "JSON (scripts/collect-postgresql.sql for PostgreSQL, scripts/collect-mysql.sql "
+    "for MySQL; both are read-only and need SELECT on information_schema plus "
+    "pg_stat_statements or performance_schema), (2) upload that JSON to this job's "
+    "file uploads, and (3) tell you the database name. Invite them to reply with "
+    "something like 'I have uploaded my results, the database name is <name>' to "
+    "begin. Keep it brief and do not mention tools, storage paths, or job_ids."
+)
+
 # The registry serves the most recently published version (there is no
 # promote/set-current API), so every apply publishes a fresh, patch-bumped version
 # to push updated agentCard metadata. New agents start here.
@@ -471,7 +489,10 @@ def _register_and_publish(
         "outputPayloadSchema": {"type": "object"},
         "monitoringType": "HEALTHCHECK",
         "notificationsEnabled": "ENABLED",
-        "objectiveNegotiationPrompt": "",
+        # Orchestrator opens the job with a proactive greeting; subagents never chat.
+        "objectiveNegotiationPrompt": (
+            ORCHESTRATOR_NEGOTIATION_PROMPT if agent.orchestrator else ""
+        ),
         "agentResiliencyConfiguration": {
             "partnerControllerRetryWindowMinutes": 6,
             "agentRecoveryConfiguration": {"recoveryWaitTimeSeconds": 60},
