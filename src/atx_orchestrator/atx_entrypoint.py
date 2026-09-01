@@ -79,12 +79,11 @@ _AGENTS: dict[str, str] = {
     # Pipeline phases. Names match the artifact key prefix in S3, not
     # core-modernizer's AGENT_TYPE values — see the module docstring for the two
     # mapping differences.
-    "collector": "/tmp/collector_agent",  # nosec B108
-    "referee-triage": "/tmp/triage_agent",  # nosec B108
-    # One consolidated analysis agent runs every triage-selected engine in-process
-    # (see ADR-024); it replaced six per-engine analysis-<engine> agents.
-    "analysis": "/tmp/analysis_agent",  # nosec B108
-    "assignment-resolver": "/tmp/assignment_agent",  # nosec B108
+    # One consolidated deterministic-core agent runs the whole deterministic
+    # front-half in-process, in order: Collect -> Triage -> Analyze (every
+    # triage-selected engine) -> Assign (see ADR-025). It replaced four separate
+    # runtimes (collector, referee-triage, analysis, assignment-resolver).
+    "deterministic-core": "/tmp/deterministic_core_agent",  # nosec B108
     "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108
     # Schema design, one per target engine. Upstream exposes a single
     # run_schema_design parameterised by target_type, so these share one module
@@ -123,22 +122,12 @@ def _resolve_factory(agent_type: str):
         from src.atx_orchestrator.app import build_agent_factory
 
         return build_agent_factory()
-    if agent_type == "collector":
-        from src.atx_orchestrator.subagents.collector import agent_factory
-
-        return agent_factory
-    if agent_type == "referee-triage":
-        from src.atx_orchestrator.subagents.triage import agent_factory
-
-        return agent_factory
-    if agent_type == "analysis":
-        # One consolidated agent runs every triage-selected engine in-process
-        # (ADR-024), replacing the six per-engine analysis-<engine> branches.
-        from src.atx_orchestrator.subagents.analysis import agent_factory
-
-        return agent_factory
-    if agent_type == "assignment-resolver":
-        from src.atx_orchestrator.subagents.assignment import agent_factory
+    if agent_type == "deterministic-core":
+        # One consolidated agent runs the whole deterministic front-half
+        # in-process (ADR-025): Collect -> Triage -> Analyze -> Assign. It
+        # replaced the collector / referee-triage / analysis / assignment-resolver
+        # branches.
+        from src.atx_orchestrator.subagents.deterministic_core import agent_factory
 
         return agent_factory
     if agent_type == "referee-synthesis":

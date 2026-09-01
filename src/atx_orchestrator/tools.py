@@ -305,6 +305,11 @@ def _run_phase_via_a2a(
     ``timeout`` is passed through only when set (the two LLM-heavy analyses need
     a longer ceiling). ``on_success`` runs with the completion payload before the
     JSON is returned — synthesis uses it to publish its rendered deliverables.
+
+    ``step`` may be empty. The deterministic-core agent spans several plan steps
+    and ticks them itself from inside the subagent (it holds the per-phase
+    progress), so its tool passes ``step=""`` and this wrapper marks nothing —
+    otherwise a single tool-level step would fight the agent's per-phase ticks.
     """
     agent_id = f"{_AGENT_PREFIX}-{agent_suffix}"
     logger.info(
@@ -314,7 +319,8 @@ def _run_phase_via_a2a(
         job_id,
         database_name,
     )
-    mark_step_running(step)
+    if step:
+        mark_step_running(step)
     try:
         if timeout is None:
             payload = invoke_and_wait(agent_id, message)
@@ -322,7 +328,8 @@ def _run_phase_via_a2a(
             payload = invoke_and_wait(agent_id, message, timeout=timeout)
     except A2AError as e:
         logger.error("ATX %s FAILED: %s: %s", label, type(e).__name__, e)
-        mark_step_failed(step, str(e))
+        if step:
+            mark_step_failed(step, str(e))
         return json.dumps(
             {
                 "error": f"A2A {label} failed: {e}",
@@ -331,53 +338,64 @@ def _run_phase_via_a2a(
                 "agent_id": agent_id,
             }
         )
-    mark_step_succeeded(step)
+    if step:
+        mark_step_succeeded(step)
     if on_success is not None:
         on_success(payload)
     return json.dumps(payload)
 
 
 @tool
-def run_collect_via_a2a(
+def run_deterministic_core_via_a2a(
     job_id: str,
     database_name: str,
 ) -> str:
-    """Run the Collector phase by invoking a deployed collector subagent over A2A.
+    """Run the whole deterministic front-half in ONE consolidated subagent over A2A.
 
-    Spawns the collector subagent BY NAME, delivers the initial message, and polls
-    until COMPLETED (or FAILED). The subagent's ``agent_output`` payload is returned
-    as a JSON string.
+    Invokes the ``deterministic-core`` subagent (ADR-025), which runs Collect ->
+    Triage -> Analyze (every triage-selected engine) -> Assign in a single
+    process, in order. It replaced the four separate collect / triage / analysis /
+    assignment tools: call this ONCE, after ``declare_pipeline_plan``. Everything
+    is deterministic (no LLM), and each phase writes the same artifacts as before:
+
+      - ``<db>/<job>/collector/output.json``
+      - ``<db>/<job>/referee-triage/triage.json``
+      - ``<db>/<job>/analysis-<engine>/analysis.json`` (+ trace, + ER diagram)
+      - ``<db>/<job>/assignment/v1/assignment.json``
 
     The customer's uploaded offline collection is located AUTOMATICALLY: this tool
-    discovers the file the customer uploaded through the WebApp (it lands in the
-    artifact store under the job's ``User Uploads/`` prefix) and hands the collector
-    its key. You do NOT pass, construct, or ask for a storage path — there is no
-    path parameter. Just call this with job_id and database_name.
+    discovers the file the customer uploaded through the WebApp (it lands under the
+    job's ``User Uploads/`` prefix) and hands the agent its key. You do NOT pass,
+    construct, or ask for a storage path.
 
-    This is the ONLY collector tool available to the orchestrator. The subagent
-    must be deployed and its registered NAME must be ``<prefix>-collector``.
+    The subagent ticks its own plan steps (collector, triage, analysis with nested
+    per-engine sub-steps, assignment) as it progresses, so the WebApp panel shows
+    live per-phase and per-engine status; this tool therefore does not mark a
+    single step itself. Subagent NAME: ``<prefix>-deterministic-core``.
 
     Args:
         job_id: Unique job identifier.
         database_name: Source database name used to namespace artifacts.
 
     Returns:
-        JSON string with the subagent's completion payload, or an error dict
-        if the A2A round-trip failed (timeout, FAILED status, network, etc.).
+        JSON string with the merged completion payload (collector, triage,
+        analysis, assignment summaries, plus a ``summary_for_chat`` block with the
+        detected signals, selected engines, and query distribution to narrate), or
+        an error dict if the A2A round-trip failed.
     """
     # Resolve the customer's uploaded offline collection here, in the orchestrator:
     # it reliably holds the Transform job context (workspace_id + platform job UUID),
     # so _discover_uploaded_input can find the WebApp upload under the job's
-    # "User Uploads/" prefix and hand the collector an explicit key. Discovery is the
+    # "User Uploads/" prefix and hand the agent an explicit key. Discovery is the
     # single source of truth for the path — the LLM never supplies one. Outside the
     # ATX runtime (dev/reference harness) discovery returns None, input_key stays "",
-    # and the collector falls back to its seed key. An ambiguous upload (more than one
-    # candidate JSON) raises with a clear message rather than picking arbitrarily.
+    # and the collector step falls back to its seed key. An ambiguous upload (more
+    # than one candidate JSON) raises with a clear message rather than picking one.
     from src.atx_orchestrator.core import _discover_uploaded_input
 
     input_key = _discover_uploaded_input(_make_store()) or ""
     if input_key:
-        logger.info("ATX collect: using customer upload %s", input_key)
+        logger.info("ATX deterministic-core: using customer upload %s", input_key)
     message = json.dumps(
         {
             "job_id": job_id,
@@ -385,131 +403,12 @@ def run_collect_via_a2a(
             "input_key": input_key,
         }
     )
+    # step="" — the agent ticks collector/triage/analysis/assignment itself; a
+    # single tool-level step would collide with the agent's per-phase progress.
     return _run_phase_via_a2a(
-        agent_suffix="collector",
-        step="collector",
-        label="collect",
-        job_id=job_id,
-        database_name=database_name,
-        message=message,
-    )
-
-
-@tool
-def run_triage_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run the Triage phase by invoking a deployed triage subagent over A2A.
-
-    Requires the Collector phase to have run first (so the subagent can read
-    ``collector/output.json`` from shared artifact storage — S3 in the deployed
-    case). Uses ``invoke_agent`` to spawn a fresh triage subagent instance
-    BY NAME and deliver the initial message atomically. Polls until terminal
-    status.
-
-    This is the ONLY triage tool available to the orchestrator — the in-process
-    variant was removed to prevent silent fallback. The subagent must be
-    deployed and its registered NAME must be ``db-modernization-triage``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload, or an error dict
-        if the A2A round-trip failed.
-    """
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    return _run_phase_via_a2a(
-        agent_suffix="triage",
-        step="triage",
-        label="triage",
-        job_id=job_id,
-        database_name=database_name,
-        message=message,
-    )
-
-
-@tool
-def run_analysis_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run analysis for every triage-selected engine via one consolidated subagent.
-
-    Requires Collector + Triage to have run first. The single ``analysis``
-    subagent (ADR-024) reads triage's selected engines and runs each engine's
-    deterministic analysis in-process, writing the same per-engine artifacts the
-    Assignment phase reads:
-
-      - ``<db>/<job>/analysis-<engine>/analysis.json``      — recommendations
-      - ``<db>/<job>/analysis-<engine>/decision-trace.json`` — per-query trace
-      - ``<db>/<job>/analysis-<engine>/er-diagram.mmd``      — DynamoDB/DocumentDB
-
-    It replaced the six per-engine analysis tools: call this ONCE, after triage.
-    The agent ticks the per-engine sub-steps under the "analysis" plan step, so
-    the WebApp shows a nested checklist inside the Analysis box. Subagent NAME:
-    ``<prefix>-analysis``.
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the merged completion payload (engines_analyzed,
-        engines_failed, per_engine summaries), or an error dict if the A2A
-        round-trip failed.
-    """
-    return _run_phase_via_a2a(
-        agent_suffix="analysis",
-        step="analysis",
-        label="analysis",
-        job_id=job_id,
-        database_name=database_name,
-        message=json.dumps({"job_id": job_id, "database_name": database_name}),
-    )
-
-
-@tool
-def run_assignment_via_a2a(
-    job_id: str,
-    database_name: str,
-) -> str:
-    """Run Assignment by invoking a deployed subagent over A2A.
-
-    Requires the Collector + Triage + Analysis phases to have run first.
-    Deterministic — no LLM invocation. The assignment subagent scores every
-    query against each candidate engine's analysis output and produces a
-    per-query assignment mapping.
-
-    Subagent name: ``db-modernization-assignment``. Writes 1 artifact:
-
-      - ``<db>/<job>/assignment/v1/assignment.json`` — query -> engine mapping
-
-    Args:
-        job_id: Unique job identifier.
-        database_name: Source database name.
-
-    Returns:
-        JSON string with the subagent's completion payload
-        (total_queries, queries_per_engine, assignment_artifact).
-    """
-    message = json.dumps(
-        {
-            "job_id": job_id,
-            "database_name": database_name,
-        }
-    )
-    return _run_phase_via_a2a(
-        agent_suffix="assignment",
-        step="assignment",
-        label="assignment",
+        agent_suffix="deterministic-core",
+        step="",
+        label="deterministic-core",
         job_id=job_id,
         database_name=database_name,
         message=message,

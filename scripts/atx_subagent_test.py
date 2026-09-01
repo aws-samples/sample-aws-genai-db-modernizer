@@ -1,14 +1,14 @@
 # ruff: noqa: E402 — imports are intentionally placed after env setup and banners
-"""Local test of the Collector subagent (one agent per image).
+"""Local test of the consolidated deterministic-core subagent (ADR-025).
 
-Exercises the collector subagent's message-handling WITHOUT the ATX runtime:
+Exercises the deterministic-core subagent's message-handling WITHOUT the ATX
+runtime:
   1. Parses an A2A-style message (JSON and key:value forms)
-  2. Runs the collector work function against a seeded ArtifactStore
-  3. Verifies the collector artifact + contract + determinism vs reference
-
-Then separately verifies the triage core runs against the collector output and
-matches the reference triage decision — proving the split (collector | triage)
-preserves the same artifacts as the merged path.
+  2. Runs the consolidated work function (Collect -> Triage -> Analyze -> Assign)
+     against a seeded ArtifactStore
+  3. Verifies the collector + triage artifacts + contracts + determinism vs the
+     reference, proving the consolidated agent preserves the same artifacts as the
+     separate collector / triage runtimes did.
 
 Run:
     uv run python scripts/atx_subagent_test.py
@@ -50,7 +50,7 @@ def ok(m):
     print(f"  ✅  {m}")
 
 
-print("\n── Collector + Triage Subagent Split Test ──\n")
+print("\n── Deterministic-Core Subagent Test (Collect -> Triage -> Analyze -> Assign) ──\n")
 
 scratch = Path(tempfile.mkdtemp(prefix="atx_subagent_"))
 os.environ["ARTIFACT_DIR"] = str(scratch)
@@ -74,11 +74,11 @@ store.write_json(input_key, json.loads(offline_input.read_text()))
 ok("Seeded offline input")
 
 # ---------------------------------------------------------------------------
-# 1. Collector subagent: message parsing + work
+# 1. Deterministic-core subagent: message parsing + consolidated work
 # ---------------------------------------------------------------------------
-print("\n1. Collector subagent")
+print("\n1. Deterministic-core subagent (Collect -> Triage -> Analyze -> Assign)")
 from src.atx_orchestrator.subagents.base import extract_text, parse_invocation
-from src.atx_orchestrator.subagents.collector import _work as collector_work
+from src.atx_orchestrator.subagents.deterministic_core import _work as core_work
 
 a2a_msg = {
     "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],
@@ -96,13 +96,13 @@ if kv["job_id"] != job_id or kv["database_name"] != db_name:
 ok("Parsed key=value message")
 
 try:
-    collect_summary = collector_work(parsed)
+    core_summary = core_work(parsed)
 except Exception as e:  # noqa: BLE001
     import traceback
 
     traceback.print_exc()
-    fail(f"collector work raised: {e}")
-ok(f"Collector returned: {collect_summary}")
+    fail(f"deterministic-core work raised: {e}")
+ok(f"Deterministic-core returned phases: {list(core_summary.keys())}")
 
 collector_key = f"{db_name}/{job_id}/collector/output.json"
 if not store.exists(collector_key):
@@ -132,29 +132,9 @@ if nt != rt or nq != rq:
 ok(f"Collector content matches reference ({nt} tables, {nq} queries)")
 
 # ---------------------------------------------------------------------------
-# 2. Triage subagent: message parsing + work
+# 2. Triage artifact produced by the consolidated run
 # ---------------------------------------------------------------------------
-print("\n2. Triage subagent (via A2A-parsed message)")
-from src.atx_orchestrator.subagents.triage import _work as triage_work
-
-triage_a2a_msg = {
-    "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],
-    "role": "user",
-}
-triage_text = extract_text(type("Req", (), {"message": triage_a2a_msg})())
-triage_parsed = parse_invocation(triage_text)
-if triage_parsed["job_id"] != job_id or triage_parsed["database_name"] != db_name:
-    fail(f"Triage JSON parse failed: {triage_parsed}")
-ok("Parsed A2A JSON message for triage")
-
-try:
-    triage_summary = triage_work(triage_parsed)
-except Exception as e:  # noqa: BLE001
-    import traceback
-
-    traceback.print_exc()
-    fail(f"triage subagent work raised: {e}")
-ok(f"Triage subagent returned: {triage_summary}")
+print("\n2. Triage artifact (produced in-process by the deterministic core)")
 
 triage_key = f"{db_name}/{job_id}/referee-triage/triage.json"
 from src.contracts.triage_output import TriageOutputContract
@@ -178,5 +158,5 @@ for field in ("selected_agents", "skipped_agents", "signals", "deferred_agents")
         fail(f"Triage '{field}' differs from reference")
 ok("Triage decision matches reference exactly")
 
-print("\n── PASSED: split collector | triage subagents preserve contracts + determinism ──")
+print("\n── PASSED: consolidated deterministic-core subagent preserves contracts + determinism ──")
 print(f"   Scratch: {scratch}\n")
