@@ -174,7 +174,7 @@ class TestSynthesisDeliverables:
                 side_effect=lambda items: captured.update({"items": items}) or {},
             ),
         ):
-            out = run_synthesis_via_a2a("job-x", "discourse", assignment_version=1)
+            out = run_synthesis_via_a2a("job-x", "discourse")
 
         # payload flows through unchanged
         assert json.loads(out)["response"]["report_artifact"] == self.KEY
@@ -202,16 +202,17 @@ class TestSynthesisDeliverables:
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
         ):
-            out = run_synthesis_via_a2a("job-x", "discourse", assignment_version=1)
+            out = run_synthesis_via_a2a("job-x", "discourse")
         assert json.loads(out)["response"]["report_artifact"] == "missing/key.json"
 
     def test_non_fatal_when_no_report_artifact(self) -> None:
         payload = {"response": {"engines_ranked": 5}}
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
-            patch("src.atx_orchestrator.tools._make_store") as make_store,
+            patch("src.atx_orchestrator.tools._make_store"),
         ):
-            out = run_synthesis_via_a2a("job-x", "discourse", assignment_version=1)
-        # bailed before constructing a store
-        make_store.assert_not_called()
+            out = run_synthesis_via_a2a("job-x", "discourse")
+        # No report_artifact -> deliverables publishing is skipped; the payload
+        # flows through unchanged. (A store is constructed once for version
+        # resolution, which is best-effort and never fatal.)
         assert json.loads(out) == payload

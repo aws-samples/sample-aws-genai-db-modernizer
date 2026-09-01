@@ -152,6 +152,15 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "stepName": "Route Queries to Engines",
             "description": "Route each query to the best-fit AWS engine.",
         },
+        # Reality Check runs inside the assessment-core agent, right after
+        # assignment (ADR-026). The agent ticks this step. It consolidates
+        # redundant engines and, when it does, writes a v2 assignment that schema
+        # design and synthesis pick up automatically.
+        {
+            "stepLabel": "reality_check",
+            "stepName": "Reality Check: Consolidate Engines",
+            "description": "Eliminate redundant engines a surviving engine can absorb.",
+        },
         # Schema design, one per target engine. VISUAL GROUPING ONLY: the six
         # engines stay separate parallel LLM subagents (see ADR-025), but the
         # plan nests them as sub-steps under one "Design Target Schemas" box so
@@ -324,7 +333,7 @@ def _run_phase_via_a2a(
     a longer ceiling). ``on_success`` runs with the completion payload before the
     JSON is returned — synthesis uses it to publish its rendered deliverables.
 
-    ``step`` may be empty. The deterministic-core agent spans several plan steps
+    ``step`` may be empty. The assessment-core agent spans several plan steps
     and ticks them itself from inside the subagent (it holds the per-phase
     progress), so its tool passes ``step=""`` and this wrapper marks nothing —
     otherwise a single tool-level step would fight the agent's per-phase ticks.
@@ -364,22 +373,26 @@ def _run_phase_via_a2a(
 
 
 @tool
-def run_deterministic_core_via_a2a(
+def run_assessment_core_via_a2a(
     job_id: str,
     database_name: str,
 ) -> str:
-    """Run the whole deterministic front-half in ONE consolidated subagent over A2A.
+    """Run the whole assessment front-half in ONE consolidated subagent over A2A.
 
-    Invokes the ``deterministic-core`` subagent (ADR-025), which runs Collect ->
-    Triage -> Analyze (every triage-selected engine) -> Assign in a single
-    process, in order. It replaced the four separate collect / triage / analysis /
-    assignment tools: call this ONCE, after ``declare_pipeline_plan``. Everything
-    is deterministic (no LLM), and each phase writes the same artifacts as before:
+    Invokes the ``assessment-core`` subagent (ADR-025, ADR-026), which runs
+    Collect -> Triage -> Analyze (every triage-selected engine) -> Assign ->
+    Reality Check in a single process, in order. It replaced the four separate
+    collect / triage / analysis / assignment tools and now also runs the
+    CTO-level Reality Check consolidation: call this ONCE, after
+    ``declare_pipeline_plan``. Collect/Triage/Analyze/Assign are deterministic;
+    Reality Check adds one Bedrock pass. Each phase writes the same artifacts as
+    before:
 
       - ``<db>/<job>/collector/output.json``
       - ``<db>/<job>/referee-triage/triage.json``
       - ``<db>/<job>/analysis-<engine>/analysis.json`` (+ trace, + ER diagram)
       - ``<db>/<job>/assignment/v1/assignment.json``
+      - ``<db>/<job>/reality-check/output.json`` (+ ``assignment/v2/`` when it consolidates)
 
     The customer's uploaded offline collection is located AUTOMATICALLY: this tool
     discovers the file the customer uploaded through the WebApp (it lands under the
@@ -387,9 +400,9 @@ def run_deterministic_core_via_a2a(
     construct, or ask for a storage path.
 
     The subagent ticks its own plan steps (collector, triage, analysis with nested
-    per-engine sub-steps, assignment) as it progresses, so the WebApp panel shows
-    live per-phase and per-engine status; this tool therefore does not mark a
-    single step itself. Subagent NAME: ``<prefix>-deterministic-core``.
+    per-engine sub-steps, assignment, reality_check) as it progresses, so the
+    WebApp panel shows live per-phase and per-engine status; this tool therefore
+    does not mark a single step itself. Subagent NAME: ``<prefix>-assessment-core``.
 
     Args:
         job_id: Unique job identifier.
@@ -397,9 +410,10 @@ def run_deterministic_core_via_a2a(
 
     Returns:
         JSON string with the merged completion payload (collector, triage,
-        analysis, assignment summaries, plus a ``summary_for_chat`` block with the
-        detected signals, selected engines, and query distribution to narrate), or
-        an error dict if the A2A round-trip failed.
+        analysis, assignment, reality_check summaries, ``effective_assignment_version``,
+        plus a ``summary_for_chat`` block with the detected signals, selected
+        engines, query distribution, and consolidation to narrate), or an error
+        dict if the A2A round-trip failed.
     """
     # Resolve the customer's uploaded offline collection here, in the orchestrator:
     # it reliably holds the Transform job context (workspace_id + platform job UUID),
@@ -413,7 +427,7 @@ def run_deterministic_core_via_a2a(
 
     input_key = _discover_uploaded_input(_make_store()) or ""
     if input_key:
-        logger.info("ATX deterministic-core: using customer upload %s", input_key)
+        logger.info("ATX assessment-core: using customer upload %s", input_key)
     message = json.dumps(
         {
             "job_id": job_id,
@@ -421,12 +435,12 @@ def run_deterministic_core_via_a2a(
             "input_key": input_key,
         }
     )
-    # step="" — the agent ticks collector/triage/analysis/assignment itself; a
-    # single tool-level step would collide with the agent's per-phase progress.
+    # step="" — the agent ticks collector/triage/analysis/assignment/reality_check
+    # itself; a single tool-level step would collide with the per-phase progress.
     return _run_phase_via_a2a(
-        agent_suffix="deterministic-core",
+        agent_suffix="assessment-core",
         step="",
-        label="deterministic-core",
+        label="assessment-core",
         job_id=job_id,
         database_name=database_name,
         message=message,
@@ -437,15 +451,14 @@ def run_deterministic_core_via_a2a(
 def run_synthesis_via_a2a(
     job_id: str,
     database_name: str,
-    assignment_version: int = 1,
 ) -> str:
     """Run Referee-Synthesis by invoking a deployed subagent over A2A.
 
-    Requires Collector + Triage + at least one Analysis + Assignment to have run
-    first. Reality-check and schema-design are optional enrichments, not
-    prerequisites — synthesis proceeds without them, though ``query_groups`` will
-    be empty until schema-design has run, since those are built from the schema
-    output's access patterns.
+    Requires the assessment core (Collector + Triage + Analysis + Assignment +
+    Reality Check) to have run first. Schema-design is an optional enrichment,
+    not a prerequisite — synthesis proceeds without it, though ``query_groups``
+    will be empty until schema-design has run, since those are built from the
+    schema output's access patterns.
 
     Produces the consolidated report a customer actually reads: engine ranking,
     table mappings, TCO comparison, risk assessment, and a recommended
@@ -453,19 +466,13 @@ def run_synthesis_via_a2a(
     summary — matching core-modernizer, which invokes ``run_synthesis`` without
     an ``llm_mode`` argument and so takes its ``"bedrock"`` default.
 
-    Writes 1 artifact, at a key that depends on the version:
-
-      - ``<db>/<job>/synthesis/v<N>/report.json``    when assignment_version > 0
-      - ``<db>/<job>/referee-synthesis/report.json`` when assignment_version = 0
+    The assignment version is resolved automatically (the latest one on the
+    store: the consolidated v2 when Reality Check ran, else v1); you do not pass
+    it. Writes ``<db>/<job>/synthesis/v<N>/report.json``.
 
     Args:
         job_id: Unique job identifier.
         database_name: Source database name.
-        assignment_version: Version the assignment agent produced. Defaults to 1
-            because ``run_assignment_core`` writes ``assignment/v1/``. Do not
-            pass 0 — at version 0 synthesis never reads the assignment at all and
-            emits a report whose recommended architecture, table mappings and
-            query groups are all empty.
 
     Returns:
         JSON string with the subagent's completion payload (engines_ranked,
@@ -473,6 +480,9 @@ def run_synthesis_via_a2a(
         query_groups, overall_risk_level, has_executive_summary,
         report_artifact).
     """
+    # Resolve the version in Python, not via the LLM (ADR-026): the latest
+    # assignment (v2 when Reality Check consolidated, else v1).
+    assignment_version = _effective_assignment_version(job_id, database_name)
     message = json.dumps(
         {
             "job_id": job_id,
@@ -581,11 +591,29 @@ _SCHEMA_ENGINES: dict[str, str] = {
 }
 
 
+def _effective_assignment_version(job_id: str, database_name: str) -> int:
+    """Resolve the latest assignment version from the store; default 1 (ADR-026).
+
+    Reality Check writes ``assignment/v2/`` when it consolidates engines, and
+    schema design and synthesis must operate on that latest version. Resolving it
+    here in Python — mirroring the REST API's ``_latest_assignment_version`` —
+    keeps the version out of the LLM's hands entirely. Falls back to 1 (the
+    version the assessment core always writes) if nothing is found or the store
+    is unavailable, so downstream never receives a bogus 0.
+    """
+    try:
+        from src.atx_orchestrator.core import _resolve_assignment_version
+
+        version = _resolve_assignment_version(_make_store(), job_id, database_name)
+        return version if version > 0 else 1
+    except Exception:  # noqa: BLE001 - best-effort; fall back to the always-written v1
+        return 1
+
+
 def _run_schema_design_via_a2a(
     suffix: str,
     job_id: str,
     database_name: str,
-    assignment_version: int = 1,
 ) -> str:
     """Shared body for the six schema-design A2A tools."""
     agent_id = f"{_AGENT_PREFIX}-schema-{suffix}"
@@ -594,6 +622,9 @@ def _run_schema_design_via_a2a(
     # (schema-aurora-pg). A mismatch here is silent: mark_step_* ignores an
     # unregistered phase name, so progress would simply never appear.
     step = f"schema_{_SCHEMA_ENGINES[suffix]}"
+    # Resolve the version in Python, not via the LLM (ADR-026): picks up the v2
+    # assignment when Reality Check consolidated, else v1.
+    assignment_version = _effective_assignment_version(job_id, database_name)
     logger.info(
         "ATX: schema-design via A2A agent=%s job_id=%s db=%s assignment_version=%s",
         agent_id,
@@ -645,14 +676,13 @@ _SCHEMA_DOC = """Design the {label} target schema by invoking a deployed subagen
 
     Writes 1 artifact: ``<db>/<job>/schema-{engine}/v<N>/schema_output.json``.
 
+    The assignment version is resolved automatically (the latest one on the
+    store, which is the consolidated v2 when Reality Check ran, else v1); you do
+    not pass it.
+
     Args:
         job_id: Unique job identifier.
         database_name: Source database name.
-        assignment_version: Version the assignment agent produced. Defaults to 1
-            because ``run_assignment_core`` writes ``assignment/v1/``. Do not pass
-            0 — at version 0 every query is passed to every engine rather than the
-            ones assigned to it, and the output is written to a key synthesis does
-            not read.
 
     Returns:
         JSON string with status, the counts of table_definitions, access_patterns
@@ -662,45 +692,33 @@ _SCHEMA_DOC = """Design the {label} target schema by invoking a deployed subagen
 
 
 @tool
-def run_schema_design_dynamodb_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("dynamodb", job_id, database_name, assignment_version)
+def run_schema_design_dynamodb_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("dynamodb", job_id, database_name)
 
 
 @tool
-def run_schema_design_documentdb_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("documentdb", job_id, database_name, assignment_version)
+def run_schema_design_documentdb_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("documentdb", job_id, database_name)
 
 
 @tool
-def run_schema_design_elasticache_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("elasticache", job_id, database_name, assignment_version)
+def run_schema_design_elasticache_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("elasticache", job_id, database_name)
 
 
 @tool
-def run_schema_design_opensearch_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("opensearch", job_id, database_name, assignment_version)
+def run_schema_design_opensearch_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("opensearch", job_id, database_name)
 
 
 @tool
-def run_schema_design_aurora_pg_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("aurora-pg", job_id, database_name, assignment_version)
+def run_schema_design_aurora_pg_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("aurora-pg", job_id, database_name)
 
 
 @tool
-def run_schema_design_aurora_mysql_via_a2a(
-    job_id: str, database_name: str, assignment_version: int = 1
-) -> str:
-    return _run_schema_design_via_a2a("aurora-mysql", job_id, database_name, assignment_version)
+def run_schema_design_aurora_mysql_via_a2a(job_id: str, database_name: str) -> str:
+    return _run_schema_design_via_a2a("aurora-mysql", job_id, database_name)
 
 
 # Docstrings are assigned rather than written inline so the six tools cannot drift

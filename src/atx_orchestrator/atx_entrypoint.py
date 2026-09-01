@@ -79,11 +79,13 @@ _AGENTS: dict[str, str] = {
     # Pipeline phases. Names match the artifact key prefix in S3, not
     # core-modernizer's AGENT_TYPE values — see the module docstring for the two
     # mapping differences.
-    # One consolidated deterministic-core agent runs the whole deterministic
-    # front-half in-process, in order: Collect -> Triage -> Analyze (every
-    # triage-selected engine) -> Assign (see ADR-025). It replaced four separate
-    # runtimes (collector, referee-triage, analysis, assignment-resolver).
-    "deterministic-core": "/tmp/deterministic_core_agent",  # nosec B108
+    # One consolidated assessment-core agent runs the whole assessment front-half
+    # in-process, in order: Collect -> Triage -> Analyze (every triage-selected
+    # engine) -> Assign -> Reality Check (see ADR-025, ADR-026). It replaced four
+    # separate runtimes (collector, referee-triage, analysis, assignment-resolver)
+    # and now also runs Reality Check. Reality Check makes one Bedrock call, so the
+    # agent is no longer purely deterministic (hence "assessment-core").
+    "assessment-core": "/tmp/assessment_core_agent",  # nosec B108
     "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108
     # Schema design, one per target engine. Upstream exposes a single
     # run_schema_design parameterised by target_type, so these share one module
@@ -94,13 +96,11 @@ _AGENTS: dict[str, str] = {
     "schema-opensearch": "/tmp/schema_opensearch_agent",  # nosec B108
     "schema-aurora-pg": "/tmp/schema_aurora_pg_agent",  # nosec B108
     "schema-aurora-mysql": "/tmp/schema_aurora_mysql_agent",  # nosec B108
-    # Not yet implemented as ATX subagents. Adding one means a row here, a branch
-    # in _resolve_factory, a subagent module (SYSTEM_PROMPT + _work +
-    # make_subagent_factory), and a directory in Dockerfile.atx:
-    #   reality-check, schema-split, schema-merge
-    # All three accept an assignment_version, and their core-modernizer defaults
-    # disagree with each other (synthesis 0, reality-check 1). The orchestrator
-    # must pass the version explicitly to every one — see the v2 plan, Dive 1.
+    # Reality Check is now folded into assessment-core (ADR-026), not a separate
+    # runtime. Still not implemented as ATX subagents: schema-split, schema-merge.
+    # Adding one means a row here, a branch in _resolve_factory, a subagent module
+    # (SYSTEM_PROMPT + _work + make_subagent_factory), and a directory in
+    # Dockerfile.atx.
 }
 
 
@@ -122,12 +122,12 @@ def _resolve_factory(agent_type: str):
         from src.atx_orchestrator.app import build_agent_factory
 
         return build_agent_factory()
-    if agent_type == "deterministic-core":
-        # One consolidated agent runs the whole deterministic front-half
-        # in-process (ADR-025): Collect -> Triage -> Analyze -> Assign. It
-        # replaced the collector / referee-triage / analysis / assignment-resolver
-        # branches.
-        from src.atx_orchestrator.subagents.deterministic_core import agent_factory
+    if agent_type == "assessment-core":
+        # One consolidated agent runs the whole assessment front-half in-process
+        # (ADR-025, ADR-026): Collect -> Triage -> Analyze -> Assign -> Reality
+        # Check. It replaced the collector / referee-triage / analysis /
+        # assignment-resolver branches and now also runs Reality Check.
+        from src.atx_orchestrator.subagents.assessment_core import agent_factory
 
         return agent_factory
     if agent_type == "referee-synthesis":

@@ -1,7 +1,7 @@
 # ruff: noqa: E402 — imports are intentionally placed after env setup and banners
-"""Local test of the consolidated deterministic-core subagent (ADR-025).
+"""Local test of the consolidated assessment-core subagent (ADR-025, ADR-026).
 
-Exercises the deterministic-core subagent's message-handling WITHOUT the ATX
+Exercises the assessment-core subagent's message-handling WITHOUT the ATX
 runtime:
   1. Parses an A2A-style message (JSON and key:value forms)
   2. Runs the consolidated work function (Collect -> Triage -> Analyze -> Assign)
@@ -50,7 +50,9 @@ def ok(m):
     print(f"  ✅  {m}")
 
 
-print("\n── Deterministic-Core Subagent Test (Collect -> Triage -> Analyze -> Assign) ──\n")
+print(
+    "\n── Assessment-Core Subagent Test (Collect -> Triage -> Analyze -> Assign -> Reality Check) ──\n"
+)
 
 scratch = Path(tempfile.mkdtemp(prefix="atx_subagent_"))
 os.environ["ARTIFACT_DIR"] = str(scratch)
@@ -74,11 +76,11 @@ store.write_json(input_key, json.loads(offline_input.read_text()))
 ok("Seeded offline input")
 
 # ---------------------------------------------------------------------------
-# 1. Deterministic-core subagent: message parsing + consolidated work
+# 1. Assessment-core subagent: message parsing + consolidated work
 # ---------------------------------------------------------------------------
-print("\n1. Deterministic-core subagent (Collect -> Triage -> Analyze -> Assign)")
+print("\n1. Assessment-core subagent (Collect -> Triage -> Analyze -> Assign -> Reality Check)")
+from src.atx_orchestrator.subagents.assessment_core import _work as core_work
 from src.atx_orchestrator.subagents.base import extract_text, parse_invocation
-from src.atx_orchestrator.subagents.deterministic_core import _work as core_work
 
 a2a_msg = {
     "parts": [{"text": json.dumps({"job_id": job_id, "database_name": db_name})}],
@@ -101,8 +103,8 @@ except Exception as e:  # noqa: BLE001
     import traceback
 
     traceback.print_exc()
-    fail(f"deterministic-core work raised: {e}")
-ok(f"Deterministic-core returned phases: {list(core_summary.keys())}")
+    fail(f"assessment-core work raised: {e}")
+ok(f"Assessment-core returned phases: {list(core_summary.keys())}")
 
 collector_key = f"{db_name}/{job_id}/collector/output.json"
 if not store.exists(collector_key):
@@ -134,7 +136,7 @@ ok(f"Collector content matches reference ({nt} tables, {nq} queries)")
 # ---------------------------------------------------------------------------
 # 2. Triage artifact produced by the consolidated run
 # ---------------------------------------------------------------------------
-print("\n2. Triage artifact (produced in-process by the deterministic core)")
+print("\n2. Triage artifact (produced in-process by the assessment core)")
 
 triage_key = f"{db_name}/{job_id}/referee-triage/triage.json"
 from src.contracts.triage_output import TriageOutputContract
@@ -158,5 +160,5 @@ for field in ("selected_agents", "skipped_agents", "signals", "deferred_agents")
         fail(f"Triage '{field}' differs from reference")
 ok("Triage decision matches reference exactly")
 
-print("\n── PASSED: consolidated deterministic-core subagent preserves contracts + determinism ──")
+print("\n── PASSED: consolidated assessment-core subagent preserves contracts + determinism ──")
 print(f"   Scratch: {scratch}\n")

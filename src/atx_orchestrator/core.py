@@ -744,6 +744,110 @@ def run_assignment_core(
     }
 
 
+def _resolve_assignment_version(store, job_id: str, database_name: str) -> int:
+    """Return the highest existing assignment version under ``assignment/``, or 0.
+
+    Mirrors the REST API's ``_latest_assignment_version``: list the assignment
+    prefix, parse the ``vN`` directory component, and return the max. This is how
+    Schema Design and Synthesis pick up the consolidated assignment Reality Check
+    produced (v2) without the version being threaded through the LLM. Returns 0
+    when no versioned assignment exists.
+    """
+    prefix = f"{database_name}/{job_id}/assignment/"
+    versions: list[int] = []
+    for key in store.list_prefix(prefix):
+        parts = key.replace(prefix, "").split("/")
+        if parts and parts[0].startswith("v"):
+            try:
+                versions.append(int(parts[0][1:]))
+            except ValueError:
+                continue
+    return max(versions) if versions else 0
+
+
+def run_reality_check_core(
+    job_id: str,
+    database_name: str,
+    assignment_version: int = 1,
+    store=None,
+) -> dict:
+    """Run Reality Check (CTO-level engine consolidation) for a completed assignment.
+
+    The final phase of the assessment core (ADR-018, ADR-026). Reads
+    ``assignment/v{assignment_version}/assignment.json`` plus triage, collector,
+    and per-engine analysis, applies the deterministic consolidation logic, then
+    runs the Bedrock LLM pass (validates the consolidations and writes the CTO
+    executive summary). Writes ``reality-check/output.json`` always and, only when
+    it consolidates, ``assignment/v{N+1}/assignment.json``.
+
+    ``llm_mode`` comes from ``REALITY_CHECK_LLM_MODE`` (default ``"bedrock"``,
+    per ADR-026). Set it to ``"none"`` to run purely deterministically (e.g. in
+    tests without Bedrock access); ``"external"`` is intentionally unsupported in
+    ATX (it needs an out-of-band resume the A2A model cannot do).
+
+    Prerequisites: collector/output.json, referee-triage/triage.json,
+    assignment/v{assignment_version}/assignment.json, and at least one analysis
+    output. Returns a summary with before/after distribution, the consolidation
+    count, and ``effective_assignment_version`` (the latest version after the run,
+    which is 2 when consolidation occurred, else the source version).
+    """
+    store = store or make_store()
+
+    prefix = f"{database_name}/{job_id}"
+    collector_key = f"{prefix}/collector/output.json"
+    triage_key = f"{prefix}/referee-triage/triage.json"
+    assignment_key = f"{prefix}/assignment/v{assignment_version}/assignment.json"
+    for key in (collector_key, triage_key, assignment_key):
+        if not store.exists(key):
+            raise FileNotFoundError(
+                f"Prerequisite artifact missing: '{key}'. "
+                "Run collector + triage + assignment first."
+            )
+
+    from src.agents.referee.reality_check_handler import run_reality_check_handler
+
+    llm_mode = os.environ.get("REALITY_CHECK_LLM_MODE", "bedrock")
+    logger.info(
+        "ATX reality-check starting: job_id=%s db=%s assignment_version=%s llm_mode=%s",
+        job_id,
+        database_name,
+        assignment_version,
+        llm_mode,
+    )
+    run_reality_check_handler(
+        job_id,
+        database_name,
+        store,
+        assignment_version=assignment_version,
+        llm_mode=llm_mode,
+    )
+
+    output_key = f"{prefix}/reality-check/output.json"
+    before_distribution: dict = {}
+    after_distribution: dict = {}
+    consolidations = 0
+    if store.exists(output_key):
+        rc = store.read_json(output_key)
+        before_distribution = rc.get("before_distribution", {})
+        after_distribution = rc.get("after_distribution", {})
+        consolidations = len(rc.get("consolidations", []))
+
+    effective_version = (
+        _resolve_assignment_version(store, job_id, database_name) or assignment_version
+    )
+
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "source_assignment_version": assignment_version,
+        "effective_assignment_version": effective_version,
+        "consolidations": consolidations,
+        "before_distribution": before_distribution,
+        "after_distribution": after_distribution,
+        "reality_check_artifact": output_key,
+    }
+
+
 def _triage_signals(store, job_id: str, database_name: str) -> list[str]:
     """Return the names of the workload signals triage detected, or [] if absent.
 
@@ -789,7 +893,7 @@ def _triage_signal_summary(store, job_id: str, database_name: str, max_signals: 
     return ". ".join(parts)
 
 
-def run_deterministic_core(
+def run_assessment_core(
     job_id: str,
     database_name: str,
     input_key: str = "",
@@ -802,31 +906,40 @@ def run_deterministic_core(
     on_engine_error: Callable[[str, str, str], None] | None = None,
     on_engine_skipped: Callable[[str, str, str], None] | None = None,
 ) -> dict:
-    """Run the whole deterministic front-half in one process (ADR-025).
+    """Run the whole assessment front-half in one process (ADR-025, ADR-026).
 
     Composes the existing single-source cores in DAG order:
     ``run_collect_core`` -> ``run_triage_core`` -> ``run_all_analyses`` ->
-    ``run_assignment_core``. Each phase writes the same artifacts it always has
-    (``collector/output.json``, ``referee-triage/triage.json``,
-    ``analysis-<engine>/analysis.json`` and friends, ``assignment/v1/assignment.json``),
-    so Schema Design, Synthesis, and every downstream reader are unaffected. This
-    is the single deterministic-core agent that replaces the four separate
-    collector/triage/analysis/assignment runtimes; consolidation is safe because
-    analysis runs in-process, satisfying the analysis -> assignment dependency
-    sequentially without a cross-agent wait.
+    ``run_assignment_core`` -> ``run_reality_check_core``. Each phase writes the
+    same artifacts it always has (``collector/output.json``,
+    ``referee-triage/triage.json``, ``analysis-<engine>/analysis.json`` and
+    friends, ``assignment/v1/assignment.json``, ``reality-check/output.json``, and
+    when Reality Check consolidates, ``assignment/v2/assignment.json``), so Schema
+    Design, Synthesis, and every downstream reader are unaffected. This is the
+    single assessment-core agent that replaced the collector/triage/analysis/
+    assignment runtimes (ADR-025) and now also runs Reality Check (ADR-026);
+    consolidation is safe because every phase runs in-process, satisfying the
+    ordering dependencies sequentially without a cross-agent wait.
+
+    Collect, Triage, Analyze, and Assign are deterministic. Reality Check runs
+    with an LLM pass (validates the consolidations and writes the CTO executive
+    summary), which is why the agent is named for what it produces rather than
+    for being purely deterministic.
 
     Progress callbacks drive the WebApp job-plan panel. ``on_phase_*`` fire for the
-    four top-level plan steps (``collector``, ``triage``, ``analysis``,
-    ``assignment``); ``on_phase_done`` carries a short human-readable ``detail``
-    string (e.g. triage's detected signals) for the step description. The
-    ``on_engine_*`` callbacks are forwarded to :func:`run_all_analyses` and tick
-    the nested per-engine ``analysis_<target_database>`` sub-steps, including skip
-    reasons for engines triage did not select.
+    five top-level plan steps (``collector``, ``triage``, ``analysis``,
+    ``assignment``, ``reality_check``); ``on_phase_done`` carries a short
+    human-readable ``detail`` string (e.g. triage's detected signals) for the step
+    description. The ``on_engine_*`` callbacks are forwarded to
+    :func:`run_all_analyses` and tick the nested per-engine
+    ``analysis_<target_database>`` sub-steps, including skip reasons for engines
+    triage did not select.
 
     Failures propagate: a phase that raises stops the chain (downstream phases
     depend on its artifacts), after reporting the error through ``on_phase_error``.
-    Returns a merged summary with each phase's result plus a compact
-    ``summary_for_chat`` block the orchestrator can narrate.
+    Returns a merged summary with each phase's result, the
+    ``effective_assignment_version`` (2 when Reality Check consolidated, else 1),
+    plus a compact ``summary_for_chat`` block the orchestrator can narrate.
     """
     store = store or make_store()
 
@@ -836,7 +949,7 @@ def run_deterministic_core(
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-            logger.exception("run_deterministic_core: phase %s failed", label)
+            logger.exception("run_assessment_core: phase %s failed", label)
             if on_phase_error is not None:
                 on_phase_error(label, str(exc))
             raise
@@ -877,7 +990,7 @@ def run_deterministic_core(
             on_engine_skipped=on_engine_skipped,
         )
     except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-        logger.exception("run_deterministic_core: phase analysis failed")
+        logger.exception("run_assessment_core: phase analysis failed")
         if on_phase_error is not None:
             on_phase_error("analysis", str(exc))
         raise
@@ -896,6 +1009,24 @@ def run_deterministic_core(
             detail += ": " + ", ".join(f"{k} {v}" for k, v in qpe.items())
         on_phase_done("assignment", assign_summary, detail)
 
+    # 5. Reality Check — CTO-level engine consolidation (ADR-018, ADR-026). Runs
+    # on assignment v1 and, when it consolidates, writes assignment v2. Uses the
+    # Bedrock LLM pass (consolidation validation + executive summary).
+    reality_check_summary = _run_phase(
+        "reality_check",
+        lambda: run_reality_check_core(job_id, database_name, assignment_version=1, store=store),
+    )
+    effective_version = reality_check_summary.get("effective_assignment_version", 1)
+    if on_phase_done is not None:
+        consolidations = reality_check_summary.get("consolidations", 0)
+        before = reality_check_summary.get("before_distribution", {})
+        after = reality_check_summary.get("after_distribution", {})
+        if consolidations:
+            detail = f"Consolidated {len(before)} -> {len(after)} engines"
+        else:
+            detail = "No consolidation; assignment unchanged"
+        on_phase_done("reality_check", reality_check_summary, detail)
+
     return {
         "job_id": job_id,
         "database_name": database_name,
@@ -903,8 +1034,15 @@ def run_deterministic_core(
         "triage": triage_summary,
         "analysis": analysis_summary,
         "assignment": assign_summary,
+        "reality_check": reality_check_summary,
+        # The version downstream schema-design and synthesis should read: 2 when
+        # Reality Check consolidated, else 1. Downstream tools resolve this from
+        # the store themselves (see _resolve_assignment_version); it is echoed here
+        # for narration and tests.
+        "effective_assignment_version": effective_version,
         # A compact, ready-to-narrate view for the orchestrator's post-core chat
-        # summary (signals picked up, engines selected, query distribution).
+        # summary (signals picked up, engines selected, query distribution,
+        # consolidation).
         "summary_for_chat": {
             "tables": collect_summary.get("tables"),
             "queries": collect_summary.get("queries"),
@@ -913,6 +1051,8 @@ def run_deterministic_core(
             "engines_analyzed": analysis_summary.get("engines_analyzed", []),
             "engines_skipped": analysis_summary.get("engines_skipped", {}),
             "queries_per_engine": assign_summary.get("queries_per_engine", {}),
+            "reality_check_consolidations": reality_check_summary.get("consolidations", 0),
+            "after_distribution": reality_check_summary.get("after_distribution", {}),
         },
     }
 

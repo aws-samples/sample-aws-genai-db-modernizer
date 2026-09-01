@@ -131,11 +131,12 @@ _ANALYSIS = ("dynamodb", "documentdb", "elasticache", "opensearch", "aurora-pg",
 _SCHEMA = _ANALYSIS
 
 _SUBAGENTS: list[Agent] = [
-    # One consolidated deterministic-core agent runs the whole deterministic
-    # front-half in-process (ADR-025): Collect -> Triage -> Analyze (every
-    # selected engine) -> Assign. It replaced four runtimes (collector, triage,
-    # analysis, assignment). Analysis was itself already consolidated per ADR-024.
-    Agent("deterministic-core", "deterministic-core"),
+    # One consolidated assessment-core agent runs the whole assessment front-half
+    # in-process (ADR-025, ADR-026): Collect -> Triage -> Analyze (every selected
+    # engine) -> Assign -> Reality Check. It replaced four runtimes (collector,
+    # triage, analysis, assignment) and now also runs Reality Check. Renamed from
+    # deterministic-core once Reality Check added a Bedrock call.
+    Agent("assessment-core", "assessment-core"),
     *[Agent(f"schema-{e}", f"schema-{e}") for e in _SCHEMA],
     Agent("synthesis", "referee-synthesis"),
 ]
