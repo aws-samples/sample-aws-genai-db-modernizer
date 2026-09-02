@@ -105,7 +105,17 @@ orchestrator's `AGENT_NAME_PREFIX` for you, so it is the simplest way to get an
 end-to-end personal fleet. The common case reuses the image the pipeline already
 built — no rebuild needed:
 
+`apply`/`destroy`/`status` read environment/account/org-specific settings from the
+environment (the deploy pipeline injects them; set them yourself for a personal
+fleet). At minimum `apply` needs the registry endpoint, an artifact bucket, and the
+publisher identity:
+
 ```bash
+export ATX_REGISTRY_ENDPOINT="<aws-transform-registry-url>"
+export ATX_S3_BUCKET="<your-artifact-bucket>"
+export ATX_OWNER_NAME="<your-team-or-alias>"
+export ATX_OWNER_CONTACT="<your-contact>"
+
 # deploy the full fleet under your alias, reusing the pipeline's image by digest
 python pipeline/atx_deploy.py apply --env <alias> \
   --image-uri <acct>.dkr.ecr.us-east-1.amazonaws.com/modernizer-dev-atx@sha256:<digest>

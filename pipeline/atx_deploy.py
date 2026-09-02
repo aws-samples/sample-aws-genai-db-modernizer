@@ -21,7 +21,7 @@ Verbs
   status   Show runtime + registry state for an environment prefix.
 
 Environments are distinguished by an --env suffix that forms the agent-name
-prefix ``dbmod-<env>`` (e.g. ``dbmod-estserna``). The
+prefix ``dbmod-<env>`` (e.g. ``dbmod-tebanieo``). The
 orchestrator resolves its subagents by that same prefix via its AGENT_NAME_PREFIX
 env var, so a fleet is fully isolated per environment.
 
@@ -31,15 +31,15 @@ Examples
   ./atx_deploy.py build
 
   # Stand up a 3-agent slice to prove the A2A path, using the just-built image
-  ./atx_deploy.py apply --env estserna --agents orchestrator,collector,triage \
-      --image-uri 754955336423.dkr.ecr.us-east-1.amazonaws.com/modernizer-dev-atx@sha256:...
+  ./atx_deploy.py apply --env tebanieo --agents orchestrator,collector,triage \
+      --image-uri 123456789012.dkr.ecr.us-east-1.amazonaws.com/modernizer-dev-atx@sha256:...
 
   # Later, after another code change: rebuild + update the same slice in place
-  ./atx_deploy.py build && ./atx_deploy.py apply --env estserna \
+  ./atx_deploy.py build && ./atx_deploy.py apply --env tebanieo \
       --agents orchestrator,collector,triage --image-uri <new-digest>
 
   # Tear the environment down
-  ./atx_deploy.py destroy --env estserna --agents orchestrator,collector,triage
+  ./atx_deploy.py destroy --env tebanieo --agents orchestrator,collector,triage
 """
 
 from __future__ import annotations
@@ -62,19 +62,32 @@ from botocore.exceptions import ClientError
 # Constants (this account / region). Override via flags where it makes sense.
 # --------------------------------------------------------------------------- #
 
-REGION = "us-east-1"
-REGISTRY_ENDPOINT = "https://iad.prod.agent-registry-external.elastic-gumby.ai.aws.dev"
-ECR_REPO = "modernizer-dev-atx"
+# All environment/account/org-specific values are read from the environment so the
+# public repo carries no hardcoded internal values. Non-sensitive settings keep a
+# sensible default; account/org-specific ones default empty and are required at apply
+# time (the deploy pipeline injects them; see the required-value guards below).
+REGION = os.environ.get("ATX_REGION", "us-east-1")
+# Environment-specific, internal registry URL. Supply via ATX_REGISTRY_ENDPOINT (the
+# deploy pipeline injects the prod URL; set it yourself to target another stage).
+# Required for apply/destroy/status; unused by build.
+REGISTRY_ENDPOINT = os.environ.get("ATX_REGISTRY_ENDPOINT", "")
+ECR_REPO = os.environ.get("ATX_ECR_REPO", "modernizer-dev-atx")
 DOCKERFILE = "src/atx_orchestrator/Dockerfile.atx"
-EXECUTION_ROLE = "AgentCoreExecutionRole"
-INVOKE_ROLE = "AWSTransformAgentInvokeRole"
+EXECUTION_ROLE = os.environ.get("ATX_EXECUTION_ROLE", "AgentCoreExecutionRole")
+INVOKE_ROLE = os.environ.get("ATX_INVOKE_ROLE", "AWSTransformAgentInvokeRole")
 
-DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
-DEFAULT_S3_BUCKET = "modernizer-atx-poc-754955336423"
-DEFAULT_STAGE = "prod"
-OWNER_NAME = "wwso-database-modernizer"
-OWNER_CONTACT = "wwso-database-modernizer"
-BASE_CHAT_LABEL = "DB Modernization Assessment"
+DEFAULT_MODEL_ID = os.environ.get("ATX_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+# Account-specific artifact bucket. Supply via --s3-bucket or ATX_S3_BUCKET (the
+# deploy pipeline injects it). Required for apply.
+DEFAULT_S3_BUCKET = os.environ.get("ATX_S3_BUCKET", "")
+DEFAULT_STAGE = os.environ.get("ATX_STAGE", "prod")
+# Publisher identity recorded in the registry (ownerName / ownerContactInfo). Org-
+# specific, so supply via ATX_OWNER_NAME / ATX_OWNER_CONTACT (the deploy pipeline
+# injects them). Required for apply.
+OWNER_NAME = os.environ.get("ATX_OWNER_NAME", "")
+OWNER_CONTACT = os.environ.get("ATX_OWNER_CONTACT", "")
+# Customer-facing job label in the AWS Transform WebApp. Overridable via ATX_CHAT_LABEL.
+BASE_CHAT_LABEL = os.environ.get("ATX_CHAT_LABEL", "DB Modernization Assessment")
 
 # Objective-negotiation prompt for the orchestrator. Set on the orchestrator's
 # published configuration so the WebApp opens a new job with a proactive greeting
@@ -167,7 +180,7 @@ def _clients():
         "ecr": session.client("ecr", config=cfg),
         "acc": session.client("bedrock-agentcore-control", config=cfg),
         "reg": session.client(
-            "atxagentregistryexternal", config=cfg, endpoint_url=REGISTRY_ENDPOINT
+            "atxagentregistryexternal", config=cfg, endpoint_url=REGISTRY_ENDPOINT or None
         ),
     }
 
@@ -211,7 +224,7 @@ def _env_for(agent: Agent, prefix: str, model_id: str, s3_bucket: str) -> dict[s
     }
     if agent.orchestrator:
         # Only the orchestrator resolves subagents by name; the prefix is the
-        # environment's fleet prefix (e.g. dbmod-estserna).
+        # environment's fleet prefix (e.g. dbmod-tebanieo).
         env["AGENT_NAME_PREFIX"] = prefix
     return env
 
@@ -555,6 +568,18 @@ def cmd_apply(args, clients) -> None:
     if not args.image_uri:
         raise SystemExit("--image-uri is required for apply (run `build` first, or pass a digest).")
 
+    if not args.s3_bucket:
+        raise SystemExit(
+            "--s3-bucket is required for apply (or set ATX_S3_BUCKET). "
+            "The deploy pipeline injects it."
+        )
+
+    if not OWNER_NAME or not OWNER_CONTACT:
+        raise SystemExit(
+            "Set ATX_OWNER_NAME and ATX_OWNER_CONTACT (publisher identity recorded "
+            "in the registry). The deploy pipeline injects them."
+        )
+
     selected_suffixes = {a.suffix for a in selected}
 
     print(f"apply env={args.env} prefix={prefix} agents={[a.suffix for a in selected]}")
@@ -685,7 +710,7 @@ def main() -> None:
 
     for verb, fn in (("apply", cmd_apply), ("destroy", cmd_destroy), ("status", cmd_status)):
         sp = sub.add_parser(verb)
-        sp.add_argument("--env", required=True, help="environment suffix, e.g. estserna")
+        sp.add_argument("--env", required=True, help="environment suffix, e.g. tebanieo")
         sp.add_argument("--agents", help="comma-separated agent keys; default = full fleet")
         sp.add_argument("--dry-run", action="store_true")
         if verb == "apply":
@@ -700,6 +725,11 @@ def main() -> None:
 
     pb.set_defaults(func=cmd_build)
     args = p.parse_args()
+    if args.cmd != "build" and not REGISTRY_ENDPOINT:
+        raise SystemExit(
+            "Set ATX_REGISTRY_ENDPOINT to the AWS Transform registry URL "
+            "(prod or another stage) for apply/destroy/status. The deploy pipeline injects it."
+        )
     clients = _clients()
     args.func(args, clients)
 

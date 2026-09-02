@@ -436,7 +436,7 @@ aws stepfunctions list-executions \
 
 # Describe a specific execution
 aws stepfunctions describe-execution \
-  --execution-arn "arn:aws:states:us-east-1:754955336423:execution:modernizer-dev-workflow:JOB_ID"
+  --execution-arn "arn:aws:states:us-east-1:123456789012:execution:modernizer-dev-workflow:JOB_ID"
 
 # ── CloudWatch Logs ──
 

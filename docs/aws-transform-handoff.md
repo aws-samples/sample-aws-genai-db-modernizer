@@ -163,7 +163,7 @@ venv was created with a mismatched interpreter — recreate with `uv venv`.
    Registration with the AWS Transform registry and invocation from the WebApp
    require the AWS account to be allowlisted by the AWS Transform team. Without it,
    `register_agent` fails and the orchestrator is not invokable from AWS Transform.
-   Account in use: `754955336423`. Check status with the AWS Transform team before
+   Account in use: `123456789012`. Check status with the AWS Transform team before
    attempting a full (registered) deploy.
 
 2. **IAM roles** — already created via `pipeline/iam-roles.yaml`:
@@ -317,7 +317,7 @@ orchestrator just needs to send → poll → parse.
 | Thing | Value |
 |---|---|
 | Owner | `wwso-database-modernizer` |
-| AWS account | `754955336423` |
+| AWS account | `123456789012` |
 | Region | `us-east-1` |
 | Orchestrator image | `db-modernization-orchestrator` |
 | Collector image | `db-modernization-collector` |
