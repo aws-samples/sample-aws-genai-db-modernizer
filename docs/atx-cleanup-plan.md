@@ -274,7 +274,7 @@ Explicitly parked until this plan is agreed. Captured so we don't lose it:
   `deploy_agent_full_pipeline` / `deploy_agent_to_agentcore` + `register_agent` / `publish_agent_version`.
 - **Blockers / cautions to resolve first:**
   - **Account allowlisting** for the AWS Transform registry (handoff doc says pending; account
-    `754955336423`). Without it, registration fails — but we *can* deploy to AgentCore and invoke the
+    `123456789012`). Without it, registration fails — but we *can* deploy to AgentCore and invoke the
     runtime directly to test the container half without spend on registration.
   - This step **builds ARM64 images, pushes to ECR, and creates AgentCore runtimes** → real AWS spend
     and a production-touching action. **I will not run any deploy without explicit go-ahead.**

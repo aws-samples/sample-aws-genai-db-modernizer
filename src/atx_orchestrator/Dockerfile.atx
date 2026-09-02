@@ -83,7 +83,7 @@ COPY src/ /app/src/
 # atx_entrypoint.py — a missing directory surfaces at server start, not build.
 RUN mkdir -p /tmp/agent_queue /app/artifacts \
     /tmp/orchestrator_agent \
-    /tmp/deterministic_core_agent \
+    /tmp/assessment_core_agent \
     /tmp/synthesis_agent \
     /tmp/schema_dynamodb_agent \
     /tmp/schema_documentdb_agent \
