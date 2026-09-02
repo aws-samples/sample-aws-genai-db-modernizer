@@ -69,15 +69,31 @@ def _discover_uploaded_input(store) -> str | None:
         from agent_builder_sdk.env_var import get_agent_context_from_env
 
         ctx = get_agent_context_from_env()
-    except Exception:  # noqa: BLE001 -- not in the ATX runtime; no upload to discover
+    except Exception as exc:  # noqa: BLE001 -- not in the ATX runtime; no upload to discover
+        logger.info(
+            "upload discovery: no ATX agent context (%s); returning None "
+            "(collector will fall back to the seed key)",
+            exc,
+        )
         return None
 
     prefix = f"AWSTransform/Workspaces/{ctx.workspace_id}/Jobs/{ctx.job_id}/User Uploads/"
+    all_keys = store.list_prefix(prefix)
     candidates: list[str] = [
-        k
-        for k in store.list_prefix(prefix)
-        if k.endswith(".json") and not k.endswith("/job_objective")
+        k for k in all_keys if k.endswith(".json") and not k.endswith("/job_objective")
     ]
+    # Observability: without this, a None return is silent and indistinguishable
+    # from "no upload", "wrong bucket/prefix", or "listed the wrong workspace".
+    # See fix/atx-input-file — an empty input_key was the root cause of collect
+    # failures that surfaced only as a downstream FileNotFoundError.
+    logger.info(
+        "upload discovery: bucket=%s prefix=%r listed=%d candidates=%d %s",
+        getattr(store, "bucket", getattr(store, "base_dir", "<unknown>")),
+        prefix,
+        len(all_keys),
+        len(candidates),
+        candidates if candidates else "",
+    )
     if len(candidates) == 1:
         return candidates[0]
     if len(candidates) > 1:
@@ -87,6 +103,14 @@ def _discover_uploaded_input(store) -> str | None:
             f"found {len(candidates)}: {names}. The pipeline cannot choose among "
             "multiple uploads without a naming convention."
         )
+    logger.warning(
+        "upload discovery found no collection JSON under %r (listed %d key(s)). "
+        "input_key will be empty; the collector will fall back to the seed key "
+        "and fail if none is staged. Confirm the customer uploaded a collection "
+        "file to this job and that the runtime's bucket matches the WebApp's.",
+        prefix,
+        len(all_keys),
+    )
     return None
 
 
@@ -112,10 +136,17 @@ def _resolve_collector_input(store, job_id: str, database_name: str, input_key: 
     if input_key:
         if not store.exists(input_key):
             raise FileNotFoundError(f"Offline collection input not found at '{input_key}'.")
+        logger.info("collector input resolved from explicit input_key=%r", input_key)
         return input_key
 
     seed = default_input_key(job_id, database_name)
     if store.exists(seed):
+        logger.info(
+            "collector input resolved from SEED key %r (no input_key was passed). "
+            "This is expected for dev/reference runs; a customer WebApp job should "
+            "resolve via upload discovery instead.",
+            seed,
+        )
         return seed
 
     raise FileNotFoundError(

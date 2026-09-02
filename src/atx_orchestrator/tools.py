@@ -428,6 +428,14 @@ def run_assessment_core_via_a2a(
     input_key = _discover_uploaded_input(_make_store()) or ""
     if input_key:
         logger.info("ATX assessment-core: using customer upload %s", input_key)
+    else:
+        logger.warning(
+            "ATX assessment-core: no customer upload discovered for job_id=%s; "
+            "passing empty input_key. The collect step will fall back to the seed "
+            "key and fail if none is staged. See upload-discovery log above for the "
+            "bucket/prefix that was listed.",
+            job_id,
+        )
     message = json.dumps(
         {
             "job_id": job_id,

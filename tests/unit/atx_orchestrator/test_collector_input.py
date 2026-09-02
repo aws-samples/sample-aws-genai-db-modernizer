@@ -116,6 +116,22 @@ class TestDiscoverUploadedInput:
         with pytest.raises(ValueError, match="exactly one"):
             core._discover_uploaded_input(store)
 
+    def test_empty_prefix_returns_none_and_lists(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With a valid context but nothing uploaded, discovery must list the job's
+        prefix and return None (empty input_key). Regression guard for the silent
+        empty-input_key root cause: the listing must actually be attempted."""
+        _inject_ctx(monkeypatch, "ws1", "uuid1")
+
+        listed: list[str] = []
+
+        class _RecordingStore(_FakeStore):
+            def list_prefix(self, prefix: str) -> list[str]:
+                listed.append(prefix)
+                return super().list_prefix(prefix)
+
+        assert core._discover_uploaded_input(_RecordingStore(())) is None
+        assert listed == [self.PREFIX]
+
 
 # =============================================================================
 # orchestrator wiring: run_assessment_core_via_a2a discovers + passes the key
