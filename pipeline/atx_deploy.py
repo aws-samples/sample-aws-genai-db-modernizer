@@ -400,6 +400,10 @@ def _agent_card(name: str, account: str, dependencies: list[str], version: str) 
         "version": version,
         "capabilities": {
             "restartable": True,
+            # Required by the registry on publish: whether users may keep chatting
+            # after a job reaches a terminal state (the platform auto-restores the
+            # agent to answer). Our agents do not support chat restore, so False.
+            "allowChatWhenJobTerminated": False,
             "a2aSupported": True,
             "legacyDashboard": False,
             "legacyTaskLink": False,
