@@ -85,7 +85,6 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     upload was found. Raises ``ValueError`` on an ambiguous upload.
     """
     try:
-        from agent_builder_sdk.agentic_framework.api_model import CategoryType
         from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
         from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
         from agent_builder_sdk.env_var import get_agent_context_from_env
@@ -105,8 +104,29 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         )
         return None
 
-    resp = artifacts.list_artifacts(ctx.agent_instance_id, category=CategoryType.CUSTOMER_INPUT)
-    all_artifacts = list(resp.get("artifacts") or [])
+    # A customer's WebApp upload is NOT owned by the orchestrator's agent instance,
+    # so the SDK's ``list_artifacts(agent_instance_id, ...)`` (an ``agentFilter``,
+    # scoped to this instance) cannot see it -- that returned ``listed=0`` in the
+    # field. ``workspaceFilter`` is the cross-job-visible scope that surfaces the
+    # customer upload; the SDK exposes no wrapper for it, so call the client
+    # directly (matching the live-tested agentcore_list_artifacts.py reference and
+    # the .NET agent's workspace-scoped listing). Note the key is ``category``
+    # (not ``categoryType``) inside ``workspaceFilter``. Paginate to be safe.
+    all_artifacts: list[dict] = []
+    next_token: str | None = None
+    while True:
+        kwargs: dict = {
+            "artifactFilter": {"workspaceFilter": {"category": "CUSTOMER_INPUT"}},
+            "requestContext": artifacts._create_request_context(),
+            "maxResults": 100,
+        }
+        if next_token:
+            kwargs["nextToken"] = next_token
+        resp = artifacts.client.list_artifacts(**kwargs)
+        all_artifacts.extend(resp.get("artifacts") or [])
+        next_token = resp.get("nextToken")
+        if not next_token:
+            break
     candidates = [
         a
         for a in all_artifacts

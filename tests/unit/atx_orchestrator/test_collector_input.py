@@ -87,17 +87,31 @@ class TestResolveCollectorInput:
 # _discover_uploaded_input
 
 
+class _FakeAgenticClient:
+    """Stand-in for the elasticgumbyagenticservice client. Records the filter it
+    was called with so tests can assert the workspace-scoped listing is used."""
+
+    def __init__(self, artifacts: list[dict]) -> None:
+        self._artifacts = artifacts
+        self.list_calls: list[dict] = []
+
+    def list_artifacts(self, **kwargs):  # noqa: ANN003
+        self.list_calls.append(kwargs)
+        return {"artifacts": self._artifacts}
+
+
 class _FakeArtifactStore:
-    """Stand-in for the SDK ArtifactStore. Records the download and serves a
-    canned collection so discovery can stage it without the real SDK/client."""
+    """Stand-in for the SDK ArtifactStore. Exposes ``.client`` and
+    ``._create_request_context`` (discovery lists via the client directly with a
+    workspaceFilter), records the download, and serves a canned collection."""
 
     def __init__(self, artifacts: list[dict], content: dict | None = None) -> None:
-        self._artifacts = artifacts
+        self.client = _FakeAgenticClient(artifacts)
         self._content = content if content is not None else {"collection_version": 1}
         self.downloaded: list[str] = []
 
-    def list_artifacts(self, agent_instance_id: str, category=None):  # noqa: ANN001
-        return {"artifacts": self._artifacts}
+    def _create_request_context(self) -> dict:
+        return {"jobMetadata": {"jobId": "uuid1", "workspaceId": "ws1"}}
 
     def download_artifact(self, artifact_id: str, destination_file_path: str) -> None:
         self.downloaded.append(artifact_id)
@@ -137,13 +151,6 @@ def _inject_sdk(monkeypatch: pytest.MonkeyPatch, fake_store: _FakeArtifactStore 
     client_mod = types.ModuleType("agent_builder_sdk.agentic_framework.client_factory")
     client_mod.get_agentic_api_client = lambda: object()  # type: ignore[attr-defined]
 
-    api_model_mod = types.ModuleType("agent_builder_sdk.agentic_framework.api_model")
-
-    class _CategoryType:
-        CUSTOMER_INPUT = "CUSTOMER_INPUT"
-
-    api_model_mod.CategoryType = _CategoryType  # type: ignore[attr-defined]
-
     monkeypatch.setitem(sys.modules, "agent_builder_sdk", pkg)
     monkeypatch.setitem(sys.modules, "agent_builder_sdk.agentic_framework", framework)
     monkeypatch.setitem(sys.modules, "agent_builder_sdk.env_var", env_mod)
@@ -153,7 +160,6 @@ def _inject_sdk(monkeypatch: pytest.MonkeyPatch, fake_store: _FakeArtifactStore 
     monkeypatch.setitem(
         sys.modules, "agent_builder_sdk.agentic_framework.client_factory", client_mod
     )
-    monkeypatch.setitem(sys.modules, "agent_builder_sdk.agentic_framework.api_model", api_model_mod)
 
 
 class TestDiscoverUploadedInput:
@@ -178,6 +184,23 @@ class TestDiscoverUploadedInput:
         assert fake.downloaded == ["art-1"]
         # ...and staged the content at the seed key for the collector to read.
         assert store.read_json(seed) == {"collection_version": 7}
+
+    def test_lists_with_workspace_filter_not_agent_filter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression guard: a customer upload is cross-job (workspace) scoped,
+        NOT owned by the orchestrator's agent instance. Discovery must list with
+        a workspaceFilter; an agentFilter returned listed=0 in the field."""
+        fake = _FakeArtifactStore([_artifact("art-1", "coll")])
+        _inject_sdk(monkeypatch, fake)
+
+        core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
+
+        assert fake.client.list_calls, "list_artifacts was not called"
+        art_filter = fake.client.list_calls[0]["artifactFilter"]
+        assert "workspaceFilter" in art_filter
+        assert "agentFilter" not in art_filter
+        assert art_filter["workspaceFilter"]["category"] == "CUSTOMER_INPUT"
 
     def test_job_objective_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Only the auto-written job_objective present -> nothing to pick.
