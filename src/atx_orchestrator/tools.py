@@ -416,24 +416,26 @@ def run_assessment_core_via_a2a(
         dict if the A2A round-trip failed.
     """
     # Resolve the customer's uploaded offline collection here, in the orchestrator:
-    # it reliably holds the Transform job context (workspace_id + platform job UUID),
-    # so _discover_uploaded_input can find the WebApp upload under the job's
-    # "User Uploads/" prefix and hand the agent an explicit key. Discovery is the
-    # single source of truth for the path — the LLM never supplies one. Outside the
-    # ATX runtime (dev/reference harness) discovery returns None, input_key stays "",
-    # and the collector step falls back to its seed key. An ambiguous upload (more
-    # than one candidate JSON) raises with a clear message rather than picking one.
+    # it reliably holds the Transform job context (workspace_id + platform job UUID
+    # + agent instance), so _discover_uploaded_input can find the WebApp upload via
+    # the ATX Artifact API (ListArtifacts CUSTOMER_INPUT) — which is account/bucket
+    # agnostic, unlike listing our own S3_BUCKET — download it, and stage it at the
+    # seed key. It returns that key. Discovery is the single source of truth for the
+    # path; the LLM never supplies one. Outside the ATX runtime (dev/reference
+    # harness) discovery returns None, input_key stays "", and the collector step
+    # falls back to a pre-staged seed key. An ambiguous upload (more than one
+    # CUSTOMER_INPUT JSON) raises with a clear message rather than picking one.
     from src.atx_orchestrator.core import _discover_uploaded_input
 
-    input_key = _discover_uploaded_input(_make_store()) or ""
+    input_key = _discover_uploaded_input(_make_store(), job_id, database_name) or ""
     if input_key:
-        logger.info("ATX assessment-core: using customer upload %s", input_key)
+        logger.info("ATX assessment-core: using customer upload staged at %s", input_key)
     else:
         logger.warning(
             "ATX assessment-core: no customer upload discovered for job_id=%s; "
             "passing empty input_key. The collect step will fall back to the seed "
-            "key and fail if none is staged. See upload-discovery log above for the "
-            "bucket/prefix that was listed.",
+            "key and fail if none is staged. See upload-discovery log above for what "
+            "the Artifact API returned.",
             job_id,
         )
     message = json.dumps(

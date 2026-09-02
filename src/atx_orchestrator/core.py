@@ -10,9 +10,11 @@ Everything here operates on the ArtifactStore abstraction. Storage type
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -51,24 +53,50 @@ def default_input_key(job_id: str, database_name: str) -> str:
     return f"{database_name}/{job_id}/uploads/collector-output.json"
 
 
-def _discover_uploaded_input(store) -> str | None:
-    """Locate a customer's WebApp-uploaded offline collection.
+def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
+    """Locate a customer's WebApp-uploaded offline collection via the ATX
+    Artifact API and stage it at the seed key for the collector.
 
-    The WebApp writes uploads to
-    ``AWSTransform/Workspaces/{workspace_id}/Jobs/{transform_job_id}/User Uploads/``,
-    keyed by the PLATFORM job UUID from the agent context -- which is distinct from
-    the pipeline ``job_id`` that drives the ``{db}/{job}/`` output tree. The job's
-    free-text objective is auto-written into that same prefix as a CUSTOMER_INPUT
-    JSON named ``job_objective``, so it is excluded by name.
+    A customer's upload is a platform **artifact** (category ``CUSTOMER_INPUT``),
+    not an object in this pipeline's ``S3_BUCKET``. The Artifact Store owns where
+    it physically lives — an ATX-managed bucket or the customer's own bucket, in
+    a different account than this fleet — and mints a presigned URL for it with
+    its own role. Listing a prefix in our ``S3_BUCKET`` (the old approach) only
+    ever found the upload when the WebApp happened to write into the same bucket
+    the runtime reads, i.e. same-account dev; cross-account it silently found
+    nothing. So discovery goes through ``ListArtifacts`` +
+    ``CreateArtifactDownloadUrl`` instead, which is account/bucket-agnostic.
 
-    Returns the S3 key of the single uploaded collection JSON, ``None`` when not
-    running in the ATX runtime (local/test) or nothing was uploaded, and raises if
-    the upload is ambiguous (more than one candidate JSON).
+    Flow (Option 1 — stage at the seed key so the collector's read path is
+    unchanged):
+
+      1. Resolve the ATX agent context (workspace/job/agent-instance) and build
+         the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
+         return ``None`` (local/dev falls back to a pre-staged seed key).
+      2. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
+         orchestrator's), filter to JSON, exclude the auto-written
+         ``job_objective``. Expect exactly one; more than one is ambiguous and
+         raises.
+      3. Download it and stage it into ``store`` at the seed key
+         ``{db}/{job}/uploads/collector-output.json``; return that key. The
+         collector then reads it exactly as it does a dev/reference seed.
+
+    Returns the staged seed key, or ``None`` when not in the ATX runtime or no
+    upload was found. Raises ``ValueError`` on an ambiguous upload.
     """
     try:
+        from agent_builder_sdk.agentic_framework.api_model import CategoryType
+        from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
+        from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
         from agent_builder_sdk.env_var import get_agent_context_from_env
 
         ctx = get_agent_context_from_env()
+        artifacts = ArtifactStore(
+            workspace_id=ctx.workspace_id,
+            job_id=ctx.job_id,
+            agent_instance_id=ctx.agent_instance_id,
+            client=get_agentic_api_client(),
+        )
     except Exception as exc:  # noqa: BLE001 -- not in the ATX runtime; no upload to discover
         logger.info(
             "upload discovery: no ATX agent context (%s); returning None "
@@ -77,41 +105,63 @@ def _discover_uploaded_input(store) -> str | None:
         )
         return None
 
-    prefix = f"AWSTransform/Workspaces/{ctx.workspace_id}/Jobs/{ctx.job_id}/User Uploads/"
-    all_keys = store.list_prefix(prefix)
-    candidates: list[str] = [
-        k for k in all_keys if k.endswith(".json") and not k.endswith("/job_objective")
+    resp = artifacts.list_artifacts(ctx.agent_instance_id, category=CategoryType.CUSTOMER_INPUT)
+    all_artifacts = list(resp.get("artifacts") or [])
+    candidates = [
+        a
+        for a in all_artifacts
+        if (a.get("artifactType") or {}).get("fileType") == "JSON"
+        and a.get("artifactLabel") != "job_objective"
     ]
-    # Observability: without this, a None return is silent and indistinguishable
-    # from "no upload", "wrong bucket/prefix", or "listed the wrong workspace".
-    # See fix/atx-input-file — an empty input_key was the root cause of collect
-    # failures that surfaced only as a downstream FileNotFoundError.
+    # Observability: a None/empty result was previously silent and
+    # indistinguishable from "no upload", "wrong account", or "listed the wrong
+    # instance". Log what the platform actually returned. See fix/atx-input-file.
     logger.info(
-        "upload discovery: bucket=%s prefix=%r listed=%d candidates=%d %s",
-        getattr(store, "bucket", getattr(store, "base_dir", "<unknown>")),
-        prefix,
-        len(all_keys),
+        "upload discovery: workspace=%s job=%s agent_instance=%s CUSTOMER_INPUT listed=%d json_candidates=%d labels=%s",
+        ctx.workspace_id,
+        ctx.job_id,
+        ctx.agent_instance_id,
+        len(all_artifacts),
         len(candidates),
-        candidates if candidates else "",
+        [a.get("artifactLabel") for a in candidates] if candidates else "",
     )
-    if len(candidates) == 1:
-        return candidates[0]
     if len(candidates) > 1:
-        names = sorted(k.rsplit("/", 1)[-1] for k in candidates)
+        labels = sorted(str(a.get("artifactLabel")) for a in candidates)
         raise ValueError(
-            f"Expected exactly one uploaded offline-collection JSON under {prefix!r}, "
-            f"found {len(candidates)}: {names}. The pipeline cannot choose among "
-            "multiple uploads without a naming convention."
+            f"Expected exactly one uploaded CUSTOMER_INPUT JSON artifact, found "
+            f"{len(candidates)}: {labels}. The pipeline cannot choose among multiple "
+            "uploads without a naming convention."
         )
-    logger.warning(
-        "upload discovery found no collection JSON under %r (listed %d key(s)). "
-        "input_key will be empty; the collector will fall back to the seed key "
-        "and fail if none is staged. Confirm the customer uploaded a collection "
-        "file to this job and that the runtime's bucket matches the WebApp's.",
-        prefix,
-        len(all_keys),
+    if not candidates:
+        logger.warning(
+            "upload discovery found no CUSTOMER_INPUT JSON artifact for agent_instance=%s "
+            "(listed %d artifact(s)). input_key will be empty; the collector will fall "
+            "back to the seed key and fail if none is staged. Confirm the customer "
+            "uploaded a collection file to this job.",
+            ctx.agent_instance_id,
+            len(all_artifacts),
+        )
+        return None
+
+    artifact_id = candidates[0]["artifactId"]
+    seed_key = default_input_key(job_id, database_name)
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        artifacts.download_artifact(artifact_id, tmp_path)
+        with open(tmp_path) as fh:
+            collection = json.load(fh)
+        store.write_json(seed_key, collection)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
+    logger.info(
+        "upload discovery: staged CUSTOMER_INPUT artifact %s (label=%r) at seed key %r",
+        artifact_id,
+        candidates[0].get("artifactLabel"),
+        seed_key,
     )
-    return None
+    return seed_key
 
 
 def _resolve_collector_input(store, job_id: str, database_name: str, input_key: str) -> str:
