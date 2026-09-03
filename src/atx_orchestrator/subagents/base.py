@@ -296,8 +296,60 @@ def make_subagent_factory(
     return agent_factory
 
 
-def run_server(agent_factory, default_storage_dir: str):
-    """Start an AgentRuntimeServer for the given factory (shared CLI entry logic)."""
+def _make_orchestrator_server_class(base_server_cls):
+    """Build a custom AgentRuntimeServer subclass that greets on first job start.
+
+    The SDK's stock server only reacts to incoming messages — nothing populates
+    the WebApp chat until the customer types. The ATX-canonical way to send a
+    proactive opening message (see MigrationAssessmentOrchestratorAgent) is to
+    override the base ``_finalize_agent_setup`` lifecycle hook: it runs once when
+    the container starts serving a job, BEFORE any user turn.
+
+    We greet only when ``agent_status == "INVOKED"`` (the first, fresh start).
+    On ``"RUNNING"`` (container rotation / checkpoint recovery) the chat already
+    has history, so re-greeting would be noise — the base class distinguishes
+    these exactly this way for its own JobStarted metric.
+
+    Built as a factory taking ``base_server_cls`` so the SDK import stays lazy
+    (module import must not require the SDK, which is only present in the ATX
+    runtime container).
+    """
+
+    class _OrchestratorServer(base_server_cls):  # type: ignore[valid-type, misc]
+        async def _finalize_agent_setup(self, agent_status: str = "RUNNING") -> None:
+            # Let the base class create the agent, wire auth/checkpointing, and
+            # transition the job to EXECUTING first. Only greet after that
+            # succeeds so a greeting is never sent for a job that failed to set up.
+            await super()._finalize_agent_setup(agent_status)
+
+            if agent_status != "INVOKED":
+                logger.info(
+                    "Agent status is %s (restart/recovery) — skipping welcome message",
+                    agent_status,
+                )
+                return
+
+            try:
+                from src.atx_orchestrator.startup import send_welcome_message
+
+                send_welcome_message()
+            except Exception:  # noqa: BLE001
+                # Fail-open: the greeting must never break job startup.
+                logger.warning("Welcome message step failed", exc_info=True)
+
+    return _OrchestratorServer
+
+
+def run_server(agent_factory, default_storage_dir: str, *, is_orchestrator: bool = False):
+    """Start an AgentRuntimeServer for the given factory (shared CLI entry logic).
+
+    Args:
+        agent_factory: Factory the server calls to build the agent.
+        default_storage_dir: Container-local ``/tmp`` dir for this agent type.
+        is_orchestrator: When True, use the orchestrator server subclass that
+            sends a proactive welcome message on first job start. Subagents leave
+            this False and use the stock server unchanged.
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="AWS Transform Subagent")
@@ -312,7 +364,13 @@ def run_server(agent_factory, default_storage_dir: str):
 
     from agent_builder_sdk.server.agent_runtime_server import AgentRuntimeServer
 
-    server = AgentRuntimeServer(
+    server_cls = (
+        _make_orchestrator_server_class(AgentRuntimeServer)
+        if is_orchestrator
+        else AgentRuntimeServer
+    )
+
+    server = server_cls(
         agent_factory=agent_factory,
         host=args.host,
         port=args.port,
@@ -320,5 +378,10 @@ def run_server(agent_factory, default_storage_dir: str):
         storage_dir=args.storage_dir,
         delayed_timeout=3600,
     )
-    logger.info("Starting subagent on %s:%s", args.host, args.port)
+    logger.info(
+        "Starting %s on %s:%s",
+        "orchestrator" if is_orchestrator else "subagent",
+        args.host,
+        args.port,
+    )
     server.start()

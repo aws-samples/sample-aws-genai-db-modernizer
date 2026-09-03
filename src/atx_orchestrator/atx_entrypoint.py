@@ -171,7 +171,13 @@ def main() -> None:
     from src.atx_orchestrator.subagents.base import run_server
 
     logger.info("Starting agent: %s", agent_type)
-    run_server(factory, default_storage_dir=storage_dir)
+    # Only the chat-facing orchestrator sends a proactive welcome message at job
+    # start; subagents run the stock server unchanged.
+    run_server(
+        factory,
+        default_storage_dir=storage_dir,
+        is_orchestrator=(agent_type == "orchestrator"),
+    )
 
 
 if __name__ == "__main__":
