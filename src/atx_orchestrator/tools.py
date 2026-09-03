@@ -540,7 +540,7 @@ def run_synthesis_via_a2a(
     # (the six engines run as separate parallel agents with no single owner to
     # mark the parent, unlike the in-process analysis phase).
     mark_step_succeeded("schema")
-    return _run_phase_via_a2a(
+    result = _run_phase_via_a2a(
         agent_suffix="synthesis",
         step="synthesis",
         label="synthesis",
@@ -549,6 +549,15 @@ def run_synthesis_via_a2a(
         message=message,
         on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
     )
+    # Synthesis is the last step of the assessment pipeline. When it succeeds the
+    # whole job is done, so mark the platform JOB terminal — the platform does not
+    # roll the job up when only plan steps and subagent instances finish, so
+    # without this the job stays EXECUTING forever. Only the orchestrator owns
+    # this transition; it is idempotent and fail-open. A synthesis error is left
+    # non-terminal on purpose so the LLM can retry.
+    if not _is_error_result(result):
+        _complete_job_success(job_id)
+    return result
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
@@ -620,6 +629,35 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             type(e).__name__,
             e,
         )
+
+
+def _is_error_result(result: str) -> bool:
+    """True if a phase tool's JSON string represents an ``{"error": ...}`` result.
+
+    ``_run_phase_via_a2a`` returns either the completion payload or an error dict,
+    both JSON-serialised. Treat unparseable output as an error too, so a
+    completion transition never fires on a malformed synthesis result.
+    """
+    try:
+        parsed = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return True
+    return isinstance(parsed, dict) and "error" in parsed
+
+
+def _complete_job_success(job_id: str) -> None:
+    """Mark the platform job COMPLETED after the pipeline's final step succeeds.
+
+    Best-effort and idempotent (see ``runtime.job_status.complete_job``). Kept as
+    a thin wrapper so the import stays local and the synthesis tool reads cleanly.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import complete_job
+
+        complete_job(success=True, job_id=job_id)
+    except Exception:  # noqa: BLE001
+        # Fail-open: never let job completion crash the final synthesis turn.
+        logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
 
 
 # Target engine per schema-design agent, keyed by the suffix used in both the
