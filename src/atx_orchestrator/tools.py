@@ -608,22 +608,32 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             f"{base}/engineering-report-{database_name}.md", engineering_md, "text/markdown"
         )
 
-        # Register all three in the WebApp panel. CUSTOMER_OUTPUT is accepted from
-        # the agent side (constraint C2, verified 2026-08-24).
+        # Register all three in the WebApp panel as EXTERNAL CUSTOMER_OUTPUT so
+        # cross-account viewers can see and download them. The 5th tuple element
+        # is the download filename (matches the S3 copy names above) so the file
+        # saves under a friendly name instead of the artifact UUID.
         _artifacts.publish(
             [
-                (decision_html.encode("utf-8"), "HTML", "Decision Report", "CUSTOMER_OUTPUT"),
+                (
+                    decision_html.encode("utf-8"),
+                    "HTML",
+                    "Decision Report",
+                    "CUSTOMER_OUTPUT",
+                    f"decision-report-{database_name}.html",
+                ),
                 (
                     engineering_md.encode("utf-8"),
                     "MARKDOWN",
                     "Engineering Report",
                     "CUSTOMER_OUTPUT",
+                    f"engineering-report-{database_name}.md",
                 ),
                 (
                     json.dumps(report, indent=2).encode("utf-8"),
                     "JSON",
                     "Assessment Data",
                     "CUSTOMER_OUTPUT",
+                    f"assessment-data-{database_name}.json",
                 ),
             ]
         )

@@ -52,12 +52,63 @@ CategoryType = Literal[
 FileType = Literal["CSV", "HTML", "JSON", "MARKDOWN", "OTHER", "PDF", "PPTX", "TXT", "XLSX", "ZIP"]
 
 
-def publish(items: list[tuple[bytes, FileType, str, CategoryType]]) -> dict[str, str]:
+# Download filename extension per file type, so a published artifact downloads
+# as "<name>.<ext>" instead of an opaque UUID. Keys are the FileType literals.
+_FILE_TYPE_EXT: dict[str, str] = {
+    "CSV": "csv",
+    "HTML": "html",
+    "JSON": "json",
+    "MARKDOWN": "md",
+    "PDF": "pdf",
+    "PPTX": "pptx",
+    "TXT": "txt",
+    "XLSX": "xlsx",
+    "ZIP": "zip",
+}
+
+
+def _default_path(label: str, file_type: str) -> str:
+    """Derive a friendly download filename from the label and file type.
+
+    Slugs the label to a filesystem-safe stem and appends the extension for the
+    file type. Used when a caller does not supply an explicit ``path``. The
+    result is what the customer's browser saves the download as, so it must be
+    human-readable rather than the artifact UUID.
+    """
+    stem = "".join(c if (c.isalnum() or c in "-_") else "-" for c in label.strip().lower())
+    stem = "-".join(filter(None, stem.split("-"))) or "artifact"
+    ext = _FILE_TYPE_EXT.get(str(file_type).upper(), "dat")
+    return f"{stem}.{ext}"
+
+
+# An item is ``(content, file_type, label, category_type)`` or, with an explicit
+# download filename, ``(content, file_type, label, category_type, path)``.
+PublishItem = (
+    tuple[bytes, FileType, str, CategoryType] | tuple[bytes, FileType, str, CategoryType, str]
+)
+
+
+def publish(items: list[PublishItem]) -> dict[str, str]:
     """Register content with the platform so it appears in the Artifacts panel.
 
+    Uploads each item as an **EXTERNAL**-visibility artifact via the client-direct
+    sequence (``create_artifact_upload_url`` -> ``upload_from_presigned_url`` ->
+    ``complete_artifact_upload``). This is deliberate and important:
+
+    * ``ArtifactStore.upload_artifact`` hardcodes ``visibility="INTERNAL"``, which
+      the frontend cannot serve for download and which cross-account viewers
+      (e.g. a customer in a different account than where the job ran) cannot see.
+      The publishing account sees INTERNAL artifacts fine, which masks the bug.
+      ``CUSTOMER_OUTPUT`` deliverables must be EXTERNAL to reach the customer.
+    * The SDK method also never sets ``fileMetadata.path``, so the download is
+      named with the artifact UUID. We set it so the file saves as its friendly
+      name. Reference: AWSTransformHelixAgentSkills schema_deployment_tools.py.
+
     Args:
-        items: ``(content, file_type, label, category_type)`` tuples. ``label`` is
-            what the customer sees in the panel, so write it for them.
+        items: ``(content, file_type, label, category_type[, path])`` tuples.
+            ``label`` is what the customer sees in the Artifacts panel; ``path``
+            (optional) is the download filename and defaults to a slug of the
+            label plus the file-type extension.
 
     Returns:
         ``{label: artifact_id}`` for whatever uploaded. Empty when running outside
@@ -65,39 +116,76 @@ def publish(items: list[tuple[bytes, FileType, str, CategoryType]]) -> dict[str,
         S3 copy is the system of record and its phase must not fail over this.
 
     Each item is uploaded independently so one rejection does not lose the rest.
-    That matters because ``category_type`` is caller-role-scoped: a category valid
-    from the agent side may be refused from the operator side, and the warning names
-    the category so the cause is visible rather than silent.
     """
     published: dict[str, str] = {}
     try:
-        from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
+        import uuid
+
         from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
-        from agent_builder_sdk.agentic_framework.common import calculate_digest
+        from agent_builder_sdk.agentic_framework.common import (
+            calculate_digest,
+            upload_from_presigned_url,
+        )
         from agent_builder_sdk.env_var import get_agent_context_from_env
 
         ctx = get_agent_context_from_env()
-        store = ArtifactStore(
-            workspace_id=ctx.workspace_id,
-            job_id=ctx.job_id,
-            agent_instance_id=ctx.agent_instance_id,
-            client=get_agentic_api_client(),
-        )
-        for content, file_type, label, category in items:
+        client = get_agentic_api_client()
+        request_context = dict(ctx.to_dict())
+
+        for item in items:
+            content, file_type, label, category = item[0], item[1], item[2], item[3]
+            path = item[4] if len(item) > 4 else _default_path(label, file_type)
             try:
-                artifact_id = store.upload_artifact(
-                    content,
-                    calculate_digest(content),
-                    category_type=category,
-                    file_type=file_type,
+                # Upload as INTERNAL first. Setting visibility="EXTERNAL" here does
+                # NOT actually make the artifact externally visible — the platform
+                # keeps it INTERNAL (observed: a create with visibility=EXTERNAL
+                # still stored INTERNAL). The switch that makes an artifact visible
+                # cross-account / frontend-downloadable is a separate copy_artifact
+                # call after the upload completes. See AWSTransformSQLTransformer
+                # artifact_service.upload_artifact (copy_artifact "make public").
+                resp = client.create_artifact_upload_url(
+                    contentDigest={"sha256": calculate_digest(content)},
+                    visibility="INTERNAL",
+                    artifactReference={
+                        "artifactType": {"categoryType": category, "fileType": file_type}
+                    },
+                    fileMetadata={"path": path},
                     label=label,
+                    requestContext=request_context,
                 )
+                artifact_id = resp["artifactId"]
+
+                # The presigned PUT targets either the ATX-managed bucket or the
+                # customer's own bucket; the metadata's storedInAtxBucket flag
+                # tells upload_from_presigned_url which error contract applies.
+                metadata = client.get_artifact_metadata(
+                    artifactId=artifact_id, requestContext=request_context
+                )
+                upload_from_presigned_url(
+                    resp, content, metadata["artifact"].get("storedInAtxBucket", True)
+                )
+                client.complete_artifact_upload(
+                    artifactId=artifact_id, requestContext=request_context
+                )
+
+                # Make the completed artifact externally visible. This is the
+                # actual visibility switch (INTERNAL -> EXTERNAL) for a
+                # CUSTOMER_OUTPUT deliverable so cross-account viewers can see and
+                # download it. idempotencyToken guards against a retried publish.
+                client.copy_artifact(
+                    artifactId=artifact_id,
+                    idempotencyToken=str(uuid.uuid4()),
+                    requestContext=request_context,
+                )
+
                 published[label] = artifact_id
                 logger.info(
-                    "Published artifact: label=%r type=%s category=%s bytes=%d id=%s",
+                    "Published artifact: label=%r type=%s category=%s visibility=EXTERNAL "
+                    "path=%r bytes=%d id=%s",
                     label,
                     file_type,
                     category,
+                    path,
                     len(content),
                     artifact_id,
                 )
