@@ -119,12 +119,17 @@ class _FakeArtifactStore:
             json.dump(self._content, fh)
 
 
-def _artifact(artifact_id: str, label: str, file_type: str = "JSON") -> dict:
-    return {
+def _artifact(
+    artifact_id: str, label: str, file_type: str = "JSON", path: str | None = None
+) -> dict:
+    a = {
         "artifactId": artifact_id,
         "artifactLabel": label,
         "artifactType": {"categoryType": "CUSTOMER_INPUT", "fileType": file_type},
     }
+    if path is not None:
+        a["fileMetadata"] = {"path": path}
+    return a
 
 
 def _inject_sdk(monkeypatch: pytest.MonkeyPatch, fake_store: _FakeArtifactStore | None) -> None:
@@ -170,7 +175,10 @@ class TestDiscoverUploadedInput:
 
     def test_single_upload_downloaded_and_staged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _FakeArtifactStore(
-            [_artifact("art-1", "discourse-collection"), _artifact("obj-1", "job_objective")],
+            [
+                _artifact("art-1", "default", path="discourse-collection.json"),
+                _artifact("obj-1", "default", path="job_objective"),
+            ],
             content={"collection_version": 7},
         )
         _inject_sdk(monkeypatch, fake)
@@ -185,39 +193,65 @@ class TestDiscoverUploadedInput:
         # ...and staged the content at the seed key for the collector to read.
         assert store.read_json(seed) == {"collection_version": 7}
 
-    def test_lists_with_workspace_filter_not_agent_filter(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Regression guard: a customer upload is cross-job (workspace) scoped,
-        NOT owned by the orchestrator's agent instance. Discovery must list with
-        a workspaceFilter; an agentFilter returned listed=0 in the field."""
-        fake = _FakeArtifactStore([_artifact("art-1", "coll")])
+    def test_lists_without_server_side_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression guard: server-side category/agent filters returned listed=0
+        in the field even though the upload existed. Discovery must list WITHOUT an
+        artifactFilter and match in Python on the artifact's real type/path."""
+        fake = _FakeArtifactStore([_artifact("art-1", "default", path="coll.json")])
         _inject_sdk(monkeypatch, fake)
 
         core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
 
         assert fake.client.list_calls, "list_artifacts was not called"
-        art_filter = fake.client.list_calls[0]["artifactFilter"]
-        assert "workspaceFilter" in art_filter
-        assert "agentFilter" not in art_filter
-        assert art_filter["workspaceFilter"]["category"] == "CUSTOMER_INPUT"
+        assert "artifactFilter" not in fake.client.list_calls[0]
 
-    def test_job_objective_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Only the auto-written job_objective present -> nothing to pick.
-        _inject_sdk(monkeypatch, _FakeArtifactStore([_artifact("obj-1", "job_objective")]))
+    def test_real_shape_two_json_objective_excluded_by_basename(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The field case: BOTH the upload and the auto-written objective are
+        CUSTOMER_INPUT/JSON with label 'default'. The objective has a bare
+        'job_objective' path (no .json, no leading slash). Only the real
+        collection must be picked — the objective is excluded by path basename."""
+        collection = _artifact("33641880", "default", path="discourse-collection.json")
+        objective = _artifact("788c3a44", "default", path="job_objective")
+        fake = _FakeArtifactStore([collection, objective], content={"collection_version": 5})
+        _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
+
+        result = core._discover_uploaded_input(store, "uuid1", "discourse")
+
+        assert result == seed
+        assert fake.downloaded == ["33641880"]  # the collection, not the objective
+        assert store.read_json(seed) == {"collection_version": 5}
+
+    def test_job_objective_only_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Only the auto-written objective present (bare 'job_objective' path).
+        _inject_sdk(
+            monkeypatch, _FakeArtifactStore([_artifact("obj-1", "default", path="job_objective")])
+        )
         assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
     def test_non_json_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A non-JSON CUSTOMER_INPUT (e.g. a ZIP) is not a collection candidate.
-        _inject_sdk(monkeypatch, _FakeArtifactStore([_artifact("z-1", "bundle", file_type="ZIP")]))
-        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
-
-    def test_ambiguous_upload_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A non-JSON upload (e.g. a ZIP) is not a collection candidate.
         _inject_sdk(
             monkeypatch,
-            _FakeArtifactStore([_artifact("a-1", "coll-a"), _artifact("b-1", "coll-b")]),
+            _FakeArtifactStore([_artifact("z-1", "default", file_type="ZIP", path="bundle.zip")]),
         )
-        with pytest.raises(ValueError, match="exactly one"):
+        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
+
+    def test_ambiguous_two_collections_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two genuine .json collection uploads (neither is the objective) -> raise.
+        _inject_sdk(
+            monkeypatch,
+            _FakeArtifactStore(
+                [
+                    _artifact("a-1", "default", path="coll-a.json"),
+                    _artifact("b-1", "default", path="coll-b.json"),
+                ]
+            ),
+        )
+        with pytest.raises(ValueError, match="found 2"):
             core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
 
     def test_no_artifacts_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:

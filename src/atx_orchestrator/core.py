@@ -104,19 +104,18 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         )
         return None
 
-    # A customer's WebApp upload is NOT owned by the orchestrator's agent instance,
-    # so the SDK's ``list_artifacts(agent_instance_id, ...)`` (an ``agentFilter``,
-    # scoped to this instance) cannot see it -- that returned ``listed=0`` in the
-    # field. ``workspaceFilter`` is the cross-job-visible scope that surfaces the
-    # customer upload; the SDK exposes no wrapper for it, so call the client
-    # directly (matching the live-tested agentcore_list_artifacts.py reference and
-    # the .NET agent's workspace-scoped listing). Note the key is ``category``
-    # (not ``categoryType``) inside ``workspaceFilter``. Paginate to be safe.
+    # List the job's artifacts with NO server-side filter, then match in Python.
+    # Server-side category/agent filters both returned listed=0 in the field even
+    # though the WebApp Artifacts panel shows the upload — the customer upload's
+    # stored category is not necessarily CUSTOMER_INPUT, and it is surfaced by a
+    # "User Uploads/" ``fileMetadata.path`` rather than a category we can predict.
+    # The live-tested agentcore_list_artifacts.py reference defaults to no filter
+    # for exactly this reason; we mirror that and inspect each artifact's real
+    # categoryType / fileType / path. Paginate.
     all_artifacts: list[dict] = []
     next_token: str | None = None
     while True:
         kwargs: dict = {
-            "artifactFilter": {"workspaceFilter": {"category": "CUSTOMER_INPUT"}},
             "requestContext": artifacts._create_request_context(),
             "maxResults": 100,
         }
@@ -127,29 +126,45 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         next_token = resp.get("nextToken")
         if not next_token:
             break
-    candidates = [
-        a
-        for a in all_artifacts
-        if (a.get("artifactType") or {}).get("fileType") == "JSON"
-        and a.get("artifactLabel") != "job_objective"
-    ]
-    # Observability: a None/empty result was previously silent and
-    # indistinguishable from "no upload", "wrong account", or "listed the wrong
-    # instance". Log what the platform actually returned. See fix/atx-input-file.
+
+    def _path(a: dict) -> str:
+        return (a.get("fileMetadata") or {}).get("path") or ""
+
+    def _label(a: dict) -> str:
+        return a.get("artifactLabel") or ""
+
+    # Log the artifact paths the platform returned. This is the observability that
+    # a None/empty result was previously missing (it looked identical whether the
+    # upload was absent, in the wrong scope, or filtered out). Paths are enough to
+    # diagnose; full artifact dicts were only needed while reverse-engineering the
+    # shape. See fix/atx-input-file.
     logger.info(
-        "upload discovery: workspace=%s job=%s agent_instance=%s CUSTOMER_INPUT listed=%d json_candidates=%d labels=%s",
-        ctx.workspace_id,
+        "upload discovery: job=%s agent_instance=%s listed=%d paths=%s",
         ctx.job_id,
         ctx.agent_instance_id,
         len(all_artifacts),
-        len(candidates),
-        [a.get("artifactLabel") for a in candidates] if candidates else "",
+        [_path(a) or _label(a) for a in all_artifacts],
     )
+
+    # A customer collection upload is a .json whose path basename ends in
+    # ``.json``. The auto-written objective is ALSO CUSTOMER_INPUT/JSON, but with
+    # label ``default`` (not ``job_objective``) and a bare ``job_objective`` path
+    # -- so it must be excluded by its path basename, not by label or a
+    # leading-slash suffix (both of which it evades, which produced a spurious
+    # "found 2" ambiguity in the field). See the ground-truth discovery log above.
+    def _basename(a: dict) -> str:
+        return _path(a).rsplit("/", 1)[-1]
+
+    candidates = [
+        a
+        for a in all_artifacts
+        if _basename(a).endswith(".json") and _basename(a) != "job_objective"
+    ]
     if len(candidates) > 1:
-        labels = sorted(str(a.get("artifactLabel")) for a in candidates)
+        paths = sorted(_path(a) or _label(a) for a in candidates)
         raise ValueError(
-            f"Expected exactly one uploaded CUSTOMER_INPUT JSON artifact, found "
-            f"{len(candidates)}: {labels}. The pipeline cannot choose among multiple "
+            f"Expected exactly one uploaded collection JSON artifact, found "
+            f"{len(candidates)}: {paths}. The pipeline cannot choose among multiple "
             "uploads without a naming convention."
         )
     if not candidates:
