@@ -38,6 +38,36 @@ from src.atx_orchestrator.runtime.job_plan import (
 
 logger = logging.getLogger(__name__)
 
+
+def _platform_job_id(supplied: str) -> str:
+    """Return the real AWS Transform platform job id, ignoring the LLM-supplied one.
+
+    ``job_id`` is an argument on every pipeline ``@tool``, so the orchestrator LLM
+    fills it in — and it fabricates a plausible slug (e.g. ``discourse-20250612-120000``)
+    rather than the platform job UUID it never reliably echoes. Every phase then keys
+    its ``{db}/{job}/`` artifact tree on that slug; a fabricated id is internally
+    consistent within one run but does not match the platform job, and two phases can
+    drift to different slugs. The real id lives in the agent runtime context, so use
+    that as the single source of truth and fall back to ``supplied`` only outside the
+    ATX runtime (local/dev/reference harness, where there is no agent context).
+    """
+    try:
+        from agent_builder_sdk.env_var import get_agent_context_from_env
+
+        ctx = get_agent_context_from_env()
+        platform_id = getattr(ctx, "job_id", "") or ""
+    except Exception as exc:  # noqa: BLE001 -- not in the ATX runtime; keep the supplied id
+        logger.debug("no ATX agent context (%s); using supplied job_id=%s", exc, supplied)
+        return supplied
+    if platform_id and platform_id != supplied:
+        logger.info(
+            "overriding LLM-supplied job_id=%r with platform job id %r",
+            supplied,
+            platform_id,
+        )
+    return platform_id or supplied
+
+
 # Subagent naming. Every A2A tool resolves its target as
 # f"{_AGENT_PREFIX}-<phase>", so one image can drive either generation:
 #   v1 (deployed):  db-modernization-<phase>          — the default
@@ -84,6 +114,7 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
         JSON string with status (``declared`` or ``no_plan_declared``) and
         the list of registered phases.
     """
+    job_id = _platform_job_id(job_id)
     logger.info(
         "ATX declare_pipeline_plan job_id=%s db=%s",
         job_id,
@@ -260,6 +291,7 @@ def get_job_status(job_id: str, database_name: str) -> str:
     Returns:
         JSON string with per-phase status values.
     """
+    job_id = _platform_job_id(job_id)
     store = _make_store()
     orch = _make_orchestrator(store)
 
@@ -286,6 +318,7 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
     Returns:
         The synthesis report as a JSON string, or an error if not available.
     """
+    job_id = _platform_job_id(job_id)
     store = _make_store()
     report_key = f"{database_name}/{job_id}/synthesis/report.json"
 
@@ -416,18 +449,29 @@ def run_assessment_core_via_a2a(
         dict if the A2A round-trip failed.
     """
     # Resolve the customer's uploaded offline collection here, in the orchestrator:
-    # it reliably holds the Transform job context (workspace_id + platform job UUID),
-    # so _discover_uploaded_input can find the WebApp upload under the job's
-    # "User Uploads/" prefix and hand the agent an explicit key. Discovery is the
-    # single source of truth for the path — the LLM never supplies one. Outside the
-    # ATX runtime (dev/reference harness) discovery returns None, input_key stays "",
-    # and the collector step falls back to its seed key. An ambiguous upload (more
-    # than one candidate JSON) raises with a clear message rather than picking one.
+    # it reliably holds the Transform job context (workspace_id + platform job UUID
+    # + agent instance), so _discover_uploaded_input can find the WebApp upload via
+    # the ATX Artifact API (ListArtifacts CUSTOMER_INPUT) — which is account/bucket
+    # agnostic, unlike listing our own S3_BUCKET — download it, and stage it at the
+    # seed key. It returns that key. Discovery is the single source of truth for the
+    # path; the LLM never supplies one. Outside the ATX runtime (dev/reference
+    # harness) discovery returns None, input_key stays "", and the collector step
+    # falls back to a pre-staged seed key. An ambiguous upload (more than one
+    # CUSTOMER_INPUT JSON) raises with a clear message rather than picking one.
     from src.atx_orchestrator.core import _discover_uploaded_input
 
-    input_key = _discover_uploaded_input(_make_store()) or ""
+    job_id = _platform_job_id(job_id)
+    input_key = _discover_uploaded_input(_make_store(), job_id, database_name) or ""
     if input_key:
-        logger.info("ATX assessment-core: using customer upload %s", input_key)
+        logger.info("ATX assessment-core: using customer upload staged at %s", input_key)
+    else:
+        logger.warning(
+            "ATX assessment-core: no customer upload discovered for job_id=%s; "
+            "passing empty input_key. The collect step will fall back to the seed "
+            "key and fail if none is staged. See upload-discovery log above for what "
+            "the Artifact API returned.",
+            job_id,
+        )
     message = json.dumps(
         {
             "job_id": job_id,
@@ -480,6 +524,7 @@ def run_synthesis_via_a2a(
         query_groups, overall_risk_level, has_executive_summary,
         report_artifact).
     """
+    job_id = _platform_job_id(job_id)
     # Resolve the version in Python, not via the LLM (ADR-026): the latest
     # assignment (v2 when Reality Check consolidated, else v1).
     assignment_version = _effective_assignment_version(job_id, database_name)
@@ -616,6 +661,7 @@ def _run_schema_design_via_a2a(
     database_name: str,
 ) -> str:
     """Shared body for the six schema-design A2A tools."""
+    job_id = _platform_job_id(job_id)
     agent_id = f"{_AGENT_PREFIX}-schema-{suffix}"
     # Plan step labels use the engine's own identifier with underscores
     # (schema_aurora_postgresql), while agent ids use hyphens
