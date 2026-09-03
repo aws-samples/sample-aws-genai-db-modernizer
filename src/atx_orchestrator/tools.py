@@ -31,6 +31,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     mark_step_failed,
     mark_step_running,
+    mark_step_skipped,
     mark_step_succeeded,
     put_job_plan,
     register_steps,
@@ -538,7 +539,10 @@ def run_synthesis_via_a2a(
     # Synthesis only runs once every schema-design agent has finished, so this is
     # the deterministic point to close out the parent "Design Target Schemas" box
     # (the six engines run as separate parallel agents with no single owner to
-    # mark the parent, unlike the in-process analysis phase).
+    # mark the parent, unlike the in-process analysis phase). Before closing the
+    # parent, mark the sub-steps for engines that were never selected as skipped,
+    # so they show the "not run" state instead of a perpetual pending clock.
+    _mark_unselected_schema_steps_skipped(job_id, database_name)
     mark_step_succeeded("schema")
     result = _run_phase_via_a2a(
         agent_suffix="synthesis",
@@ -691,6 +695,69 @@ def _effective_assignment_version(job_id: str, database_name: str) -> int:
         return version if version > 0 else 1
     except Exception:  # noqa: BLE001 - best-effort; fall back to the always-written v1
         return 1
+
+
+def _engines_with_in_scope_queries(
+    job_id: str, database_name: str, assignment_version: int
+) -> set[str]:
+    """Return the engines that have at least one in-scope query routed to them.
+
+    Reads ``<db>/<job>/assignment/v<N>/assignment.json`` and unions
+    ``assigned_engine`` over in-scope query assignments. Mirrors
+    ``local_orchestrator._get_engines_with_in_scope_queries``. Because the caller
+    passes the *effective* version (v2 when Reality Check consolidated, else v1),
+    this already reflects any engine consolidation.
+
+    Fail-open: returns an empty set if the artifact is missing or unreadable, so
+    callers can leave the plan untouched rather than mismark it.
+    """
+    try:
+        store = _make_store()
+        key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
+        if not store.exists(key):
+            return set()
+        assignment = store.read_json(key)
+        return {
+            qa["assigned_engine"]
+            for qa in assignment.get("query_assignments", [])
+            if qa.get("in_scope", True) and qa.get("assigned_engine")
+        }
+    except Exception:  # noqa: BLE001 - best-effort; leave the plan untouched on any error
+        return set()
+
+
+def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> None:
+    """Mark the schema sub-steps for engines with no routed queries as STOPPED.
+
+    Without this, an engine triage did not pick (or Reality Check consolidated
+    away) keeps its ``schema_<engine>`` sub-step at NOT_STARTED, which the WebApp
+    renders as a perpetual pending/clock icon. STOPPED renders as the "considered
+    but not run" state, matching how the analysis phase reports skipped engines.
+
+    Determines the selected set from the effective-version assignment (the engines
+    schema-design actually ran for). Best-effort: if the selected set can't be
+    resolved, nothing is marked (leaving the prior behaviour) rather than wrongly
+    skipping every engine.
+    """
+    version = _effective_assignment_version(job_id, database_name)
+    selected = _engines_with_in_scope_queries(job_id, database_name, version)
+    if not selected:
+        # Could not resolve which engines ran — don't risk marking all six
+        # skipped. Leave the plan as-is.
+        logger.info(
+            "ATX: no selected schema engines resolved (job_id=%s) — not marking skips", job_id
+        )
+        return
+
+    # The engine part of each schema label (schema_<engine>) matches the
+    # assignment's assigned_engine vocabulary 1:1, so no translation is needed.
+    all_engines = set(_SCHEMA_ENGINES.values())
+    for engine in sorted(all_engines - selected):
+        mark_step_skipped(
+            f"schema_{engine}",
+            "Not selected — no queries routed to this engine.",
+        )
+        logger.info("ATX: marked schema_%s skipped (not selected)", engine)
 
 
 def _run_schema_design_via_a2a(
