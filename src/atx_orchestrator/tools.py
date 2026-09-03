@@ -31,6 +31,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     mark_step_failed,
     mark_step_running,
+    mark_step_skipped,
     mark_step_succeeded,
     put_job_plan,
     register_steps,
@@ -538,9 +539,12 @@ def run_synthesis_via_a2a(
     # Synthesis only runs once every schema-design agent has finished, so this is
     # the deterministic point to close out the parent "Design Target Schemas" box
     # (the six engines run as separate parallel agents with no single owner to
-    # mark the parent, unlike the in-process analysis phase).
+    # mark the parent, unlike the in-process analysis phase). Before closing the
+    # parent, mark the sub-steps for engines that were never selected as skipped,
+    # so they show the "not run" state instead of a perpetual pending clock.
+    _mark_unselected_schema_steps_skipped(job_id, database_name)
     mark_step_succeeded("schema")
-    return _run_phase_via_a2a(
+    result = _run_phase_via_a2a(
         agent_suffix="synthesis",
         step="synthesis",
         label="synthesis",
@@ -549,6 +553,15 @@ def run_synthesis_via_a2a(
         message=message,
         on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
     )
+    # Synthesis is the last step of the assessment pipeline. When it succeeds the
+    # whole job is done, so mark the platform JOB terminal — the platform does not
+    # roll the job up when only plan steps and subagent instances finish, so
+    # without this the job stays EXECUTING forever. Only the orchestrator owns
+    # this transition; it is idempotent and fail-open. A synthesis error is left
+    # non-terminal on purpose so the LLM can retry.
+    if not _is_error_result(result):
+        _complete_job_success(job_id)
+    return result
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
@@ -622,6 +635,35 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         )
 
 
+def _is_error_result(result: str) -> bool:
+    """True if a phase tool's JSON string represents an ``{"error": ...}`` result.
+
+    ``_run_phase_via_a2a`` returns either the completion payload or an error dict,
+    both JSON-serialised. Treat unparseable output as an error too, so a
+    completion transition never fires on a malformed synthesis result.
+    """
+    try:
+        parsed = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return True
+    return isinstance(parsed, dict) and "error" in parsed
+
+
+def _complete_job_success(job_id: str) -> None:
+    """Mark the platform job COMPLETED after the pipeline's final step succeeds.
+
+    Best-effort and idempotent (see ``runtime.job_status.complete_job``). Kept as
+    a thin wrapper so the import stays local and the synthesis tool reads cleanly.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import complete_job
+
+        complete_job(success=True, job_id=job_id)
+    except Exception:  # noqa: BLE001
+        # Fail-open: never let job completion crash the final synthesis turn.
+        logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
+
+
 # Target engine per schema-design agent, keyed by the suffix used in both the
 # agent id and the plan step. Mirrors SCHEMA_TARGETS in schema_subagent.py; the
 # two differ because agent ids use hyphens while artifact keys and upstream's
@@ -653,6 +695,69 @@ def _effective_assignment_version(job_id: str, database_name: str) -> int:
         return version if version > 0 else 1
     except Exception:  # noqa: BLE001 - best-effort; fall back to the always-written v1
         return 1
+
+
+def _engines_with_in_scope_queries(
+    job_id: str, database_name: str, assignment_version: int
+) -> set[str]:
+    """Return the engines that have at least one in-scope query routed to them.
+
+    Reads ``<db>/<job>/assignment/v<N>/assignment.json`` and unions
+    ``assigned_engine`` over in-scope query assignments. Mirrors
+    ``local_orchestrator._get_engines_with_in_scope_queries``. Because the caller
+    passes the *effective* version (v2 when Reality Check consolidated, else v1),
+    this already reflects any engine consolidation.
+
+    Fail-open: returns an empty set if the artifact is missing or unreadable, so
+    callers can leave the plan untouched rather than mismark it.
+    """
+    try:
+        store = _make_store()
+        key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
+        if not store.exists(key):
+            return set()
+        assignment = store.read_json(key)
+        return {
+            qa["assigned_engine"]
+            for qa in assignment.get("query_assignments", [])
+            if qa.get("in_scope", True) and qa.get("assigned_engine")
+        }
+    except Exception:  # noqa: BLE001 - best-effort; leave the plan untouched on any error
+        return set()
+
+
+def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> None:
+    """Mark the schema sub-steps for engines with no routed queries as STOPPED.
+
+    Without this, an engine triage did not pick (or Reality Check consolidated
+    away) keeps its ``schema_<engine>`` sub-step at NOT_STARTED, which the WebApp
+    renders as a perpetual pending/clock icon. STOPPED renders as the "considered
+    but not run" state, matching how the analysis phase reports skipped engines.
+
+    Determines the selected set from the effective-version assignment (the engines
+    schema-design actually ran for). Best-effort: if the selected set can't be
+    resolved, nothing is marked (leaving the prior behaviour) rather than wrongly
+    skipping every engine.
+    """
+    version = _effective_assignment_version(job_id, database_name)
+    selected = _engines_with_in_scope_queries(job_id, database_name, version)
+    if not selected:
+        # Could not resolve which engines ran — don't risk marking all six
+        # skipped. Leave the plan as-is.
+        logger.info(
+            "ATX: no selected schema engines resolved (job_id=%s) — not marking skips", job_id
+        )
+        return
+
+    # The engine part of each schema label (schema_<engine>) matches the
+    # assignment's assigned_engine vocabulary 1:1, so no translation is needed.
+    all_engines = set(_SCHEMA_ENGINES.values())
+    for engine in sorted(all_engines - selected):
+        mark_step_skipped(
+            f"schema_{engine}",
+            "Not selected — no queries routed to this engine.",
+        )
+        logger.info("ATX: marked schema_%s skipped (not selected)", engine)
 
 
 def _run_schema_design_via_a2a(
