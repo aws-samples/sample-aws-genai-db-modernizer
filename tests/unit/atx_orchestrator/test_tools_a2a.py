@@ -17,15 +17,54 @@ plan steps, so this tool passes ``step=""`` and the wrapper marks nothing.
 from __future__ import annotations
 
 import json
+import sys
+import types
 from importlib.util import find_spec
 from unittest.mock import patch
 
 import pytest
 
+from src.atx_orchestrator import tools
 from src.atx_orchestrator.a2a import A2AFailedError, A2APayloadError, A2ATimeoutError
 from src.atx_orchestrator.tools import run_assessment_core_via_a2a
 
 _AGENT = "db-modernization-assessment-core"
+
+
+# =============================================================================
+# _platform_job_id -- ignore the LLM-supplied job_id, use the platform one
+
+
+class TestPlatformJobId:
+    def test_fallback_to_supplied_outside_atx_runtime(self) -> None:
+        # No agent_builder_sdk / no context -> keep the supplied id (local/dev).
+        assert tools._platform_job_id("discourse-20250612-120000") == "discourse-20250612-120000"
+
+    def test_overrides_supplied_with_platform_id_in_runtime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pkg = types.ModuleType("agent_builder_sdk")
+        env_mod = types.ModuleType("agent_builder_sdk.env_var")
+        env_mod.get_agent_context_from_env = lambda: types.SimpleNamespace(  # type: ignore[attr-defined]
+            workspace_id="ws1", job_id="b7db3717-real-uuid", agent_instance_id="inst1"
+        )
+        monkeypatch.setitem(sys.modules, "agent_builder_sdk", pkg)
+        monkeypatch.setitem(sys.modules, "agent_builder_sdk.env_var", env_mod)
+
+        # The LLM-supplied slug is discarded in favor of the platform job id.
+        assert tools._platform_job_id("discourse-20250612-120000") == "b7db3717-real-uuid"
+
+    def test_keeps_supplied_when_context_has_no_job_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pkg = types.ModuleType("agent_builder_sdk")
+        env_mod = types.ModuleType("agent_builder_sdk.env_var")
+        env_mod.get_agent_context_from_env = lambda: types.SimpleNamespace(job_id="")  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "agent_builder_sdk", pkg)
+        monkeypatch.setitem(sys.modules, "agent_builder_sdk.env_var", env_mod)
+
+        assert tools._platform_job_id("supplied-id") == "supplied-id"
+
 
 # =============================================================================
 # run_assessment_core_via_a2a -- happy path
