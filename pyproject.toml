@@ -1,6 +1,6 @@
 [project]
 name = "database-modernizer"
-version = "0.1.0b2"
+version = "0.1.0b1"
 description = "AI-powered database modernization analysis and recommendation system"
 authors = [
     {name = "Amazon Web Services"}
@@ -36,6 +36,12 @@ dependencies = [
 
     # Template rendering (k6 script generation)
     "jinja2>=3.1.0",
+
+    # Executive Summary Report deck — atx_orchestrator.runtime.pptx_report
+    "python-pptx>=1.0.2",
+
+    # PDF rendering of that deck — atx_orchestrator.runtime.pdf_report
+    "reportlab>=4.2.0",
 
     # DocumentDB load test driver — [aws] extra pulls pymongo-auth-aws for
     # MONGODB-AWS authentication. Used by load_test.documentdb.{provisioner,seeder}.

@@ -9,9 +9,9 @@ exercised against a committed fixture — the real report from the deployed
 content split, not a hand-built stub.
 
 ``_publish_synthesis_deliverables`` (in ``tools``) is tested with a fake store
-and a patched ``publish`` to confirm: two rendered files are written to S3, all
-three deliverables are published as CUSTOMER_OUTPUT, and the whole step is
-non-fatal when the report cannot be read.
+and a patched ``publish`` to confirm: three rendered files are written to S3 under
+the canonical artifact names, all four deliverables are published as
+CUSTOMER_OUTPUT, and the whole step is non-fatal when the report cannot be read.
 """
 
 from __future__ import annotations
@@ -155,6 +155,12 @@ class _FakeStore:
     def read_json(self, path: str) -> dict:
         return self.data[path]
 
+    def exists(self, path: str) -> bool:
+        return path in self.data
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        return [k for k in self.data if k.startswith(prefix)]
+
     def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
         self.text_writes[path] = (content, content_type)
 
@@ -162,7 +168,7 @@ class _FakeStore:
 class TestSynthesisDeliverables:
     KEY = "discourse/job-x/synthesis/v1/report.json"
 
-    def test_writes_two_files_and_publishes_three(self, report: dict) -> None:
+    def test_writes_three_files_and_publishes_four(self, report: dict) -> None:
         payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
         store = _FakeStore({self.KEY: report})
         captured: dict = {}
@@ -179,19 +185,23 @@ class TestSynthesisDeliverables:
         # payload flows through unchanged
         assert json.loads(out)["response"]["report_artifact"] == self.KEY
 
-        # exactly the two rendered deliverables written to S3 (report.json untouched)
+        # exactly the three rendered deliverables written to S3 (report.json untouched)
         keys = list(store.text_writes)
-        assert len(keys) == 2
-        assert any(k.endswith("decision-report-discourse.html") for k in keys)
-        assert any(k.endswith("engineering-report-discourse.md") for k in keys)
+        assert len(keys) == 3
+        # canonical stem: {database}_{artifact}_{job8}_{YYYYMMDD}.{ext}
+        assert any(re.search(r"/discourse_decision-report_job-x_\d{8}\.html$", k) for k in keys)
+        assert any(re.search(r"/discourse_engineering-report_job-x_\d{8}\.md$", k) for k in keys)
+        assert any(re.search(r"/discourse_analysis-report_job-x_\d{8}\.html$", k) for k in keys)
+        assert self.KEY not in keys
 
-        # three published, in order, all CUSTOMER_OUTPUT
+        # four published, in order, all CUSTOMER_OUTPUT
         items = captured["items"]
-        assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON"]
+        assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON", "HTML"]
         assert [it[2] for it in items] == [
-            "Decision Report",
-            "Engineering Report",
-            "Assessment Data",
+            "Decision Report — discourse",
+            "Engineering Report — discourse",
+            "Assessment Data (raw) — discourse",
+            "Interactive Analysis Report — discourse",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 

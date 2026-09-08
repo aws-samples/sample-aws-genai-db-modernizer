@@ -31,7 +31,6 @@ from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     mark_step_failed,
     mark_step_running,
-    mark_step_skipped,
     mark_step_succeeded,
     put_job_plan,
     register_steps,
@@ -539,12 +538,9 @@ def run_synthesis_via_a2a(
     # Synthesis only runs once every schema-design agent has finished, so this is
     # the deterministic point to close out the parent "Design Target Schemas" box
     # (the six engines run as separate parallel agents with no single owner to
-    # mark the parent, unlike the in-process analysis phase). Before closing the
-    # parent, mark the sub-steps for engines that were never selected as skipped,
-    # so they show the "not run" state instead of a perpetual pending clock.
-    _mark_unselected_schema_steps_skipped(job_id, database_name)
+    # mark the parent, unlike the in-process analysis phase).
     mark_step_succeeded("schema")
-    result = _run_phase_via_a2a(
+    return _run_phase_via_a2a(
         agent_suffix="synthesis",
         step="synthesis",
         label="synthesis",
@@ -553,27 +549,25 @@ def run_synthesis_via_a2a(
         message=message,
         on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
     )
-    # Synthesis is the last step of the assessment pipeline. When it succeeds the
-    # whole job is done, so mark the platform JOB terminal — the platform does not
-    # roll the job up when only plan steps and subagent instances finish, so
-    # without this the job stays EXECUTING forever. Only the orchestrator owns
-    # this transition; it is idempotent and fail-open. A synthesis error is left
-    # non-terminal on purpose so the LLM can retry.
-    if not _is_error_result(result):
-        _complete_job_success(job_id)
-    return result
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
-    """Render the two audience-shaped reports from the synthesis report.json and
-    publish all three deliverables as CUSTOMER_OUTPUT.
+    """Render the audience-shaped deliverables from the synthesis report.json and
+    publish them as CUSTOMER_OUTPUT.
 
     The orchestrator owns this, not the subagent, because it owns the synthesis
-    plan step. Three artifacts reach the WebApp Artifacts panel: Decision Report
-    (executive HTML), Engineering Report (build-team Markdown) and Assessment
-    Data (the raw report JSON). Each rendered report is also written to our own
+    plan step. Five artifacts reach the WebApp Artifacts panel: Decision Report
+    (executive HTML), Engineering Report (build-team Markdown), Assessment Data
+    (the raw report JSON), Interactive Analysis Report (HTML) and Executive
+    Summary Report (PDF). Each rendered deliverable is also written to our own
     S3 bucket, which is the system of record and survives the customer stopping
-    the job; report.json is already there (the subagent wrote it).
+    the job; report.json is already there (the subagent wrote it). The executive
+    summary's editable ``.pptx`` is written to S3 too but deliberately not
+    registered — the PDF is the delivery.
+
+    Every deliverable is rendered deterministically from artifacts already on the
+    store — no LLM call happens here, so two runs over the same report.json
+    produce byte-comparable content.
 
     Entirely non-fatal: a synthesis whose report is durable in S3 must not fail
     over a rendering or registration call. ``artifacts.publish`` never raises on
@@ -597,81 +591,124 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         base = report_key.rsplit("/", 1)[0]
         trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
 
+        def _prov(artifact: str, ext: str) -> dict:
+            return _artifacts.provenance(
+                report, artifact, ext, job_id=job_id, source_artifact=report_key
+            )
+
+        decision_prov = _prov("decision-report", "html")
+        engineering_prov = _prov("engineering-report", "md")
+        data_prov = _prov("assessment-data", "json")
+
         decision_html = _artifacts.render_decision_report_html(
-            report, trust_generated_summary=trust
+            report, trust_generated_summary=trust, prov=decision_prov
         )
-        engineering_md = _artifacts.render_engineering_report_md(report)
+        engineering_md = _artifacts.render_engineering_report_md(report, prov=engineering_prov)
+        # The published JSON is wrapped with an identity envelope; the object at
+        # report_key is NOT touched. That one is the system of record and is
+        # validated against the synthesis contract on re-read, so injecting a key
+        # into it would risk failing validation for the sake of a filename.
+        data_json = json.dumps({"_artifact": data_prov, **report}, indent=2)
 
         # S3-first: our bucket is the system of record (survives job stop).
-        store.write_text(f"{base}/decision-report-{database_name}.html", decision_html, "text/html")
-        store.write_text(
-            f"{base}/engineering-report-{database_name}.md", engineering_md, "text/markdown"
-        )
+        store.write_text(f"{base}/{decision_prov['filename']}", decision_html, "text/html")
+        store.write_text(f"{base}/{engineering_prov['filename']}", engineering_md, "text/markdown")
 
-        # Register all three in the WebApp panel as EXTERNAL CUSTOMER_OUTPUT so
-        # cross-account viewers can see and download them. The 5th tuple element
-        # is the download filename (matches the S3 copy names above) so the file
-        # saves under a friendly name instead of the artifact UUID.
-        _artifacts.publish(
-            [
+        items: list = [
+            (
+                decision_html.encode("utf-8"),
+                "HTML",
+                f"Decision Report — {database_name}",
+                "CUSTOMER_OUTPUT",
+            ),
+            (
+                engineering_md.encode("utf-8"),
+                "MARKDOWN",
+                f"Engineering Report — {database_name}",
+                "CUSTOMER_OUTPUT",
+            ),
+            (
+                data_json.encode("utf-8"),
+                "JSON",
+                f"Assessment Data (raw) — {database_name}",
+                "CUSTOMER_OUTPUT",
+            ),
+        ]
+
+        # Fourth deliverable: the interactive report the WebApp's "Export to HTML"
+        # produces. Assembled straight off the ArtifactStore because the API path is
+        # unreachable for an ATX job — every route resolves database_name through
+        # Step Functions, and an A2A-orchestrated job has no execution. Isolated in
+        # its own try: it reads six more artifacts than the other three, and none of
+        # them failing is a reason to withhold reports that already rendered.
+        try:
+            from src.atx_orchestrator.runtime import analysis_report as _ar
+
+            assignment_version = int(inner.get("assignment_version") or 1)
+            export_data = _ar.build_export_data(
+                store, job_id, database_name, assignment_version=assignment_version
+            )
+            analysis_prov = _prov("analysis-report", "html")
+            analysis_html = _ar.render_analysis_report_html(
+                export_data, filename=analysis_prov["filename"]
+            )
+            store.write_text(f"{base}/{analysis_prov['filename']}", analysis_html, "text/html")
+            items.append(
                 (
-                    decision_html.encode("utf-8"),
+                    analysis_html.encode("utf-8"),
                     "HTML",
-                    "Decision Report",
+                    f"Interactive Analysis Report — {database_name}",
                     "CUSTOMER_OUTPUT",
-                    f"decision-report-{database_name}.html",
-                ),
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ATX interactive analysis report skipped: %s: %s", type(e).__name__, e)
+            export_data = None
+
+        # Fifth deliverable: the executive summary, rendered from the same report
+        # as the Decision Report HTML plus the export data above (slide 3 needs
+        # the collector query patterns; it degrades to a stated gap without them,
+        # which is why export_data is passed even when it failed to build).
+        #
+        # The PDF is what the customer gets in the Artifacts panel — it opens
+        # anywhere and carries the deck's fonts with it. The .pptx is still
+        # written to S3 as the editable source for whoever presents it, just not
+        # registered. Both come from one render, so they cannot disagree.
+        #
+        # Its own try: this is the only part of the function with a binary
+        # dependency (python-pptx, reportlab, the bundled template and fonts),
+        # and a problem there must not withhold the four reports already rendered.
+        try:
+            from src.atx_orchestrator.runtime import pdf_report as _pdf
+            from src.atx_orchestrator.runtime import pptx_report as _pptx
+
+            deck, deck_pdf = _pdf.render_executive_summary_pdf(report, export_data)
+            # Fixed names, unlike the other four: this is the reusable executive
+            # deliverable and is called the same thing in every engagement. The
+            # job it belongs to is already in the key prefix (and in the deck's
+            # own core properties), so no date-stamped stem is needed.
+            store.write_bytes(f"{base}/{_pptx.FILENAME}", deck)
+            store.write_bytes(f"{base}/{_pdf.FILENAME}", deck_pdf)
+            items.append(
                 (
-                    engineering_md.encode("utf-8"),
-                    "MARKDOWN",
-                    "Engineering Report",
+                    deck_pdf,
+                    "PDF",
+                    f"Executive Summary Report — {database_name}",
                     "CUSTOMER_OUTPUT",
-                    f"engineering-report-{database_name}.md",
-                ),
-                (
-                    json.dumps(report, indent=2).encode("utf-8"),
-                    "JSON",
-                    "Assessment Data",
-                    "CUSTOMER_OUTPUT",
-                    f"assessment-data-{database_name}.json",
-                ),
-            ]
-        )
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ATX executive summary skipped: %s: %s", type(e).__name__, e)
+
+        # Register in the WebApp panel. CUSTOMER_OUTPUT is accepted from the agent
+        # side (constraint C2, verified 2026-08-24).
+        _artifacts.publish(items)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "ATX synthesis deliverables skipped (report is durable in S3): %s: %s",
             type(e).__name__,
             e,
         )
-
-
-def _is_error_result(result: str) -> bool:
-    """True if a phase tool's JSON string represents an ``{"error": ...}`` result.
-
-    ``_run_phase_via_a2a`` returns either the completion payload or an error dict,
-    both JSON-serialised. Treat unparseable output as an error too, so a
-    completion transition never fires on a malformed synthesis result.
-    """
-    try:
-        parsed = json.loads(result)
-    except (TypeError, json.JSONDecodeError):
-        return True
-    return isinstance(parsed, dict) and "error" in parsed
-
-
-def _complete_job_success(job_id: str) -> None:
-    """Mark the platform job COMPLETED after the pipeline's final step succeeds.
-
-    Best-effort and idempotent (see ``runtime.job_status.complete_job``). Kept as
-    a thin wrapper so the import stays local and the synthesis tool reads cleanly.
-    """
-    try:
-        from src.atx_orchestrator.runtime.job_status import complete_job
-
-        complete_job(success=True, job_id=job_id)
-    except Exception:  # noqa: BLE001
-        # Fail-open: never let job completion crash the final synthesis turn.
-        logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
 
 
 # Target engine per schema-design agent, keyed by the suffix used in both the
@@ -705,69 +742,6 @@ def _effective_assignment_version(job_id: str, database_name: str) -> int:
         return version if version > 0 else 1
     except Exception:  # noqa: BLE001 - best-effort; fall back to the always-written v1
         return 1
-
-
-def _engines_with_in_scope_queries(
-    job_id: str, database_name: str, assignment_version: int
-) -> set[str]:
-    """Return the engines that have at least one in-scope query routed to them.
-
-    Reads ``<db>/<job>/assignment/v<N>/assignment.json`` and unions
-    ``assigned_engine`` over in-scope query assignments. Mirrors
-    ``local_orchestrator._get_engines_with_in_scope_queries``. Because the caller
-    passes the *effective* version (v2 when Reality Check consolidated, else v1),
-    this already reflects any engine consolidation.
-
-    Fail-open: returns an empty set if the artifact is missing or unreadable, so
-    callers can leave the plan untouched rather than mismark it.
-    """
-    try:
-        store = _make_store()
-        key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
-        if not store.exists(key):
-            return set()
-        assignment = store.read_json(key)
-        return {
-            qa["assigned_engine"]
-            for qa in assignment.get("query_assignments", [])
-            if qa.get("in_scope", True) and qa.get("assigned_engine")
-        }
-    except Exception:  # noqa: BLE001 - best-effort; leave the plan untouched on any error
-        return set()
-
-
-def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> None:
-    """Mark the schema sub-steps for engines with no routed queries as STOPPED.
-
-    Without this, an engine triage did not pick (or Reality Check consolidated
-    away) keeps its ``schema_<engine>`` sub-step at NOT_STARTED, which the WebApp
-    renders as a perpetual pending/clock icon. STOPPED renders as the "considered
-    but not run" state, matching how the analysis phase reports skipped engines.
-
-    Determines the selected set from the effective-version assignment (the engines
-    schema-design actually ran for). Best-effort: if the selected set can't be
-    resolved, nothing is marked (leaving the prior behaviour) rather than wrongly
-    skipping every engine.
-    """
-    version = _effective_assignment_version(job_id, database_name)
-    selected = _engines_with_in_scope_queries(job_id, database_name, version)
-    if not selected:
-        # Could not resolve which engines ran — don't risk marking all six
-        # skipped. Leave the plan as-is.
-        logger.info(
-            "ATX: no selected schema engines resolved (job_id=%s) — not marking skips", job_id
-        )
-        return
-
-    # The engine part of each schema label (schema_<engine>) matches the
-    # assignment's assigned_engine vocabulary 1:1, so no translation is needed.
-    all_engines = set(_SCHEMA_ENGINES.values())
-    for engine in sorted(all_engines - selected):
-        mark_step_skipped(
-            f"schema_{engine}",
-            "Not selected — no queries routed to this engine.",
-        )
-        logger.info("ATX: marked schema_%s skipped (not selected)", engine)
 
 
 def _run_schema_design_via_a2a(

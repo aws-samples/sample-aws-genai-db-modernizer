@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import re
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -52,63 +54,42 @@ CategoryType = Literal[
 FileType = Literal["CSV", "HTML", "JSON", "MARKDOWN", "OTHER", "PDF", "PPTX", "TXT", "XLSX", "ZIP"]
 
 
-# Download filename extension per file type, so a published artifact downloads
-# as "<name>.<ext>" instead of an opaque UUID. Keys are the FileType literals.
-_FILE_TYPE_EXT: dict[str, str] = {
-    "CSV": "csv",
-    "HTML": "html",
-    "JSON": "json",
-    "MARKDOWN": "md",
-    "PDF": "pdf",
-    "PPTX": "pptx",
-    "TXT": "txt",
-    "XLSX": "xlsx",
-    "ZIP": "zip",
-}
+def artifact_stem(
+    database_name: str,
+    artifact: str,
+    job_id: str,
+    generated: datetime | None = None,
+) -> str:
+    """Canonical filename stem: ``{database}_{artifact}_{job8}_{YYYYMMDD}``.
 
+    The customer downloads ``1e8ec29e-0227-4ae4-9523-306d4a622c47.html`` and cannot
+    tell which database, job or report it is. That is not an S3 problem — the keys
+    written here have been descriptive all along — it is that
+    ``ArtifactStore.upload_artifact(content, digest, category_type=, file_type=,
+    label=)`` takes no filename, so the panel names the download after the artifact
+    id. Two things follow: the S3 keys use this stem, and each rendered file states
+    its own identity internally (HTML ``<title>`` + ``x-dbmod-*`` meta, Markdown
+    front matter, JSON ``_artifact`` envelope) so a UUID download is still traceable.
 
-def _default_path(label: str, file_type: str) -> str:
-    """Derive a friendly download filename from the label and file type.
+    Underscore separates fields, hyphen lives inside one, so the stem splits cleanly
+    on ``_``. ``job_id[:8]`` rather than the full UUID: 32 bits is ample within one
+    database, and 36 characters of UUID would crowd out the two fields that actually
+    distinguish the file. The full job id is in the S3 key and inside the file.
 
-    Slugs the label to a filesystem-safe stem and appends the extension for the
-    file type. Used when a caller does not supply an explicit ``path``. The
-    result is what the customer's browser saves the download as, so it must be
-    human-readable rather than the artifact UUID.
+    If a future SDK's ``upload_artifact`` accepts a filename, pass this stem to it
+    and the panel problem disappears; the SDK is container-only, so that is untested.
     """
-    stem = "".join(c if (c.isalnum() or c in "-_") else "-" for c in label.strip().lower())
-    stem = "-".join(filter(None, stem.split("-"))) or "artifact"
-    ext = _FILE_TYPE_EXT.get(str(file_type).upper(), "dat")
-    return f"{stem}.{ext}"
+    db = re.sub(r"[^a-z0-9]+", "-", database_name.lower()).strip("-") or "database"
+    day = (generated or datetime.now(UTC)).strftime("%Y%m%d")
+    return f"{db}_{artifact}_{job_id[:8]}_{day}"
 
 
-# An item is ``(content, file_type, label, category_type)`` or, with an explicit
-# download filename, ``(content, file_type, label, category_type, path)``.
-PublishItem = (
-    tuple[bytes, FileType, str, CategoryType] | tuple[bytes, FileType, str, CategoryType, str]
-)
-
-
-def publish(items: list[PublishItem]) -> dict[str, str]:
+def publish(items: list[tuple[bytes, FileType, str, CategoryType]]) -> dict[str, str]:
     """Register content with the platform so it appears in the Artifacts panel.
 
-    Uploads each item as an **EXTERNAL**-visibility artifact via the client-direct
-    sequence (``create_artifact_upload_url`` -> ``upload_from_presigned_url`` ->
-    ``complete_artifact_upload``). This is deliberate and important:
-
-    * ``ArtifactStore.upload_artifact`` hardcodes ``visibility="INTERNAL"``, which
-      the frontend cannot serve for download and which cross-account viewers
-      (e.g. a customer in a different account than where the job ran) cannot see.
-      The publishing account sees INTERNAL artifacts fine, which masks the bug.
-      ``CUSTOMER_OUTPUT`` deliverables must be EXTERNAL to reach the customer.
-    * The SDK method also never sets ``fileMetadata.path``, so the download is
-      named with the artifact UUID. We set it so the file saves as its friendly
-      name. Reference: AWSTransformHelixAgentSkills schema_deployment_tools.py.
-
     Args:
-        items: ``(content, file_type, label, category_type[, path])`` tuples.
-            ``label`` is what the customer sees in the Artifacts panel; ``path``
-            (optional) is the download filename and defaults to a slug of the
-            label plus the file-type extension.
+        items: ``(content, file_type, label, category_type)`` tuples. ``label`` is
+            what the customer sees in the panel, so write it for them.
 
     Returns:
         ``{label: artifact_id}`` for whatever uploaded. Empty when running outside
@@ -116,76 +97,39 @@ def publish(items: list[PublishItem]) -> dict[str, str]:
         S3 copy is the system of record and its phase must not fail over this.
 
     Each item is uploaded independently so one rejection does not lose the rest.
+    That matters because ``category_type`` is caller-role-scoped: a category valid
+    from the agent side may be refused from the operator side, and the warning names
+    the category so the cause is visible rather than silent.
     """
     published: dict[str, str] = {}
     try:
-        import uuid
-
+        from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
         from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
-        from agent_builder_sdk.agentic_framework.common import (
-            calculate_digest,
-            upload_from_presigned_url,
-        )
+        from agent_builder_sdk.agentic_framework.common import calculate_digest
         from agent_builder_sdk.env_var import get_agent_context_from_env
 
         ctx = get_agent_context_from_env()
-        client = get_agentic_api_client()
-        request_context = dict(ctx.to_dict())
-
-        for item in items:
-            content, file_type, label, category = item[0], item[1], item[2], item[3]
-            path = item[4] if len(item) > 4 else _default_path(label, file_type)
+        store = ArtifactStore(
+            workspace_id=ctx.workspace_id,
+            job_id=ctx.job_id,
+            agent_instance_id=ctx.agent_instance_id,
+            client=get_agentic_api_client(),
+        )
+        for content, file_type, label, category in items:
             try:
-                # Upload as INTERNAL first. Setting visibility="EXTERNAL" here does
-                # NOT actually make the artifact externally visible — the platform
-                # keeps it INTERNAL (observed: a create with visibility=EXTERNAL
-                # still stored INTERNAL). The switch that makes an artifact visible
-                # cross-account / frontend-downloadable is a separate copy_artifact
-                # call after the upload completes. See AWSTransformSQLTransformer
-                # artifact_service.upload_artifact (copy_artifact "make public").
-                resp = client.create_artifact_upload_url(
-                    contentDigest={"sha256": calculate_digest(content)},
-                    visibility="INTERNAL",
-                    artifactReference={
-                        "artifactType": {"categoryType": category, "fileType": file_type}
-                    },
-                    fileMetadata={"path": path},
+                artifact_id = store.upload_artifact(
+                    content,
+                    calculate_digest(content),
+                    category_type=category,
+                    file_type=file_type,
                     label=label,
-                    requestContext=request_context,
                 )
-                artifact_id = resp["artifactId"]
-
-                # The presigned PUT targets either the ATX-managed bucket or the
-                # customer's own bucket; the metadata's storedInAtxBucket flag
-                # tells upload_from_presigned_url which error contract applies.
-                metadata = client.get_artifact_metadata(
-                    artifactId=artifact_id, requestContext=request_context
-                )
-                upload_from_presigned_url(
-                    resp, content, metadata["artifact"].get("storedInAtxBucket", True)
-                )
-                client.complete_artifact_upload(
-                    artifactId=artifact_id, requestContext=request_context
-                )
-
-                # Make the completed artifact externally visible. This is the
-                # actual visibility switch (INTERNAL -> EXTERNAL) for a
-                # CUSTOMER_OUTPUT deliverable so cross-account viewers can see and
-                # download it. idempotencyToken guards against a retried publish.
-                client.copy_artifact(
-                    artifactId=artifact_id,
-                    idempotencyToken=str(uuid.uuid4()),
-                    requestContext=request_context,
-                )
-
                 published[label] = artifact_id
                 logger.info(
-                    "Published artifact: label=%r type=%s category=%s visibility=EXTERNAL "
-                    "path=%r bytes=%d id=%s",
+                    "Published artifact: label=%r type=%s category=%s bytes=%d id=%s",
                     label,
                     file_type,
                     category,
-                    path,
                     len(content),
                     artifact_id,
                 )
@@ -497,8 +441,57 @@ def _risk_tile_class(level: str) -> str:
     return "green"
 
 
+def provenance(
+    report: dict[str, Any],
+    artifact: str,
+    ext: str,
+    job_id: str = "",
+    source_artifact: str = "",
+) -> dict[str, str]:
+    """Identity block for one rendered deliverable.
+
+    Carried inside the file (meta tags / front matter / ``_artifact`` envelope) so a
+    download named after a UUID is still traceable to a database and a job. See
+    ``artifact_stem`` for why the filename itself cannot be set.
+    """
+    db = str(report.get("database_name") or "database")
+    jid = job_id or str(report.get("job_id") or "")
+    now = datetime.now(UTC)
+    return {
+        "artifact": artifact,
+        "database": db,
+        "job_id": jid,
+        "generated": now.isoformat(timespec="seconds"),
+        "filename": f"{artifact_stem(db, artifact, jid, now)}.{ext}",
+        "source_artifact": source_artifact,
+    }
+
+
+def _meta_tags(prov: dict[str, str] | None) -> str:
+    if not prov:
+        return ""
+    return "".join(
+        f'<meta name="x-dbmod-{k.replace("_", "-")}" content="{_html.escape(str(v))}">'
+        for k, v in prov.items()
+        if v
+    )
+
+
+def _provenance_footer_html(prov: dict[str, str] | None) -> str:
+    if not prov:
+        return ""
+    bits = f"{_html.escape(prov['filename'])}"
+    if prov.get("job_id"):
+        bits += f" &middot; job {_html.escape(prov['job_id'])}"
+    if prov.get("generated"):
+        bits += f" &middot; generated {_html.escape(prov['generated'])}"
+    return f"<p class=note>{bits}</p>"
+
+
 def render_decision_report_html(
-    report: dict[str, Any], trust_generated_summary: bool = True
+    report: dict[str, Any],
+    trust_generated_summary: bool = True,
+    prov: dict[str, str] | None = None,
 ) -> str:
     """Stakeholder-facing decision document: why / what / cost / risk.
 
@@ -533,7 +526,10 @@ def render_decision_report_html(
     out = [
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
         '<meta name=viewport content="width=device-width,initial-scale=1">',
-        f"<title>Decision Report \u2014 {esc(db)}</title>",
+        f"<title>Decision Report \u2014 {esc(db)}"
+        + (f" \u2014 {esc(prov['job_id'][:8])}" if prov and prov.get("job_id") else "")
+        + "</title>",
+        _meta_tags(prov),
         f"<style>{_DECISION_CSS}</style></head><body>",
         "<div class=hero><div class=wrap>",
         "<h1>Database Modernization \u2014 Decision Report</h1>",
@@ -655,9 +651,10 @@ def render_decision_report_html(
         "model decides which engine a table or query goes to. The executive summary is written "
         "over already-computed results and cannot change a recommendation. The complete "
         "machine-readable assessment is available as the Assessment Data (JSON) artifact.</footer>",
+        _provenance_footer_html(prov),
         "</div></body></html>",
     ]
-    return "\n".join(out)
+    return "\n".join(o for o in out if o)
 
 
 def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
@@ -687,13 +684,18 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
     return "\n".join(lines)
 
 
-def render_engineering_report_md(report: dict[str, Any]) -> str:
+def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
     engineers open it in (VS Code, GitHub, GitLab).
     """
     db = report.get("database_name", "?")
-    out = [
+    out: list[str] = []
+    if prov:
+        out += ["---"]
+        out += [f"{k}: {v}" for k, v in prov.items() if v]
+        out += ["---", ""]
+    out += [
         "# Database Modernization \u2014 Engineering Report",
         "",
         f"Source database: `{db}`. This is the build companion to the Decision Report: "

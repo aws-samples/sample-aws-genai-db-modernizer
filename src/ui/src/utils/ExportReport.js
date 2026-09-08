@@ -14,23 +14,18 @@
  * for all user-provided data before HTML insertion.
  */
 
-const ENGINE_COLORS = {
-  dynamodb: '#3184e8', documentdb: '#1d8102', opensearch: '#2ea597',
-  elasticache: '#d13212', neptune: '#7d2105', keyspaces: '#8b6ccb', aurora: '#ec7211',
-};
-
+// Engine, operation and chart colours are NOT declared here. The palette lives in
+// exactly one place -- the :root block of REPORT_CSS below -- and both the badges
+// (via [data-engine] rules) and the charts (via paletteColor() at runtime) read it
+// from there, so re-theming the report is a single edit.
+// Display names for every engine key the pipeline emits. Kept in sync with
+// ENGINE_LABELS in src/atx_orchestrator/runtime/analysis_report.py by
+// tests/unit/atx_orchestrator/test_report_template_sync.py.
 const ENGINE_LABELS = {
   dynamodb: 'DynamoDB', documentdb: 'DocumentDB', opensearch: 'OpenSearch',
-  elasticache: 'ElastiCache', neptune: 'Neptune', keyspaces: 'Keyspaces', aurora: 'Aurora',
-};
-
-const ENGINE_BADGE_CLASSES = {
-  dynamodb: 'badge-blue', documentdb: 'badge-green', elasticache: 'badge-red',
-  opensearch: 'badge-grey', neptune: 'badge-red', keyspaces: 'badge-blue', aurora: 'badge-orange'
-};
-
-const OP_COLORS = {
-  read: '#2ea597', write: '#ec7211', search: '#9b59b6', update: '#3184e8', delete: '#d13212',
+  elasticache: 'Elasticache', aurora_postgresql: 'AuroraPostgresql',
+  aurora_mysql: 'AuroraMySQL', neptune: 'Neptune', keyspaces: 'Keyspaces',
+  aurora: 'Aurora',
 };
 
 // Helper function to escape HTML to prevent XSS
@@ -43,43 +38,94 @@ const escapeHtml = (text) => {
 
 // CSS styles as a regular string (not a template literal) to avoid Semgrep false positives
 // Using single quotes to avoid any template literal syntax
+// NOTE: every line of this concatenation must stay a single-quoted string
+// literal — scripts/sync_report_template.py lifts it verbatim into the ATX
+// report template and rejects anything else (including comments) inside it.
+//
+// .grid-auto exists because a card count driven by the recommended-engine count
+// outgrows the fixed .grid-N classes: 5 engines asks for .grid-5, which is not
+// defined, so the grid falls back to a single column and stacks vertically.
 const REPORT_CSS = '\n' +
   '  :root {\n' +
-  '    --color-bg-container: #fff; --color-bg-layout: #f2f3f3; --color-border: #d5dbdb;\n' +
-  '    --color-text: #0f1b2a; --color-text-secondary: #5f6b7a; --color-blue: #0972d3;\n' +
+  '    --indigo-900: #150f35; --indigo-800: #241a5c; --indigo-700: #33268a;\n' +
+  '    --indigo-600: #4a3aa8; --indigo-500: #5f4bd0; --indigo-400: #7a5af5;\n' +
+  '    --indigo-300: #9c85f8; --indigo-200: #ae97f0; --indigo-100: #ddd6fb;\n' +
+  '    --engine-dynamodb: var(--indigo-400); --engine-documentdb: var(--indigo-700);\n' +
+  '    --engine-elasticache: var(--indigo-500); --engine-opensearch: var(--indigo-900);\n' +
+  '    --engine-aurora_postgresql: var(--indigo-600); --engine-aurora_mysql: var(--indigo-800);\n' +
+  '    --engine-aurora: var(--engine-aurora_postgresql); --engine-neptune: var(--indigo-300);\n' +
+  '    --engine-keyspaces: var(--indigo-200); --engine-fallback: var(--indigo-600);\n' +
+  '    --op-read: var(--indigo-400); --op-write: var(--indigo-700); --op-search: var(--indigo-200);\n' +
+  '    --op-update: var(--indigo-500); --op-delete: var(--indigo-900);\n' +
+  '    --chart-neutral: #8794a4;\n' +
+  '    --radius-container: 16px;\n' +
+  '    --color-bg-container: #fff; --color-bg-layout: #f7f9fb; --color-border: #d5dbdb;\n' +
+  '    --color-border-subtle: #e6ebf0;\n' +
+  '    --color-text: #0f1b2a; --color-text-secondary: #5f6b7a;\n' +
+  '    --color-badge-neutral: #eaeded;\n' +
+  '    --color-brand: #01a88d;\n' +
+  '    --color-accent: var(--indigo-600); --color-accent-tint: var(--indigo-100);\n' +
+  '    --color-blue: var(--color-accent);\n' +
   '    --font-family: \'Amazon Ember\', \'Helvetica Neue\', Roboto, Arial, sans-serif;\n' +
   '  }\n' +
   '  * { margin: 0; padding: 0; box-sizing: border-box; }\n' +
+  '  button, input, select, textarea { font-family: inherit; }\n' +
   '  body { font-family: var(--font-family); background: var(--color-bg-layout); color: var(--color-text); padding: 24px; line-height: 1.5; }\n' +
   '  .container { max-width: 1400px; margin: 0 auto; }\n' +
-  '  .section { background: var(--color-bg-container); padding: 24px; border-radius: 8px; margin-bottom: 24px; box-shadow: 0 1px 1px 0 rgba(0,28,36,0.3); }\n' +
-  '  .section-header { font-size: 20px; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid var(--color-border); }\n' +
+  '  .section { background: var(--color-bg-container); padding: 28px 32px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-container); margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,28,36,0.04), 0 8px 24px -8px rgba(0,28,36,0.08); }\n' +
+  '  .section-header { font-size: 20px; font-weight: 700; margin-bottom: 4px; }\n' +
+  '  .section-desc { color: var(--color-text-secondary); font-size: 14px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border-subtle); }\n' +
+  '  .section-body { margin-bottom: 20px; padding: 20px; background: var(--color-bg-container); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-container); box-shadow: 0 1px 2px rgba(0,28,36,0.04), 0 8px 24px -8px rgba(0,28,36,0.08); }\n' +
+  '  .meta-pairs { display: flex; flex-wrap: wrap; gap: 0 40px; margin-top: 20px; }\n' +
+  '  .section-desc + .meta-pairs { margin-top: 0; }\n' +
+  '  .report-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border-subtle); }\n' +
+  '  .report-head .section-desc { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }\n' +
+  '  .report-head + .meta-pairs { margin-top: 0; }\n' +
+  '  .report-brand { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }\n' +
+  '  .report-brand svg { display: block; width: 56px; height: 56px; }\n' +
+  '  .report-brand .badge { white-space: nowrap; margin-right: 0; }\n' +
+  '  .meta-pair { padding-left: 20px; border-left: 1px solid var(--color-border-subtle); }\n' +
+  '  .meta-pair-label, .key-value-label { font-size: 14px; font-weight: 700; color: var(--color-text); }\n' +
+  '  .meta-pair-value, .key-value-value { font-size: 14px; color: var(--color-text); }\n' +
   '  .grid { display: grid; gap: 16px; }\n' +
   '  .grid-2 { grid-template-columns: repeat(2, 1fr); }\n' +
   '  .grid-3 { grid-template-columns: repeat(3, 1fr); }\n' +
   '  .grid-4 { grid-template-columns: repeat(4, 1fr); }\n' +
-  '  .stat-card { padding: 16px; border: 1px solid var(--color-border); border-radius: 8px; }\n' +
-  '  .stat-label { font-size: 12px; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }\n' +
+  '  .grid-auto { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }\n' +
+  '  .stat-card, .item-card { padding: 20px; background: var(--color-bg-container); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-container); box-shadow: 0 1px 2px rgba(0,28,36,0.04), 0 8px 24px -8px rgba(0,28,36,0.08); }\n' +
+  '  .item-card { margin: 12px 0; }\n' +
+  '  .stat-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }\n' +
   '  .stat-value { font-size: 24px; font-weight: 700; }\n' +
-  '  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; margin-right: 4px; }\n' +
-  '  .badge-blue { background: #0972d3; color: white; }\n' +
-  '  .badge-green { background: #1d8102; color: white; }\n' +
-  '  .badge-red { background: #d13212; color: white; }\n' +
-  '  .badge-orange { background: #ec7211; color: white; }\n' +
-  '  .badge-grey { background: #5f6b7a; color: white; }\n' +
+  '  .badge { display: inline-block; padding: 3px 10px; border-radius: var(--radius-container); font-size: 12px; font-weight: 600; margin-right: 4px; background: var(--color-badge-neutral); color: var(--color-text); }\n' +
+  '  .badge-blue { background: var(--indigo-600); color: white; }\n' +
+  '  .badge-green { background: var(--indigo-700); color: white; }\n' +
+  '  .badge-red { background: var(--indigo-500); color: white; }\n' +
+  '  .badge-orange { background: var(--indigo-800); color: white; }\n' +
+  '  .badge-grey { background: var(--color-badge-neutral); color: var(--color-text); }\n' +
+  '  .badge[data-engine] { background: var(--engine-fallback); color: white; }\n' +
+  '  .badge[data-engine="dynamodb"] { background: var(--engine-dynamodb); }\n' +
+  '  .badge[data-engine="documentdb"] { background: var(--engine-documentdb); }\n' +
+  '  .badge[data-engine="elasticache"] { background: var(--engine-elasticache); }\n' +
+  '  .badge[data-engine="opensearch"] { background: var(--engine-opensearch); }\n' +
+  '  .badge[data-engine="aurora_postgresql"] { background: var(--engine-aurora_postgresql); }\n' +
+  '  .badge[data-engine="aurora_mysql"] { background: var(--engine-aurora_mysql); }\n' +
+  '  .badge[data-engine="aurora"] { background: var(--engine-aurora); }\n' +
+  '  .badge[data-engine="neptune"] { background: var(--engine-neptune); color: var(--indigo-900); }\n' +
+  '  .badge[data-engine="keyspaces"] { background: var(--engine-keyspaces); color: var(--indigo-900); }\n' +
   '  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 16px; }\n' +
-  '  thead { background: var(--color-bg-layout); border-bottom: 2px solid var(--color-border); }\n' +
-  '  th { text-align: left; padding: 8px 16px; font-weight: 700; font-size: 12px; text-transform: uppercase; }\n' +
+  '  thead { background: var(--color-bg-container); border-bottom: 1px solid var(--color-border); }\n' +
+  '  th { text-align: left; padding: 12px 16px; font-weight: 700; font-size: 14px; white-space: nowrap; }\n' +
   '  td { padding: 8px 16px; border-bottom: 1px solid var(--color-border); }\n' +
+  '  th.nowrap, td.nowrap { white-space: nowrap; }\n' +
   '  tbody tr:hover { background: #f9fafb; }\n' +
   '  .link { color: var(--color-blue); text-decoration: none; cursor: pointer; }\n' +
   '  .link:hover { text-decoration: underline; }\n' +
   '  .chart-container { position: relative; height: 300px; margin: 16px 0; }\n' +
-  '  .filter-bar { display: flex; gap: 16px; align-items: center; margin: 16px 0; padding: 16px; background: var(--color-bg-layout); border-radius: 8px; }\n' +
+  '  .filter-bar { display: flex; gap: 16px; align-items: center; margin: 16px 0; padding: 16px; background: var(--color-bg-layout); border-radius: var(--radius-container); }\n' +
   '  .filter-chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; background: var(--color-blue); color: white; border-radius: 16px; font-size: 14px; }\n' +
   '  .filter-chip button { background: none; border: none; color: white; cursor: pointer; font-size: 16px; padding: 0 4px; }\n' +
-  '  .filter-input { flex: 1; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 4px; font-size: 14px; }\n' +
-  '  .btn { padding: 8px 16px; border: 1px solid var(--color-border); background: white; border-radius: 4px; cursor: pointer; font-size: 14px; }\n' +
+  '  .filter-input { flex: 1; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-container); font-size: 14px; }\n' +
+  '  .btn { padding: 8px 16px; border: 1px solid var(--color-border); background: white; border-radius: var(--radius-container); cursor: pointer; font-size: 14px; }\n' +
   '  .btn:hover { background: var(--color-bg-layout); }\n' +
   '  .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }\n' +
   '  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }\n' +
@@ -87,19 +133,19 @@ const REPORT_CSS = '\n' +
   '  .modal-header { padding: 24px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; }\n' +
   '  .modal-header h2 { font-size: 20px; font-weight: 700; margin: 0; }\n' +
   '  .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--color-text-secondary); padding: 4px; line-height: 1; }\n' +
-  '  .modal-body { padding: 24px; max-height: 70vh; overflow-y: auto; }\n' +
-  '  .tab-bar { display: flex; border-bottom: 2px solid var(--color-border); margin-bottom: 16px; }\n' +
+  '  .modal-body { padding: 28px; max-height: 70vh; overflow-y: auto; font-size: 14px; }\n' +
+  '  .modal-body .badge { font-size: 14px; padding: 4px 12px; }\n' +
+  '  .tab-bar { display: flex; border-bottom: 2px solid var(--color-border); margin-bottom: 20px; }\n' +
   '  .tab-button { padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; color: var(--color-text-secondary); border-bottom: 2px solid transparent; margin-bottom: -2px; }\n' +
   '  .tab-button.active { color: var(--color-blue); border-bottom-color: var(--color-blue); }\n' +
   '  .tab-content { display: none; }\n' +
   '  .tab-content.active { display: block; }\n' +
-  '  .key-value-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 16px 0; }\n' +
+  '  .key-value-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin: 24px 0; }\n' +
   '  .key-value-item { }\n' +
-  '  .key-value-label { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }\n' +
-  '  .key-value-value { font-size: 14px; }\n' +
-  '  .code-block { background: #232f3e; color: #d4d4d4; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 8px 0; }\n' +
+  '  .key-value-block { margin-top: 24px; }\n' +
+  '  .code-block { background: var(--color-badge-neutral); color: var(--color-text); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; white-space: pre-wrap; word-break: break-word; margin: 12px 0; }\n' +
   '  tbody tr { cursor: pointer; }\n' +
-  '  .toggle-group { display: inline-flex; border: 1px solid var(--color-border); border-radius: 4px; overflow: hidden; }\n' +
+  '  .toggle-group { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-container); overflow: hidden; }\n' +
   '  .toggle-btn { padding: 6px 16px; border: none; background: white; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--color-text-secondary); border-right: 1px solid var(--color-border); }\n' +
   '  .toggle-btn:last-child { border-right: none; }\n' +
   '  .toggle-btn.active { background: var(--color-blue); color: white; }\n' +
@@ -107,17 +153,30 @@ const REPORT_CSS = '\n' +
 
 // Helper function to generate the report JavaScript code without template literals
 // This eliminates Semgrep false positives for missing-template-string-indicator
-const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENGINE_BADGE_CLASSES) => {
+const generateReportScript = (data, ENGINE_LABELS) => {
   const { results, schemaDesigns, collector, jobId, queryJourneys } = data;
 
   // Build the script using string concatenation (not template literals)
   let script = '';
   script += '  <script>\n';
   script += '    const DATA = ' + JSON.stringify({ results, schemaDesigns, collector, jobId, queryJourneys }, null, 2) + ';\n';
-  script += '    const ENGINE_COLORS = ' + JSON.stringify(ENGINE_COLORS) + ';\n';
   script += '    const ENGINE_LABELS = ' + JSON.stringify(ENGINE_LABELS) + ';\n';
-  script += '    const OP_COLORS = ' + JSON.stringify(OP_COLORS) + ';\n';
-  script += '    const ENGINE_BADGE_CLASSES = ' + JSON.stringify(ENGINE_BADGE_CLASSES) + ';\n';
+  script += '\n';
+  script += '    // The palette lives only in the CSS :root block. Charts and SVG need real\n';
+  script += '    // colour values, so read the custom properties back at runtime -- the\n';
+  script += '    // computed value of a custom property has its var() references resolved.\n';
+  script += '    const PALETTE_CACHE = {};\n';
+  script += '    function paletteColor(name) {\n';
+  script += '      if (!(name in PALETTE_CACHE)) {\n';
+  script += '        PALETTE_CACHE[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim();\n';
+  script += '      }\n';
+  script += '      return PALETTE_CACHE[name];\n';
+  script += '    }\n';
+  script += '    function engineColor(engine) { return paletteColor(\'--engine-\' + engine) || paletteColor(\'--engine-fallback\'); }\n';
+  script += '    function opColor(op) { return paletteColor(\'--op-\' + op) || paletteColor(\'--engine-fallback\'); }\n';
+  script += '    function engineBadge(engine, label) {\n';
+  script += '      return \'<span class="badge" data-engine="\' + escapeHtml(engine) + \'">\' + escapeHtml(label) + \'</span>\';\n';
+  script += '    }\n';
   script += '\n';
   script += '    // Helper function to escape HTML to prevent XSS\n';
   script += '    function escapeHtml(text) {\n';
@@ -266,13 +325,12 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      const start = (currentPage - 1) * PAGE_SIZE;\n';
   script += '      const paginated = filtered.slice(start, start + PAGE_SIZE);\n';
   script += '      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);\n';
-  script += '      let html = \'<table><thead><tr><th>Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>\';\n';
+  script += '      let html = \'<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>\';\n';
   script += '      paginated.forEach(p => {\n';
-  script += '        const badgeClass = ENGINE_BADGE_CLASSES[p.engine] || \'badge-grey\';\n';
   script += '        html += \'<tr onclick="showPatternDetails(\\\'\' + escapeHtml(p.id) + \'\\\')">\';\n';
-  script += '        html += \'<td><span class="link">\' + escapeHtml(p.id.slice(0, 8)) + \'</span></td>\';\n';
+  script += '        html += \'<td class="nowrap"><span class="link">\' + escapeHtml(p.id.slice(0, 8)) + \'</span></td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.operation) + \'</td>\';\n';
-  script += '        html += \'<td><span class="badge \' + badgeClass + \'\">\' + escapeHtml(p.engine) + \'</span></td>\';\n';
+  script += '        html += \'<td>\' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.sourceTables) + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.destTable) + (p.gsiName ? \' (GSI: \' + p.gsiName + \')\' : \'\') + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.description) + \'</td>\';\n';
@@ -295,8 +353,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      let html = \'<table><thead><tr><th>Source Table</th><th>Engines</th><th>Destination Tables</th><th>Patterns</th><th>Convergence</th><th>Operations</th></tr></thead><tbody>\';\n';
   script += '      paginated.forEach(g => {\n';
   script += '        const engines = [...g.engines].map(e => {\n';
-  script += '          const badgeClass = ENGINE_BADGE_CLASSES[e] || \'badge-grey\';\n';
-  script += '          return \'<span class="badge \' + badgeClass + \'\">\' + (ENGINE_LABELS[e] || e) + \'</span>\';\n';
+  script += '          return engineBadge(e, ENGINE_LABELS[e] || e);\n';
   script += '        }).join(\' \');\n';
   script += '        const destTables = [...g.destTables].join(\', \');\n';
   script += '        const opSummary = {};\n';
@@ -337,7 +394,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '        type: \'pie\',\n';
   script += '        data: {\n';
   script += '          labels: Object.keys(engineDist).map(e => ENGINE_LABELS[e] || e),\n';
-  script += '          datasets: [{ data: Object.values(engineDist), backgroundColor: Object.keys(engineDist).map(e => ENGINE_COLORS[e] || \'#5f6b7a\') }]\n';
+  script += '          datasets: [{ data: Object.values(engineDist), backgroundColor: Object.keys(engineDist).map(e => engineColor(e)) }]\n';
   script += '        },\n';
   script += '        options: {\n';
   script += '          responsive: true, maintainAspectRatio: false,\n';
@@ -360,7 +417,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '        type: \'doughnut\',\n';
   script += '        data: {\n';
   script += '          labels: Object.keys(opDist).map(o => o.charAt(0).toUpperCase() + o.slice(1)),\n';
-  script += '          datasets: [{ data: Object.values(opDist), backgroundColor: Object.keys(opDist).map(o => OP_COLORS[o] || \'#5f6b7a\') }]\n';
+  script += '          datasets: [{ data: Object.values(opDist), backgroundColor: Object.keys(opDist).map(o => opColor(o)) }]\n';
   script += '        },\n';
   script += '        options: {\n';
   script += '          responsive: true, maintainAspectRatio: false,\n';
@@ -388,13 +445,12 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      const afterDist = DATA.results?.synthesis?.reality_check?.after_distribution || {};\n';
   script += '      const active = costs.filter(cb => afterDist[cb.database]);\n';
   script += '      if (active.length === 0) { container.innerHTML = \'<p>No cost data available.</p>\'; return; }\n';
-  script += '      let html = \'<div class="grid grid-\' + active.length + \'">\';';
+  script += '      let html = \'<div class="grid grid-auto">\';';
   script += '      active.forEach(cb => {\n';
-  script += '        const badgeClass = ENGINE_BADGE_CLASSES[cb.database] || \'badge-grey\';\n';
   script += '        html += \'<div class="stat-card" style="text-align: center;">\';\n';
-  script += '        html += \'<span class="badge \' + badgeClass + \'\">\' + cb.database + \'</span>\';\n';
-  script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0;">$\' + (cb.monthly_cost_usd?.toFixed(2) || \'0.00\') + \'</div>\';\n';
-  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">/month · \' + cb.pricing_mode + \'</div>\';\n';
+  script += '        html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);\n';
+  script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$\' + (cb.monthly_cost_usd?.toFixed(2) || \'0.00\') + \'</div>\';\n';
+  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">month · \' + cb.pricing_mode + \'</div>\';\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
   script += '      html += \'</div>\';\n';
@@ -422,12 +478,12 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      html += \'<svg width="\' + svgWidth + \'" height="\' + svgHeight + \'" style="background: transparent;">\';\n';
   script += '      html += \'<defs>\';\n';
   script += '      html += \'<linearGradient id="gradient-queries" x1="0%" y1="0%" x2="100%" y2="0%">\';\n';
-  script += '      html += \'<stop offset="0%" style="stop-color:#5f6b7a;stop-opacity:0.4" />\';\n';
-  script += '      html += \'<stop offset="100%" style="stop-color:#5f6b7a;stop-opacity:0.2" />\';\n';
+  script += '      html += \'<stop offset="0%" style="stop-color:var(--chart-neutral);stop-opacity:0.4" />\';\n';
+  script += '      html += \'<stop offset="100%" style="stop-color:var(--chart-neutral);stop-opacity:0.2" />\';\n';
   script += '      html += \'</linearGradient>\';\n';
   script += '      sortedEngines.forEach(function(entry) {\n';
   script += '        const engine = entry[0];\n';
-  script += '        const color = ENGINE_COLORS[engine] || \'#5f6b7a\';\n';
+  script += '        const color = engineColor(engine);\n';
   script += '        html += \'<linearGradient id="gradient-\' + engine + \'" x1="0%" y1="0%" x2="100%" y2="0%">\';\n';
   script += '        html += \'<stop offset="0%" style="stop-color:\' + color + \';stop-opacity:0.4" />\';\n';
   script += '        html += \'<stop offset="100%" style="stop-color:\' + color + \';stop-opacity:0.2" />\';\n';
@@ -447,94 +503,107 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '        html += \'<path d="\' + pathData + \'" fill="url(#gradient-\' + engine + \')" stroke="none" opacity="0.6" />\';\n';
   script += '      });\n';
   script += '      const sourceHeight = Math.min(150, svgHeight - 100);\n';
-  script += '      html += \'<rect x="\' + sourceX + \'" y="\' + (sourceY - sourceHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + sourceHeight + \'" fill="#5f6b7a" stroke="#5f6b7a" rx="2" opacity="0.8" />\';\n';
-  script += '      html += \'<text x="\' + (sourceX + nodeWidth + 10) + \'" y="\' + sourceY + \'" dy="0.35em" font-size="14" font-weight="600" fill="var(--color-text)">queries (\' + totalQueries + \')</text>\';\n';
+  script += '      html += \'<rect x="\' + sourceX + \'" y="\' + (sourceY - sourceHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + sourceHeight + \'" style="fill:var(--chart-neutral);stroke:var(--chart-neutral)" rx="2" opacity="0.8" />\';\n';
   script += '      sortedEngines.forEach(function(entry, idx) {\n';
   script += '        const engine = entry[0], count = entry[1];\n';
   script += '        const targetY = startY + (idx * engineSpacing) + (engineSpacing / 2);\n';
   script += '        const nodeHeight = Math.max(20, (count / totalQueries) * 120);\n';
-  script += '        const color = ENGINE_COLORS[engine] || \'#5f6b7a\';\n';
+  script += '        const color = engineColor(engine);\n';
   script += '        const label = ENGINE_LABELS[engine] || engine;\n';
   script += '        html += \'<rect x="\' + targetX + \'" y="\' + (targetY - nodeHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + nodeHeight + \'" fill="\' + color + \'" stroke="\' + color + \'" rx="2" opacity="0.8" />\';\n';
-  script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + label + \' (\' + count + \')</text>\';\n';
+  script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + label + \' (\' + Number(count).toFixed(1) + \'%)</text>\';\n';
   script += '      });\n';
   script += '      html += \'</svg></div>\';\n';
   script += '      container.innerHTML = html;\n';
   script += '    }\n';
   script += '\n';
 
-  // Add buildTradeoffs function - this is complex with nested template literals
+  // Trade-offs and the Principal Engineer notes come from the same trade_offs list --
+  // the notes are the entries prefixed "[PE note]". They render into two separate
+  // containers, so both read the list through tradeoffsByEngine(kind).
+  script += '    function tradeoffsByEngine(kind) {\n';
+  script += '      const out = {};\n';
+  script += '      DATA.schemaDesigns.forEach(d => {\n';
+  script += '        const raw = d.content?.trade_offs || [];\n';
+  script += '        const normalized = raw.map(t => typeof t === \'object\' ? t : { description: String(t), impact: \'\', source_tables: [], target_tables: [], query_ids: [] });\n';
+  script += '        const wanted = normalized.filter(t => String(t.description || \'\').startsWith(\'[PE note]\') === (kind === \'pe\'));\n';
+  script += '        if (wanted.length > 0) out[d.target_type] = wanted;\n';
+  script += '      });\n';
+  script += '      return out;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function sqlIdsHtml(queryIds) {\n';
+  script += '      if (!queryIds || queryIds.length === 0) return \'\';\n';
+  script += '      let out = \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
+  script += '      queryIds.forEach(function(qid) {\n';
+  script += '        out += \'<span class="link" onclick="showQueryJourney(\\\'\' + qid + \'\\\')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + qid.substring(0, 12) + \'...</span>\';\n';
+  script += '      });\n';
+  script += '      return out + \'</div></div>\';\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function engineTabBar(engines, byEngine, btnClass, switchFn) {\n';
+  script += '      let out = \'<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 20px;">\';\n';
+  script += '      engines.forEach(function(engine, idx) {\n';
+  script += '        const activeStyle = idx === 0 ? \'color: var(--color-blue); border-bottom-color: var(--color-blue);\' : \'color: var(--color-text-secondary); border-bottom-color: transparent;\';\n';
+  script += '        out += \'<button class="\' + btnClass + (idx === 0 ? \' active\' : \'\') + \'" onclick="\' + switchFn + \'(&quot;\' + engine + \'&quot;)" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + (ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')</button>\';\n';
+  script += '      });\n';
+  script += '      return out + \'</div>\';\n';
+  script += '    }\n';
+  script += '\n';
   script += '    function buildTradeoffs() {\n';
   script += '      const container = document.getElementById(\'tradeoffs-container\');\n';
-  script += '      const tradeoffsByEngine = {};\n';
-  script += '      DATA.schemaDesigns.forEach(d => {\n';
-  script += '        if (d.content?.trade_offs?.length > 0) tradeoffsByEngine[d.target_type] = d.content.trade_offs;\n';
-  script += '      });\n';
-  script += '      if (Object.keys(tradeoffsByEngine).length === 0) { container.innerHTML = \'<p>No trade-offs available.</p>\'; return; }\n';
-  script += '      let html = \'<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 16px;">\';\n';
-  script += '      Object.keys(tradeoffsByEngine).forEach(function(engine, idx) {\n';
-  script += '        const activeStyle = idx === 0 ? \'color: var(--color-blue); border-bottom-color: var(--color-blue);\' : \'color: var(--color-text-secondary); border-bottom-color: transparent;\';\n';
-  script += '        html += \'<button class="tradeoff-tab-btn \' + (idx === 0 ? \'active\' : \'\') + \'" onclick="switchTradeoffTab(\\\'\' + engine + \'\\\')\" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + (ENGINE_LABELS[engine] || engine) + \' (\' + tradeoffsByEngine[engine].length + \')</button>\';\n';
-  script += '      });\n';
-  script += '      html += \'</div>\';\n';
-  script += '      Object.entries(tradeoffsByEngine).forEach(function(entry, idx) {\n';
-  script += '        const engine = entry[0], tradeoffs = entry[1];\n';
+  script += '      const byEngine = tradeoffsByEngine(\'decision\');\n';
+  script += '      const engines = Object.keys(byEngine);\n';
+  script += '      if (engines.length === 0) { container.innerHTML = \'<p>No trade-offs available.</p>\'; return; }\n';
+  script += '      let html = engineTabBar(engines, byEngine, \'tradeoff-tab-btn\', \'switchTradeoffTab\');\n';
+  script += '      engines.forEach(function(engine, idx) {\n';
   script += '        html += \'<div id="tradeoff-tab-\' + engine + \'" class="tradeoff-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
-  script += '        const normalized = tradeoffs.map(t => typeof t === \'object\' ? t : { description: String(t), impact: \'\', source_tables: [], target_tables: [], query_ids: [] });\n';
-  script += '        const peNotes = normalized.filter(t => t.description.startsWith(\'[PE note]\'));\n';
-  script += '        const decisions = normalized.filter(t => !t.description.startsWith(\'[PE note]\'));\n';
-  script += '        if (decisions.length > 0) {\n';
-  script += '          html += \'<div style="margin-bottom: 16px;">\';\n';
-  script += '          decisions.forEach(function(to) {\n';
-  script += '            const queryIds = to.query_ids || [];\n';
-  script += '            html += \'<div style="padding: 12px; margin: 8px 0; border-left: 3px solid #0972d3; background: #f2f8fd; border-radius: 4px;">\';\n';
-  script += '            html += \'<div style="font-weight: 600; color: #0972d3;">\' + escapeHtml(to.description) + \'</div>\';\n';
-  script += '            if (to.impact) html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(to.impact) + \'</div>\';\n';
-  script += '            if (queryIds.length > 0) {\n';
-  script += '              html += \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
-  script += '              queryIds.forEach(function(qid) {\n';
-  script += '                html += \'<span class="link" onclick="showQueryJourney(\\\'\' + qid + \'\\\')\" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: #e9ebed; border-radius: 3px;">\' + qid.substring(0, 12) + \'...</span>\';\n';
-  script += '              });\n';
-  script += '              html += \'</div></div>\';\n';
-  script += '            }\n';
-  script += '            html += \'</div>\';\n';
-  script += '          });\n';
+  script += '        byEngine[engine].forEach(function(to) {\n';
+  script += '          html += \'<div class="item-card">\';\n';
+  script += '          html += \'<div style="font-size: 13px; font-weight: 700; color: var(--color-text);">\' + escapeHtml(to.description) + \'</div>\';\n';
+  script += '          if (to.impact) html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(to.impact) + \'</div>\';\n';
+  script += '          html += sqlIdsHtml(to.query_ids);\n';
   script += '          html += \'</div>\';\n';
-  script += '        }\n';
-  script += '        if (peNotes.length > 0) {\n';
-  script += '          html += \'<div style="margin-top: 16px; padding: 12px; background: #f9fafb; border-radius: 4px;">\';\n';
-  script += '          html += \'<div style="font-weight: 600; margin-bottom: 12px; color: var(--color-text);">Principal Engineer notes (\' + peNotes.length + \')</div><div>\';\n';
-  script += '          peNotes.forEach(function(note, noteIdx) {\n';
-  script += '            const queryIds = note.query_ids || [];\n';
-  script += '            const cleanDescription = note.description.replace(/^\\[PE note\\]\\s*/, \'\');\n';
-  script += '            html += \'<div style="padding: 10px; margin: 8px 0; border-left: 3px solid #ff9900; background: #fff8e6; border-radius: 4px;">\';\n';
-  script += '            html += \'<div style="display: flex; align-items: flex-start; gap: 8px;">\';\n';
-  script += '            html += \'<span style="display: inline-block; padding: 2px 8px; background: #0972d3; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; min-width: 24px; text-align: center;">\' + (noteIdx + 1) + \'</span>\';\n';
-  script += '            html += \'<div style="flex: 1;"><div style="font-size: 13px;">\' + escapeHtml(cleanDescription) + \'</div>\';\n';
-  script += '            if (note.impact) html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(note.impact) + \'</div>\';\n';
-  script += '            if (queryIds.length > 0) {\n';
-  script += '              html += \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
-  script += '              queryIds.forEach(function(qid) {\n';
-  script += '                html += \'<span class="link" onclick="showQueryJourney(\\\'\' + qid + \'\\\')\" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: #e9ebed; border-radius: 3px;">\' + qid.substring(0, 12) + \'...</span>\';\n';
-  script += '              });\n';
-  script += '              html += \'</div></div>\';\n';
-  script += '            }\n';
-  script += '            html += \'</div></div></div>\';\n';
-  script += '          });\n';
-  script += '          html += \'</div></div>\';\n';
-  script += '        }\n';
+  script += '        });\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
   script += '      container.innerHTML = html;\n';
   script += '    }\n';
   script += '\n';
-  script += '    function switchTradeoffTab(engineId) {\n';
-  script += '      document.querySelectorAll(\'.tradeoff-tab-btn\').forEach(btn => { btn.style.color = \'var(--color-text-secondary)\'; btn.style.borderBottomColor = \'transparent\'; });\n';
+  script += '    function buildPeNotes() {\n';
+  script += '      const container = document.getElementById(\'pe-notes-container\');\n';
+  script += '      if (!container) return;\n';
+  script += '      const byEngine = tradeoffsByEngine(\'pe\');\n';
+  script += '      const engines = Object.keys(byEngine);\n';
+  script += '      if (engines.length === 0) { container.innerHTML = \'<p>No engineering notes were raised.</p>\'; return; }\n';
+  script += '      let html = engineTabBar(engines, byEngine, \'pe-tab-btn\', \'switchPeNoteTab\');\n';
+  script += '      engines.forEach(function(engine, idx) {\n';
+  script += '        html += \'<div id="pe-tab-\' + engine + \'" class="pe-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
+  script += '        byEngine[engine].forEach(function(note, noteIdx) {\n';
+  script += '          html += \'<div class="item-card">\';\n';
+  script += '          html += \'<div style="display: flex; align-items: flex-start; gap: 12px;">\';\n';
+  script += '          html += \'<span style="display: inline-block; padding: 2px 8px; background: var(--color-accent); color: white; border-radius: 4px; font-size: 12px; font-weight: 600; min-width: 24px; text-align: center;">\' + (noteIdx + 1) + \'</span>\';\n';
+  script += '          html += \'<div style="flex: 1;"><div style="font-size: 13px;">\' + escapeHtml(note.description.replace(/^\\[PE note\\]\\s*/, \'\')) + \'</div>\';\n';
+  script += '          if (note.impact) html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(note.impact) + \'</div>\';\n';
+  script += '          html += sqlIdsHtml(note.query_ids);\n';
+  script += '          html += \'</div></div></div>\';\n';
+  script += '        });\n';
+  script += '        html += \'</div>\';\n';
+  script += '      });\n';
+  script += '      container.innerHTML = html;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function switchEngineTab(btnClass, contentClass, showId) {\n';
+  script += '      document.querySelectorAll(\'.\' + btnClass).forEach(btn => { btn.style.color = \'var(--color-text-secondary)\'; btn.style.borderBottomColor = \'transparent\'; });\n';
   script += '      event.target.style.color = \'var(--color-blue)\';\n';
   script += '      event.target.style.borderBottomColor = \'var(--color-blue)\';\n';
-  script += '      document.querySelectorAll(\'.tradeoff-tab-content\').forEach(content => content.style.display = \'none\');\n';
-  script += '      document.getElementById(\'tradeoff-tab-\' + engineId).style.display = \'block\';\n';
+  script += '      document.querySelectorAll(\'.\' + contentClass).forEach(content => content.style.display = \'none\');\n';
+  script += '      document.getElementById(showId).style.display = \'block\';\n';
   script += '    }\n';
+  script += '\n';
+  script += '    function switchTradeoffTab(engineId) { switchEngineTab(\'tradeoff-tab-btn\', \'tradeoff-tab-content\', \'tradeoff-tab-\' + engineId); }\n';
+  script += '\n';
+  script += '    function switchPeNoteTab(engineId) { switchEngineTab(\'pe-tab-btn\', \'pe-tab-content\', \'pe-tab-\' + engineId); }\n';
   script += '\n';
 
   // Due to the massive size of showPatternDetails, showSourceTableDetails, and showQueryJourney,
@@ -569,23 +638,22 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      tabsHtml += \'<button class="tab-button" onclick="switchPatternTab(\\\'target\\\')">Target Pattern</button>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-overview" class="tab-content active">\';\n';
-  script += '      tabsHtml += \'<div style="margin-bottom: 16px;"><div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Description</div>\';\n';
-  script += '      tabsHtml += \'<div style="padding: 12px; background: var(--color-bg-layout); border-radius: 4px;">\' + escapeHtml(fullPattern.description || fullPattern.name || \'No description available\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div style="margin-bottom: 24px;"><div class="key-value-label">Description</div>\';\n';
+  script += '      tabsHtml += \'<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">\' + escapeHtml(fullPattern.description || fullPattern.name || \'No description available\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-grid">\';\n';
-  script += '      const badgeClass = ENGINE_BADGE_CLASSES[fullPattern.engine] || \'badge-grey\';\n';
-  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value"><span class="badge \' + badgeClass + \'">\' + (ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + \'</span></div></div>\';\n';
+  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">\' + engineBadge(fullPattern.engine, ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Operation</div><div class="key-value-value">\' + escapeHtml(fullPattern.operation || fullPattern.http_method || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">\' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      if (fullPattern.source_tables && fullPattern.source_tables.length > 0) {\n';
-  script += '        tabsHtml += \'<div style="margin-top: 16px;"><div class="key-value-label">Source Tables</div><div style="margin-top: 4px;">\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">Source Tables</div><div>\';\n';
   script += '        fullPattern.source_tables.forEach(function(t) {\n';
   script += '          tabsHtml += \'<span class="badge badge-grey">\' + t.split(\'.\').pop() + \'</span> \';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '      }\n';
   script += '      if (fullPattern.query_ids && fullPattern.query_ids.length > 0) {\n';
-  script += '        tabsHtml += \'<div style="margin-top: 16px;"><div class="key-value-label">SQL IDs (\' + fullPattern.query_ids.length + \')</div><div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">SQL IDs (\' + fullPattern.query_ids.length + \')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">\';\n';
   script += '        fullPattern.query_ids.forEach(function(qid) {\n';
   script += '          const hasJourney = QUERY_JOURNEY_LOOKUP[qid];\n';
   script += '          const cursorStyle = hasJourney ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
@@ -608,15 +676,15 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      tabsHtml += \'</div></div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-source" class="tab-content">\';\n';
   script += '      if (fullPattern.source_query) {\n';
-  script += '        tabsHtml += \'<div><div style="font-weight: 600; margin-bottom: 8px;">Source SQL Query</div><div class="code-block">\' + escapeHtml(fullPattern.source_query) + \'</div></div>\';\n';
+  script += '        tabsHtml += \'<div><div class="key-value-label">Source SQL Query</div><div class="code-block">\' + escapeHtml(fullPattern.source_query) + \'</div></div>\';\n';
   script += '      } else {\n';
   script += '        tabsHtml += \'<p style="color: var(--color-text-secondary);">No source query available for this pattern.</p>\';\n';
   script += '      }\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-target" class="tab-content">\';\n';
-  script += '      if (fullPattern.key_condition) tabsHtml += \'<div><div style="font-weight: 600; margin-bottom: 8px;">Key Condition Expression</div><div class="code-block">\' + escapeHtml(fullPattern.key_condition) + \'</div></div>\';\n';
+  script += '      if (fullPattern.key_condition) tabsHtml += \'<div><div class="key-value-label">Key Condition Expression</div><div class="code-block">\' + escapeHtml(fullPattern.key_condition) + \'</div></div>\';\n';
   script += '      if (fullPattern.dsl_query) {\n';
-  script += '        tabsHtml += \'<div style="margin-top: 16px;"><div style="font-weight: 600; margin-bottom: 8px;">OpenSearch DSL Query</div><div class="code-block">\' + (typeof fullPattern.dsl_query === \'string\' ? escapeHtml(fullPattern.dsl_query) : JSON.stringify(fullPattern.dsl_query, null, 2)) + \'</div></div>\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">OpenSearch DSL Query</div><div class="code-block">\' + (typeof fullPattern.dsl_query === \'string\' ? escapeHtml(fullPattern.dsl_query) : JSON.stringify(fullPattern.dsl_query, null, 2)) + \'</div></div>\';\n';
   script += '      }\n';
   script += '      if (!fullPattern.key_condition && !fullPattern.dsl_query) tabsHtml += \'<p style="color: var(--color-text-secondary);">No target pattern details available.</p>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
@@ -675,15 +743,15 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '        tabsHtml += \'<div id="source-table-tab-\' + engine + \'" class="tab-content\' + activeClass + \'" style="display: \' + displayStyle + \';">\';\n';
   script += '        tabsHtml += \'<div style="margin-bottom: 16px;"><div class="key-value-grid">\';\n';
   script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Source Table</div><div class="key-value-value">\' + escapeHtml(tableName) + \'</div></div>\';\n';
-  script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Target Engine</div><div class="key-value-value"><span class="badge \' + badgeClass + \'">\' + (ENGINE_LABELS[engine] || engine) + \'</span></div></div>\';\n';
+  script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Target Engine</div><div class="key-value-value">\' + engineBadge(engine, ENGINE_LABELS[engine] || engine) + \'</div></div>\';\n';
   script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Total Patterns</div><div class="key-value-value"><span class="badge badge-grey">\' + patterns.length + \'</span></div></div>\';\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '        Object.entries(byDest).forEach(function(destEntry) {\n';
   script += '          const destTable = destEntry[0], destPatterns = destEntry[1];\n';
-  script += '          tabsHtml += \'<div style="margin-bottom: 16px; padding: 12px; background: var(--color-bg-layout); border-radius: 4px;">\';\n';
-  script += '          tabsHtml += \'<div style="font-weight: 600; margin-bottom: 8px;">Destination: \' + escapeHtml(destTable) + \'</div>\';\n';
-  script += '          tabsHtml += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-bottom: 8px;">\' + destPatterns.length + \' pattern(s)</div>\';\n';
-  script += '          tabsHtml += \'<table style="font-size: 13px;"><thead><tr>\';\n';
+  script += '          tabsHtml += \'<div style="margin-bottom: 24px; padding: 20px; background: var(--color-bg-layout); border-radius: 8px;">\';\n';
+  script += '          tabsHtml += \'<div class="key-value-label">Destination: \' + escapeHtml(destTable) + \'</div>\';\n';
+  script += '          tabsHtml += \'<div style="color: var(--color-text-secondary); margin-bottom: 8px;">\' + destPatterns.length + \' pattern(s)</div>\';\n';
+  script += '          tabsHtml += \'<table><thead><tr>\';\n';
   script += '          tabsHtml += \'<th style="text-align: left; padding: 4px 8px;">Pattern ID</th>\';\n';
   script += '          tabsHtml += \'<th style="text-align: left; padding: 4px 8px;">Operation</th>\';\n';
   script += '          tabsHtml += \'<th style="text-align: left; padding: 4px 8px;">Description</th>\';\n';
@@ -728,7 +796,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '        modal = document.createElement(\'div\');\n';
   script += '        modal.id = \'query-journey-modal\';\n';
   script += '        modal.style.cssText = \'display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;\';\n';
-  script += '        modal.innerHTML = \'<div style="background: white; border-radius: 8px; max-width: 90%; max-height: 90%; overflow: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.3);"><div style="padding: 24px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;"><h2 id="query-modal-title" style="font-size: 20px; font-weight: 700; margin: 0;">Query Journey</h2><button onclick="closeQueryJourneyModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--color-text-secondary); padding: 4px; line-height: 1;">×</button></div><div id="query-modal-body" style="padding: 24px; max-height: 70vh; overflow-y: auto;"></div></div>\';\n';
+  script += '        modal.innerHTML = \'<div class="modal-content"><div class="modal-header"><h2 id="query-modal-title">Query Journey</h2><button class="modal-close" onclick="closeQueryJourneyModal()">×</button></div><div class="modal-body" id="query-modal-body"></div></div>\';\n';
   script += '        document.body.appendChild(modal);\n';
   script += '      }\n';
   script += '      document.getElementById(\'query-modal-title\').textContent = \'Query Journey: \' + queryId.substring(0, 16) + \'...\';\n';
@@ -744,21 +812,21 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="tab-general" class="tab-content" style="display: block;">\';\n';
   script += '      tabsHtml += \'<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px;">\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">Query Type</div><div>\' + escapeHtml(source.query_type || \'—\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span></div></div>\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">Confidence</div><div>\' + (assignment.confidence || \'—\') + \'%</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">Frequency (per hour)</div><div>\' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : \'—\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">Calls per Second</div><div>\' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : \'—\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">In Scope</div><div>\' + (assignment.in_scope ? \'Yes\' : \'No\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Query Type</div><div>\' + escapeHtml(source.query_type || \'—\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span></div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Confidence</div><div>\' + (assignment.confidence || \'—\') + \'%</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Frequency (per hour)</div><div>\' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : \'—\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Calls per Second</div><div>\' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : \'—\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">In Scope</div><div>\' + (assignment.in_scope ? \'Yes\' : \'No\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      if (source.tables_accessed && source.tables_accessed.length > 0) {\n';
-  script += '        tabsHtml += \'<div style="margin-top: 16px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">Tables Accessed</div><div>\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">Tables Accessed</div><div>\';\n';
   script += '        source.tables_accessed.forEach(function(t) { tabsHtml += \'<span class="badge badge-grey">\' + escapeHtml(t) + \'</span> \'; });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '      }\n';
   script += '      if (source.query_text) {\n';
-  script += '        tabsHtml += \'<div style="margin-top: 16px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">Query Text</div>\';\n';
-  script += '        tabsHtml += \'<div style="background: #232f3e; color: #d4d4d4; padding: 12px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word;">\' + escapeHtml(source.query_text) + \'</div></div>\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">Query Text</div>\';\n';
+  script += '        tabsHtml += \'<div class="code-block">\' + escapeHtml(source.query_text) + \'</div></div>\';\n';
   script += '      }\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="tab-performance" class="tab-content" style="display: none;">\';\n';
@@ -768,7 +836,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '          const key = entry[0], value = entry[1];\n';
   script += '          const label = key.replace(/_/g, \' \').replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });\n';
   script += '          const displayValue = value !== null && value !== undefined ? (typeof value === \'number\' ? value.toFixed(4) : escapeHtml(String(value))) : \'—\';\n';
-  script += '          tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">\' + escapeHtml(label) + \'</div><div>\' + displayValue + \'</div></div>\';\n';
+  script += '          tabsHtml += \'<div><div class="key-value-label">\' + escapeHtml(label) + \'</div><div>\' + displayValue + \'</div></div>\';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div>\';\n';
   script += '      } else {\n';
@@ -782,7 +850,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '          const key = entry[0], value = entry[1];\n';
   script += '          const label = key.replace(/_/g, \' \').replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });\n';
   script += '          const displayValue = value !== null && value !== undefined ? escapeHtml(String(value)) : \'—\';\n';
-  script += '          tabsHtml += \'<div><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600;">\' + escapeHtml(label) + \'</div><div>\' + displayValue + \'</div></div>\';\n';
+  script += '          tabsHtml += \'<div><div class="key-value-label">\' + escapeHtml(label) + \'</div><div>\' + displayValue + \'</div></div>\';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div>\';\n';
   script += '      } else {\n';
@@ -790,7 +858,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      }\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="tab-json" class="tab-content" style="display: none;">\';\n';
-  script += '      tabsHtml += \'<div style="background: #232f3e; color: #d4d4d4; padding: 16px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 12px; white-space: pre;">\' + JSON.stringify(journey, null, 2) + \'</div>\';\n';
+  script += '      tabsHtml += \'<div class="code-block" style="white-space: pre;">\' + JSON.stringify(journey, null, 2) + \'</div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      document.getElementById(\'query-modal-body\').innerHTML = tabsHtml;\n';
   script += '      modal.style.display = \'flex\';\n';
@@ -831,6 +899,7 @@ const generateReportScript = (data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENG
   script += '      buildTable();\n';
   script += '      createCharts();\n';
   script += '      buildTradeoffs();\n';
+  script += '      buildPeNotes();\n';
   script += '    });\n';
   script += '  </script>\n';
 
@@ -845,7 +914,8 @@ export const generateHTMLReport = (data) => {
   // This approach eliminates template string interpolation in HTML context
   const engineBadges = Object.keys(afterDist).map(engine => {
     const span = document.createElement('span');
-    span.className = `badge ${ENGINE_BADGE_CLASSES[engine] || 'badge-grey'}`;
+    span.className = 'badge';
+    span.setAttribute('data-engine', engine);
     span.textContent = engine; // Browser automatically escapes content
     return span.outerHTML;
   }).join('');
@@ -866,16 +936,36 @@ export const generateHTMLReport = (data) => {
 <body>
   <div class="container">
     <div class="section">
-      <h1>Database Migration Analysis Report</h1>
-      <div style="color: var(--color-text-secondary); margin-top: 8px;">
-        <strong>Job ID:</strong> ${jobId} | <strong>Exported:</strong> ${new Date(exportDate).toLocaleString()} |
-        <strong>Database:</strong> ${results?.synthesis?.database_name || 'N/A'}
+      <div class="report-head">
+        <div>
+          <h1>Database Modernization Analysis Report</h1>
+          <p class="section-desc">Review the AWS database engine recommended for each access pattern in your source database, the estimated cost of running it, and the trade-offs each design accepts.</p>
+        </div>
+        <div class="report-brand">
+          <svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AWS Transform"><rect width="80" height="80" rx="16" style="fill: var(--color-brand)"/><path fill="white" d="M62.9961 29.5693C62.3662 29.207 61.6182 29.2099 60.9922 29.5761L51.4961 35.1172C51.1885 35.2964 51 35.6255 51 35.9809V42.3628L47.5527 44.0864C47.2139 44.2558 47 44.602 47 44.9809V48.4809L44 50.7309L41 48.4814V31.4805L44 29.2309L47 31.4809V35.3809L49 34.2309V30.9809C49 30.666 48.8516 30.3696 48.5996 30.1811L44.5996 27.1811C44.2441 26.9145 43.7559 26.9145 43.4004 27.1811L40 29.7309L36.5996 27.1811C36.2695 26.9321 35.8213 26.9141 35.4697 27.1328L31.4697 29.6328C31.1777 29.8159 31 30.1362 31 30.4809V34.3628L27.5527 36.0864C27.2139 36.2558 27 36.602 27 36.9809V43.3872L18 48.2964V28.791C18 27.4048 18.7363 26.0952 19.9199 25.374L37.7285 14.5342C39.0859 13.7065 40.8037 13.7637 42.1035 14.6738L56.8277 24.981H52V26.981H60C60.5527 26.981 61 26.5332 61 25.981V17.981H59V24.0604L43.25 13.0352C41.2988 11.669 38.7236 11.5869 36.6894 12.8257L18.8808 23.666C17.1035 24.7476 16 26.7114 16 28.791V48.2964C16 49.0093 16.3662 49.6524 16.9785 50.0161C17.2959 50.2046 17.6475 50.2988 17.999 50.2988C18.3271 50.2988 18.6553 50.2168 18.957 50.0522L28.4785 44.8589C28.7998 44.6836 29 44.3467 29 43.981V37.5991L32.4473 35.8755C32.7861 35.7061 33 35.3599 33 34.981V31.0352L35.9482 29.1924L39 31.4805V48.4814L36 50.731L33 48.481V44.581L31 45.681V48.981C31 49.2959 31.1484 49.5923 31.4004 49.7808L35.4004 52.7808C35.7558 53.0474 36.2441 53.0474 36.5996 52.7808L40 50.231L43.4004 52.7808C43.7558 53.0474 44.2441 53.0474 44.5996 52.7808L48.5996 49.7808C48.8515 49.5923 49 49.2959 49 48.981V45.5991L52.4473 43.8755C52.7861 43.7061 53 43.3599 53 42.981V36.5552L62 31.3037V51.1709C62 52.5571 61.2637 53.8667 60.0801 54.5879L42.2715 65.4277C40.9131 66.2534 39.1963 66.1982 37.8965 65.2881L23.1722 54.981H28V52.981H20C19.4473 52.981 19 53.4287 19 53.981V61.981H21V55.9016L36.75 66.9268C37.7803 67.6479 38.9844 68.0112 40.1914 68.0112C41.2695 68.0112 42.3506 67.7207 43.3105 67.1362L61.1191 56.2959C62.8965 55.2144 64 53.2505 64 51.1709V31.3037C64 30.5786 63.625 29.9301 62.9961 29.5693Z"/></svg>
+          <span class="badge badge-blue">Generated by AWS Transform</span>
+        </div>
+      </div>
+      <div class="meta-pairs">
+        <div class="meta-pair">
+          <div class="meta-pair-label">Job ID</div>
+          <div class="meta-pair-value">${jobId}</div>
+        </div>
+        <div class="meta-pair">
+          <div class="meta-pair-label">Created</div>
+          <div class="meta-pair-value">${new Date(exportDate).toLocaleString()}</div>
+        </div>
+        <div class="meta-pair">
+          <div class="meta-pair-label">Database</div>
+          <div class="meta-pair-value">${results?.synthesis?.database_name || 'N/A'}</div>
+        </div>
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">Executive Summary</div>
-      <p style="margin-bottom: 16px;">${results?.synthesis?.summary || 'No summary available.'}</p>
+      <p class="section-desc">The target architecture recommended for this database, its projected monthly cost, and the workload it covers.</p>
+      <p class="section-body">${results?.synthesis?.summary || 'No summary available.'}</p>
       <div class="grid grid-4">
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${results?.synthesis?.database_name || '—'}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
@@ -886,18 +976,19 @@ export const generateHTMLReport = (data) => {
 
     <div class="section">
       <div class="section-header">Cost Breakdown</div>
-      <p style="margin-bottom: 16px; color: var(--color-text-secondary);">Estimated monthly cost per target engine</p>
+      <p class="section-desc">Estimated monthly cost of running each recommended engine at your current workload volume.</p>
       <div id="cost-breakdown-container"></div>
     </div>
 
     <div class="section">
       <div class="section-header">Query Flow</div>
-      <p style="margin-bottom: 16px; color: var(--color-text-secondary);">Access patterns distribution across recommended engines</p>
+      <p class="section-desc">How your access patterns distribute across the recommended engines, from source table to target.</p>
       <div id="query-flow-container"></div>
     </div>
 
     <div class="section">
       <div class="section-header">Access Pattern Explorer (<span id="pattern-count">${totalPatterns}</span>)</div>
+      <p class="section-desc">Browse every access pattern by pattern or by source table. Filter by engine, operation, or text to narrow the list, then select a row to see its target design.</p>
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <div class="toggle-group">
           <button class="toggle-btn active" onclick="switchBrowseMode('pattern')">By access pattern</button>
@@ -905,24 +996,31 @@ export const generateHTMLReport = (data) => {
         </div>
       </div>
       <div class="filter-bar">
-        <input type="text" id="filter-input" class="filter-input" placeholder="Filter by engine, source table, destination, operation...">
+        <input type="text" id="filter-input" class="filter-input" placeholder="Filter by engine, source table, destination, or operation">
         <button class="btn" onclick="clearAllFilters()">Clear filters</button>
       </div>
       <div id="active-filters" style="margin: 16px 0;"></div>
       <div class="grid grid-2">
-        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by Engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div></div>
-        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by Operation Type</div><div class="chart-container"><canvas id="operationChart"></canvas></div></div>
+        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div></div>
+        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by operation type</div><div class="chart-container"><canvas id="operationChart"></canvas></div></div>
       </div>
       <div id="access-patterns-container"></div>
     </div>
 
     <div class="section">
       <div class="section-header">Trade-offs and Design Decisions</div>
+      <p class="section-desc">What each target design gains, what it gives up, and the reasoning behind the decision.</p>
       <div id="tradeoffs-container"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Principal Engineer Notes</div>
+      <p class="section-desc">Observations raised while reviewing each design, including the decisions to validate with your team before you commit to them.</p>
+      <div id="pe-notes-container"></div>
     </div>
   </div>
 
-${generateReportScript(data, ENGINE_COLORS, ENGINE_LABELS, OP_COLORS, ENGINE_BADGE_CLASSES)}
+${generateReportScript(data, ENGINE_LABELS)}
 
 </body>
 </html>`;

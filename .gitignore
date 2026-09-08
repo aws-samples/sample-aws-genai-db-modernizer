@@ -71,3 +71,7 @@ docs/examples/**/*.json
 # Superpowers scratch and local specs/plans (never committed)
 .superpowers/
 docs/superpowers/
+
+# LOCAL files
+workspace/
+CLAUDE.md
