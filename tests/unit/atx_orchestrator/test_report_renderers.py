@@ -9,15 +9,21 @@ exercised against a committed fixture — the real report from the deployed
 content split, not a hand-built stub.
 
 ``_publish_synthesis_deliverables`` (in ``tools``) is tested with a fake store
-and a patched ``publish`` to confirm: three rendered files are written to S3 under
-the canonical artifact names, all four deliverables are published as
-CUSTOMER_OUTPUT, and the whole step is non-fatal when the report cannot be read.
+and a patched ``publish`` to confirm: three text deliverables plus the executive
+deck and its PDF are written to S3 under the canonical artifact names, all five
+deliverables are published as CUSTOMER_OUTPUT each carrying an explicit download
+filename, and the whole step is non-fatal when the report cannot be read.
+
+``_FakeStore`` implements ``write_bytes`` deliberately. While it did not, the
+executive-summary block raised ``AttributeError`` straight into its own
+``except`` and the fifth deliverable was never exercised at all.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -151,6 +157,7 @@ class _FakeStore:
     def __init__(self, data: dict) -> None:
         self.data: dict[str, dict] = dict(data)
         self.text_writes: dict[str, tuple[str, str]] = {}
+        self.byte_writes: dict[str, bytes] = {}
 
     def read_json(self, path: str) -> dict:
         return self.data[path]
@@ -164,11 +171,17 @@ class _FakeStore:
     def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
         self.text_writes[path] = (content, content_type)
 
+    # The executive summary writes binary. Without this the whole block raises
+    # AttributeError into its own ``except`` and the fifth deliverable silently
+    # never renders -- which is exactly how it went untested before.
+    def write_bytes(self, path: str, content: bytes, content_type: str = "") -> None:
+        self.byte_writes[path] = content
+
 
 class TestSynthesisDeliverables:
     KEY = "discourse/job-x/synthesis/v1/report.json"
 
-    def test_writes_three_files_and_publishes_four(self, report: dict) -> None:
+    def test_writes_five_files_and_publishes_five(self, report: dict) -> None:
         payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
         store = _FakeStore({self.KEY: report})
         captured: dict = {}
@@ -185,6 +198,9 @@ class TestSynthesisDeliverables:
         # payload flows through unchanged
         assert json.loads(out)["response"]["report_artifact"] == self.KEY
 
+        # provenance stems are date-stamped; derive the day rather than freezing time
+        day = datetime.now(UTC).strftime("%Y%m%d")
+
         # exactly the three rendered deliverables written to S3 (report.json untouched)
         keys = list(store.text_writes)
         assert len(keys) == 3
@@ -194,16 +210,40 @@ class TestSynthesisDeliverables:
         assert any(re.search(r"/discourse_analysis-report_job-x_\d{8}\.html$", k) for k in keys)
         assert self.KEY not in keys
 
-        # four published, in order, all CUSTOMER_OUTPUT
+        # the executive summary writes both halves as binary under fixed names --
+        # the deck stays on S3 as the editable source, only the PDF is registered
+        assert sorted(k.rsplit("/", 1)[-1] for k in store.byte_writes) == [
+            "summary-executive-report.pdf",
+            "summary-executive-report.pptx",
+        ]
+        assert (
+            store.byte_writes[f"{self.KEY.rsplit('/', 1)[0]}/summary-executive-report.pdf"][:5]
+            == b"%PDF-"
+        )
+
+        # five published, in order, all CUSTOMER_OUTPUT
         items = captured["items"]
-        assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON", "HTML"]
+        assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON", "HTML", "PDF"]
         assert [it[2] for it in items] == [
             "Decision Report — discourse",
             "Engineering Report — discourse",
             "Assessment Data (raw) — discourse",
             "Interactive Analysis Report — discourse",
+            "Executive Summary Report — discourse",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
+
+        # Every item carries an explicit download filename (5th element). Without it
+        # publish() cannot set fileMetadata.path and the customer's download is named
+        # after the artifact UUID -- a regression no other assertion here would catch.
+        assert all(len(it) == 5 for it in items)
+        assert items[-1][4] == "summary-executive-report.pdf"
+        assert [it[4] for it in items[:4]] == [
+            f"discourse_decision-report_job-x_{day}.html",
+            f"discourse_engineering-report_job-x_{day}.md",
+            f"discourse_assessment-data_job-x_{day}.json",
+            f"discourse_analysis-report_job-x_{day}.html",
+        ]
 
     def test_non_fatal_when_report_unreadable(self) -> None:
         payload = {"response": {"report_artifact": "missing/key.json"}}
