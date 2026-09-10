@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import re
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,36 @@ def _default_path(label: str, file_type: str) -> str:
 
 # An item is ``(content, file_type, label, category_type)`` or, with an explicit
 # download filename, ``(content, file_type, label, category_type, path)``.
+def artifact_stem(
+    database_name: str,
+    artifact: str,
+    job_id: str,
+    generated: datetime | None = None,
+) -> str:
+    """Canonical filename stem: ``{database}_{artifact}_{job8}_{YYYYMMDD}``.
+
+    The customer downloads ``1e8ec29e-0227-4ae4-9523-306d4a622c47.html`` and cannot
+    tell which database, job or report it is. That is not an S3 problem — the keys
+    written here have been descriptive all along — it is that
+    ``ArtifactStore.upload_artifact(content, digest, category_type=, file_type=,
+    label=)`` takes no filename, so the panel names the download after the artifact
+    id. Two things follow: the S3 keys use this stem, and each rendered file states
+    its own identity internally (HTML ``<title>`` + ``x-dbmod-*`` meta, Markdown
+    front matter, JSON ``_artifact`` envelope) so a UUID download is still traceable.
+
+    Underscore separates fields, hyphen lives inside one, so the stem splits cleanly
+    on ``_``. ``job_id[:8]`` rather than the full UUID: 32 bits is ample within one
+    database, and 36 characters of UUID would crowd out the two fields that actually
+    distinguish the file. The full job id is in the S3 key and inside the file.
+
+    If a future SDK's ``upload_artifact`` accepts a filename, pass this stem to it
+    and the panel problem disappears; the SDK is container-only, so that is untested.
+    """
+    db = re.sub(r"[^a-z0-9]+", "-", database_name.lower()).strip("-") or "database"
+    day = (generated or datetime.now(UTC)).strftime("%Y%m%d")
+    return f"{db}_{artifact}_{job_id[:8]}_{day}"
+
+
 PublishItem = (
     tuple[bytes, FileType, str, CategoryType] | tuple[bytes, FileType, str, CategoryType, str]
 )
@@ -497,8 +529,57 @@ def _risk_tile_class(level: str) -> str:
     return "green"
 
 
+def provenance(
+    report: dict[str, Any],
+    artifact: str,
+    ext: str,
+    job_id: str = "",
+    source_artifact: str = "",
+) -> dict[str, str]:
+    """Identity block for one rendered deliverable.
+
+    Carried inside the file (meta tags / front matter / ``_artifact`` envelope) so a
+    download named after a UUID is still traceable to a database and a job. See
+    ``artifact_stem`` for why the filename itself cannot be set.
+    """
+    db = str(report.get("database_name") or "database")
+    jid = job_id or str(report.get("job_id") or "")
+    now = datetime.now(UTC)
+    return {
+        "artifact": artifact,
+        "database": db,
+        "job_id": jid,
+        "generated": now.isoformat(timespec="seconds"),
+        "filename": f"{artifact_stem(db, artifact, jid, now)}.{ext}",
+        "source_artifact": source_artifact,
+    }
+
+
+def _meta_tags(prov: dict[str, str] | None) -> str:
+    if not prov:
+        return ""
+    return "".join(
+        f'<meta name="x-dbmod-{k.replace("_", "-")}" content="{_html.escape(str(v))}">'
+        for k, v in prov.items()
+        if v
+    )
+
+
+def _provenance_footer_html(prov: dict[str, str] | None) -> str:
+    if not prov:
+        return ""
+    bits = f"{_html.escape(prov['filename'])}"
+    if prov.get("job_id"):
+        bits += f" &middot; job {_html.escape(prov['job_id'])}"
+    if prov.get("generated"):
+        bits += f" &middot; generated {_html.escape(prov['generated'])}"
+    return f"<p class=note>{bits}</p>"
+
+
 def render_decision_report_html(
-    report: dict[str, Any], trust_generated_summary: bool = True
+    report: dict[str, Any],
+    trust_generated_summary: bool = True,
+    prov: dict[str, str] | None = None,
 ) -> str:
     """Stakeholder-facing decision document: why / what / cost / risk.
 
@@ -533,7 +614,10 @@ def render_decision_report_html(
     out = [
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
         '<meta name=viewport content="width=device-width,initial-scale=1">',
-        f"<title>Decision Report \u2014 {esc(db)}</title>",
+        f"<title>Decision Report \u2014 {esc(db)}"
+        + (f" \u2014 {esc(prov['job_id'][:8])}" if prov and prov.get("job_id") else "")
+        + "</title>",
+        _meta_tags(prov),
         f"<style>{_DECISION_CSS}</style></head><body>",
         "<div class=hero><div class=wrap>",
         "<h1>Database Modernization \u2014 Decision Report</h1>",
@@ -655,9 +739,10 @@ def render_decision_report_html(
         "model decides which engine a table or query goes to. The executive summary is written "
         "over already-computed results and cannot change a recommendation. The complete "
         "machine-readable assessment is available as the Assessment Data (JSON) artifact.</footer>",
+        _provenance_footer_html(prov),
         "</div></body></html>",
     ]
-    return "\n".join(out)
+    return "\n".join(o for o in out if o)
 
 
 def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
@@ -687,13 +772,18 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
     return "\n".join(lines)
 
 
-def render_engineering_report_md(report: dict[str, Any]) -> str:
+def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
     engineers open it in (VS Code, GitHub, GitLab).
     """
     db = report.get("database_name", "?")
-    out = [
+    out: list[str] = []
+    if prov:
+        out += ["---"]
+        out += [f"{k}: {v}" for k, v in prov.items() if v]
+        out += ["---", ""]
+    out += [
         "# Database Modernization \u2014 Engineering Report",
         "",
         f"Source database: `{db}`. This is the build companion to the Decision Report: "

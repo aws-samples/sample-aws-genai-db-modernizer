@@ -565,15 +565,27 @@ def run_synthesis_via_a2a(
 
 
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
-    """Render the two audience-shaped reports from the synthesis report.json and
-    publish all three deliverables as CUSTOMER_OUTPUT.
+    """Render the audience-shaped deliverables from the synthesis report.json and
+    publish them as CUSTOMER_OUTPUT.
 
     The orchestrator owns this, not the subagent, because it owns the synthesis
-    plan step. Three artifacts reach the WebApp Artifacts panel: Decision Report
-    (executive HTML), Engineering Report (build-team Markdown) and Assessment
-    Data (the raw report JSON). Each rendered report is also written to our own
+    plan step. Five artifacts reach the WebApp Artifacts panel: Decision Report
+    (executive HTML), Engineering Report (build-team Markdown), Assessment Data
+    (the raw report JSON), Interactive Analysis Report (HTML) and Executive
+    Summary Report (PDF). Each rendered deliverable is also written to our own
     S3 bucket, which is the system of record and survives the customer stopping
-    the job; report.json is already there (the subagent wrote it).
+    the job; report.json is already there (the subagent wrote it). The executive
+    summary's editable ``.pptx`` is written to S3 too but deliberately not
+    registered -- the PDF is the delivery.
+
+    Every item carries an explicit download filename (the 5th tuple element) so
+    the artifact publishes EXTERNAL and saves under a human-readable name rather
+    than its UUID. Dropping it regresses cross-account visibility silently: the
+    publishing account still sees INTERNAL artifacts, so nothing looks wrong.
+
+    Every deliverable is rendered deterministically from artifacts already on the
+    store -- no LLM call happens here, so two runs over the same report.json
+    produce byte-comparable content.
 
     Entirely non-fatal: a synthesis whose report is durable in S3 must not fail
     over a rendering or registration call. ``artifacts.publish`` never raises on
@@ -597,46 +609,123 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         base = report_key.rsplit("/", 1)[0]
         trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
 
+        def _prov(artifact: str, ext: str) -> dict:
+            return _artifacts.provenance(
+                report, artifact, ext, job_id=job_id, source_artifact=report_key
+            )
+
+        decision_prov = _prov("decision-report", "html")
+        engineering_prov = _prov("engineering-report", "md")
+        data_prov = _prov("assessment-data", "json")
+
         decision_html = _artifacts.render_decision_report_html(
-            report, trust_generated_summary=trust
+            report, trust_generated_summary=trust, prov=decision_prov
         )
-        engineering_md = _artifacts.render_engineering_report_md(report)
+        engineering_md = _artifacts.render_engineering_report_md(report, prov=engineering_prov)
+        # The published JSON is wrapped with an identity envelope; the object at
+        # report_key is NOT touched. That one is the system of record and is
+        # validated against the synthesis contract on re-read, so injecting a key
+        # into it would risk failing validation for the sake of a filename.
+        data_json = json.dumps({"_artifact": data_prov, **report}, indent=2)
 
         # S3-first: our bucket is the system of record (survives job stop).
-        store.write_text(f"{base}/decision-report-{database_name}.html", decision_html, "text/html")
-        store.write_text(
-            f"{base}/engineering-report-{database_name}.md", engineering_md, "text/markdown"
-        )
+        store.write_text(f"{base}/{decision_prov['filename']}", decision_html, "text/html")
+        store.write_text(f"{base}/{engineering_prov['filename']}", engineering_md, "text/markdown")
 
-        # Register all three in the WebApp panel as EXTERNAL CUSTOMER_OUTPUT so
-        # cross-account viewers can see and download them. The 5th tuple element
-        # is the download filename (matches the S3 copy names above) so the file
-        # saves under a friendly name instead of the artifact UUID.
-        _artifacts.publish(
-            [
+        items: list = [
+            (
+                decision_html.encode("utf-8"),
+                "HTML",
+                f"Decision Report — {database_name}",
+                "CUSTOMER_OUTPUT",
+                decision_prov["filename"],
+            ),
+            (
+                engineering_md.encode("utf-8"),
+                "MARKDOWN",
+                f"Engineering Report — {database_name}",
+                "CUSTOMER_OUTPUT",
+                engineering_prov["filename"],
+            ),
+            (
+                data_json.encode("utf-8"),
+                "JSON",
+                f"Assessment Data (raw) — {database_name}",
+                "CUSTOMER_OUTPUT",
+                data_prov["filename"],
+            ),
+        ]
+
+        # Fourth deliverable: the interactive report the WebApp's "Export to HTML"
+        # produces. Assembled straight off the ArtifactStore because the API path is
+        # unreachable for an ATX job -- every route resolves database_name through
+        # Step Functions, and an A2A-orchestrated job has no execution. Isolated in
+        # its own try: it reads six more artifacts than the other three, and none of
+        # them failing is a reason to withhold reports that already rendered.
+        try:
+            from src.atx_orchestrator.runtime import analysis_report as _ar
+
+            assignment_version = int(inner.get("assignment_version") or 1)
+            export_data = _ar.build_export_data(
+                store, job_id, database_name, assignment_version=assignment_version
+            )
+            analysis_prov = _prov("analysis-report", "html")
+            analysis_html = _ar.render_analysis_report_html(
+                export_data, filename=analysis_prov["filename"]
+            )
+            store.write_text(f"{base}/{analysis_prov['filename']}", analysis_html, "text/html")
+            items.append(
                 (
-                    decision_html.encode("utf-8"),
+                    analysis_html.encode("utf-8"),
                     "HTML",
-                    "Decision Report",
+                    f"Interactive Analysis Report — {database_name}",
                     "CUSTOMER_OUTPUT",
-                    f"decision-report-{database_name}.html",
-                ),
+                    analysis_prov["filename"],
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ATX interactive analysis report skipped: %s: %s", type(e).__name__, e)
+            export_data = None
+
+        # Fifth deliverable: the executive summary, rendered from the same report
+        # as the Decision Report HTML plus the export data above (slide 3 needs
+        # the collector query patterns; it degrades to a stated gap without them,
+        # which is why export_data is passed even when it failed to build).
+        #
+        # The PDF is what the customer gets in the Artifacts panel -- it opens
+        # anywhere and carries the deck's fonts with it. The .pptx is still
+        # written to S3 as the editable source for whoever presents it, just not
+        # registered. Both come from one render, so they cannot disagree.
+        #
+        # Its own try: this is the only part of the function with a binary
+        # dependency (python-pptx, reportlab, the bundled template and fonts),
+        # and a problem there must not withhold the four reports already rendered.
+        try:
+            from src.atx_orchestrator.runtime import pdf_report as _pdf
+            from src.atx_orchestrator.runtime import pptx_report as _pptx
+
+            deck, deck_pdf = _pdf.render_executive_summary_pdf(report, export_data)
+            # Fixed names, unlike the other four: this is the reusable executive
+            # deliverable and is called the same thing in every engagement. The
+            # job it belongs to is already in the key prefix (and in the deck's
+            # own core properties), so no date-stamped stem is needed.
+            store.write_bytes(f"{base}/{_pptx.FILENAME}", deck)
+            store.write_bytes(f"{base}/{_pdf.FILENAME}", deck_pdf)
+            items.append(
                 (
-                    engineering_md.encode("utf-8"),
-                    "MARKDOWN",
-                    "Engineering Report",
+                    deck_pdf,
+                    "PDF",
+                    f"Executive Summary Report — {database_name}",
                     "CUSTOMER_OUTPUT",
-                    f"engineering-report-{database_name}.md",
-                ),
-                (
-                    json.dumps(report, indent=2).encode("utf-8"),
-                    "JSON",
-                    "Assessment Data",
-                    "CUSTOMER_OUTPUT",
-                    f"assessment-data-{database_name}.json",
-                ),
-            ]
-        )
+                    _pdf.FILENAME,
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ATX executive summary skipped: %s: %s", type(e).__name__, e)
+
+        # Register in the WebApp panel. CUSTOMER_OUTPUT is accepted from the agent
+        # side (constraint C2, verified 2026-08-24).
+        _artifacts.publish(items)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "ATX synthesis deliverables skipped (report is durable in S3): %s: %s",
