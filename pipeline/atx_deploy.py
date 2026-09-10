@@ -409,13 +409,6 @@ def _agent_card(name: str, account: str, dependencies: list[str], version: str) 
             "legacyTaskLink": False,
             "webAppV2": True,
             "legacyRestartable": False,
-            # Required by AtxAgentRegistry.PublishAgentVersion as of 2026-09.
-            # False = once a job reaches FAILED/COMPLETED/STOPPED the customer cannot
-            # keep chatting with it. None of these agents supports chat restore: the
-            # orchestrator holds no conversational state across a terminal job and the
-            # subagents are single-shot work functions, so the platform restoring one to
-            # answer a follow-up would produce a confused answer, not a useful one.
-            "allowChatWhenJobTerminated": False,
             "extensions": [
                 {
                     "name": "Agent Provider",
