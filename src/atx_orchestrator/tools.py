@@ -208,38 +208,38 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "subSteps": [
                 {
                     "stepLabel": "schema_dynamodb",
-                    "stepName": "Design DynamoDB Schema",
+                    "stepName": "DynamoDB",
                     "description": "Design tables and access patterns for the DynamoDB target.",
                 },
                 {
                     "stepLabel": "schema_documentdb",
-                    "stepName": "Design DocumentDB Schema",
+                    "stepName": "DocumentDB",
                     "description": (
                         "Design collections and access patterns for the DocumentDB target."
                     ),
                 },
                 {
                     "stepLabel": "schema_elasticache",
-                    "stepName": "Design ElastiCache Schema",
+                    "stepName": "ElastiCache",
                     "description": (
                         "Design key structures and access patterns for the ElastiCache target."
                     ),
                 },
                 {
                     "stepLabel": "schema_opensearch",
-                    "stepName": "Design OpenSearch Schema",
+                    "stepName": "OpenSearch",
                     "description": (
                         "Design index mappings and access patterns for the OpenSearch target."
                     ),
                 },
                 {
                     "stepLabel": "schema_aurora_postgresql",
-                    "stepName": "Design Aurora PostgreSQL Schema",
+                    "stepName": "Aurora PostgreSQL",
                     "description": "Assess schema design coverage for the Aurora PostgreSQL target.",
                 },
                 {
                     "stepLabel": "schema_aurora_mysql",
-                    "stepName": "Design Aurora MySQL Schema",
+                    "stepName": "Aurora MySQL",
                     "description": "Assess schema design coverage for the Aurora MySQL target.",
                 },
             ],
