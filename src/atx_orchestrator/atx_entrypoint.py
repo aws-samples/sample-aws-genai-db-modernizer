@@ -87,15 +87,12 @@ _AGENTS: dict[str, str] = {
     # agent is no longer purely deterministic (hence "assessment-core").
     "assessment-core": "/tmp/assessment_core_agent",  # nosec B108
     "referee-synthesis": "/tmp/synthesis_agent",  # nosec B108
-    # Schema design, one per target engine. Upstream exposes a single
-    # run_schema_design parameterised by target_type, so these share one module
-    # (schema_subagent.make_schema_agent_factory) rather than having six.
-    "schema-dynamodb": "/tmp/schema_dynamodb_agent",  # nosec B108
-    "schema-documentdb": "/tmp/schema_documentdb_agent",  # nosec B108
-    "schema-elasticache": "/tmp/schema_elasticache_agent",  # nosec B108
-    "schema-opensearch": "/tmp/schema_opensearch_agent",  # nosec B108
-    "schema-aurora-pg": "/tmp/schema_aurora_pg_agent",  # nosec B108
-    "schema-aurora-mysql": "/tmp/schema_aurora_mysql_agent",  # nosec B108
+    # Schema design (ADR-027): one agent for every target engine. Upstream
+    # exposes a single run_schema_design parameterised by target_type, so one
+    # runtime takes target_type from the invocation payload instead of six
+    # runtimes each baking it into AGENT_TYPE. The orchestrator still invokes it
+    # once per engine, concurrently.
+    "schema": "/tmp/schema_agent",  # nosec B108
     # Reality Check is now folded into assessment-core (ADR-026), not a separate
     # runtime. Still not implemented as ATX subagents: schema-split, schema-merge.
     # Adding one means a row here, a branch in _resolve_factory, a subagent module
@@ -134,21 +131,14 @@ def _resolve_factory(agent_type: str):
         from src.atx_orchestrator.subagents.synthesis import agent_factory
 
         return agent_factory
-    # One branch for all six schema-design targets: upstream's run_schema_design
-    # is parameterised by target_type, so the factory is built per engine from a
-    # single module rather than imported from six near-identical ones. Routed on
-    # the prefix to keep the subagent import lazy like the branches above.
-    if agent_type.startswith("schema-"):
-        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS, make_schema_agent_factory
+    # One agent for every schema-design target (ADR-027): upstream's
+    # run_schema_design is parameterised by target_type, which now arrives in the
+    # invocation payload rather than being baked into AGENT_TYPE. The subagent
+    # validates it and fails loudly on an unknown engine.
+    if agent_type == "schema":
+        from src.atx_orchestrator.subagents.schema import agent_factory
 
-        if agent_type not in SCHEMA_TARGETS:
-            # schema-split and schema-merge are separate phases, not design
-            # targets. Fail loudly rather than dispatching one as the other.
-            _fail(
-                f"AGENT_TYPE={agent_type!r} starts with 'schema-' but is not a design "
-                f"target. Known targets: {sorted(SCHEMA_TARGETS)}"
-            )
-        return make_schema_agent_factory(SCHEMA_TARGETS[agent_type])
+        return agent_factory
 
     # Unreachable: main() validates against _AGENTS before calling. Guards against
     # a row being added to the table without a matching branch here.

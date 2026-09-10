@@ -763,10 +763,11 @@ def _complete_job_success(job_id: str) -> None:
         logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
 
 
-# Target engine per schema-design agent, keyed by the suffix used in both the
-# agent id and the plan step. Mirrors SCHEMA_TARGETS in schema_subagent.py; the
-# two differ because agent ids use hyphens while artifact keys and upstream's
-# dispatch use the engine's own identifier.
+# Target engine per schema-design tool suffix, used in the plan step label and,
+# since ADR-027, sent as target_type in the payload to the one consolidated
+# `schema` agent. The suffix and engine differ because tool suffixes use hyphens
+# (aurora-pg) while artifact keys and upstream's dispatch use the engine's own
+# identifier (aurora_postgresql). Must stay within schema.VALID_TARGET_TYPES.
 _SCHEMA_ENGINES: dict[str, str] = {
     "dynamodb": "dynamodb",
     "documentdb": "documentdb",
@@ -866,7 +867,10 @@ def _run_schema_design_via_a2a(
 ) -> str:
     """Shared body for the six schema-design A2A tools."""
     job_id = _platform_job_id(job_id)
-    agent_id = f"{_AGENT_PREFIX}-schema-{suffix}"
+    # One consolidated `schema` agent serves every engine (ADR-027); the target
+    # engine travels in the invocation payload as target_type, not in the agent
+    # id. The orchestrator still invokes once per engine, concurrently.
+    agent_id = f"{_AGENT_PREFIX}-schema"
     # Plan step labels use the engine's own identifier with underscores
     # (schema_aurora_postgresql), while agent ids use hyphens
     # (schema-aurora-pg). A mismatch here is silent: mark_step_* ignores an
@@ -961,6 +965,9 @@ def _run_schema_design_via_a2a(
             "job_id": job_id,
             "database_name": database_name,
             "assignment_version": assignment_version,
+            # target_type selects the engine for the one consolidated schema agent
+            # (ADR-027). The subagent validates it against VALID_TARGET_TYPES.
+            "target_type": engine,
         }
     )
     # Flip the parent "schema" box to in-progress as soon as any engine's design

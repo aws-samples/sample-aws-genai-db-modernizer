@@ -346,3 +346,55 @@ class TestSchemaDesignImplementedDesignerSkip:
         assert mock_skip.call_args.args[0] == "schema_aurora_postgresql"
         payload = json.loads(out)
         assert any("no schema design required" in n for n in payload["notes"])
+
+
+# =============================================================================
+# _run_schema_design_via_a2a — consolidated `schema` agent dispatch (ADR-027)
+#
+# All six engine tools resolve to the one `schema` agent id, and the target
+# engine travels in the invocation payload as target_type rather than in the
+# agent id.
+
+
+class TestSchemaDesignConsolidatedDispatch:
+    def test_dispatch_uses_one_agent_id_and_payload_target_type(self) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=3),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"opensearch"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            tools._run_schema_design_via_a2a("opensearch", "job-1", "discourse")
+
+        agent_id = mock_invoke.call_args.args[0]
+        message = json.loads(mock_invoke.call_args.args[1])
+        assert agent_id == f"{tools._AGENT_PREFIX}-schema"  # not ...-schema-opensearch
+        assert message["target_type"] == "opensearch"
+        assert message["assignment_version"] == 3
+        assert message["database_name"] == "discourse"
+
+    def test_aurora_pg_suffix_becomes_engine_target_type_in_payload(self) -> None:
+        # The hyphenated tool suffix (aurora-pg) maps to the engine identifier
+        # (aurora_postgresql) the subagent validates against. aurora has no
+        # implemented designer, so force dispatch by treating it as implemented
+        # is not possible; instead assert the mapping via the skip payload, which
+        # carries the same engine name the dispatch payload would.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-pg", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        assert json.loads(out)["target_type"] == "aurora_postgresql"

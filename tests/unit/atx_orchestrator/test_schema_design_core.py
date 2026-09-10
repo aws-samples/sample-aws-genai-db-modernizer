@@ -226,26 +226,29 @@ class TestPrerequisites:
 
 
 class TestAgentTypeMapping:
-    """Six agent types, each mapping to the target_type upstream expects."""
+    """One `schema` agent designs for every target engine (ADR-027).
+
+    target_type arrives in the invocation payload, so the valid set is a flat
+    frozenset of engine identifiers, not a per-runtime AGENT_TYPE map.
+    """
 
     def test_all_six_targets_present_and_correct(self) -> None:
-        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS
+        from src.atx_orchestrator.subagents.schema import VALID_TARGET_TYPES
 
-        assert SCHEMA_TARGETS == {
-            "schema-dynamodb": "dynamodb",
-            "schema-documentdb": "documentdb",
-            "schema-elasticache": "elasticache",
-            "schema-opensearch": "opensearch",
-            "schema-aurora-pg": "aurora_postgresql",
-            "schema-aurora-mysql": "aurora_mysql",
+        assert VALID_TARGET_TYPES == {
+            "dynamodb",
+            "documentdb",
+            "elasticache",
+            "opensearch",
+            "aurora_postgresql",
+            "aurora_mysql",
         }
 
-    def test_every_target_is_in_the_entrypoint_table(self) -> None:
-        """A target with no _AGENTS row could never be deployed."""
+    def test_schema_agent_is_in_the_entrypoint_table(self) -> None:
+        """The one schema runtime must have an _AGENTS row or it can't deploy."""
         from src.atx_orchestrator.atx_entrypoint import _AGENTS
-        from src.atx_orchestrator.subagents.schema import SCHEMA_TARGETS
 
-        assert set(SCHEMA_TARGETS) <= set(_AGENTS)
+        assert "schema" in _AGENTS
 
 
 class TestNonTabularEngineIsNotMistakenForNoDesign:

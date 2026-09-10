@@ -1,6 +1,6 @@
 # ADR-027: Consolidate the Schema-Design Fleet into One Agent
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-04
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-024 (Consolidate the Deterministic Analysis Fleet), ADR-025 (Consolidate the Deterministic Core Agent), ADR-026 (Reality Check in the Assessment Core), ADR-016 (Compute and Orchestration Strategy)
