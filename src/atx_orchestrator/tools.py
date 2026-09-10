@@ -871,10 +871,45 @@ def _run_schema_design_via_a2a(
     # (schema_aurora_postgresql), while agent ids use hyphens
     # (schema-aurora-pg). A mismatch here is silent: mark_step_* ignores an
     # unregistered phase name, so progress would simply never appear.
-    step = f"schema_{_SCHEMA_ENGINES[suffix]}"
+    engine = _SCHEMA_ENGINES[suffix]
+    step = f"schema_{engine}"
     # Resolve the version in Python, not via the LLM (ADR-026): picks up the v2
     # assignment when Reality Check consolidated, else v1.
     assignment_version = _effective_assignment_version(job_id, database_name)
+
+    # Pre-dispatch skip: if the effective assignment routes no in-scope query to
+    # this engine, there is nothing to design. Short-circuit before the A2A call so
+    # we don't pay an AgentCore runtime cold-start just for the subagent to write a
+    # "skipped" placeholder (mirrors handler.run_schema_design). This gate keys off
+    # query routing (assigned_engine), independent of the table-qualifier match the
+    # subagent-side skip uses.
+    #
+    # Fail-open: _engines_with_in_scope_queries returns an empty set when the
+    # assignment can't be read, so we only skip when the routed set was positively
+    # resolved AND this engine is absent from it; an empty set means "unknown" and
+    # we still dispatch.
+    routed = _engines_with_in_scope_queries(job_id, database_name, assignment_version)
+    if routed and engine not in routed:
+        logger.info(
+            "ATX: schema-design %s skipped pre-dispatch — no in-scope queries routed to "
+            "%s (assignment v%s)",
+            suffix,
+            engine,
+            assignment_version,
+        )
+        mark_step_skipped(step, "No queries routed to this engine.")
+        return json.dumps(
+            {
+                "status": "skipped",
+                "reason": "No queries or tables assigned to this engine",
+                "target_type": engine,
+                "assignment_version": assignment_version,
+                "job_id": job_id,
+                "skipped_pre_dispatch": True,
+                "notes": [f"{engine}: no queries routed to this engine; schema design skipped."],
+            }
+        )
+
     logger.info(
         "ATX: schema-design via A2A agent=%s job_id=%s db=%s assignment_version=%s",
         agent_id,
