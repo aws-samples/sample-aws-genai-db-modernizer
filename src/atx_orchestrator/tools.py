@@ -877,6 +877,45 @@ def _run_schema_design_via_a2a(
     # assignment when Reality Check consolidated, else v1.
     assignment_version = _effective_assignment_version(job_id, database_name)
 
+    from src.atx_orchestrator.core import (
+        IMPLEMENTED_SCHEMA_DESIGNERS,
+        _source_engine,
+        schema_no_design_notes,
+    )
+
+    # Implemented-designer skip: aurora_postgresql / aurora_mysql have no real
+    # designer (handler._dispatch_schema_agent writes a placeholder), so invoking
+    # their runtime only pays an AgentCore cold-start for a guaranteed non-design.
+    # Skip pre-dispatch, but emit the SAME note the post-dispatch path would have —
+    # importantly the same-family "no redesign required" note when the Aurora
+    # target matches the source. Runs before the routing skip so a same-family
+    # target reports "no redesign" rather than "no queries routed".
+    if engine not in IMPLEMENTED_SCHEMA_DESIGNERS:
+        src = _source_engine(_make_store(), job_id, database_name)
+        nd_notes, nd_warnings = schema_no_design_notes(engine, src, status="not_implemented")
+        detail = (nd_notes or nd_warnings or ["No schema designer for this engine."])[0]
+        logger.info(
+            "ATX: schema-design %s skipped pre-dispatch — no implemented designer for "
+            "%s (source=%s)",
+            suffix,
+            engine,
+            src or "unknown",
+        )
+        mark_step_skipped(step, detail)
+        no_designer: dict[str, object] = {
+            "status": "skipped",
+            "reason": "No implemented schema designer for this engine",
+            "target_type": engine,
+            "assignment_version": assignment_version,
+            "job_id": job_id,
+            "skipped_pre_dispatch": True,
+        }
+        if nd_notes:
+            no_designer["notes"] = nd_notes
+        if nd_warnings:
+            no_designer["warnings"] = nd_warnings
+        return json.dumps(no_designer)
+
     # Pre-dispatch skip: if the effective assignment routes no in-scope query to
     # this engine, there is nothing to design. Short-circuit before the A2A call so
     # we don't pay an AgentCore runtime cold-start just for the subagent to write a

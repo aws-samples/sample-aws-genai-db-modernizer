@@ -825,6 +825,10 @@ def _dispatch_schema_agent(
         analysis_path: Path to analysis output JSON (preferred over env var).
         revision_context_path: Optional path to revision context JSON.
     """
+    # The cases below are the implemented designers; keep them in sync with
+    # core.IMPLEMENTED_SCHEMA_DESIGNERS (the orchestrator skips engines absent
+    # from that set before dispatch). Anything else falls through to the
+    # not_implemented placeholder.
     match target_type:
         case "dynamodb":
             from src.tools.schema.dynamodb_schema_agent import run_dynamodb_schema_agent
