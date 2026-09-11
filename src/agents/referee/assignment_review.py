@@ -113,6 +113,12 @@ def render_assignment_review(assignment: Assignment) -> str:
         "To drop a query from this iteration, set its **in scope** cell to `no`."
     )
     lines.append(
+        "- You only need to send back the rows you changed. Keep the two marker "
+        "comments and the header row, then include just the edited rows — any query "
+        "you leave out is kept exactly as it is now. (You can also send the whole "
+        "table back if you prefer.)"
+    )
+    lines.append(
         "- Do not change the **query_id** column (it anchors each row) or remove the "
         "marker comments around the table."
     )

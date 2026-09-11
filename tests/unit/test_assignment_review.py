@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 import pytest
 
 from src.agents.referee.assignment_review import (
+    REVIEW_BEGIN_MARKER,
+    REVIEW_END_MARKER,
     REVIEW_TABLE_COLUMNS,
     ReviewParseError,
     diff_review_rows,
@@ -112,6 +114,27 @@ class TestEdits:
         assert len(overrides) == 1
         assert overrides[0].assigned_engine == "dynamodb"
         assert overrides[0].in_scope is True
+
+    def test_partial_table_with_only_changed_rows(self) -> None:
+        # A customer on a large workload replies with ONLY the rows they changed
+        # (markers + header + one edited row). Omitted queries are unchanged.
+        a = _assignment()
+        header = "| " + " | ".join(REVIEW_TABLE_COLUMNS) + " |"
+        sep = "| " + " | ".join(["---"] * len(REVIEW_TABLE_COLUMNS)) + " |"
+        partial = "\n".join(
+            [
+                "Here are just my changes:",
+                REVIEW_BEGIN_MARKER,
+                header,
+                sep,
+                "| q2 | t.posts | dynamodb | opensearch | yes |",
+                REVIEW_END_MARKER,
+            ]
+        )
+        overrides = diff_review_rows(a, parse_assignment_review(partial))
+        assert len(overrides) == 1
+        assert overrides[0].query_id == "q2"
+        assert overrides[0].assigned_engine == "opensearch"
 
     def test_editing_read_only_current_column_is_ignored(self) -> None:
         # The customer wrongly edits the read-only "current engine" cell; the

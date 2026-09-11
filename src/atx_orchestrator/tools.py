@@ -394,7 +394,10 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     except Exception:  # noqa: BLE001 - staging is best-effort; the markdown is returned regardless
         logger.warning("ATX: could not stage review doc at %s", review_key, exc_info=True)
 
-    # Best-effort publish so the customer can open/download the review in the panel.
+    # Publish so the customer can open/download the review in the Artifacts panel.
+    # Use CUSTOMER_OUTPUT: it is the category the WebApp panel actually renders
+    # (the synthesis deliverables use it, verified). HITL_FROM_AGENT uploads
+    # succeed but do not surface in the panel, so the customer cannot find them.
     try:
         from src.atx_orchestrator.runtime import artifacts as _artifacts
 
@@ -404,7 +407,7 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
                     review_md.encode("utf-8"),
                     "MARKDOWN",
                     f"Query Routing Review — {database_name}",
-                    "HITL_FROM_AGENT",
+                    "CUSTOMER_OUTPUT",
                     f"assignment-review-v{version}.md",
                 )
             ]

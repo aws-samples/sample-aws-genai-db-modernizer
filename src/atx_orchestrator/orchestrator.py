@@ -162,15 +162,22 @@ Workflow:
       3. STOP and write the assessment-core summary to the customer in chat (see
          the REQUIRED chat summary rule below). Do this as its own assistant
          message BEFORE the review gate.
-      4. present_assignment_review(job_id, database_name) — present the returned
-         review_markdown to the customer (where each query is routed and why) and
-         ask them to approve as-is or reply with the edited routing table. This is
-         a REQUIRED stop: WAIT for the customer's reply. Do not call any
-         schema-design tool yet.
+      4. present_assignment_review(job_id, database_name) — then give the customer
+         a concise routing summary in chat: per engine, the query count and the
+         main rationale (do NOT paste the whole table into chat — it can be
+         thousands of rows). Tell them the full editable table is in the Artifacts
+         panel (published as "Query Routing Review"), and that to change routing
+         they can reply with just the rows they changed (keeping the marker
+         comments and the header row) or simply describe the change (e.g. "move
+         query <id> to dynamodb"). This is a REQUIRED stop: WAIT for the customer's
+         reply. Do not call any schema-design tool yet.
       5. apply_assignment_edits(job_id, database_name, edited_markdown=<the
-         customer's reply, or empty if they approved as-is>). Only after this
-         returns "approved" may schema design run. If it returns "invalid_edit",
-         relay the message and ask the customer to resend; do not proceed.
+         customer's edited rows — the marker-bounded table, which may contain only
+         the changed rows; or empty if they approved as-is>). If the customer
+         described changes in words, translate them into that marker-bounded table
+         (header + only the changed rows) and pass it here. Only after this returns
+         "approved" may schema design run. If it returns "invalid_edit", relay the
+         message and ask the customer to resend; do not proceed.
       6. the schema-design tools for the same engines triage selected, dispatched
          in parallel — run_schema_design_<engine>_via_a2a. Wait for all of them
          before the next step. Each takes roughly 10-15 minutes, so tell the
