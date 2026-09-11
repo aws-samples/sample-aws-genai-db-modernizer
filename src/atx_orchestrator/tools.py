@@ -887,13 +887,14 @@ def _run_schema_design_via_a2a(
         schema_no_design_notes,
     )
 
-    # Implemented-designer skip: aurora_postgresql / aurora_mysql have no real
-    # designer (handler._dispatch_schema_agent writes a placeholder), so invoking
-    # their runtime only pays an AgentCore cold-start for a guaranteed non-design.
-    # Skip pre-dispatch, but emit the SAME note the post-dispatch path would have —
-    # importantly the same-family "no redesign required" note when the Aurora
-    # target matches the source. Runs before the routing skip so a same-family
-    # target reports "no redesign" rather than "no queries routed".
+    # Implemented-designer skip: guards engines with no real designer in
+    # handler._dispatch_schema_agent (which would write a placeholder), so we
+    # avoid paying an AgentCore cold-start for a guaranteed non-design. All six
+    # current targets are implemented, so this branch is currently unreachable —
+    # it stays as defensive coverage for any future target added before its
+    # designer. When it does fire it emits the SAME note the post-dispatch path
+    # would have, before the routing skip, so a same-family target reports "no
+    # redesign" rather than "no queries routed".
     if engine not in IMPLEMENTED_SCHEMA_DESIGNERS:
         src = _source_engine(_make_store(), job_id, database_name)
         nd_notes, nd_warnings = schema_no_design_notes(engine, src, status="not_implemented")
