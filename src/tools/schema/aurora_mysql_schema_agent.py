@@ -331,7 +331,7 @@ def run_aurora_mysql_schema_agent(
 
     # Run the deterministic core to produce the authoritative draft.
     draft, strategy = _build_draft(agent_input)
-    # NOTE (Phase 1): the draft duplicates column info already in collector.tables.
+    # NOTE: the draft duplicates column info already in collector.tables.
     # Accepted overhead for now; a future pass can compact collector.tables columns
     # since the draft is authoritative for column types. See ADR-028.
     agent_input["draft"] = draft
