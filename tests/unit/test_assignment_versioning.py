@@ -15,6 +15,7 @@ from src.storage.assignment_versioning import (
     assignment_artifact_path,
     next_assignment_version,
     resolve_effective_assignment_version,
+    stale_schema_versions,
 )
 
 
@@ -77,6 +78,48 @@ class TestNextAssignmentVersion:
 class TestAssignmentArtifactPath:
     def test_path_shape(self) -> None:
         assert assignment_artifact_path("db", "job", 2) == "db/job/assignment/v2/assignment.json"
+
+
+# =============================================================================
+# stale_schema_versions
+
+
+def _schema_key(db: str, job: str, engine: str, version: int) -> str:
+    return f"{db}/{job}/schema-{engine}/v{version}/schema_output.json"
+
+
+class TestStaleSchemaVersions:
+    def test_empty_when_no_assignment(self) -> None:
+        # Schema outputs exist but there is no assignment to be stale against.
+        store = _FakeStore([_schema_key("db", "job", "dynamodb", 1)])
+        assert stale_schema_versions(store, "db", "job") == {}
+
+    def test_none_stale_when_all_at_effective(self) -> None:
+        store = _FakeStore(
+            _keys("db", "job", [2])
+            + [_schema_key("db", "job", "dynamodb", 2), _schema_key("db", "job", "opensearch", 2)]
+        )
+        assert stale_schema_versions(store, "db", "job") == {}
+
+    def test_reports_engines_behind_effective(self) -> None:
+        # effective assignment v2; dynamodb designed at v2 (fresh), opensearch at v1 (stale).
+        store = _FakeStore(
+            _keys("db", "job", [1, 2])
+            + [_schema_key("db", "job", "dynamodb", 2), _schema_key("db", "job", "opensearch", 1)]
+        )
+        assert stale_schema_versions(store, "db", "job") == {"opensearch": 1}
+
+    def test_uses_newest_schema_version_per_engine(self) -> None:
+        # dynamodb has both v1 and v2 outputs; the newest (v2) matches effective, so not stale.
+        store = _FakeStore(
+            _keys("db", "job", [2])
+            + [_schema_key("db", "job", "dynamodb", 1), _schema_key("db", "job", "dynamodb", 2)]
+        )
+        assert stale_schema_versions(store, "db", "job") == {}
+
+    def test_ignores_legacy_unversioned_output(self) -> None:
+        store = _FakeStore(_keys("db", "job", [2]) + ["db/job/schema-dynamodb/schema_output.json"])
+        assert stale_schema_versions(store, "db", "job") == {}
 
 
 # =============================================================================

@@ -97,6 +97,13 @@ class AssignmentSummary(BaseModel):
 
     version: int | None = Field(None, ge=1)
     status: str | None = Field(None)
+    source: str | None = Field(
+        None,
+        description=(
+            "Provenance of the assignment version this report was built from "
+            "(assignment_resolution | reality_check | customer_gate). ADR-028."
+        ),
+    )
     query_count: int = Field(..., ge=0)
     in_scope_count: int = Field(..., ge=0)
     co_dependency_groups: int = Field(default=0, ge=0)
