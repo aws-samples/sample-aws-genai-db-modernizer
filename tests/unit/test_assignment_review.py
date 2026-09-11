@@ -210,3 +210,115 @@ class TestDiffUnknownQuery:
         rows = parse_assignment_review(md)
         with pytest.raises(ReviewParseError, match="not in the current"):
             diff_review_rows(a, rows)
+
+
+class TestSummary:
+    """render_assignment_summary is the engine-level recommendation shown first."""
+
+    def test_summary_lists_engines_with_counts_and_rationale(self) -> None:
+        from src.agents.referee.assignment_review import render_assignment_summary
+
+        md = render_assignment_summary(_assignment())
+        assert "recommendation" in md.lower()
+        # One row per engine in use, with in-scope/total counts.
+        assert "dynamodb" in md and "opensearch" in md and "elasticache" in md
+        assert "2 / 2" in md  # dynamodb: 2 in scope of 2
+        assert "0 / 1" in md  # elasticache: q4 is out of scope
+        # A rationale is surfaced (aggregated from assignment_reason).
+        assert "key-value lookups" in md or "highest confidence" in md
+        # It is NOT the full per-query editable table.
+        assert REVIEW_BEGIN_MARKER not in md
+
+
+class TestStructuredTable:
+    """build_review_table + diff_review_items are the HITL structured analogues
+    of render/parse/diff."""
+
+    def test_table_columns_mark_editable_and_include_rationale(self) -> None:
+        from src.agents.referee.assignment_review import build_review_table
+
+        cols, items = build_review_table(_assignment())
+        by_field = {c["field"]: c for c in cols}
+        # The two editable columns carry an editConfig; the rest do not.
+        assert by_field["new_engine"]["editConfig"]["editingCell"] is True
+        assert by_field["in_scope"]["editConfig"]["editingCell"] is True
+        assert "editConfig" not in by_field["query_id"]
+        assert "editConfig" not in by_field["rationale"]
+        # The new-engine validation regex is built from the valid engine set.
+        for engine in valid_target_engines():
+            assert engine in by_field["new_engine"]["editConfig"]["validation"]
+        # One row per query, anchored by id, with the rationale carried through.
+        assert len(items) == 4
+        q3 = next(i for i in items if i["query_id"] == "q3")
+        assert q3["id"] == "q3"
+        assert q3["current_engine"] == "opensearch"
+        assert q3["new_engine"] == "opensearch"  # defaults to current
+        assert "text_search" in q3["rationale"]
+
+    def test_unedited_items_diff_to_no_changes(self) -> None:
+        from src.agents.referee.assignment_review import build_review_table, diff_review_items
+
+        a = _assignment()
+        _cols, items = build_review_table(a)
+        assert diff_review_items(a, items) == []
+
+    def test_engine_edit_yields_one_override(self) -> None:
+        from src.agents.referee.assignment_review import build_review_table, diff_review_items
+
+        a = _assignment()
+        _cols, items = build_review_table(a)
+        for item in items:
+            if item["query_id"] == "q2":
+                item["new_engine"] = "opensearch"
+        overrides = diff_review_items(a, items)
+        assert len(overrides) == 1
+        assert overrides[0].query_id == "q2"
+        assert overrides[0].assigned_engine == "opensearch"
+        assert overrides[0].in_scope is None  # unchanged field left unset
+
+    def test_scope_edit_yields_one_override(self) -> None:
+        from src.agents.referee.assignment_review import build_review_table, diff_review_items
+
+        a = _assignment()
+        _cols, items = build_review_table(a)
+        for item in items:
+            if item["query_id"] == "q1":
+                item["in_scope"] = "no"
+        overrides = diff_review_items(a, items)
+        assert len(overrides) == 1
+        assert overrides[0].query_id == "q1"
+        assert overrides[0].in_scope is False
+
+    def test_unknown_engine_raises(self) -> None:
+        from src.agents.referee.assignment_review import diff_review_items
+
+        a = _assignment()
+        items = [{"query_id": "q1", "new_engine": "dynamdb", "in_scope": "yes"}]
+        with pytest.raises(ReviewParseError, match="Unknown engine"):
+            diff_review_items(a, items)
+
+    def test_unknown_query_raises(self) -> None:
+        from src.agents.referee.assignment_review import diff_review_items
+
+        a = _assignment()
+        items = [{"query_id": "q999", "new_engine": "dynamodb", "in_scope": "yes"}]
+        with pytest.raises(ReviewParseError, match="not in the current"):
+            diff_review_items(a, items)
+
+    def test_bad_scope_raises(self) -> None:
+        from src.agents.referee.assignment_review import diff_review_items
+
+        a = _assignment()
+        items = [{"query_id": "q1", "new_engine": "dynamodb", "in_scope": "maybe"}]
+        with pytest.raises(ReviewParseError, match="in scope"):
+            diff_review_items(a, items)
+
+    def test_id_used_when_query_id_missing(self) -> None:
+        from src.agents.referee.assignment_review import diff_review_items
+
+        a = _assignment()
+        # A submission that carries only ``id`` (the row anchor) still resolves.
+        items = [{"id": "q2", "new_engine": "opensearch", "in_scope": "yes"}]
+        overrides = diff_review_items(a, items)
+        assert len(overrides) == 1
+        assert overrides[0].query_id == "q2"

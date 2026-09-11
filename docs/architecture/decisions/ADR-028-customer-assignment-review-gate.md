@@ -260,3 +260,82 @@ Tradeoffs:
 
 The self-describing editable-surface catalog, previously listed here as
 optional, is now **in scope** for this ADR (see Decision B and Implementation).
+
+---
+
+## Amendment (2026-08-27): platform-native HITL editable-table transport + two-step gate
+
+The original decision (parts A-C above) shipped and the gate worked, but the
+**transport** proved wrong in a live run. The review document was published as a
+`CUSTOMER_OUTPUT` markdown artifact and the customer was asked to paste an edited
+marker-bounded table back into chat. Two failures surfaced:
+
+1. **The table does not round-trip through chat.** A real assignment was 1,654
+   rows; that cannot be pasted back, and the free-text "move query X" path the
+   LLM offered was never wired to `apply_assignment_edits`.
+2. **`HITL_FROM_AGENT` never surfaced in the Artifacts panel.** An earlier attempt
+   to publish the review as `HITL_FROM_AGENT` uploaded successfully but did not
+   render in the panel — that category is for the HITL-task UI, not the panel — so
+   the customer could not find the table at all.
+
+This amendment keeps the gate, the approval signal (`.meta` `ASSIGNMENT_REVIEW`
+phase), and all of parts C (one resolver + provenance + staleness). It changes
+**only how the routing is presented and how edits come back**, and adds a
+recommendation step in front of the detailed table.
+
+### D. Two-step gate
+
+`present_assignment_review` no longer renders the full per-query table. It renders
+an **engine-level recommendation** (per engine: in-scope/total query counts and
+the main rationale, aggregated from `assignment_reason`) and asks the customer to
+either **continue with the recommendation** or **review the full routing in
+detail**. The large per-query table is generated only if they choose detail. Most
+customers accept the recommendation, so the expensive table is usually never
+built.
+
+- Continue -> `finalize_assignment_review` (no edits) approves as-is.
+- Review in detail -> `open_detailed_routing_review` raises the editable table.
+
+### E. HITL editable `TableComponent` transport (raise-and-resume)
+
+`open_detailed_routing_review` raises a **BLOCKING** platform HITL task rendered as
+an editable `TableComponent` (`src/atx_orchestrator/runtime/hitl.py`), over the
+same `get_agentic_api_client()` seam `runtime/artifacts.py` already uploads
+through (`create_artifact_upload_url` -> `complete_artifact_upload` ->
+`create_hitl_task` -> `start_hitl_task`). Columns: `query_id`, `access pattern`,
+`current engine` (read-only), **`new engine`** and **`in scope`** (editable, each
+with an `editConfig` validation regex the WebApp enforces inline), and
+**`rationale`** (read-only, the per-query "why"). The customer edits cells in place
+and submits.
+
+The blocking model is **raise-and-resume**: the tool records the `hitlTaskId` in a
+small transport-state pointer (`<db>/<job>/assignment/review/pending_hitl.json` —
+not an approval artifact) and the orchestrator ends its turn. When the customer
+submits, the platform re-invokes the orchestrator, which calls
+`finalize_assignment_review`; that reads the submission back
+(`get_hitl_task` -> `humanArtifact` inline `content` or downloaded `artifactId`),
+converts the edited rows to overrides via `diff_review_items`, and applies them
+through the same `apply_assignment_overrides` path (`source = customer_gate`). This
+avoids parking a multi-hour human wait inside a single AgentCore turn.
+
+### F. Chat fallback retained
+
+When the HITL transport is unavailable (outside the WebApp runtime, or any client
+failure), `open_detailed_routing_review` degrades to the original transport:
+publish the full editable markdown table as `CUSTOMER_OUTPUT` and accept the
+edited marker-bounded table back through `finalize_assignment_review(edited_markdown=...)`.
+The markdown render/parse/diff functions (Decision B) are retained for this path.
+
+### Transport surface after the amendment
+
+- `present_assignment_review` — engine-level recommendation + choice (`awaiting_choice`).
+- `open_detailed_routing_review` — raise the editable HITL table (BLOCKING), or
+  fall back to `CUSTOMER_OUTPUT` markdown + chat.
+- `finalize_assignment_review(job_id, database_name, edited_markdown="")` — read
+  HITL submission, or parse fallback markdown, or approve-as-is; apply overrides;
+  mark `ASSIGNMENT_REVIEW` completed. Replaces `apply_assignment_edits`.
+
+`present_assignment_review` remains the entry point; `apply_assignment_edits` is
+superseded by `finalize_assignment_review`. Structured additions live in
+`assignment_review.py` (`render_assignment_summary`, `build_review_table`,
+`diff_review_items`) alongside the retained markdown helpers.

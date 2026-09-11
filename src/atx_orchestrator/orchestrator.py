@@ -17,10 +17,11 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 )
 
 from src.atx_orchestrator.tools import (
-    apply_assignment_edits,
     declare_pipeline_plan,
+    finalize_assignment_review,
     get_job_status,
     get_synthesis_report,
+    open_detailed_routing_review,
     present_assignment_review,
     run_assessment_core_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
@@ -73,16 +74,24 @@ dispatch.
                                              MySQL/MariaDB) are handled inside the agent from
                                              triage's output. Call it ONCE, after
                                              declare_pipeline_plan.
-  1b. present_assignment_review /           — The assignment-review GATE. After the
-      apply_assignment_edits                 assessment core, present_assignment_review
-                                             returns a review_markdown showing where each
-                                             query is routed and why. Show it to the
-                                             customer and WAIT: they either approve as-is or
-                                             reply with the edited routing table. Then call
-                                             apply_assignment_edits with their reply (empty
-                                             edited_markdown = approve as-is). Schema design
-                                             is BLOCKED until apply_assignment_edits returns
-                                             "approved". This is the one required pause.
+  1b. present_assignment_review /           — The assignment-review GATE (two steps).
+      open_detailed_routing_review /         present_assignment_review returns a
+      finalize_assignment_review             summary_markdown: the engine-level routing
+                                             recommendation (per engine, the query count and
+                                             the main rationale). Show it and ask the customer
+                                             to either continue with the recommendation or
+                                             review the full per-query routing in detail.
+                                             * Continue: call finalize_assignment_review (no
+                                               edits) to approve as-is.
+                                             * Review in detail: call
+                                               open_detailed_routing_review, which raises an
+                                               editable routing table for the customer. STOP
+                                               and end your turn; when they submit, call
+                                               finalize_assignment_review to read and apply
+                                               their edits.
+                                             Schema design is BLOCKED until
+                                             finalize_assignment_review returns "approved".
+                                             This is the one required pause.
   2. run_schema_design_<engine>_via_a2a     — CORRECT WAY to design target schemas. One tool
                                              per engine: run_schema_design_dynamodb_via_a2a,
                                              _documentdb_, _elasticache_, _opensearch_,
@@ -162,22 +171,29 @@ Workflow:
       3. STOP and write the assessment-core summary to the customer in chat (see
          the REQUIRED chat summary rule below). Do this as its own assistant
          message BEFORE the review gate.
-      4. present_assignment_review(job_id, database_name) — then give the customer
-         a concise routing summary in chat: per engine, the query count and the
-         main rationale (do NOT paste the whole table into chat — it can be
-         thousands of rows). Tell them the full editable table is in the Artifacts
-         panel (published as "Query Routing Review"), and that to change routing
-         they can reply with just the rows they changed (keeping the marker
-         comments and the header row) or simply describe the change (e.g. "move
-         query <id> to dynamodb"). This is a REQUIRED stop: WAIT for the customer's
-         reply. Do not call any schema-design tool yet.
-      5. apply_assignment_edits(job_id, database_name, edited_markdown=<the
-         customer's edited rows — the marker-bounded table, which may contain only
-         the changed rows; or empty if they approved as-is>). If the customer
-         described changes in words, translate them into that marker-bounded table
-         (header + only the changed rows) and pass it here. Only after this returns
-         "approved" may schema design run. If it returns "invalid_edit", relay the
-         message and ask the customer to resend; do not proceed.
+      4. present_assignment_review(job_id, database_name) — then relay the returned
+         summary_markdown to the customer: per engine, the query count and the main
+         rationale (this is a small recommendation, not the full table). Ask them
+         to choose: continue with this recommendation, or review the full per-query
+         routing in detail. This is a REQUIRED stop: WAIT for their reply. Do not
+         call any schema-design tool yet.
+      5. Based on the customer's choice:
+         * They continue / approve as-is: call
+           finalize_assignment_review(job_id, database_name) with no edited_markdown.
+         * They want to review in detail: call
+           open_detailed_routing_review(job_id, database_name). If it returns
+           transport "hitl", tell the customer their editable routing table is open
+           in the WebApp and to submit it when done, then STOP and end your turn —
+           the platform re-invokes you when they submit, and you then call
+           finalize_assignment_review(job_id, database_name) (no edited_markdown; the
+           edits are read back from the table). If it returns transport "chat"
+           (fallback), present the returned review_markdown, wait for the customer's
+           edited rows, and pass them to
+           finalize_assignment_review(job_id, database_name, edited_markdown=<their
+           marker-bounded table, changed rows only>).
+         Only after finalize_assignment_review returns "approved" may schema design
+         run. If it returns "invalid_edit", relay the message and ask the customer
+         to resend; do not proceed.
       6. the schema-design tools for the same engines triage selected, dispatched
          in parallel — run_schema_design_<engine>_via_a2a. Wait for all of them
          before the next step. Each takes roughly 10-15 minutes, so tell the
@@ -206,8 +222,8 @@ Workflow:
 
   - State the plan in a sentence or two, then execute the sequence. There is
     exactly ONE required pause: the assignment-review gate (steps 4-5). Present the
-    routing, wait for the customer, and start schema design only after
-    apply_assignment_edits returns "approved". Do not pause anywhere else, and
+    recommendation, wait for the customer, and start schema design only after
+    finalize_assignment_review returns "approved". Do not pause anywhere else, and
     never ask the customer to choose phases, tools, or order.
 
   - Report findings in the customer's terms, not the system's: which engines were
@@ -243,7 +259,8 @@ PIPELINE_TOOLS = [
     declare_pipeline_plan,
     run_assessment_core_via_a2a,
     present_assignment_review,
-    apply_assignment_edits,
+    open_detailed_routing_review,
+    finalize_assignment_review,
     run_schema_design_dynamodb_via_a2a,
     run_schema_design_documentdb_via_a2a,
     run_schema_design_elasticache_via_a2a,

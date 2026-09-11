@@ -25,7 +25,9 @@ silently dropping an edit.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from src.agents.referee.assignment_overrides import QueryOverrideInput
 from src.agents.referee.triage import ANALYSIS_AGENTS
@@ -283,6 +285,189 @@ def diff_review_rows(current: Assignment, rows: list[ReviewRow]) -> list[QueryOv
                 query_id=row.query_id,
                 assigned_engine=row.new_engine if engine_changed else None,
                 in_scope=row.in_scope if scope_changed else None,
+            )
+        )
+
+    return overrides
+
+
+# --- Structured (HITL) surface ----------------------------------------------
+# The platform HITL transport (ADR-028 amendment) does not exchange markdown: it
+# renders an editable ``TableComponent`` and hands the edited rows back as JSON.
+# These helpers are the structured analogues of render/parse/diff above. The
+# markdown functions remain for the chat fallback (when HITL is unavailable).
+
+# Item field keys for the structured routing table. The editable ones
+# (``new_engine``, ``in_scope``) mirror the two customer-editable markdown columns;
+# ``rationale`` is a read-only "why this engine" column added for the HITL table.
+REVIEW_ITEM_FIELDS: tuple[str, ...] = (
+    "query_id",
+    "access_pattern",
+    "current_engine",
+    "new_engine",
+    "in_scope",
+    "rationale",
+)
+
+
+def _parse_scope(value: Any, query_id: str) -> bool:
+    """Parse an 'in scope' cell (yes/no and friends) to a bool, or raise.
+
+    Shared accepted-token set with the markdown parser so the two transports
+    agree on what counts as in/out of scope.
+    """
+    normalized = str(value if value is not None else "").strip().lower()
+    if normalized in ("yes", "y", "true", "in scope"):
+        return True
+    if normalized in ("no", "n", "false", "out of scope"):
+        return False
+    raise ReviewParseError(
+        f"Invalid 'in scope' value {value!r} for query {query_id!r}. Use 'yes' or 'no'."
+    )
+
+
+def _top_reasons(group: list, limit: int = 3) -> str:
+    """Join the most common per-query rationales in an engine group.
+
+    The per-query ``assignment_reason`` is the authoritative "why"; for an
+    engine-level summary we surface the few most frequent distinct reasons so the
+    recommendation reads as a rationale rather than a wall of identical strings.
+    """
+    counts = Counter(_sanitize_cell(qa.assignment_reason) for qa in group if qa.assignment_reason)
+    top = [reason for reason, _ in counts.most_common(limit) if reason]
+    return "; ".join(top) if top else "no reason recorded"
+
+
+def render_assignment_summary(assignment: Assignment) -> str:
+    """Render the engine-level routing recommendation (no per-query table).
+
+    This is the first step of the two-step gate: the customer sees where the
+    workload is routed and why, per engine, and decides whether to accept the
+    recommendation or open the full per-query table for detailed review. It is
+    intentionally small (one row per engine) so it is safe to show in chat even
+    when the assignment has thousands of queries.
+    """
+    engines_in_use = sorted({qa.assigned_engine for qa in assignment.query_assignments})
+    in_scope_total = sum(1 for qa in assignment.query_assignments if qa.in_scope)
+
+    lines: list[str] = []
+    lines.append("# Query-to-engine routing \u2014 recommendation")
+    lines.append("")
+    lines.append(
+        f"Assignment version {assignment.version}: "
+        f"{len(assignment.query_assignments)} queries "
+        f"({in_scope_total} in scope) across {len(engines_in_use)} engine(s)."
+    )
+    lines.append("")
+    lines.append("| engine | queries (in scope / total) | main rationale |")
+    lines.append("| --- | --- | --- |")
+    for engine in engines_in_use:
+        group = [qa for qa in assignment.query_assignments if qa.assigned_engine == engine]
+        in_scope_n = sum(1 for qa in group if qa.in_scope)
+        lines.append(f"| {engine} | {in_scope_n} / {len(group)} | {_top_reasons(group)} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_review_table(assignment: Assignment) -> tuple[list[dict], list[dict]]:
+    """Build the editable HITL ``TableComponent`` payload for the assignment.
+
+    Returns ``(column_definitions, items)``. ``new engine`` and ``in scope`` are
+    the editable columns (each carries an ``editConfig`` with a validation regex
+    the WebApp enforces inline); ``query_id``, ``access pattern``, ``current
+    engine`` and ``rationale`` are read-only context. One item per query; ``id``
+    is the stable row anchor (the query id). Rendering then diffing an unedited
+    table yields no overrides.
+    """
+    engines = sorted(valid_target_engines())
+    engine_regex = "^(" + "|".join(re.escape(e) for e in engines) + ")$"
+
+    column_definitions: list[dict] = [
+        {"header": "query_id", "field": "query_id", "type": "text"},
+        {"header": "access pattern", "field": "access_pattern", "type": "text"},
+        {"header": "current engine", "field": "current_engine", "type": "text"},
+        {
+            "header": "new engine",
+            "field": "new_engine",
+            "type": "text",
+            "editConfig": {"editingCell": True, "validation": engine_regex},
+        },
+        {
+            "header": "in scope",
+            "field": "in_scope",
+            "type": "text",
+            "editConfig": {"editingCell": True, "validation": "^(yes|no)$"},
+        },
+        {"header": "rationale", "field": "rationale", "type": "text"},
+    ]
+
+    items: list[dict] = []
+    for qa in assignment.query_assignments:
+        access = _sanitize_cell(", ".join(qa.source_tables)) or "-"
+        items.append(
+            {
+                "id": qa.query_id,
+                "query_id": qa.query_id,
+                "access_pattern": access,
+                "current_engine": qa.assigned_engine,
+                "new_engine": qa.assigned_engine,  # defaults to current -> no change
+                "in_scope": _bool_to_scope(qa.in_scope),
+                "rationale": _sanitize_cell(qa.assignment_reason) or "no reason recorded",
+            }
+        )
+    return column_definitions, items
+
+
+def diff_review_items(current: Assignment, items: list[dict]) -> list[QueryOverrideInput]:
+    """Compute minimal overrides from edited HITL table rows (structured analogue
+    of :func:`diff_review_rows`).
+
+    Reads ``query_id`` (falling back to ``id``), ``new_engine`` and ``in_scope``
+    from each submitted row, compares against the current assignment, and returns
+    only the queries that changed, with only the fields that changed set. A blank
+    ``new_engine`` is treated as unchanged (keeps the current engine). Raises
+    ``ReviewParseError`` on a duplicate row, an unknown engine, an unparseable
+    scope, or a row anchored to a query not in the current assignment.
+    """
+    current_by_id = {qa.query_id: qa for qa in current.query_assignments}
+    valid_engines = valid_target_engines()
+    overrides: list[QueryOverrideInput] = []
+    seen: set[str] = set()
+
+    for row in items:
+        query_id = str(row.get("query_id") or row.get("id") or "").strip()
+        if not query_id:
+            # A row without an anchor cannot be applied; skip rather than fail the
+            # whole submission (the platform should never emit one).
+            continue
+        if query_id in seen:
+            raise ReviewParseError(f"Duplicate query_id in the submitted table: {query_id!r}")
+        seen.add(query_id)
+
+        qa = current_by_id.get(query_id)
+        if qa is None:
+            raise ReviewParseError(
+                f"Submitted row references query {query_id!r} which is not in the current "
+                "assignment."
+            )
+
+        new_engine = str(row.get("new_engine") or "").strip() or qa.assigned_engine
+        if new_engine not in valid_engines:
+            raise ReviewParseError(
+                f"Unknown engine {new_engine!r} for query {query_id!r}. "
+                f"Valid engines: {sorted(valid_engines)}."
+            )
+        in_scope = _parse_scope(row.get("in_scope"), query_id)
+
+        engine_changed = new_engine != qa.assigned_engine
+        scope_changed = in_scope != qa.in_scope
+        if not engine_changed and not scope_changed:
+            continue
+        overrides.append(
+            QueryOverrideInput(
+                query_id=query_id,
+                assigned_engine=new_engine if engine_changed else None,
+                in_scope=in_scope if scope_changed else None,
             )
         )
 

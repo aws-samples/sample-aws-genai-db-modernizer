@@ -1,9 +1,16 @@
-"""ATX assignment-review gate (ADR-028).
+"""ATX assignment-review gate (ADR-028 + HITL editable-table amendment).
 
 The gate is a hard interrupt: schema design must refuse until the customer has
 approved the routing (the ASSIGNMENT_REVIEW phase in .meta is COMPLETED).
-present_assignment_review only marks it awaiting; apply_assignment_edits records
-approval (applying any edits as a new customer_gate version first).
+
+Two-step gate:
+- present_assignment_review shows the engine-level recommendation and marks the
+  phase awaiting (it does not approve).
+- open_detailed_routing_review raises the editable per-query table (HITL), or
+  falls back to publishing the markdown table for chat.
+- finalize_assignment_review records approval, applying any edits first (read
+  back from the HITL submission, or parsed from the chat-fallback markdown, or
+  approve-as-is when there is nothing to apply).
 """
 
 from __future__ import annotations
@@ -87,19 +94,21 @@ class TestGateBlocksSchemaDesign:
         assert out["reason"] == "awaiting_assignment_review_approval"
         mock_invoke.assert_not_called()
 
-    def test_present_does_not_approve(self, store) -> None:
+    def test_present_offers_choice_without_approving(self, store) -> None:
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
             out = json.loads(tools.present_assignment_review(JOB, DB))
-            assert out["status"] == "awaiting_review"
-            assert "ATX-ASSIGNMENT-REVIEW:BEGIN" in out["review_markdown"]
+            assert out["status"] == "awaiting_choice"
+            # A recommendation, not the full per-query table (no markers).
+            assert "recommendation" in out["summary_markdown"].lower()
+            assert "ATX-ASSIGNMENT-REVIEW:BEGIN" not in out["summary_markdown"]
             # Still blocked: present only marks awaiting, it does not approve.
             assert tools._assignment_review_approved(JOB) is False
 
 
 class TestApproveAsIs:
-    def test_empty_reply_approves_without_new_version(self, store) -> None:
+    def test_continue_approves_without_new_version(self, store) -> None:
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
-            out = json.loads(tools.apply_assignment_edits(JOB, DB, ""))
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
             assert out["status"] == "approved"
             assert out["changed"] is False
             assert out["assignment_version"] == 1
@@ -116,31 +125,40 @@ class TestApproveAsIs:
             patch("src.atx_orchestrator.tools.mark_step_running"),
             patch("src.atx_orchestrator.tools.mark_step_succeeded"),
         ):
-            tools.apply_assignment_edits(JOB, DB, "")
+            tools.finalize_assignment_review(JOB, DB, "")
             out = json.loads(tools._run_schema_design_via_a2a("dynamodb", JOB, DB))
         assert out.get("status") != "blocked"
         mock_invoke.assert_called_once()  # dynamodb is routed + implemented -> dispatched
 
 
-class TestApplyEdits:
-    def _edited(self, store) -> str:
+class TestDetailedReviewChatFallback:
+    """When HITL is unavailable, open_detailed_routing_review publishes the full
+    editable markdown table and finalize accepts the edited markdown back."""
+
+    def test_open_detailed_falls_back_to_chat(self, store) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            # HITL unavailable -> None -> chat fallback.
+            patch("src.atx_orchestrator.runtime.hitl.raise_assignment_table", return_value=None),
+        ):
+            out = json.loads(tools.open_detailed_routing_review(JOB, DB))
+        assert out["status"] == "awaiting_review"
+        assert out["transport"] == "chat"
+        assert "ATX-ASSIGNMENT-REVIEW:BEGIN" in out["review_markdown"]
+        assert tools._assignment_review_approved(JOB) is False
+
+    def test_finalize_applies_edited_markdown(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review
 
         assignment = Assignment.model_validate(
             store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
         )
-        md = render_assignment_review(assignment)
-        # Move q2 from dynamodb to opensearch (both analyzed -> valid).
-        return md.replace(
+        edited = render_assignment_review(assignment).replace(
             "| q2 | t.posts | dynamodb | dynamodb | yes |",
             "| q2 | t.posts | dynamodb | opensearch | yes |",
         )
-
-    def test_edit_creates_new_version_and_approves(self, store) -> None:
-        edited = self._edited(store)
-        assert "| q2 | t.posts | dynamodb | opensearch | yes |" in edited
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
-            out = json.loads(tools.apply_assignment_edits(JOB, DB, edited))
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, edited))
             assert out["status"] == "approved"
             assert out["changed"] is True
             assert out["applied_overrides"] == 1
@@ -152,7 +170,7 @@ class TestApplyEdits:
         by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
         assert by_id["q2"]["assigned_engine"] == "opensearch"
 
-    def test_invalid_edit_does_not_approve(self, store) -> None:
+    def test_invalid_edited_markdown_does_not_approve(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review
 
         assignment = Assignment.model_validate(
@@ -163,7 +181,65 @@ class TestApplyEdits:
             "| q1 | t.users | dynamodb | dynamdb | yes |",  # typo'd engine
         )
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
-            out = json.loads(tools.apply_assignment_edits(JOB, DB, bad))
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, bad))
             assert out["status"] == "invalid_edit"
             assert tools._assignment_review_approved(JOB) is False
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestDetailedReviewHitl:
+    """The HITL transport: open records a pending task; finalize reads the
+    customer's submitted edits back and applies them."""
+
+    def test_open_records_pending_and_finalize_reads_back(self, store) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch(
+                "src.atx_orchestrator.runtime.hitl.raise_assignment_table",
+                return_value="hitl-123",
+            ),
+        ):
+            opened = json.loads(tools.open_detailed_routing_review(JOB, DB))
+            assert opened["transport"] == "hitl"
+            assert opened["hitl_task_id"] == "hitl-123"
+            # Pending pointer persisted; still not approved.
+            pending = tools._read_pending_hitl(store, DB, JOB)
+            assert pending is not None and pending["hitl_task_id"] == "hitl-123"
+            assert tools._assignment_review_approved(JOB) is False
+
+            # Customer submits: q2 -> opensearch. finalize reads it back.
+            submitted = [
+                {"query_id": "q1", "new_engine": "dynamodb", "in_scope": "yes"},
+                {"query_id": "q2", "new_engine": "opensearch", "in_scope": "yes"},
+                {"query_id": "q3", "new_engine": "opensearch", "in_scope": "yes"},
+            ]
+            with patch(
+                "src.atx_orchestrator.runtime.hitl.read_assignment_submission",
+                return_value=("submitted", submitted),
+            ):
+                out = json.loads(tools.finalize_assignment_review(JOB, DB))
+        assert out["status"] == "approved"
+        assert out["changed"] is True
+        assert out["applied_overrides"] == 1
+        assert out["assignment_version"] == 2
+        v2 = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        assert {qa["query_id"]: qa for qa in v2["query_assignments"]}["q2"][
+            "assigned_engine"
+        ] == "opensearch"
+
+    def test_finalize_waits_when_not_yet_submitted(self, store) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch(
+                "src.atx_orchestrator.runtime.hitl.raise_assignment_table",
+                return_value="hitl-123",
+            ),
+        ):
+            tools.open_detailed_routing_review(JOB, DB)
+            with patch(
+                "src.atx_orchestrator.runtime.hitl.read_assignment_submission",
+                return_value=("awaiting_submission", None),
+            ):
+                out = json.loads(tools.finalize_assignment_review(JOB, DB))
+        assert out["status"] == "awaiting_review"
+        assert tools._assignment_review_approved(JOB) is False

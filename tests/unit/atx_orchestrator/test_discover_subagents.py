@@ -43,11 +43,13 @@ class TestDiscoverSubagentsRegistration:
             # tools; it runs Collect -> Triage -> Analyze -> Assign -> Reality
             # Check in one agent.
             "run_assessment_core_via_a2a",
-            # assignment-review gate (ADR-028): present the routing for approval,
-            # then apply the customer's edits/approval, between the assessment
-            # core and schema design.
+            # assignment-review gate (ADR-028 + HITL amendment): present the
+            # engine-level recommendation, optionally open the editable per-query
+            # table for detailed review, then finalize the customer's decision,
+            # between the assessment core and schema design.
             "present_assignment_review",
-            "apply_assignment_edits",
+            "open_detailed_routing_review",
+            "finalize_assignment_review",
             # schema design, one per target engine, run in parallel between
             # the assessment core and synthesis
             "run_schema_design_dynamodb_via_a2a",
