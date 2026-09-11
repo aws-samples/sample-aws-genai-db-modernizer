@@ -131,6 +131,7 @@ def validate_schema_design_output(output: dict, target_type: str) -> dict:
     Returns ``{"valid": True}`` on success, or
     ``{"valid": False, "errors": [str(e)]}`` on validation failure.
     """
+    from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
     from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
     from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
     from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
@@ -141,6 +142,7 @@ def validate_schema_design_output(output: dict, target_type: str) -> dict:
         "documentdb": DocumentDBModelOutputContract,
         "opensearch": OpenSearchModelOutputContract,
         "elasticache": ElastiCacheModelOutputContract,
+        "aurora_postgresql": AuroraPostgresqlModelOutputContract,
     }
 
     contract_cls = _ENGINE_CONTRACTS.get(target_type)
@@ -869,6 +871,18 @@ def _dispatch_schema_agent(
                 revision_context_path=revision_context_path,
             )
             return ec_result.model_dump_json(indent=2), json.dumps(ec_trace, indent=2)
+
+        case "aurora_postgresql":
+            from src.tools.schema.aurora_postgresql_schema_agent import (
+                run_aurora_postgresql_schema_agent,
+            )
+
+            pg_result, pg_trace = run_aurora_postgresql_schema_agent(
+                collector_path=collector_path,
+                analysis_path=analysis_path,
+                revision_context_path=revision_context_path,
+            )
+            return pg_result.model_dump_json(indent=2), json.dumps(pg_trace, indent=2)
 
         case _:
             print(

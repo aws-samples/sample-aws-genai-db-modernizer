@@ -1348,13 +1348,19 @@ _SAME_FAMILY: dict[str, set[str]] = {
 
 
 # Target engines that have a real schema designer in
-# handler._dispatch_schema_agent. aurora_postgresql / aurora_mysql have none
-# (that dispatch writes a placeholder), so invoking their runtime only pays an
-# AgentCore cold-start for a guaranteed non-design. The orchestrator's
-# pre-dispatch skip uses this to avoid the round-trip. Keep in sync with the
-# match arms in _dispatch_schema_agent.
+# handler._dispatch_schema_agent. aurora_postgresql now has one; aurora_mysql
+# still does not (Phase 2), so that dispatch writes a placeholder and invoking
+# its runtime only pays an AgentCore cold-start for a guaranteed non-design.
+# The orchestrator's pre-dispatch skip uses this to avoid the round-trip. Keep
+# in sync with the match arms in _dispatch_schema_agent.
+#
+# Once a real design is produced, the _SAME_FAMILY "no redesign required" note
+# below no longer fires for PostgreSQL -> Aurora PostgreSQL, because
+# table_definitions is non-empty (see the `if not designs` check in this
+# file). _SAME_FAMILY remains only as the fallback for a genuinely empty
+# design.
 IMPLEMENTED_SCHEMA_DESIGNERS: frozenset[str] = frozenset(
-    {"dynamodb", "documentdb", "opensearch", "elasticache"}
+    {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql"}
 )
 
 
@@ -1409,12 +1415,14 @@ _DESIGN_SHAPE: dict[str, tuple[str, str]] = {
     "documentdb": ("collections", "collections"),
     "elasticache": ("key_designs", "key designs"),
     "opensearch": ("index_designs", "index designs"),
+    "aurora_postgresql": ("table_definitions", "target tables"),
 }
 
-# Aurora targets have no designer upstream, so they have no design field either.
-# Fall back to the DynamoDB name rather than guessing: a relational target that
-# ever gains a designer will most plausibly emit table definitions, and the
-# fallback only has to be empty-or-present, not exhaustive.
+# Aurora MySQL has no designer upstream yet, so it has no design field either.
+# Fall back to the DynamoDB/Aurora PostgreSQL name rather than guessing: a
+# relational target that ever gains a designer will most plausibly emit table
+# definitions, and the fallback only has to be empty-or-present, not
+# exhaustive.
 _DESIGN_SHAPE_DEFAULT: tuple[str, str] = ("table_definitions", "target tables")
 
 
