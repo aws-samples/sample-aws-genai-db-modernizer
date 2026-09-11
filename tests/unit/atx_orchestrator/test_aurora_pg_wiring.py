@@ -1,3 +1,5 @@
+"""Assert the four wiring points that register Aurora PostgreSQL as a schema designer."""
+
 from src.atx_orchestrator.core import IMPLEMENTED_SCHEMA_DESIGNERS, _design_shape
 
 

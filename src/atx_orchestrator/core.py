@@ -1525,8 +1525,9 @@ def run_schema_design_core(
     access_patterns = output.get("access_patterns") or []
 
     # Upstream dispatches on target_type alone and has designers for dynamodb,
-    # documentdb, opensearch and elasticache; other targets take a default branch
-    # that writes a placeholder. The source engine — which upstream does not
+    # documentdb, opensearch, elasticache and aurora_postgresql; aurora_mysql is
+    # the remaining target that takes a default branch and writes a placeholder.
+    # The source engine — which upstream does not
     # consult — is what distinguishes a target needing no redesign from one this
     # report simply does not cover. Reported as informational in the first case
     # and as a warning in the second, so that a warning always means the reader
