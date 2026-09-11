@@ -1,8 +1,9 @@
 """Schema-design absence is classified using the source engine.
 
 Upstream's ``run_schema_design`` dispatches on ``target_type`` alone. It has
-designers for dynamodb, documentdb, opensearch and elasticache; other targets
-take a ``case _:`` branch that writes ``status: "not_implemented"``. Because it
+designers for dynamodb, documentdb, opensearch, elasticache and
+aurora_postgresql; aurora_mysql takes a ``case _:`` branch that writes
+``status: "not_implemented"``. Because it
 never reads ``metadata.source_database.engine``, it cannot distinguish a target
 that needs no redesign from one this report does not cover.
 
