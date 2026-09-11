@@ -24,11 +24,20 @@ then runs schema design. That gate is enforced by an explicit approval step
 the per-query override write path already exists in
 `src/api/routes/assignments.py` (applies all overrides, stamps
 `customer_override=True`, writes `assignment/v{N+1}` with `previous_version`).
+The gate is not new to the domain model either: `phase_models.py` already
+defines an `ASSIGNMENT_REVIEW` phase that `REALITY_CHECK` precedes and
+`SCHEMA_DESIGN` depends on, the orchestrator progression file
+(`.meta/<job>.json`) records its completion, and
+`AssignmentStatus.CUSTOMER_APPROVED` exists for the approved artifact. So the
+approval signal already exists; what is missing is a consumer that honors it in
+ATX.
 
-The **AWS Transform (ATX)** modernizer has **no such gate**. After Reality Check
-the orchestrator dispatches schema design immediately, so a customer cannot see
-or adjust routing before the long, LLM-heavy design phase runs. Bringing the
-web gate to ATX is the primary goal of this ADR.
+The **AWS Transform (ATX)** modernizer does **not honor that gate**. Its
+orchestrator prompt currently tells it not to pause between phases for approval
+(`orchestrator.py`), so after Reality Check it dispatches schema design
+immediately and a customer cannot see or adjust routing before the long,
+LLM-heavy design phase runs. Bringing the web gate to ATX is the primary goal of
+this ADR.
 
 A second, long-standing problem surfaces the moment a customer edit can create a
 new assignment version: **"which assignment version is authoritative" is
@@ -57,13 +66,18 @@ behind **one provenance-aware resolver**. Three parts.
 
 After Reality Check, the orchestrator renders the effective assignment to a
 review markdown, presents it, and **stops**. It must not call any schema-design
-tool until an approval artifact exists.
+tool until the review is approved.
 
-- Enforced by **artifact state, not prompt discipline**: a gate tool returns
-  "awaiting approval" and refuses to advance the pipeline until approval is
-  recorded, mirroring the web's `WaitForAssignmentApproval` +
-  `.meta/<job>.json` marker. The system prompt describes the gate, but the block
-  is real regardless of what the LLM decides.
+- Enforced by **artifact state, not prompt discipline**, reusing the mechanism
+  that already exists rather than adding a new artifact: the orchestrator marks
+  the `ASSIGNMENT_REVIEW` phase running, and the gate tool refuses to advance to
+  schema design until that phase is recorded completed in the progression file
+  (`.meta/<job>.json`) and the effective assignment version carries
+  `status = customer_approved` (unedited) or `customer_modified` (after an edit).
+  ATX simply starts honoring the `ASSIGNMENT_REVIEW` phase the domain model and
+  the web already define; its prompt changes from "do not pause" to "run the
+  gate". The system prompt describes the gate, but the block is real regardless
+  of what the LLM decides.
 - Two ways to clear the gate:
   1. **Approve / light chat edits** — the customer replies "looks good", or asks
      for a small change in chat ("move the full-text queries to OpenSearch"),
@@ -95,6 +109,12 @@ table**, keyed by `query_id` as a stable anchor, with a fixed column schema:
 - This mirrors the AWS Transform Helix plan-editor pattern (a single markdown
   document with well-defined editable surfaces and a capability catalog that
   bounds what may change), adapted to per-query routing.
+- **Self-describing editable surface (in scope).** The table's column schema and
+  the set of valid target engines come from one small catalog helper (the
+  equivalent of Helix's `get_edit_rules`), not hard-coded separately in the
+  renderer and the parser. The renderer, the parser's validation, and the
+  customer-facing guidance all read that single catalog, so the editable surface
+  cannot drift between what we show, what we accept, and what we document.
 
 ### C. Versioning: one resolver + provenance + staleness detection
 
@@ -132,20 +152,49 @@ table**, keyed by `query_id` as a stable anchor, with a fixed column schema:
   `local_s3`, and `graph/populators` through it.
 - **Shared override write path** — factor the override -> `v{N+1}` logic out of
   `api/routes/assignments.py` into a helper both REST and the ATX gate call.
+- **Editable-surface catalog** — one helper returns the table column schema and
+  the valid engine set; the renderer and the parser validation both read it.
 - **Render** — assignment -> review markdown (group by engine, embed the
-  parseable table).
-- **Parse** — edited markdown table -> per-query overrides, strict validation.
+  parseable table from the catalog).
+- **Parse** — edited markdown table -> per-query overrides, strict validation
+  against the catalog.
 - **ATX orchestrator tools** — `present_assignment_review` (render + write the
-  review doc, mark awaiting approval), `apply_assignment_edits` (parse edit,
-  write `v{N+1}`), and a gate that blocks schema tools until an approval artifact
-  exists. Orchestrator prompt runs the gate after Reality Check and before any
-  schema-design tool.
+  review doc, mark `ASSIGNMENT_REVIEW` running), `apply_assignment_edits` (parse
+  edit, write `v{N+1}`), and a gate that blocks schema tools until
+  `ASSIGNMENT_REVIEW` is completed. The orchestrator prompt changes from its
+  current "do not pause between phases" instruction to "run the gate after
+  Reality Check and before any schema-design tool".
 - **Downstream provenance** — stamp the consumed `assignment_version` on the
   synthesis output; add the staleness check.
 
-The durable contract (the `assignment/v<N>/assignment.json` shape plus the new
-`source` field) stays stable, so schema design, synthesis, and the graph read
-the same artifacts they always have.
+The artifact shape (`assignment/v<N>/assignment.json`) stays backward-compatible
+by keeping `source` optional with a default, so old artifacts and readers do not
+break; see Contract impact below.
+
+## Contract impact
+
+**This is a contract modification, not just new code.** It changes shared data
+contracts, so the blast radius reaches every producer and consumer of the
+assignment, plus contract tests:
+
+- **`Assignment` contract** — new `source` field (optional, defaulted for
+  backward compatibility) and first real use of `AssignmentStatus.CUSTOMER_APPROVED`.
+  Bump the model's contract version and add round-trip tests. Both writers (the
+  assignment resolver and Reality Check) must stamp `source`.
+- **Downstream artifact contracts** — the consumed `assignment_version` (and
+  ideally its `source`) must be recorded on synthesis output
+  (`AssignmentSummary` in `synthesis_output.py`) as it already is on schema
+  output, so staleness is checkable. `reality-check/output.json` already carries
+  `source_assignment_version` (`contract_version "1.1"`) and should align with
+  the new provenance vocabulary.
+- **Phase contract** — `ASSIGNMENT_REVIEW` already exists in `phase_models.py`;
+  ATX must honor the `REALITY_CHECK -> ASSIGNMENT_REVIEW -> SCHEMA_DESIGN`
+  ordering the contract declares.
+- **Contract tests to update/add** — `tests/contract/test_reality_check_output.py`,
+  `tests/contract/test_synthesis_output.py`, and a new assignment-model contract
+  test covering the `source` field, defaulting, and version round-trip. The
+  review-markdown render/parse round-trip also needs a golden-file contract test
+  (render -> edit -> parse -> overrides) so the editable-surface format is pinned.
 
 ## Rationale
 
@@ -202,8 +251,12 @@ Tradeoffs:
 ## Future Work
 
 - **Re-entry into the assignment phase** after schema design, using
-  staleness-driven re-dispatch of only the affected engines.
+  staleness-driven re-dispatch of only the affected engines. This is a
+  customer-requested capability (assessment feedback) and is tracked as its own
+  issue; the provenance + staleness groundwork in this ADR is the prerequisite
+  for it.
 - **Consolidate the web gate onto the shared write path** so both products share
   one override -> version implementation end to end.
-- Optional: surface the parseable table's schema in a capability-catalog style
-  helper (as Helix does) so the editable surface is self-describing.
+
+The self-describing editable-surface catalog, previously listed here as
+optional, is now **in scope** for this ADR (see Decision B and Implementation).
