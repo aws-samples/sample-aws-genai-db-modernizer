@@ -28,6 +28,9 @@ def test_classify_source_family(engine, expected):
         ("sqlserver", "aurora_postgresql", "translate"),
         ("mysql", "aurora_mysql", "carry_over"),
         ("oracle", "aurora_mysql", "translate"),
+        # Known-but-mismatched families must translate, not carry over.
+        ("mysql", "aurora_postgresql", "translate"),
+        ("postgresql", "aurora_mysql", "translate"),
     ],
 )
 def test_migration_strategy(engine, target, expected):
