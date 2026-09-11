@@ -77,6 +77,15 @@ Phase 1 delivers Aurora PostgreSQL in full (builds the shared core + the whole
 heterogeneous path). Phase 2 adds Aurora MySQL, reusing the core and adding only
 the MySQL type-map dict, dialect quirks, contract, skills, and command.
 
+**Status: both phases delivered.** Phase 1 (Aurora PostgreSQL) and Phase 2
+(Aurora MySQL) are implemented. Phase 2 introduced a small `Dialect`
+abstraction in `ddl_generator.py` (quote char, auto-increment clause, type
+resolver) so the two engines share the DDL assembly; the PostgreSQL golden
+tests guard that its output stayed byte-identical. All six target engines now
+have real schema designers (`IMPLEMENTED_SCHEMA_DESIGNERS`), so the
+orchestrator's pre-dispatch "no implemented designer" skip is now defensive
+coverage for a future engine rather than a live path.
+
 ## Consequences
 
 - **Positive:** mechanical translation is deterministic and unit-testable
