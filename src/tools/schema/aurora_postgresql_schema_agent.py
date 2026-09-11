@@ -94,69 +94,6 @@ class PEReviewResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Trace (kept for backward compat with existing tests)
-# ---------------------------------------------------------------------------
-
-
-class SchemaDesignTrace:
-    """Accumulates structured trace entries for the design loop."""
-
-    def __init__(self) -> None:
-        self.iterations: list[dict] = []
-        self.start_time: float = 0.0
-
-    def log_designer(
-        self, iteration: int, duration_s: float, output: AuroraPostgresqlModelOutputContract
-    ) -> None:
-        entry = self._get_or_create(iteration)
-        entry["designer"] = {
-            "duration_seconds": round(duration_s, 2),
-            "table_definitions": len(output.table_definitions),
-            "app_layer_notes": len(output.app_layer_notes),
-            "optimizations": len(output.optimizations),
-            "validation_passed": output.validation_passed,
-        }
-
-    def log_pe_review(self, iteration: int, duration_s: float, review: PEReviewResult) -> None:
-        entry = self._get_or_create(iteration)
-        entry["pe_review"] = {
-            "duration_seconds": round(duration_s, 2),
-            "verdict": review.verdict.value,
-            "change_requests": [
-                {
-                    "category": cr.category.value,
-                    "severity": cr.severity.value,
-                    "target": cr.target,
-                    "requested_change": cr.requested_change,
-                    "rationale": cr.rationale,
-                }
-                for cr in review.change_requests
-            ],
-            "strengths": review.strengths,
-            "pe_notes": review.pe_notes,
-            "summary": review.summary,
-        }
-
-    def log_pe_error(self, iteration: int, error: str) -> None:
-        entry = self._get_or_create(iteration)
-        entry["pe_review"] = {"error": error}
-
-    def to_dict(self) -> dict:
-        import time
-
-        return {
-            "total_duration_seconds": round(time.time() - self.start_time, 2),
-            "total_iterations": len(self.iterations),
-            "iterations": self.iterations,
-        }
-
-    def _get_or_create(self, iteration: int) -> dict:
-        while len(self.iterations) <= iteration:
-            self.iterations.append({"iteration": len(self.iterations) + 1})
-        return self.iterations[iteration]
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -271,7 +208,13 @@ def _build_draft(agent_input: dict) -> tuple[dict, str]:
     source_engine = collector.get("source_database_engine", "")
     strategy = migration_strategy(source_engine, "aurora_postgresql")
 
-    tables = [AgentTable.model_validate(t) for t in collector.get("tables", [])]
+    raw_tables = collector.get("tables", [])
+    if not raw_tables:
+        logger.warning(
+            "[schema-design/aurora_postgresql] Collector has no tables; "
+            "draft will be empty and the designer will have nothing to translate."
+        )
+    tables = [AgentTable.model_validate(t) for t in raw_tables]
     ddl = generate_pg_ddl(tables)
 
     draft = {
@@ -411,6 +354,9 @@ def run_aurora_postgresql_schema_agent(
 
     # Run the deterministic core to produce the authoritative draft.
     draft, strategy = _build_draft(agent_input)
+    # NOTE (Phase 1): the draft duplicates column info already in collector.tables.
+    # Accepted overhead for now; a future pass can compact collector.tables columns
+    # since the draft is authoritative for column types. See ADR-028.
     agent_input["draft"] = draft
     agent_input["migration_strategy"] = strategy
     input_json = json.dumps(agent_input, indent=2, default=str)
