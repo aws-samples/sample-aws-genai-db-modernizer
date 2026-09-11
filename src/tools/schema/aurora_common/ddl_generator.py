@@ -1,4 +1,4 @@
-"""Generate Aurora PostgreSQL DDL from the normalized collector schema.
+"""Generate Aurora PostgreSQL and MySQL DDL from the normalized collector schema.
 
 Pure, deterministic, and LLM-free. Every column the type map cannot resolve
 confidently becomes a residual marker (surfaced to the LLM), never a silent
@@ -12,6 +12,7 @@ would collide (out of scope for Phase 1).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from src.contracts.schema_design_input import AgentColumn, AgentTable
@@ -19,9 +20,40 @@ from src.tools.schema.aurora_common.constraint_translator import (
     default_clause,
     fk_on_delete_clause,
     identity_clause,
+    mysql_auto_increment_clause,
     not_null_clause,
 )
-from src.tools.schema.aurora_common.type_map import resolve_pg_type
+from src.tools.schema.aurora_common.type_map import (
+    TypeResolution,
+    resolve_mysql_type,
+    resolve_pg_type,
+)
+
+
+@dataclass(frozen=True)
+class Dialect:
+    name: str
+    quote_char: str
+    auto_increment: Callable[[bool | None], str]
+    resolve_type: Callable[..., TypeResolution]
+
+    def q(self, identifier: str) -> str:
+        c = self.quote_char
+        return c + identifier.replace(c, c + c) + c
+
+
+POSTGRES = Dialect(
+    name="aurora_postgresql",
+    quote_char='"',
+    auto_increment=identity_clause,
+    resolve_type=resolve_pg_type,
+)
+MYSQL = Dialect(
+    name="aurora_mysql",
+    quote_char="`",
+    auto_increment=mysql_auto_increment_clause,
+    resolve_type=resolve_mysql_type,
+)
 
 
 @dataclass
@@ -51,13 +83,10 @@ class DdlResult:
     residuals: list[dict]
 
 
-def _q(identifier: str) -> str:
-    """Double-quote a PostgreSQL identifier."""
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _column_ddl(table_name: str, col: AgentColumn, residuals: list[dict]) -> ColumnDDL:
-    resolution = resolve_pg_type(col.normalized_data_type, max_length=col.max_length)
+def _column_ddl(
+    table_name: str, col: AgentColumn, residuals: list[dict], dialect: Dialect
+) -> ColumnDDL:
+    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     if resolution.needs_judgment:
         residuals.append(
@@ -69,13 +98,13 @@ def _column_ddl(table_name: str, col: AgentColumn, residuals: list[dict]) -> Col
                 "reason": resolution.reason,
             }
         )
-    identity = identity_clause(col.is_auto_increment)
-    # Identity and default are mutually exclusive in PostgreSQL — a column
-    # cannot be both GENERATED ... AS IDENTITY and carry a DEFAULT clause.
-    default = "" if identity else default_clause(col.default_value)
+    auto_increment = dialect.auto_increment(col.is_auto_increment)
+    # Identity/auto-increment and default are mutually exclusive — a column
+    # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
+    default = "" if auto_increment else default_clause(col.default_value)
     fragment = (
-        f"{_q(col.column_name)} {resolution.aurora_type}"
-        f"{identity}"
+        f"{dialect.q(col.column_name)} {resolution.aurora_type}"
+        f"{auto_increment}"
         f"{not_null_clause(col.nullable)}"
         f"{default}"
     )
@@ -90,55 +119,56 @@ def _column_ddl(table_name: str, col: AgentColumn, residuals: list[dict]) -> Col
     )
 
 
-def _create_table_sql(table: AgentTable, columns: list[ColumnDDL]) -> str:
+def _create_table_sql(table: AgentTable, columns: list[ColumnDDL], dialect: Dialect) -> str:
     lines = [f"  {c.fragment}" for c in columns]
     if table.primary_key:
-        pk_cols = ", ".join(_q(c) for c in table.primary_key)
+        pk_cols = ", ".join(dialect.q(c) for c in table.primary_key)
         lines.append(f"  PRIMARY KEY ({pk_cols})")
     body = ",\n".join(lines)
-    return f"CREATE TABLE {_q(table.table_name)} (\n{body}\n);"
+    return f"CREATE TABLE {dialect.q(table.table_name)} (\n{body}\n);"
 
 
-def _index_sql(table: AgentTable) -> list[str]:
+def _index_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     statements: list[str] = []
     for idx in table.indexes or []:
         if idx.is_primary:
             continue  # covered by PRIMARY KEY
         unique = "UNIQUE " if idx.is_unique else ""
-        cols = ", ".join(_q(c) for c in idx.columns)
+        cols = ", ".join(dialect.q(c) for c in idx.columns)
         statements.append(
-            f"CREATE {unique}INDEX {_q(idx.index_name)} ON {_q(table.table_name)} ({cols});"
+            f"CREATE {unique}INDEX {dialect.q(idx.index_name)} "
+            f"ON {dialect.q(table.table_name)} ({cols});"
         )
     return statements
 
 
-def _fk_sql(table: AgentTable) -> list[str]:
+def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     statements: list[str] = []
     for fk in table.foreign_keys or []:
-        local = ", ".join(_q(c) for c in fk.columns)
-        ref = ", ".join(_q(c) for c in fk.referenced_columns)
+        local = ", ".join(dialect.q(c) for c in fk.columns)
+        ref = ", ".join(dialect.q(c) for c in fk.referenced_columns)
         statements.append(
-            f"ALTER TABLE {_q(table.table_name)} ADD CONSTRAINT {_q(fk.constraint_name)} "
-            f"FOREIGN KEY ({local}) REFERENCES {_q(fk.referenced_table)} ({ref})"
+            f"ALTER TABLE {dialect.q(table.table_name)} "
+            f"ADD CONSTRAINT {dialect.q(fk.constraint_name)} "
+            f"FOREIGN KEY ({local}) REFERENCES {dialect.q(fk.referenced_table)} ({ref})"
             f"{fk_on_delete_clause(fk.on_delete)};"
         )
     return statements
 
 
-def generate_pg_ddl(tables: list[AgentTable]) -> DdlResult:
-    """Translate normalized source tables into Aurora PostgreSQL DDL."""
+def _generate(tables: list[AgentTable], dialect: Dialect) -> DdlResult:
     residuals: list[dict] = []
     table_ddls: list[TableDDL] = []
 
     for table in tables:
-        columns = [_column_ddl(table.table_name, c, residuals) for c in table.columns]
+        columns = [_column_ddl(table.table_name, c, residuals, dialect) for c in table.columns]
         table_ddls.append(
             TableDDL(
                 table_name=table.table_name,
                 columns=columns,
-                create_sql=_create_table_sql(table, columns),
-                index_sql=_index_sql(table),
-                fk_sql=_fk_sql(table),
+                create_sql=_create_table_sql(table, columns, dialect),
+                index_sql=_index_sql(table, dialect),
+                fk_sql=_fk_sql(table, dialect),
             )
         )
 
@@ -150,3 +180,13 @@ def generate_pg_ddl(tables: list[AgentTable]) -> DdlResult:
         parts.extend(t.fk_sql)
 
     return DdlResult(tables=table_ddls, full_ddl="\n\n".join(parts), residuals=residuals)
+
+
+def generate_pg_ddl(tables: list[AgentTable]) -> DdlResult:
+    """Translate normalized source tables into Aurora PostgreSQL DDL."""
+    return _generate(tables, POSTGRES)
+
+
+def generate_mysql_ddl(tables: list[AgentTable]) -> DdlResult:
+    """Translate normalized source tables into Aurora MySQL DDL."""
+    return _generate(tables, MYSQL)

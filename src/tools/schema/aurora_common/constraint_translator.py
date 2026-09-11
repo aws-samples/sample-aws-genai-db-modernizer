@@ -47,3 +47,8 @@ def default_clause(default_value: str | int | float | bool | None) -> str:
 
 def fk_on_delete_clause(action: ForeignKeyAction | None) -> str:
     return f" ON DELETE {action.value}" if action is not None else ""
+
+
+def mysql_auto_increment_clause(is_auto_increment: bool | None) -> str:
+    """MySQL AUTO_INCREMENT replaces PostgreSQL IDENTITY."""
+    return " AUTO_INCREMENT" if is_auto_increment else ""
