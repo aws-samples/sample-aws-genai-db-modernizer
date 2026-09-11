@@ -12,7 +12,18 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 from src.atx_orchestrator import tools
+
+
+@pytest.fixture(autouse=True)
+def _assignment_review_approved():
+    """These tests exercise the schema skip/dispatch logic, which is downstream of
+    the ADR-028 assignment-review gate. Treat the gate as approved so every test
+    reaches the behavior it targets rather than the gate's block."""
+    with patch("src.atx_orchestrator.tools._assignment_review_approved", return_value=True):
+        yield
 
 
 class _FakeStore:

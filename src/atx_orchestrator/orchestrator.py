@@ -17,9 +17,11 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 )
 
 from src.atx_orchestrator.tools import (
+    apply_assignment_edits,
     declare_pipeline_plan,
     get_job_status,
     get_synthesis_report,
+    present_assignment_review,
     run_assessment_core_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
     run_schema_design_aurora_pg_via_a2a,
@@ -71,6 +73,16 @@ dispatch.
                                              MySQL/MariaDB) are handled inside the agent from
                                              triage's output. Call it ONCE, after
                                              declare_pipeline_plan.
+  1b. present_assignment_review /           — The assignment-review GATE. After the
+      apply_assignment_edits                 assessment core, present_assignment_review
+                                             returns a review_markdown showing where each
+                                             query is routed and why. Show it to the
+                                             customer and WAIT: they either approve as-is or
+                                             reply with the edited routing table. Then call
+                                             apply_assignment_edits with their reply (empty
+                                             edited_markdown = approve as-is). Schema design
+                                             is BLOCKED until apply_assignment_edits returns
+                                             "approved". This is the one required pause.
   2. run_schema_design_<engine>_via_a2a     — CORRECT WAY to design target schemas. One tool
                                              per engine: run_schema_design_dynamodb_via_a2a,
                                              _documentdb_, _elasticache_, _opensearch_,
@@ -149,12 +161,21 @@ Workflow:
          (every engine triage selected), Assign, and Reality Check
       3. STOP and write the assessment-core summary to the customer in chat (see
          the REQUIRED chat summary rule below). Do this as its own assistant
-         message BEFORE calling any schema-design tool.
-      4. the schema-design tools for the same engines triage selected, dispatched
+         message BEFORE the review gate.
+      4. present_assignment_review(job_id, database_name) — present the returned
+         review_markdown to the customer (where each query is routed and why) and
+         ask them to approve as-is or reply with the edited routing table. This is
+         a REQUIRED stop: WAIT for the customer's reply. Do not call any
+         schema-design tool yet.
+      5. apply_assignment_edits(job_id, database_name, edited_markdown=<the
+         customer's reply, or empty if they approved as-is>). Only after this
+         returns "approved" may schema design run. If it returns "invalid_edit",
+         relay the message and ask the customer to resend; do not proceed.
+      6. the schema-design tools for the same engines triage selected, dispatched
          in parallel — run_schema_design_<engine>_via_a2a. Wait for all of them
-         before step 5. Each takes roughly 10-15 minutes, so tell the customer this
-         is the long phase and say what it produces.
-      5. run_synthesis_via_a2a(job_id, database_name)
+         before the next step. Each takes roughly 10-15 minutes, so tell the
+         customer this is the long phase and say what it produces.
+      7. run_synthesis_via_a2a(job_id, database_name)
 
   - REQUIRED chat summary (step 3). When run_assessment_core_via_a2a returns you
     MUST reply to the customer with a short chat message BEFORE calling any other
@@ -176,9 +197,11 @@ Workflow:
     `notes` or `warnings` field. Relay that text as given. Do not describe it as
     an error, do not retry it, and do not characterise it in your own words.
 
-  - State the plan in a sentence or two, then execute the whole sequence. Do not
-    pause between phases for approval unless the customer asked for a
-    step-by-step review.
+  - State the plan in a sentence or two, then execute the sequence. There is
+    exactly ONE required pause: the assignment-review gate (steps 4-5). Present the
+    routing, wait for the customer, and start schema design only after
+    apply_assignment_edits returns "approved". Do not pause anywhere else, and
+    never ask the customer to choose phases, tools, or order.
 
   - Report findings in the customer's terms, not the system's: which engines were
     selected and why, how the queries distributed, what the ranking says. Do not
@@ -212,6 +235,8 @@ Key points:
 PIPELINE_TOOLS = [
     declare_pipeline_plan,
     run_assessment_core_via_a2a,
+    present_assignment_review,
+    apply_assignment_edits,
     run_schema_design_dynamodb_via_a2a,
     run_schema_design_documentdb_via_a2a,
     run_schema_design_elasticache_via_a2a,
