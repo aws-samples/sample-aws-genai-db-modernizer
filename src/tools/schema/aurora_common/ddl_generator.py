@@ -4,6 +4,10 @@ Pure, deterministic, and LLM-free. Every column the type map cannot resolve
 confidently becomes a residual marker (surfaced to the LLM), never a silent
 guess. Foreign keys and secondary indexes are emitted after all CREATE TABLE
 statements so table ordering never breaks a reference.
+
+Tables are emitted into a single flat namespace; `AgentTable.schema_name` is
+intentionally not used, so source tables that share a name across schemas
+would collide (out of scope for Phase 1).
 """
 
 from __future__ import annotations
@@ -54,26 +58,31 @@ def _q(identifier: str) -> str:
 
 def _column_ddl(table_name: str, col: AgentColumn, residuals: list[dict]) -> ColumnDDL:
     resolution = resolve_pg_type(col.normalized_data_type, max_length=col.max_length)
+    source_type = col.normalized_data_type.value if col.normalized_data_type else None
     if resolution.needs_judgment:
         residuals.append(
             {
                 "table": table_name,
                 "column": col.column_name,
-                "source_type": col.normalized_data_type.value if col.normalized_data_type else None,
+                "source_type": source_type,
                 "fallback_type": resolution.aurora_type,
                 "reason": resolution.reason,
             }
         )
+    identity = identity_clause(col.is_auto_increment)
+    # Identity and default are mutually exclusive in PostgreSQL — a column
+    # cannot be both GENERATED ... AS IDENTITY and carry a DEFAULT clause.
+    default = "" if identity else default_clause(col.default_value)
     fragment = (
         f"{_q(col.column_name)} {resolution.aurora_type}"
-        f"{identity_clause(col.is_auto_increment)}"
+        f"{identity}"
         f"{not_null_clause(col.nullable)}"
-        f"{default_clause(col.default_value)}"
+        f"{default}"
     )
     return ColumnDDL(
         name=col.column_name,
         aurora_type=resolution.aurora_type,
-        source_type=col.normalized_data_type.value if col.normalized_data_type else None,
+        source_type=source_type,
         script_derived=not resolution.needs_judgment,
         needs_judgment=resolution.needs_judgment,
         judgment_reason=resolution.reason,
