@@ -88,6 +88,3 @@ the MySQL type-map dict, dialect quirks, contract, skills, and command.
   must be maintained per source family.
 - **Follow-up:** data migration/ETL execution, Aurora load-testing subpackages,
   and Oracle/SQL-Server → Aurora MySQL remain out of scope.
-
-The detailed implementation spec is maintained locally under
-`docs/superpowers/specs/` (gitignored per repo convention).
