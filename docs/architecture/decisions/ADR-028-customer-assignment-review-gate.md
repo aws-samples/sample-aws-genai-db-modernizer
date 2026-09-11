@@ -1,6 +1,6 @@
 # ADR-028: Customer Assignment-Review Gate Before Schema Design
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-11
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-026 (Reality Check in the Assessment Core), ADR-027 (Consolidate the Schema-Design Fleet), ADR-018 (Assignment Resolution), ADR-016 (Compute and Orchestration Strategy)
