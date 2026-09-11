@@ -1348,19 +1348,18 @@ _SAME_FAMILY: dict[str, set[str]] = {
 
 
 # Target engines that have a real schema designer in
-# handler._dispatch_schema_agent. aurora_postgresql now has one; aurora_mysql
-# still does not (Phase 2), so that dispatch writes a placeholder and invoking
-# its runtime only pays an AgentCore cold-start for a guaranteed non-design.
-# The orchestrator's pre-dispatch skip uses this to avoid the round-trip. Keep
-# in sync with the match arms in _dispatch_schema_agent.
+# handler._dispatch_schema_agent. Both Aurora engines (aurora_postgresql and
+# aurora_mysql) now have one — there is no remaining Aurora placeholder — so
+# all six target engines are implemented. Keep in sync with the match arms in
+# _dispatch_schema_agent.
 #
 # Once a real design is produced, the _SAME_FAMILY "no redesign required" note
-# below no longer fires for PostgreSQL -> Aurora PostgreSQL, because
-# table_definitions is non-empty (see the `if not designs` check in this
-# file). _SAME_FAMILY remains only as the fallback for a genuinely empty
-# design.
+# below no longer fires for PostgreSQL -> Aurora PostgreSQL or
+# MySQL -> Aurora MySQL, because table_definitions is non-empty (see the
+# `if not designs` check in this file). _SAME_FAMILY remains only as the
+# fallback for a genuinely empty design.
 IMPLEMENTED_SCHEMA_DESIGNERS: frozenset[str] = frozenset(
-    {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql"}
+    {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql", "aurora_mysql"}
 )
 
 
@@ -1416,13 +1415,13 @@ _DESIGN_SHAPE: dict[str, tuple[str, str]] = {
     "elasticache": ("key_designs", "key designs"),
     "opensearch": ("index_designs", "index designs"),
     "aurora_postgresql": ("table_definitions", "target tables"),
+    "aurora_mysql": ("table_definitions", "target tables"),
 }
 
-# Aurora MySQL has no designer upstream yet, so it has no design field either.
-# Fall back to the DynamoDB/Aurora PostgreSQL name rather than guessing: a
-# relational target that ever gains a designer will most plausibly emit table
-# definitions, and the fallback only has to be empty-or-present, not
-# exhaustive.
+# Fallback for a target with no entry above (e.g. a future engine not yet
+# mapped). Defaults to the DynamoDB/Aurora shape rather than guessing wildly: a
+# relational target is the most plausible next addition, and the fallback only
+# has to be empty-or-present, not exhaustive.
 _DESIGN_SHAPE_DEFAULT: tuple[str, str] = ("table_definitions", "target tables")
 
 
@@ -1524,14 +1523,13 @@ def run_schema_design_core(
     designs = output.get(design_field) or []
     access_patterns = output.get("access_patterns") or []
 
-    # Upstream dispatches on target_type alone and has designers for dynamodb,
-    # documentdb, opensearch, elasticache and aurora_postgresql; aurora_mysql is
-    # the remaining target that takes a default branch and writes a placeholder.
-    # The source engine — which upstream does not
-    # consult — is what distinguishes a target needing no redesign from one this
-    # report simply does not cover. Reported as informational in the first case
-    # and as a warning in the second, so that a warning always means the reader
-    # needs to act.
+    # Upstream dispatches on target_type alone and now has designers for all six
+    # target engines: dynamodb, documentdb, opensearch, elasticache,
+    # aurora_postgresql and aurora_mysql. The source engine — which upstream
+    # does not consult — is what distinguishes a target needing no redesign
+    # from one this report simply does not cover. Reported as informational in
+    # the first case and as a warning in the second, so that a warning always
+    # means the reader needs to act.
     #
     # "Did a design happen" is asked of the engine's own field, not of
     # ``table_definitions``. Only DynamoDB uses that name; DocumentDB produces
