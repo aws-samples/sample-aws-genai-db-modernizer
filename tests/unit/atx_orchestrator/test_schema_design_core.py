@@ -93,8 +93,8 @@ class TestSameFamily:
     def test_status_from_upstream_is_relayed_not_rewritten(self) -> None:
         """We classify alongside upstream's value; we do not overwrite it."""
         s = _run(
-            "aurora_postgresql",
-            _store("postgresql", {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store("mysql", {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         assert s["status"] == "not_implemented"
 
@@ -102,11 +102,11 @@ class TestSameFamily:
 class TestHeterogeneousSource:
     """A conversion this report does not cover: the reader needs to act."""
 
-    @pytest.mark.parametrize("source", ["oracle", "sqlserver", "mysql"])
+    @pytest.mark.parametrize("source", ["oracle", "sqlserver", "postgresql"])
     def test_reported_as_a_warning_naming_the_source(self, source: str) -> None:
         s = _run(
-            "aurora_postgresql",
-            _store(source, {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store(source, {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         assert "notes" not in s
         assert len(s["warnings"]) == 1
@@ -118,8 +118,8 @@ class TestHeterogeneousSource:
     def test_wording_carries_no_fault_language(self) -> None:
         """These strings can reach the customer deliverable."""
         s = _run(
-            "aurora_postgresql",
-            _store("oracle", {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store("oracle", {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         w = s["warnings"][0].lower()
         for word in ("owed", "failed", "should have", "instead", "not yet", "gap", "placeholder"):
@@ -150,8 +150,8 @@ class TestMissingSourceEngine:
 
     def test_falls_back_to_a_warning_without_naming_an_engine(self) -> None:
         s = _run(
-            "aurora_postgresql",
-            _store(None, {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store(None, {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         assert len(s["warnings"]) == 1
         assert "not covered here" in s["warnings"][0]
