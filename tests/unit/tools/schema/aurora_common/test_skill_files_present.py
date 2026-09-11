@@ -17,3 +17,17 @@ def test_pe_review_skill_present():
     text = (SKILLS / "aurora_postgresql-pe-review.md").read_text(encoding="utf-8")
     assert "Principal Engineer" in text
     assert "verdict" in text.lower()
+
+
+def test_mysql_designer_skill_present_and_bounded():
+    text = (SKILLS / "aurora_mysql-data-modeling.md").read_text(encoding="utf-8")
+    assert "Aurora MySQL" in text
+    assert "draft" in text.lower()
+    assert "needs_judgment" in text
+    assert "migration_strategy" in text
+
+
+def test_mysql_pe_review_skill_present():
+    text = (SKILLS / "aurora_mysql-pe-review.md").read_text(encoding="utf-8")
+    assert "Principal Engineer" in text
+    assert "verdict" in text.lower()
