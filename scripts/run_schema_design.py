@@ -15,7 +15,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_ALL_ENGINES = {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql"}
+_ALL_ENGINES = {
+    "dynamodb",
+    "documentdb",
+    "opensearch",
+    "elasticache",
+    "aurora_postgresql",
+    "aurora_mysql",
+}
 
 # Maps engine -> skill prompt path (relative to repo root)
 _SKILL_PROMPTS = {
@@ -24,6 +31,7 @@ _SKILL_PROMPTS = {
     "opensearch": "src/skills/opensearch-index-modeling.md",
     "elasticache": "src/skills/elasticache-data-modeling.md",
     "aurora_postgresql": "src/skills/aurora_postgresql-data-modeling.md",
+    "aurora_mysql": "src/skills/aurora_mysql-data-modeling.md",
 }
 
 
@@ -39,6 +47,7 @@ def _error(message: str, code: int = 1) -> None:
 
 def _get_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
     """Generate JSON schema from the engine's Pydantic output contract."""
+    from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
     from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
     from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
     from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
@@ -51,6 +60,7 @@ def _get_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
         "opensearch": OpenSearchModelOutputContract,
         "elasticache": ElastiCacheModelOutputContract,
         "aurora_postgresql": AuroraPostgresqlModelOutputContract,
+        "aurora_mysql": AuroraMySQLModelOutputContract,
     }
 
     contract_cls = _ENGINE_CONTRACTS[engine]
@@ -72,16 +82,22 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
     # Inject the output schema so the LLM knows exactly what to produce
     llm_request["output_schema"] = _get_output_schema(engine)
 
-    if engine == "aurora_postgresql":
+    if engine in ("aurora_postgresql", "aurora_mysql"):
         from src.contracts.analysis_output import AnalysisOutputContract
         from src.contracts.collector_output import CollectorOutputContract
         from src.contracts.schema_design_input import project_schema_design_input
-        from src.tools.schema.aurora_common.draft_builder import build_pg_draft
+        from src.tools.schema.aurora_common.draft_builder import build_mysql_draft, build_pg_draft
+
+        _DRAFT_BUILDERS = {
+            "aurora_postgresql": build_pg_draft,
+            "aurora_mysql": build_mysql_draft,
+        }
 
         collector = CollectorOutputContract.model_validate(llm_request["collector_output"])
         analysis = AnalysisOutputContract.model_validate(llm_request["analysis_output"])
         agent_collector, _, _ = project_schema_design_input(collector, analysis)
-        draft, strategy = build_pg_draft(
+        build_draft = _DRAFT_BUILDERS[engine]
+        draft, strategy = build_draft(
             agent_collector.tables, agent_collector.source_database_engine
         )
         llm_request["draft"] = draft

@@ -136,6 +136,104 @@ def test_run_external_attaches_deterministic_draft_for_aurora_postgresql(capsys)
     assert status["status"] == "awaiting_llm"
 
 
+_COLLECTOR_AURORA_MYSQL = {
+    "contract_version": "3.0",
+    "job_id": "job-001",
+    "metadata": {
+        "collection_timestamp": "2024-01-15T10:00:00Z",
+        "collector_version": "1.0.0",
+        "source_database": {
+            "engine": "mysql",
+            "version": "8.0",
+            "hostname": "test-db.local",
+        },
+    },
+    "database_schema": {
+        "tables": [
+            {
+                "table_id": "mydb.users",
+                "table_name": "users",
+                "row_count": 100,
+                "primary_key": ["id"],
+                "columns": [
+                    {
+                        "column_name": "id",
+                        "data_type": "int",
+                        "normalized_data_type": "integer",
+                        "nullable": False,
+                        "is_auto_increment": True,
+                    }
+                ],
+            }
+        ]
+    },
+    "queries": {
+        "query_patterns": [
+            {
+                "query_id": "q1",
+                "query_text": "SELECT * FROM users",
+                "frequency_per_hour": 10.0,
+                "tables_accessed": ["mydb.users"],
+            }
+        ]
+    },
+    "metrics": {"performance_metrics": {}},
+}
+
+_ANALYSIS_AURORA_MYSQL = {
+    "contract_version": "2.1",
+    "agent_metadata": {
+        "agent_name": "aurora-mysql-analysis-agent",
+        "agent_version": "1.0.0",
+        "target_database": "aurora_mysql",
+        "analysis_timestamp": "2024-01-15T12:00:00Z",
+    },
+    "table_recommendations": [
+        {
+            "table_id": "mydb.users",
+            "confidence_score": 90,
+            "score_breakdown": {
+                "pattern_match_score": 80,
+                "complexity_score": 20,
+                "performance_score": 85,
+                "cost_score": 70,
+            },
+        }
+    ],
+    "workload_analysis": {"patterns_detected": []},
+    "cost_estimate": {
+        "monthly_cost_usd": 100.0,
+        "cost_components": {"compute": 80.0, "storage": 20.0},
+    },
+}
+
+
+def test_run_external_attaches_deterministic_draft_for_aurora_mysql(capsys):
+    store = _mock_store(
+        {
+            "collector/output.json": _COLLECTOR_AURORA_MYSQL,
+            "analysis-aurora_mysql/analysis.json": _ANALYSIS_AURORA_MYSQL,
+        }
+    )
+
+    run_external(store, "job-001", "mydb", "aurora_mysql", assignment_version=0)
+
+    written_key = next(k for k in store._written if "schema_design_aurora_mysql.json" in k)
+    llm_request = store._written[written_key]
+
+    assert "draft" in llm_request
+    draft = llm_request["draft"]
+    assert "full_ddl" in draft
+    assert "`" in draft["full_ddl"]
+    assert "CREATE TABLE `users`" in draft["full_ddl"]
+    assert llm_request["migration_strategy"] == "carry_over"
+
+    # stdout status line should still report awaiting_llm
+    captured = capsys.readouterr()
+    status = json.loads(captured.out)
+    assert status["status"] == "awaiting_llm"
+
+
 def test_run_external_other_engines_do_not_get_a_draft():
     store = _mock_store(
         {
