@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_ALL_ENGINES = {"dynamodb", "documentdb", "opensearch", "elasticache"}
+_ALL_ENGINES = {"dynamodb", "documentdb", "opensearch", "elasticache", "aurora_postgresql"}
 
 # Maps engine -> skill prompt path (relative to repo root)
 _SKILL_PROMPTS = {
@@ -23,6 +23,7 @@ _SKILL_PROMPTS = {
     "documentdb": "src/skills/documentdb-data-modeling.md",
     "opensearch": "src/skills/opensearch-index-modeling.md",
     "elasticache": "src/skills/elasticache-data-modeling.md",
+    "aurora_postgresql": "src/skills/aurora_postgresql-data-modeling.md",
 }
 
 
@@ -38,6 +39,7 @@ def _error(message: str, code: int = 1) -> None:
 
 def _get_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
     """Generate JSON schema from the engine's Pydantic output contract."""
+    from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
     from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
     from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
     from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
@@ -48,6 +50,7 @@ def _get_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
         "documentdb": DocumentDBModelOutputContract,
         "opensearch": OpenSearchModelOutputContract,
         "elasticache": ElastiCacheModelOutputContract,
+        "aurora_postgresql": AuroraPostgresqlModelOutputContract,
     }
 
     contract_cls = _ENGINE_CONTRACTS[engine]
