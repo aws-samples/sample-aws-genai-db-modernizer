@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 
 import pytest
 
@@ -29,7 +30,8 @@ class FakeStore:
 
     def read_json(self, path: str) -> dict:
         self.reads.append(path)
-        return json.loads(json.dumps(self.objects[path]))
+        result: dict = json.loads(json.dumps(self.objects[path]))
+        return result
 
     def exists(self, path: str) -> bool:
         return path in self.objects
@@ -298,7 +300,7 @@ def test_journeys_are_read_concurrently():
     import threading
 
     lock = threading.Lock()
-    inner = store.read_json
+    inner: Callable[[str], dict] = store.read_json
 
     def slow(path: str) -> dict:
         nonlocal live, max_concurrent
@@ -321,7 +323,7 @@ def test_journeys_are_read_concurrently():
 def test_one_unreadable_journey_does_not_lose_the_rest():
     objects = _objects()
     store = FakeStore(objects)
-    inner = store.read_json
+    inner: Callable[[str], dict] = store.read_json
 
     def flaky(path: str) -> dict:
         if path.endswith("q2.json"):
@@ -362,7 +364,7 @@ def test_unfilled_placeholder_in_the_template_raises(monkeypatch):
     real = ar._read_template
 
     def fake(name: str) -> str:
-        text = real(name)
+        text: str = real(name)
         return text + "\n<!-- __BRAND_NEW__ -->" if name.endswith(".tpl") else text
 
     monkeypatch.setattr(ar, "_read_template", fake)
