@@ -14,12 +14,14 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock, patch
 
+from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_handler import (
     apply_synthesis_llm_output,
     prepare_synthesis_llm_input,
     run_synthesis,
     run_synthesis_deterministic,
 )
+from src.agents.referee.synthesis_report import build_risk_assessment
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -587,3 +589,98 @@ class TestRunSynthesisBackwardCompatible:
         run_synthesis("job-1", "mydb", store, assignment_version=2, llm_mode="none")
         written_keys = list(store._written.keys())
         assert any("synthesis/v2/report.json" in k for k in written_keys)
+
+
+# ---------------------------------------------------------------------------
+# Risk assessment excludes engines the assignment dropped
+# ---------------------------------------------------------------------------
+
+
+def _ap(qid: str, weight: float) -> dict:
+    """One target-design anti-pattern. weight >= 0.7 becomes a HIGH risk."""
+    return {
+        "anti_pattern_type": "correlated-subquery",
+        "description": "Queries with correlated subqueries",
+        "query_ids": [qid],
+        "table_ids": ["t1"],
+        "severity_weight": weight,
+        "recommendation": "denormalize",
+    }
+
+
+def _risk_data(assignment: dict | None) -> SynthesisData:
+    """Triage picked dynamodb + documentdb; both have two HIGH anti-patterns each.
+
+    Mirrors the observed ``discourse`` job: DocumentDB survived triage and analysis, then
+    the assignment routed every query elsewhere.
+    """
+    data = SynthesisData(job_id="job-1", database_name="mydb")
+    data.triage = {"selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "documentdb"}]}
+    for eng in ("dynamodb", "documentdb"):
+        data.engines[eng] = EngineArtifacts(
+            engine=eng,
+            analysis={
+                "workload_analysis": {
+                    "anti_patterns_detected": [_ap(f"{eng}-q1", 0.9), _ap(f"{eng}-q2", 0.8)]
+                }
+            },
+            schema_design={},
+        )
+    data.assignment = assignment
+    return data
+
+
+_ASSIGNED_TO_DYNAMO_ONLY = {
+    "query_assignments": [
+        {"query_id": "q1", "assigned_engine": "dynamodb", "in_scope": True},
+        {"query_id": "q2", "assigned_engine": "dynamodb", "in_scope": True},
+    ]
+}
+
+
+class TestRiskAssessmentExcludesDroppedEngines:
+    def test_dropped_engine_contributes_no_risks(self) -> None:
+        out = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
+        engines = {r["description"].split("]")[0].lstrip("[") for r in out["risks"]}
+        assert engines == {"dynamodb"}
+        assert not any("documentdb" in r["description"] for r in out["risks"])
+
+    def test_assigned_engine_keeps_all_of_its_risks(self) -> None:
+        out = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
+        assert len(out["risks"]) == 2
+
+    def test_overall_risk_drops_from_high_to_medium(self) -> None:
+        """The consequence that matters.
+
+        ``overall_risk_level`` is a HIGH-count threshold (>= 3). Four HIGH risks across two
+        engines reads HIGH; once the dropped engine's two are excluded only two remain, so
+        the headline rating falls to MEDIUM. An engine carrying no workload was raising it.
+        """
+        unfiltered = build_risk_assessment(_risk_data(None))
+        assert [r["severity"] for r in unfiltered["risks"]].count("HIGH") == 4
+        assert unfiltered["overall_risk_level"] == "HIGH"
+
+        filtered = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
+        assert [r["severity"] for r in filtered["risks"]].count("HIGH") == 2
+        assert filtered["overall_risk_level"] == "MEDIUM"
+
+    def test_fails_open_when_no_assignment(self) -> None:
+        """No readable assignment must never empty the register — worse than the defect."""
+        out = build_risk_assessment(_risk_data(None))
+        assert len(out["risks"]) == 4
+        assert any("documentdb" in r["description"] for r in out["risks"])
+
+    def test_out_of_scope_assignment_does_not_qualify_an_engine(self) -> None:
+        assignment = {
+            "query_assignments": [
+                {"query_id": "q1", "assigned_engine": "dynamodb", "in_scope": True},
+                {"query_id": "q9", "assigned_engine": "documentdb", "in_scope": False},
+            ]
+        }
+        out = build_risk_assessment(_risk_data(assignment))
+        assert not any("documentdb" in r["description"] for r in out["risks"])
+
+    def test_mitigations_derive_from_the_filtered_set(self) -> None:
+        out = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
+        assert out["mitigation_strategies"]
+        assert not any("documentdb" in s for s in out["mitigation_strategies"])

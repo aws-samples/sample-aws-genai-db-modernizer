@@ -430,17 +430,51 @@ def _estimate_rds_cost(rds_meta: dict) -> float:
     return base
 
 
+def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
+    """Engines the assignment actually routed in-scope queries to.
+
+    ``data.engines`` is keyed on *triage's* selections and is never narrowed by the
+    assignment, so it still holds engines the assignment eliminated outright. Risks are
+    generated per engine during analysis, while every triage-selected engine is still a
+    candidate, so carrying a dropped engine's risks forward inflates the counts -- and
+    because ``overall_risk_level`` is a HIGH-count threshold (>= 3), two risks on an engine
+    that carries no workload can raise the headline rating from MEDIUM to HIGH.
+
+    Fail-open: an empty set means "cannot tell". The caller keeps every risk in that case
+    rather than silently emptying the register, which would be far worse than the defect.
+    """
+    if not data.assignment:
+        return set()
+    return {
+        qa["assigned_engine"]
+        for qa in data.assignment.get("query_assignments", [])
+        if qa.get("in_scope", True) and qa.get("assigned_engine")
+    }
+
+
 def build_risk_assessment(data: SynthesisData) -> dict:
     """Compile risks from anti-patterns, migration notes, and unsupported patterns.
 
     Anti-patterns are cross-referenced against schema design access patterns:
     if all of an anti-pattern's query_ids are covered by in-scope access
     patterns, the risk is considered resolved and downgraded to a note.
+
+    Only engines the assignment routed queries to contribute risks. An engine triage
+    selected but the assignment then dropped is not part of the target architecture, so its
+    anti-patterns describe a design that will never be built.
     """
     risks = []
     risk_id = 0
+    assigned = _engines_with_assigned_queries(data)
 
     for engine, artifacts in data.engines.items():
+        # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
+        if assigned and engine not in assigned:
+            logger.info(
+                "Risk assessment: skipping %s (assignment routed it no in-scope queries)",
+                engine,
+            )
+            continue
         analysis = artifacts.analysis or {}
         schema = artifacts.schema_design or {}
 

@@ -150,6 +150,100 @@ class TestRiskFilter:
 
 
 # =============================================================================
+# Engine roles — an engine that won no queries is not "Retained"
+
+
+@pytest.fixture
+def zero_workload_report(report: dict) -> dict:
+    """The real report, reshaped so DocumentDB is the engine that won nothing.
+
+    Reproduces the observed defect: triage selected DocumentDB, analysis scored it 56%,
+    then the assignment routed every query elsewhere, so schema design was skipped.
+    """
+    rep = json.loads(json.dumps(report))
+    pct = {
+        "aurora_postgresql": 49.3,
+        "elasticache": 29.4,
+        "dynamodb": 15.1,
+        "opensearch": 6.1,
+        "documentdb": 0.0,
+    }
+    for r in rep["ranking"]:
+        r["workload_percent"] = pct.get(r["target"])
+    rep["recommended_architecture"]["databases"] = [
+        d for d in rep["recommended_architecture"]["databases"] if d["service"] != "documentdb"
+    ]
+    rep.setdefault("schema_designs", {})["documentdb"] = {"status": "skipped"}
+    return rep
+
+
+class TestEngineRole:
+    def test_zero_workload_is_evaluated_not_retained(self) -> None:
+        """The defect: a skipped design used to imply "Retained" regardless of workload."""
+        assert (
+            artifacts._engine_role("documentdb", set(), {"documentdb": {"status": "skipped"}}, 0.0)
+            == "Evaluated"
+        )
+        assert artifacts._engine_role("documentdb", set(), {}, None) == "Evaluated"
+
+    def test_workload_carrying_engine_with_no_design_is_still_retained(self) -> None:
+        """Guards against over-correcting: the source relational core keeps Retained."""
+        role = artifacts._engine_role(
+            "aurora_postgresql", set(), {"aurora_postgresql": {"status": "not_available"}}, 49.3
+        )
+        assert role == "Retained"
+
+    def test_cache_and_migration_target_keep_their_role_at_zero_workload(self) -> None:
+        """Branch-order guard: the workload test must not outrank these two."""
+        assert artifacts._engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
+        assert artifacts._engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
+
+    def test_scope_reads_no_queries_assigned(self, zero_workload_report: dict) -> None:
+        rows = {e["engine"]: e for e in artifacts._architecture_engines(zero_workload_report)}
+        assert rows["documentdb"]["role"] == "Evaluated"
+        assert rows["documentdb"]["scope"] == "no queries assigned"
+        # the engines that do the work are unaffected
+        assert rows["aurora_postgresql"]["role"] == "Retained"
+        assert rows["elasticache"]["role"] == "Cache layer"
+
+    def test_evaluated_engine_excluded_from_retained_narrative(
+        self, zero_workload_report: dict
+    ) -> None:
+        """The HTML claimed DocumentDB was "retained as the relational core"."""
+        engines = artifacts._architecture_engines(zero_workload_report)
+        assert [e["engine"] for e in engines if e["role"] == "Retained"] == ["aurora_postgresql"]
+
+    def test_evaluated_engine_excluded_from_wave_one(self, zero_workload_report: dict) -> None:
+        """Wave 1 is built from ``no_move``, and its confidence is a ``min()`` over members.
+
+        An engine the assignment routed nothing to must not be named in the wave nor be
+        eligible to set its confidence floor. On the observed ``discourse`` report the
+        printed figure does not move (ElastiCache independently sits at the same 56%), so
+        this asserts membership rather than the number — the number is only distorted when
+        the Evaluated engine happens to be the sole minimum, and asserting it here would
+        encode a coincidence of that one report.
+        """
+        engines = artifacts._architecture_engines(zero_workload_report)
+        no_move = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
+        assert [e["engine"] for e in no_move] == ["aurora_postgresql", "elasticache"]
+        assert "documentdb" not in {e["engine"] for e in no_move}
+
+    def test_footer_names_and_percentage_agree(self, zero_workload_report: dict) -> None:
+        """Tested positively on role, so an Evaluated engine is not named as "keeping" workload."""
+        engines = artifacts._architecture_engines(zero_workload_report)
+        kept = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
+        assert [e["engine"] for e in kept] == ["aurora_postgresql", "elasticache"]
+        assert abs(sum(e["workload"] for e in kept) - 78.7) < 0.05
+
+    def test_architecture_svg_renders_the_evaluated_engine_muted(
+        self, zero_workload_report: dict
+    ) -> None:
+        svg = artifacts.architecture_svg(zero_workload_report)
+        assert artifacts._ROLE_STROKE["Evaluated"] in svg
+        assert ">None<" not in svg
+
+
+# =============================================================================
 # Orchestrator publish wiring
 
 
