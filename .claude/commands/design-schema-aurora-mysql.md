@@ -58,8 +58,8 @@ DynamoDB. Aurora runs once, like OpenSearch.
      the fragments needed to resolve residuals — never regenerate DDL for
      columns the draft already resolved
    - Any source feature that cannot be expressed as Aurora DDL (triggers,
-     sequences, stored procedures, packages) goes in `app_layer_notes` with a
-     concrete recommendation — never fabricate DDL for it
+     stored procedures, events, generated columns) goes in `app_layer_notes`
+     with a concrete recommendation — never fabricate DDL for it
    - Add Aurora-specific `optimizations` driven by the query patterns:
      partitioning for large hot tables, added indexes for frequent unindexed
      filter/sort columns, read-replica routing for read-heavy patterns,
