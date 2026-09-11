@@ -123,8 +123,8 @@ def test_run_external_attaches_deterministic_draft_for_aurora_postgresql(capsys)
     written_key = next(k for k in store._written if "schema_design_aurora_postgresql.json" in k)
     llm_request = store._written[written_key]
 
-    assert "deterministic_draft" in llm_request
-    draft = llm_request["deterministic_draft"]
+    assert "draft" in llm_request
+    draft = llm_request["draft"]
     assert "full_ddl" in draft
     assert "users" in draft["full_ddl"]
     assert draft["tables"][0]["columns"][0]["aurora_type"] == "BIGINT"
@@ -177,4 +177,4 @@ def test_run_external_other_engines_do_not_get_a_draft():
 
     written_key = next(k for k in store._written if "schema_design_dynamodb.json" in k)
     llm_request = store._written[written_key]
-    assert "deterministic_draft" not in llm_request
+    assert "draft" not in llm_request

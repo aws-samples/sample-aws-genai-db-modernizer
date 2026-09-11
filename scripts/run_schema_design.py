@@ -84,7 +84,7 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         draft, strategy = build_pg_draft(
             agent_collector.tables, agent_collector.source_database_engine
         )
-        llm_request["deterministic_draft"] = draft
+        llm_request["draft"] = draft
         llm_request["migration_strategy"] = strategy
 
     llm_request_path = f"{db}/{job_id}/llm_requests/schema_design_{engine}.json"
