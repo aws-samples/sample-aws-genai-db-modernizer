@@ -22,6 +22,9 @@ def build_pg_draft(tables: list[AgentTable], source_engine: str) -> tuple[dict, 
         "tables": [
             {
                 "table_name": t.table_name,
+                "primary_key": src.primary_key or [],
+                "indexes": t.index_sql,
+                "foreign_keys": t.fk_sql,
                 "columns": [
                     {
                         "name": c.name,
@@ -34,7 +37,7 @@ def build_pg_draft(tables: list[AgentTable], source_engine: str) -> tuple[dict, 
                     for c in t.columns
                 ],
             }
-            for t in ddl.tables
+            for src, t in zip(tables, ddl.tables, strict=True)
         ],
         "full_ddl": ddl.full_ddl,
         "residuals": ddl.residuals,

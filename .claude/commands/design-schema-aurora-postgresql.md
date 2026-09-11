@@ -23,10 +23,10 @@ DynamoDB. Aurora runs once, like OpenSearch.
    a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/schema_design_aurora_postgresql.json`
       - Contains: filtered queries, tables, analysis results, `output_schema`
         (the exact JSON Schema your output must conform to), and — same as the
-        automated Bedrock path (ADR-028) — a `deterministic_draft` plus
+        automated Bedrock path (ADR-028) — a `draft` plus
         `migration_strategy`, both built by the script from the shared draft
         builder (`src/tools/schema/aurora_common/draft_builder.py`).
-        `deterministic_draft` already contains, per column, a resolved
+        `draft` already contains, per column, a resolved
         `aurora_type`, its `source_type`, and provenance
         (`script_derived`/`needs_judgment`), along with `full_ddl` and a
         `residuals` list of columns the script could not resolve confidently.
@@ -43,15 +43,15 @@ DynamoDB. Aurora runs once, like OpenSearch.
 
 4. **Design the schema**
    Produce JSON conforming to `output_schema` from the request file. Treat
-   `deterministic_draft` as authoritative and reconcile it — do not re-derive
+   `draft` as authoritative and reconcile it — do not re-derive
    types from scratch:
    - For every column where the draft's `script_derived` is `true` and
      `needs_judgment` is `false`, reproduce its `aurora_type` and `source_type`
      unchanged, keeping `script_derived=true`
-   - For every entry in `deterministic_draft.residuals`, use your judgment to
+   - For every entry in `draft.residuals`, use your judgment to
      pick the right Aurora type, then set that column's `needs_judgment=true`
      and `script_derived=false` in your output, and update the DDL accordingly
-   - Start `generated_ddl` from `deterministic_draft.full_ddl` and only change
+   - Start `generated_ddl` from `draft.full_ddl` and only change
      the fragments needed to resolve residuals — never regenerate DDL for
      columns the draft already resolved
    - Any source feature that cannot be expressed as Aurora DDL (triggers,

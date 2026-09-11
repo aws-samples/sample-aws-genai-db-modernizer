@@ -23,7 +23,9 @@ script's work.
 
 1. **The draft is authoritative for types and DDL.** Do NOT change a column whose
    `script_derived` is true and `needs_judgment` is false. Reproduce those types
-   verbatim in `table_definitions`.
+   verbatim in `table_definitions`. Copy each table's `primary_key`, `indexes`,
+   and `foreign_keys` straight from `draft.tables[i]` into the matching
+   `table_definitions` entry — do not re-derive them.
 2. **Resolve every residual.** For each entry in `draft.residuals`, choose the
    correct Aurora type (e.g. VARCHAR(n) vs TEXT using column cardinality and
    query filters), set that column's `needs_judgment=true` and
