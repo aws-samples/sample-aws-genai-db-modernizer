@@ -46,10 +46,7 @@ class TestBuildOutputPassFail:
 
     def _output(self, pattern_results):
         from src.agents.load_test.models import SeedManifest
-        from src.contracts.load_test_models import (
-            InfrastructureManifest,
-            TestConfig,
-        )
+        from src.contracts.load_test_models import InfrastructureManifest, TestConfig
 
         return _build_output(
             run_id="r",

@@ -35,17 +35,25 @@ try:
         declare_pipeline_plan,
         get_job_status,
         get_synthesis_report,
-        run_assignment_via_a2a,
-        run_collect_via_a2a,
+        run_assessment_core_via_a2a,
+        run_schema_design_aurora_mysql_via_a2a,
+        run_schema_design_aurora_pg_via_a2a,
+        run_schema_design_documentdb_via_a2a,
+        run_schema_design_dynamodb_via_a2a,
+        run_schema_design_elasticache_via_a2a,
+        run_schema_design_opensearch_via_a2a,
         run_synthesis_via_a2a,
-        run_triage_via_a2a,
     )
 
     tools = [
         declare_pipeline_plan,
-        run_collect_via_a2a,
-        run_triage_via_a2a,
-        run_assignment_via_a2a,
+        run_assessment_core_via_a2a,
+        run_schema_design_dynamodb_via_a2a,
+        run_schema_design_documentdb_via_a2a,
+        run_schema_design_elasticache_via_a2a,
+        run_schema_design_opensearch_via_a2a,
+        run_schema_design_aurora_pg_via_a2a,
+        run_schema_design_aurora_mysql_via_a2a,
         run_synthesis_via_a2a,
         get_job_status,
         get_synthesis_report,
@@ -69,8 +77,8 @@ try:
     check("DBModernizationOrchestrator imported", True)
     check(
         "PIPELINE_TOOLS count",
-        len(PIPELINE_TOOLS) == 19,
-        f"expected 19, got {len(PIPELINE_TOOLS)}",
+        len(PIPELINE_TOOLS) == 11,
+        f"expected 11, got {len(PIPELINE_TOOLS)}",
     )
 except ImportError as e:
     check("DBModernizationOrchestrator imported", False, str(e))
