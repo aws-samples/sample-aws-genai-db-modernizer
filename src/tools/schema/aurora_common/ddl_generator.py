@@ -32,6 +32,8 @@ from src.tools.schema.aurora_common.type_map import (
 
 @dataclass(frozen=True)
 class Dialect:
+    """Per-engine DDL parametrization: identifier quoting, auto-increment clause, type resolver."""
+
     name: str
     quote_char: str
     auto_increment: Callable[[bool | None], str]

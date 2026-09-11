@@ -86,3 +86,88 @@ def test_mysql_decimal_is_residual():
     result = generate_mysql_ddl([tbl])
     assert any(r["column"] == "amount" for r in result.residuals)
     assert "`amount` DECIMAL(38,10)" in result.full_ddl
+
+
+def test_mysql_composite_primary_key():
+    tbl = AgentTable(
+        table_id="t",
+        table_name="memberships",
+        row_count=1,
+        primary_key=["org_id", "user_id"],
+        columns=[
+            AgentColumn(column_name="org_id", normalized_data_type=N.integer, nullable=False),
+            AgentColumn(column_name="user_id", normalized_data_type=N.integer, nullable=False),
+        ],
+    )
+    ddl = generate_mysql_ddl([tbl]).full_ddl
+    assert "PRIMARY KEY (`org_id`, `user_id`)" in ddl
+
+
+def test_mysql_multi_column_index_and_fk():
+    parent = AgentTable(
+        table_id="p",
+        table_name="orgs",
+        row_count=1,
+        primary_key=["id"],
+        columns=[AgentColumn(column_name="id", normalized_data_type=N.integer, nullable=False)],
+    )
+    child = AgentTable(
+        table_id="c",
+        table_name="members",
+        row_count=1,
+        primary_key=["org_id", "user_id"],
+        columns=[
+            AgentColumn(column_name="org_id", normalized_data_type=N.integer, nullable=False),
+            AgentColumn(column_name="user_id", normalized_data_type=N.integer, nullable=False),
+        ],
+        indexes=[
+            AgentIndex(index_name="ix_members_pair", columns=["org_id", "user_id"], is_unique=False)
+        ],
+        foreign_keys=[
+            AgentForeignKey(
+                constraint_name="fk_members_org",
+                columns=["org_id"],
+                referenced_table="orgs",
+                referenced_columns=["id"],
+                on_delete=None,
+            )
+        ],
+    )
+    ddl = generate_mysql_ddl([parent, child]).full_ddl
+    assert "CREATE INDEX `ix_members_pair` ON `members` (`org_id`, `user_id`)" in ddl
+    assert "FOREIGN KEY (`org_id`) REFERENCES `orgs` (`id`)" in ddl
+
+
+def test_mysql_backtick_in_identifier_is_escaped():
+    tbl = AgentTable(
+        table_id="t",
+        table_name="we`ird",
+        row_count=1,
+        primary_key=["c`x"],
+        columns=[AgentColumn(column_name="c`x", normalized_data_type=N.integer, nullable=False)],
+    )
+    ddl = generate_mysql_ddl([tbl]).full_ddl
+    # An embedded backtick is doubled.
+    assert "CREATE TABLE `we``ird`" in ddl
+    assert "`c``x`" in ddl
+
+
+def test_mysql_auto_increment_suppresses_default():
+    tbl = AgentTable(
+        table_id="t",
+        table_name="seqs",
+        row_count=1,
+        primary_key=["id"],
+        columns=[
+            AgentColumn(
+                column_name="id",
+                normalized_data_type=N.integer,
+                nullable=False,
+                is_auto_increment=True,
+                default_value=0,
+            ),
+        ],
+    )
+    ddl = generate_mysql_ddl([tbl]).full_ddl
+    assert "AUTO_INCREMENT" in ddl
+    assert "DEFAULT 0" not in ddl
