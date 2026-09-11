@@ -100,14 +100,7 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
 
 
 def _next_version(store: ArtifactStore, database_name: str, job_id: str) -> int:
-    """Determine the next assignment version by scanning existing versions."""
-    prefix = f"{database_name}/{job_id}/assignment/"
-    existing = store.list_prefix(prefix)
-    max_version = 0
-    for path in existing:
-        # Paths look like: db/job/assignment/v3/assignment.json
-        parts = path.split("/")
-        for part in parts:
-            if part.startswith("v") and part[1:].isdigit():
-                max_version = max(max_version, int(part[1:]))
-    return max_version + 1
+    """Determine the next assignment version (ADR-028 shared resolver)."""
+    from src.storage.assignment_versioning import next_assignment_version
+
+    return next_assignment_version(store, database_name, job_id)

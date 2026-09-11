@@ -170,18 +170,10 @@ class LocalOrchestrator(Orchestrator):
         return [a["agent_type"] for a in triage.get("selected_agents", [])]
 
     def _get_assignment_version(self, job_id: str, database_name: str) -> int:
-        """Find the latest assignment version."""
-        prefix = f"{database_name}/{job_id}/assignment/"
-        keys = self.store.list_prefix(prefix)
-        max_version = 0
-        for key in keys:
-            parts = key.replace(prefix, "").split("/")
-            if parts and parts[0].startswith("v"):
-                try:
-                    max_version = max(max_version, int(parts[0][1:]))
-                except ValueError:
-                    continue
-        return max_version
+        """Find the latest assignment version (0 when none). ADR-028 shared resolver."""
+        from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+        return resolve_effective_assignment_version(self.store, database_name, job_id)
 
     def _get_engines_with_in_scope_queries(
         self, job_id: str, database_name: str, assignment_version: int

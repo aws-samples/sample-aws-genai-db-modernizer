@@ -16,11 +16,25 @@ from pydantic import BaseModel, Field
 
 
 class AssignmentStatus(str, Enum):
-    """Status of an assignment artifact indicating its origin."""
+    """Status of an assignment artifact indicating its approval state."""
 
     AUTO_GENERATED = "auto_generated"
     CUSTOMER_APPROVED = "customer_approved"
     CUSTOMER_MODIFIED = "customer_modified"
+
+
+class AssignmentSource(str, Enum):
+    """Pipeline stage that produced an assignment version (provenance).
+
+    ``status`` tracks approval state; ``source`` records *which stage* wrote the
+    version, so a consumer can reason about the lineage instead of trusting the
+    version number alone (ADR-028). ``None`` on an artifact means the source was
+    not recorded (a legacy version written before this field existed).
+    """
+
+    ASSIGNMENT_RESOLUTION = "assignment_resolution"
+    REALITY_CHECK = "reality_check"
+    CUSTOMER_GATE = "customer_gate"
 
 
 class QueryAssignment(BaseModel):
@@ -97,6 +111,13 @@ class Assignment(BaseModel):
     previous_version: int | None = Field(
         None,
         description="Version number of the previous assignment (None for first version)",
+    )
+    source: AssignmentSource | None = Field(
+        None,
+        description=(
+            "Pipeline stage that produced this version (provenance). None for "
+            "legacy artifacts written before this field existed (ADR-028)."
+        ),
     )
 
 

@@ -13,11 +13,13 @@ from pydantic import BaseModel, Field
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.contracts.assignment_models import (
     Assignment,
+    AssignmentSource,
     AssignmentStatus,
     QueryAssignment,
     ValidationResult,
 )
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import resolve_effective_assignment_version
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assignments"])
 
@@ -81,19 +83,8 @@ class AssignmentResponse(BaseModel):
 
 
 def _latest_assignment_version(store: ArtifactStore, db: str, job_id: str) -> int:
-    """Find the latest assignment version by listing versioned prefixes."""
-    prefix = f"{db}/{job_id}/assignment/"
-    keys = store.list_prefix(prefix)
-    versions: list[int] = []
-    for key in keys:
-        # keys look like: db/job/assignment/v3/assignment.json
-        parts = key.replace(prefix, "").split("/")
-        if parts and parts[0].startswith("v"):
-            try:
-                versions.append(int(parts[0][1:]))
-            except ValueError:
-                continue
-    return max(versions) if versions else 0
+    """Find the latest assignment version (0 when none). ADR-028 shared resolver."""
+    return resolve_effective_assignment_version(store, db, job_id)
 
 
 def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -> Assignment:
@@ -207,6 +198,7 @@ async def put_assignments(
         update={
             "version": new_version,
             "status": AssignmentStatus.CUSTOMER_MODIFIED,
+            "source": AssignmentSource.CUSTOMER_GATE,
             "timestamp": datetime.now(UTC),
             "query_assignments": list(qa_map.values()),
             "previous_version": current_version,

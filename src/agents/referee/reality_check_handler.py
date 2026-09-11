@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from collections import defaultdict
+from datetime import UTC, datetime
 
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
@@ -16,6 +17,7 @@ from src.agents.referee.consolidation_validator import (
     validate_consolidations,
 )
 from src.agents.referee.reality_check import _build_recommendations, run_reality_check
+from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
 
@@ -287,6 +289,9 @@ def run_reality_check_handler(
         revised_assignment = {
             **assignment,
             "version": new_version,
+            "previous_version": assignment_version,
+            "source": AssignmentSource.REALITY_CHECK.value,
+            "timestamp": datetime.now(UTC).isoformat(),
             "query_assignments": det["revised_assignments"],
             "reality_check_applied": True,
         }
