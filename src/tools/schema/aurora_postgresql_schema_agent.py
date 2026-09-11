@@ -26,8 +26,6 @@ from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.schema_design_input import AgentTable, project_schema_design_input
-from src.tools.schema.aurora_common.ddl_generator import generate_pg_ddl
-from src.tools.schema.aurora_common.source_family import classify_source_family, migration_strategy
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
 
 logger = logging.getLogger(__name__)
@@ -203,11 +201,15 @@ def _compact_agent_input(agent_input: dict) -> None:
 
 
 def _build_draft(agent_input: dict) -> tuple[dict, str]:
-    """Run the deterministic core; return (draft dict, migration_strategy)."""
+    """Run the deterministic core; return (draft dict, migration_strategy).
+
+    Delegates to the shared draft builder (ADR-028) so the automated agent
+    and the external/interactive seam produce an identical draft.
+    """
+    from src.tools.schema.aurora_common.draft_builder import build_pg_draft
+
     collector = agent_input.get("collector", {})
     source_engine = collector.get("source_database_engine", "")
-    strategy = migration_strategy(source_engine, "aurora_postgresql")
-
     raw_tables = collector.get("tables", [])
     if not raw_tables:
         logger.warning(
@@ -215,32 +217,7 @@ def _build_draft(agent_input: dict) -> tuple[dict, str]:
             "draft will be empty and the designer will have nothing to translate."
         )
     tables = [AgentTable.model_validate(t) for t in raw_tables]
-    ddl = generate_pg_ddl(tables)
-
-    draft = {
-        "migration_strategy": strategy,
-        "source_family": classify_source_family(source_engine),
-        "tables": [
-            {
-                "table_name": t.table_name,
-                "columns": [
-                    {
-                        "name": c.name,
-                        "aurora_type": c.aurora_type,
-                        "source_type": c.source_type,
-                        "script_derived": c.script_derived,
-                        "needs_judgment": c.needs_judgment,
-                        "judgment_reason": c.judgment_reason,
-                    }
-                    for c in t.columns
-                ],
-            }
-            for t in ddl.tables
-        ],
-        "full_ddl": ddl.full_ddl,
-        "residuals": ddl.residuals,
-    }
-    return draft, strategy
+    return build_pg_draft(tables, source_engine)
 
 
 # ---------------------------------------------------------------------------

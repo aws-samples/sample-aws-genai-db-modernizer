@@ -72,6 +72,21 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
     # Inject the output schema so the LLM knows exactly what to produce
     llm_request["output_schema"] = _get_output_schema(engine)
 
+    if engine == "aurora_postgresql":
+        from src.contracts.analysis_output import AnalysisOutputContract
+        from src.contracts.collector_output import CollectorOutputContract
+        from src.contracts.schema_design_input import project_schema_design_input
+        from src.tools.schema.aurora_common.draft_builder import build_pg_draft
+
+        collector = CollectorOutputContract.model_validate(llm_request["collector_output"])
+        analysis = AnalysisOutputContract.model_validate(llm_request["analysis_output"])
+        agent_collector, _, _ = project_schema_design_input(collector, analysis)
+        draft, strategy = build_pg_draft(
+            agent_collector.tables, agent_collector.source_database_engine
+        )
+        llm_request["deterministic_draft"] = draft
+        llm_request["migration_strategy"] = strategy
+
     llm_request_path = f"{db}/{job_id}/llm_requests/schema_design_{engine}.json"
     store.write_json(llm_request_path, llm_request)
 
