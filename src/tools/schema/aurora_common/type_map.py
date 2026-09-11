@@ -77,3 +77,55 @@ def resolve_pg_type(
         needs_judgment=True,
         reason=f"No deterministic Aurora mapping for normalized type '{normalized}'.",
     )
+
+
+# Aurora MySQL direct mappings (length-independent). decimal is intentionally
+# absent: bare MySQL DECIMAL is (10,0) and lossy, so it needs judgment.
+_MYSQL_DIRECT: dict[NormalizedDataType, str] = {
+    NormalizedDataType.integer: "BIGINT",
+    NormalizedDataType.boolean: "BOOLEAN",
+    NormalizedDataType.date: "DATE",
+    NormalizedDataType.datetime: "DATETIME",
+    NormalizedDataType.timestamp: "TIMESTAMP",
+    NormalizedDataType.binary: "BLOB",
+    NormalizedDataType.blob: "LONGBLOB",
+    NormalizedDataType.json: "JSON",
+    NormalizedDataType.xml: "LONGTEXT",
+    NormalizedDataType.uuid: "CHAR(36)",
+    NormalizedDataType.text: "TEXT",
+}
+
+
+def resolve_mysql_type(
+    normalized: NormalizedDataType | None,
+    *,
+    max_length: int | None = None,
+) -> TypeResolution:
+    """Resolve one column's Aurora MySQL type from its normalized type."""
+    if normalized is None:
+        return TypeResolution(
+            aurora_type="TEXT",
+            needs_judgment=True,
+            reason="Source type was not normalized; confirm the intended column type.",
+        )
+    if normalized is NormalizedDataType.decimal:
+        return TypeResolution(
+            aurora_type="DECIMAL(38,10)",
+            needs_judgment=True,
+            reason="Decimal precision/scale unknown; confirm DECIMAL(p,s) (bare DECIMAL is lossy).",
+        )
+    if normalized in _MYSQL_DIRECT:
+        return TypeResolution(aurora_type=_MYSQL_DIRECT[normalized], needs_judgment=False)
+    if normalized is NormalizedDataType.string:
+        if max_length and max_length > 0:
+            return TypeResolution(aurora_type=f"VARCHAR({max_length})", needs_judgment=False)
+        return TypeResolution(
+            aurora_type="TEXT",
+            needs_judgment=True,
+            reason="String column has no known max length; confirm VARCHAR(n) vs TEXT.",
+        )
+    return TypeResolution(
+        aurora_type="TEXT",
+        needs_judgment=True,
+        reason=f"No deterministic Aurora MySQL mapping for normalized type '{normalized}'.",
+    )
