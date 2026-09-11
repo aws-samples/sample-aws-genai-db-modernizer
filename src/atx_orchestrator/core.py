@@ -1347,6 +1347,54 @@ _SAME_FAMILY: dict[str, set[str]] = {
 }
 
 
+# Target engines that have a real schema designer in
+# handler._dispatch_schema_agent. aurora_postgresql / aurora_mysql have none
+# (that dispatch writes a placeholder), so invoking their runtime only pays an
+# AgentCore cold-start for a guaranteed non-design. The orchestrator's
+# pre-dispatch skip uses this to avoid the round-trip. Keep in sync with the
+# match arms in _dispatch_schema_agent.
+IMPLEMENTED_SCHEMA_DESIGNERS: frozenset[str] = frozenset(
+    {"dynamodb", "documentdb", "opensearch", "elasticache"}
+)
+
+
+def schema_no_design_notes(
+    target_type: str,
+    source_engine: str,
+    status: str = "skipped",
+    reason: str = "",
+) -> tuple[list[str], list[str]]:
+    """Return ``(notes, warnings)`` for an engine that produced no schema design.
+
+    A same-family target gets an informational note that the existing schema
+    carries over; a skipped engine gets its skip reason; anything else gets a
+    warning that the report does not cover the conversion. Shared by
+    ``run_schema_design_core`` (after a design runs and produces nothing) and the
+    orchestrator's pre-dispatch skip (which never invokes the engine), so the
+    customer-facing wording is identical from either path.
+    """
+    notes: list[str] = []
+    warnings: list[str] = []
+    if target_type in _SAME_FAMILY.get(source_engine, set()):
+        notes.append(
+            f"{target_type}: no schema design required. Source and target are both "
+            f"{source_engine}, so the existing schema carries over unchanged."
+        )
+    elif status == "skipped":
+        notes.append(f"{target_type}: {reason or 'no queries or tables assigned'}.")
+    else:
+        warnings.append(
+            f"{target_type}: schema design not included in this report."
+            + (
+                f" The source engine is {source_engine}, so type and object mappings for "
+                f"this target would need a separate schema conversion assessment."
+                if source_engine
+                else " Type and object mappings for this target are not covered here."
+            )
+        )
+    return notes, warnings
+
+
 # Each schema designer names its output after the target's own vocabulary, so
 # there is no single field that means "a design exists". Values are
 # (artifact field, human-readable unit).
@@ -1488,25 +1536,11 @@ def run_schema_design_core(
     warnings: list[str] = []
     if not designs:
         src = _source_engine(store, job_id, database_name)
-        if target_type in _SAME_FAMILY.get(src, set()):
-            notes.append(
-                f"{target_type}: no schema design required. Source and target are both "
-                f"{src}, so the existing schema carries over unchanged."
-            )
-        elif status == "skipped":
-            notes.append(
-                f"{target_type}: {output.get('reason') or 'no queries or tables assigned'}."
-            )
-        else:
-            warnings.append(
-                f"{target_type}: schema design not included in this report."
-                + (
-                    f" The source engine is {src}, so type and object mappings for this "
-                    f"target would need a separate schema conversion assessment."
-                    if src
-                    else " Type and object mappings for this target are not covered here."
-                )
-            )
+        _nd_notes, _nd_warnings = schema_no_design_notes(
+            target_type, src, status, output.get("reason") or ""
+        )
+        notes.extend(_nd_notes)
+        warnings.extend(_nd_warnings)
 
     summary = {
         "job_id": job_id,

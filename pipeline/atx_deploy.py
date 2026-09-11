@@ -140,9 +140,6 @@ class Agent:
     dependencies: tuple[str, ...] = field(default_factory=tuple)
 
 
-_ANALYSIS = ("dynamodb", "documentdb", "elasticache", "opensearch", "aurora-pg", "aurora-mysql")
-_SCHEMA = _ANALYSIS
-
 _SUBAGENTS: list[Agent] = [
     # One consolidated assessment-core agent runs the whole assessment front-half
     # in-process (ADR-025, ADR-026): Collect -> Triage -> Analyze (every selected
@@ -150,7 +147,11 @@ _SUBAGENTS: list[Agent] = [
     # triage, analysis, assignment) and now also runs Reality Check. Renamed from
     # deterministic-core once Reality Check added a Bedrock call.
     Agent("assessment-core", "assessment-core"),
-    *[Agent(f"schema-{e}", f"schema-{e}") for e in _SCHEMA],
+    # One consolidated schema agent for every target engine (ADR-027). It replaced
+    # six schema-<engine> runtimes that differed only in a baked AGENT_TYPE; the
+    # orchestrator now passes target_type in the invocation payload and invokes
+    # this one agent once per engine, concurrently.
+    Agent("schema", "schema"),
     Agent("synthesis", "referee-synthesis"),
 ]
 
@@ -409,13 +410,6 @@ def _agent_card(name: str, account: str, dependencies: list[str], version: str) 
             "legacyTaskLink": False,
             "webAppV2": True,
             "legacyRestartable": False,
-            # Required by AtxAgentRegistry.PublishAgentVersion as of 2026-09.
-            # False = once a job reaches FAILED/COMPLETED/STOPPED the customer cannot
-            # keep chatting with it. None of these agents supports chat restore: the
-            # orchestrator holds no conversational state across a terminal job and the
-            # subagents are single-shot work functions, so the platform restoring one to
-            # answer a follow-up would produce a confused answer, not a useful one.
-            "allowChatWhenJobTerminated": False,
             "extensions": [
                 {
                     "name": "Agent Provider",

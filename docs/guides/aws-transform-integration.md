@@ -139,10 +139,11 @@ Adding a phase touches four places, mirroring the existing subagents:
 4. An orchestrator tool in `tools.py` that calls `invoke_and_wait`, plus its
    registration in `orchestrator.py`.
 
-The six schema-design targets share one parametrized factory
-(`schema_subagent.make_schema_agent_factory`) rather than six near-identical
-modules; the six analysis engines share `run_analysis_core` driven by a per-engine
-table. Prefer that pattern over copy-paste when a phase has per-engine variants.
+Schema design is a single `schema` agent (ADR-027) that takes `target_type` from
+the invocation payload, rather than six near-identical per-engine runtimes; the
+orchestrator invokes it once per engine, concurrently. The analysis engines
+similarly share `run_analysis_core` driven by a per-engine table. Prefer that
+pattern over copy-paste when a phase has per-engine variants.
 
 ## Environment variables
 

@@ -107,10 +107,10 @@ def _synthesis_key(store: Any, database_name: str, job_id: str, assignment_versi
     prefix = f"{database_name}/{job_id}/synthesis/"
     try:
         found: list[tuple[int, str]] = []
-        for key in store.list_prefix(prefix):
-            m = re.search(r"/synthesis/v(\d+)/report\.json$", key)
+        for raw_key in store.list_prefix(prefix):
+            m = re.search(r"/synthesis/v(\d+)/report\.json$", raw_key)
             if m:
-                found.append((int(m.group(1)), key))
+                found.append((int(m.group(1)), raw_key))
         candidates.extend(k for _, k in sorted(found, reverse=True))
     except Exception as exc:  # noqa: BLE001 - listing is best-effort
         logger.debug("Could not list %s: %s", prefix, exc)

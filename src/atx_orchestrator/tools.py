@@ -208,38 +208,38 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "subSteps": [
                 {
                     "stepLabel": "schema_dynamodb",
-                    "stepName": "Design DynamoDB Schema",
+                    "stepName": "DynamoDB",
                     "description": "Design tables and access patterns for the DynamoDB target.",
                 },
                 {
                     "stepLabel": "schema_documentdb",
-                    "stepName": "Design DocumentDB Schema",
+                    "stepName": "DocumentDB",
                     "description": (
                         "Design collections and access patterns for the DocumentDB target."
                     ),
                 },
                 {
                     "stepLabel": "schema_elasticache",
-                    "stepName": "Design ElastiCache Schema",
+                    "stepName": "ElastiCache",
                     "description": (
                         "Design key structures and access patterns for the ElastiCache target."
                     ),
                 },
                 {
                     "stepLabel": "schema_opensearch",
-                    "stepName": "Design OpenSearch Schema",
+                    "stepName": "OpenSearch",
                     "description": (
                         "Design index mappings and access patterns for the OpenSearch target."
                     ),
                 },
                 {
                     "stepLabel": "schema_aurora_postgresql",
-                    "stepName": "Design Aurora PostgreSQL Schema",
+                    "stepName": "Aurora PostgreSQL",
                     "description": "Assess schema design coverage for the Aurora PostgreSQL target.",
                 },
                 {
                     "stepLabel": "schema_aurora_mysql",
-                    "stepName": "Design Aurora MySQL Schema",
+                    "stepName": "Aurora MySQL",
                     "description": "Assess schema design coverage for the Aurora MySQL target.",
                 },
             ],
@@ -763,10 +763,11 @@ def _complete_job_success(job_id: str) -> None:
         logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
 
 
-# Target engine per schema-design agent, keyed by the suffix used in both the
-# agent id and the plan step. Mirrors SCHEMA_TARGETS in schema_subagent.py; the
-# two differ because agent ids use hyphens while artifact keys and upstream's
-# dispatch use the engine's own identifier.
+# Target engine per schema-design tool suffix, used in the plan step label and,
+# since ADR-027, sent as target_type in the payload to the one consolidated
+# `schema` agent. The suffix and engine differ because tool suffixes use hyphens
+# (aurora-pg) while artifact keys and upstream's dispatch use the engine's own
+# identifier (aurora_postgresql). Must stay within schema.VALID_TARGET_TYPES.
 _SCHEMA_ENGINES: dict[str, str] = {
     "dynamodb": "dynamodb",
     "documentdb": "documentdb",
@@ -866,15 +867,92 @@ def _run_schema_design_via_a2a(
 ) -> str:
     """Shared body for the six schema-design A2A tools."""
     job_id = _platform_job_id(job_id)
-    agent_id = f"{_AGENT_PREFIX}-schema-{suffix}"
+    # One consolidated `schema` agent serves every engine (ADR-027); the target
+    # engine travels in the invocation payload as target_type, not in the agent
+    # id. The orchestrator still invokes once per engine, concurrently.
+    agent_id = f"{_AGENT_PREFIX}-schema"
     # Plan step labels use the engine's own identifier with underscores
     # (schema_aurora_postgresql), while agent ids use hyphens
     # (schema-aurora-pg). A mismatch here is silent: mark_step_* ignores an
     # unregistered phase name, so progress would simply never appear.
-    step = f"schema_{_SCHEMA_ENGINES[suffix]}"
+    engine = _SCHEMA_ENGINES[suffix]
+    step = f"schema_{engine}"
     # Resolve the version in Python, not via the LLM (ADR-026): picks up the v2
     # assignment when Reality Check consolidated, else v1.
     assignment_version = _effective_assignment_version(job_id, database_name)
+
+    from src.atx_orchestrator.core import (
+        IMPLEMENTED_SCHEMA_DESIGNERS,
+        _source_engine,
+        schema_no_design_notes,
+    )
+
+    # Implemented-designer skip: aurora_postgresql / aurora_mysql have no real
+    # designer (handler._dispatch_schema_agent writes a placeholder), so invoking
+    # their runtime only pays an AgentCore cold-start for a guaranteed non-design.
+    # Skip pre-dispatch, but emit the SAME note the post-dispatch path would have —
+    # importantly the same-family "no redesign required" note when the Aurora
+    # target matches the source. Runs before the routing skip so a same-family
+    # target reports "no redesign" rather than "no queries routed".
+    if engine not in IMPLEMENTED_SCHEMA_DESIGNERS:
+        src = _source_engine(_make_store(), job_id, database_name)
+        nd_notes, nd_warnings = schema_no_design_notes(engine, src, status="not_implemented")
+        detail = (nd_notes or nd_warnings or ["No schema designer for this engine."])[0]
+        logger.info(
+            "ATX: schema-design %s skipped pre-dispatch — no implemented designer for "
+            "%s (source=%s)",
+            suffix,
+            engine,
+            src or "unknown",
+        )
+        mark_step_skipped(step, detail)
+        no_designer: dict[str, object] = {
+            "status": "skipped",
+            "reason": "No implemented schema designer for this engine",
+            "target_type": engine,
+            "assignment_version": assignment_version,
+            "job_id": job_id,
+            "skipped_pre_dispatch": True,
+        }
+        if nd_notes:
+            no_designer["notes"] = nd_notes
+        if nd_warnings:
+            no_designer["warnings"] = nd_warnings
+        return json.dumps(no_designer)
+
+    # Pre-dispatch skip: if the effective assignment routes no in-scope query to
+    # this engine, there is nothing to design. Short-circuit before the A2A call so
+    # we don't pay an AgentCore runtime cold-start just for the subagent to write a
+    # "skipped" placeholder (mirrors handler.run_schema_design). This gate keys off
+    # query routing (assigned_engine), independent of the table-qualifier match the
+    # subagent-side skip uses.
+    #
+    # Fail-open: _engines_with_in_scope_queries returns an empty set when the
+    # assignment can't be read, so we only skip when the routed set was positively
+    # resolved AND this engine is absent from it; an empty set means "unknown" and
+    # we still dispatch.
+    routed = _engines_with_in_scope_queries(job_id, database_name, assignment_version)
+    if routed and engine not in routed:
+        logger.info(
+            "ATX: schema-design %s skipped pre-dispatch — no in-scope queries routed to "
+            "%s (assignment v%s)",
+            suffix,
+            engine,
+            assignment_version,
+        )
+        mark_step_skipped(step, "No queries routed to this engine.")
+        return json.dumps(
+            {
+                "status": "skipped",
+                "reason": "No queries or tables assigned to this engine",
+                "target_type": engine,
+                "assignment_version": assignment_version,
+                "job_id": job_id,
+                "skipped_pre_dispatch": True,
+                "notes": [f"{engine}: no queries routed to this engine; schema design skipped."],
+            }
+        )
+
     logger.info(
         "ATX: schema-design via A2A agent=%s job_id=%s db=%s assignment_version=%s",
         agent_id,
@@ -887,6 +965,9 @@ def _run_schema_design_via_a2a(
             "job_id": job_id,
             "database_name": database_name,
             "assignment_version": assignment_version,
+            # target_type selects the engine for the one consolidated schema agent
+            # (ADR-027). The subagent validates it against VALID_TARGET_TYPES.
+            "target_type": engine,
         }
     )
     # Flip the parent "schema" box to in-progress as soon as any engine's design

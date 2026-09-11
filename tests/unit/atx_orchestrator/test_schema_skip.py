@@ -9,6 +9,7 @@ assignment artifact.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from src.atx_orchestrator import tools
@@ -157,3 +158,243 @@ class TestSynthesisMarksSkips:
             tools.run_synthesis_via_a2a(job_id="job-1", database_name="discourse")
 
         mock_mark.assert_called_once_with("job-1", "discourse")
+
+
+# =============================================================================
+# _run_schema_design_via_a2a — pre-dispatch skip
+#
+# Skip engines with zero in-scope routed queries BEFORE the A2A call, so we don't
+# pay an AgentCore runtime cold-start just for the subagent to write a "skipped"
+# placeholder. Fail-open: an unresolved (empty) routed set means "unknown" and
+# must still dispatch.
+
+
+class TestSchemaDesignPreDispatchSkip:
+    def test_skips_engine_with_no_routed_queries_without_a2a(self) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"aurora_postgresql"},  # dynamodb absent -> skip
+            ),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running") as mock_running,
+        ):
+            out = tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()  # no A2A round-trip / runtime cold-start
+        mock_running.assert_not_called()  # engine sub-step never flipped to running
+        mock_skip.assert_called_once()
+        assert mock_skip.call_args.args[0] == "schema_dynamodb"
+        payload = json.loads(out)
+        assert payload["status"] == "skipped"
+        assert payload["skipped_pre_dispatch"] is True
+        assert payload["target_type"] == "dynamodb"
+        assert payload["assignment_version"] == 2
+
+    def test_dispatches_engine_with_routed_queries(self) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"dynamodb", "opensearch"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            out = tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
+
+        mock_invoke.assert_called_once()
+        mock_skip.assert_not_called()
+        assert json.loads(out) == {"status": "complete"}
+
+    def test_fail_open_dispatches_when_routed_set_unresolved(self) -> None:
+        # Empty set = "unknown" (assignment unreadable). Must NOT skip; dispatch.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._engines_with_in_scope_queries", return_value=set()),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
+
+        mock_invoke.assert_called_once()
+        mock_skip.assert_not_called()
+
+    def test_aurora_pg_suffix_maps_to_engine_name(self) -> None:
+        # Suffix aurora-pg maps to engine aurora_postgresql, which has no
+        # implemented designer, so it is skipped pre-dispatch; the plan step and
+        # payload use the engine name.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-pg", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        assert mock_skip.call_args.args[0] == "schema_aurora_postgresql"
+        assert json.loads(out)["target_type"] == "aurora_postgresql"
+
+
+# =============================================================================
+# _run_schema_design_via_a2a — implemented-designer skip
+#
+# aurora_postgresql / aurora_mysql have no real designer (handler writes a
+# placeholder), so the orchestrator skips them BEFORE the A2A call. The skip
+# runs ahead of the routing skip and emits the SAME customer-facing note the
+# post-dispatch path would have: a same-family Aurora target reports "no schema
+# design required", while a cross-family target gets a "not covered" warning.
+
+
+class TestSchemaDesignImplementedDesignerSkip:
+    def test_same_family_target_skipped_with_no_redesign_note(self) -> None:
+        # postgresql -> aurora_postgresql: same family, so the note says the
+        # existing schema carries over, not that queries were unrouted.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running") as mock_running,
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-pg", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        mock_running.assert_not_called()
+        assert mock_skip.call_args.args[0] == "schema_aurora_postgresql"
+        payload = json.loads(out)
+        assert payload["status"] == "skipped"
+        assert payload["skipped_pre_dispatch"] is True
+        assert payload["target_type"] == "aurora_postgresql"
+        assert "warnings" not in payload
+        assert any("no schema design required" in n for n in payload["notes"])
+
+    def test_not_covered_target_skipped_with_warning(self) -> None:
+        # postgresql -> aurora_mysql: cross-family, no designer, so this is a
+        # warning that the report does not cover the conversion (no note).
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-mysql", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        assert mock_skip.call_args.args[0] == "schema_aurora_mysql"
+        payload = json.loads(out)
+        assert payload["target_type"] == "aurora_mysql"
+        assert "notes" not in payload
+        assert any("not included in this report" in w for w in payload["warnings"])
+
+    def test_implemented_engine_not_skipped_by_designer_gate(self) -> None:
+        # dynamodb has a real designer, so the designer gate lets it through; with
+        # routed queries it dispatches normally.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"dynamodb"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            out = tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
+
+        mock_invoke.assert_called_once()
+        mock_skip.assert_not_called()
+        assert json.loads(out) == {"status": "complete"}
+
+    def test_designer_gate_runs_before_routing_skip(self) -> None:
+        # aurora-pg has queries routed to a DIFFERENT engine (dynamodb). The
+        # designer gate must fire first, so the result is the same-family "no
+        # redesign" note, not a "no queries routed" note. _engines_with_in_scope_
+        # queries must never be consulted for a non-implemented engine.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools._engines_with_in_scope_queries") as mock_routed,
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped") as mock_skip,
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-pg", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        mock_routed.assert_not_called()
+        assert mock_skip.call_args.args[0] == "schema_aurora_postgresql"
+        payload = json.loads(out)
+        assert any("no schema design required" in n for n in payload["notes"])
+
+
+# =============================================================================
+# _run_schema_design_via_a2a — consolidated `schema` agent dispatch (ADR-027)
+#
+# All six engine tools resolve to the one `schema` agent id, and the target
+# engine travels in the invocation payload as target_type rather than in the
+# agent id.
+
+
+class TestSchemaDesignConsolidatedDispatch:
+    def test_dispatch_uses_one_agent_id_and_payload_target_type(self) -> None:
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=3),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"opensearch"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            tools._run_schema_design_via_a2a("opensearch", "job-1", "discourse")
+
+        agent_id = mock_invoke.call_args.args[0]
+        message = json.loads(mock_invoke.call_args.args[1])
+        assert agent_id == f"{tools._AGENT_PREFIX}-schema"  # not ...-schema-opensearch
+        assert message["target_type"] == "opensearch"
+        assert message["assignment_version"] == 3
+        assert message["database_name"] == "discourse"
+
+    def test_aurora_pg_suffix_becomes_engine_target_type_in_payload(self) -> None:
+        # The hyphenated tool suffix (aurora-pg) maps to the engine identifier
+        # (aurora_postgresql) the subagent validates against. aurora has no
+        # implemented designer, so force dispatch by treating it as implemented
+        # is not possible; instead assert the mapping via the skip payload, which
+        # carries the same engine name the dispatch payload would.
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch("src.atx_orchestrator.tools._make_store", return_value=object()),
+            patch("src.atx_orchestrator.core._source_engine", return_value="postgresql"),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+        ):
+            out = tools._run_schema_design_via_a2a("aurora-pg", "job-1", "discourse")
+
+        mock_invoke.assert_not_called()
+        assert json.loads(out)["target_type"] == "aurora_postgresql"
