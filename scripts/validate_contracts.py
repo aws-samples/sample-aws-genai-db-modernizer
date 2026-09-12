@@ -144,19 +144,19 @@ def test_model_validation(model_name: str, model_class: type) -> tuple[bool, lis
         sample_data = {}
         for field_name, field_info in required_fields.items():
             # Provide dummy values based on type
-            if field_info.annotation == str:
+            if field_info.annotation is str:
                 sample_data[field_name] = "test"
-            elif field_info.annotation == int:
+            elif field_info.annotation is int:
                 sample_data[field_name] = 0
-            elif field_info.annotation == float:
+            elif field_info.annotation is float:
                 sample_data[field_name] = 0.0
-            elif field_info.annotation == bool:
+            elif field_info.annotation is bool:
                 sample_data[field_name] = False
-            elif field_info.annotation == dict or str(field_info.annotation).startswith(
+            elif field_info.annotation is dict or str(field_info.annotation).startswith(
                 "typing.Dict"
             ):
                 sample_data[field_name] = {}
-            elif field_info.annotation == list or str(field_info.annotation).startswith(
+            elif field_info.annotation is list or str(field_info.annotation).startswith(
                 "typing.List"
             ):
                 sample_data[field_name] = []

@@ -1,10 +1,12 @@
 """Schema-design absence is classified using the source engine.
 
-Upstream's ``run_schema_design`` dispatches on ``target_type`` alone. It has
-designers for dynamodb, documentdb, opensearch and elasticache; other targets
-take a ``case _:`` branch that writes ``status: "not_implemented"``. Because it
-never reads ``metadata.source_database.engine``, it cannot distinguish a target
-that needs no redesign from one this report does not cover.
+Upstream's ``run_schema_design`` dispatches on ``target_type`` alone. It now
+has designers for all six target engines: dynamodb, documentdb, opensearch,
+elasticache, aurora_postgresql and aurora_mysql. Regardless, a designer can
+still legitimately produce an empty design (e.g. no tables/queries assigned,
+or a same-family target needing no redesign) — upstream never reads
+``metadata.source_database.engine``, so on its own it cannot distinguish a
+target that needs no redesign from one this report does not cover.
 
 ``run_schema_design_core`` supplies that distinction. These tests pin the four
 branches and, importantly, which channel each lands in: ``notes`` for a normal
@@ -76,14 +78,22 @@ def _run(target: str, store: FakeStore) -> dict:
 
 
 class TestSameFamily:
-    """Source and target in one family: a normal outcome, not a warning."""
+    """Source and target in one family: a normal outcome, not a warning.
+
+    Both Aurora engines now have real designers (there is no remaining
+    "not_implemented" placeholder target), so the empty-design case exercised
+    here is a designer that legitimately ran and produced no
+    ``table_definitions`` — not an unimplemented-designer placeholder. The
+    same-family "no redesign required" note fires via this empty-design path
+    regardless of why the design came back empty.
+    """
 
     @pytest.mark.parametrize(
         ("source", "target"),
         [("postgresql", "aurora_postgresql"), ("mysql", "aurora_mysql")],
     )
     def test_reported_as_a_note_not_a_warning(self, source: str, target: str) -> None:
-        s = _run(target, _store(source, {"target_type": target, "status": "not_implemented"}))
+        s = _run(target, _store(source, {"target_type": target, "status": "completed"}))
         assert "warnings" not in s
         assert len(s["notes"]) == 1
         note = s["notes"][0]
@@ -93,20 +103,20 @@ class TestSameFamily:
     def test_status_from_upstream_is_relayed_not_rewritten(self) -> None:
         """We classify alongside upstream's value; we do not overwrite it."""
         s = _run(
-            "aurora_postgresql",
-            _store("postgresql", {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store("mysql", {"target_type": "aurora_mysql", "status": "completed"}),
         )
-        assert s["status"] == "not_implemented"
+        assert s["status"] == "completed"
 
 
 class TestHeterogeneousSource:
     """A conversion this report does not cover: the reader needs to act."""
 
-    @pytest.mark.parametrize("source", ["oracle", "sqlserver", "mysql"])
+    @pytest.mark.parametrize("source", ["oracle", "sqlserver", "postgresql"])
     def test_reported_as_a_warning_naming_the_source(self, source: str) -> None:
         s = _run(
-            "aurora_postgresql",
-            _store(source, {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store(source, {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         assert "notes" not in s
         assert len(s["warnings"]) == 1
@@ -118,8 +128,8 @@ class TestHeterogeneousSource:
     def test_wording_carries_no_fault_language(self) -> None:
         """These strings can reach the customer deliverable."""
         s = _run(
-            "aurora_postgresql",
-            _store("oracle", {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store("oracle", {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         w = s["warnings"][0].lower()
         for word in ("owed", "failed", "should have", "instead", "not yet", "gap", "placeholder"):
@@ -150,8 +160,8 @@ class TestMissingSourceEngine:
 
     def test_falls_back_to_a_warning_without_naming_an_engine(self) -> None:
         s = _run(
-            "aurora_postgresql",
-            _store(None, {"target_type": "aurora_postgresql", "status": "not_implemented"}),
+            "aurora_mysql",
+            _store(None, {"target_type": "aurora_mysql", "status": "not_implemented"}),
         )
         assert len(s["warnings"]) == 1
         assert "not covered here" in s["warnings"][0]

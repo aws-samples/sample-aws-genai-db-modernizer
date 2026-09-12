@@ -247,10 +247,12 @@ def build() -> dict[Path, str]:
         if placeholder not in shell:
             raise SystemExit(f"shell template is missing {placeholder}")
 
+    # Emit exactly one trailing newline so the generated files agree with
+    # pre-commit's end-of-file-fixer (otherwise the two fight and --check flaps).
     return {
-        CSS_OUT: f"/* {GENERATED_BANNER} */\n{css}",
-        JS_OUT: f"// {GENERATED_BANNER}\n{script}",
-        HTML_OUT: f"<!-- {GENERATED_BANNER} -->\n{shell}",
+        CSS_OUT: f"/* {GENERATED_BANNER} */\n{css}".rstrip("\n") + "\n",
+        JS_OUT: f"// {GENERATED_BANNER}\n{script}".rstrip("\n") + "\n",
+        HTML_OUT: f"<!-- {GENERATED_BANNER} -->\n{shell}".rstrip("\n") + "\n",
     }
 
 
