@@ -29,6 +29,7 @@ from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
 from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
+    get_step_id,
     mark_step_failed,
     mark_step_pending_human_input,
     mark_step_running,
@@ -36,6 +37,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     mark_step_succeeded,
     put_job_plan,
     register_steps,
+    register_steps_from_server,
 )
 from src.contracts.phase_models import Phase, PhaseStatus
 
@@ -353,10 +355,11 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
 
     Call this AFTER the assessment core (which includes Reality Check) and BEFORE
     any schema-design tool. It renders an engine-level summary of the effective
-    assignment (per engine: query count and the main rationale), publishes it to
-    the customer's Artifacts panel, and marks the review gate as awaiting the
-    customer. It does NOT generate the large per-query table — that is only built
-    if the customer asks to review in detail (``open_detailed_routing_review``).
+    assignment (per engine: query count and the main rationale) for the chat, and
+    marks the review gate as awaiting the customer. The summary is shown in chat,
+    NOT published as a downloadable artifact, and it does NOT generate the large
+    per-query table — that is only built if the customer asks to review in detail
+    (``open_detailed_routing_review``).
 
     Show the returned ``summary_markdown`` to the customer and ask them to choose:
       - continue with the recommendation as-is, or
@@ -392,31 +395,17 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     )
     summary_md = render_assignment_summary(assignment)
 
+    # The recommendation is a chat message the customer reads to decide "continue"
+    # vs "review in detail" — it is intentionally NOT published as a CUSTOMER_OUTPUT
+    # artifact, because that renders as a download in the WebApp and misleads the
+    # customer into thinking the review happens in a downloaded file. It is staged
+    # on the store only for provenance; the editable experience is the HITL table
+    # from ``open_detailed_routing_review``.
     summary_key = f"{database_name}/{job_id}/assignment/review/summary-v{version}.md"
     try:
         store.write_text(summary_key, summary_md, "text/markdown")
     except Exception:  # noqa: BLE001 - staging is best-effort; the markdown is returned regardless
         logger.warning("ATX: could not stage routing summary at %s", summary_key, exc_info=True)
-
-    # The summary is small and safe for the Artifacts panel (CUSTOMER_OUTPUT is the
-    # category the WebApp actually renders; the full editable table goes through the
-    # HITL transport, not the panel).
-    try:
-        from src.atx_orchestrator.runtime import artifacts as _artifacts
-
-        _artifacts.publish(
-            [
-                (
-                    summary_md.encode("utf-8"),
-                    "MARKDOWN",
-                    f"Query Routing Recommendation — {database_name}",
-                    "CUSTOMER_OUTPUT",
-                    f"routing-recommendation-v{version}.md",
-                )
-            ]
-        )
-    except Exception:  # noqa: BLE001 - the chat copy is the primary channel
-        logger.warning("ATX: could not publish routing summary", exc_info=True)
 
     mark_step_pending_human_input(
         "assignment_review", "Awaiting customer review of the routing recommendation."
@@ -484,6 +473,17 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     # Try the platform HITL editable-table transport first.
     from src.atx_orchestrator.runtime import hitl as _hitl
 
+    # Resolve the assignment_review plan step id so the HITL task renders UNDER
+    # that step in the WebApp. A task created without a stepId attaches to no step
+    # and never surfaces in the tasks panel (the customer sees nothing to open).
+    # The in-process registry is populated by declare_pipeline_plan; under
+    # raise-and-resume this may run in a fresh process, so fall back to reading the
+    # plan back from the server.
+    step_id = get_step_id("assignment_review")
+    if not step_id:
+        register_steps_from_server()
+        step_id = get_step_id("assignment_review")
+
     column_definitions, items = build_review_table(assignment)
     hitl_task_id = _hitl.raise_assignment_table(
         column_definitions=column_definitions,
@@ -494,6 +494,7 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
             "Edit the 'new engine' and 'in scope' cells to change routing, then submit. "
             "Leave a row unchanged to keep its current routing."
         ),
+        step_id=step_id,
         tag=f"assignment-review-v{version}",
     )
 

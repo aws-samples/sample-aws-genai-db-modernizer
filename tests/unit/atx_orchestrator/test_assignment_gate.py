@@ -227,6 +227,25 @@ class TestDetailedReviewHitl:
             "assigned_engine"
         ] == "opensearch"
 
+    def test_open_passes_step_id_so_task_renders_under_the_plan_step(self, store) -> None:
+        """The HITL task must be attached to the assignment_review plan step, or the
+        WebApp has no step to render it under and the customer sees nothing to open."""
+        from src.atx_orchestrator.runtime import job_plan
+
+        job_plan.register_steps({"assignment_review": "step-xyz"})
+        try:
+            with (
+                patch("src.atx_orchestrator.tools._make_store", return_value=store),
+                patch(
+                    "src.atx_orchestrator.runtime.hitl.raise_assignment_table",
+                    return_value="hitl-123",
+                ) as mock_raise,
+            ):
+                tools.open_detailed_routing_review(JOB, DB)
+            assert mock_raise.call_args.kwargs["step_id"] == "step-xyz"
+        finally:
+            job_plan.clear_step_registry()
+
     def test_finalize_waits_when_not_yet_submitted(self, store) -> None:
         with (
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
