@@ -605,14 +605,17 @@ def rebuild_graph(
         if analysis:
             populate_from_analysis(analysis, engine, graph_store)
 
-    # 4. Assignment (latest version)
-    assignment = None
-    for v in range(10, 0, -1):
-        assignment = _read_safe(f"{prefix}/assignment/v{v}/assignment.json")
+    # 4. Assignment (effective version — ADR-028 shared resolver)
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_effective_assignment_version,
+    )
+
+    assignment_version = resolve_effective_assignment_version(artifact_store, db_name, job_id)
+    if assignment_version > 0:
+        assignment = _read_safe(assignment_artifact_path(db_name, job_id, assignment_version))
         if assignment:
-            break
-    if assignment:
-        populate_from_assignment(assignment, graph_store)
+            populate_from_assignment(assignment, graph_store)
 
     # 5. Reality check
     reality = _read_safe(f"{prefix}/reality-check/output.json")

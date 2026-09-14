@@ -43,6 +43,13 @@ class TestDiscoverSubagentsRegistration:
             # tools; it runs Collect -> Triage -> Analyze -> Assign -> Reality
             # Check in one agent.
             "run_assessment_core_via_a2a",
+            # assignment-review gate (ADR-028 + HITL amendment): present the
+            # engine-level recommendation, optionally open the editable per-query
+            # table for detailed review, then finalize the customer's decision,
+            # between the assessment core and schema design.
+            "present_assignment_review",
+            "open_detailed_routing_review",
+            "finalize_assignment_review",
             # schema design, one per target engine, run in parallel between
             # the assessment core and synthesis
             "run_schema_design_dynamodb_via_a2a",
@@ -52,14 +59,6 @@ class TestDiscoverSubagentsRegistration:
             "run_schema_design_aurora_pg_via_a2a",
             "run_schema_design_aurora_mysql_via_a2a",
             "run_synthesis_via_a2a",
-            # in-process legacy paths — registered but the system prompt directs
-            # the LLM never to call them. run_schema_design and run_synthesis are
-            # superseded by the _via_a2a tools above; run_reality_check has no
-            # deployed subagent.
-            "run_reality_check",
-            "run_schema_design",
-            "run_synthesis",
-            "run_full_assessment",
             # status / read-only
             "get_job_status",
             "get_synthesis_report",

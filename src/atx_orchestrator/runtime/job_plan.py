@@ -379,3 +379,16 @@ def mark_step_skipped(phase_name: str, reason: str = "") -> None:
     if step_id:
         desc = reason[:200] if reason else None
         update_job_plan_step(step_id, STATUS_STOPPED, description=desc)
+
+
+def mark_step_pending_human_input(phase_name: str, detail: str = "") -> None:
+    """Mark a phase PENDING_HUMAN_INPUT by phase_name lookup. Safe if unregistered.
+
+    Used for the assignment-review gate (ADR-028): the panel shows the step waiting
+    on the customer while the orchestrator holds before schema design. ``detail``
+    rides along as the step description. Safe if unregistered.
+    """
+    step_id = get_step_id(phase_name)
+    if step_id:
+        desc = detail[:200] if detail else None
+        update_job_plan_step(step_id, STATUS_PENDING_HUMAN_INPUT, description=desc)

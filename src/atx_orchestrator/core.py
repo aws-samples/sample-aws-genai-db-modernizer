@@ -863,22 +863,15 @@ def run_assignment_core(
 def _resolve_assignment_version(store, job_id: str, database_name: str) -> int:
     """Return the highest existing assignment version under ``assignment/``, or 0.
 
-    Mirrors the REST API's ``_latest_assignment_version``: list the assignment
-    prefix, parse the ``vN`` directory component, and return the max. This is how
-    Schema Design and Synthesis pick up the consolidated assignment Reality Check
-    produced (v2) without the version being threaded through the LLM. Returns 0
-    when no versioned assignment exists.
+    Thin wrapper over the shared resolver (ADR-028) preserving this module's
+    ``(store, job_id, database_name)`` argument order for existing callers. This
+    is how Schema Design and Synthesis pick up the consolidated assignment
+    Reality Check produced (v2) without the version being threaded through the
+    LLM. Returns 0 when no versioned assignment exists.
     """
-    prefix = f"{database_name}/{job_id}/assignment/"
-    versions: list[int] = []
-    for key in store.list_prefix(prefix):
-        parts = key.replace(prefix, "").split("/")
-        if parts and parts[0].startswith("v"):
-            try:
-                versions.append(int(parts[0][1:]))
-            except ValueError:
-                continue
-    return max(versions) if versions else 0
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+    return resolve_effective_assignment_version(store, database_name, job_id)
 
 
 def run_reality_check_core(

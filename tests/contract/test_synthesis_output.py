@@ -136,7 +136,20 @@ class TestAssignmentSummary:
         s = AssignmentSummary(query_count=50, in_scope_count=50)
         assert s.version is None
         assert s.status is None
+        assert s.source is None
         assert s.co_dependency_groups == 0
+
+    def test_source_provenance_roundtrips(self):
+        # ADR-028: the report records which stage produced the assignment it used.
+        s = AssignmentSummary(
+            version=2,
+            status="customer_modified",
+            source="customer_gate",
+            query_count=10,
+            in_scope_count=9,
+        )
+        assert s.source == "customer_gate"
+        assert AssignmentSummary.model_validate(s.model_dump()).source == "customer_gate"
 
 
 class TestSynthesisOutputContract:

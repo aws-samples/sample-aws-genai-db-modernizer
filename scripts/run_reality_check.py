@@ -77,10 +77,17 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
     # If consolidation occurred, write a new assignment version
     assignment = result["assignment"]
     if result["consolidations"]:
+        from datetime import UTC, datetime
+
+        from src.contracts.assignment_models import AssignmentSource
+
         new_version = assignment_version + 1
         revised_assignment = {
             **assignment,
             "version": new_version,
+            "previous_version": assignment_version,
+            "source": AssignmentSource.REALITY_CHECK.value,
+            "timestamp": datetime.now(UTC).isoformat(),
             "query_assignments": result["revised_assignments"],
             "reality_check_applied": True,
         }

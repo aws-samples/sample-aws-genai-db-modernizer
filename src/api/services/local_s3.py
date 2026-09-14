@@ -190,22 +190,17 @@ class LocalS3Service:
         self, database_name: str, job_id: str
     ) -> dict | None:
         """Build a minimal reality-check response from assignment data."""
-        # Find latest assignment version
-        prefix = f"{database_name}/{job_id}/assignment/"
-        keys = self._store.list_prefix(prefix)
-        versions: list[int] = []
-        for key in keys:
-            parts = key.replace(prefix, "").split("/")
-            if parts and parts[0].startswith("v"):
-                try:
-                    versions.append(int(parts[0][1:]))
-                except ValueError:
-                    continue
-        if not versions:
+        # Find latest assignment version (ADR-028 shared resolver)
+        from src.storage.assignment_versioning import (
+            assignment_artifact_path,
+            resolve_effective_assignment_version,
+        )
+
+        latest = resolve_effective_assignment_version(self._store, database_name, job_id)
+        if latest == 0:
             return None
 
-        latest = max(versions)
-        path = f"{database_name}/{job_id}/assignment/v{latest}/assignment.json"
+        path = assignment_artifact_path(database_name, job_id, latest)
         try:
             assignment = self._store.read_json(path)
         except Exception:

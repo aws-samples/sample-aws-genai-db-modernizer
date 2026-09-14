@@ -29,13 +29,17 @@ from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
 from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
+    get_step_id,
     mark_step_failed,
+    mark_step_pending_human_input,
     mark_step_running,
     mark_step_skipped,
     mark_step_succeeded,
     put_job_plan,
     register_steps,
+    register_steps_from_server,
 )
+from src.contracts.phase_models import Phase, PhaseStatus
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +197,15 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "stepName": "Reality Check: Consolidate Engines",
             "description": "Eliminate redundant engines a surviving engine can absorb.",
         },
+        # Human gate (ADR-028): the customer reviews the query-to-engine routing and
+        # approves or edits it before the long schema-design phase runs. The
+        # orchestrator marks this PENDING_HUMAN_INPUT while it waits, then SUCCEEDED
+        # once the customer approves. Schema design is blocked until then.
+        {
+            "stepLabel": "assignment_review",
+            "stepName": "Review Query Routing",
+            "description": "Customer reviews and approves where each query is routed before design.",
+        },
         # Schema design, one per target engine. VISUAL GROUPING ONLY: the six
         # engines stay separate parallel LLM subagents (see ADR-025), but the
         # plan nests them as sub-steps under one "Design Target Schemas" box so
@@ -334,6 +347,358 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
 
     report = store.read_json(report_key)
     return json.dumps(report)
+
+
+@tool
+def present_assignment_review(job_id: str, database_name: str) -> str:
+    """Present the routing RECOMMENDATION and ask the customer how to proceed.
+
+    Call this AFTER the assessment core (which includes Reality Check) and BEFORE
+    any schema-design tool. It renders an engine-level summary of the effective
+    assignment (per engine: query count and the main rationale) for the chat, and
+    marks the review gate as awaiting the customer. The summary is shown in chat,
+    NOT published as a downloadable artifact, and it does NOT generate the large
+    per-query table — that is only built if the customer asks to review in detail
+    (``open_detailed_routing_review``).
+
+    Show the returned ``summary_markdown`` to the customer and ask them to choose:
+      - continue with the recommendation as-is, or
+      - review the full per-query routing in detail.
+
+    If they choose continue, call ``finalize_assignment_review`` (no edits) to
+    approve. If they choose detail, call ``open_detailed_routing_review``. Schema
+    design is blocked until ``finalize_assignment_review`` records approval.
+
+    Returns JSON with ``status`` ("awaiting_choice"), ``assignment_version``, and
+    ``summary_markdown`` (present this to the customer).
+    """
+    job_id = _platform_job_id(job_id)
+    from src.agents.referee.assignment_review import render_assignment_summary
+    from src.contracts.assignment_models import Assignment
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_effective_assignment_version,
+    )
+
+    store = _make_store()
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return json.dumps(
+            {
+                "error": "No assignment found to review. Run the assessment core first.",
+                "job_id": job_id,
+            }
+        )
+
+    assignment = Assignment.model_validate(
+        store.read_json(assignment_artifact_path(database_name, job_id, version))
+    )
+    summary_md = render_assignment_summary(assignment)
+
+    # The recommendation is a chat message the customer reads to decide "continue"
+    # vs "review in detail" — it is intentionally NOT published as a CUSTOMER_OUTPUT
+    # artifact, because that renders as a download in the WebApp and misleads the
+    # customer into thinking the review happens in a downloaded file. It is staged
+    # on the store only for provenance; the editable experience is the HITL table
+    # from ``open_detailed_routing_review``.
+    summary_key = f"{database_name}/{job_id}/assignment/review/summary-v{version}.md"
+    try:
+        store.write_text(summary_key, summary_md, "text/markdown")
+    except Exception:  # noqa: BLE001 - staging is best-effort; the markdown is returned regardless
+        logger.warning("ATX: could not stage routing summary at %s", summary_key, exc_info=True)
+
+    mark_step_pending_human_input(
+        "assignment_review", "Awaiting customer review of the routing recommendation."
+    )
+    _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+
+    return json.dumps(
+        {
+            "status": "awaiting_choice",
+            "job_id": job_id,
+            "assignment_version": version,
+            "summary_artifact": summary_key,
+            "summary_markdown": summary_md,
+        }
+    )
+
+
+@tool
+def open_detailed_routing_review(job_id: str, database_name: str) -> str:
+    """Open the full per-query routing table for detailed customer review/editing.
+
+    Call this ONLY when the customer, after seeing the recommendation from
+    ``present_assignment_review``, asks to review the routing in detail. It builds
+    the per-query table (query_id, access pattern, current engine, editable new
+    engine, editable in-scope, and rationale) and raises it as a BLOCKING
+    human-in-the-loop task the customer edits inline in the WebApp.
+
+    The task is BLOCKING: after it returns, STOP and end your turn. Do NOT call any
+    other tool. Tell the customer their editable routing table is open in the
+    WebApp and to submit it when done. When they submit, the platform re-invokes
+    you; then call ``finalize_assignment_review`` to read their edits and proceed.
+
+    If the human-in-the-loop transport is unavailable (e.g. running outside the
+    WebApp), this falls back to publishing the full editable table as markdown to
+    the Artifacts panel and returns it as ``review_markdown``; in that case present
+    it in chat, wait for the customer's edited rows, and pass them to
+    ``finalize_assignment_review(edited_markdown=...)``.
+
+    Returns JSON with ``status`` ("awaiting_review"), ``transport`` ("hitl" or
+    "chat"), ``assignment_version``, and — for the chat fallback —
+    ``review_markdown``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.agents.referee.assignment_review import build_review_table, render_assignment_review
+    from src.contracts.assignment_models import Assignment
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_effective_assignment_version,
+    )
+
+    store = _make_store()
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return json.dumps(
+            {
+                "error": "No assignment found to review. Run the assessment core first.",
+                "job_id": job_id,
+            }
+        )
+
+    assignment = Assignment.model_validate(
+        store.read_json(assignment_artifact_path(database_name, job_id, version))
+    )
+
+    # Try the platform HITL editable-table transport first.
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    # Resolve the assignment_review plan step id so the HITL task renders UNDER
+    # that step in the WebApp. A task created without a stepId attaches to no step
+    # and never surfaces in the tasks panel (the customer sees nothing to open).
+    # The in-process registry is populated by declare_pipeline_plan; under
+    # raise-and-resume this may run in a fresh process, so fall back to reading the
+    # plan back from the server.
+    step_id = get_step_id("assignment_review")
+    if not step_id:
+        register_steps_from_server()
+        step_id = get_step_id("assignment_review")
+
+    column_definitions, items = build_review_table(assignment)
+    hitl_task_id = _hitl.raise_assignment_table(
+        column_definitions=column_definitions,
+        items=items,
+        header=f"Query-to-engine routing — {database_name} (v{version})",
+        title="Review query-to-engine routing",
+        description=(
+            "Edit the 'new engine' and 'in scope' cells to change routing, then submit. "
+            "Leave a row unchanged to keep its current routing."
+        ),
+        step_id=step_id,
+        tag=f"assignment-review-v{version}",
+    )
+
+    if hitl_task_id:
+        _record_pending_hitl(store, database_name, job_id, hitl_task_id, version)
+        mark_step_pending_human_input(
+            "assignment_review", "Awaiting the customer's edited routing table."
+        )
+        _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+        return json.dumps(
+            {
+                "status": "awaiting_review",
+                "transport": "hitl",
+                "job_id": job_id,
+                "assignment_version": version,
+                "hitl_task_id": hitl_task_id,
+            }
+        )
+
+    # Fallback: HITL unavailable. Publish the full editable markdown table to the
+    # Artifacts panel and hand it to chat, preserving the original transport.
+    review_md = render_assignment_review(assignment)
+    review_key = f"{database_name}/{job_id}/assignment/review/v{version}.md"
+    try:
+        store.write_text(review_key, review_md, "text/markdown")
+    except Exception:  # noqa: BLE001 - staging is best-effort
+        logger.warning("ATX: could not stage review doc at %s", review_key, exc_info=True)
+    try:
+        from src.atx_orchestrator.runtime import artifacts as _artifacts
+
+        _artifacts.publish(
+            [
+                (
+                    review_md.encode("utf-8"),
+                    "MARKDOWN",
+                    f"Query Routing Review — {database_name}",
+                    "CUSTOMER_OUTPUT",
+                    f"assignment-review-v{version}.md",
+                )
+            ]
+        )
+    except Exception:  # noqa: BLE001 - the chat copy is the primary channel
+        logger.warning("ATX: could not publish review artifact", exc_info=True)
+
+    mark_step_pending_human_input(
+        "assignment_review", "Awaiting the customer's edited routing table (chat)."
+    )
+    _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+    return json.dumps(
+        {
+            "status": "awaiting_review",
+            "transport": "chat",
+            "job_id": job_id,
+            "assignment_version": version,
+            "review_artifact": review_key,
+            "review_markdown": review_md,
+        }
+    )
+
+
+@tool
+def finalize_assignment_review(job_id: str, database_name: str, edited_markdown: str = "") -> str:
+    """Apply the customer's routing decision and open the schema-design gate.
+
+    This is the single approval point of the review gate. It handles all three
+    ways the customer can respond:
+
+      - Continue with the recommendation (from ``present_assignment_review``):
+        call with an empty ``edited_markdown`` and no detailed review open. Nothing
+        is changed; the routing is approved as-is.
+      - Detailed review via the WebApp table (``open_detailed_routing_review``
+        returned transport "hitl"): call with an empty ``edited_markdown``. Their
+        submitted edits are read back from the human-in-the-loop task and applied.
+      - Detailed review via the chat fallback (transport "chat"): pass the
+        customer's edited marker-bounded markdown table as ``edited_markdown``.
+
+    Applies only the changed rows as a new customer_modified assignment version via
+    the shared override path, then records approval so schema design may run. On a
+    parse/validation failure nothing is applied and the gate stays closed.
+
+    Returns JSON with ``status`` ("approved" or "invalid_edit"), ``changed``,
+    ``applied_overrides``, and ``assignment_version`` (effective after any edit).
+    """
+    job_id = _platform_job_id(job_id)
+    from src.agents.referee.assignment_overrides import (
+        AssignmentOverrideError,
+        AssignmentValidationFailed,
+        NoAssignmentFound,
+        UnknownQuery,
+        apply_assignment_overrides,
+    )
+    from src.agents.referee.assignment_review import (
+        REVIEW_BEGIN_MARKER,
+        ReviewParseError,
+        diff_review_items,
+        diff_review_rows,
+        parse_assignment_review,
+    )
+    from src.contracts.assignment_models import Assignment, AssignmentSource
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_effective_assignment_version,
+    )
+
+    store = _make_store()
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return json.dumps(
+            {"error": "No assignment found. Run the assessment core first.", "job_id": job_id}
+        )
+
+    current = Assignment.model_validate(
+        store.read_json(assignment_artifact_path(database_name, job_id, version))
+    )
+
+    # Resolve overrides from whichever transport the customer used. Precedence:
+    #   1. explicit edited_markdown (chat fallback)
+    #   2. a pending HITL submission (WebApp editable table)
+    #   3. nothing -> approve as-is (customer continued with the recommendation)
+    overrides: list = []
+    stripped = (edited_markdown or "").strip()
+    pending = _read_pending_hitl(store, database_name, job_id)
+
+    try:
+        if stripped and REVIEW_BEGIN_MARKER in stripped:
+            overrides = diff_review_rows(current, parse_assignment_review(stripped))
+        elif pending and pending.get("hitl_task_id"):
+            from src.atx_orchestrator.runtime import hitl as _hitl
+
+            status, edited_items = _hitl.read_assignment_submission(pending["hitl_task_id"])
+            if status == "awaiting_submission":
+                return json.dumps(
+                    {
+                        "status": "awaiting_review",
+                        "job_id": job_id,
+                        "message": (
+                            "The customer has not submitted the routing table yet. Wait for "
+                            "their submission before finalizing."
+                        ),
+                    }
+                )
+            if status == "submitted" and edited_items is not None:
+                overrides = diff_review_items(current, edited_items)
+            # status == "unavailable": treat as approve-as-is (no readable edits).
+    except ReviewParseError as e:
+        return json.dumps(
+            {
+                "status": "invalid_edit",
+                "error": str(e),
+                "job_id": job_id,
+                "message": (
+                    "The edited routing could not be read. Ask the customer to correct it "
+                    "and resend; nothing was applied."
+                ),
+            }
+        )
+
+    changed = False
+    applied = 0
+    effective_version = version
+    if overrides:
+        try:
+            result = apply_assignment_overrides(
+                store,
+                database_name,
+                job_id,
+                overrides,
+                source=AssignmentSource.CUSTOMER_GATE,
+            )
+        except AssignmentValidationFailed as e:
+            return json.dumps(
+                {
+                    "status": "invalid_edit",
+                    "error": "; ".join(e.errors),
+                    "job_id": job_id,
+                    "message": (
+                        "The requested routing is not valid (for example an engine that "
+                        "did not analyze the query). Nothing was applied."
+                    ),
+                }
+            )
+        except (UnknownQuery, NoAssignmentFound, AssignmentOverrideError) as e:
+            return json.dumps({"status": "invalid_edit", "error": str(e), "job_id": job_id})
+        changed = True
+        applied = len(overrides)
+        effective_version = result.assignment.version
+
+    # Record approval — this opens the schema-design gate. Same .meta phase signal
+    # the web path checks, so no new approval artifact is introduced (ADR-028).
+    _mark_assignment_review(job_id, PhaseStatus.COMPLETED)
+    detail = "Customer approved query routing."
+    if changed:
+        detail += f" {applied} change(s) applied (assignment v{effective_version})."
+    mark_step_succeeded("assignment_review", detail)
+
+    return json.dumps(
+        {
+            "status": "approved",
+            "job_id": job_id,
+            "changed": changed,
+            "applied_overrides": applied,
+            "assignment_version": effective_version,
+        }
+    )
 
 
 # =============================================================================
@@ -860,6 +1225,101 @@ def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> No
         logger.info("ATX: marked schema_%s skipped (not selected)", engine)
 
 
+# =============================================================================
+# Assignment-review gate (ADR-028)
+#
+# The gate reuses the existing ASSIGNMENT_REVIEW phase in the .meta/{job}.json
+# progression as the approval signal — the same one the web path checks
+# (_is_phase_completed(job_id, "assignment_review")) — so no new approval
+# artifact is introduced. present_assignment_review marks it AWAITING_REVIEW;
+# finalize_assignment_review marks it COMPLETED; the schema-design tools refuse to
+# dispatch until it is COMPLETED (a hard interrupt between Reality Check and
+# Schema Design).
+
+
+def _pending_hitl_key(database_name: str, job_id: str) -> str:
+    """Store key for the review gate's pending HITL pointer (transport state)."""
+    return f"{database_name}/{job_id}/assignment/review/pending_hitl.json"
+
+
+def _record_pending_hitl(
+    store: object, database_name: str, job_id: str, hitl_task_id: str, version: int
+) -> None:
+    """Persist the HITL task the review gate is blocked on (best-effort).
+
+    Under the raise-and-resume model the task id is otherwise known only to the
+    turn that raised it; recording it lets a later turn (after the customer
+    submits and the platform re-invokes the orchestrator) read the submission
+    back. This is transport state, not an approval signal — approval remains the
+    ``.meta`` ASSIGNMENT_REVIEW phase (ADR-028), so no approval artifact is added.
+    """
+    try:
+        store.write_text(  # type: ignore[attr-defined]
+            _pending_hitl_key(database_name, job_id),
+            json.dumps({"hitl_task_id": hitl_task_id, "assignment_version": version}),
+            "application/json",
+        )
+    except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
+        logger.warning(
+            "ATX: could not record pending HITL task %s (job_id=%s)",
+            hitl_task_id,
+            job_id,
+            exc_info=True,
+        )
+
+
+def _read_pending_hitl(store: object, database_name: str, job_id: str) -> dict | None:
+    """Return the recorded pending HITL pointer, or None when absent/unreadable."""
+    key = _pending_hitl_key(database_name, job_id)
+    try:
+        if store.exists(key):  # type: ignore[attr-defined]
+            data = store.read_json(key)  # type: ignore[attr-defined]
+            return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - absence is normal (chat fallback / approve-as-is)
+        logger.debug("ATX: no pending HITL pointer for job_id=%s", job_id, exc_info=True)
+    return None
+
+
+def _mark_assignment_review(job_id: str, status: PhaseStatus) -> None:
+    """Set the ASSIGNMENT_REVIEW phase status in the .meta progression (best-effort).
+
+    Reuses LocalOrchestrator's progression persistence (store-backed .meta), which
+    is S3-safe: get_progression returns a fresh all-NOT_STARTED progression when
+    .meta is absent, so nothing is inferred by scanning a local dir.
+    """
+    try:
+        store = _make_store()
+        orch = _make_orchestrator(store)
+        progression = orch.get_progression(job_id)
+        orch._set_phase_status(progression, Phase.ASSIGNMENT_REVIEW, status)
+        orch._save_progression(progression)
+    except Exception:  # noqa: BLE001 - progress signal must not break the tool
+        logger.warning(
+            "ATX: could not set assignment_review=%s (job_id=%s)", status, job_id, exc_info=True
+        )
+
+
+def _assignment_review_approved(job_id: str) -> bool:
+    """True when the customer has approved the assignment review (phase COMPLETED).
+
+    Fail-closed: any error reading the progression is treated as NOT approved, so
+    the gate holds rather than letting schema design run on an unreviewed
+    assignment.
+    """
+    try:
+        store = _make_store()
+        orch = _make_orchestrator(store)
+        progression = orch.get_progression(job_id)
+        return bool(progression.phases[Phase.ASSIGNMENT_REVIEW].status == PhaseStatus.COMPLETED)
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning(
+            "ATX: could not read assignment_review phase (job_id=%s); treating as NOT approved",
+            job_id,
+            exc_info=True,
+        )
+        return False
+
+
 def _run_schema_design_via_a2a(
     suffix: str,
     job_id: str,
@@ -867,6 +1327,29 @@ def _run_schema_design_via_a2a(
 ) -> str:
     """Shared body for the six schema-design A2A tools."""
     job_id = _platform_job_id(job_id)
+    # Hard interrupt (ADR-028): schema design must not run until the customer has
+    # approved the routing at the assignment-review gate. Refuse before any state
+    # change or dispatch; the orchestrator calls present_assignment_review then
+    # finalize_assignment_review (which records approval) first.
+    if not _assignment_review_approved(job_id):
+        logger.info(
+            "ATX: schema-design %s blocked — assignment review not approved (job_id=%s)",
+            suffix,
+            job_id,
+        )
+        return json.dumps(
+            {
+                "status": "blocked",
+                "reason": "awaiting_assignment_review_approval",
+                "job_id": job_id,
+                "message": (
+                    "Schema design is gated on the customer approving the query-to-engine "
+                    "routing. Call present_assignment_review, share the recommendation with "
+                    "the customer, and call finalize_assignment_review once they approve "
+                    "(directly, or after open_detailed_routing_review) before designing schemas."
+                ),
+            }
+        )
     # One consolidated `schema` agent serves every engine (ADR-027); the target
     # engine travels in the invocation payload as target_type, not in the agent
     # id. The orchestrator still invokes once per engine, concurrently.

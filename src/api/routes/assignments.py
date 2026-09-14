@@ -5,19 +5,19 @@ Requirements: 14.1, 14.2, 3.2
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.agents.referee.assignment_validator import AssignmentValidator
-from src.contracts.assignment_models import (
-    Assignment,
-    AssignmentStatus,
-    QueryAssignment,
-    ValidationResult,
+from src.agents.referee.assignment_overrides import (
+    AssignmentValidationFailed,
+    NoAssignmentFound,
+    QueryOverrideInput,
+    UnknownQuery,
+    apply_assignment_overrides,
 )
+from src.contracts.assignment_models import Assignment, AssignmentSource, ValidationResult
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import resolve_effective_assignment_version
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assignments"])
 
@@ -81,19 +81,8 @@ class AssignmentResponse(BaseModel):
 
 
 def _latest_assignment_version(store: ArtifactStore, db: str, job_id: str) -> int:
-    """Find the latest assignment version by listing versioned prefixes."""
-    prefix = f"{db}/{job_id}/assignment/"
-    keys = store.list_prefix(prefix)
-    versions: list[int] = []
-    for key in keys:
-        # keys look like: db/job/assignment/v3/assignment.json
-        parts = key.replace(prefix, "").split("/")
-        if parts and parts[0].startswith("v"):
-            try:
-                versions.append(int(parts[0][1:]))
-            except ValueError:
-                continue
-    return max(versions) if versions else 0
+    """Find the latest assignment version (0 when none). ADR-028 shared resolver."""
+    return resolve_effective_assignment_version(store, db, job_id)
 
 
 def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -> Assignment:
@@ -101,28 +90,6 @@ def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -
     path = f"{db}/{job_id}/assignment/v{version}/assignment.json"
     data = store.read_json(path)
     return Assignment.model_validate(data)
-
-
-def _read_collector_output(store: ArtifactStore, db: str, job_id: str) -> dict:
-    return store.read_json(f"{db}/{job_id}/collector/output.json")
-
-
-def _read_analysis_outputs(store: ArtifactStore, db: str, job_id: str) -> dict[str, dict]:
-    """Read all analysis outputs by listing the analysis-* prefixes."""
-    prefix = f"{db}/{job_id}/"
-    keys = store.list_prefix(prefix)
-    engines: set[str] = set()
-    for key in keys:
-        relative = key.replace(prefix, "")
-        if relative.startswith("analysis-"):
-            engine = relative.split("/")[0].replace("analysis-", "")
-            engines.add(engine)
-    outputs: dict[str, dict] = {}
-    for engine in engines:
-        path = f"{db}/{job_id}/analysis-{engine}/analysis.json"
-        if store.exists(path):
-            outputs[engine] = store.read_json(path)
-    return outputs
 
 
 # ---------------------------------------------------------------------------
@@ -153,105 +120,50 @@ async def put_assignments(
 ):
     """Accept overrides or scope narrowing.
 
-    Reads the current assignment, applies overrides, validates, writes a new
-    versioned artifact, and returns validation warnings.
+    Delegates to the shared ``apply_assignment_overrides`` helper (ADR-028) so the
+    web route and the ATX review gate write byte-identical artifacts, then maps
+    the helper's domain errors to HTTP status codes.
     Returns HTTP 422 for hard errors (e.g. query assigned to unanalyzed engine).
     """
     store = _require_store()
 
-    # Read current assignment
-    current_version = _latest_assignment_version(store, database_name, job_id)
-    if current_version == 0:
-        raise HTTPException(status_code=404, detail="No assignment artifact found to override")
+    overrides = [
+        QueryOverrideInput(
+            query_id=o.query_id,
+            assigned_engine=o.assigned_engine,
+            in_scope=o.in_scope,
+        )
+        for o in body.overrides
+    ]
+    exclude_tables = body.scope.exclude_tables if body.scope else None
 
-    current = _read_assignment(store, database_name, job_id, current_version)
-
-    # Build lookup for quick access
-    qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
-
-    # Apply per-query overrides
-    for override in body.overrides:
-        qa = qa_map.get(override.query_id)
-        if qa is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Query {override.query_id} not found in current assignment",
-            )
-        if override.assigned_engine is not None:
-            qa.assigned_engine = override.assigned_engine
-            qa.customer_override = True
-        if override.in_scope is not None:
-            qa.in_scope = override.in_scope
-
-    # Apply table-level scope narrowing
-    scope_warnings: list[str] = []
-    if body.scope and body.scope.exclude_tables:
-        excluded_tables = set(body.scope.exclude_tables)
-        for qa in qa_map.values():
-            tables = set(qa.source_tables)
-            if tables and tables.issubset(excluded_tables):
-                # All tables are excluded → mark query out-of-scope
-                qa.in_scope = False
-            elif tables & excluded_tables:
-                # Query accesses both in-scope and out-of-scope tables
-                scope_warnings.append(
-                    f"WARNING [LOW]: Query {qa.query_id} accesses both "
-                    f"in-scope and excluded tables "
-                    f"({sorted(tables & excluded_tables)}). "
-                    f"Keeping query in scope."
-                )
-
-    # Build new assignment
-    new_version = current_version + 1
-    new_assignment = current.model_copy(
-        update={
-            "version": new_version,
-            "status": AssignmentStatus.CUSTOMER_MODIFIED,
-            "timestamp": datetime.now(UTC),
-            "query_assignments": list(qa_map.values()),
-            "previous_version": current_version,
-        }
-    )
-
-    # Validate
-    collector_output = _read_collector_output(store, database_name, job_id)
-    analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
-    validator = AssignmentValidator()
-    validation = validator.validate(new_assignment, collector_output, analysis_outputs)
-
-    # Hard errors → 422
-    if not validation.valid:
+    try:
+        result = apply_assignment_overrides(
+            store,
+            database_name,
+            job_id,
+            overrides,
+            exclude_tables,
+            source=AssignmentSource.CUSTOMER_GATE,
+        )
+    except NoAssignmentFound:
+        raise HTTPException(
+            status_code=404, detail="No assignment artifact found to override"
+        ) from None
+    except UnknownQuery as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except AssignmentValidationFailed as exc:
         raise HTTPException(
             status_code=422,
             detail={
                 "message": "Assignment validation failed with hard errors",
-                "errors": validation.errors,
-                "warnings": validation.warnings,
+                "errors": exc.errors,
+                "warnings": exc.warnings,
             },
-        )
-
-    # Persist warnings on the assignment (include scope warnings)
-    all_warnings = scope_warnings + validation.warnings
-    new_assignment.validation_warnings = all_warnings
-
-    # Detect engines with zero in-scope queries (will be SKIPPED in schema design)
-    engine_in_scope_counts: dict[str, int] = {}
-    for qa in new_assignment.query_assignments:
-        if qa.in_scope:
-            engine_in_scope_counts.setdefault(qa.assigned_engine, 0)
-            engine_in_scope_counts[qa.assigned_engine] = (
-                engine_in_scope_counts[qa.assigned_engine] + 1
-            )
-    skipped_engines = [
-        engine
-        for engine in {qa.assigned_engine for qa in new_assignment.query_assignments}
-        if engine_in_scope_counts.get(engine, 0) == 0
-    ]
-
-    # Write new versioned artifact
-    path = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
-    store.write_json(path, new_assignment.model_dump(mode="json"))
+        ) from None
 
     return AssignmentResponse(
-        assignment=new_assignment, validation=validation, skipped_engines=skipped_engines
+        assignment=result.assignment,
+        validation=result.validation,
+        skipped_engines=result.skipped_engines,
     )

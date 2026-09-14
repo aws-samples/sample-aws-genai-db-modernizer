@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.contracts.assignment_models import (
     Assignment,
+    AssignmentSource,
     AssignmentStatus,
     QueryAssignment,
     TableAssignment,
@@ -214,6 +215,7 @@ class AssignmentResolver:
             job_id=collector_output.get("job_id", "unknown"),
             version=1,
             status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
             timestamp=datetime.now(tz=UTC),
             query_assignments=query_assignments,
             table_assignments=table_assignments,

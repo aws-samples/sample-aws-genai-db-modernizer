@@ -99,6 +99,7 @@ def run_synthesis_deterministic(
         assignment_summary = {
             "version": data.assignment.get("version"),
             "status": data.assignment.get("status"),
+            "source": data.assignment.get("source"),
             "query_count": len(data.assignment.get("query_assignments", [])),
             "in_scope_count": sum(
                 1 for qa in data.assignment.get("query_assignments", []) if qa.get("in_scope", True)
