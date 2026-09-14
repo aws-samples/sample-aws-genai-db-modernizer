@@ -780,7 +780,11 @@ def slide_summary(prs, f):
         head_h=0.32,
         emphasis=emph,
     )
-    kept = [e for e in f["engines"] if e["role"] != "Migration target"]
+    # Only engines that actually keep serving workload. Tested positively against the
+    # two roles that do, not negatively against "Migration target": an "Evaluated"
+    # engine (assignment routed it nothing) also fails that negative test, and naming
+    # it here claimed it keeps a share of the workload it does not carry.
+    kept = [e for e in f["engines"] if e["role"] in ("Retained", "Cache layer")]
     kept_pct = sum(e.get("workload") or 0 for e in kept)
     footer_note(
         s,
