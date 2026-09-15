@@ -199,3 +199,33 @@ def apply_assignment_overrides(
         skipped_engines=skipped_engines,
         written_path=new_path,
     )
+
+
+def mark_assignment_customer_approved(
+    store: _Store, database_name: str, job_id: str
+) -> Assignment | None:
+    """Stamp the effective assignment's status as ``CUSTOMER_APPROVED`` in place.
+
+    Used when the customer approves the routing **as-is** (no edits) at the review
+    gate. The gate's approval signal remains the ``.meta`` ASSIGNMENT_REVIEW phase;
+    this additionally records approval on the artifact itself so it is
+    self-describing (an auditor reading ``assignment/v<N>/assignment.json`` sees
+    ``customer_approved``). It does NOT write a new version — the content is
+    unchanged, so append-only lineage is preserved and downstream staleness
+    detection (which keys on the version number) is unaffected.
+
+    Idempotent and narrow: a ``CUSTOMER_MODIFIED`` artifact is left untouched (a
+    modification already implies approval-with-changes), and re-stamping an
+    already-approved artifact is a no-op. Returns the (possibly unchanged)
+    effective assignment, or ``None`` when no assignment exists.
+    """
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return None
+    path = assignment_artifact_path(database_name, job_id, version)
+    current = Assignment.model_validate(store.read_json(path))
+    if current.status in (AssignmentStatus.CUSTOMER_MODIFIED, AssignmentStatus.CUSTOMER_APPROVED):
+        return current
+    updated = current.model_copy(update={"status": AssignmentStatus.CUSTOMER_APPROVED})
+    store.write_json(path, updated.model_dump(mode="json"))
+    return updated

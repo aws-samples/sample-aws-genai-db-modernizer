@@ -3,6 +3,12 @@ Synthesis Output Contract
 
 Data models for the synthesis agent output: the final modernization report
 with ranking, architecture, table mappings, query groups, TCO, and risks.
+
+Version History:
+- 1.0: Initial synthesis output contract.
+- 1.1 (2026-08-27): Added optional ``source`` provenance to ``AssignmentSummary``
+  so a consumer can see which pipeline stage produced the consumed assignment
+  version (ADR-028). Backward compatible — ``source`` defaults to ``None``.
 """
 
 from datetime import datetime
@@ -121,7 +127,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.0",
+        default="1.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

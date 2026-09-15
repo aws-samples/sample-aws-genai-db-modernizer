@@ -585,6 +585,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         NoAssignmentFound,
         UnknownQuery,
         apply_assignment_overrides,
+        mark_assignment_customer_approved,
     )
     from src.agents.referee.assignment_review import (
         REVIEW_BEGIN_MARKER,
@@ -696,6 +697,19 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         changed = True
         applied = len(overrides)
         effective_version = result.assignment.version
+    else:
+        # Approved as-is (no edits): record approval on the artifact too, by
+        # stamping the effective assignment CUSTOMER_APPROVED in place. No new
+        # version is written, so staleness detection is unaffected. Best-effort —
+        # the .meta phase below is the authoritative gate signal.
+        try:
+            mark_assignment_customer_approved(store, database_name, job_id)
+        except Exception:  # noqa: BLE001 - artifact stamp must not fail the gate
+            logger.warning(
+                "ATX: could not stamp assignment CUSTOMER_APPROVED (job_id=%s)",
+                job_id,
+                exc_info=True,
+            )
 
     # Record approval — this opens the schema-design gate. Same .meta phase signal
     # the web path checks, so no new approval artifact is introduced (ADR-028).

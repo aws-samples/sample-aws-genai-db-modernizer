@@ -115,6 +115,11 @@ class TestApproveAsIs:
             assert tools._assignment_review_approved(JOB) is True
         # No v2 written on approve-as-is.
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        # Approval is also stamped on the effective artifact (in place, no new version).
+        assert (
+            store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")["status"]
+            == "customer_approved"
+        )
 
     def test_gate_opens_after_approval(self, store) -> None:
         with (
