@@ -396,11 +396,15 @@ def run_schema_split(
 
     # Filter by assignment
     queries = collector_output.get("queries", {}).get("query_patterns", [])
+    co_dependency_groups: list[list[str]] | None = None
     if assignment_version > 0:
         assignment_key = (
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
         )
         assignment = store.read_json(assignment_key)
+        # Carry the assignment's co-dependency groups into clustering so
+        # JOIN-related queries are designed together (ADR-027 amendment).
+        co_dependency_groups = assignment.get("co_dependency_groups") or None
         collector_output = filter_collector_for_assignment(
             collector_output, assignment, target_type
         )
@@ -431,6 +435,7 @@ def run_schema_split(
         queries=queries,
         store=store,
         schema_version=artifact_version,
+        co_dependency_groups=co_dependency_groups,
     )
 
     elapsed = time.time() - start_time
@@ -507,6 +512,13 @@ def run_schema_merge(
     print(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
 
 
+# Engines that always design single-pass and never split into groups. Aurora's
+# output is a single ``generated_ddl`` script plus table definitions that do not
+# merge from independently designed groups, and a relational engine does not gain
+# from query grouping the way a remodeling target does (ADR-027 amendment).
+_NON_GROUPED_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_mysql"})
+
+
 def run_schema_design_auto(
     job_id: str,
     database_name: str,
@@ -518,11 +530,25 @@ def run_schema_design_auto(
 
     If the number of in-scope queries exceeds MAX_GROUP_SIZE, splits into groups,
     runs schema design per group (in parallel), then merges. Otherwise falls back
-    to the standard single-call path.
+    to the standard single-call path. Aurora engines always run single-pass (see
+    ``_NON_GROUPED_ENGINES``).
 
     This is the recommended entry point for local and orchestrator usage.
     """
     from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+
+    # Aurora stays single-pass (ADR-027 amendment): its generated_ddl script does
+    # not merge across groups and a relational engine gains nothing from grouping.
+    if target_type in _NON_GROUPED_ENGINES:
+        print(f"[schema-design/{target_type}] Aurora engine — running single-pass (no grouping)")
+        run_schema_design(
+            job_id,
+            database_name,
+            target_type,
+            store,
+            assignment_version=assignment_version,
+        )
+        return
 
     # Derive artifact version from assignment_version (synthesis reads v{N}/)
     artifact_version = assignment_version if assignment_version > 0 else 1

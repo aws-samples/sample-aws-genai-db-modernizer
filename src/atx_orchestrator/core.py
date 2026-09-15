@@ -1494,9 +1494,13 @@ def run_schema_design_core(
         assignment_version,
     )
 
-    from src.agents.schema_design.handler import run_schema_design
+    # Group related queries and design them together (ADR-027 amendment). auto
+    # splits an engine's queries into affinity groups (FK + aggregate + co-access
+    # + co-dependency JOINs), designs each group, and merges; it falls back to a
+    # single pass at or below MAX_GROUP_SIZE and forces single-pass for Aurora.
+    from src.agents.schema_design.handler import run_schema_design_auto
 
-    run_schema_design(
+    run_schema_design_auto(
         job_id=job_id,
         database_name=database_name,
         target_type=target_type,
