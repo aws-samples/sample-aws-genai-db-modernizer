@@ -127,21 +127,54 @@ class TestReadAssignmentSubmission:
         assert status == "submitted"
         assert items == rows
 
-    def test_human_artifact_without_items_is_unavailable(self) -> None:
+    def test_no_human_artifact_is_awaiting(self) -> None:
         client = _StubClient(
-            get_hitl_return={"hitlTask": {"hitlTaskStatus": "SUBMITTED", "humanArtifact": {}}}
+            get_hitl_return={"hitlTask": {"hitlTaskStatus": "IN_PROGRESS", "humanArtifact": {}}}
         )
         with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
             assert hitl.read_assignment_submission("task-1") == ("awaiting_submission", None)
 
+    def test_submitted_but_unparseable_is_unreadable_not_dropped(self) -> None:
+        # A submission we cannot parse must surface as "unreadable" (never as an
+        # empty "submitted") so the caller does not silently drop the edits.
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"content": {"unexpected": "shape"}},
+                }
+            }
+        )
+        with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+            assert hitl.read_assignment_submission("task-1") == ("unreadable", None)
+
 
 class TestExtractItems:
-    def test_various_shapes(self) -> None:
-        rows = [{"query_id": "q1"}]
+    ROW = {"query_id": "q1", "new_engine": "dynamodb", "in_scope": "yes"}
+
+    def test_recognized_shapes(self) -> None:
+        rows = [self.ROW]
+        # bare list, common wrapper keys, nested properties, JSON string
         assert hitl._extract_items(rows) == rows
         assert hitl._extract_items({"items": rows}) == rows
+        assert hitl._extract_items({"rows": rows}) == rows
+        assert hitl._extract_items({"tableData": rows}) == rows
         assert hitl._extract_items({"properties": {"items": rows}}) == rows
-        assert hitl._extract_items('{"items": [{"query_id": "q1"}]}') == rows
+        assert hitl._extract_items({"result": {"data": rows}}) == rows  # arbitrary nesting
+        assert hitl._extract_items('{"items": [{"query_id": "q1", "new_engine": "dynamodb"}]}')
+
+    def test_dict_keyed_by_row_id(self) -> None:
+        # Some components hand back a map of row-id -> row rather than a list.
+        payload = {"q1": self.ROW, "q2": {"id": "q2", "in_scope": "no"}}
+        found = hitl._extract_items(payload)
+        assert found is not None and len(found) == 2
+
+    def test_id_plus_value_required(self) -> None:
+        # A list of dicts that are not rows (no value key) is not matched.
+        assert hitl._extract_items([{"query_id": "q1"}]) is None
+        assert hitl._extract_items([{"header": "x", "field": "y"}]) is None
+
+    def test_non_row_payloads(self) -> None:
         assert hitl._extract_items(None) is None
         assert hitl._extract_items("not json") is None
         assert hitl._extract_items({"no_items": 1}) is None

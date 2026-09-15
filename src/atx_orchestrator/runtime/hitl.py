@@ -197,34 +197,102 @@ def _download_artifact_json(client: Any, request_context: dict[str, Any], artifa
         return None
 
 
-def _extract_items(payload: Any) -> list[dict[str, Any]] | None:
-    """Pull the edited rows out of a HITL submission payload, tolerantly.
+# Keys that anchor a routing row to a query, and keys that carry an editable
+# value. A submitted row is recognized by having at least one of each, so the
+# recursive search below can find the row list under whatever wrapper key the
+# platform's TableComponent submission uses, without matching columnDefinitions
+# or other incidental lists of dicts.
+_ROW_ID_KEYS = ("query_id", "queryId", "id", "rowId")
+_ROW_VALUE_KEYS = ("new_engine", "newEngine", "in_scope", "inScope", "current_engine")
 
-    A submitted ``TableComponent`` may hand back the rows in a few shapes:
-    the bare list, ``{"items": [...]}``, or ``{"properties": {"items": [...]}}``.
-    A JSON string is decoded first. Returns the list of row dicts, or ``None``.
-    """
-    if payload is None:
-        return None
+
+def _coerce_json(payload: Any) -> Any:
+    """Decode bytes/str payloads to Python objects; pass objects through."""
     if isinstance(payload, (bytes, bytearray)):
         payload = payload.decode("utf-8", errors="replace")
     if isinstance(payload, str):
         try:
-            payload = json.loads(payload)
+            return json.loads(payload)
         except (ValueError, TypeError):
             return None
-    rows: Any
-    if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, dict):
-        rows = payload.get("items")
-        if rows is None:
-            rows = (payload.get("properties") or {}).get("items")
-    else:
+    return payload
+
+
+def _looks_like_row(value: Any) -> bool:
+    """True if ``value`` looks like an edited routing row (anchor + value key)."""
+    if not isinstance(value, dict):
+        return False
+    keys = set(value.keys())
+    return any(k in keys for k in _ROW_ID_KEYS) and any(k in keys for k in _ROW_VALUE_KEYS)
+
+
+def _find_rows(node: Any, depth: int = 0) -> list[dict[str, Any]] | None:
+    """Recursively locate the list of routing-row dicts in a submission payload.
+
+    Handles the shapes a ``TableComponent`` submission can take without us knowing
+    the exact wrapper key: a bare list of rows, ``{"items"|"rows"|...: [...]}``,
+    ``{"properties": {"items": [...]}}``, a dict keyed by row id, or any nested
+    combination. Returns the first list of row-like dicts found, or ``None``.
+    """
+    if depth > 6 or node is None:
         return None
-    if not isinstance(rows, list):
+    if isinstance(node, list):
+        rows = [x for x in node if _looks_like_row(x)]
+        if rows:
+            return rows
+        for element in node:
+            found = _find_rows(element, depth + 1)
+            if found:
+                return found
         return None
-    return [r for r in rows if isinstance(r, dict)]
+    if isinstance(node, dict):
+        # A dict keyed by row id, whose values are the rows.
+        values = list(node.values())
+        row_values = [v for v in values if _looks_like_row(v)]
+        if row_values and len(row_values) >= max(1, len(values) // 2):
+            return row_values
+        # Common container keys first, then any nested value.
+        for key in ("items", "rows", "tableData", "data", "editedItems", "value", "properties"):
+            if key in node:
+                found = _find_rows(node[key], depth + 1)
+                if found:
+                    return found
+        for value in values:
+            found = _find_rows(value, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _extract_items(payload: Any) -> list[dict[str, Any]] | None:
+    """Pull the edited routing rows out of a HITL submission payload, tolerantly.
+
+    Decodes a JSON string/bytes first, then recursively finds the row list under
+    whatever wrapper key the platform uses. Returns the list of row dicts, or
+    ``None`` when no row-like list is present.
+    """
+    return _find_rows(_coerce_json(payload))
+
+
+def _describe_shape(payload: Any, limit: int = 800) -> str:
+    """A compact, log-safe description of an unparseable submission payload.
+
+    Surfaces the structure (type + top-level keys, or a truncated repr) so a shape
+    we do not yet parse can be diagnosed from the logs rather than guessed at.
+    """
+    obj = _coerce_json(payload)
+    if isinstance(obj, dict):
+        keys = list(obj.keys())
+        return f"dict(keys={keys[:25]})"
+    if isinstance(obj, list):
+        head = obj[0] if obj else None
+        head_desc = (
+            f"dict(keys={list(head.keys())[:25]})"
+            if isinstance(head, dict)
+            else type(head).__name__
+        )
+        return f"list(len={len(obj)}, first={head_desc})"
+    return repr(obj)[:limit]
 
 
 def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, Any]] | None]:
@@ -233,10 +301,13 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
     ``status`` is a coarse label the caller can branch on:
 
     * ``"submitted"`` — the customer submitted; ``edited_items`` is the row list
-      (possibly empty if the submission carried no rows).
+      (possibly empty if the submission genuinely carried no rows).
     * ``"awaiting_submission"`` — the task exists but has no human response yet.
-    * ``"unavailable"`` — outside the ATX runtime, or the task/response could not
-      be read; ``edited_items`` is ``None``.
+    * ``"unreadable"`` — the customer submitted (humanArtifact present) but the
+      rows could not be parsed out of the payload. The caller MUST NOT treat this
+      as "no changes"; the edits are there but we failed to read them.
+    * ``"unavailable"`` — outside the ATX runtime, or the task could not be
+      fetched at all. ``edited_items`` is ``None`` for all non-submitted states.
 
     The submission is read from ``hitlTask.humanArtifact``: inline ``content`` is
     preferred (no download), otherwise it is fetched by ``artifactId``. Both the
@@ -262,23 +333,28 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
     # A submission is signalled by the presence of a humanArtifact. A closed task
     # keeps its humanArtifact, so terminal status alone is not "just submitted";
     # the caller's .meta COMPLETED flag guards against re-applying a processed one.
-    if not human and status not in _TERMINAL_STATUSES:
-        return "awaiting_submission", None
     if not human:
         return "awaiting_submission", None
 
     inline = human.get("content")
     items = _extract_items(inline)
+    downloaded: Any = None
     if items is None:
         artifact_id = human.get("artifactId")
         if artifact_id:
-            items = _extract_items(_download_artifact_json(client, request_context, artifact_id))
+            downloaded = _download_artifact_json(client, request_context, artifact_id)
+            items = _extract_items(downloaded)
 
     if items is None:
+        # The customer DID submit (humanArtifact present) but we could not locate
+        # the rows. Log the actual payload shape so it can be parsed correctly,
+        # and report "unreadable" so the caller does not silently drop the edits.
         logger.warning(
-            "HITL task %s has a humanArtifact but no readable items (status=%s)",
+            "HITL task %s submitted (status=%s) but rows unreadable. " "inline=%s downloaded=%s",
             hitl_task_id,
             status,
+            _describe_shape(inline) if inline is not None else "None",
+            _describe_shape(downloaded) if downloaded is not None else "None",
         )
-        return "unavailable", None
+        return "unreadable", None
     return "submitted", items

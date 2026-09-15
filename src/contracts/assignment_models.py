@@ -7,6 +7,11 @@ and validation results.
 
 Version History:
 - 1.0 (2026-04-01): Initial version — Phase 1A assignment models
+- 1.1 (2026-08-27): Added optional ``AssignmentSource`` and the ``source`` field
+  on ``Assignment`` for version provenance; first real use of
+  ``AssignmentStatus.CUSTOMER_APPROVED`` (customer approved routing as-is at the
+  review gate). Both are backward compatible — ``source`` defaults to ``None``
+  on artifacts written before it existed (ADR-028).
 """
 
 from datetime import datetime

@@ -174,3 +174,39 @@ class TestApplyAssignmentOverrides:
             )
         assert exc.value.errors
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestMarkCustomerApproved:
+    """mark_assignment_customer_approved stamps the artifact for approve-as-is."""
+
+    def test_stamps_customer_approved_in_place_without_new_version(self) -> None:
+        from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
+
+        store = _store_with_two_ddb_queries()
+        updated = mark_assignment_customer_approved(store, DB, JOB)
+
+        assert updated is not None
+        assert updated.status is AssignmentStatus.CUSTOMER_APPROVED
+        # Same version, rewritten in place — no v2 is created (staleness-safe).
+        assert updated.version == 1
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        persisted = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        assert persisted["status"] == AssignmentStatus.CUSTOMER_APPROVED.value
+
+    def test_leaves_customer_modified_untouched(self) -> None:
+        from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
+
+        store = _store_with_two_ddb_queries()
+        # Apply an edit first -> v2 customer_modified becomes effective.
+        apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q2", assigned_engine="opensearch")]
+        )
+        updated = mark_assignment_customer_approved(store, DB, JOB)
+
+        assert updated is not None
+        assert updated.status is AssignmentStatus.CUSTOMER_MODIFIED  # not downgraded to approved
+
+    def test_none_when_no_assignment(self) -> None:
+        from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
+
+        assert mark_assignment_customer_approved(_MemStore(), DB, JOB) is None
