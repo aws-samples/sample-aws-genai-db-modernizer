@@ -160,7 +160,7 @@ def zero_workload_report(report: dict) -> dict:
     Reproduces the observed defect: triage selected DocumentDB, analysis scored it 56%,
     then the assignment routed every query elsewhere, so schema design was skipped.
     """
-    rep = json.loads(json.dumps(report))
+    rep: dict = json.loads(json.dumps(report))
     pct = {
         "aurora_postgresql": 49.3,
         "elasticache": 29.4,
