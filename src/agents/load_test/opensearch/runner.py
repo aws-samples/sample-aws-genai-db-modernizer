@@ -150,7 +150,9 @@ class OpenSearchRunner(BaseRunner):
         )
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
+            with urllib.request.urlopen(
+                req, timeout=15
+            ) as resp:  # nosec B310  # nosemgrep: dynamic-urllib-use-detected -- URL built from trusted internal config, not user input
                 return (resp.status, resp.read().decode(errors="replace"))
         except urllib.error.HTTPError as exc:
             return (exc.code, exc.read().decode(errors="replace"))

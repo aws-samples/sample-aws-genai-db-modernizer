@@ -437,7 +437,7 @@ def _data_keys_used_by_template() -> set[str]:
 
 def _engine_badges(after_distribution: dict) -> str:
     return "".join(
-        f'<span class="badge" data-engine="{html.escape(str(engine), quote=True)}">'
+        f'<span class="badge" data-engine="{html.escape(str(engine), quote=True)}">'  # nosemgrep: string-concat-in-list -- intentional multi-line string
         f"{html.escape(ENGINE_LABELS.get(engine, str(engine)))}</span>"
         for engine in after_distribution
     )

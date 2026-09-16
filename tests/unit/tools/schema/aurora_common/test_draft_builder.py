@@ -94,6 +94,6 @@ def test_draft_carries_primary_key_indexes_and_foreign_keys():
         'CREATE UNIQUE INDEX "ix_orders_user_id" ON "orders" ("user_id");'
     ]
     assert table_draft["foreign_keys"] == [
-        'ALTER TABLE "orders" ADD CONSTRAINT "fk_orders_user" '
+        'ALTER TABLE "orders" ADD CONSTRAINT "fk_orders_user" '  # nosemgrep: string-concat-in-list -- intentional multi-line string
         'FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE;'
     ]

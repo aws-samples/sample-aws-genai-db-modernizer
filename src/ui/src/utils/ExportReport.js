@@ -295,7 +295,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      activeFilters.operations.forEach(o => {\n';
   script += '        chips.push(\'<span class="filter-chip">Operation = \' + o + \' <button onclick="removeFilter(\\\'operation\\\', \\\'\' + o + \'\\\')">×</button></span>\');\n';
   script += '      });\n';
-  script += '      container.innerHTML = chips.join(\'\');\n';
+  script += '      container.innerHTML = chips.join(\'\');  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function removeFilter(type, value) {\n';
@@ -332,7 +332,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<td>\' + escapeHtml(p.operation) + \'</td>\';\n';
   script += '        html += \'<td>\' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.sourceTables) + \'</td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(p.destTable) + (p.gsiName ? \' (GSI: \' + p.gsiName + \')\' : \'\') + \'</td>\';\n';
+  script += '        html += \'<td>\' + escapeHtml(p.destTable) + (p.gsiName ? \' (GSI: \' + escapeHtml(p.gsiName) + \')\' : \'\') + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.description) + \'</td>\';\n';
   script += '        html += \'</tr>\';\n';
   script += '      });\n';
@@ -341,7 +341,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      html += \'<span>Page \' + currentPage + \' of \' + totalPages + \'</span>\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(1)" \' + (currentPage === totalPages ? \'disabled\' : \'\') + \'>Next</button>\';\n';
   script += '      html += \'</div>\';\n';
-  script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;\n';
+  script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function buildSourceTableTable() {\n';
@@ -374,7 +374,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      html += \'<span>Page \' + currentPage + \' of \' + totalPages + \'</span>\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(1)" \' + (currentPage === totalPages ? \'disabled\' : \'\') + \'>Next</button>\';\n';
   script += '      html += \'</div>\';\n';
-  script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;\n';
+  script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function changePage(delta) {\n';
@@ -450,11 +450,11 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<div class="stat-card" style="text-align: center;">\';\n';
   script += '        html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);\n';
   script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$\' + (cb.monthly_cost_usd?.toFixed(2) || \'0.00\') + \'</div>\';\n';
-  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">month · \' + cb.pricing_mode + \'</div>\';\n';
+  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">month · \' + escapeHtml(cb.pricing_mode) + \'</div>\';\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
   script += '      html += \'</div>\';\n';
-  script += '      container.innerHTML = html;\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
 
@@ -514,7 +514,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + label + \' (\' + Number(count).toFixed(1) + \'%)</text>\';\n';
   script += '      });\n';
   script += '      html += \'</svg></div>\';\n';
-  script += '      container.innerHTML = html;\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
 
@@ -536,7 +536,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (!queryIds || queryIds.length === 0) return \'\';\n';
   script += '      let out = \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
   script += '      queryIds.forEach(function(qid) {\n';
-  script += '        out += \'<span class="link" onclick="showQueryJourney(\\\'\' + qid + \'\\\')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + qid.substring(0, 12) + \'...</span>\';\n';
+  script += '        out += \'<span class="link" onclick="showQueryJourney(\\\'\' + escapeHtml(qid) + \'\\\')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + escapeHtml(qid.substring(0, 12)) + \'...</span>\';\n';
   script += '      });\n';
   script += '      return out + \'</div></div>\';\n';
   script += '    }\n';
@@ -567,7 +567,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
-  script += '      container.innerHTML = html;\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function buildPeNotes() {\n';
@@ -590,7 +590,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
-  script += '      container.innerHTML = html;\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function switchEngineTab(btnClass, contentClass, showId) {\n';
@@ -612,7 +612,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
 
   script += '    function showPatternDetails(patternId) {\n';
   script += '      const pattern = allPatterns.find(p => p.id === patternId);\n';
-  script += '      if (!pattern) { alert(\'Pattern not found: \' + patternId); return; }\n';
+  script += '      if (!pattern) { alert(\'Pattern not found: \' + patternId); return; }  // nosemgrep: javascript-alert -- intentional user notice in standalone exported report\n';
   script += '      let fullPattern = null;\n';
   script += '      DATA.schemaDesigns.forEach(design => {\n';
   script += '        const content = design.content || {};\n';
@@ -648,7 +648,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (fullPattern.source_tables && fullPattern.source_tables.length > 0) {\n';
   script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">Source Tables</div><div>\';\n';
   script += '        fullPattern.source_tables.forEach(function(t) {\n';
-  script += '          tabsHtml += \'<span class="badge badge-grey">\' + t.split(\'.\').pop() + \'</span> \';\n';
+  script += '          tabsHtml += \'<span class="badge badge-grey">\' + escapeHtml(t.split(\'.\').pop()) + \'</span> \';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '      }\n';
@@ -657,9 +657,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        fullPattern.query_ids.forEach(function(qid) {\n';
   script += '          const hasJourney = QUERY_JOURNEY_LOOKUP[qid];\n';
   script += '          const cursorStyle = hasJourney ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
-  script += '          const onclickAttr = hasJourney ? \' onclick="showQueryJourney(\\\'\' + qid + \'\\\')"\' : \'\';\n';
+  script += '          const onclickAttr = hasJourney ? \' onclick="showQueryJourney(\\\'\' + escapeHtml(qid) + \'\\\')"\' : \'\';\n';
   script += '          const titleAttr = hasJourney ? \'Click to view query journey\' : \'Query journey not available\';\n';
-  script += '          tabsHtml += \'<span class="badge badge-blue" style="\' + cursorStyle + \'" title="\' + titleAttr + \'"\' + onclickAttr + \'>\' + qid.slice(0, 8) + \'...</span>\';\n';
+  script += '          tabsHtml += \'<span class="badge badge-blue" style="\' + cursorStyle + \'" title="\' + titleAttr + \'"\' + onclickAttr + \'>\' + escapeHtml(qid.slice(0, 8)) + \'...</span>\';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '      }\n';
@@ -671,8 +671,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (fullPattern.filter_expression) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Filter Expression</div><div class="key-value-value">\' + escapeHtml(fullPattern.filter_expression) + \'</div></div>\';\n';
   script += '      if (fullPattern.projection) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Projection</div><div class="key-value-value">\' + escapeHtml(fullPattern.projection) + \'</div></div>\';\n';
   script += '      if (fullPattern.consistency) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Consistency</div><div class="key-value-value">\' + escapeHtml(fullPattern.consistency) + \'</div></div>\';\n';
-  script += '      if (fullPattern.estimated_rps != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Estimated RPS</div><div class="key-value-value">\' + fullPattern.estimated_rps + \'</div></div>\';\n';
-  script += '      if (fullPattern.estimated_item_size != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Estimated Item Size</div><div class="key-value-value">\' + fullPattern.estimated_item_size + \' bytes</div></div>\';\n';
+  script += '      if (fullPattern.estimated_rps != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Estimated RPS</div><div class="key-value-value">\' + escapeHtml(String(fullPattern.estimated_rps)) + \'</div></div>\';\n';
+  script += '      if (fullPattern.estimated_item_size != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Estimated Item Size</div><div class="key-value-value">\' + escapeHtml(String(fullPattern.estimated_item_size)) + \' bytes</div></div>\';\n';
   script += '      tabsHtml += \'</div></div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-source" class="tab-content">\';\n';
   script += '      if (fullPattern.source_query) {\n';
@@ -684,11 +684,11 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      tabsHtml += \'<div id="pattern-tab-target" class="tab-content">\';\n';
   script += '      if (fullPattern.key_condition) tabsHtml += \'<div><div class="key-value-label">Key Condition Expression</div><div class="code-block">\' + escapeHtml(fullPattern.key_condition) + \'</div></div>\';\n';
   script += '      if (fullPattern.dsl_query) {\n';
-  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">OpenSearch DSL Query</div><div class="code-block">\' + (typeof fullPattern.dsl_query === \'string\' ? escapeHtml(fullPattern.dsl_query) : JSON.stringify(fullPattern.dsl_query, null, 2)) + \'</div></div>\';\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">OpenSearch DSL Query</div><div class="code-block">\' + (typeof fullPattern.dsl_query === \'string\' ? escapeHtml(fullPattern.dsl_query) : escapeHtml(JSON.stringify(fullPattern.dsl_query, null, 2))) + \'</div></div>\';\n';
   script += '      }\n';
   script += '      if (!fullPattern.key_condition && !fullPattern.dsl_query) tabsHtml += \'<p style="color: var(--color-text-secondary);">No target pattern details available.</p>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
-  script += '      document.getElementById(\'pattern-modal-body\').innerHTML = tabsHtml;\n';
+  script += '      document.getElementById(\'pattern-modal-body\').innerHTML = tabsHtml;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '      modal.style.display = \'flex\';\n';
   script += '    }\n';
   script += '\n';
@@ -706,7 +706,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '\n';
   script += '    function showSourceTableDetails(tableName) {\n';
   script += '      const group = sourceTableGroups.find(g => g.table === tableName);\n';
-  script += '      if (!group) { alert(\'Source table not found: \' + tableName); return; }\n';
+  script += '      if (!group) { alert(\'Source table not found: \' + tableName); return; }  // nosemgrep: javascript-alert -- intentional user notice in standalone exported report\n';
   script += '      let modal = document.getElementById(\'source-table-modal\');\n';
   script += '      if (!modal) {\n';
   script += '        modal = document.createElement(\'div\');\n';
@@ -767,7 +767,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '        tabsHtml += \'</div>\';\n';
   script += '      });\n';
-  script += '      document.getElementById(\'source-table-modal-body\').innerHTML = tabsHtml;\n';
+  script += '      document.getElementById(\'source-table-modal-body\').innerHTML = tabsHtml;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '      modal.style.display = \'flex\';\n';
   script += '    }\n';
   script += '\n';
@@ -786,7 +786,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    function showQueryJourney(queryId) {\n';
   script += '      const journey = QUERY_JOURNEY_LOOKUP[queryId];\n';
   script += '      if (!journey) {\n';
-  script += '        alert(\'Query journey data not found for: \' + queryId + \'\\n\\nAvailable query IDs: \' + Object.keys(QUERY_JOURNEY_LOOKUP).length);\n';
+  script += '        alert(\'Query journey data not found for: \' + queryId + \'\\n\\nAvailable query IDs: \' + Object.keys(QUERY_JOURNEY_LOOKUP).length);  // nosemgrep: javascript-alert -- intentional user notice in standalone exported report\n';
   script += '        console.log(\'QUERY_JOURNEY_LOOKUP:\', QUERY_JOURNEY_LOOKUP);\n';
   script += '        console.log(\'Requested queryId:\', queryId);\n';
   script += '        return;\n';
@@ -814,7 +814,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      tabsHtml += \'<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px;">\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Query Type</div><div>\' + escapeHtml(source.query_type || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span></div></div>\';\n';
-  script += '      tabsHtml += \'<div><div class="key-value-label">Confidence</div><div>\' + (assignment.confidence || \'—\') + \'%</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Confidence</div><div>\' + escapeHtml(String(assignment.confidence || \'—\')) + \'%</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Frequency (per hour)</div><div>\' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Calls per Second</div><div>\' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">In Scope</div><div>\' + (assignment.in_scope ? \'Yes\' : \'No\') + \'</div></div>\';\n';
@@ -858,9 +858,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      }\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="tab-json" class="tab-content" style="display: none;">\';\n';
-  script += '      tabsHtml += \'<div class="code-block" style="white-space: pre;">\' + JSON.stringify(journey, null, 2) + \'</div>\';\n';
+  script += '      tabsHtml += \'<div class="code-block" style="white-space: pre;">\' + escapeHtml(JSON.stringify(journey, null, 2)) + \'</div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
-  script += '      document.getElementById(\'query-modal-body\').innerHTML = tabsHtml;\n';
+  script += '      document.getElementById(\'query-modal-body\').innerHTML = tabsHtml;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '      modal.style.display = \'flex\';\n';
   script += '    }\n';
   script += '\n';

@@ -84,7 +84,7 @@ def _journey(qid: str, qtype: str, engine: str | None, cps: float) -> dict:
     return {
         "query_id": qid,
         "source": {
-            "query_text": f"SELECT * FROM t WHERE id = {qid}",
+            "query_text": f"SELECT * FROM t WHERE id = {qid}",  # nosec B608 — static test SQL, not user input
             "query_type": qtype,
             "tables_accessed": ["discourse.posts"],
             "frequency_per_hour": 100,
@@ -308,7 +308,7 @@ def test_journeys_are_read_concurrently():
             live += 1
             max_concurrent = max(max_concurrent, live)
         try:
-            time.sleep(0.005)
+            time.sleep(0.005)  # nosemgrep: arbitrary-sleep -- test timing assertion
             return inner(path)
         finally:
             with lock:

@@ -44,7 +44,7 @@ def _created_dirs(dockerfile: str) -> set[str]:
     Everything before ``useradd`` is where directories are created.
     """
     head = dockerfile[: dockerfile.index("useradd")]
-    return set(re.findall(r"/tmp/[a-z0-9_]+_agent\b", head))
+    return set(re.findall(r"/tmp/[a-z0-9_]+_agent\b", head))  # nosec B108 — test-only temp path
 
 
 class TestStorageDirectories:
@@ -73,7 +73,9 @@ class TestOwnershipIsDerivedNotRepeated:
     def test_chown_does_not_enumerate_agent_directories(self, dockerfile: str) -> None:
         chown_block = dockerfile[dockerfile.index("useradd") :]
         chown_block = chown_block[: chown_block.index("USER appuser")]
-        enumerated = re.findall(r"/tmp/[a-z0-9_]+_agent\b", chown_block)
+        enumerated = re.findall(
+            r"/tmp/[a-z0-9_]+_agent\b", chown_block
+        )  # nosec B108 — test-only temp path
         assert not enumerated, (
             "chown enumerates agent directories again: "
             f"{sorted(set(enumerated))}. Derive them instead — a repeated list is "

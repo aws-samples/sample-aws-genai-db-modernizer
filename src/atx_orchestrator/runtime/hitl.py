@@ -188,8 +188,12 @@ def _download_artifact_json(client: Any, request_context: dict[str, Any], artifa
         )
         stored_in_atx = (dl.get("artifact") or {}).get("storedInAtxBucket", True)
         with tempfile.NamedTemporaryFile(suffix=".json", delete=True) as tmp:
-            download_from_presigned_url(dl, tmp.name, is_managed_bucket=stored_in_atx)
-            with open(tmp.name, encoding="utf-8") as fh:
+            download_from_presigned_url(
+                dl, tmp.name, is_managed_bucket=stored_in_atx
+            )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
+            with open(
+                tmp.name, encoding="utf-8"
+            ) as fh:  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
                 raw = fh.read()
         return json.loads(raw)
     except Exception as exc:  # noqa: BLE001

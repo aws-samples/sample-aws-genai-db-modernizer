@@ -280,7 +280,9 @@ def make_subagent_factory(
                     # reads agentOutput.serializedPayload written just above.
                     return _SubagentResult(_summary_line(summary))
                 except Exception as e:  # noqa: BLE001
-                    logger.exception("Subagent FAILED")
+                    logger.exception(
+                        "Subagent FAILED"
+                    )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
                     if manager and instance_id:
                         manager.update_status(instance_id, "FAILED", status_reason=str(e)[:1024])
                     raise

@@ -329,7 +329,7 @@ class DocumentDBProvisioner(BaseProvisioner):
                 raise RuntimeError(
                     f"DocumentDB cluster {cluster_id} entered terminal state: {status}"
                 )
-            time.sleep(15)
+            time.sleep(15)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
         raise RuntimeError(f"DocumentDB cluster {cluster_id} did not become available in 20 min")
 
     def _create_instance(
@@ -478,7 +478,7 @@ class DocumentDBProvisioner(BaseProvisioner):
                     error=str(exc),
                 )
                 if attempt < BOOTSTRAP_MAX_ATTEMPTS:
-                    time.sleep(backoff)
+                    time.sleep(backoff)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
                     backoff = int(backoff * BOOTSTRAP_BACKOFF_MULTIPLIER)
 
         raise RuntimeError(

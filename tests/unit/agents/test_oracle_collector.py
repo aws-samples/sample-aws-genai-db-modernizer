@@ -130,7 +130,9 @@ class TestBuildTables:
         assert t.table_name == "orders"
         assert t.row_count == 5000
         assert t.columns[0].column_name == "order_id"
-        assert t.columns[0].is_auto_increment is True
+        assert (
+            t.columns[0].is_auto_increment is True
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
         assert t.columns[0].normalized_data_type == NormalizedDataType.decimal
 
 

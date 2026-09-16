@@ -181,10 +181,12 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     artifact_id = candidates[0]["artifactId"]
     seed_key = default_input_key(job_id, database_name)
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = tmp.name
+        tmp_path = (
+            tmp.name
+        )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
     try:
         artifacts.download_artifact(artifact_id, tmp_path)
-        with open(tmp_path) as fh:
+        with open(tmp_path, encoding="utf-8") as fh:
             collection = json.load(fh)
         store.write_json(seed_key, collection)
     finally:
@@ -1058,7 +1060,9 @@ def run_assessment_core(
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-            logger.exception("run_assessment_core: phase %s failed", label)
+            logger.exception(
+                "run_assessment_core: phase %s failed", label
+            )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
             if on_phase_error is not None:
                 on_phase_error(label, str(exc))
             raise
@@ -1099,7 +1103,9 @@ def run_assessment_core(
             on_engine_skipped=on_engine_skipped,
         )
     except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-        logger.exception("run_assessment_core: phase analysis failed")
+        logger.exception(
+            "run_assessment_core: phase analysis failed"
+        )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
         if on_phase_error is not None:
             on_phase_error("analysis", str(exc))
         raise

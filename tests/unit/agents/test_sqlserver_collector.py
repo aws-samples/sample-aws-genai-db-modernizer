@@ -131,11 +131,15 @@ class TestBuildTables:
 
     def test_identity_column_marked_auto_increment(self) -> None:
         tables = _build_tables({"tables": [self._table_raw()]})
-        assert tables[0].columns[0].is_auto_increment is True
+        assert (
+            tables[0].columns[0].is_auto_increment is True
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     def test_non_identity_not_auto_increment(self) -> None:
         tables = _build_tables({"tables": [self._table_raw(is_identity="NO")]})
-        assert tables[0].columns[0].is_auto_increment is False
+        assert (
+            tables[0].columns[0].is_auto_increment is False
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     def test_normalized_types(self) -> None:
         types_to_check = [

@@ -100,7 +100,9 @@ def _column_ddl(
                 "reason": resolution.reason,
             }
         )
-    auto_increment = dialect.auto_increment(col.is_auto_increment)
+    auto_increment = dialect.auto_increment(
+        col.is_auto_increment
+    )  # nosemgrep: is-function-without-parentheses -- property, not a method
     # Identity/auto-increment and default are mutually exclusive — a column
     # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
     default = "" if auto_increment else default_clause(col.default_value)
@@ -133,9 +135,11 @@ def _create_table_sql(table: AgentTable, columns: list[ColumnDDL], dialect: Dial
 def _index_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     statements: list[str] = []
     for idx in table.indexes or []:
-        if idx.is_primary:
+        if idx.is_primary:  # nosemgrep: is-function-without-parentheses -- property, not a method
             continue  # covered by PRIMARY KEY
-        unique = "UNIQUE " if idx.is_unique else ""
+        unique = (
+            "UNIQUE " if idx.is_unique else ""
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
         cols = ", ".join(dialect.q(c) for c in idx.columns)
         statements.append(
             f"CREATE {unique}INDEX {dialect.q(idx.index_name)} "
