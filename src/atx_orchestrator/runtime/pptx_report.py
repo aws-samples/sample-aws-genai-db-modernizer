@@ -736,9 +736,13 @@ def slide_summary(prs, f):
         first=True,
     )
 
+    # Present the migration as WAVES, not a raw target-engine count: a headline
+    # like "5 target engines" invites the "why would I move to 5 databases?"
+    # objection, whereas the wave framing reads as a phased, lower-risk plan
+    # (ADR-029 waves alignment). The wave breakdown is on the sequencing slide.
     tiles = [
         (f"{f['n_patterns']:,}", "query patterns analyzed", BLUE),
-        (f"{len(f['engines'])}", "target engines", PURPLE),
+        (f"{len(f.get('waves') or [])}", "migration waves", PURPLE),
         (f"{f['migrated']}", "source tables migrate", GREEN),
         (f["risk_level"], f"overall risk, {len(f['risks'])} items", _risk_accent(f["risk_level"])),
     ]
