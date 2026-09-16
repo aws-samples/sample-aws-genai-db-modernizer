@@ -183,11 +183,7 @@ def apply_assignment_overrides(
     # previous version's forward (ADR-029 Layer B). model_copy only replaced
     # query_assignments, so table_assignments and co_dependency_groups would
     # otherwise go stale relative to the customer's edits.
-    new_assignment.table_assignments = derive_table_assignments(new_assignment.query_assignments)
-    new_assignment.co_dependency_groups = build_co_dependency_groups(
-        collector_output.get("queries", {}).get("query_patterns", []),
-        collector_output.get("database_schema", {}).get("tables", []),
-    )
+    _recompute_derived_views(new_assignment, collector_output)
 
     validation = AssignmentValidator().validate(new_assignment, collector_output, analysis_outputs)
     if not validation.valid:
@@ -244,3 +240,85 @@ def mark_assignment_customer_approved(
     updated = current.model_copy(update={"status": AssignmentStatus.CUSTOMER_APPROVED})
     store.write_json(path, updated.model_dump(mode="json"))
     return updated
+
+
+def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> None:
+    """Recompute ``table_assignments`` and ``co_dependency_groups`` against the
+    current query assignments and collector output, in place.
+
+    Both are derived views that must reflect the routing rather than be carried
+    forward from a previous version (ADR-029 Layer B).
+    """
+    assignment.table_assignments = derive_table_assignments(assignment.query_assignments)
+    assignment.co_dependency_groups = build_co_dependency_groups(
+        collector_output.get("queries", {}).get("query_patterns", []),
+        collector_output.get("database_schema", {}).get("tables", []),
+    )
+
+
+def refresh_consolidated_assignment(
+    raw: dict,
+    collector_output: dict,
+    analysis_outputs: dict[str, dict],
+    *,
+    dead_engines: set[str] | None = None,
+) -> dict:
+    """Refresh a Reality-Check consolidated assignment dict (ADR-029 Layers B+E).
+
+    Recomputes the derived views against the consolidated routing, refreshes
+    ``validation_warnings`` via the validator (so a split warning naming an engine
+    that was consolidated away is not re-emitted), and drops per-query warnings
+    that name an engine ``dead_engines`` says consolidation eliminated, so
+    dead-engine noise does not persist into the revised version.
+
+    Operates on ``raw`` as a dict and patches only the recomputed fields, so all
+    other keys (including the ``reality_check_applied`` marker) are preserved and
+    partial/legacy assignment dicts are tolerated — a probe model is built only to
+    drive the pure computations.
+    """
+    qa_dicts = raw.get("query_assignments", [])
+    qas = [
+        QueryAssignment(
+            query_id=qa.get("query_id", ""),
+            assigned_engine=qa.get("assigned_engine", ""),
+            confidence=int(qa.get("confidence", 0) or 0),
+            source_tables=qa.get("source_tables", []) or [],
+            assignment_reason=qa.get("assignment_reason", ""),
+            in_scope=qa.get("in_scope", True),
+            customer_override=qa.get("customer_override", False),
+            warnings=qa.get("warnings", []) or [],
+        )
+        for qa in qa_dicts
+    ]
+
+    table_assignments = derive_table_assignments(qas)
+    co_dependency_groups = build_co_dependency_groups(
+        collector_output.get("queries", {}).get("query_patterns", []),
+        collector_output.get("database_schema", {}).get("tables", []),
+    )
+    probe = Assignment(
+        job_id=str(raw.get("job_id", "")),
+        version=int(raw.get("version", 1)),
+        status=AssignmentStatus.CUSTOMER_MODIFIED,
+        timestamp=datetime.now(UTC),
+        query_assignments=qas,
+        table_assignments=table_assignments,
+        co_dependency_groups=co_dependency_groups,
+        validation_warnings=[],
+    )
+    validation = AssignmentValidator().validate(probe, collector_output, analysis_outputs)
+
+    out = dict(raw)
+    out["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
+    out["co_dependency_groups"] = co_dependency_groups
+    out["validation_warnings"] = validation.warnings
+    if dead_engines:
+        pruned: list[dict] = []
+        for qa in qa_dicts:
+            qa = dict(qa)
+            qa["warnings"] = [
+                w for w in qa.get("warnings", []) if not any(e in w for e in dead_engines)
+            ]
+            pruned.append(qa)
+        out["query_assignments"] = pruned
+    return out

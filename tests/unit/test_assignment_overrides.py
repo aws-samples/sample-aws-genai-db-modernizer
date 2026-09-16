@@ -19,6 +19,7 @@ from src.agents.referee.assignment_overrides import (
     QueryOverrideInput,
     UnknownQuery,
     apply_assignment_overrides,
+    refresh_consolidated_assignment,
 )
 from src.contracts.assignment_models import (
     Assignment,
@@ -317,3 +318,84 @@ class TestRecomputesDerivedViews:
         by_table = {ta.table_id: ta for ta in result.assignment.table_assignments}
         assert by_table["t.users"].primary_engine == "dynamodb"
         assert by_table["t.posts"].primary_engine == "opensearch"
+
+
+class TestRefreshConsolidatedAssignment:
+    """ADR-029 Layers B+E: reality-check consolidation refreshes derived views,
+    re-validates, and prunes per-query warnings that name an eliminated engine."""
+
+    @staticmethod
+    def _collector(query_patterns: list[dict]) -> dict:
+        return {
+            "queries": {"query_patterns": query_patterns},
+            "database_schema": {"tables": []},
+        }
+
+    def test_recomputes_views_and_prunes_dead_engine_warnings(self) -> None:
+        raw = {
+            "job_id": JOB,
+            "version": 2,
+            "previous_version": 1,
+            "status": "auto_generated",
+            "source": "reality_check",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "query_assignments": [
+                {
+                    "query_id": "q1",
+                    "assigned_engine": "dynamodb",
+                    "confidence": 80,
+                    "source_tables": ["t.users"],
+                    "assignment_reason": "consolidated",
+                    "warnings": ["moved off documentdb; verify embedding shape"],
+                },
+                {
+                    "query_id": "q2",
+                    "assigned_engine": "dynamodb",
+                    "confidence": 80,
+                    "source_tables": ["t.posts"],
+                    "assignment_reason": "consolidated",
+                    "warnings": [],
+                },
+            ],
+            "table_assignments": [],
+            "co_dependency_groups": [["stale-group"]],
+            "validation_warnings": ["WARNING [HIGH]: documentdb split (stale)"],
+            "reality_check_applied": True,
+        }
+        collector = self._collector(
+            [
+                {"query_id": "q1", "tables_accessed": ["t.users"]},
+                {"query_id": "q2", "tables_accessed": ["t.posts"]},
+            ]
+        )
+        out = refresh_consolidated_assignment(
+            raw, collector, {"dynamodb": {"workload_analysis": {}}}, dead_engines={"documentdb"}
+        )
+
+        # Stale co-dependency group cleared (no significant JOINs in collector).
+        assert out["co_dependency_groups"] == []
+        # table_assignments recomputed from the consolidated routing.
+        by_table = {ta["table_id"]: ta for ta in out["table_assignments"]}
+        assert by_table["t.users"]["primary_engine"] == "dynamodb"
+        assert by_table["t.posts"]["primary_engine"] == "dynamodb"
+        # Per-query warning naming the eliminated engine is dropped.
+        assert out["query_assignments"][0]["warnings"] == []
+        # validation_warnings refreshed against current routing (no dead-engine ref).
+        assert all("documentdb" not in w for w in out["validation_warnings"])
+        # Non-model keys preserved.
+        assert out["reality_check_applied"] is True
+        assert out["source"] == "reality_check"
+        assert out["previous_version"] == 1
+
+    def test_tolerates_partial_query_assignment_dicts(self) -> None:
+        # Legacy/minimal dicts (no confidence/source_tables) must not raise.
+        raw = {
+            "version": 2,
+            "query_assignments": [
+                {"query_id": "q1", "assigned_engine": "dynamodb", "assignment_reason": "x"},
+            ],
+        }
+        collector = self._collector([{"query_id": "q1", "tables_accessed": ["t.users"]}])
+        out = refresh_consolidated_assignment(raw, collector, {"dynamodb": {}})
+        assert "table_assignments" in out
+        assert out["co_dependency_groups"] == []
