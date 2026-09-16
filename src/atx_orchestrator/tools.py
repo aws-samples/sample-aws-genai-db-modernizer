@@ -573,7 +573,12 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
 
 
 @tool
-def finalize_assignment_review(job_id: str, database_name: str, edited_markdown: str = "") -> str:
+def finalize_assignment_review(
+    job_id: str,
+    database_name: str,
+    edited_markdown: str = "",
+    accept_feasibility_risks: bool = False,
+) -> str:
     """Apply the customer's routing decision and open the schema-design gate.
 
     This is the single approval point of the review gate. It handles all three
@@ -592,8 +597,18 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
     the shared override path, then records approval so schema design may run. On a
     parse/validation failure nothing is applied and the gate stays closed.
 
-    Returns JSON with ``status`` ("approved" or "invalid_edit"), ``changed``,
-    ``applied_overrides``, and ``assignment_version`` (effective after any edit).
+    After applying edits (or approving as-is), a feasibility review runs on the
+    effective routing (ADR-029 Layer C). If it finds a blocking problem — a table
+    whose reads are routed away from its writes, or a co-dependent JOIN group split
+    onto an engine that cannot serve joins — the gate stays closed and this returns
+    ``status`` "infeasible" with ``feasibility_findings``; present them to the
+    customer, who must fix the routing and resubmit, or re-run with
+    ``accept_feasibility_risks=True`` to proceed with the risk recorded on the
+    artifact.
+
+    Returns JSON with ``status`` ("approved", "invalid_edit", or "infeasible"),
+    ``changed``, ``applied_overrides``, ``assignment_version`` (effective after any
+    edit), ``validation_warnings``, and ``feasibility_findings``.
     """
     job_id = _platform_job_id(job_id)
     from src.agents.referee.assignment_overrides import (
@@ -689,6 +704,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
     applied = 0
     warnings: list[str] = []
     effective_version = version
+    effective_assignment: Assignment = current
     if overrides:
         try:
             result = apply_assignment_overrides(
@@ -715,15 +731,70 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         changed = True
         applied = len(overrides)
         effective_version = result.assignment.version
+        effective_assignment = result.assignment
         # Surface the co-dependency-split (and scope) warnings the validator
         # computed for this version so the orchestrator can show them to the
         # customer, instead of leaving them buried on the artifact (ADR-029 B).
         warnings = result.assignment.validation_warnings
-    else:
-        # Approved as-is (no edits): record approval on the artifact too, by
-        # stamping the effective assignment CUSTOMER_APPROVED in place. No new
-        # version is written, so staleness detection is unaffected. Best-effort —
-        # the .meta phase below is the authoritative gate signal.
+    # Approve-as-is (no edits) is stamped CUSTOMER_APPROVED on the artifact only
+    # after the feasibility gate below passes, so a routing the reviewer blocks is
+    # never recorded as approved.
+
+    # Post-gate feasibility review (ADR-029 Layer C). Runs on the effective
+    # routing (first-pass approval or an edited version). Blocking findings loop
+    # the gate: the customer must fix the routing or re-run with
+    # accept_feasibility_risks=true. Advisory findings are surfaced but do not
+    # block. The reviewer pushes back rather than shipping a routing that fails
+    # in production.
+    from src.agents.referee.feasibility_review import review_assignment_feasibility
+    from src.contracts.feasibility_models import FindingSeverity
+
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
+    findings = review_assignment_feasibility(effective_assignment, collector_output)
+    blocking = [f for f in findings if f.severity is FindingSeverity.BLOCKING]
+    findings_json = [f.model_dump(mode="json") for f in findings]
+
+    if blocking and not accept_feasibility_risks:
+        # Keep the gate awaiting — do NOT open schema design. The edited version
+        # (if any) is already written; the customer either re-edits or accepts.
+        _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+        mark_step_pending_human_input(
+            "assignment_review",
+            "Routing is not feasible as submitted; awaiting customer fix or acceptance.",
+        )
+        return json.dumps(
+            {
+                "status": "infeasible",
+                "job_id": job_id,
+                "changed": changed,
+                "applied_overrides": applied,
+                "assignment_version": effective_version,
+                "validation_warnings": warnings,
+                "feasibility_findings": findings_json,
+                "message": (
+                    "The routing has blocking feasibility problems (see "
+                    "feasibility_findings). Present them to the customer plainly: this "
+                    "will not work as routed. They must either change the routing and "
+                    "resubmit, or explicitly accept the risks by re-running "
+                    "finalize_assignment_review with accept_feasibility_risks=true."
+                ),
+            }
+        )
+
+    if blocking and accept_feasibility_risks:
+        # Record the accepted blocking findings on the artifact for audit, then
+        # proceed. No new version — this stamps the effective version in place.
+        effective_assignment.accepted_feasibility_findings = blocking
+        store.write_json(
+            assignment_artifact_path(database_name, job_id, effective_version),
+            effective_assignment.model_dump(mode="json"),
+        )
+
+    if not changed:
+        # Approved as-is and feasible: stamp the effective assignment
+        # CUSTOMER_APPROVED in place (no new version) so the artifact is
+        # self-describing. Best-effort — the .meta phase is the authoritative gate.
         try:
             mark_assignment_customer_approved(store, database_name, job_id)
         except Exception:  # noqa: BLE001 - artifact stamp must not fail the gate
@@ -749,6 +820,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
             "applied_overrides": applied,
             "assignment_version": effective_version,
             "validation_warnings": warnings,
+            "feasibility_findings": findings_json,
         }
     )
 

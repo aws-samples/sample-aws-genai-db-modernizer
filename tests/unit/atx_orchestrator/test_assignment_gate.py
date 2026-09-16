@@ -215,11 +215,18 @@ class TestDetailedReviewChatFallback:
         )
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
             out = json.loads(tools.finalize_assignment_review(JOB, DB, edited))
-        assert out["status"] == "approved"
-        assert "validation_warnings" in out
+            # Splitting a co-dependent group onto dynamodb (no complex_joins) is a
+            # blocking feasibility problem: the gate loops instead of approving,
+            # and both the validator warning and the structured finding surface.
+            assert out["status"] == "infeasible"
+            assert tools._assignment_review_approved(JOB) is False
         assert any(
             "[HIGH]" in w and "split across engines" in w for w in out["validation_warnings"]
         ), out["validation_warnings"]
+        assert any(
+            f["kind"] == "co_dependency_split" and f["severity"] == "blocking"
+            for f in out["feasibility_findings"]
+        ), out["feasibility_findings"]
 
     def test_invalid_edited_markdown_does_not_approve(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review
@@ -333,3 +340,80 @@ class TestDetailedReviewHitl:
                 out = json.loads(tools.finalize_assignment_review(JOB, DB))
         assert out["status"] == "awaiting_review"
         assert tools._assignment_review_approved(JOB) is False
+
+
+class TestFeasibilityGate:
+    """ADR-029 Layer C: the feasibility reviewer runs inside finalize and loops
+    the gate on blocking findings unless the customer accepts the risk."""
+
+    @staticmethod
+    def _make_read_write_split(store) -> None:
+        # q1 writes t.shared on dynamodb; q3 reads t.shared on opensearch, which
+        # never receives those writes -> blocking read/write split.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_type": "INSERT",
+                            "tables_accessed": ["t.shared"],
+                        },
+                        {
+                            "query_id": "q3",
+                            "query_type": "SELECT",
+                            "tables_accessed": ["t.shared"],
+                        },
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+
+    def test_read_write_split_blocks_approval(self, store) -> None:
+        self._make_read_write_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "infeasible"
+            assert tools._assignment_review_approved(JOB) is False
+        assert any(
+            f["kind"] == "read_write_split" and f["severity"] == "blocking"
+            for f in out["feasibility_findings"]
+        ), out["feasibility_findings"]
+        # Not stamped approved on the artifact either.
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        assert v1["status"] != "customer_approved"
+
+    def test_accept_risks_proceeds_and_records_findings(self, store) -> None:
+        self._make_read_write_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(
+                tools.finalize_assignment_review(JOB, DB, "", accept_feasibility_risks=True)
+            )
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        accepted = v1["accepted_feasibility_findings"]
+        assert any(f["kind"] == "read_write_split" for f in accepted), accepted
+        assert v1["status"] == "customer_approved"
+
+    def test_feasible_routing_approves_normally(self, store) -> None:
+        # Reads and writes co-located on dynamodb -> no blocking finding.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {"query_id": "q1", "query_type": "INSERT", "tables_accessed": ["t.users"]},
+                        {"query_id": "q2", "query_type": "SELECT", "tables_accessed": ["t.users"]},
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        assert out["feasibility_findings"] == []

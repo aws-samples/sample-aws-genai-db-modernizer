@@ -12,12 +12,18 @@ Version History:
   ``AssignmentStatus.CUSTOMER_APPROVED`` (customer approved routing as-is at the
   review gate). Both are backward compatible — ``source`` defaults to ``None``
   on artifacts written before it existed (ADR-028).
+- 1.2 (2026-08-27): Added the optional ``accepted_feasibility_findings`` field on
+  ``Assignment`` recording blocking feasibility findings the customer explicitly
+  accepted at the review gate. Defaults to an empty list, so it is backward
+  compatible with artifacts written before it existed (ADR-029 Layer C).
 """
 
 from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
+
+from src.contracts.feasibility_models import FeasibilityFinding
 
 
 class AssignmentStatus(str, Enum):
@@ -122,6 +128,13 @@ class Assignment(BaseModel):
         description=(
             "Pipeline stage that produced this version (provenance). None for "
             "legacy artifacts written before this field existed (ADR-028)."
+        ),
+    )
+    accepted_feasibility_findings: list[FeasibilityFinding] = Field(
+        default_factory=list,
+        description=(
+            "Blocking feasibility findings the customer explicitly accepted at the "
+            "review gate (ADR-029 Layer C). Empty by default; recorded for audit."
         ),
     )
 
