@@ -1673,3 +1673,188 @@ for _fn, _label, _engine in (
 ):
     _target = getattr(_fn, "__wrapped__", _fn)
     _target.__doc__ = _SCHEMA_DOC.format(label=_label, engine=_engine)
+
+
+# =============================================================================
+# Staleness-driven re-entry (ADR-029 Layer A)
+#
+# After schema design and synthesis, a customer may change routing. Re-entry
+# reuses the review gate: reopen_assignment_review flips the gate back to
+# AWAITING_REVIEW so present/open/finalize run again; finalize appends a new
+# assignment version. redispatch_after_reroute then re-designs only the engines
+# whose in-scope query set changed and copies the unchanged engines' schema
+# forward to the new version, so the expensive fleet is not re-run wholesale.
+
+
+# engine identifier (aurora_postgresql) -> tool suffix (aurora-pg).
+_ENGINE_TO_SUFFIX: dict[str, str] = {engine: suffix for suffix, engine in _SCHEMA_ENGINES.items()}
+
+
+def _latest_schema_version_below(
+    store: object, database_name: str, job_id: str, below: int
+) -> int | None:
+    """Highest assignment version < ``below`` that has any schema output written.
+
+    This is the version schema was last built at, so an unaffected engine's
+    ``schema-<engine>/v<prev>/schema_output.json`` can be copied forward.
+    """
+    prefix = f"{database_name}/{job_id}/"
+    best: int | None = None
+    for key in store.list_prefix(prefix):  # type: ignore[attr-defined]
+        parts = str(key).replace(prefix, "").split("/")
+        if (
+            len(parts) == 3
+            and parts[0].startswith("schema-")
+            and parts[1].startswith("v")
+            and parts[2] == "schema_output.json"
+        ):
+            try:
+                version = int(parts[1][1:])
+            except ValueError:
+                continue
+            if version < below and (best is None or version > best):
+                best = version
+    return best
+
+
+def _copy_schema_forward(
+    store: object, database_name: str, job_id: str, engine: str, prev_version: int, new_version: int
+) -> bool:
+    """Copy an unaffected engine's schema output (+ design trace) to ``new_version``.
+
+    Restamps the embedded ``assignment_version`` so a reader sees the version it
+    now belongs to. Returns True when a schema output was copied. An engine whose
+    in-scope query set is unchanged produces a byte-identical design, so this
+    avoids re-running the LLM-heavy designer for it.
+    """
+    base_prev = f"{database_name}/{job_id}/schema-{engine}/v{prev_version}"
+    base_new = f"{database_name}/{job_id}/schema-{engine}/v{new_version}"
+    src = f"{base_prev}/schema_output.json"
+    if not store.exists(src):  # type: ignore[attr-defined]
+        return False
+    output = store.read_json(src)  # type: ignore[attr-defined]
+    if isinstance(output, dict):
+        output["assignment_version"] = new_version
+    store.write_json(f"{base_new}/schema_output.json", output)  # type: ignore[attr-defined]
+    trace_src = f"{base_prev}/design_trace.json"
+    if store.exists(trace_src):  # type: ignore[attr-defined]
+        store.write_json(  # type: ignore[attr-defined]
+            f"{base_new}/design_trace.json", store.read_json(trace_src)  # type: ignore[attr-defined]
+        )
+    return True
+
+
+@tool
+def reopen_assignment_review(job_id: str, database_name: str) -> str:
+    """Reopen the assignment-review gate so the customer can change routing.
+
+    Use this for staleness-driven re-entry: after schema design / synthesis, when
+    the customer wants to adjust the query-to-engine routing. It flips the
+    ASSIGNMENT_REVIEW phase back to awaiting review; then drive the normal gate
+    (``present_assignment_review`` -> optionally ``open_detailed_routing_review``
+    -> ``finalize_assignment_review``). After ``finalize`` applies the edit, call
+    ``redispatch_after_reroute`` to re-run only the affected engines.
+
+    Returns JSON with ``status`` ("reopened") and the current ``assignment_version``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+    store = _make_store()
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return json.dumps(
+            {"error": "No assignment to reopen. Run the assessment core first.", "job_id": job_id}
+        )
+    _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+    mark_step_pending_human_input(
+        "assignment_review", "Reopened for customer routing changes (re-entry)."
+    )
+    return json.dumps(
+        {
+            "status": "reopened",
+            "job_id": job_id,
+            "assignment_version": version,
+            "message": (
+                "Gate reopened. Present the routing, apply the customer's edit with "
+                "finalize_assignment_review, then call redispatch_after_reroute."
+            ),
+        }
+    )
+
+
+@tool
+def redispatch_after_reroute(job_id: str, database_name: str) -> str:
+    """Re-design only the engines a re-entry edit changed; copy the rest forward.
+
+    Call this after ``finalize_assignment_review`` applies a re-entry edit (a new
+    assignment version). It computes, deterministically from the assignment diff,
+    which engines' in-scope query set changed since schema was last built, copies
+    the unchanged engines' schema output forward to the new version, and returns
+    the affected engines to re-design.
+
+    Next steps (the tool does not run them, so the per-engine designs stay
+    parallel and within the response window): call the listed ``dispatch_tools``
+    for the ``affected_engines`` (in parallel, as in the first pass), then
+    ``run_synthesis_via_a2a`` to rebuild the report at the new version.
+
+    Returns JSON with ``affected_engines``, ``copied_forward_engines``,
+    ``dispatch_tools``, ``assignment_version`` and ``previous_schema_version``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.storage.assignment_versioning import (
+        assignment_engine_diff,
+        resolve_effective_assignment_version,
+    )
+
+    store = _make_store()
+    new_version = resolve_effective_assignment_version(store, database_name, job_id)
+    if new_version == 0:
+        return json.dumps({"error": "No assignment found.", "job_id": job_id})
+
+    prev_version = _latest_schema_version_below(store, database_name, job_id, new_version)
+    copied: list[str] = []
+    if prev_version is None:
+        # No prior schema to reuse (not a re-entry, or schema never ran): every
+        # engine with in-scope queries must be designed.
+        affected = sorted(_engines_with_in_scope_queries(job_id, database_name, new_version))
+    else:
+        diff = assignment_engine_diff(store, database_name, job_id, prev_version, new_version)
+        affected = list(diff["affected"])
+        for engine in diff["unaffected"]:
+            if _copy_schema_forward(
+                store, database_name, job_id, engine, prev_version, new_version
+            ):
+                copied.append(engine)
+            else:
+                affected.append(engine)  # nothing to copy forward -> must re-run
+        affected = sorted(set(affected))
+
+    dispatch_tools = [
+        f"run_schema_design_{_ENGINE_TO_SUFFIX.get(e, e).replace('-', '_')}_via_a2a"
+        for e in affected
+    ]
+    logger.info(
+        "ATX redispatch: job_id=%s prev_schema_v=%s new_v=%s affected=%s copied=%s",
+        job_id,
+        prev_version,
+        new_version,
+        affected,
+        copied,
+    )
+    return json.dumps(
+        {
+            "status": "redispatch_ready",
+            "job_id": job_id,
+            "assignment_version": new_version,
+            "previous_schema_version": prev_version,
+            "affected_engines": affected,
+            "copied_forward_engines": copied,
+            "dispatch_tools": dispatch_tools,
+            "message": (
+                "Copied unchanged engines' schema forward. Now dispatch schema design for the "
+                "affected_engines (call the listed dispatch_tools in parallel), then call "
+                "run_synthesis_via_a2a to rebuild the report at this version."
+            ),
+        }
+    )

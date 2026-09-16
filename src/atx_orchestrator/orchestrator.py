@@ -23,6 +23,8 @@ from src.atx_orchestrator.tools import (
     get_synthesis_report,
     open_detailed_routing_review,
     present_assignment_review,
+    redispatch_after_reroute,
+    reopen_assignment_review,
     run_assessment_core_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
     run_schema_design_aurora_pg_via_a2a,
@@ -268,6 +270,8 @@ PIPELINE_TOOLS = [
     run_schema_design_aurora_pg_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
     run_synthesis_via_a2a,
+    reopen_assignment_review,
+    redispatch_after_reroute,
     get_job_status,
     get_synthesis_report,
     # NOTE: discover_subagents omitted intentionally. As of SDK v1.0.2 it

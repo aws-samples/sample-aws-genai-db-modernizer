@@ -59,6 +59,10 @@ class TestDiscoverSubagentsRegistration:
             "run_schema_design_aurora_pg_via_a2a",
             "run_schema_design_aurora_mysql_via_a2a",
             "run_synthesis_via_a2a",
+            # staleness-driven re-entry (ADR-029 Layer A): reopen the gate for a
+            # routing change, then re-design only the affected engines.
+            "reopen_assignment_review",
+            "redispatch_after_reroute",
             # status / read-only
             "get_job_status",
             "get_synthesis_report",
