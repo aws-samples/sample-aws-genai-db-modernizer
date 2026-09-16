@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS, discover_subagents
+from src.atx_orchestrator.orchestrator import PIPELINE_TOOLS, SYSTEM_PROMPT, discover_subagents
 
 
 class TestDiscoverSubagentsRegistration:
@@ -73,6 +73,27 @@ class TestDiscoverSubagentsRegistration:
     def test_discover_subagents_still_importable(self) -> None:
         """The function itself remains available for future re-enablement."""
         assert discover_subagents is not None
+
+
+class TestSystemPromptDiscoverability:
+    """A registered tool the prompt never mentions is effectively dead: the LLM
+    has no cue to call it. These guards keep the ADR-029 re-entry flow reachable
+    from the orchestrator prompt, so it does not silently regress into unused
+    code (which is exactly how the guidance was missing on first implementation).
+    """
+
+    def test_prompt_names_both_reentry_tools(self) -> None:
+        assert "reopen_assignment_review" in SYSTEM_PROMPT
+        assert "redispatch_after_reroute" in SYSTEM_PROMPT
+
+    def test_prompt_explains_when_to_reenter(self) -> None:
+        """The prompt must frame re-entry as a post-report routing change, not a
+        fresh run, so the LLM does not restart the whole pipeline."""
+        assert "Re-entry" in SYSTEM_PROMPT
+        # affected_engines / dispatch_tools is the redispatch handshake the LLM
+        # must follow to re-run only the changed engines in parallel.
+        assert "affected_engines" in SYSTEM_PROMPT
+        assert "dispatch_tools" in SYSTEM_PROMPT
 
 
 class TestDiscoverSubagentsCallable:

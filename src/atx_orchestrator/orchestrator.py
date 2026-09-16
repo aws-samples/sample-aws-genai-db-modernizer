@@ -118,6 +118,23 @@ dispatch.
                                              resolved automatically. Run this LAST, after the
                                              schema-design tools have finished, so their output
                                              is available to it.
+  3b. reopen_assignment_review /            — RE-ENTRY, after a report already exists. Use ONLY
+      redispatch_after_reroute               when the customer has seen the routing/report and
+                                             now wants to change the query-to-engine routing.
+                                             Do NOT re-run the whole pipeline.
+                                             reopen_assignment_review flips the gate back to
+                                             AWAITING_REVIEW; then drive the normal gate
+                                             (present_assignment_review -> optionally
+                                             open_detailed_routing_review ->
+                                             finalize_assignment_review) to apply their edit.
+                                             After finalize applies it, redispatch_after_reroute
+                                             copies the UNCHANGED engines' schema forward to the
+                                             new assignment version and returns only the changed
+                                             engines in `affected_engines` with the matching
+                                             `dispatch_tools`. Call those dispatch_tools IN
+                                             PARALLEL, then run_synthesis_via_a2a to rebuild the
+                                             report. Only the engines the edit actually changed
+                                             are redesigned.
   4. get_job_status                        — check current phase progression.
   5. get_synthesis_report                  — read the completed report.
 
@@ -227,6 +244,17 @@ Workflow:
     recommendation, wait for the customer, and start schema design only after
     finalize_assignment_review returns "approved". Do not pause anywhere else, and
     never ask the customer to choose phases, tools, or order.
+
+  - Re-entry (after the report already exists). If the customer has seen the
+    routing or the final report and asks to move some queries or tables to a
+    different engine, do NOT start the pipeline over. Call
+    reopen_assignment_review, run the gate again (present_assignment_review ->
+    optionally open_detailed_routing_review -> finalize_assignment_review) to apply
+    the edit, then call redispatch_after_reroute. Dispatch the schema-design tools
+    it names in `affected_engines` / `dispatch_tools` in parallel (the unchanged
+    engines are copied forward for you), and finish with run_synthesis_via_a2a.
+    This redesigns only the engines the edit actually changed, so it is much faster
+    than a fresh run.
 
   - Report findings in the customer's terms, not the system's: which engines were
     selected and why, how the queries distributed, what the ranking says. Do not
