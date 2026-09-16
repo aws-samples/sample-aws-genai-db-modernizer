@@ -687,6 +687,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
 
     changed = False
     applied = 0
+    warnings: list[str] = []
     effective_version = version
     if overrides:
         try:
@@ -714,6 +715,10 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         changed = True
         applied = len(overrides)
         effective_version = result.assignment.version
+        # Surface the co-dependency-split (and scope) warnings the validator
+        # computed for this version so the orchestrator can show them to the
+        # customer, instead of leaving them buried on the artifact (ADR-029 B).
+        warnings = result.assignment.validation_warnings
     else:
         # Approved as-is (no edits): record approval on the artifact too, by
         # stamping the effective assignment CUSTOMER_APPROVED in place. No new
@@ -743,6 +748,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
             "changed": changed,
             "applied_overrides": applied,
             "assignment_version": effective_version,
+            "validation_warnings": warnings,
         }
     )
 

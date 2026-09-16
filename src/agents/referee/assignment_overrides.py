@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
+from src.agents.referee.assignment_resolver import (
+    build_co_dependency_groups,
+    derive_table_assignments,
+)
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.contracts.assignment_models import (
     Assignment,
@@ -174,6 +178,17 @@ def apply_assignment_overrides(
 
     collector_output = _read_collector_output(store, database_name, job_id)
     analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
+
+    # Recompute derived views against the NEW routing instead of carrying the
+    # previous version's forward (ADR-029 Layer B). model_copy only replaced
+    # query_assignments, so table_assignments and co_dependency_groups would
+    # otherwise go stale relative to the customer's edits.
+    new_assignment.table_assignments = derive_table_assignments(new_assignment.query_assignments)
+    new_assignment.co_dependency_groups = build_co_dependency_groups(
+        collector_output.get("queries", {}).get("query_patterns", []),
+        collector_output.get("database_schema", {}).get("tables", []),
+    )
+
     validation = AssignmentValidator().validate(new_assignment, collector_output, analysis_outputs)
     if not validation.valid:
         raise AssignmentValidationFailed(validation.errors, validation.warnings)

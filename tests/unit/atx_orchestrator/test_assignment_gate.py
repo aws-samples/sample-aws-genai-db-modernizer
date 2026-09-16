@@ -175,6 +175,52 @@ class TestDetailedReviewChatFallback:
         by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
         assert by_id["q2"]["assigned_engine"] == "opensearch"
 
+    def test_finalize_surfaces_codependency_split_warning(self, store) -> None:
+        """ADR-029 Layer B: splitting a co-dependent group across engines returns
+        the HIGH warning in the finalize response, not just on the artifact."""
+        from src.agents.referee.assignment_review import render_assignment_review
+
+        # Make q1 and q2 co-dependent: both share a significant JOIN on the same
+        # tables in the collector, so they form one co-dependency group.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "tables_accessed": ["t.users", "t.posts"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                        {
+                            "query_id": "q2",
+                            "tables_accessed": ["t.users", "t.posts"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                        {"query_id": "q3", "tables_accessed": ["t.docs"]},
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        assignment = Assignment.model_validate(
+            store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        )
+        # Split the group: move q2 (dynamodb) to opensearch while q1 stays.
+        edited = render_assignment_review(assignment).replace(
+            "| q2 | t.posts | dynamodb | dynamodb | yes |",
+            "| q2 | t.posts | dynamodb | opensearch | yes |",
+        )
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, edited))
+        assert out["status"] == "approved"
+        assert "validation_warnings" in out
+        assert any(
+            "[HIGH]" in w and "split across engines" in w for w in out["validation_warnings"]
+        ), out["validation_warnings"]
+
     def test_invalid_edited_markdown_does_not_approve(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review
 
