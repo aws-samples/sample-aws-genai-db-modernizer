@@ -67,7 +67,7 @@ def _run(target: str, store: FakeStore) -> dict:
     """
     key = f"{DB}/{JOB}/schema-{target}/v1/schema_output.json"
     store.data[key] = store.data.pop(f"{DB}/{JOB}/schema-TARGET/v1/schema_output.json")
-    with patch("src.agents.schema_design.handler.run_schema_design"):
+    with patch("src.agents.schema_design.handler.run_schema_design_auto"):
         return run_schema_design_core(
             job_id=JOB,
             database_name=DB,
@@ -177,7 +177,7 @@ class TestMissingSourceEngine:
             return store.data[path]
 
         with (
-            patch("src.agents.schema_design.handler.run_schema_design"),
+            patch("src.agents.schema_design.handler.run_schema_design_auto"),
             patch.object(store, "read_json", side_effect=boom),
         ):
             s = run_schema_design_core(JOB, DB, "aurora_postgresql", 1, store=store)
@@ -230,9 +230,31 @@ class TestPrerequisites:
                 f"{DB}/{JOB}/assignment/v1/assignment.json": {"version": 1},
             }
         )
-        with patch("src.agents.schema_design.handler.run_schema_design"):
+        with patch("src.agents.schema_design.handler.run_schema_design_auto"):
             with pytest.raises(FileNotFoundError, match="no output exists"):
                 run_schema_design_core(JOB, DB, "dynamodb", 1, store=store)
+
+
+class TestGroupingWiring:
+    """The deployed core routes through the grouping-aware auto path (ADR-027 amendment)."""
+
+    def test_core_invokes_run_schema_design_auto(self) -> None:
+        store = _store("postgresql", {"target_type": "dynamodb", "status": "completed"})
+        key = f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json"
+        store.data[key] = store.data.pop(f"{DB}/{JOB}/schema-TARGET/v1/schema_output.json")
+
+        def _fake_auto(**kwargs: object) -> None:
+            # auto would write the versioned output; it is already staged here so
+            # the core's read-back succeeds.
+            return None
+
+        with patch(
+            "src.agents.schema_design.handler.run_schema_design_auto", side_effect=_fake_auto
+        ) as auto:
+            run_schema_design_core(JOB, DB, "dynamodb", 1, store=store)
+        auto.assert_called_once()
+        assert auto.call_args.kwargs["target_type"] == "dynamodb"
+        assert auto.call_args.kwargs["assignment_version"] == 1
 
 
 class TestAgentTypeMapping:

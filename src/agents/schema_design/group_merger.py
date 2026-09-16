@@ -14,6 +14,11 @@ from __future__ import annotations
 from src.storage.artifact_store import ArtifactStore
 
 # Fields that are concatenated (list merge) across groups, per engine
+# Field names below are taken from each engine's output contract
+# (src/contracts/<engine>_model_output.py). Grouping applies only to the
+# remodeling engines; Aurora stays single-pass (its output is a single
+# generated_ddl script that does not merge), so it has no entry here (ADR-027
+# amendment).
 DYNAMODB_LIST_FIELDS = [
     "access_patterns",
     "table_definitions",
@@ -27,14 +32,25 @@ DYNAMODB_LIST_FIELDS = [
 OPENSEARCH_LIST_FIELDS = [
     "index_designs",
     "data_stream_designs",
+    "access_patterns",
+    "unsupported_patterns",
+    "trade_offs",
+    "validation_failures",
+]
+
+DOCUMENTDB_LIST_FIELDS = [
+    "collections",
+    "access_patterns",
     "unsupported_patterns",
     "migration_notes",
     "trade_offs",
     "validation_failures",
 ]
 
-DOCUMENTDB_LIST_FIELDS = [
-    "collection_designs",
+ELASTICACHE_LIST_FIELDS = [
+    "key_designs",
+    "access_patterns",
+    "cache_invalidation",
     "unsupported_patterns",
     "migration_notes",
     "trade_offs",
@@ -45,6 +61,7 @@ ENGINE_LIST_FIELDS: dict[str, list[str]] = {
     "dynamodb": DYNAMODB_LIST_FIELDS,
     "opensearch": OPENSEARCH_LIST_FIELDS,
     "documentdb": DOCUMENTDB_LIST_FIELDS,
+    "elasticache": ELASTICACHE_LIST_FIELDS,
 }
 
 
@@ -102,7 +119,7 @@ def merge_group_drafts(drafts: list[dict], engine: str) -> dict:
             combined.extend(draft.get(field, []))
         merged[field] = combined
 
-    # Deduplicate table/collection/index definitions
+    # Deduplicate table/collection/index/key definitions by their contract name field.
     if engine == "dynamodb" and "table_definitions" in merged:
         merged["table_definitions"] = _dedupe_table_definitions(merged["table_definitions"])
     elif engine == "opensearch":
@@ -110,12 +127,12 @@ def merge_group_drafts(drafts: list[dict], engine: str) -> dict:
             merged["index_designs"] = _dedupe_by_name(merged["index_designs"], "index_name")
         if "data_stream_designs" in merged:
             merged["data_stream_designs"] = _dedupe_by_name(
-                merged["data_stream_designs"], "stream_name"
+                merged["data_stream_designs"], "data_stream_name"
             )
-    elif engine == "documentdb" and "collection_designs" in merged:
-        merged["collection_designs"] = _dedupe_by_name(
-            merged["collection_designs"], "collection_name"
-        )
+    elif engine == "documentdb" and "collections" in merged:
+        merged["collections"] = _dedupe_by_name(merged["collections"], "collection_name")
+    elif engine == "elasticache" and "key_designs" in merged:
+        merged["key_designs"] = _dedupe_by_name(merged["key_designs"], "key_pattern")
 
     # Deduplicate trade_offs by description
     if "trade_offs" in merged:

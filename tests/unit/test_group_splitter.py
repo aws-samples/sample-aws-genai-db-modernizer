@@ -252,3 +252,50 @@ class TestAffinityGrouping:
         assert total == MAX_GROUP_SIZE + 5 + 3
         # Should have been split into chunks
         assert all(len(g["queries"]) <= MAX_GROUP_SIZE for g in groups)
+
+
+class TestCoDependencyClustering:
+    """Source 4: the assignment's co_dependency_groups fold into clustering."""
+
+    @staticmethod
+    def _group_with(groups: list[dict], qid: str) -> dict | None:
+        for g in groups:
+            if qid in {q["query_id"] for q in g["queries"]}:
+                return g
+        return None
+
+    def test_codependent_queries_cluster_across_tables(self):
+        """Two tables that would otherwise form separate groups are merged when a
+        co-dependency group joins queries across them."""
+        queries = [_make_query(f"q_a{i}", ["db.a"]) for i in range(5)]
+        queries += [_make_query(f"q_b{i}", ["db.b"]) for i in range(5)]
+
+        # Baseline: no co-dependency → two independent clusters/groups.
+        baseline = build_groups(queries, "db")
+        assert self._group_with(baseline, "q_a0") is not self._group_with(baseline, "q_b0")
+
+        # With a co-dependency group joining a and b, they land together.
+        grouped = build_groups(queries, "db", co_dependency_groups=[["q_a0", "q_b0"]])
+        g = self._group_with(grouped, "q_a0")
+        assert g is not None
+        qids = {q["query_id"] for q in g["queries"]}
+        assert "q_b0" in qids, "co-dependent queries must be in the same group"
+
+    def test_works_without_analysis_or_collector(self):
+        """Source 4 runs even when no collector/analysis signals are present."""
+        queries = [_make_query("q1", ["db.a"]), _make_query("q2", ["db.b"])]
+        grouped = build_groups(queries, "db", co_dependency_groups=[["q1", "q2"]])
+        g = self._group_with(grouped, "q1")
+        assert g is not None
+        assert "q2" in {q["query_id"] for q in g["queries"]}
+
+    def test_group_member_not_on_this_engine_is_ignored(self):
+        """A co-dependency group split across engines only pulls in the queries
+        actually routed to this engine; unknown query_ids are ignored safely."""
+        queries = [_make_query(f"q_a{i}", ["db.a"]) for i in range(5)]
+        # q_other is on another engine and absent from this engine's queries.
+        grouped = build_groups(queries, "db", co_dependency_groups=[["q_a0", "q_other"]])
+        total = sum(len(g["queries"]) for g in grouped)
+        assert total == 5  # no crash, no phantom queries introduced
+        g = self._group_with(grouped, "q_a0")
+        assert g is not None

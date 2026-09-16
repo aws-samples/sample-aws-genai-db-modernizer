@@ -167,3 +167,105 @@ class TestSchemaDesignHandler:
         output = artifact_store.read_json("mydb/job-001/schema-neptune/schema_output.json")
         assert output["target_type"] == "neptune"
         assert output["status"] == "not_implemented"
+
+
+# ---------------------------------------------------------------------------
+# run_schema_design_auto routing (ADR-027 amendment): grouping on the deployed
+# path, single-pass fallback at/under MAX_GROUP_SIZE, Aurora always single-pass.
+# ---------------------------------------------------------------------------
+
+
+def _store_with_queries(tmp_path, engine, n):
+    """LocalArtifactStore seeded with n queries all routed to `engine` in scope."""
+    store = LocalArtifactStore(str(tmp_path))
+    qps = [
+        {
+            "query_id": f"q{i}",
+            "query_text": "SELECT 1",
+            "tables_accessed": ["mydb.t"],
+            "frequency_per_hour": 1.0,
+        }
+        for i in range(n)
+    ]
+    store.write_json(
+        "mydb/job-001/collector/output.json",
+        {
+            "contract_version": "3.0",
+            "database_schema": {
+                "tables": [{"table_id": "mydb.t", "table_name": "t", "row_count": 1, "columns": []}]
+            },
+            "queries": {"query_patterns": qps},
+        },
+    )
+    store.write_json(f"mydb/job-001/analysis-{engine}/analysis.json", {"contract_version": "2.1"})
+    store.write_json(
+        "mydb/job-001/assignment/v1/assignment.json",
+        {
+            "version": 1,
+            "co_dependency_groups": [],
+            "query_assignments": [
+                {
+                    "query_id": f"q{i}",
+                    "assigned_engine": engine,
+                    "in_scope": True,
+                    "source_tables": ["mydb.t"],
+                }
+                for i in range(n)
+            ],
+        },
+    )
+    return store
+
+
+class TestRunSchemaDesignAutoRouting:
+    def test_aurora_always_single_pass_even_when_large(self, tmp_path):
+        """Aurora skips grouping regardless of query count (ADR-027 amendment)."""
+        from src.agents.schema_design.handler import run_schema_design_auto
+
+        store = _store_with_queries(tmp_path, "aurora_postgresql", 50)
+        with (
+            patch("src.agents.schema_design.handler.run_schema_design") as single,
+            patch("src.agents.schema_design.handler.run_schema_split") as split,
+        ):
+            run_schema_design_auto(
+                "job-001", "mydb", "aurora_postgresql", store, assignment_version=1
+            )
+        single.assert_called_once()
+        split.assert_not_called()
+
+    def test_small_workload_runs_single_pass(self, tmp_path):
+        """At or under MAX_GROUP_SIZE, no split happens."""
+        from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+        from src.agents.schema_design.handler import run_schema_design_auto
+
+        store = _store_with_queries(tmp_path, "dynamodb", MAX_GROUP_SIZE)
+        with (
+            patch("src.agents.schema_design.handler.run_schema_design") as single,
+            patch("src.agents.schema_design.handler.run_schema_split") as split,
+        ):
+            run_schema_design_auto("job-001", "mydb", "dynamodb", store, assignment_version=1)
+        single.assert_called_once()
+        split.assert_not_called()
+
+    def test_large_remodeling_workload_splits_into_groups(self, tmp_path):
+        """Above MAX_GROUP_SIZE, a remodeling engine takes the grouping path."""
+        from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+        from src.agents.schema_design.handler import run_schema_design_auto
+
+        store = _store_with_queries(tmp_path, "dynamodb", MAX_GROUP_SIZE + 10)
+
+        def _empty_manifest(job_id, database_name, target_type, store, assignment_version=0):
+            ver = assignment_version if assignment_version > 0 else 1
+            store.write_json(
+                f"{database_name}/{job_id}/schema-{target_type}/v{ver}/groups_manifest.json",
+                {"groups": []},
+            )
+
+        with (
+            patch("src.agents.schema_design.handler.run_schema_design"),
+            patch(
+                "src.agents.schema_design.handler.run_schema_split", side_effect=_empty_manifest
+            ) as split,
+        ):
+            run_schema_design_auto("job-001", "mydb", "dynamodb", store, assignment_version=1)
+        split.assert_called_once()

@@ -44,17 +44,26 @@ def get_primary_table(query: dict, db_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _qualify(table: str, db_name: str) -> str:
+    """Schema-qualify a bare table name with db_name (leaves qualified names as-is)."""
+    if table and "." not in table and db_name:
+        return f"{db_name}.{table}"
+    return table
+
+
 def _build_table_clusters(
     collector_output: dict,
     analysis_output: dict | None,
     db_name: str,
+    queries: list[dict] | None = None,
+    co_dependency_groups: list[list[str]] | None = None,
 ) -> dict[str, str]:
     """Build table clusters from FK relationships and analysis signals.
 
     Returns a mapping of table_id → cluster_root using union-find.
     Tables in the same cluster should be designed together because they
-    share FK relationships, appear in the same aggregates, or are
-    frequently co-accessed.
+    share FK relationships, appear in the same aggregates, are frequently
+    co-accessed, or are joined by co-dependent queries (see Source 4).
     """
     parent: dict[str, str] = {}
 
@@ -73,12 +82,29 @@ def _build_table_clusters(
     for table in collector_output.get("database_schema", {}).get("tables", []):
         table_id = table.get("table_id", "")
         for fk in table.get("foreign_keys") or []:
-            ref_table = fk.get("referenced_table", "")
-            # Qualify if not already
-            if "." not in ref_table and db_name:
-                ref_table = f"{db_name}.{ref_table}"
+            ref_table = _qualify(fk.get("referenced_table", ""), db_name)
             if table_id and ref_table:
                 union(table_id, ref_table)
+
+    # Source 4: Co-dependency groups (JOIN-based relatedness from the assignment).
+    # These are the union-find over significant JOINs computed at assignment time
+    # (ADR-027 amendment). Queries sharing a significant JOIN must be modeled
+    # together, so we union the tables touched by each group's queries. Only the
+    # queries actually routed to this engine (present in ``queries``) are
+    # considered, so a group split across engines only pulls in this engine's
+    # share. Runs regardless of ``analysis_output`` so grouping stays co-dependency
+    # aware even when analysis signals are absent.
+    if co_dependency_groups and queries:
+        qid_to_tables: dict[str, list[str]] = {
+            q.get("query_id", ""): (q.get("tables_accessed") or []) for q in queries
+        }
+        for group in co_dependency_groups:
+            group_tables: list[str] = []
+            for qid in group:
+                group_tables.extend(qid_to_tables.get(qid, []))
+            qualified = list(dict.fromkeys(_qualify(t, db_name) for t in group_tables if t))
+            for i in range(1, len(qualified)):
+                union(qualified[0], qualified[i])
 
     if not analysis_output:
         return parent
@@ -131,18 +157,28 @@ def build_groups(
     db_name: str,
     collector_output: dict | None = None,
     analysis_output: dict | None = None,
+    co_dependency_groups: list[list[str]] | None = None,
 ) -> list[dict]:
     """Split queries into groups using table affinity clusters.
 
-    When analysis_output is provided, uses FK relationships, aggregate
-    recommendations, and co-access patterns to cluster related tables.
-    Queries are assigned to clusters, then clusters are sized into groups.
+    Clusters related tables from FK relationships, aggregate recommendations,
+    co-access patterns, and the assignment's ``co_dependency_groups`` (JOIN-based
+    relatedness). Queries are assigned to clusters, then clusters are sized into
+    groups so co-dependent / related queries are designed together.
 
     Returns a list of dicts with keys: group_name, primary_tables, queries.
     """
-    # Build table clusters if we have the data
-    if collector_output and analysis_output:
-        parent = _build_table_clusters(collector_output, analysis_output, db_name)
+    # Build table clusters when we have any clustering signal. co_dependency_groups
+    # alone is enough (it clusters from the queries' own tables), so this no longer
+    # requires analysis_output.
+    if collector_output or co_dependency_groups:
+        parent = _build_table_clusters(
+            collector_output or {},
+            analysis_output,
+            db_name,
+            queries=queries,
+            co_dependency_groups=co_dependency_groups,
+        )
     else:
         parent = {}
 
@@ -256,24 +292,34 @@ def split_schema_input(
     queries: list[dict],
     store: ArtifactStore,
     schema_version: int = 1,
+    co_dependency_groups: list[list[str]] | None = None,
 ) -> SchemaDesignGroupsManifest:
     """Split schema design input into groups and write per-group input files.
 
     Args:
         job_id: Pipeline job ID.
         database_name: Source database name.
-        engine: Target engine (dynamodb, documentdb, opensearch).
+        engine: Target engine (dynamodb, documentdb, opensearch, elasticache).
         collector_output: Full collector output dict.
         analysis_output: Full analysis output dict.
         queries: Filtered query patterns (only those assigned to this engine).
         store: ArtifactStore for writing artifacts.
         schema_version: Schema version number for artifact paths.
+        co_dependency_groups: The assignment's co-dependency groups (query-id
+            groups sharing significant JOINs). Folded into table clustering so
+            co-dependent queries are designed together.
 
     Returns:
         SchemaDesignGroupsManifest with group entries.
     """
     all_tables = collector_output.get("database_schema", {}).get("tables", [])
-    groups = build_groups(queries, database_name, collector_output, analysis_output)
+    groups = build_groups(
+        queries,
+        database_name,
+        collector_output,
+        analysis_output,
+        co_dependency_groups=co_dependency_groups,
+    )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 
     manifest_groups: list[SchemaDesignGroupEntry] = []

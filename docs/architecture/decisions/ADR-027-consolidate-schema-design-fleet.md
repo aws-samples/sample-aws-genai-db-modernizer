@@ -169,3 +169,86 @@ Tradeoffs:
   schema consolidation and the rename land in a single deploy rather than two.
 - The schema-design table-qualifier match bug (tracked separately) is orthogonal
   to this change and should land regardless of consolidation.
+
+---
+
+## Amendment (2026-08-27): restore per-engine query grouping on the deployed path + co-dependency-aware clustering
+
+Consolidating the fleet (above) did not change how a single engine's queries are
+turned into a design. That path had **drifted** from its intended behavior, and
+this amendment corrects it. The drift was not caught in review; a broader audit
+follows once this and the assignment re-entry work (ADR-029) land.
+
+### What drifted
+
+1. **Grouping never runs on the deployed (A2A) path.** The intended design splits
+   a large engine's queries into affinity groups, designs each group, then merges
+   (`group_splitter` -> per-group design -> `group_merger`), so related queries are
+   modeled together. That path exists only behind `run_schema_design_auto` /
+   `run_schema_split`, which the docstrings describe as the Step Functions / local
+   entrypoints. The deployed subagent path
+   (`subagents/schema.py` -> `core.run_schema_design_core` -> `handler.run_schema_design`)
+   calls the **single-shot** designer, which sends an engine's entire filtered query
+   set to one LLM prompt. So on AWS Transform, grouping never happened. Earlier
+   testing found grouped results materially better than the single all-queries
+   prompt; the deployed path regressed to the worse behavior.
+
+2. **The grouping ignored the JOIN-relatedness signal.** `group_splitter._build_table_clusters`
+   clusters tables from foreign keys, aggregate recommendations, and co-access
+   patterns, but never consults the assignment's `co_dependency_groups` — the
+   union-find over significant JOINs that exists precisely to keep related queries
+   together. So even where grouping did run, the signal most directly meant to drive
+   it was unused.
+
+3. **The merger was incomplete and partly wrong.** `group_merger.ENGINE_LIST_FIELDS`
+   covered only dynamodb / opensearch / documentdb. Against the actual output
+   contracts: documentdb used `collection_designs` (the contract field is
+   `collections`), so merges kept only the first group's collections; the opensearch
+   data-stream dedup keyed on `stream_name` (contract field is `data_stream_name`)
+   and listed a `migration_notes` field the opensearch contract does not define;
+   elasticache and the two Aurora engines had no entries at all. Routing those
+   engines through grouping without this fix would silently drop all but the first
+   group's design.
+
+### The correction
+
+- **A. Wire the deployed path through grouping.** `run_schema_design_core` calls
+  `run_schema_design_auto` (split -> per-group design -> merge) instead of the
+  single-shot `run_schema_design`, preserving the existing `<= MAX_GROUP_SIZE`
+  single-pass fallback so small engines are unchanged.
+- **B. Co-dependency-aware clustering.** Fold the assignment's `co_dependency_groups`
+  into the table-affinity union in `_build_table_clusters`, alongside FK / aggregate
+  / co-access. For each co-dependency group, the tables its queries touch are unioned
+  into one cluster, so JOIN-related queries land in the same design group. The
+  assignment's groups are threaded from `run_schema_split` -> `split_schema_input`
+  -> `build_groups`.
+- **C. Correct and complete the merger, and scope grouping to the remodeling
+  engines.** Fix documentdb (`collections`), fix the opensearch data-stream dedup key
+  (`data_stream_name`) and drop the non-existent `migration_notes`, and add
+  elasticache. Grouping applies to **dynamodb, documentdb, opensearch, elasticache**;
+  **Aurora (postgresql, mysql) stays single-pass**. Aurora's output is a single
+  `generated_ddl` script plus table definitions that do not merge from independently
+  designed groups, and a relational engine does not gain from query grouping the way
+  a remodeling target does (JOINs execute within the engine regardless of how the
+  design prompt was batched). `run_schema_design_auto` forces single-pass for the
+  Aurora engines.
+
+### Rationale
+
+Grouping related queries yields a more coherent per-engine model — denormalization
+and access-pattern decisions are made with the related queries in view — than one
+prompt over every query. This matches what earlier testing showed and what the
+consolidation ADR always assumed the per-engine core did. The tradeoff is more LLM
+calls plus a merge step for large engines (slower), which is accepted for the
+quality gain.
+
+### Consequences
+
+- On the deployed path, a large remodeling engine now designs per affinity group
+  (FK + aggregate + co-access + co-dependency JOINs) and merges, instead of one
+  all-queries prompt.
+- The merger is correct for every engine it is now used for; Aurora is explicitly
+  single-pass.
+- This is a drift correction, so the durable artifact contract
+  (`schema-<engine>/v<N>/schema_output.json`) is unchanged; synthesis and fixtures
+  see the same shape.
