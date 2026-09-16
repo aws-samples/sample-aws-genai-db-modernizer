@@ -334,19 +334,36 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
     """
     job_id = _platform_job_id(job_id)
     store = _make_store()
-    report_key = f"{database_name}/{job_id}/synthesis/report.json"
 
-    if not store.exists(report_key):
-        return json.dumps(
-            {
-                "error": "Report not available yet. Run synthesis first.",
-                "job_id": job_id,
-                "report_artifact": report_key,
-            }
-        )
+    # The synthesis writer produces a VERSIONED key, synthesis/v{N}/report.json
+    # (keyed on the effective assignment version), or the legacy
+    # referee-synthesis/report.json when no versioned assignment exists. It never
+    # writes an unversioned synthesis/report.json, so resolve the effective
+    # version and read the versioned key first, then fall back. (ADR-029: the
+    # previous unversioned-only read meant this tool always reported "not
+    # available" for a normally-run synthesis.)
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
 
-    report = store.read_json(report_key)
-    return json.dumps(report)
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    candidate_keys: list[str] = []
+    if version > 0:
+        candidate_keys.append(f"{database_name}/{job_id}/synthesis/v{version}/report.json")
+    candidate_keys.append(f"{database_name}/{job_id}/referee-synthesis/report.json")
+    # Legacy/defensive: an older unversioned artifact, if one exists.
+    candidate_keys.append(f"{database_name}/{job_id}/synthesis/report.json")
+
+    for report_key in candidate_keys:
+        if store.exists(report_key):
+            return json.dumps(store.read_json(report_key))
+
+    return json.dumps(
+        {
+            "error": "Report not available yet. Run synthesis first.",
+            "job_id": job_id,
+            "report_artifact": candidate_keys[0],
+            "searched": candidate_keys,
+        }
+    )
 
 
 @tool
