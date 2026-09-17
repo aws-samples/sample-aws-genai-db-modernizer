@@ -13,28 +13,63 @@ over A2A, while the analysis stays deterministic and auditable.
 startup and serves the matching factory. The AWS Transform runtime provisions one
 instance per agent, and the orchestrator invokes the others over A2A.
 
+The fleet is **four agents**: the orchestrator plus three subagents. The
+assessment front-half was consolidated into one `assessment-core` agent (ADR-025,
+ADR-026) and the six per-engine schema runtimes into one parametrized `schema`
+agent (ADR-027), so `AGENT_TYPE` now takes one of `orchestrator`,
+`assessment-core`, `schema`, `referee-synthesis`.
+
 ```
 AWS Transform WebApp
      │  MCP / A2A
      ▼
 orchestrator (AGENT_TYPE=orchestrator)
-     │  invokes subagents by name over A2A (Agentic API)
-     ├─► collector            → collector/output.json
-     ├─► referee-triage       → referee-triage/triage.json
-     ├─► analysis-<engine>    (dynamodb, documentdb, elasticache, opensearch, aurora-pg, aurora-mysql)
-     ├─► assignment-resolver  → assignment/v1/assignment.json
-     ├─► schema-<engine>      (six targets) → schema-<engine>/v1/schema_output.json
-     └─► referee-synthesis    → synthesis/v1/report.json (+ Decision & Engineering reports)
+     │  invokes 3 subagents by name over A2A (Agentic API)
+     │
+     ├─► assessment-core   (AGENT_TYPE=assessment-core): whole front-half, one agent
+     │        Collect       → collector/output.json
+     │        Triage        → referee-triage/triage.json
+     │        Analyze       → analysis-<engine>/...  (per triage-selected engine)
+     │        Assign        → assignment/v{N}/assignment.json
+     │        Reality Check → consolidated assignment (CTO-level engine trim; 1 LLM pass)
+     │
+     ├─◆ assignment-review GATE  (orchestrator tools; the one required pause)
+     │        present_assignment_review → [optional] open_detailed_routing_review
+     │                                  → finalize_assignment_review
+     │        finalize runs the feasibility reviewer; BLOCKING findings loop the
+     │        gate (status "infeasible") until fixed or explicitly accepted.
+     │
+     ├─► schema            (AGENT_TYPE=schema): one agent, invoked once per target
+     │        engine IN PARALLEL → schema-<engine>/v{N}/schema_output.json
+     │
+     └─► referee-synthesis → synthesis/v{N}/report.json (+ Decision & Engineering reports)
+
+Re-entry (ADR-029, after a report exists): reopen_assignment_review → finalize the
+edit → redispatch_after_reroute re-runs ONLY the engines whose routing changed
+(unchanged engines' schema is copied forward v{N} → v{N+1}), then synthesis reruns.
 
 All agents read/write through the ArtifactStore abstraction:
   - local dir  (ARTIFACT_DIR)  for testing
   - S3 bucket  (S3_BUCKET)     for cloud
 ```
 
-The deterministic pipeline logic is **unchanged** — these wrappers call the
-existing handlers via shared functions in `core.py`. Only the orchestrator LLM's
-routing is non-deterministic; every engine and query recommendation is produced
-deterministically.
+The per-query engine assignment stays **deterministic and auditable**: no LLM
+decides which engine a table or query goes to. The LLM/advisory passes are the
+Reality Check consolidation (validates the deterministic engine trim and writes a
+CTO summary), the post-gate feasibility reviewer (flags routings that will not
+work; it advises and can block, but never reroutes), and the synthesis executive
+summary. Only the orchestrator's own tool-routing is non-deterministic. The
+wrappers call the existing handlers via shared functions in `core.py`.
+
+### Design decisions
+
+The current shape of this integration is recorded in `docs/architecture/decisions/`:
+
+- **ADR-025**: consolidate the deterministic front-half into one agent
+- **ADR-026**: fold Reality Check into `assessment-core`
+- **ADR-027**: consolidate the six schema-design runtimes into one `schema` agent
+- **ADR-028**: customer assignment-review gate
+- **ADR-029**: assignment re-entry + post-gate feasibility review
 
 ## Files
 
@@ -43,17 +78,22 @@ deterministically.
 | `atx_entrypoint.py` | Single container entry point; dispatches on `AGENT_TYPE` |
 | `Dockerfile.atx` | The one image for every agent (ARM64 / Graviton) |
 | `core.py` | Shared, storage-agnostic phase functions (single source of truth) |
-| `orchestrator.py` | Orchestrator class, tool registration, system prompt |
+| `orchestrator.py` | Orchestrator class, `PIPELINE_TOOLS` registration, `SYSTEM_PROMPT` |
 | `app.py` | `build_agent_factory` for the orchestrator agent |
-| `tools.py` | Orchestrator A2A tools (`run_*_via_a2a`) |
+| `startup.py` | Orchestrator's proactive job-open welcome message |
+| `tools.py` | Orchestrator tools: `run_*_via_a2a`, the assignment-review gate (`present_`/`open_detailed_routing_`/`finalize_assignment_review`), and re-entry (`reopen_assignment_review`, `redispatch_after_reroute`) |
 | `a2a.py` | A2A invoke-and-poll primitive |
-| `subagents/base.py` | Shared subagent factory (A2A message parsing + status management) |
-| `subagents/collector.py`, `triage.py`, `assignment.py`, `synthesis.py` | Per-phase subagents (one `AGENT_TYPE` each) |
-| `subagents/schema.py` | Schema-design subagents (six targets, one parametrized factory) |
-| `subagents/analysis/{dynamodb,documentdb,elasticache,opensearch,aurora_pg,aurora_mysql}.py` | Per-engine analysis subagents |
-| `runtime/job_plan.py` | WebApp progress-panel updates |
+| `subagents/base.py` | Shared subagent factory (A2A message parsing + status management) + `run_server` |
+| `subagents/assessment_core.py` | Consolidated front-half subagent: Collect → Triage → Analyze → Assign → Reality Check (ADR-025, ADR-026) |
+| `subagents/schema.py` | Schema-design subagent: one parametrized factory, invoked once per target engine (ADR-027) |
+| `subagents/synthesis.py` | Referee-synthesis subagent (final report) |
+| `runtime/job_plan.py` | WebApp progress-panel plan + per-phase status updates |
+| `runtime/job_status.py` | Job/phase status helpers |
+| `runtime/hitl.py` | Human-in-the-loop transport for the detailed routing-review table |
 | `runtime/artifacts.py` | Artifacts-panel publishing + Decision/Engineering report renderers |
+| `runtime/analysis_report.py`, `pdf_report.py`, `pptx_report.py` | Report renderers (analysis markdown, PDF, executive PPTX) |
 | `runtime/store.py` | Transform storage subclasses (adds `write_text`) |
+| `runtime/assets/`, `runtime/templates/` | Report template + static assets |
 | `requirements.txt` | Container Python deps (SDK + project runtime deps) |
 
 ## Environment variables
@@ -82,7 +122,7 @@ finch build --platform linux/arm64 \
 uv run python scripts/atx_smoke_test.py       # imports + wiring
 uv run python scripts/atx_contract_test.py    # raw handlers reproduce reference
 uv run python scripts/atx_tool_test.py        # orchestrator tool reproduces reference
-uv run python scripts/atx_subagent_test.py    # collector | triage split reproduces reference
+uv run python scripts/atx_subagent_test.py    # consolidated assessment-core reproduces reference
 ```
 
 ## Testing your own fleet (before the pipeline)
@@ -100,10 +140,11 @@ works locally).
 
 ### Full fleet — use the harness
 
-`pipeline/atx_deploy.py` deploys all 16 agents from one image and wires the
-orchestrator's `AGENT_NAME_PREFIX` for you, so it is the simplest way to get an
-end-to-end personal fleet. The common case reuses the image the pipeline already
-built — no rebuild needed:
+`pipeline/atx_deploy.py` deploys the full four-agent fleet (orchestrator +
+assessment-core + schema + synthesis) from one image and wires the orchestrator's
+`AGENT_NAME_PREFIX` for you, so it is the simplest way to get an end-to-end
+personal fleet. The common case reuses the image the pipeline already built — no
+rebuild needed:
 
 `apply`/`destroy`/`status` read environment/account/org-specific settings from the
 environment (the deploy pipeline injects them; set them yourself for a personal
@@ -128,8 +169,8 @@ python pipeline/atx_deploy.py destroy --env <alias> --force
 
 To test your own code changes, build+push an image first (`atx_deploy.py build`)
 and pass its digest instead. Keep `<alias>` short: AgentCore runtime names are
-capped at 48 chars and the longest is `dbmod-<alias>-analysis-aurora-mysql`, so
-aliases up to ~20 characters fit.
+capped at 48 chars and the longest is now `dbmod-<alias>-assessment-core`, so
+aliases up to ~26 characters fit.
 
 ### Single agent — use the AWS Transform MCP toolkit
 
