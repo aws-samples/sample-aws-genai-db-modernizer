@@ -116,6 +116,25 @@ finch build --platform linux/arm64 \
 
 `AGENT_TYPE` is set per AgentCore runtime, so this one image backs every agent.
 
+### AgentCore requirements
+
+Non-obvious constraints Bedrock AgentCore imposes. `Dockerfile.atx` and
+`subagents/base.py` already satisfy them; keep them in mind when changing either:
+
+- **arm64 only.** Images must be `linux/arm64` (AgentCore runs on Graviton); an x86
+  image fails at runtime with `exec format error`.
+- **Startup contract.** The image registers the AWS Transform botocore service
+  models (via `AWS_DATA_PATH`) and creates the MCP shim at
+  `/home/amazon/AgentBuilderAgenticMCP/bin/agent-builder-agentic-mcp`. Missing
+  either leaves the agent stuck in `STARTING`.
+- **Long-running server.** Use `AgentRuntimeServer` with `delayed_timeout=3600`,
+  never `StatelessAgentRuntimeServer` (its ~28s cap kills real analysis runs).
+- **`mcp_clients` is a list** (or `None`), never a singular `mcp_client=`.
+- **Define the subagent class inside `agent_factory()`.** A module-level subclass
+  hangs in production containers; `subagents/base.py` handles this.
+- Serve on **port 8080 with a `/ping` healthcheck**, and use the cross-region model
+  id `us.anthropic.claude-sonnet-4-6`.
+
 ## Local tests (no AWS, no Docker required)
 
 ```bash
@@ -184,4 +203,12 @@ alias fleet, and — for an orchestrator — set its `AGENT_NAME_PREFIX` to
 
 ## Deploy
 
-See `docs/aws-transform-handoff.md` for the deployment runbook.
+Everything is driven by `pipeline/atx_deploy.py`: one image, N AgentCore runtimes
+that differ only by env var (verbs `build` / `apply` / `destroy` / `status`).
+
+- **Personal fleet:** see "Testing your own fleet" above (`atx_deploy.py apply`).
+- **Automated environments:** CI builds the arm64 image, pushes to ECR, and runs
+  `atx_deploy.py apply` per environment; shared environments are never deployed from
+  a laptop.
+
+Run `python pipeline/atx_deploy.py --help` for the current flags.
