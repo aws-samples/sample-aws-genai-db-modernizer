@@ -364,3 +364,45 @@ Tradeoffs:
 - Extend the feasibility reviewer with transaction-boundary and
   referential-integrity splits (Aurora-only capabilities already in
   `ENGINE_CAPABILITIES`).
+
+---
+
+## Amendment 1 (2026-09-17): defer job completion so re-entry is possible
+
+**Status:** Accepted. **Trigger:** re-entry was broken on the deployed
+`feat_staleness_` fleet — the reopened routing table showed no submit button and
+nothing auto-continued after submit.
+
+**What we found (from the orchestrator's CloudWatch logs).** The re-entry code
+path was correct: `reopen_assignment_review` -> `present_assignment_review` ->
+`open_detailed_routing_review` did raise the editable HITL table. But every
+`UpdateJobPlanStep` during re-entry failed with `ValidationException: Attempting
+to update a job that is in a terminal state`, and the re-raised HITL task never
+reached `SUBMITTED`. Root cause: `run_synthesis_via_a2a` marked the platform job
+`COMPLETED` at the end of the first round. `COMPLETED` is **terminal** on the AWS
+Transform platform and cannot be revived (`UpdateJobStatus` declares a
+`TerminalResourceException`; sibling agents `ATXITAgentTestOrch` and Helix
+deliberately avoid completing a job they intend to reuse). A terminal job rejects
+job-plan updates and HITL submission, so both symptoms followed.
+
+**Decision.** The assessment is not "done" when the first report lands — the
+customer may re-route. So:
+
+- **Do not auto-complete at synthesis.** `run_synthesis_via_a2a` now rests the
+  job at the non-terminal `AWAITING_HUMAN_INPUT` (`job_status.set_awaiting_human_input`).
+- **Resume on re-entry.** `reopen_assignment_review` first moves the job back to
+  `EXECUTING` (`job_status.resume_executing`) so the reopened gate, job-plan
+  updates, and HITL submission work on a live job.
+- **Complete once, explicitly.** A new `complete_assessment` tool sets the single
+  terminal `COMPLETED`, called only when the customer confirms they are done. The
+  orchestrator prompt adds a post-report checkpoint (step 8) that asks "adjust
+  routing, or finish?" and gates `complete_assessment` on the customer's answer.
+
+This matches the platform-blessed pattern for re-enterable jobs (rest at
+`AWAITING_HUMAN_INPUT`, `EXECUTING` during work, terminal `COMPLETED` once). The
+job now stays open across as many re-route rounds as the customer wants.
+
+**Tradeoff.** A job stays non-terminal until the customer says done (or the
+platform's idle timeout fires), rather than closing the instant the first report
+is produced. The completion idempotency guard now latches only on the terminal
+`COMPLETED`; non-terminal transitions clear it so a later round can complete.

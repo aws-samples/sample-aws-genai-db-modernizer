@@ -71,6 +71,19 @@ class TestReopen:
             out = json.loads(tools.reopen_assignment_review(JOB, DB))
             assert "error" in out
 
+    def test_reopen_resumes_job_to_executing(self, store) -> None:
+        # The job rests at AWAITING_HUMAN_INPUT between rounds; reopen must move it
+        # back to EXECUTING first, or the re-raised HITL routing table (raised on a
+        # non-terminal job) would not be submittable.
+        _write_assignment(store, 1, [_qa("q1", "dynamodb")], previous=None)
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.runtime.job_status.resume_executing") as mock_resume,
+        ):
+            out = json.loads(tools.reopen_assignment_review(JOB, DB))
+        assert out["status"] == "reopened"
+        mock_resume.assert_called_once()
+
 
 class TestRedispatch:
     def _seed_v1_schema(self, store) -> None:

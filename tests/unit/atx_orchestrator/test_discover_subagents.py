@@ -63,6 +63,10 @@ class TestDiscoverSubagentsRegistration:
             # routing change, then re-design only the affected engines.
             "reopen_assignment_review",
             "redispatch_after_reroute",
+            # explicit terminal completion (ADR-029 amendment): the job rests at
+            # AWAITING_HUMAN_INPUT between rounds and is completed only on the
+            # customer's explicit "done", so re-entry stays possible.
+            "complete_assessment",
             # status / read-only
             "get_job_status",
             "get_synthesis_report",

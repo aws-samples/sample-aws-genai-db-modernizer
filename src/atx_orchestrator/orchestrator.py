@@ -17,6 +17,7 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 )
 
 from src.atx_orchestrator.tools import (
+    complete_assessment,
     declare_pipeline_plan,
     finalize_assignment_review,
     get_job_status,
@@ -135,6 +136,14 @@ dispatch.
                                              PARALLEL, then run_synthesis_via_a2a to rebuild the
                                              report. Only the engines the edit actually changed
                                              are redesigned.
+  3c. complete_assessment                   — FINISH the assessment. Marks the job COMPLETED,
+                                             which is TERMINAL and cannot be undone (no more
+                                             re-entry after it). Call this ONLY when the customer,
+                                             having seen the report, confirms they have no further
+                                             routing changes. Do NOT call it automatically after
+                                             synthesis: between rounds the job waits so the
+                                             customer can re-route. Their explicit "I'm done" (or
+                                             equivalent) is the trigger.
   4. get_job_status                        — check current phase progression.
   5. get_synthesis_report                  — read the completed report.
 
@@ -218,6 +227,15 @@ Workflow:
          before the next step. Each takes roughly 10-15 minutes, so tell the
          customer this is the long phase and say what it produces.
       7. run_synthesis_via_a2a(job_id, database_name)
+      8. Present the report, then ask the customer whether they want to adjust any
+         query-to-engine routing or are happy to finish. WAIT for their answer.
+         * If they want a change: run the re-entry flow (reopen_assignment_review
+           -> gate -> redispatch_after_reroute -> the named schema tools ->
+           run_synthesis_via_a2a again), then return here and ask again.
+         * If they are done: call complete_assessment(job_id, database_name). This
+           is what closes the job. Do NOT call it until they confirm — the job
+           stays open between rounds so they can re-route as many times as they
+           want.
 
   - REQUIRED chat summary (step 3). When run_assessment_core_via_a2a returns you
     MUST reply to the customer with a short chat message BEFORE calling any other
@@ -239,10 +257,12 @@ Workflow:
     `notes` or `warnings` field. Relay that text as given. Do not describe it as
     an error, do not retry it, and do not characterise it in your own words.
 
-  - State the plan in a sentence or two, then execute the sequence. There is
-    exactly ONE required pause: the assignment-review gate (steps 4-5). Present the
-    recommendation, wait for the customer, and start schema design only after
-    finalize_assignment_review returns "approved". Do not pause anywhere else, and
+  - State the plan in a sentence or two, then execute the sequence. There are TWO
+    required pauses: the assignment-review gate (step 5), and the post-report
+    checkpoint (step 8) where you ask whether to adjust routing or finish. At the
+    gate, start schema design only after finalize_assignment_review returns
+    "approved". At the post-report checkpoint, do not call complete_assessment
+    until the customer confirms they are done. Do not pause anywhere else, and
     never ask the customer to choose phases, tools, or order.
 
   - Re-entry (after the report already exists). If the customer has seen the
@@ -252,9 +272,11 @@ Workflow:
     optionally open_detailed_routing_review -> finalize_assignment_review) to apply
     the edit, then call redispatch_after_reroute. Dispatch the schema-design tools
     it names in `affected_engines` / `dispatch_tools` in parallel (the unchanged
-    engines are copied forward for you), and finish with run_synthesis_via_a2a.
-    This redesigns only the engines the edit actually changed, so it is much faster
-    than a fresh run.
+    engines are copied forward for you), then run_synthesis_via_a2a, and return to
+    the post-report checkpoint (step 8) to ask again. This redesigns only the
+    engines the edit actually changed, so it is much faster than a fresh run. The
+    job stays open across as many re-route rounds as the customer wants; it closes
+    only when they confirm they are done and you call complete_assessment.
 
   - Report findings in the customer's terms, not the system's: which engines were
     selected and why, how the queries distributed, what the ranking says. Do not
@@ -300,6 +322,7 @@ PIPELINE_TOOLS = [
     run_synthesis_via_a2a,
     reopen_assignment_review,
     redispatch_after_reroute,
+    complete_assessment,
     get_job_status,
     get_synthesis_report,
     # NOTE: discover_subagents omitted intentionally. As of SDK v1.0.2 it

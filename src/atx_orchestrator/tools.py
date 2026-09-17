@@ -1042,14 +1042,17 @@ def run_synthesis_via_a2a(
         message=message,
         on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
     )
-    # Synthesis is the last step of the assessment pipeline. When it succeeds the
-    # whole job is done, so mark the platform JOB terminal — the platform does not
-    # roll the job up when only plan steps and subagent instances finish, so
-    # without this the job stays EXECUTING forever. Only the orchestrator owns
-    # this transition; it is idempotent and fail-open. A synthesis error is left
-    # non-terminal on purpose so the LLM can retry.
+    # Synthesis produced the report, but the assessment is NOT necessarily done:
+    # the customer may want to re-route queries and re-run (ADR-029 re-entry). So
+    # rest the job at the non-terminal AWAITING_HUMAN_INPUT rather than completing
+    # it. A terminal COMPLETED job cannot be revived (the platform rejects updates
+    # on a terminal job), which is exactly what broke re-entry. The terminal
+    # COMPLETED is set once, explicitly, by complete_assessment when the customer
+    # confirms they are done. The platform still does not roll the job up on its
+    # own, so we own this transition; it is best-effort and fail-open. A synthesis
+    # error is left as-is so the LLM can retry.
     if not _is_error_result(result):
-        _complete_job_success(job_id)
+        _rest_job_awaiting_input(job_id)
     return result
 
 
@@ -1250,6 +1253,37 @@ def _complete_job_success(job_id: str) -> None:
     except Exception:  # noqa: BLE001
         # Fail-open: never let job completion crash the final synthesis turn.
         logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
+
+
+def _rest_job_awaiting_input(job_id: str) -> None:
+    """Rest the platform job at AWAITING_HUMAN_INPUT after a synthesis round.
+
+    Replaces the old auto-COMPLETE-at-synthesis: a terminal job cannot be revived,
+    which broke ADR-029 re-entry (the reopened gate's HITL table was not
+    submittable on a terminal job). Resting at the non-terminal
+    AWAITING_HUMAN_INPUT keeps the job re-enterable; the terminal COMPLETED is set
+    once, explicitly, by ``complete_assessment`` when the customer is done.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import set_awaiting_human_input
+
+        set_awaiting_human_input(job_id=job_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ATX: resting job AWAITING_HUMAN_INPUT failed (best-effort)", exc_info=True)
+
+
+def _resume_job_executing(job_id: str) -> None:
+    """Move the platform job back to EXECUTING for a re-entry round.
+
+    Called by ``reopen_assignment_review`` so the reopened gate + HITL run on a
+    live (non-terminal) job. Best-effort and fail-open.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import resume_executing
+
+        resume_executing(job_id=job_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ATX: resuming job EXECUTING failed (best-effort)", exc_info=True)
 
 
 # Target engine per schema-design tool suffix, used in the plan step label and,
@@ -1766,6 +1800,11 @@ def reopen_assignment_review(job_id: str, database_name: str) -> str:
         return json.dumps(
             {"error": "No assignment to reopen. Run the assessment core first.", "job_id": job_id}
         )
+    # Move the job back to EXECUTING FIRST. After a synthesis round the job rests
+    # at the non-terminal AWAITING_HUMAN_INPUT; resuming it to EXECUTING is what
+    # makes the subsequent job-plan updates and the re-raised HITL routing table
+    # submittable. Without this the reopened table renders but cannot be submitted.
+    _resume_job_executing(job_id)
     _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
     mark_step_pending_human_input(
         "assignment_review", "Reopened for customer routing changes (re-entry)."
@@ -1855,6 +1894,37 @@ def redispatch_after_reroute(job_id: str, database_name: str) -> str:
                 "Copied unchanged engines' schema forward. Now dispatch schema design for the "
                 "affected_engines (call the listed dispatch_tools in parallel), then call "
                 "run_synthesis_via_a2a to rebuild the report at this version."
+            ),
+        }
+    )
+
+
+@tool
+def complete_assessment(job_id: str, database_name: str) -> str:
+    """Mark the assessment DONE — the single terminal completion of the job.
+
+    Call this ONLY when the customer, after seeing the report, confirms they have
+    no further routing changes (they are done). It marks the platform job
+    COMPLETED, which is terminal and cannot be undone: no further re-entry,
+    routing edits, or schema/synthesis runs are possible on this job afterward.
+
+    Do NOT call it right after synthesis by default. Between rounds the job rests
+    at AWAITING_HUMAN_INPUT so the customer can re-route (reopen_assignment_review
+    -> ... -> redispatch_after_reroute). Only their explicit "I'm done" (or
+    equivalent) should trigger this.
+
+    Returns JSON with ``status`` ("completed").
+    """
+    job_id = _platform_job_id(job_id)
+    _complete_job_success(job_id)
+    logger.info("ATX: assessment marked COMPLETED (terminal) for job_id=%s", job_id)
+    return json.dumps(
+        {
+            "status": "completed",
+            "job_id": job_id,
+            "message": (
+                "Assessment marked complete. The job is now closed; no further routing "
+                "changes or re-runs are possible on it."
             ),
         }
     )
