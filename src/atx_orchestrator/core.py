@@ -10,11 +10,9 @@ Everything here operates on the ArtifactStore abstraction. Storage type
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
-import tempfile
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -60,7 +58,8 @@ def default_input_key(job_id: str, database_name: str) -> str:
 
 def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
     """Locate a customer's WebApp-uploaded offline collection via the ATX
-    Artifact API and stage it at the seed key for the collector.
+    Artifact API and return an ``artifact://<artifact_id>`` key that reads it
+    in place -- no download, no copy into our store.
 
     A customer's upload is a platform **artifact** (category ``CUSTOMER_INPUT``),
     not an object in this pipeline's ``S3_BUCKET``. The Artifact Store owns where
@@ -69,11 +68,10 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     its own role. Listing a prefix in our ``S3_BUCKET`` (the old approach) only
     ever found the upload when the WebApp happened to write into the same bucket
     the runtime reads, i.e. same-account dev; cross-account it silently found
-    nothing. So discovery goes through ``ListArtifacts`` +
-    ``CreateArtifactDownloadUrl`` instead, which is account/bucket-agnostic.
+    nothing. So discovery goes through ``ListArtifacts`` instead, which is
+    account/bucket-agnostic.
 
-    Flow (Option 1 — stage at the seed key so the collector's read path is
-    unchanged):
+    Flow:
 
       1. Resolve the ATX agent context (workspace/job/agent-instance) and build
          the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
@@ -82,12 +80,12 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
          orchestrator's), filter to JSON, exclude the auto-written
          ``job_objective``. Expect exactly one; more than one is ambiguous and
          raises.
-      3. Download it and stage it into ``store`` at the seed key
-         ``{db}/{job}/uploads/collector-output.json``; return that key. The
-         collector then reads it exactly as it does a dev/reference seed.
+      3. Return ``artifact://<artifact_id>``. The ATX artifact store backend's
+         ``read_json``/``exists`` understand this scheme and read the artifact
+         directly through the Artifact API -- nothing is copied into ``store``.
 
-    Returns the staged seed key, or ``None`` when not in the ATX runtime or no
-    upload was found. Raises ``ValueError`` on an ambiguous upload.
+    Returns the ``artifact://`` key, or ``None`` when not in the ATX runtime or
+    no upload was found. Raises ``ValueError`` on an ambiguous upload.
     """
     try:
         from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
@@ -184,26 +182,16 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         return None
 
     artifact_id = candidates[0]["artifactId"]
-    seed_key = default_input_key(job_id, database_name)
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = (
-            tmp.name
-        )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
-    try:
-        artifacts.download_artifact(artifact_id, tmp_path)
-        with open(tmp_path, encoding="utf-8") as fh:
-            collection = json.load(fh)
-        store.write_json(seed_key, collection)
-    finally:
-        with contextlib.suppress(OSError):
-            os.remove(tmp_path)
     logger.info(
-        "upload discovery: staged CUSTOMER_INPUT artifact %s (label=%r) at seed key %r",
+        "upload discovery: resolved CUSTOMER_INPUT artifact %s (label=%r) as artifact://%s "
+        "(read in place; nothing staged to our store)",
         artifact_id,
         candidates[0].get("artifactLabel"),
-        seed_key,
+        artifact_id,
     )
-    return seed_key
+    from src.atx_orchestrator.runtime.atx_store import ARTIFACT_SCHEME
+
+    return f"{ARTIFACT_SCHEME}{artifact_id}"
 
 
 def _resolve_collector_input(store, job_id: str, database_name: str, input_key: str) -> str:

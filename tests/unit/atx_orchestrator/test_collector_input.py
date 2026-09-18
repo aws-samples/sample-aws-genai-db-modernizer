@@ -82,6 +82,17 @@ class TestResolveCollectorInput:
                 core._resolve_collector_input(store, "job", "db", "")
             disc.assert_not_called()
 
+    def test_resolve_uses_artifact_uri_without_seed(self) -> None:
+        class _ArtifactUriStore(_FakeStore):
+            def exists(self, path: str) -> bool:
+                return path.startswith("artifact://") or super().exists(path)
+
+        store = _ArtifactUriStore()
+        assert (
+            core._resolve_collector_input(store, "job", "db", "artifact://art-1")
+            == "artifact://art-1"
+        )
+
 
 # =============================================================================
 # _discover_uploaded_input
@@ -173,25 +184,17 @@ class TestDiscoverUploadedInput:
         _inject_sdk(monkeypatch, None)
         assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
-    def test_single_upload_downloaded_and_staged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_single_upload_returns_artifact_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _FakeArtifactStore(
             [
                 _artifact("art-1", "default", path="discourse-collection.json"),
                 _artifact("obj-1", "default", path="job_objective"),
-            ],
-            content={"collection_version": 7},
+            ]
         )
         _inject_sdk(monkeypatch, fake)
-        store = _FakeStore()
-        seed = core.default_input_key("uuid1", "discourse")
-
-        result = core._discover_uploaded_input(store, "uuid1", "discourse")
-
-        assert result == seed
-        # It downloaded the collection artifact (not the job_objective)...
-        assert fake.downloaded == ["art-1"]
-        # ...and staged the content at the seed key for the collector to read.
-        assert store.read_json(seed) == {"collection_version": 7}
+        result = core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
+        assert result == "artifact://art-1"
+        assert fake.downloaded == []  # no download, no S3 copy
 
     def test_lists_without_server_side_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Regression guard: server-side category/agent filters returned listed=0
@@ -214,16 +217,13 @@ class TestDiscoverUploadedInput:
         collection must be picked — the objective is excluded by path basename."""
         collection = _artifact("33641880", "default", path="discourse-collection.json")
         objective = _artifact("788c3a44", "default", path="job_objective")
-        fake = _FakeArtifactStore([collection, objective], content={"collection_version": 5})
+        fake = _FakeArtifactStore([collection, objective])
         _inject_sdk(monkeypatch, fake)
-        store = _FakeStore()
-        seed = core.default_input_key("uuid1", "discourse")
 
-        result = core._discover_uploaded_input(store, "uuid1", "discourse")
+        result = core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
 
-        assert result == seed
-        assert fake.downloaded == ["33641880"]  # the collection, not the objective
-        assert store.read_json(seed) == {"collection_version": 5}
+        assert result == "artifact://33641880"
+        assert fake.downloaded == []  # no download, no S3 copy
 
     def test_job_objective_only_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Only the auto-written objective present (bare 'job_objective' path).
@@ -267,15 +267,17 @@ class TestDiscoverUploadedInput:
 
 class TestOrchestratorPassesDiscoveredKey:
     def test_discovered_key_passed_as_input_key(self) -> None:
-        seed = core.default_input_key("job", "db")
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
             patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=seed),
+            patch(
+                "src.atx_orchestrator.core._discover_uploaded_input",
+                return_value="artifact://art-1",
+            ),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
         message = json.loads(m.call_args[0][1])
-        assert message["input_key"] == seed
+        assert message["input_key"] == "artifact://art-1"
 
     def test_no_upload_leaves_key_empty_for_seed_fallback(self) -> None:
         with (
