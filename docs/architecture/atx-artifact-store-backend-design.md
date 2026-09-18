@@ -15,6 +15,11 @@ own S3 bucket. Customer-uploaded input is read **in place** from its
 
 **Goal:** ATX executions store nothing in our S3 bucket.
 
+This branch has two phases: **(1)** the `AtxArtifactStore` backend (the enabler),
+then **(2)** an orchestrator `query_context_graph` tool that answers graph
+queries in-process from the artifact-store JSON — no S3, no HTTP hop. Phase 2
+depends on phase 1 and lands after it in the same branch.
+
 ## Goals
 
 - ATX runs use the ATX artifact store as the storage backend for all pipeline
@@ -22,6 +27,8 @@ own S3 bucket. Customer-uploaded input is read **in place** from its
 - Stop copying the customer's uploaded input into our S3 (`core.py:191`).
 - Keep Step Functions (S3) and local (filesystem) execution unchanged.
 - Keep the graph layer working with **zero** S3 writes (rebuild-on-demand).
+- (Phase 2) Expose an orchestrator tool that runs curated/Cypher graph queries
+  in-process against the artifact-store-backed graph — no S3, no API hop.
 
 ## Non-Goals
 
@@ -182,6 +189,28 @@ then always builds fresh into local ephemeral disk from `STATE` JSON artifacts.
 Guard by capability (a `supports_bytes`/`persistent` flag on the store, or
 `isinstance` check), not by catching `NotImplementedError`.
 
+### 6. Orchestrator graph-query tool — `query_context_graph` (Phase 2)
+
+A new orchestrator tool (registered like the other A2A/orchestrator tools in
+`src/atx_orchestrator/tools.py`) that answers graph questions in-process, reusing
+the phase-1 backend so nothing touches S3:
+
+- Build/load the context graph on the orchestrator task's local ephemeral disk
+  from the `STATE` JSON artifacts (the same `rebuild_graph` path `_get_graph`
+  uses), cached per `job_id` for the process lifetime.
+- Execute a **curated** query from `src/graph/queries.py` (e.g. table impact,
+  provenance, risks, engine detail) or a raw Cypher string, and return rows.
+- Signature sketch: `query_context_graph(job_id, query)` where `query` is either
+  a curated-query name + params or a Cypher string. Reuses the existing Pydantic
+  response models in `src/api/models/graph_responses.py`.
+- No HTTP call to the API `/graph/query` route and no persisted `.lbug` — the
+  orchestrator already holds the agent context and reads the artifact store
+  directly.
+
+This is strictly additive to phase 1 and cannot skip S3 until the phase-1 backend
+is in place. A natural-language → Cypher layer on top of this tool is out of
+scope here (possible future step).
+
 ## Non-JSON Caller Audit (must reroute for ATX)
 
 `write_text` (19) / `write_bytes` (5) / `read_bytes` (4) sites, e.g.:
@@ -230,6 +259,9 @@ setting `S3_BUCKET`. Local/dev/tests leave it unset → local store.
   no `write_bytes` call.
 - **Caller-audit regression** — assert the ATX backend's `write_bytes`/
   `write_text` are never called on a full pipeline run (raise would fail tests).
+- **(Phase 2) Graph-query tool** — with the fake backend seeded with `STATE`
+  JSON, `query_context_graph` builds the graph and returns expected rows for a
+  curated query and a raw Cypher query; no S3/HTTP access.
 
 ## Rollout / Migration
 
@@ -238,6 +270,8 @@ setting `S3_BUCKET`. Local/dev/tests leave it unset → local store.
 3. Switch the ATX Dockerfile/runtime env to `STORAGE_BACKEND=atx`, remove
    `S3_BUCKET` from the ATX path.
 4. Verify an end-to-end ATX run writes nothing to our S3.
+5. (Phase 2) Add the `query_context_graph` orchestrator tool on top of the
+   landed backend.
 
 Rollback: unset `STORAGE_BACKEND` / restore `S3_BUCKET` — reverts ATX to S3.
 
