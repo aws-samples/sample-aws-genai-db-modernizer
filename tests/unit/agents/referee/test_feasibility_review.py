@@ -150,12 +150,30 @@ class TestCoDependencySplit:
         assert len(findings) == 1
         assert findings[0].severity is FindingSeverity.ADVISORY
 
-    def test_colocated_group_is_clean(self) -> None:
+    def test_colocated_group_on_join_capable_engine_is_clean(self) -> None:
+        # Whole group co-located on a join-capable engine -> no finding.
+        assignment = _assignment(
+            [_qa("q1", "aurora_postgresql", ["t.a"]), _qa("q2", "aurora_postgresql", ["t.b"])],
+            codep=[["q1", "q2"]],
+        )
+        assert review_assignment_feasibility(assignment, _collector([])) == []
+
+    def test_colocated_group_on_non_join_engine_is_advisory(self) -> None:
+        # Whole JOIN group pinned to dynamodb (no complex_joins): the join can't
+        # run server-side, but the data is co-located so a denormalized design or
+        # app-side join works -> ADVISORY (not blocking), with the pattern.
         assignment = _assignment(
             [_qa("q1", "dynamodb", ["t.a"]), _qa("q2", "dynamodb", ["t.b"])],
             codep=[["q1", "q2"]],
         )
-        assert review_assignment_feasibility(assignment, _collector([])) == []
+        findings = review_assignment_feasibility(assignment, _collector([]))
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.kind is FindingKind.CO_DEPENDENCY_ON_NON_JOIN_ENGINE
+        assert f.severity is FindingSeverity.ADVISORY
+        assert f.engines == ["dynamodb"]
+        assert f.query_ids == ["q1", "q2"]
+        assert f.recommended_pattern and "denormalize" in f.recommended_pattern.lower()
 
 
 def test_blocking_findings_sort_before_advisory() -> None:

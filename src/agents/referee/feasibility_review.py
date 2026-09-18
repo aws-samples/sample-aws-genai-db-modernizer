@@ -15,10 +15,16 @@ Two checks:
   is **advisory**: the finding names the recommended replication pattern (CDC,
   zero-ETL, cache-aside, CQRS, Saga) keyed on the read engine's role, and the gate
   proceeds rather than blocking.
-- **Capability-aware co-dependency split.** A co-dependency group (queries sharing
-  a significant JOIN) split across engines where at least one destination lacks
-  ``complex_joins`` cannot serve the JOIN. Blocking. A split where every side is
-  join-capable is advisory (a cross-engine join is still a design smell).
+- **Capability-aware co-dependency check.** For a co-dependency group (queries
+  sharing a significant JOIN):
+  * split across engines where at least one destination lacks ``complex_joins``
+    cannot serve the JOIN — **blocking**;
+  * split across engines that are all join-capable — **advisory** (a cross-engine
+    join is still a design smell / needs federation);
+  * co-located on a single engine that lacks ``complex_joins`` (e.g. the whole
+    group pinned to DynamoDB) — **advisory**: the JOIN cannot run server-side and
+    needs a denormalized design or application-side joining, with the recommended
+    pattern attached.
 """
 
 from __future__ import annotations
@@ -169,8 +175,39 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
     findings: list[FeasibilityFinding] = []
     for group in assignment.co_dependency_groups:
         engines = {engine_by_query[qid] for qid in group if qid in engine_by_query}
-        if len(engines) <= 1:
-            continue  # co-located, fine
+        if not engines:
+            continue  # none of the group's queries are routed / in scope
+        if len(engines) == 1:
+            # Co-located group. Fine on a join-capable engine. On a non-join
+            # engine the whole group's JOINs cannot run server-side — they need a
+            # denormalized (single-table) design or application-side joining. This
+            # is a legitimate modernization target (the schema designer
+            # denormalizes), so it is advisory with the pattern to use, not a
+            # block. Catches a group the customer (or override propagation) pinned
+            # onto an engine like DynamoDB.
+            (engine,) = tuple(engines)
+            if _engine_lacks_complex_joins(engine):
+                recommendation = (
+                    f"Denormalize the joined tables into a single-table / embedded design on "
+                    f"{engine}, or perform the join in the application; a server-side JOIN is "
+                    f"not available on {engine}."
+                )
+                findings.append(
+                    FeasibilityFinding(
+                        kind=FindingKind.CO_DEPENDENCY_ON_NON_JOIN_ENGINE,
+                        severity=FindingSeverity.ADVISORY,
+                        table=None,
+                        engines=[engine],
+                        query_ids=sorted(group),
+                        message=(
+                            f"Co-dependent queries {sorted(group)} share a significant JOIN and "
+                            f"are all routed to {engine}, which has no server-side complex-join "
+                            f"support. {recommendation}"
+                        ),
+                        recommended_pattern=recommendation,
+                    )
+                )
+            continue  # co-located; capable engine needs no finding
         incapable = sorted(e for e in engines if _engine_lacks_complex_joins(e))
         if incapable:
             findings.append(

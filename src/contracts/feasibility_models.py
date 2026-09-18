@@ -20,6 +20,11 @@ class FindingKind(str, Enum):
 
     READ_WRITE_SPLIT = "read_write_split"
     CO_DEPENDENCY_SPLIT = "co_dependency_split"
+    # A co-dependent JOIN group co-located on ONE engine that has no server-side
+    # complex-join support (e.g. the whole group pinned to DynamoDB). Not a split,
+    # but the joins cannot run natively — they need a denormalized design or
+    # application-side joining. Advisory (the schema designer denormalizes).
+    CO_DEPENDENCY_ON_NON_JOIN_ENGINE = "co_dependency_on_non_join_engine"
 
 
 class FindingSeverity(str, Enum):

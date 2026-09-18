@@ -479,8 +479,17 @@ the whole workload.
   `redispatch_after_reroute` re-designs exactly the engines whose query set
   changed — still not the whole fleet.
 
-**Known follow-up.** The co-dependency feasibility check flags a *split* group; it
-does not yet flag a group co-located onto an engine that cannot serve the JOIN
-(e.g. a whole JOIN group moved onto a non-`complex_joins` engine). Propagation can
-produce that shape when the customer pins the group to such an engine; catching it
-is a reviewer enhancement tracked separately.
+**Co-located-on-non-join detection (folded into this change).** Because
+propagation can co-locate a whole JOIN group onto an engine that cannot serve the
+JOIN (e.g. the customer pins the group to a non-`complex_joins` engine like
+DynamoDB), the feasibility reviewer now covers that shape too. A co-dependency
+group co-located on a single engine that lacks `complex_joins` raises a new
+`FindingKind.CO_DEPENDENCY_ON_NON_JOIN_ENGINE` finding. It is **advisory** rather
+than blocking: the data is co-located, so a denormalized (single-table / embedded)
+design or an application-side join is a legitimate modernization target, and the
+schema designer denormalizes for these engines. The finding carries the
+recommended pattern (denormalize or app-side join) so the customer sees how to
+serve the JOIN. This keeps the reviewer's three co-dependency cases consistent:
+split onto an incapable engine is blocking; a split across capable engines is
+advisory (needs federation); and a co-located group on an incapable engine is
+advisory (needs denormalization).
