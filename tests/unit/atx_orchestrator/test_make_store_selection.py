@@ -14,6 +14,11 @@ def test_atx_backend_selected_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "src.atx_orchestrator.runtime.atx_store.TransformAtxStore.__init__",
         lambda self, *a, **k: None,
     )
+
+    def _must_not_be_called(*a, **k):  # noqa: ANN002, ANN003
+        raise AssertionError("factory must not be consulted on the ATX path")
+
+    monkeypatch.setattr("src.storage.create_artifact_store", _must_not_be_called)
     store = core.make_store()
     assert isinstance(store, TransformAtxStore)
 

@@ -228,3 +228,25 @@ class TestTransformAtxStore:
         store = TransformAtxStore(sdk_store=_FakeSdkStore(), agent_instance_id="inst1")
         with pytest.raises(NotImplementedError, match="publish"):
             store.write_text("db/job/report.md", "# hi", "text/markdown")
+
+
+class TestUpgradeStoreAtxBranch:
+    def test_rehomes_plain_atx_store_preserving_wiring(self) -> None:
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+        from src.atx_orchestrator.runtime.store import upgrade_store
+
+        fake = _FakeSdkStore()
+        store = AtxArtifactStore(sdk_store=fake, agent_instance_id="inst1")
+        result = upgrade_store(store)
+        assert isinstance(result, TransformAtxStore)
+        assert result._sdk is fake
+        assert result._agent_instance_id == "inst1"
+
+    def test_passthrough_for_existing_transform_atx_store(self) -> None:
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+        from src.atx_orchestrator.runtime.store import upgrade_store
+
+        fake = _FakeSdkStore()
+        store = TransformAtxStore(sdk_store=fake, agent_instance_id="inst1")
+        result = upgrade_store(store)
+        assert result is store

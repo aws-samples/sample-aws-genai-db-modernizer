@@ -29,13 +29,12 @@ def make_store():
     ``create_artifact_store()`` decides S3-vs-local from env and ``upgrade_store``
     re-homes it onto the Transform subclass that adds ``write_text``.
     """
-    from src.atx_orchestrator.runtime.store import upgrade_store
-
     if os.environ.get("STORAGE_BACKEND") == "atx":
         from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
 
         return TransformAtxStore()
 
+    from src.atx_orchestrator.runtime.store import upgrade_store
     from src.storage import create_artifact_store
 
     return upgrade_store(create_artifact_store())
