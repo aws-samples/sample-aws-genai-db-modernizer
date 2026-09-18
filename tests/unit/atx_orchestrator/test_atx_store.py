@@ -69,6 +69,45 @@ class _FakeSdkStore:
             fh.write(content)
 
 
+class _PagedFakeSdkStore:
+    """Minimal fake exercising ``_load_index``'s pagination + newest-first dedup.
+
+    Takes pre-built pages of raw ``ListArtifacts``-shaped artifact dicts (as
+    ``_artifact()`` below builds) and serves them one per call, chaining
+    ``nextToken`` values until the last page. ``download_artifact`` serves
+    canned content by id so tests can tell which id the index resolved to.
+    """
+
+    def __init__(self, pages: list[list[dict]], contents: dict[str, bytes]) -> None:
+        self._pages = pages
+        self._contents = contents
+        self.client = self
+        self.downloaded: list[str] = []
+
+    def _create_request_context(self) -> dict:
+        return {"jobMetadata": {"jobId": "job1", "workspaceId": "ws1"}}
+
+    def list_artifacts(self, **kwargs):  # noqa: ANN003
+        page_index = int(kwargs["nextToken"]) if kwargs.get("nextToken") else 0
+        result: dict = {"artifacts": self._pages[page_index]}
+        if page_index + 1 < len(self._pages):
+            result["nextToken"] = str(page_index + 1)
+        return result
+
+    def download_artifact(self, artifact_id: str, destination_file_path: str) -> None:
+        self.downloaded.append(artifact_id)
+        with open(destination_file_path, "wb") as fh:
+            fh.write(self._contents[artifact_id])
+
+
+def _artifact(artifact_id: str, label: str, category: str = "STATE") -> dict:
+    return {
+        "artifactId": artifact_id,
+        "artifactLabel": label,
+        "artifactType": {"categoryType": category, "fileType": "JSON"},
+    }
+
+
 def _store() -> tuple[AtxArtifactStore, _FakeSdkStore]:
     sdk = _FakeSdkStore()
     return AtxArtifactStore(sdk_store=sdk, agent_instance_id="inst1"), sdk
@@ -130,6 +169,40 @@ class TestArtifactScheme:
     def test_exists_true_for_artifact_uri(self) -> None:
         store, _ = _store()
         assert store.exists(f"{ARTIFACT_SCHEME}art-anything") is True
+
+
+class TestLoadIndexPaginationAndDedup:
+    def test_pagination_merges_all_pages(self) -> None:
+        sdk = _PagedFakeSdkStore(
+            pages=[
+                [_artifact("art-1", "db/job/a.json")],
+                [_artifact("art-2", "db/job/b.json")],
+            ],
+            contents={"art-2": json.dumps({"page": 2}).encode()},
+        )
+        store = AtxArtifactStore(sdk_store=sdk, agent_instance_id="inst1")
+        # The second page's key is only found if both pages were merged into the index.
+        assert store.exists("db/job/b.json") is True
+        assert store.read_json("db/job/b.json") == {"page": 2}
+
+    def test_newest_first_dedup_keeps_first_seen_id(self) -> None:
+        # Same label, both STATE, returned newest-first -- the index must keep
+        # the first id it sees per label (setdefault), i.e. the newest one.
+        sdk = _PagedFakeSdkStore(
+            pages=[
+                [
+                    _artifact("art-new", "db/job/x.json"),
+                    _artifact("art-old", "db/job/x.json"),
+                ]
+            ],
+            contents={
+                "art-new": json.dumps({"v": "new"}).encode(),
+                "art-old": json.dumps({"v": "old"}).encode(),
+            },
+        )
+        store = AtxArtifactStore(sdk_store=sdk, agent_instance_id="inst1")
+        assert store.read_json("db/job/x.json") == {"v": "new"}
+        assert sdk.downloaded == ["art-new"]
 
 
 class TestNonJsonRaises:

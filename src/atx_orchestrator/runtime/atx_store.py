@@ -18,13 +18,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import logging
 import os
 import tempfile
 
 from src.storage.artifact_store import ArtifactStore
-
-logger = logging.getLogger(__name__)
 
 ARTIFACT_SCHEME = "artifact://"
 _STATE_CATEGORY = "STATE"
@@ -63,6 +60,8 @@ class AtxArtifactStore(ArtifactStore):
 
     # ------------------------------------------------------------------ index
     def _load_index(self) -> dict[str, str]:
+        # Cached for the lifetime of this store instance -- fine because each
+        # pipeline phase runs as a fresh process with its own store instance.
         if self._index is not None:
             return self._index
         index: dict[str, str] = {}
@@ -121,6 +120,8 @@ class AtxArtifactStore(ArtifactStore):
 
     def exists(self, path: str) -> bool:
         if path.startswith(ARTIFACT_SCHEME):
+            # Deliberate optimism: we can't verify the id without a fetch, so a
+            # missing/bad artifact id fails later, at download, not here.
             return True
         return path in self._load_index()
 
