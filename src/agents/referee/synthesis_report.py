@@ -17,6 +17,8 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from src.agents.referee.schema_shapes import design_count, design_table_defs, is_cache_engine
+
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
 
@@ -122,13 +124,11 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         )
         weight = max(0.0, min(1.0, weight))
 
-        # Schema design stats — handle engine-specific formats
+        # Schema design stats. Counted through the shared shape map because each
+        # engine names its designs differently: testing table_definitions alone
+        # reported ElastiCache's key_designs as no design at all.
         schema = artifacts.schema_design or {}
-        schema_tables = schema.get("table_definitions", [])
-        if engine == "opensearch" and not schema_tables:
-            schema_tables = schema.get("index_designs", []) + schema.get("data_stream_designs", [])
-        if engine == "documentdb" and not schema_tables:
-            schema_tables = schema.get("collections", [])
+        target_tables = design_count(engine, schema)
         access_patterns = schema.get("access_patterns", [])
         pattern_groups: dict[str, list] = {}
         for ap in access_patterns:
@@ -156,8 +156,8 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             "anti_patterns_detected": len(anti_patterns),
             "migration_complexity_avg": most_common,
             "aggregate_count": len(aggregates),
-            "schema_design_available": bool(schema_tables),
-            "target_tables": len(schema_tables),
+            "schema_design_available": target_tables > 0,
+            "target_tables": target_tables,
             "access_patterns": len(access_patterns),
             "pattern_groups": len(pattern_groups),
         }
@@ -204,38 +204,10 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
             for t in (analysis.get("table_recommendations") or [])
         }
 
-        # Collect table definitions — handle engine-specific formats
-        table_defs = schema.get("table_definitions", [])
-        if engine == "opensearch" and not table_defs:
-            # OpenSearch uses index_designs + data_stream_designs
-            for idx in schema.get("index_designs", []):
-                table_defs.append(
-                    {
-                        "table_name": idx.get("index_name", ""),
-                        "source_tables": idx.get("source_tables", []),
-                        "aggregate_pattern": "search_index",
-                    }
-                )
-            for ds in schema.get("data_stream_designs", []):
-                table_defs.append(
-                    {
-                        "table_name": ds.get("data_stream_name", ""),
-                        "source_tables": ds.get("source_tables", []),
-                        "aggregate_pattern": "data_stream",
-                    }
-                )
-        if engine == "documentdb" and not table_defs:
-            # DocumentDB uses collections with source_tables
-            for coll in schema.get("collections", []):
-                table_defs.append(
-                    {
-                        "table_name": coll.get("collection_name", ""),
-                        "source_tables": coll.get("source_tables", []),
-                        "aggregate_pattern": "document_collection",
-                    }
-                )
-
-        for table_def in table_defs:
+        # Collect table definitions. The shared shape map normalises every
+        # engine's own vocabulary — collections, key_designs, index_designs — to
+        # one {table_name, source_tables, aggregate_pattern} record.
+        for table_def in design_table_defs(engine, schema):
             target_table_name = table_def.get("table_name", "")
             aggregate_pattern = table_def.get("aggregate_pattern", "separate")
 
@@ -252,10 +224,19 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
                     }
                 )
 
-    # Build mappings — primary = highest confidence, others = alternatives
+    # Build mappings — primary = highest confidence, others = alternatives.
+    # A cache sorts last whatever it scored: ElastiCache analysis scores the
+    # tables it would cache, and a table scoring higher there than at its real
+    # store would otherwise be reported with recommended_database: elasticache —
+    # telling the reader to migrate a table into a cache. It still ranks as an
+    # alternative, and wins the primary slot when no store designed the table at
+    # all (a cache-only assessment), where it is the only answer there is.
     mappings = []
     for source_table, targets in sorted(table_to_engines.items()):
-        targets.sort(key=lambda t: t["confidence_score"], reverse=True)
+        targets.sort(
+            key=lambda t: (not is_cache_engine(t["engine"]), t["confidence_score"]),
+            reverse=True,
+        )
         primary = targets[0]
         alternatives = targets[1:] if len(targets) > 1 else []
 
@@ -614,8 +595,7 @@ def build_architecture_recommendation(
     if len(engines_with_workload) <= 1:
         arch_type = "SINGLE_DATABASE"
     else:
-        # Check if any engine is a cache (elasticache)
-        has_cache = any("cache" in e.lower() for e in engines_with_workload)
+        has_cache = any(is_cache_engine(e) for e in engines_with_workload)
         arch_type = "HYBRID_WITH_CACHE" if has_cache else "MULTI_DATABASE"
 
     # Database allocations
@@ -623,6 +603,14 @@ def build_architecture_recommendation(
     for mapping in table_mappings:
         engine = mapping["recommended_database"]
         engine_tables.setdefault(engine, []).append(mapping["source_table"])
+        # A cache is never a table's recommended_database, so the tables it
+        # fronts reach it only through the alternatives. Count them: a cache
+        # reporting table_count 0 in an architecture whose whole point is to put
+        # it in front of those tables reads as a cache with nothing to do.
+        for alt in mapping.get("alternatives") or []:
+            alt_engine = alt.get("database", "")
+            if is_cache_engine(alt_engine):
+                engine_tables.setdefault(alt_engine, []).append(mapping["source_table"])
 
     databases = []
     for r in ranking:
@@ -673,8 +661,8 @@ def _architecture_rationale(
             return f"Workload analysis indicates {databases[0]['service']} as the primary target with {databases[0]['confidence_score']}% confidence."
         return "Insufficient data to recommend a specific architecture."
     elif arch_type == "HYBRID_WITH_CACHE":
-        primary = [d for d in databases if "cache" not in d["service"].lower()]
-        cache = [d for d in databases if "cache" in d["service"].lower()]
+        primary = [d for d in databases if not is_cache_engine(d["service"])]
+        cache = [d for d in databases if is_cache_engine(d["service"])]
         parts = []
         if primary:
             parts.append(f"{primary[0]['service']} for primary data storage")
