@@ -1495,11 +1495,12 @@ def schema_no_design_notes(
 # there is no single field that means "a design exists". Values are
 # (artifact field, human-readable unit).
 #
-# Upstream's ``schema_design_available`` normalises ``collections`` and
+# Upstream's ``schema_design_available`` used to normalise ``collections`` and
 # ``index_designs`` into a common count but not ``key_designs``, so an
-# ElastiCache design reads as absent in the synthesis report. That is
-# core-modernizer's to fix and is on the list for their team; we report
-# accurately on our side regardless.
+# ElastiCache design read as absent in the synthesis report. Fixed upstream in
+# src/agents/referee/schema_shapes.py, which is now the canonical field map
+# there. This map stays separate because core.py takes no module-level ``src.*``
+# imports — keep the two in step when an engine is added.
 _DESIGN_SHAPE: dict[str, tuple[str, str]] = {
     "dynamodb": ("table_definitions", "target tables"),
     "documentdb": ("collections", "collections"),

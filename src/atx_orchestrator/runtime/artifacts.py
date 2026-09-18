@@ -304,12 +304,12 @@ def _engine_role(
 ) -> str:
     """Role of an engine in the target architecture.
 
-    ``recommended_architecture.databases`` lists only net-new migration targets —
-    it drops the retained relational core and cache engines because it filters on
-    a ``schema_design_available`` flag that is False for both (defect (d) for the
-    cache, which has a completed design the flag does not count; by design for a
-    retained engine, which has no migration design). Roles are therefore derived
-    from the engine kind and its design status, not from that list alone.
+    ``recommended_architecture.databases`` still drops the retained relational
+    core, which by design has no migration design and so fails the
+    ``schema_design_available`` filter. It used to drop cache engines too
+    (defect (d): a completed set of ``key_designs`` the flag did not count),
+    fixed upstream in src/agents/referee/schema_shapes.py. Roles are derived from
+    the engine kind and its design status regardless, not from that list alone.
 
     An engine carrying **no workload** is ``Evaluated``: triage selected it, analysis
     scored it, and the assignment then routed nothing to it because another engine won
