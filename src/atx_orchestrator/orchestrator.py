@@ -260,6 +260,10 @@ Workflow:
       * On re-entry: after redispatch_after_reroute, tell the customer which
         engines are being re-designed and which are unchanged (copied forward), so
         they see why it is fast.
+      * If finalize_assignment_review returns a non-empty `co_dependency_propagated`
+        list, tell the customer plainly that those queries were moved to the same
+        engine as their edit to keep a shared JOIN group together (they did not
+        pick those individually) — relay finalize's `message` if present.
       * If a phase is genuinely long, prefer a short "still working on X" note over
         going silent.
 

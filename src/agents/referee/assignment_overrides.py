@@ -58,6 +58,9 @@ class AssignmentOverrideResult:
     validation: ValidationResult
     skipped_engines: list[str] = field(default_factory=list)
     written_path: str = ""
+    # Query IDs moved automatically to stay co-located with a co-dependent query
+    # the customer re-routed (ADR-029 Amendment 3). Empty when nothing propagated.
+    propagated_query_ids: list[str] = field(default_factory=list)
 
 
 class AssignmentOverrideError(Exception):
@@ -149,6 +152,14 @@ def apply_assignment_overrides(
         if override.in_scope is not None:
             qa.in_scope = override.in_scope
 
+    # Co-dependency-aware propagation (ADR-029 Amendment 3): if the customer
+    # re-routed a query that shares a significant JOIN group with others, move the
+    # group's other in-scope members with it so the JOIN stays co-located instead
+    # of silently splitting. Read the collector once here and reuse it for the
+    # derived-view recompute below.
+    collector_output = _read_collector_output(store, database_name, job_id)
+    propagated_query_ids = _propagate_codependent_overrides(qa_map, overrides, collector_output)
+
     # Table-level scope narrowing: a query whose tables are all excluded drops
     # out of scope; a partial overlap stays in scope with a low-severity warning.
     scope_warnings: list[str] = []
@@ -176,7 +187,6 @@ def apply_assignment_overrides(
         }
     )
 
-    collector_output = _read_collector_output(store, database_name, job_id)
     analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
 
     # Recompute derived views against the NEW routing instead of carrying the
@@ -209,6 +219,7 @@ def apply_assignment_overrides(
         validation=validation,
         skipped_engines=skipped_engines,
         written_path=new_path,
+        propagated_query_ids=propagated_query_ids,
     )
 
 
@@ -240,6 +251,68 @@ def mark_assignment_customer_approved(
     updated = current.model_copy(update={"status": AssignmentStatus.CUSTOMER_APPROVED})
     store.write_json(path, updated.model_dump(mode="json"))
     return updated
+
+
+def _propagate_codependent_overrides(
+    qa_map: dict[str, QueryAssignment],
+    overrides: list[QueryOverrideInput],
+    collector_output: dict,
+) -> list[str]:
+    """Move a customer-re-routed query's co-dependent group-mates with it.
+
+    When the customer changes a query's engine and that query shares a significant
+    JOIN group with others (``co_dependency_groups``), the group's other IN-SCOPE
+    members that the customer did NOT explicitly set are moved to the same engine,
+    so the JOIN group stays co-located instead of silently splitting (ADR-029
+    Amendment 3). Mutates ``qa_map`` in place; returns the propagated query IDs.
+
+    Respects explicit customer picks: a group the customer explicitly split (two
+    members set to different engines in the same edit) is left as chosen — the
+    resulting split is surfaced by the feasibility reviewer, not overridden here.
+    A propagated query is tagged ``co_dependency_propagated`` (not
+    ``customer_override``) so it is distinguishable from the customer's own picks.
+
+    Best-effort: any error building the groups leaves the explicit overrides intact
+    and propagates nothing — propagation is an enhancement, never a blocker.
+    """
+    explicit: dict[str, str] = {
+        ov.query_id: ov.assigned_engine for ov in overrides if ov.assigned_engine is not None
+    }
+    if not explicit:
+        return []
+    try:
+        groups = build_co_dependency_groups(
+            collector_output.get("queries", {}).get("query_patterns", []),
+            collector_output.get("database_schema", {}).get("tables", []),
+        )
+    except Exception:  # noqa: BLE001 - never block a customer edit on a grouping error
+        return []
+
+    propagated: list[str] = []
+    for group in groups:
+        touched = set(group) & set(explicit)
+        if not touched:
+            continue  # customer did not touch this group
+        chosen = {explicit[q] for q in touched}
+        if len(chosen) != 1:
+            continue  # explicitly split across engines -> respect; feasibility flags it
+        target = next(iter(chosen))
+        anchor = sorted(touched)[0]
+        for qid in group:
+            if qid in explicit:
+                continue  # the customer's own pick is authoritative
+            qa = qa_map.get(qid)
+            if qa is None or not qa.in_scope:
+                continue
+            if qa.assigned_engine != target:
+                qa.assigned_engine = target
+                qa.co_dependency_propagated = True
+                qa.assignment_reason = (
+                    f"Co-located with co-dependent query group of {anchor} (shared JOIN) "
+                    f"after a customer routing change."
+                )
+                propagated.append(qid)
+    return sorted(propagated)
 
 
 def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> None:

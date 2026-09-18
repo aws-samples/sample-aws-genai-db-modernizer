@@ -448,3 +448,39 @@ replication workaround.
 co-dependency blockers; read/write splits ride along as advisories on the approved
 routing so the customer sees which tables need a replication pattern and which one
 to use.
+
+---
+
+## Amendment 3 (2026-09-18): co-dependency-aware override propagation
+
+**Status:** Accepted. **Trigger:** the gate applied a customer edit to only the
+single query the customer touched. If that query shared a significant JOIN group
+with others, the group was silently split — the feasibility reviewer then flagged
+it, but leaving the group split by default is a latent bug and a poor default.
+
+**Decision.** When the customer re-routes a query that belongs to a co-dependency
+group (queries sharing a significant JOIN), the shared override write path
+(`apply_assignment_overrides`, used by both the web route and the ATX gate) now
+**moves the group's other in-scope members to the same engine**, so the group
+stays co-located instead of splitting. This re-decides only the touched group, not
+the whole workload.
+
+- Only the customer's explicit pick is authoritative; propagated queries are
+  tagged `co_dependency_propagated` on `QueryAssignment` (contract 1.3), distinct
+  from `customer_override`, so the move is self-describing and reportable.
+- A group the customer **explicitly** split (two members set to different engines
+  in the same edit) is respected — propagation is skipped and the split is
+  surfaced by the feasibility reviewer, not overridden.
+- Out-of-scope members are left alone; an in-scope-only toggle does not propagate.
+- `finalize_assignment_review` returns `co_dependency_propagated` and a note, and
+  the orchestrator prompt tells the customer which queries moved along with their
+  edit and why.
+- Composes with re-entry: `assignment_engine_diff` sees the propagated moves, so
+  `redispatch_after_reroute` re-designs exactly the engines whose query set
+  changed — still not the whole fleet.
+
+**Known follow-up.** The co-dependency feasibility check flags a *split* group; it
+does not yet flag a group co-located onto an engine that cannot serve the JOIN
+(e.g. a whole JOIN group moved onto a non-`complex_joins` engine). Propagation can
+produce that shape when the customer pins the group to such an engine; catching it
+is a reviewer enhancement tracked separately.

@@ -175,9 +175,10 @@ class TestDetailedReviewChatFallback:
         by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
         assert by_id["q2"]["assigned_engine"] == "opensearch"
 
-    def test_finalize_surfaces_codependency_split_warning(self, store) -> None:
-        """ADR-029 Layer B: splitting a co-dependent group across engines returns
-        the HIGH warning in the finalize response, not just on the artifact."""
+    def test_editing_codependent_member_propagates_to_group(self, store) -> None:
+        """ADR-029 Amendment 3: editing one query in a co-dependent JOIN group
+        moves its group-mates to the same engine (co-locating the group) instead
+        of splitting it, so the routing is approved rather than looping."""
         from src.agents.referee.assignment_review import render_assignment_review
 
         # Make q1 and q2 co-dependent: both share a significant JOIN on the same
@@ -215,18 +216,19 @@ class TestDetailedReviewChatFallback:
         )
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
             out = json.loads(tools.finalize_assignment_review(JOB, DB, edited))
-            # Splitting a co-dependent group onto dynamodb (no complex_joins) is a
-            # blocking feasibility problem: the gate loops instead of approving,
-            # and both the validator warning and the structured finding surface.
-            assert out["status"] == "infeasible"
-            assert tools._assignment_review_approved(JOB) is False
-        assert any(
-            "[HIGH]" in w and "split across engines" in w for w in out["validation_warnings"]
-        ), out["validation_warnings"]
-        assert any(
-            f["kind"] == "co_dependency_split" and f["severity"] == "blocking"
-            for f in out["feasibility_findings"]
-        ), out["feasibility_findings"]
+            # q1 (q2's co-dependent group-mate) is moved to opensearch with q2, so
+            # the JOIN group stays co-located: no split, so the gate approves.
+            assert out["status"] == "approved"
+            assert "q1" in out["co_dependency_propagated"]
+            assert tools._assignment_review_approved(JOB) is True
+        v2 = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
+        assert by_id["q2"]["assigned_engine"] == "opensearch"
+        assert by_id["q2"]["customer_override"] is True
+        # q1 followed as a propagated co-dependent move, not a customer pick.
+        assert by_id["q1"]["assigned_engine"] == "opensearch"
+        assert by_id["q1"]["co_dependency_propagated"] is True
+        assert by_id["q1"]["customer_override"] is False
 
     def test_invalid_edited_markdown_does_not_approve(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review

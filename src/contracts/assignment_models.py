@@ -16,6 +16,10 @@ Version History:
   ``Assignment`` recording blocking feasibility findings the customer explicitly
   accepted at the review gate. Defaults to an empty list, so it is backward
   compatible with artifacts written before it existed (ADR-029 Layer C).
+- 1.3 (2026-09-18): Added the optional ``co_dependency_propagated`` flag on
+  ``QueryAssignment``, set when a query is moved automatically to stay co-located
+  with a co-dependent query the customer re-routed (ADR-029 Amendment 3).
+  Defaults to False, backward compatible with artifacts written before it existed.
 """
 
 from datetime import datetime
@@ -68,6 +72,14 @@ class QueryAssignment(BaseModel):
     customer_override: bool = Field(
         default=False,
         description="True if customer changed the assignment",
+    )
+    co_dependency_propagated: bool = Field(
+        default=False,
+        description=(
+            "True if this query was moved automatically to stay co-located with a "
+            "co-dependent query the customer explicitly re-routed (shared JOIN group). "
+            "Distinct from customer_override, which marks the customer's own picks."
+        ),
     )
     warnings: list[str] = Field(
         default_factory=list,

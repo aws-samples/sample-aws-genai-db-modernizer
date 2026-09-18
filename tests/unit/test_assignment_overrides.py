@@ -399,3 +399,119 @@ class TestRefreshConsolidatedAssignment:
         out = refresh_consolidated_assignment(raw, collector, {"dynamodb": {}})
         assert "table_assignments" in out
         assert out["co_dependency_groups"] == []
+
+
+class TestCoDependencyPropagation:
+    """ADR-029 Amendment 3: re-routing one query in a co-dependent JOIN group
+    moves the group's other in-scope members with it, so the group stays
+    co-located instead of silently splitting."""
+
+    @staticmethod
+    def _seed_join_group(store: _MemStore, engines: list[str], *, q3_in_scope: bool = True) -> None:
+        # q1, q2, q3 all on dynamodb, all sharing a significant JOIN on t.orders
+        # -> one co-dependency group of three.
+        qas = [
+            _qa("q1", "dynamodb", ["t.orders", "t.items"]),
+            _qa("q2", "dynamodb", ["t.orders", "t.items"]),
+            _qa("q3", "dynamodb", ["t.orders", "t.items"], in_scope=q3_in_scope),
+        ]
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=qas,
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": q,
+                            "tables_accessed": ["t.orders", "t.items"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        }
+                        for q in ("q1", "q2", "q3")
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in engines:
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+
+    def test_moving_one_query_moves_its_codependent_group(self) -> None:
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"])
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="aurora_postgresql")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        # q1 is the explicit customer pick.
+        assert by_id["q1"].assigned_engine == "aurora_postgresql"
+        assert by_id["q1"].customer_override is True
+        assert by_id["q1"].co_dependency_propagated is False
+        # q2, q3 moved with it to keep the JOIN group together, tagged propagated
+        # (NOT customer_override).
+        for q in ("q2", "q3"):
+            assert by_id[q].assigned_engine == "aurora_postgresql", q
+            assert by_id[q].co_dependency_propagated is True, q
+            assert by_id[q].customer_override is False, q
+        assert result.propagated_query_ids == ["q2", "q3"]
+
+    def test_explicit_split_is_respected_no_propagation(self) -> None:
+        # The customer sets two group members to DIFFERENT engines -> respect both
+        # explicit picks and propagate nothing (they chose to split it).
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql", "aurora_mysql"])
+        result = apply_assignment_overrides(
+            store,
+            DB,
+            JOB,
+            [
+                QueryOverrideInput("q1", assigned_engine="aurora_postgresql"),
+                QueryOverrideInput("q2", assigned_engine="aurora_mysql"),
+            ],
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q1"].assigned_engine == "aurora_postgresql"
+        assert by_id["q2"].assigned_engine == "aurora_mysql"
+        # q3 (untouched) is left alone because the group was explicitly split.
+        assert by_id["q3"].co_dependency_propagated is False
+        assert by_id["q3"].assigned_engine == "dynamodb"
+        assert result.propagated_query_ids == []
+
+    def test_out_of_scope_group_member_not_propagated(self) -> None:
+        store = _MemStore()
+        self._seed_join_group(store, engines=["dynamodb", "aurora_postgresql"], q3_in_scope=False)
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="aurora_postgresql")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q2"].co_dependency_propagated is True
+        # q3 is out of scope -> left on its original engine, not propagated.
+        assert by_id["q3"].co_dependency_propagated is False
+        assert by_id["q3"].assigned_engine == "dynamodb"
+        assert result.propagated_query_ids == ["q2"]
+
+    def test_no_group_no_propagation(self) -> None:
+        # Single-table queries with no shared JOIN form no group -> nothing moves.
+        store = _store_with_two_ddb_queries()
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q2"].assigned_engine == "dynamodb"  # untouched
+        assert by_id["q2"].co_dependency_propagated is False
+        assert result.propagated_query_ids == []

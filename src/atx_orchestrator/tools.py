@@ -711,6 +711,7 @@ def finalize_assignment_review(
     changed = False
     applied = 0
     warnings: list[str] = []
+    propagated: list[str] = []
     effective_version = version
     effective_assignment: Assignment = current
     if overrides:
@@ -744,6 +745,10 @@ def finalize_assignment_review(
         # computed for this version so the orchestrator can show them to the
         # customer, instead of leaving them buried on the artifact (ADR-029 B).
         warnings = result.assignment.validation_warnings
+        # Queries moved automatically to stay co-located with a co-dependent query
+        # the customer re-routed (ADR-029 Amendment 3), so the orchestrator can
+        # tell the customer the group moved together.
+        propagated = result.propagated_query_ids
     # Approve-as-is (no edits) is stamped CUSTOMER_APPROVED on the artifact only
     # after the feasibility gate below passes, so a routing the reviewer blocks is
     # never recorded as approved.
@@ -777,6 +782,7 @@ def finalize_assignment_review(
                 "job_id": job_id,
                 "changed": changed,
                 "applied_overrides": applied,
+                "co_dependency_propagated": propagated,
                 "assignment_version": effective_version,
                 "validation_warnings": warnings,
                 "feasibility_findings": findings_json,
@@ -825,10 +831,20 @@ def finalize_assignment_review(
         "job_id": job_id,
         "changed": changed,
         "applied_overrides": applied,
+        "co_dependency_propagated": propagated,
         "assignment_version": effective_version,
         "validation_warnings": warnings,
         "feasibility_findings": findings_json,
     }
+    if propagated:
+        # Be transparent that co-dependent group-mates moved with the customer's
+        # explicit pick, so they are not surprised by engine changes they did not
+        # click (ADR-029 Amendment 3).
+        approved["message"] = (
+            f"Note: {len(propagated)} co-dependent quer{'y' if len(propagated) == 1 else 'ies'} "
+            f"({', '.join(propagated)}) moved to the same engine as your edit to keep the shared "
+            f"JOIN group together."
+        )
     if no_changes_submission:
         # Be transparent: the customer submitted without changes, so tell them the
         # routing was kept as-is. If they actually intended a change, this makes a
