@@ -44,7 +44,10 @@ def _collector(patterns: list[dict]) -> dict:
 
 
 class TestReadWriteSplit:
-    def test_reads_on_engine_without_writes_is_blocking(self) -> None:
+    def test_reads_on_engine_without_writes_is_advisory_with_pattern(self) -> None:
+        # A polyglot read/write split (writes on the primary, reads on a search
+        # engine) is feasible via replication, so it is advisory and carries a
+        # recommended replication pattern rather than blocking the gate.
         assignment = _assignment(
             [_qa("qw", "dynamodb", ["t.orders"]), _qa("qr", "opensearch", ["t.orders"])]
         )
@@ -58,9 +61,26 @@ class TestReadWriteSplit:
         assert len(findings) == 1
         f = findings[0]
         assert f.kind is FindingKind.READ_WRITE_SPLIT
-        assert f.severity is FindingSeverity.BLOCKING
+        assert f.severity is FindingSeverity.ADVISORY
         assert f.table == "t.orders"
         assert f.engines == ["dynamodb", "opensearch"]
+        # Reads on a search engine -> recommend CDC / zero-ETL replication.
+        assert f.recommended_pattern is not None
+        assert "zero-ETL" in f.recommended_pattern or "CDC" in f.recommended_pattern
+
+    def test_read_to_cache_recommends_cache_pattern(self) -> None:
+        assignment = _assignment(
+            [_qa("qw", "dynamodb", ["t.session"]), _qa("qr", "elasticache", ["t.session"])]
+        )
+        collector = _collector(
+            [
+                {"query_id": "qw", "query_type": "UPDATE", "tables_accessed": ["t.session"]},
+                {"query_id": "qr", "query_type": "SELECT", "tables_accessed": ["t.session"]},
+            ]
+        )
+        findings = review_assignment_feasibility(assignment, collector)
+        assert findings[0].severity is FindingSeverity.ADVISORY
+        assert "cache" in (findings[0].recommended_pattern or "").lower()
 
     def test_reads_colocated_with_writes_is_clean(self) -> None:
         assignment = _assignment(
@@ -139,14 +159,16 @@ class TestCoDependencySplit:
 
 
 def test_blocking_findings_sort_before_advisory() -> None:
+    # One blocking finding (co-dependency group split onto a non-join engine) and
+    # one advisory finding (a read/write split) — blocking must sort first.
     assignment = _assignment(
         [
             _qa("qw", "dynamodb", ["t.orders"]),
             _qa("qr", "opensearch", ["t.orders"]),
             _qa("q1", "aurora_postgresql", ["t.a"]),
-            _qa("q2", "aurora_mysql", ["t.b"]),
+            _qa("q2", "dynamodb", ["t.b"]),
         ],
-        codep=[["q1", "q2"]],  # advisory (both join-capable)
+        codep=[["q1", "q2"]],  # blocking (dynamodb lacks complex_joins)
     )
     collector = _collector(
         [

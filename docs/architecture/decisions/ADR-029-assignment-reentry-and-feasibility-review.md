@@ -406,3 +406,45 @@ job now stays open across as many re-route rounds as the customer wants.
 platform's idle timeout fires), rather than closing the instant the first report
 is produced. The completion idempotency guard now latches only on the terminal
 `COMPLETED`; non-terminal transitions clear it so a later round can complete.
+
+---
+
+## Amendment 2 (2026-09-18): read/write split is advisory, not blocking
+
+**Status:** Accepted. **Trigger:** on the `feat_staleness_` fleet, the very first
+assignment-review gate blocked approve-as-is: the feasibility reviewer flagged
+**72 tables** on the deterministic baseline routing as infeasible read/write
+splits (e.g. `discourse.users` writes on Aurora PG, reads on DynamoDB +
+ElastiCache).
+
+**What we got wrong.** Layer C made a read/write split **blocking**. But routing a
+table's reads to a cache (ElastiCache) or search engine (OpenSearch) while writes
+stay on the primary (Aurora) is precisely the polyglot pattern this tool exists to
+recommend, and it is feasible via replication (CDC, zero-ETL, cache-aside). The
+reviewer was therefore blocking the tool's own core recommendation on the baseline
+routing, forcing the customer to "accept the risks" on every run for 72 tables.
+This is the exact scenario the original Future Work item foresaw ("model an
+intended read/write split rather than accept it as a risk").
+
+**Decision.** A read/write split is now **advisory**, not blocking. The finding
+carries a `recommended_pattern` (new field on `FeasibilityFinding`) that names the
+replication/consistency approach keyed on the read engine's role:
+
+- reads on a **cache** -> cache-aside / write-through kept fresh from the primary
+  (DynamoDB Streams, or an Aurora CDC/Lambda updater) with a TTL;
+- reads on a **search** engine -> CDC / zero-ETL (DynamoDB zero-ETL to OpenSearch,
+  or Aurora zero-ETL / DMS CDC to OpenSearch);
+- reads on a **second system of record** -> a CQRS read model fed by a change
+  stream (Streams / logical replication via Kinesis or EventBridge), with the Saga
+  pattern for writes that must stay consistent across stores.
+
+The gate no longer loops on read/write splits — it approves and surfaces the
+advisory findings with their recommended patterns. **Blocking is now reserved for
+the capability-based co-dependency split** (a co-dependent JOIN group routed onto
+an engine that cannot serve the join), which is a genuine infeasibility with no
+replication workaround.
+
+**Consequence.** `accepted_feasibility_findings` now records only accepted
+co-dependency blockers; read/write splits ride along as advisories on the approved
+routing so the customer sees which tables need a replication pattern and which one
+to use.

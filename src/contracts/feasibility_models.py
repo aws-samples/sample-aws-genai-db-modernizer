@@ -44,5 +44,13 @@ class FeasibilityFinding(BaseModel):
         default_factory=list, description="Query IDs involved in the finding, sorted"
     )
     message: str = Field(..., description="Human-facing explanation and remediation")
+    recommended_pattern: str | None = Field(
+        None,
+        description=(
+            "For an advisory read/write split, the recommended replication/consistency "
+            "pattern (e.g. CDC, zero-ETL, CQRS, cache-aside, Saga) that makes the split "
+            "work. None when not applicable."
+        ),
+    )
 
     model_config = ConfigDict(extra="forbid")

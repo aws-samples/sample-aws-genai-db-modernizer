@@ -21,6 +21,27 @@ def test_round_trips_through_json() -> None:
     assert restored == finding
 
 
+def test_recommended_pattern_defaults_none_and_round_trips() -> None:
+    default = FeasibilityFinding(
+        kind=FindingKind.CO_DEPENDENCY_SPLIT,
+        severity=FindingSeverity.BLOCKING,
+        message="x",
+    )
+    assert default.recommended_pattern is None
+
+    with_pattern = FeasibilityFinding(
+        kind=FindingKind.READ_WRITE_SPLIT,
+        severity=FindingSeverity.ADVISORY,
+        table="t.orders",
+        engines=["dynamodb", "opensearch"],
+        message="needs replication",
+        recommended_pattern="CDC / zero-ETL to OpenSearch",
+    )
+    restored = FeasibilityFinding.model_validate(with_pattern.model_dump(mode="json"))
+    assert restored == with_pattern
+    assert restored.recommended_pattern == "CDC / zero-ETL to OpenSearch"
+
+
 def test_table_defaults_to_none_for_query_group_findings() -> None:
     finding = FeasibilityFinding(
         kind=FindingKind.CO_DEPENDENCY_SPLIT,

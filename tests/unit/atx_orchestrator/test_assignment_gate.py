@@ -395,22 +395,44 @@ class TestFeasibilityGate:
             },
         )
 
-    def test_read_write_split_blocks_approval(self, store) -> None:
+    @staticmethod
+    def _make_blocking_codep_split(store) -> None:
+        # Make q1 (dynamodb) and q3 (opensearch) a co-dependency group: dynamodb
+        # lacks complex_joins, so the split is a BLOCKING feasibility finding.
+        a = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        a["co_dependency_groups"] = [["q1", "q3"]]
+        store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", a)
+
+    def test_read_write_split_is_advisory_and_approves(self, store) -> None:
+        # A read/write split is the tool's own polyglot pattern (writes on the
+        # primary, reads on a search/cache engine): feasible via replication, so it
+        # is advisory and approves, carrying a recommended replication pattern.
         self._make_read_write_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        advisory = [f for f in out["feasibility_findings"] if f["kind"] == "read_write_split"]
+        assert advisory and all(f["severity"] == "advisory" for f in advisory), out[
+            "feasibility_findings"
+        ]
+        assert advisory[0]["recommended_pattern"], advisory[0]
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        assert v1["status"] == "customer_approved"
+
+    def test_blocking_codep_split_loops_gate(self, store) -> None:
+        self._make_blocking_codep_split(store)
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
             out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
             assert out["status"] == "infeasible"
             assert tools._assignment_review_approved(JOB) is False
         assert any(
-            f["kind"] == "read_write_split" and f["severity"] == "blocking"
+            f["kind"] == "co_dependency_split" and f["severity"] == "blocking"
             for f in out["feasibility_findings"]
         ), out["feasibility_findings"]
-        # Not stamped approved on the artifact either.
-        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
-        assert v1["status"] != "customer_approved"
 
     def test_accept_risks_proceeds_and_records_findings(self, store) -> None:
-        self._make_read_write_split(store)
+        self._make_blocking_codep_split(store)
         with patch("src.atx_orchestrator.tools._make_store", return_value=store):
             out = json.loads(
                 tools.finalize_assignment_review(JOB, DB, "", accept_feasibility_risks=True)
@@ -419,7 +441,7 @@ class TestFeasibilityGate:
             assert tools._assignment_review_approved(JOB) is True
         v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
         accepted = v1["accepted_feasibility_findings"]
-        assert any(f["kind"] == "read_write_split" for f in accepted), accepted
+        assert any(f["kind"] == "co_dependency_split" for f in accepted), accepted
         assert v1["status"] == "customer_approved"
 
     def test_feasible_routing_approves_normally(self, store) -> None:
