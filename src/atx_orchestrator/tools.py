@@ -1539,6 +1539,42 @@ def _run_schema_design_via_a2a(
     # assignment when Reality Check consolidated, else v1.
     assignment_version = _effective_assignment_version(job_id, database_name)
 
+    # Idempotent skip (restore-safe reuse): if this engine's schema output already
+    # exists for the effective assignment version, return it instead of designing
+    # again. A substantive design runs ~10-35 min, and the schema subagent
+    # completes and writes its output INDEPENDENTLY of the orchestrator. So if the
+    # orchestrator is recycled mid-wait and restored (idle/hibernation) — or a
+    # dispatch is duplicated — re-running would redo a finished design and can
+    # loop. Reusing the existing output makes a recycle harmless and lets restore
+    # make forward progress. This also composes with redispatch_after_reroute,
+    # which copies unaffected engines' output forward to the new version: those are
+    # skipped here, and only the truly-affected engines (no vN output yet) run.
+    existing_key = (
+        f"{database_name}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+    )
+    _store = _make_store()
+    if _store.exists(existing_key):
+        logger.info(
+            "ATX: schema-design %s reused — output already exists at %s (restore-safe skip)",
+            suffix,
+            existing_key,
+        )
+        mark_step_succeeded(step, "Schema already designed for this version (reused).")
+        existing = _store.read_json(existing_key)
+        if isinstance(existing, dict):
+            existing["reused_existing"] = True
+            existing.setdefault("status", "already_designed")
+            return json.dumps(existing)
+        return json.dumps(
+            {
+                "status": "already_designed",
+                "reused_existing": True,
+                "target_type": engine,
+                "assignment_version": assignment_version,
+                "job_id": job_id,
+            }
+        )
+
     from src.atx_orchestrator.core import (
         IMPLEMENTED_SCHEMA_DESIGNERS,
         _source_engine,

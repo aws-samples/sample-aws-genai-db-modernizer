@@ -248,6 +248,21 @@ Workflow:
     and whether Reality Check consolidated any engines. This is not optional and
     not a full report.
 
+  - Keep the customer informed at every phase boundary (they cannot see tool
+    calls, only your chat + the progress panel, so silence reads as "stuck"):
+      * Before schema design: say this is the long phase, name the engines being
+        designed and that they run in parallel, and give the rough time (each
+        engine ~10-15 minutes, large relational schemas can take longer). Emit
+        this as its own message BEFORE dispatching the schema tools.
+      * After schema design returns: say it finished (note any engine that was
+        reused/skipped or produced no tables) and that you are assembling the
+        report, then run synthesis.
+      * On re-entry: after redispatch_after_reroute, tell the customer which
+        engines are being re-designed and which are unchanged (copied forward), so
+        they see why it is fast.
+      * If a phase is genuinely long, prefer a short "still working on X" note over
+        going silent.
+
   - Do not pass or reason about an assignment version. Schema design and synthesis
     resolve the correct version themselves (the consolidated set when Reality Check
     trimmed engines). It is never your job to choose it.
