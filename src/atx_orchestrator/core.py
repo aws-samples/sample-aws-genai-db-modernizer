@@ -10,9 +10,11 @@ Everything here operates on the ArtifactStore abstraction. Storage type
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -61,10 +63,9 @@ def default_input_key(job_id: str, database_name: str) -> str:
     return f"{database_name}/{job_id}/uploads/collector-output.json"
 
 
-def _discover_uploaded_input() -> str | None:
+def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
     """Locate a customer's WebApp-uploaded offline collection via the ATX
-    Artifact API and return an ``artifact://<artifact_id>`` key that reads it
-    in place -- no download, no copy into our store.
+    Artifact API, download it, and stage it at the seed key for the collector.
 
     A customer's upload is a platform **artifact** (category ``CUSTOMER_INPUT``),
     not an object in this pipeline's ``S3_BUCKET``. The Artifact Store owns where
@@ -73,23 +74,27 @@ def _discover_uploaded_input() -> str | None:
     its own role. Listing a prefix in our ``S3_BUCKET`` (the old approach) only
     ever found the upload when the WebApp happened to write into the same bucket
     the runtime reads, i.e. same-account dev; cross-account it silently found
-    nothing. So discovery goes through ``ListArtifacts`` instead, which is
-    account/bucket-agnostic.
+    nothing. So discovery goes through ``ListArtifacts`` +
+    ``CreateArtifactDownloadUrl`` instead, which is account/bucket-agnostic.
 
-    Discovery only runs -- and only ever emits an ``artifact://`` key -- when
-    ``STORAGE_BACKEND=atx`` is active, because only the ATX storage backend's
-    ``read_json``/``exists`` understand that scheme; a local/S3 store handed an
-    ``artifact://`` key would raise ``FileNotFoundError``. Outside that backend
-    (dev/local, or ATX runtime code not opted into the ATX backend) this returns
-    ``None`` immediately and the collector falls back to the seed key.
+    Discovery runs whenever we're in the ATX runtime -- it does NOT gate on
+    ``STORAGE_BACKEND=atx``. That flip is deferred: live ATX runs still set
+    ``STORAGE_BACKEND`` to something other than ``atx``, so gating on it made
+    discovery return ``None`` unconditionally in production, and the collector
+    fell back to a seed key nothing had staged. The customer's upload also has
+    an arbitrary ATX-assigned name/path we don't control, so the collector can't
+    read it directly under a fixed key either -- staging it ourselves at the
+    seed key is what makes the collector's read path work regardless of backend.
+    Once ``STORAGE_BACKEND=atx`` is eventually flipped, ``store.write_json`` for
+    the seed lands in the ATX artifact store as a ``STATE`` artifact rather than
+    our S3 -- so this still never touches our S3 for the customer's data.
 
     Flow:
 
-      1. Gate on ``STORAGE_BACKEND=atx``; return ``None`` otherwise (see above).
-      2. Resolve the ATX agent context (workspace/job/agent-instance) and build
+      1. Resolve the ATX agent context (workspace/job/agent-instance) and build
          the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
          return ``None`` (local/dev falls back to a pre-staged seed key).
-      3. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
+      2. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
          orchestrator's), filter to JSON, exclude the auto-written
          ``job_objective`` AND our own ``STATE``-category artifacts (this
          pipeline's own writes, e.g. ``{db}/{job}/collector/output.json`` on a
@@ -98,21 +103,13 @@ def _discover_uploaded_input() -> str | None:
          ``STATE``. If it ever did, discovery would exclude the real upload and
          fall back to the seed. Expect exactly one candidate after exclusions;
          more than one is ambiguous and raises.
-      4. Return ``artifact://<artifact_id>``. The ATX artifact store backend's
-         ``read_json``/``exists`` understand this scheme and read the artifact
-         directly through the Artifact API -- nothing is copied into ``store``.
+      3. Download it and stage it into ``store`` at the seed key
+         ``{db}/{job}/uploads/collector-output.json``; return that key. The
+         collector then reads it exactly as it does a dev/reference seed.
 
-    Returns the ``artifact://`` key, or ``None`` when the ATX backend isn't
-    active, when not in the ATX runtime, or when no upload was found. Raises
-    ``ValueError`` on an ambiguous upload.
+    Returns the staged seed key, or ``None`` when not in the ATX runtime or no
+    upload was found. Raises ``ValueError`` on an ambiguous upload.
     """
-    # Discovery only emits an artifact:// key when the ATX backend is active,
-    # so the key is always resolvable by the collector's store; on dev/local
-    # runs (or ATX runtime code not opted into STORAGE_BACKEND=atx) the
-    # collector falls back to the seed key instead.
-    if not _atx_backend_active():
-        return None
-
     try:
         from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
         from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
@@ -223,16 +220,26 @@ def _discover_uploaded_input() -> str | None:
         return None
 
     artifact_id = candidates[0]["artifactId"]
+    seed_key = default_input_key(job_id, database_name)
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        tmp_path = (
+            tmp.name
+        )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
+    try:
+        artifacts.download_artifact(artifact_id, tmp_path)
+        with open(tmp_path, encoding="utf-8") as fh:
+            collection = json.load(fh)
+        store.write_json(seed_key, collection)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
     logger.info(
-        "upload discovery: resolved CUSTOMER_INPUT artifact %s (label=%r) as artifact://%s "
-        "(read in place; nothing staged to our store)",
+        "upload discovery: staged CUSTOMER_INPUT artifact %s (label=%r) at seed key %r",
         artifact_id,
         candidates[0].get("artifactLabel"),
-        artifact_id,
+        seed_key,
     )
-    from src.atx_orchestrator.runtime.atx_store import ARTIFACT_SCHEME
-
-    return f"{ARTIFACT_SCHEME}{artifact_id}"
+    return seed_key
 
 
 def _resolve_collector_input(store, job_id: str, database_name: str, input_key: str) -> str:

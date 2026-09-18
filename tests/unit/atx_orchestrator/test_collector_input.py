@@ -8,7 +8,8 @@ Two behaviours are pinned here:
 * ``_discover_uploaded_input`` (called by the orchestrator) finds the single
   customer-uploaded collection under the job's ``User Uploads/`` prefix, keyed by
   the platform job UUID from the agent context, excluding the auto-written
-  ``job_objective``.
+  ``job_objective`` and this pipeline's own ``STATE``-category writes, then
+  downloads and stages it at the seed key for the collector to read.
 
 The orchestrator wiring test confirms ``run_assessment_core_via_a2a``
 discovers the upload and passes its key to the assessment-core agent as
@@ -81,17 +82,6 @@ class TestResolveCollectorInput:
             with pytest.raises(FileNotFoundError):
                 core._resolve_collector_input(store, "job", "db", "")
             disc.assert_not_called()
-
-    def test_resolve_uses_artifact_uri_without_seed(self) -> None:
-        class _ArtifactUriStore(_FakeStore):
-            def exists(self, path: str) -> bool:
-                return path.startswith("artifact://") or super().exists(path)
-
-        store = _ArtifactUriStore()
-        assert (
-            core._resolve_collector_input(store, "job", "db", "artifact://art-1")
-            == "artifact://art-1"
-        )
 
 
 # =============================================================================
@@ -183,30 +173,30 @@ def _inject_sdk(monkeypatch: pytest.MonkeyPatch, fake_store: _FakeArtifactStore 
 
 
 class TestDiscoverUploadedInput:
-    """Discovery only ever runs its SDK/candidate logic under STORAGE_BACKEND=atx
-    (see test_gate_returns_none_when_backend_not_atx below) -- set it here so the
-    rest of this class continues to exercise the discovery path itself."""
-
-    @pytest.fixture(autouse=True)
-    def _atx_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STORAGE_BACKEND", "atx")
-
     def test_no_agent_context_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # SDK context resolution fails (not in ATX runtime) -> None, no staging.
         _inject_sdk(monkeypatch, None)
-        assert core._discover_uploaded_input() is None
+        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
-    def test_single_upload_returns_artifact_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_single_upload_downloaded_and_staged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _FakeArtifactStore(
             [
                 _artifact("art-1", "default", path="discourse-collection.json"),
                 _artifact("obj-1", "default", path="job_objective"),
-            ]
+            ],
+            content={"collection_version": 7},
         )
         _inject_sdk(monkeypatch, fake)
-        result = core._discover_uploaded_input()
-        assert result == "artifact://art-1"
-        assert fake.downloaded == []  # no download, no S3 copy
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
+
+        result = core._discover_uploaded_input(store, "uuid1", "discourse")
+
+        assert result == seed
+        # It downloaded the collection artifact (not the job_objective)...
+        assert fake.downloaded == ["art-1"]
+        # ...and staged the content at the seed key for the collector to read.
+        assert store.read_json(seed) == {"collection_version": 7}
 
     def test_lists_without_server_side_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Regression guard: server-side category/agent filters returned listed=0
@@ -215,7 +205,7 @@ class TestDiscoverUploadedInput:
         fake = _FakeArtifactStore([_artifact("art-1", "default", path="coll.json")])
         _inject_sdk(monkeypatch, fake)
 
-        core._discover_uploaded_input()
+        core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
 
         assert fake.client.list_calls, "list_artifacts was not called"
         assert "artifactFilter" not in fake.client.list_calls[0]
@@ -229,20 +219,23 @@ class TestDiscoverUploadedInput:
         collection must be picked — the objective is excluded by path basename."""
         collection = _artifact("33641880", "default", path="discourse-collection.json")
         objective = _artifact("788c3a44", "default", path="job_objective")
-        fake = _FakeArtifactStore([collection, objective])
+        fake = _FakeArtifactStore([collection, objective], content={"collection_version": 5})
         _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
 
-        result = core._discover_uploaded_input()
+        result = core._discover_uploaded_input(store, "uuid1", "discourse")
 
-        assert result == "artifact://33641880"
-        assert fake.downloaded == []  # no download, no S3 copy
+        assert result == seed
+        assert fake.downloaded == ["33641880"]  # the collection, not the objective
+        assert store.read_json(seed) == {"collection_version": 5}
 
     def test_job_objective_only_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Only the auto-written objective present (bare 'job_objective' path).
         _inject_sdk(
             monkeypatch, _FakeArtifactStore([_artifact("obj-1", "default", path="job_objective")])
         )
-        assert core._discover_uploaded_input() is None
+        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
     def test_non_json_excluded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A non-JSON upload (e.g. a ZIP) is not a collection candidate.
@@ -250,7 +243,7 @@ class TestDiscoverUploadedInput:
             monkeypatch,
             _FakeArtifactStore([_artifact("z-1", "default", file_type="ZIP", path="bundle.zip")]),
         )
-        assert core._discover_uploaded_input() is None
+        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
     def test_ambiguous_two_collections_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Two genuine .json collection uploads (neither is the objective) -> raise.
@@ -264,26 +257,13 @@ class TestDiscoverUploadedInput:
             ),
         )
         with pytest.raises(ValueError, match="found 2"):
-            core._discover_uploaded_input()
+            core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse")
 
     def test_no_artifacts_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Valid context but nothing uploaded -> None (collector falls back to a
         pre-staged seed). Regression guard for the silent empty-input_key cause."""
         _inject_sdk(monkeypatch, _FakeArtifactStore([]))
-        assert core._discover_uploaded_input() is None
-
-    def test_gate_returns_none_when_backend_not_atx(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Discovery only ever emits an artifact:// key when the ATX backend is
-        active -- otherwise the collector's local/S3 store can't resolve that
-        scheme. With STORAGE_BACKEND unset, discovery must return None WITHOUT
-        touching the SDK at all, even when a valid context and a discoverable
-        upload are injected."""
-        monkeypatch.delenv("STORAGE_BACKEND", raising=False)
-        fake = _FakeArtifactStore([_artifact("art-1", "default", path="user-upload.json")])
-        _inject_sdk(monkeypatch, fake)
-
-        assert core._discover_uploaded_input() is None
-        assert fake.client.list_calls == []
+        assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
     def test_state_artifacts_excluded_no_false_ambiguity(
         self, monkeypatch: pytest.MonkeyPatch
@@ -299,12 +279,17 @@ class TestDiscoverUploadedInput:
             path="discourse/uuid1/collector/output.json",
             category="STATE",
         )
-        fake = _FakeArtifactStore([upload, own_state_write])
+        fake = _FakeArtifactStore([upload, own_state_write], content={"collection_version": 9})
         _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
 
-        result = core._discover_uploaded_input()
+        result = core._discover_uploaded_input(store, "uuid1", "discourse")
 
-        assert result == "artifact://art-1"
+        assert result == seed
+        # The customer upload was downloaded and staged, not the STATE artifact.
+        assert fake.downloaded == ["art-1"]
+        assert store.read_json(seed) == {"collection_version": 9}
 
 
 # =============================================================================
@@ -313,17 +298,15 @@ class TestDiscoverUploadedInput:
 
 class TestOrchestratorPassesDiscoveredKey:
     def test_discovered_key_passed_as_input_key(self) -> None:
+        seed = core.default_input_key("job", "db")
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
             patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch(
-                "src.atx_orchestrator.core._discover_uploaded_input",
-                return_value="artifact://art-1",
-            ),
+            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=seed),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
         message = json.loads(m.call_args[0][1])
-        assert message["input_key"] == "artifact://art-1"
+        assert message["input_key"] == seed
 
     def test_no_upload_leaves_key_empty_for_seed_fallback(self) -> None:
         with (
@@ -334,3 +317,17 @@ class TestOrchestratorPassesDiscoveredKey:
             run_assessment_core_via_a2a(job_id="job", database_name="db")
         # empty input_key -> collect step falls back to the seed key
         assert json.loads(m.call_args[0][1])["input_key"] == ""
+
+    def test_discovery_receives_job_and_db(self) -> None:
+        """The orchestrator must pass job_id + database_name so discovery can stage
+        the download at the correct seed key."""
+        with (
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}),
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
+            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None) as disc,
+        ):
+            run_assessment_core_via_a2a(job_id="job", database_name="db")
+        # positional: (store, job_id, database_name)
+        args = disc.call_args[0]
+        assert args[1] == "job"
+        assert args[2] == "db"
