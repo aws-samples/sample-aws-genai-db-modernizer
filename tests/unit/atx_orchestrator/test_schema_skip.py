@@ -183,6 +183,9 @@ class TestSynthesisMarksSkips:
 class TestSchemaDesignPreDispatchSkip:
     def test_skips_engine_with_no_routed_queries_without_a2a(self) -> None:
         with (
+            # No existing schema output -> the idempotent skip is bypassed and we
+            # reach the routed pre-dispatch skip.
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore({})),
             patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
             patch(
                 "src.atx_orchestrator.tools._engines_with_in_scope_queries",
@@ -393,3 +396,50 @@ class TestSchemaDesignConsolidatedDispatch:
         message = json.loads(mock_invoke.call_args.args[1])
         assert message["target_type"] == "aurora_postgresql"
         assert json.loads(out) == {"status": "complete"}
+
+
+# =============================================================================
+# _run_schema_design_via_a2a — idempotent skip (restore-safe reuse)
+#
+# If this engine's schema output already exists for the effective assignment
+# version, reuse it instead of re-invoking. Makes an orchestrator recycle mid-
+# design harmless (the subagent completes and writes output independently) and
+# stops the re-dispatch loop a long design + a recycle would otherwise cause.
+
+
+class TestSchemaDesignIdempotentSkip:
+    def test_reuses_existing_output_without_reinvoking(self) -> None:
+        key = "discourse/job-1/schema-dynamodb/v2/schema_output.json"
+        store = _FakeStore({key: {"target_type": "dynamodb", "status": "completed", "tables": []}})
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch("src.atx_orchestrator.tools.invoke_and_wait") as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_succeeded") as mock_succeeded,
+        ):
+            out = json.loads(tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse"))
+
+        assert out["reused_existing"] is True
+        assert out["status"] == "completed"  # preserved from the existing output
+        mock_invoke.assert_not_called()  # no re-design
+        mock_succeeded.assert_called_once()
+
+    def test_dispatches_when_no_existing_output(self) -> None:
+        store = _FakeStore(
+            {"discourse/job-1/assignment/v2/assignment.json": _assignment(["dynamodb"])}
+        )
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"dynamodb"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": True}
+            ) as mock_invoke,
+        ):
+            out = json.loads(tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse"))
+
+        mock_invoke.assert_called_once()  # no existing output -> designs normally
+        assert out == {"ok": True}

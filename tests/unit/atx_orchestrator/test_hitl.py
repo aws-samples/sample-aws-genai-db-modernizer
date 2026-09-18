@@ -148,6 +148,50 @@ class TestReadAssignmentSubmission:
         with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
             assert hitl.read_assignment_submission("task-1") == ("unreadable", None)
 
+    def test_empty_downloaded_dict_is_submitted_empty(self) -> None:
+        # The real-world case: the customer opened the table, changed nothing, and
+        # submitted; the downloaded submission is an empty object. That must be
+        # "submitted_empty" (approve-as-is), NOT "unreadable" (which loops).
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"artifactId": "art-empty"},
+                }
+            }
+        )
+        with (
+            patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})),
+            patch.object(hitl, "_download_artifact_json", return_value={}),
+        ):
+            assert hitl.read_assignment_submission("task-1") == ("submitted_empty", [])
+
+    def test_empty_inline_containers_are_submitted_empty(self) -> None:
+        for empty in ({}, [], {"items": []}, ""):
+            client = _StubClient(
+                get_hitl_return={
+                    "hitlTask": {"hitlTaskStatus": "SUBMITTED", "humanArtifact": {"content": empty}}
+                }
+            )
+            with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+                status, items = hitl.read_assignment_submission("task-1")
+            assert (status, items) == ("submitted_empty", []), f"payload {empty!r}"
+
+
+class TestIsEffectivelyEmpty:
+    def test_empty_values(self) -> None:
+        for empty in (None, {}, [], "", "   ", {"items": []}, [{}], {"a": {}, "b": []}):
+            assert hitl._is_effectively_empty(empty) is True, f"{empty!r} should be empty"
+
+    def test_non_empty_values(self) -> None:
+        for content in ({"query_id": "q1"}, [{"x": 1}], "text", 0, False):
+            assert hitl._is_effectively_empty(content) is False, f"{content!r} should be content"
+
+    def test_json_string_decoded_first(self) -> None:
+        assert hitl._is_effectively_empty("{}") is True
+        assert hitl._is_effectively_empty('{"items": []}') is True
+        assert hitl._is_effectively_empty('{"query_id": "q1"}') is False
+
 
 class TestExtractItems:
     ROW = {"query_id": "q1", "new_engine": "dynamodb", "in_scope": "yes"}

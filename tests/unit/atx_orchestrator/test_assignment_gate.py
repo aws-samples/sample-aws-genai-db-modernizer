@@ -175,6 +175,61 @@ class TestDetailedReviewChatFallback:
         by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
         assert by_id["q2"]["assigned_engine"] == "opensearch"
 
+    def test_editing_codependent_member_propagates_to_group(self, store) -> None:
+        """ADR-029 Amendment 3: editing one query in a co-dependent JOIN group
+        moves its group-mates to the same engine (co-locating the group) instead
+        of splitting it, so the routing is approved rather than looping."""
+        from src.agents.referee.assignment_review import render_assignment_review
+
+        # Make q1 and q2 co-dependent: both share a significant JOIN on the same
+        # tables in the collector, so they form one co-dependency group.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "tables_accessed": ["t.users", "t.posts"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                        {
+                            "query_id": "q2",
+                            "tables_accessed": ["t.users", "t.posts"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                        {"query_id": "q3", "tables_accessed": ["t.docs"]},
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        assignment = Assignment.model_validate(
+            store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        )
+        # Split the group: move q2 (dynamodb) to opensearch while q1 stays.
+        edited = render_assignment_review(assignment).replace(
+            "| q2 | t.posts | dynamodb | dynamodb | yes |",
+            "| q2 | t.posts | dynamodb | opensearch | yes |",
+        )
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, edited))
+            # q1 (q2's co-dependent group-mate) is moved to opensearch with q2, so
+            # the JOIN group stays co-located: no split, so the gate approves.
+            assert out["status"] == "approved"
+            assert "q1" in out["co_dependency_propagated"]
+            assert tools._assignment_review_approved(JOB) is True
+        v2 = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        by_id = {qa["query_id"]: qa for qa in v2["query_assignments"]}
+        assert by_id["q2"]["assigned_engine"] == "opensearch"
+        assert by_id["q2"]["customer_override"] is True
+        # q1 followed as a propagated co-dependent move, not a customer pick.
+        assert by_id["q1"]["assigned_engine"] == "opensearch"
+        assert by_id["q1"]["co_dependency_propagated"] is True
+        assert by_id["q1"]["customer_override"] is False
+
     def test_invalid_edited_markdown_does_not_approve(self, store) -> None:
         from src.agents.referee.assignment_review import render_assignment_review
 
@@ -271,6 +326,30 @@ class TestDetailedReviewHitl:
         assert tools._assignment_review_approved(JOB) is False
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
 
+    def test_finalize_empty_submission_approves_as_is(self, store) -> None:
+        """A submitted-but-empty table (customer browsed, changed nothing) is a
+        valid keep-as-is: it approves without a new version and tells the customer
+        no changes were detected, instead of looping on an 'unreadable' error."""
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch(
+                "src.atx_orchestrator.runtime.hitl.raise_assignment_table",
+                return_value="hitl-123",
+            ),
+        ):
+            tools.open_detailed_routing_review(JOB, DB)
+            with patch(
+                "src.atx_orchestrator.runtime.hitl.read_assignment_submission",
+                return_value=("submitted_empty", []),
+            ):
+                out = json.loads(tools.finalize_assignment_review(JOB, DB))
+            assert out["status"] == "approved"
+            assert out["changed"] is False
+            assert "without changing" in out.get("message", "")
+            assert tools._assignment_review_approved(JOB) is True
+            # No new assignment version created for a no-change submit.
+            assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
     def test_finalize_waits_when_not_yet_submitted(self, store) -> None:
         with (
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
@@ -287,3 +366,102 @@ class TestDetailedReviewHitl:
                 out = json.loads(tools.finalize_assignment_review(JOB, DB))
         assert out["status"] == "awaiting_review"
         assert tools._assignment_review_approved(JOB) is False
+
+
+class TestFeasibilityGate:
+    """ADR-029 Layer C: the feasibility reviewer runs inside finalize and loops
+    the gate on blocking findings unless the customer accepts the risk."""
+
+    @staticmethod
+    def _make_read_write_split(store) -> None:
+        # q1 writes t.shared on dynamodb; q3 reads t.shared on opensearch, which
+        # never receives those writes -> blocking read/write split.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_type": "INSERT",
+                            "tables_accessed": ["t.shared"],
+                        },
+                        {
+                            "query_id": "q3",
+                            "query_type": "SELECT",
+                            "tables_accessed": ["t.shared"],
+                        },
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+
+    @staticmethod
+    def _make_blocking_codep_split(store) -> None:
+        # Make q1 (dynamodb) and q3 (opensearch) a co-dependency group: dynamodb
+        # lacks complex_joins, so the split is a BLOCKING feasibility finding.
+        a = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        a["co_dependency_groups"] = [["q1", "q3"]]
+        store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", a)
+
+    def test_read_write_split_is_advisory_and_approves(self, store) -> None:
+        # A read/write split is the tool's own polyglot pattern (writes on the
+        # primary, reads on a search/cache engine): feasible via replication, so it
+        # is advisory and approves, carrying a recommended replication pattern.
+        self._make_read_write_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        advisory = [f for f in out["feasibility_findings"] if f["kind"] == "read_write_split"]
+        assert advisory and all(f["severity"] == "advisory" for f in advisory), out[
+            "feasibility_findings"
+        ]
+        assert advisory[0]["recommended_pattern"], advisory[0]
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        assert v1["status"] == "customer_approved"
+
+    def test_blocking_codep_split_loops_gate(self, store) -> None:
+        self._make_blocking_codep_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "infeasible"
+            assert tools._assignment_review_approved(JOB) is False
+        assert any(
+            f["kind"] == "co_dependency_split" and f["severity"] == "blocking"
+            for f in out["feasibility_findings"]
+        ), out["feasibility_findings"]
+
+    def test_accept_risks_proceeds_and_records_findings(self, store) -> None:
+        self._make_blocking_codep_split(store)
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(
+                tools.finalize_assignment_review(JOB, DB, "", accept_feasibility_risks=True)
+            )
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        accepted = v1["accepted_feasibility_findings"]
+        assert any(f["kind"] == "co_dependency_split" for f in accepted), accepted
+        assert v1["status"] == "customer_approved"
+
+    def test_feasible_routing_approves_normally(self, store) -> None:
+        # Reads and writes co-located on dynamodb -> no blocking finding.
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {"query_id": "q1", "query_type": "INSERT", "tables_accessed": ["t.users"]},
+                        {"query_id": "q2", "query_type": "SELECT", "tables_accessed": ["t.users"]},
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        with patch("src.atx_orchestrator.tools._make_store", return_value=store):
+            out = json.loads(tools.finalize_assignment_review(JOB, DB, ""))
+            assert out["status"] == "approved"
+            assert tools._assignment_review_approved(JOB) is True
+        assert out["feasibility_findings"] == []

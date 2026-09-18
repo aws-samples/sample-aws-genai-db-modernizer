@@ -113,3 +113,59 @@ def stale_schema_versions(store: _Lister, database_name: str, job_id: str) -> di
             latest[engine] = max(latest.get(engine, 0), version)
 
     return {engine: version for engine, version in latest.items() if version < effective}
+
+
+class _Reader(Protocol):
+    def read_json(self, path: str) -> dict: ...
+    def exists(self, path: str) -> bool: ...
+
+
+def _in_scope_engine_query_sets(
+    store: _Reader, database_name: str, job_id: str, version: int
+) -> dict[str, set[str]]:
+    """Return ``engine -> {in-scope query_id, ...}`` for one assignment version.
+
+    Empty when the version's artifact is absent.
+    """
+    path = assignment_artifact_path(database_name, job_id, version)
+    if not store.exists(path):
+        return {}
+    assignment = store.read_json(path)
+    result: dict[str, set[str]] = {}
+    for qa in assignment.get("query_assignments", []):
+        if not qa.get("in_scope", True):
+            continue
+        engine = qa.get("assigned_engine")
+        qid = qa.get("query_id")
+        if engine and qid:
+            result.setdefault(engine, set()).add(qid)
+    return result
+
+
+def assignment_engine_diff(
+    store: _Reader,
+    database_name: str,
+    job_id: str,
+    prev_version: int,
+    new_version: int,
+) -> dict[str, list[str]]:
+    """Classify the NEW assignment's engines against the previous one (ADR-029 A).
+
+    Returns ``{"affected": [...], "unaffected": [...]}`` (both sorted):
+
+    - **affected** — an engine in ``new_version`` whose in-scope query set differs
+      from ``prev_version`` (a query arrived, left, or its scope changed) or that is
+      new. Its schema must be re-designed.
+    - **unaffected** — an engine in ``new_version`` whose in-scope query set is
+      identical to ``prev_version``. Its schema is byte-identical, so it can be
+      copied forward instead of re-run.
+
+    Engines that dropped to zero in-scope queries in ``new_version`` appear in
+    neither list: they are eliminated and their schema is not carried forward.
+    """
+    prev = _in_scope_engine_query_sets(store, database_name, job_id, prev_version)
+    new = _in_scope_engine_query_sets(store, database_name, job_id, new_version)
+    affected = sorted(engine for engine, qids in new.items() if qids != prev.get(engine, set()))
+    affected_set = set(affected)
+    unaffected = sorted(engine for engine in new if engine not in affected_set)
+    return {"affected": affected, "unaffected": unaffected}

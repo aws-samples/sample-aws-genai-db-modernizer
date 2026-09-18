@@ -96,9 +96,29 @@ def load_synthesis_data(
             required=False,
         )
 
+    # Engines consolidation (or a customer re-route) eliminated — those with no
+    # in-scope query in the effective assignment — are dropped here so they never
+    # reach the ranking, table mappings, or schema summaries (ADR-029 Layer E).
+    # Their rationale still lives in the reality-check consolidation summary. Only
+    # filter when a non-empty surviving set is positively resolved; an empty set
+    # means unknown/degenerate, so keep every selected engine (fail-open).
+    surviving_engines: set[str] | None = None
+    if data.assignment:
+        surviving = {
+            qa.get("assigned_engine")
+            for qa in data.assignment.get("query_assignments", [])
+            if qa.get("in_scope", True) and qa.get("assigned_engine")
+        }
+        surviving_engines = surviving or None
+
     # Per-engine artifacts
     for agent_info in data.triage.get("selected_agents", []):
         engine = agent_info["agent_type"]
+        if surviving_engines is not None and engine not in surviving_engines:
+            logger.info(
+                "Synthesis: skipping consolidated-away engine %s (no in-scope queries)", engine
+            )
+            continue
         artifacts = EngineArtifacts(engine=engine)
 
         artifacts.analysis = _read_artifact(
