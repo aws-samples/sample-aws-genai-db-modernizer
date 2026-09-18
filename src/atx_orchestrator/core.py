@@ -22,14 +22,20 @@ logger = logging.getLogger(__name__)
 
 
 def make_store():
-    """Create a text-capable ArtifactStore using the project's own factory.
+    """Create a text-capable ArtifactStore.
 
-    core-modernizer's ``create_artifact_store()`` decides S3-vs-local from env;
-    ``upgrade_store`` re-homes that choice onto the Transform subclass that adds
-    ``write_text``. See src/atx_orchestrator/store.py for why that capability is
-    not on the shared ABC.
+    ``STORAGE_BACKEND=atx`` selects the ATX Agentic Artifact Store backend (ATX
+    runs store nothing in our S3). Otherwise core-modernizer's
+    ``create_artifact_store()`` decides S3-vs-local from env and ``upgrade_store``
+    re-homes it onto the Transform subclass that adds ``write_text``.
     """
     from src.atx_orchestrator.runtime.store import upgrade_store
+
+    if os.environ.get("STORAGE_BACKEND") == "atx":
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+
+        return TransformAtxStore()
+
     from src.storage import create_artifact_store
 
     return upgrade_store(create_artifact_store())

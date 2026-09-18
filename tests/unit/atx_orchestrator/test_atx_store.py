@@ -219,3 +219,12 @@ class TestNonJsonRaises:
     def test_supports_bytes_is_false(self) -> None:
         store, _ = _store()
         assert store.supports_bytes is False
+
+
+class TestTransformAtxStore:
+    def test_write_text_raises(self) -> None:
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+
+        store = TransformAtxStore(sdk_store=_FakeSdkStore(), agent_instance_id="inst1")
+        with pytest.raises(NotImplementedError, match="publish"):
+            store.write_text("db/job/report.md", "# hi", "text/markdown")

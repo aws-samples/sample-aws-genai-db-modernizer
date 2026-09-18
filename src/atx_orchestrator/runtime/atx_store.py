@@ -154,3 +154,10 @@ class AtxArtifactStore(ArtifactStore):
 
     def write_bytes(self, path: str, data: bytes) -> None:
         raise NotImplementedError(_NON_JSON_MSG)
+
+
+class TransformAtxStore(AtxArtifactStore):
+    """ATX backend plus the Transform-layer ``write_text`` signature (raises)."""
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        raise NotImplementedError(_NON_JSON_MSG)
