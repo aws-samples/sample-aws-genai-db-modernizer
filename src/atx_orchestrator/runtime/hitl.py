@@ -362,3 +362,184 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
         )
         return "unreadable", None
     return "submitted", items
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# File-upload gate (collection ingestion)
+# ═════════════════════════════════════════════════════════════════════════════
+# The customer's offline collection is collected at job start through a BLOCKING
+# ``FileUploadV2`` HITL task instead of being discovered by listing artifacts.
+# The submission hands us the uploaded file's ``artifactId`` directly (job-scoped
+# and unambiguous), which the collector then reads via an ``artifact://<id>`` key
+# — no ListArtifacts, no exclusion heuristics, no cross-run ambiguity. Mirrors the
+# raise/read lifecycle of the assignment-review gate above, reusing the same
+# client seam and upload helper; only the component id and the submission shape
+# differ (a file manifest instead of edited table rows).
+
+# Keys under which a FileUploadV2 submission wraps its manifest array. The
+# platform's current convention is ``uploadedArtifacts``; ``uploadedFiles`` is an
+# older sibling component's key kept as a tolerated fallback. Verified against the
+# ProServeModFactoryAwsTransformAssessmentAgent source-collection flow.
+_UPLOAD_MANIFEST_KEYS = ("uploadedArtifacts", "uploadedFiles")
+
+
+def raise_file_upload(
+    *,
+    title: str,
+    description: str,
+    label: str,
+    step_id: str = "",
+    tag: str = "",
+) -> str | None:
+    """Raise a BLOCKING ``FileUploadV2`` HITL task; return its id, or ``None``.
+
+    Uploads ``{properties: {label, description}}`` as the HITL request artifact,
+    creates a ``FileUploadV2`` HITL task with ``blockingType="BLOCKING"`` (so the
+    WebApp parks the step until the customer uploads and submits), and starts it.
+
+    Returns the HITL task id on success. Returns ``None`` outside the ATX runtime
+    or on any failure (the caller degrades — e.g. dev/reference runs stage the
+    collection at the seed key instead). Never raises.
+    """
+    try:
+        client, request_context = _resolve_client_and_context()
+    except Exception as exc:  # noqa: BLE001 - expected outside the ATX runtime
+        logger.warning("HITL unavailable (no runtime client): %s", exc)
+        return None
+
+    try:
+        artifact_id = _upload_hitl_request(
+            client,
+            request_context,
+            {"properties": {"label": label, "description": description}},
+        )
+
+        create_kwargs: dict[str, Any] = {
+            "uxComponentId": "FileUploadV2",
+            "title": title,
+            "description": description,
+            "severity": "STANDARD",
+            "hitlTaskType": "NORMAL",
+            "blockingType": "BLOCKING",
+            "hitlRequestArtifact": {"artifactId": artifact_id},
+            "idempotencyToken": str(uuid.uuid4()),
+            "requestContext": request_context,
+        }
+        if step_id:
+            create_kwargs["stepId"] = step_id
+        if tag:
+            create_kwargs["tag"] = tag
+
+        hitl_response = client.create_hitl_task(**create_kwargs)
+        hitl_task_id = str(hitl_response["hitlTaskId"])
+
+        client.start_hitl_task(
+            hitlTaskId=hitl_task_id,
+            idempotencyToken=str(uuid.uuid4()),
+            firstInChain=True,
+            requestContext=request_context,
+        )
+        logger.info("Raised BLOCKING FileUploadV2 HITL task %s", hitl_task_id)
+        return hitl_task_id
+    except Exception as exc:  # noqa: BLE001 - degrade; caller handles None
+        logger.warning("Failed to raise HITL file-upload task: %s", exc, exc_info=True)
+        return None
+
+
+def _first_uploaded_artifact_id(manifest: Any) -> str | None:
+    """Pull the first uploaded file's ``artifactId`` from a submission manifest.
+
+    Tolerates the shapes a ``FileUploadV2`` submission can take: a bare list of
+    ``{name, artifactId, mimeType}`` items, or that list wrapped under
+    ``uploadedArtifacts`` / ``uploadedFiles`` (optionally nested under
+    ``properties``). Returns the first non-empty ``artifactId``, or ``None``.
+    """
+
+    def _first_from_list(items: Any) -> str | None:
+        if not isinstance(items, list):
+            return None
+        for item in items:
+            if isinstance(item, dict):
+                aid = item.get("artifactId")
+                if isinstance(aid, str) and aid:
+                    return aid
+        return None
+
+    # Bare list.
+    found = _first_from_list(manifest)
+    if found:
+        return found
+
+    # Wrapped in a dict, possibly under "properties".
+    if isinstance(manifest, dict):
+        containers = [manifest]
+        props = manifest.get("properties")
+        if isinstance(props, dict):
+            containers.append(props)
+        for container in containers:
+            for key in _UPLOAD_MANIFEST_KEYS:
+                found = _first_from_list(container.get(key))
+                if found:
+                    return found
+    return None
+
+
+def read_file_upload_submission(hitl_task_id: str) -> tuple[str, str | None]:
+    """Read a ``FileUploadV2`` submission; return ``(status, artifact_id)``.
+
+    ``status`` is one of:
+      * ``"submitted"``  — the customer uploaded; ``artifact_id`` is the uploaded
+        file's platform ``artifactId`` (pass it to the collector as
+        ``artifact://<id>``).
+      * ``"awaiting_submission"`` — no ``humanArtifact`` yet; still waiting.
+      * ``"unreadable"`` — the customer submitted but we could not locate the
+        uploaded file's id in the manifest (fail loud; do NOT proceed).
+      * ``"unavailable"`` — outside the ATX runtime, or the task could not be
+        fetched.
+
+    The submission is read from ``hitlTask.humanArtifact``: inline ``content`` is
+    preferred (no download), otherwise it is fetched by ``artifactId``. Both the
+    nested ``{"hitlTask": {...}}`` and a flat top-level shape are tolerated. Never
+    raises.
+    """
+    try:
+        client, request_context = _resolve_client_and_context()
+    except Exception as exc:  # noqa: BLE001 - outside the ATX runtime
+        logger.warning("HITL read unavailable (no runtime client): %s", exc)
+        return "unavailable", None
+
+    try:
+        resp: Any = client.get_hitl_task(hitlTaskId=hitl_task_id, requestContext=request_context)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_hitl_task failed for %s: %s", hitl_task_id, exc)
+        return "unavailable", None
+
+    task = resp.get("hitlTask") or resp
+    human = task.get("humanArtifact") or resp.get("humanArtifact") or {}
+    status = str(task.get("hitlTaskStatus") or task.get("status") or "").upper()
+
+    if not human:
+        return "awaiting_submission", None
+
+    inline = human.get("content")
+    manifest = _coerce_json(inline) if inline is not None else None
+    artifact_id = _first_uploaded_artifact_id(manifest) if manifest is not None else None
+
+    downloaded: Any = None
+    if artifact_id is None:
+        human_artifact_id = human.get("artifactId")
+        if human_artifact_id:
+            downloaded = _download_artifact_json(client, request_context, human_artifact_id)
+            artifact_id = _first_uploaded_artifact_id(downloaded)
+
+    if artifact_id is None:
+        logger.warning(
+            "HITL file-upload task %s submitted (status=%s) but no uploaded artifactId "
+            "found in the manifest. inline=%s downloaded=%s",
+            hitl_task_id,
+            status,
+            _describe_shape(inline) if inline is not None else "None",
+            _describe_shape(downloaded) if downloaded is not None else "None",
+        )
+        return "unreadable", None
+    return "submitted", artifact_id

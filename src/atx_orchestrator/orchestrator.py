@@ -19,10 +19,12 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 from src.atx_orchestrator.tools import (
     declare_pipeline_plan,
     finalize_assignment_review,
+    finalize_collection_upload,
     get_job_status,
     get_synthesis_report,
     open_detailed_routing_review,
     present_assignment_review,
+    request_collection_upload,
     run_assessment_core_via_a2a,
     run_schema_design_aurora_mysql_via_a2a,
     run_schema_design_aurora_pg_via_a2a,
@@ -57,15 +59,28 @@ dispatch.
                                              once at the start of a new assessment so
                                              users see per-phase status updates in the
                                              UI as work progresses.
+  0b. request_collection_upload /           — The collection-upload GATE (two steps),
+      finalize_collection_upload             right after declare_pipeline_plan.
+                                             request_collection_upload opens a BLOCKING
+                                             file-upload panel in the WebApp asking the
+                                             customer to upload their offline collection JSON.
+                                             STOP and end your turn; the platform re-invokes
+                                             you when they submit. Then call
+                                             finalize_collection_upload, which records the
+                                             uploaded file so the assessment can read it.
+                                             run_assessment_core_via_a2a is BLOCKED until the
+                                             upload is recorded. (Outside the ATX runtime the
+                                             gate returns "unavailable" and the collection is
+                                             read from the seed key instead.)
   1. run_assessment_core_via_a2a           — ONE call runs the whole assessment
                                              front-half in order: Collect -> Triage ->
                                              Analyze (every selected engine) -> Assign ->
                                              Reality Check (CTO-level engine consolidation).
                                              Collect/Triage/Analyze/Assign are deterministic;
-                                             Reality Check adds one LLM pass. It auto-discovers
-                                             the customer's uploaded offline JSON from the
-                                             job's file uploads; pass only job_id +
-                                             database_name, never a path. The agent ticks
+                                             Reality Check adds one LLM pass. It reads the
+                                             collection recorded by finalize_collection_upload;
+                                             pass only job_id + database_name, never a path.
+                                             The agent ticks
                                              collector, triage, the nested per-engine analysis
                                              sub-steps, assignment, and reality_check in the
                                              progress panel as it goes. Engine selection and
@@ -166,6 +181,14 @@ Workflow:
 
   - Then run this sequence without being asked, in order:
       1. declare_pipeline_plan(job_id, database_name)
+      1a. request_collection_upload(job_id, database_name) — opens the file-upload
+          panel. Tell the customer to upload their collection JSON, then STOP and
+          end your turn. When they submit, the platform re-invokes you; call
+          finalize_collection_upload(job_id, database_name). If it returns
+          "awaiting_upload", they have not submitted yet — wait. If it returns
+          "error", relay the message and ask them to upload again. Proceed only
+          when it returns "recorded". (If request_collection_upload returns
+          "unavailable", you are outside the WebApp; proceed directly.)
       2. run_assessment_core_via_a2a — one call runs Collect, Triage, Analyze
          (every engine triage selected), Assign, and Reality Check
       3. STOP and write the assessment-core summary to the customer in chat (see
@@ -241,14 +264,15 @@ Key points:
     a CTO summary) and the synthesis executive summary; neither invents a
     per-query recommendation. Say "deterministic" about which engine handles a
     query, not about the whole report.
-  - The customer must upload their offline collection JSON before the assessment
-    core runs. They attach it through the WebApp's file uploads for this job (it
-    lands in the artifact store under "User Uploads/"), and
-    run_assessment_core_via_a2a discovers it automatically. You never construct,
-    pass, or ask for a storage path. If the run reports no upload found, tell the
-    customer to run the collection script for their engine and attach the resulting
-    JSON to this job's file uploads, then retry. Do not quote an S3 key, and do not
-    attempt to copy or re-upload the file yourself.
+  - The customer uploads their offline collection JSON through the file-upload
+    gate (request_collection_upload -> customer uploads in the WebApp ->
+    finalize_collection_upload), which runs right after declare_pipeline_plan and
+    before the assessment core. The uploaded file's id is captured at submission
+    and read by run_assessment_core_via_a2a. You never construct, pass, or ask for
+    a storage path, and you do not copy or re-upload the file yourself. If the
+    customer has not produced a collection yet, tell them to run the collection
+    script for their engine (e.g. collect-postgresql.sql / collect-mysql.sql) and
+    upload the resulting JSON in the panel. Do not quote an S3 key.
   - table_mappings and query_groups are derived from schema-design output. The
     workflow runs schema-design (step 4) before synthesis, so they populate
     normally; they are empty only for an engine whose design produced no tables.
@@ -257,6 +281,8 @@ Key points:
 
 PIPELINE_TOOLS = [
     declare_pipeline_plan,
+    request_collection_upload,
+    finalize_collection_upload,
     run_assessment_core_via_a2a,
     present_assignment_review,
     open_detailed_routing_review,

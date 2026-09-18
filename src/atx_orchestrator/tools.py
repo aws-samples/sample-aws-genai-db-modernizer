@@ -97,11 +97,12 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     UI for the user during long-running phases (see F20 in
     ``docs-atx-poc/subagent-recipe.md``).
 
-    The declared plan includes 9 phases:
-      1. collector — ingest customer's offline collection
-      2. triage — select candidate target engines
-      3-8. analysis_{dynamodb,documentdb,elasticache,opensearch,aurora_postgresql,aurora_mysql}
-      9. assignment — route queries to engines
+    The declared plan includes these phases:
+      1. upload — customer uploads their offline collection (HITL file-upload gate)
+      2. collector — ingest customer's offline collection
+      3. triage — select candidate target engines
+      4-9. analysis_{dynamodb,documentdb,elasticache,opensearch,aurora_postgresql,aurora_mysql}
+      10. assignment — route queries to engines
 
     Unused analysis phases (engines not selected by triage) stay at
     ``NOT_STARTED`` — that's expected and shows the user which engines
@@ -132,6 +133,15 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     # dict[str, object] (not str): the "analysis" node carries a nested subSteps
     # list, so values are no longer all strings.
     steps: list[dict[str, object]] = [
+        # Upload gate (first step): the customer uploads their offline collection
+        # through a BLOCKING FileUploadV2 HITL task raised under this step, so the
+        # collector receives the uploaded file's artifactId directly (job-scoped,
+        # unambiguous) rather than discovering it by listing artifacts.
+        {
+            "stepLabel": "upload",
+            "stepName": "Upload Database Collection",
+            "description": "Upload the offline collection JSON produced by the collection script.",
+        },
         {
             "stepLabel": "collector",
             "stepName": "Collect Database Schema and Queries",
@@ -292,6 +302,178 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
             "phase_labels": list(mappings.keys()),
         }
     )
+
+
+@tool
+def request_collection_upload(job_id: str, database_name: str) -> str:
+    """Ask the customer to upload their offline collection, as the FIRST step.
+
+    Call this immediately AFTER ``declare_pipeline_plan`` and BEFORE
+    ``run_assessment_core_via_a2a``. It raises a BLOCKING file-upload task in the
+    WebApp (under the "upload" plan step) asking the customer to upload the JSON
+    produced by the collection script.
+
+    This task is BLOCKING: after it returns, STOP and end your turn. Do NOT call
+    any other tool. Tell the customer their upload panel is open in the WebApp and
+    to submit the collection file. When they submit, the platform re-invokes you;
+    then call ``finalize_collection_upload`` to record the uploaded file and
+    proceed to the assessment.
+
+    Outside the ATX runtime (local/reference harness), the HITL transport is
+    unavailable and this returns ``status="unavailable"``; in that case the
+    collection is expected pre-staged at the seed key and you may proceed directly
+    to ``run_assessment_core_via_a2a``.
+
+    Returns JSON with ``status`` (``"awaiting_upload"`` or ``"unavailable"``) and,
+    when raised, the ``hitl_task_id``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    store = _make_store()
+
+    # Resolve the "upload" plan step so the HITL task renders under it. A task
+    # created without a stepId never surfaces in the WebApp tasks panel. The
+    # in-process registry is populated by declare_pipeline_plan; under
+    # raise-and-resume a fresh process falls back to reading the plan from the
+    # server.
+    step_id = get_step_id("upload")
+    if not step_id:
+        register_steps_from_server()
+        step_id = get_step_id("upload")
+
+    hitl_task_id = _hitl.raise_file_upload(
+        title="Upload your database collection",
+        description=(
+            "Upload the offline collection JSON produced by the collection script "
+            "(e.g. collect-postgresql.sql / collect-mysql.sql output). The assessment "
+            "runs on this file."
+        ),
+        label="Database collection JSON",
+        step_id=step_id,
+        tag="collection-upload",
+    )
+
+    if hitl_task_id:
+        _record_pending_upload(store, database_name, job_id, hitl_task_id)
+        mark_step_pending_human_input("upload", "Awaiting the customer's collection upload.")
+        return json.dumps(
+            {
+                "status": "awaiting_upload",
+                "job_id": job_id,
+                "hitl_task_id": hitl_task_id,
+                "message": (
+                    "A file-upload panel is open in the WebApp. Ask the customer to upload "
+                    "their collection JSON and submit. STOP here and end your turn; call "
+                    "finalize_collection_upload after they submit."
+                ),
+            }
+        )
+
+    # HITL transport unavailable (outside the ATX runtime). Dev/reference runs
+    # stage the collection at the seed key, so the assessment can proceed.
+    logger.info(
+        "ATX request_collection_upload: HITL unavailable for job_id=%s; "
+        "collection is expected at the seed key (dev/reference).",
+        job_id,
+    )
+    return json.dumps(
+        {
+            "status": "unavailable",
+            "job_id": job_id,
+            "message": (
+                "File-upload HITL is unavailable (outside the ATX runtime). If the "
+                "collection is staged at the seed key, proceed to run_assessment_core_via_a2a."
+            ),
+        }
+    )
+
+
+@tool
+def finalize_collection_upload(job_id: str, database_name: str) -> str:
+    """Record the customer's uploaded collection and open the assessment.
+
+    Call this AFTER ``request_collection_upload`` once the customer has submitted
+    their upload in the WebApp (the platform re-invokes you on submission). It
+    reads the submission, resolves the uploaded file's artifact id, and records it
+    as the collection input for the assessment. Then call
+    ``run_assessment_core_via_a2a``.
+
+    Returns JSON with ``status``:
+      * ``"recorded"`` — the upload was read; ``run_assessment_core_via_a2a`` may run.
+      * ``"awaiting_upload"`` — the customer has not submitted yet; wait.
+      * ``"error"`` — the submission could not be read; ask them to re-upload.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    store = _make_store()
+    pending = _read_pending_upload(store, database_name, job_id)
+    if not pending or not pending.get("hitl_task_id"):
+        return json.dumps(
+            {
+                "status": "error",
+                "job_id": job_id,
+                "message": (
+                    "No pending upload task was found. Call request_collection_upload first "
+                    "to open the upload panel for the customer."
+                ),
+            }
+        )
+
+    status, artifact_id = _hitl.read_file_upload_submission(pending["hitl_task_id"])
+    if status == "awaiting_submission":
+        return json.dumps(
+            {
+                "status": "awaiting_upload",
+                "job_id": job_id,
+                "message": (
+                    "The customer has not uploaded the collection yet. Wait for their "
+                    "submission before finalizing."
+                ),
+            }
+        )
+    if status != "submitted" or not artifact_id:
+        # unreadable / unavailable: the customer submitted but we could not read
+        # the uploaded file's id, or the task could not be fetched. Fail loudly so
+        # the gate stays open rather than proceeding without a collection.
+        return json.dumps(
+            {
+                "status": "error",
+                "job_id": job_id,
+                "message": (
+                    "The uploaded collection could not be read back, so nothing was "
+                    "recorded. Ask the customer to upload and submit again; if it keeps "
+                    "failing, this is a bug to report."
+                ),
+            }
+        )
+
+    input_key = f"{_hitl_artifact_scheme()}{artifact_id}"
+    _record_resolved_input_key(store, database_name, job_id, input_key)
+    mark_step_succeeded("upload", "Collection uploaded.")
+    logger.info(
+        "ATX finalize_collection_upload: recorded collection input_key=%s (job_id=%s)",
+        input_key,
+        job_id,
+    )
+    return json.dumps(
+        {
+            "status": "recorded",
+            "job_id": job_id,
+            "message": (
+                "Collection upload recorded. Proceed to run_assessment_core_via_a2a to run "
+                "the assessment."
+            ),
+        }
+    )
+
+
+def _hitl_artifact_scheme() -> str:
+    """The ``artifact://`` key prefix the ATX store resolves to a direct read."""
+    from src.atx_orchestrator.runtime.atx_store import ARTIFACT_SCHEME
+
+    return ARTIFACT_SCHEME
 
 
 @tool
@@ -822,13 +1004,12 @@ def run_assessment_core_via_a2a(
       - ``<db>/<job>/assignment/v1/assignment.json``
       - ``<db>/<job>/reality-check/output.json`` (+ ``assignment/v2/`` when it consolidates)
 
-    The customer's uploaded offline collection is located AUTOMATICALLY: this tool
-    discovers the file the customer uploaded through the WebApp (it lands under the
-    job's ``User Uploads/`` prefix), downloads it, and stages it at the seed key.
-    You do NOT pass, construct, or ask for a storage path. Discovery matches the
-    customer upload by excluding this pipeline's own ``STATE``-category artifacts
-    and the auto-written job objective, never by trusting a category the platform
-    assigns to the upload itself.
+    The customer's uploaded offline collection is resolved from the file-upload
+    gate: call ``declare_pipeline_plan``, then ``request_collection_upload`` (the
+    customer uploads their collection in the WebApp), then
+    ``finalize_collection_upload`` (records the uploaded file's artifact id), and
+    THEN this tool. It reads that recorded ``artifact://<id>`` input and passes it
+    to the collector. You do NOT pass, construct, or ask for a storage path.
 
     The subagent ticks its own plan steps (collector, triage, analysis with nested
     per-engine sub-steps, assignment, reality_check) as it progresses, so the
@@ -846,31 +1027,23 @@ def run_assessment_core_via_a2a(
         engines, query distribution, and consolidation to narrate), or an error
         dict if the A2A round-trip failed.
     """
-    # Resolve the customer's uploaded offline collection here, in the orchestrator:
-    # it reliably holds the Transform job context (workspace_id + platform job UUID
-    # + agent instance), so _discover_uploaded_input can find the WebApp upload via
-    # the ATX Artifact API (ListArtifacts CUSTOMER_INPUT) — which is account/bucket
-    # agnostic, unlike listing our own S3_BUCKET — download it, and stage it at the
-    # seed key. It returns that key. Discovery is the single source of truth for the
-    # path; the LLM never supplies one. Outside the ATX runtime (dev/reference
-    # harness) discovery returns None, input_key stays "", and the collector step
-    # falls back to a pre-staged seed key. Candidates exclude our own pipeline's
-    # STATE-category artifacts (e.g. collector/output.json on a retry/resume) and
-    # the auto-written job objective, so only the genuine customer upload remains;
-    # more than one remaining candidate is ambiguous and raises with a clear
-    # message rather than picking one.
-    from src.atx_orchestrator.core import _discover_uploaded_input
-
+    # The customer's collection is uploaded through the file-upload gate
+    # (request_collection_upload -> finalize_collection_upload), which records the
+    # uploaded file's artifact id as an ``artifact://<id>`` input_key on the store.
+    # Read that here and pass it to the collector — no listing, no discovery
+    # heuristics: the id was handed to us by the platform at submission, job-scoped
+    # and unambiguous. Outside the ATX runtime (dev/reference harness) no gate ran,
+    # input_key stays "", and the collector falls back to a pre-staged seed key.
     job_id = _platform_job_id(job_id)
-    input_key = _discover_uploaded_input(_make_store(), job_id, database_name) or ""
+    input_key = _read_resolved_input_key(_make_store(), database_name, job_id)
     if input_key:
-        logger.info("ATX assessment-core: customer upload staged at %s", input_key)
+        logger.info("ATX assessment-core: collection input resolved to %s", input_key)
     else:
         logger.warning(
-            "ATX assessment-core: no customer upload discovered for job_id=%s; "
-            "passing empty input_key. The collect step will fall back to the seed "
-            "key and fail if none is staged. See upload-discovery log above for what "
-            "the Artifact API returned.",
+            "ATX assessment-core: no uploaded collection recorded for job_id=%s; "
+            "passing empty input_key. The collect step will fall back to the seed key "
+            "and fail if none is staged. Was request_collection_upload / "
+            "finalize_collection_upload run first?",
             job_id,
         )
     message = json.dumps(
@@ -1313,6 +1486,86 @@ def _read_pending_hitl(store: object, database_name: str, job_id: str) -> dict |
     except Exception:  # noqa: BLE001 - absence is normal (chat fallback / approve-as-is)
         logger.debug("ATX: no pending HITL pointer for job_id=%s", job_id, exc_info=True)
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Upload-gate transport state (collection ingestion)
+# ─────────────────────────────────────────────────────────────────────────────
+# The upload gate (request_collection_upload / finalize_collection_upload) is a
+# raise-and-resume flow like the assignment-review gate: the turn that raises the
+# HITL only knows the task id, and the resolved collection input_key is only known
+# once the customer submits and a later turn reads it back. Two small pointers on
+# the store carry that state across turns/processes.
+
+
+def _pending_upload_key(database_name: str, job_id: str) -> str:
+    """Store key for the pending upload HITL task pointer (transport state)."""
+    return f"{database_name}/{job_id}/uploads/pending_upload.json"
+
+
+def _resolved_input_key_key(database_name: str, job_id: str) -> str:
+    """Store key for the resolved collection ``input_key`` (artifact://<id>)."""
+    return f"{database_name}/{job_id}/uploads/input_key.json"
+
+
+def _record_pending_upload(
+    store: object, database_name: str, job_id: str, hitl_task_id: str
+) -> None:
+    """Persist the upload HITL task the gate is blocked on (best-effort)."""
+    try:
+        store.write_text(  # type: ignore[attr-defined]
+            _pending_upload_key(database_name, job_id),
+            json.dumps({"hitl_task_id": hitl_task_id}),
+            "application/json",
+        )
+    except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
+        logger.warning(
+            "ATX: could not record pending upload HITL task %s (job_id=%s)",
+            hitl_task_id,
+            job_id,
+            exc_info=True,
+        )
+
+
+def _read_pending_upload(store: object, database_name: str, job_id: str) -> dict | None:
+    """Return the recorded pending upload HITL pointer, or None when absent."""
+    key = _pending_upload_key(database_name, job_id)
+    try:
+        if store.exists(key):  # type: ignore[attr-defined]
+            data = store.read_json(key)  # type: ignore[attr-defined]
+            return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - absence is normal (dev/reference runs)
+        logger.debug("ATX: no pending upload pointer for job_id=%s", job_id, exc_info=True)
+    return None
+
+
+def _record_resolved_input_key(
+    store: object, database_name: str, job_id: str, input_key: str
+) -> None:
+    """Persist the resolved collection ``input_key`` (best-effort)."""
+    try:
+        store.write_text(  # type: ignore[attr-defined]
+            _resolved_input_key_key(database_name, job_id),
+            json.dumps({"input_key": input_key}),
+            "application/json",
+        )
+    except Exception:  # noqa: BLE001 - a lost pointer only degrades a later resume
+        logger.warning(
+            "ATX: could not record resolved input_key (job_id=%s)", job_id, exc_info=True
+        )
+
+
+def _read_resolved_input_key(store: object, database_name: str, job_id: str) -> str:
+    """Return the resolved collection ``input_key``, or ``""`` when absent."""
+    key = _resolved_input_key_key(database_name, job_id)
+    try:
+        if store.exists(key):  # type: ignore[attr-defined]
+            data = store.read_json(key)  # type: ignore[attr-defined]
+            if isinstance(data, dict):
+                return str(data.get("input_key") or "")
+    except Exception:  # noqa: BLE001 - absence is normal (dev/reference runs)
+        logger.debug("ATX: no resolved input_key for job_id=%s", job_id, exc_info=True)
+    return ""
 
 
 def _mark_assignment_review(job_id: str, status: PhaseStatus) -> None:

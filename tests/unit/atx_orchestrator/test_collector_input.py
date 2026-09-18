@@ -293,41 +293,47 @@ class TestDiscoverUploadedInput:
 
 
 # =============================================================================
-# orchestrator wiring: run_assessment_core_via_a2a discovers + passes the key
+# orchestrator wiring: run_assessment_core_via_a2a reads the upload-gate's key
 
 
-class TestOrchestratorPassesDiscoveredKey:
-    def test_discovered_key_passed_as_input_key(self) -> None:
-        seed = core.default_input_key("job", "db")
+class _FakeStoreWithText(_FakeStore):
+    """_FakeStore plus write_text, so the upload-gate pointers can round-trip."""
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        self._objects[path] = json.loads(content)
+
+
+class TestOrchestratorPassesResolvedKey:
+    def test_recorded_key_passed_as_input_key(self) -> None:
+        """The key recorded by finalize_collection_upload is passed to the collector."""
+        from src.atx_orchestrator.tools import _record_resolved_input_key
+
+        store = _FakeStoreWithText()
+        _record_resolved_input_key(store, "db", "job", "artifact://abc-123")
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=seed),
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
         message = json.loads(m.call_args[0][1])
-        assert message["input_key"] == seed
+        assert message["input_key"] == "artifact://abc-123"
 
     def test_no_upload_leaves_key_empty_for_seed_fallback(self) -> None:
+        """With no recorded upload (dev/reference), input_key is empty -> seed fallback."""
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None),
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStoreWithText()),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
-        # empty input_key -> collect step falls back to the seed key
         assert json.loads(m.call_args[0][1])["input_key"] == ""
 
-    def test_discovery_receives_job_and_db(self) -> None:
-        """The orchestrator must pass job_id + database_name so discovery can stage
-        the download at the correct seed key."""
+    def test_does_not_call_discovery(self) -> None:
+        """The assessment tool no longer performs upload discovery; the upload gate
+        supplies the artifact id instead."""
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}),
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None) as disc,
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStoreWithText()),
+            patch("src.atx_orchestrator.core._discover_uploaded_input") as disc,
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
-        # positional: (store, job_id, database_name)
-        args = disc.call_args[0]
-        assert args[1] == "job"
-        assert args[2] == "db"
+        disc.assert_not_called()
