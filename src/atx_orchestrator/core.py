@@ -19,6 +19,11 @@ from typing import NamedTuple
 logger = logging.getLogger(__name__)
 
 
+def _atx_backend_active() -> bool:
+    """True when the ATX Agentic Artifact Store backend is selected."""
+    return os.environ.get("STORAGE_BACKEND") == "atx"
+
+
 def make_store():
     """Create a text-capable ArtifactStore.
 
@@ -27,7 +32,7 @@ def make_store():
     ``create_artifact_store()`` decides S3-vs-local from env and ``upgrade_store``
     re-homes it onto the Transform subclass that adds ``write_text``.
     """
-    if os.environ.get("STORAGE_BACKEND") == "atx":
+    if _atx_backend_active():
         from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
 
         return TransformAtxStore()
@@ -88,8 +93,11 @@ def _discover_uploaded_input() -> str | None:
          orchestrator's), filter to JSON, exclude the auto-written
          ``job_objective`` AND our own ``STATE``-category artifacts (this
          pipeline's own writes, e.g. ``{db}/{job}/collector/output.json`` on a
-         retry/resume -- never the customer upload). Expect exactly one
-         candidate; more than one is ambiguous and raises.
+         retry/resume). ``STATE`` is a category THIS pipeline assigns to its own
+         writes; we assume the platform never tags a customer WebApp upload as
+         ``STATE``. If it ever did, discovery would exclude the real upload and
+         fall back to the seed. Expect exactly one candidate after exclusions;
+         more than one is ambiguous and raises.
       4. Return ``artifact://<artifact_id>``. The ATX artifact store backend's
          ``read_json``/``exists`` understand this scheme and read the artifact
          directly through the Artifact API -- nothing is copied into ``store``.
@@ -102,7 +110,7 @@ def _discover_uploaded_input() -> str | None:
     # so the key is always resolvable by the collector's store; on dev/local
     # runs (or ATX runtime code not opted into STORAGE_BACKEND=atx) the
     # collector falls back to the seed key instead.
-    if os.environ.get("STORAGE_BACKEND") != "atx":
+    if not _atx_backend_active():
         return None
 
     try:
@@ -128,8 +136,10 @@ def _discover_uploaded_input() -> str | None:
     # List the job's artifacts with NO server-side filter, then match in Python.
     # Server-side category/agent filters both returned listed=0 in the field even
     # though the WebApp Artifacts panel shows the upload — the customer upload's
-    # stored category is not necessarily CUSTOMER_INPUT, and it is surfaced by a
-    # "User Uploads/" ``fileMetadata.path`` rather than a category we can predict.
+    # stored category is not necessarily CUSTOMER_INPUT. (The WebApp Artifacts
+    # panel surfaces it under a "User Uploads/" grouping, but that path prefix is
+    # NOT relied upon for matching below -- matching is exclusion-based: a .json
+    # basename, minus the auto-written job_objective, minus our own STATE writes.)
     # The live-tested agentcore_list_artifacts.py reference defaults to no filter
     # for exactly this reason; we mirror that and inspect each artifact's real
     # categoryType / fileType / path. Paginate.
@@ -180,7 +190,10 @@ def _discover_uploaded_input() -> str | None:
     # same job (e.g. {db}/{job}/collector/output.json). Once the ATX backend is
     # active, those land in the same ListArtifacts response as the customer's
     # upload on a retry/resume and match the ".json" basename rule too -- so
-    # they must be excluded explicitly; they are never the customer upload.
+    # they must be excluded explicitly. STATE is a category THIS pipeline
+    # assigns to its own writes; we assume the platform never tags a customer
+    # WebApp upload as STATE. If it ever did, this would exclude the real
+    # upload and fall back to the seed (see docstring).
     def _category(a: dict) -> str:
         return (a.get("artifactType") or {}).get("categoryType") or ""
 
