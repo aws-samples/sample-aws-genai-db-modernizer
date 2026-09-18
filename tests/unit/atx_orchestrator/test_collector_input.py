@@ -131,12 +131,16 @@ class _FakeArtifactStore:
 
 
 def _artifact(
-    artifact_id: str, label: str, file_type: str = "JSON", path: str | None = None
+    artifact_id: str,
+    label: str,
+    file_type: str = "JSON",
+    path: str | None = None,
+    category: str = "CUSTOMER_INPUT",
 ) -> dict:
     a = {
         "artifactId": artifact_id,
         "artifactLabel": label,
-        "artifactType": {"categoryType": "CUSTOMER_INPUT", "fileType": file_type},
+        "artifactType": {"categoryType": category, "fileType": file_type},
     }
     if path is not None:
         a["fileMetadata"] = {"path": path}
@@ -179,6 +183,14 @@ def _inject_sdk(monkeypatch: pytest.MonkeyPatch, fake_store: _FakeArtifactStore 
 
 
 class TestDiscoverUploadedInput:
+    """Discovery only ever runs its SDK/candidate logic under STORAGE_BACKEND=atx
+    (see test_gate_returns_none_when_backend_not_atx below) -- set it here so the
+    rest of this class continues to exercise the discovery path itself."""
+
+    @pytest.fixture(autouse=True)
+    def _atx_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STORAGE_BACKEND", "atx")
+
     def test_no_agent_context_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # SDK context resolution fails (not in ATX runtime) -> None, no staging.
         _inject_sdk(monkeypatch, None)
@@ -259,6 +271,40 @@ class TestDiscoverUploadedInput:
         pre-staged seed). Regression guard for the silent empty-input_key cause."""
         _inject_sdk(monkeypatch, _FakeArtifactStore([]))
         assert core._discover_uploaded_input() is None
+
+    def test_gate_returns_none_when_backend_not_atx(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Discovery only ever emits an artifact:// key when the ATX backend is
+        active -- otherwise the collector's local/S3 store can't resolve that
+        scheme. With STORAGE_BACKEND unset, discovery must return None WITHOUT
+        touching the SDK at all, even when a valid context and a discoverable
+        upload are injected."""
+        monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+        fake = _FakeArtifactStore([_artifact("art-1", "default", path="user-upload.json")])
+        _inject_sdk(monkeypatch, fake)
+
+        assert core._discover_uploaded_input() is None
+        assert fake.client.list_calls == []
+
+    def test_state_artifacts_excluded_no_false_ambiguity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Our own pipeline writes JSON artifacts under CategoryType.STATE into
+        the same job (e.g. collector/output.json) on a retry/resume. Those must
+        not be mistaken for the customer upload -- and must not create a false
+        ambiguity with the real upload."""
+        upload = _artifact("art-1", "default", path="user-upload.json")
+        own_state_write = _artifact(
+            "state-1",
+            "default",
+            path="discourse/uuid1/collector/output.json",
+            category="STATE",
+        )
+        fake = _FakeArtifactStore([upload, own_state_write])
+        _inject_sdk(monkeypatch, fake)
+
+        result = core._discover_uploaded_input()
+
+        assert result == "artifact://art-1"
 
 
 # =============================================================================

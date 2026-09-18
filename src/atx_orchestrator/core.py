@@ -71,22 +71,40 @@ def _discover_uploaded_input() -> str | None:
     nothing. So discovery goes through ``ListArtifacts`` instead, which is
     account/bucket-agnostic.
 
+    Discovery only runs -- and only ever emits an ``artifact://`` key -- when
+    ``STORAGE_BACKEND=atx`` is active, because only the ATX storage backend's
+    ``read_json``/``exists`` understand that scheme; a local/S3 store handed an
+    ``artifact://`` key would raise ``FileNotFoundError``. Outside that backend
+    (dev/local, or ATX runtime code not opted into the ATX backend) this returns
+    ``None`` immediately and the collector falls back to the seed key.
+
     Flow:
 
-      1. Resolve the ATX agent context (workspace/job/agent-instance) and build
+      1. Gate on ``STORAGE_BACKEND=atx``; return ``None`` otherwise (see above).
+      2. Resolve the ATX agent context (workspace/job/agent-instance) and build
          the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
          return ``None`` (local/dev falls back to a pre-staged seed key).
-      2. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
+      3. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
          orchestrator's), filter to JSON, exclude the auto-written
-         ``job_objective``. Expect exactly one; more than one is ambiguous and
-         raises.
-      3. Return ``artifact://<artifact_id>``. The ATX artifact store backend's
+         ``job_objective`` AND our own ``STATE``-category artifacts (this
+         pipeline's own writes, e.g. ``{db}/{job}/collector/output.json`` on a
+         retry/resume -- never the customer upload). Expect exactly one
+         candidate; more than one is ambiguous and raises.
+      4. Return ``artifact://<artifact_id>``. The ATX artifact store backend's
          ``read_json``/``exists`` understand this scheme and read the artifact
          directly through the Artifact API -- nothing is copied into ``store``.
 
-    Returns the ``artifact://`` key, or ``None`` when not in the ATX runtime or
-    no upload was found. Raises ``ValueError`` on an ambiguous upload.
+    Returns the ``artifact://`` key, or ``None`` when the ATX backend isn't
+    active, when not in the ATX runtime, or when no upload was found. Raises
+    ``ValueError`` on an ambiguous upload.
     """
+    # Discovery only emits an artifact:// key when the ATX backend is active,
+    # so the key is always resolvable by the collector's store; on dev/local
+    # runs (or ATX runtime code not opted into STORAGE_BACKEND=atx) the
+    # collector falls back to the seed key instead.
+    if os.environ.get("STORAGE_BACKEND") != "atx":
+        return None
+
     try:
         from agent_builder_sdk.agentic_framework.artifact_store import ArtifactStore
         from agent_builder_sdk.agentic_framework.client_factory import get_agentic_api_client
@@ -158,10 +176,20 @@ def _discover_uploaded_input() -> str | None:
     def _basename(a: dict) -> str:
         return _path(a).rsplit("/", 1)[-1]
 
+    # Our own pipeline writes JSON artifacts under CategoryType.STATE into the
+    # same job (e.g. {db}/{job}/collector/output.json). Once the ATX backend is
+    # active, those land in the same ListArtifacts response as the customer's
+    # upload on a retry/resume and match the ".json" basename rule too -- so
+    # they must be excluded explicitly; they are never the customer upload.
+    def _category(a: dict) -> str:
+        return (a.get("artifactType") or {}).get("categoryType") or ""
+
     candidates = [
         a
         for a in all_artifacts
-        if _basename(a).endswith(".json") and _basename(a) != "job_objective"
+        if _basename(a).endswith(".json")
+        and _basename(a) != "job_objective"
+        and _category(a) != "STATE"
     ]
     if len(candidates) > 1:
         paths = sorted(_path(a) or _label(a) for a in candidates)

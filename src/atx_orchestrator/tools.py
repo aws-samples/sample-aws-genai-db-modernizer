@@ -825,7 +825,12 @@ def run_assessment_core_via_a2a(
     The customer's uploaded offline collection is located AUTOMATICALLY: this tool
     discovers the file the customer uploaded through the WebApp (it lands under the
     job's ``User Uploads/`` prefix) and hands the agent its key. You do NOT pass,
-    construct, or ask for a storage path.
+    construct, or ask for a storage path. Discovery only runs under the ATX
+    storage backend (``STORAGE_BACKEND=atx``) -- the only backend that can
+    resolve the ``artifact://`` key it returns -- and matches the customer
+    upload by excluding this pipeline's own ``STATE``-category artifacts and
+    the auto-written job objective, never by trusting a category the platform
+    assigns to the upload itself.
 
     The subagent ticks its own plan steps (collector, triage, analysis with nested
     per-engine sub-steps, assignment, reality_check) as it progresses, so the
@@ -850,10 +855,15 @@ def run_assessment_core_via_a2a(
     # agnostic, unlike listing our own S3_BUCKET — and returns an ``artifact://<id>``
     # key the collector reads in place; nothing is staged into our store. Discovery
     # is the single source of truth for the path; the LLM never supplies one.
-    # Outside the ATX runtime (dev/reference harness) discovery returns None,
-    # input_key stays "", and the collector step falls back to a pre-staged seed
-    # key. An ambiguous upload (more than one CUSTOMER_INPUT JSON) raises with a
-    # clear message rather than picking one.
+    # Discovery only runs (and only ever returns an artifact:// key) when
+    # STORAGE_BACKEND=atx is active, since that's the only backend able to
+    # resolve that scheme; otherwise -- and outside the ATX runtime (dev/
+    # reference harness) -- discovery returns None, input_key stays "", and the
+    # collector step falls back to a pre-staged seed key. Candidates exclude our
+    # own pipeline's STATE-category artifacts (e.g. collector/output.json on a
+    # retry/resume) and the auto-written job objective, so only the genuine
+    # customer upload remains; more than one remaining candidate is ambiguous
+    # and raises with a clear message rather than picking one.
     from src.atx_orchestrator.core import _discover_uploaded_input
 
     job_id = _platform_job_id(job_id)
