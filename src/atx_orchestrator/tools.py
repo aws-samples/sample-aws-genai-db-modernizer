@@ -847,18 +847,21 @@ def run_assessment_core_via_a2a(
     # it reliably holds the Transform job context (workspace_id + platform job UUID
     # + agent instance), so _discover_uploaded_input can find the WebApp upload via
     # the ATX Artifact API (ListArtifacts CUSTOMER_INPUT) — which is account/bucket
-    # agnostic, unlike listing our own S3_BUCKET — download it, and stage it at the
-    # seed key. It returns that key. Discovery is the single source of truth for the
-    # path; the LLM never supplies one. Outside the ATX runtime (dev/reference
-    # harness) discovery returns None, input_key stays "", and the collector step
-    # falls back to a pre-staged seed key. An ambiguous upload (more than one
-    # CUSTOMER_INPUT JSON) raises with a clear message rather than picking one.
+    # agnostic, unlike listing our own S3_BUCKET — and returns an ``artifact://<id>``
+    # key the collector reads in place; nothing is staged into our store. Discovery
+    # is the single source of truth for the path; the LLM never supplies one.
+    # Outside the ATX runtime (dev/reference harness) discovery returns None,
+    # input_key stays "", and the collector step falls back to a pre-staged seed
+    # key. An ambiguous upload (more than one CUSTOMER_INPUT JSON) raises with a
+    # clear message rather than picking one.
     from src.atx_orchestrator.core import _discover_uploaded_input
 
     job_id = _platform_job_id(job_id)
-    input_key = _discover_uploaded_input(_make_store(), job_id, database_name) or ""
+    input_key = _discover_uploaded_input() or ""
     if input_key:
-        logger.info("ATX assessment-core: using customer upload staged at %s", input_key)
+        logger.info(
+            "ATX assessment-core: customer upload resolved to %s (read in place)", input_key
+        )
     else:
         logger.warning(
             "ATX assessment-core: no customer upload discovered for job_id=%s; "

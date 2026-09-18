@@ -56,7 +56,7 @@ def default_input_key(job_id: str, database_name: str) -> str:
     return f"{database_name}/{job_id}/uploads/collector-output.json"
 
 
-def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
+def _discover_uploaded_input() -> str | None:
     """Locate a customer's WebApp-uploaded offline collection via the ATX
     Artifact API and return an ``artifact://<artifact_id>`` key that reads it
     in place -- no download, no copy into our store.
