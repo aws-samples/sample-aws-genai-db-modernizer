@@ -648,6 +648,7 @@ def finalize_assignment_review(
     #   2. a pending HITL submission (WebApp editable table)
     #   3. nothing -> approve as-is (customer continued with the recommendation)
     overrides: list = []
+    no_changes_submission = False
     stripped = (edited_markdown or "").strip()
     pending = _read_pending_hitl(store, database_name, job_id)
 
@@ -671,11 +672,18 @@ def finalize_assignment_review(
                 )
             if status == "submitted":
                 overrides = diff_review_items(current, edited_items or [])
+            elif status == "submitted_empty":
+                # The customer opened the routing table, changed nothing, and
+                # submitted — a valid "keep the routing as-is" action. Treat it as
+                # approve-as-is (no overrides) and proceed; the approved response
+                # notes that no changes were detected so a lost edit is noticeable.
+                overrides = []
+                no_changes_submission = True
             else:
                 # status in ("unreadable", "unavailable"): the customer submitted
-                # but we could not read their edits, or the task could not be
-                # fetched. Do NOT approve-as-is — that would silently drop the
-                # edits. Fail loudly so the gate stays open and nothing is lost.
+                # content we could not read, or the task could not be fetched. Do
+                # NOT approve-as-is — that would silently drop real edits. Fail
+                # loudly so the gate stays open and nothing is lost.
                 return json.dumps(
                     {
                         "status": "error",
@@ -812,17 +820,26 @@ def finalize_assignment_review(
         detail += f" {applied} change(s) applied (assignment v{effective_version})."
     mark_step_succeeded("assignment_review", detail)
 
-    return json.dumps(
-        {
-            "status": "approved",
-            "job_id": job_id,
-            "changed": changed,
-            "applied_overrides": applied,
-            "assignment_version": effective_version,
-            "validation_warnings": warnings,
-            "feasibility_findings": findings_json,
-        }
-    )
+    approved: dict = {
+        "status": "approved",
+        "job_id": job_id,
+        "changed": changed,
+        "applied_overrides": applied,
+        "assignment_version": effective_version,
+        "validation_warnings": warnings,
+        "feasibility_findings": findings_json,
+    }
+    if no_changes_submission:
+        # Be transparent: the customer submitted without changes, so tell them the
+        # routing was kept as-is. If they actually intended a change, this makes a
+        # dropped edit visible so they can re-open the table and edit again.
+        approved["message"] = (
+            "You submitted the routing table without changing any cells, so the current "
+            "routing is kept as-is and the assessment continues. If you meant to change a "
+            "routing, re-open the table and edit the 'new engine' / 'in scope' cells before "
+            "submitting."
+        )
+    return json.dumps(approved)
 
 
 # =============================================================================

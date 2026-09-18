@@ -324,6 +324,30 @@ class TestDetailedReviewHitl:
         assert tools._assignment_review_approved(JOB) is False
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
 
+    def test_finalize_empty_submission_approves_as_is(self, store) -> None:
+        """A submitted-but-empty table (customer browsed, changed nothing) is a
+        valid keep-as-is: it approves without a new version and tells the customer
+        no changes were detected, instead of looping on an 'unreadable' error."""
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch(
+                "src.atx_orchestrator.runtime.hitl.raise_assignment_table",
+                return_value="hitl-123",
+            ),
+        ):
+            tools.open_detailed_routing_review(JOB, DB)
+            with patch(
+                "src.atx_orchestrator.runtime.hitl.read_assignment_submission",
+                return_value=("submitted_empty", []),
+            ):
+                out = json.loads(tools.finalize_assignment_review(JOB, DB))
+            assert out["status"] == "approved"
+            assert out["changed"] is False
+            assert "without changing" in out.get("message", "")
+            assert tools._assignment_review_approved(JOB) is True
+            # No new assignment version created for a no-change submit.
+            assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
     def test_finalize_waits_when_not_yet_submitted(self, store) -> None:
         with (
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
