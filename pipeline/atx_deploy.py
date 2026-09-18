@@ -222,6 +222,12 @@ def _env_for(agent: Agent, prefix: str, model_id: str, s3_bucket: str) -> dict[s
         "S3_BUCKET": s3_bucket,
         "REGION": REGION,
         "STAGE": DEFAULT_STAGE,
+        # Route all pipeline state through the ATX Agentic Artifact Store so ATX
+        # runs store nothing in our S3 bucket. make_store() checks this first and
+        # takes precedence over S3_BUCKET; set on every runtime (orchestrator +
+        # subagents) so all phases share the same backend. Requires an image that
+        # includes the AtxArtifactStore backend.
+        "STORAGE_BACKEND": "atx",
     }
     if agent.orchestrator:
         # Only the orchestrator resolves subagents by name; the prefix is the
