@@ -345,6 +345,9 @@ def _make_orchestrator_server_class(base_server_cls):
             # first interaction. job_id is resolved from the agent context inside
             # the helper. Fail-open — a failure here must not block job start
             # (dev/reference has no HITL transport and returns None).
+            #
+            # NOTE: the agent runtime serves whatever image was last built for this
+            # branch; changes here only take effect after a rebuild + redeploy.
             try:
                 from src.atx_orchestrator.tools import declare_plan_and_request_upload
 
