@@ -121,12 +121,14 @@ def _assigned_confidence(analysis: dict, schema: dict, engine: str) -> int | Non
     Returns ``None`` when the engine was assigned nothing, so callers can omit the figure
     rather than print a misleading 0.
     """
-    per_table = {
-        t.get("table_id"): t.get("confidence_score", 0)
+    # Annotated, not inferred: analysis artifacts are untyped dicts, so without these casts
+    # the scores are Any and the return leaks Any out of an ``int | None`` signature.
+    per_table: dict[str, int] = {
+        str(t.get("table_id") or ""): int(t.get("confidence_score", 0) or 0)
         for t in (analysis.get("table_recommendations") or [])
     }
     assigned = _designed_source_tables(engine, schema)
-    scores = [per_table[t] for t in sorted(assigned) if t in per_table]
+    scores: list[int] = [per_table[t] for t in sorted(assigned) if t in per_table]
     return round(sum(scores) / len(scores)) if scores else None
 
 
