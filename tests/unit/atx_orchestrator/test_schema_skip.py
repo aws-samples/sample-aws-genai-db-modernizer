@@ -443,3 +443,28 @@ class TestSchemaDesignIdempotentSkip:
 
         mock_invoke.assert_called_once()  # no existing output -> designs normally
         assert out == {"ok": True}
+
+    def test_dispatch_uses_multi_hour_timeout(self, monkeypatch) -> None:
+        # Schema design is the longest phase; the heaviest engines (e.g.
+        # ElastiCache) can run past the generic 30-min A2A default. The dispatch
+        # must pass the multi-hour timeout so a slow but healthy run is not marked
+        # FAILED at 1800s.
+        monkeypatch.delenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", raising=False)
+        store = _FakeStore(
+            {"discourse/job-1/assignment/v2/assignment.json": _assignment(["elasticache"])}
+        )
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"elasticache"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": True}
+            ) as mock_invoke,
+        ):
+            tools._run_schema_design_via_a2a("elasticache", "job-1", "discourse")
+
+        mock_invoke.assert_called_once()
+        assert mock_invoke.call_args.kwargs["timeout"] == 4 * 60 * 60

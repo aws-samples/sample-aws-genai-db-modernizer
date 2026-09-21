@@ -177,3 +177,25 @@ class TestToolsRegistered:
 
         names = {getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS}
         assert "run_synthesis_via_a2a" in names
+
+
+# =============================================================================
+# Schema-design A2A timeout (long-running engines must not trip the 30-min ceiling)
+
+
+class TestSchemaDesignTimeout:
+    def test_defaults_to_four_hours(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", raising=False)
+        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60
+
+    def test_env_override_is_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "21600")
+        assert tools._schema_design_timeout_seconds() == 21600.0
+
+    def test_invalid_env_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "not-a-number")
+        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60
+
+    def test_nonpositive_env_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "0")
+        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60

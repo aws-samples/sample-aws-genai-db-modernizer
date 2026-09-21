@@ -45,6 +45,43 @@ from src.contracts.phase_models import Phase, PhaseStatus
 logger = logging.getLogger(__name__)
 
 
+def _schema_design_timeout_seconds() -> float:
+    """A2A polling timeout for a single engine's schema design.
+
+    Schema design is by far the longest-running phase: the consolidated schema
+    agent makes many sequential model calls (one per table / access-pattern
+    group), and the heaviest engines (e.g. ElastiCache with hundreds of key
+    designs and access patterns) can run well past the generic 30-minute A2A
+    default, especially under Bedrock throttling. Hitting the poll timeout marks
+    the step FAILED even though the subagent keeps running and eventually writes
+    its artifact, which reads to the customer as a schema-design failure.
+
+    So we wait hours rather than minutes. The subagent completing independently
+    plus the idempotent-skip on restore (a re-dispatch reuses an already-written
+    schema_output.json) is the safety net if the orchestrator is recycled before
+    this returns. Overridable via ``SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS`` so the
+    ceiling can be tuned without a code change; defaults to 4 hours.
+    """
+    default = 4 * 60 * 60  # 4 hours
+    raw = os.environ.get("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS")
+    if not raw:
+        return float(default)
+    try:
+        value = float(raw)
+        return value if value > 0 else float(default)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS=%r — falling back to %ss", raw, default
+        )
+        return float(default)
+
+
+# Poll less often than the 2s A2A default: over a multi-hour ceiling, 2s polling
+# would issue tens of thousands of get_agent_instance calls per engine. 15s keeps
+# the call volume sane while staying responsive enough for progress reporting.
+_SCHEMA_DESIGN_POLL_INTERVAL_SECONDS = 15.0
+
+
 def _platform_job_id(supplied: str) -> str:
     """Return the real AWS Transform platform job id, ignoring the LLM-supplied one.
 
@@ -1718,7 +1755,12 @@ def _run_schema_design_via_a2a(
     mark_step_running("schema")
     mark_step_running(step)
     try:
-        payload = invoke_and_wait(agent_id, message)
+        payload = invoke_and_wait(
+            agent_id,
+            message,
+            timeout=_schema_design_timeout_seconds(),
+            poll_interval=_SCHEMA_DESIGN_POLL_INTERVAL_SECONDS,
+        )
     except A2AError as e:
         logger.error("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
         mark_step_failed(step, str(e))
