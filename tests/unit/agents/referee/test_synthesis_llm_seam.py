@@ -21,7 +21,11 @@ from src.agents.referee.synthesis_handler import (
     run_synthesis,
     run_synthesis_deterministic,
 )
-from src.agents.referee.synthesis_report import build_risk_assessment
+from src.agents.referee.synthesis_report import (
+    _assigned_confidence,
+    _designed_source_tables,
+    build_risk_assessment,
+)
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -684,3 +688,62 @@ class TestRiskAssessmentExcludesDroppedEngines:
         out = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
         assert out["mitigation_strategies"]
         assert not any("documentdb" in s for s in out["mitigation_strategies"])
+
+
+# ---------------------------------------------------------------------------
+# Fit on assigned scope vs breadth across the schema
+# ---------------------------------------------------------------------------
+
+
+class TestAssignedConfidence:
+    """A narrow engine must not be reported as low-confidence.
+
+    OpenSearch on the discourse workload is unsuitable for 303 of 311 tables *by design*,
+    giving a 2% corpus-wide mean that was printed as "confidence". On the 2 search tables it
+    was actually assigned it scores 80%. These pin the distinction.
+    """
+
+    ANALYSIS = {
+        "table_recommendations": [
+            {"table_id": "search_a", "confidence_score": 90},
+            {"table_id": "search_b", "confidence_score": 70},
+            *[{"table_id": f"other_{i}", "confidence_score": 0} for i in range(18)],
+        ]
+    }
+
+    def test_mean_over_assigned_tables_only(self) -> None:
+        schema = {"index_designs": [{"source_tables": ["search_a", "search_b"]}]}
+        assert _assigned_confidence(self.ANALYSIS, schema, "opensearch") == 80
+
+    def test_corpus_wide_mean_is_far_lower(self) -> None:
+        """Documents the gap the fix exists to close: 8% breadth vs 80% fit."""
+        recs = self.ANALYSIS["table_recommendations"]
+        corpus = sum(t["confidence_score"] for t in recs) / len(recs)
+        assert round(corpus) == 8
+        schema = {"index_designs": [{"source_tables": ["search_a", "search_b"]}]}
+        assert _assigned_confidence(self.ANALYSIS, schema, "opensearch") == 80
+
+    def test_none_when_nothing_assigned(self) -> None:
+        """So callers omit the figure rather than printing a misleading 0%."""
+        assert _assigned_confidence(self.ANALYSIS, {}, "documentdb") is None
+
+    def test_reads_every_design_shape(self) -> None:
+        for key in ("table_definitions", "index_designs", "data_stream_designs", "collections"):
+            schema = {key: [{"source_tables": ["search_a"]}]}
+            assert _designed_source_tables("x", schema) == {"search_a"}, key
+
+    def test_does_not_mutate_the_schema(self) -> None:
+        """build_table_mappings appends into table_definitions in place; doing that twice
+        would duplicate every OpenSearch index and DocumentDB collection."""
+        schema = {
+            "table_definitions": [{"source_tables": ["a"]}],
+            "collections": [{"source_tables": ["b"]}],
+            "index_designs": [{"source_tables": ["c"]}],
+        }
+        _designed_source_tables("documentdb", schema)
+        assert len(schema["table_definitions"]) == 1
+        assert schema["table_definitions"] == [{"source_tables": ["a"]}]
+
+    def test_tables_missing_a_score_are_skipped_not_zeroed(self) -> None:
+        schema = {"table_definitions": [{"source_tables": ["search_a", "unscored"]}]}
+        assert _assigned_confidence(self.ANALYSIS, schema, "x") == 90

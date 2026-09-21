@@ -385,8 +385,38 @@ def draw_text_frame(
 # shapes
 # ---------------------------------------------------------------------------
 def draw_picture(c: Canvas, shape, page_h: float) -> None:
+    """Draw a picture, honouring any ``srcRect`` crop on the shape.
+
+    The crop matters: the AWS wordmark on the intro slide is one wide asset cropped to 44.9%
+    of its width (``crop_right`` 0.551). Ignoring that squeezed the whole image into the
+    cropped-size frame and compressed the logo horizontally by 2.2x, which is what made it
+    look mis-drawn against the source deck.
+    """
     try:
-        img = ImageReader(io.BytesIO(shape.image.blob))
+        blob = shape.image.blob
+        crop = (
+            float(shape.crop_left or 0),
+            float(shape.crop_right or 0),
+            float(shape.crop_top or 0),
+            float(shape.crop_bottom or 0),
+        )
+        if any(crop):
+            from PIL import Image
+
+            im = Image.open(io.BytesIO(blob))
+            pw, ph = im.size
+            box = (
+                int(round(pw * crop[0])),
+                int(round(ph * crop[2])),
+                pw - int(round(pw * crop[1])),
+                ph - int(round(ph * crop[3])),
+            )
+            # A degenerate crop would raise inside PIL; fall back to the whole image.
+            if box[2] > box[0] and box[3] > box[1]:
+                buf = io.BytesIO()
+                im.crop(box).save(buf, format="PNG")
+                blob = buf.getvalue()
+        img = ImageReader(io.BytesIO(blob))
     except Exception as e:  # noqa: BLE001 — a bad image must not lose the page
         logger.debug("picture %s skipped: %s", shape.name, e)
         return

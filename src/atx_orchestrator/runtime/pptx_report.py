@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,42 @@ MONTHS = (
 # ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
 
+# ``risk_type`` -> short column label, and the one-line gloss that says what the
+# category actually means. The deck used to print severity counts repeatedly without
+# ever naming the kind of problem, so "HIGH risk" carried no actionable meaning.
+RISK_KIND = {
+    "PERFORMANCE_DEGRADATION": "Performance",
+    "MIGRATION_COMPLEXITY": "Migration effort",
+    "OPERATIONAL_RISK": "Operations",
+}
+
+
+def _confidence_basis(su: dict) -> str:
+    """How many source tables the engine suits at all, of those scored: ``suited/scored``.
+
+    This is the "why" behind the Confidence column. Confidence is averaged over the tables an
+    engine was *assigned*, so a narrow engine can score high there while suiting almost
+    nothing overall -- OpenSearch reads 80% on its 2 search tables and 8/311 here, which is
+    the whole point: it is a good fit for a small job, not a general store.
+
+    Uses only counts every engine populates in ``ranking[]``. The richer answer would be the
+    four dimensions behind ``compute_confidence`` (pattern match 40 / complexity 30 /
+    performance 20 / cost 10), but ``score_breakdown`` is emitted by the DynamoDB, DocumentDB,
+    OpenSearch and Aurora analysers and **not** by the ElastiCache one, and synthesis never
+    forwards it, so it cannot be shown for every row without new plumbing upstream.
+    """
+    scored, suited = su.get("scored") or 0, su.get("suited") or 0
+    return f"{suited}/{scored}" if scored else "—"
+
+
+RISK_GLOSS = {
+    "Performance": "the target cannot express these query shapes natively, so they need "
+    "denormalising or a redesign",
+    "Migration effort": "the data or query rewrite is substantial; it lands in build effort "
+    "rather than at runtime",
+    "Operations": "it runs, but adds something to monitor, tune or keep in sync after cutover",
+}
+
 LAYOUT_HERO = "Default 32"  # aurora full-bleed background + 48pt title
 LAYOUT_CONTENT = "Default 5"  # title + subtitle, plain dark background
 
@@ -211,6 +248,10 @@ def _style(run, size, *, bold=False, color=WHITE, font=FONT_BODY):
 TITLE_BOX = (0.67, 0.55, 11.50, 0.72)
 SUB_BOX = (0.67, 1.29, 11.50, 0.42)
 BODY_TOP = 1.92
+# Risk panels stop here and the reconciling footnote sits just below. Was 5.05 when a
+# full-width card closed the slide; that card is a footnote now and the height went to the
+# panels, which is what lets MEDIUM carry the same prose as HIGH.
+RISK_BODY_BOTTOM = 5.62
 
 
 def _place(shape, box) -> None:
@@ -362,8 +403,14 @@ def table(
     row_h=0.30,
     head_h=0.34,
     emphasis=None,
+    right_cols=(),
 ):
-    """rows[0] is the header. ``emphasis`` = {(row, col): RGBColor} for bold cells."""
+    """rows[0] is the header. ``emphasis`` = {(row, col): RGBColor} for bold cells.
+
+    ``right_cols`` forces whole columns right-aligned. The default is per-cell -- right when
+    the value starts with a digit -- which is correct for pure number columns but leaves a
+    mixed column ragged: "25 tables" right, "source schema retained" left, in the same column.
+    """
     n_rows, n_cols = len(rows), len(rows[0])
     h = head_h + row_h * (n_rows - 1)
     gf = slide.shapes.add_table(n_rows, n_cols, Inches(x), Inches(t), Inches(w), Inches(h))
@@ -390,7 +437,7 @@ def table(
             p = tf.paragraphs[0]
             p.alignment = (
                 PP_ALIGN.RIGHT
-                if (c and isinstance(val, str) and val[:1].isdigit())
+                if c in right_cols or (c and isinstance(val, str) and val[:1].isdigit())
                 else PP_ALIGN.LEFT
             )
             run = p.add_run()
@@ -468,6 +515,81 @@ def clean_risk_text(description: str) -> tuple[str, str]:
     return " ".join(desc.split()), n_q
 
 
+def _lead_sentence(text: str) -> str:
+    """The first complete sentence of a risk description or mitigation.
+
+    Risk prose is written as "<what it is>. <engine-specific explanation>", so the first
+    sentence is the summary and the rest is detail the Engineering Report already carries.
+    Taking it whole keeps the deck free of mid-word ellipses: a summary deck should never show
+    the reader a severed phrase.
+    """
+    t = " ".join(str(text or "").split())
+    m = re.search(r"(.+?[.!?])(\s|$)", t)
+    return (m.group(1) if m else t).strip()
+
+
+def _join_within(parts: list[str], budget: int) -> tuple[str, int]:
+    """Join complete sentences while they fit ``budget`` characters.
+
+    Returns the joined text and how many were left out, so a caller can say "+N more"
+    instead of truncating. Never cuts inside a sentence.
+    """
+    out: list[str] = []
+    used = 0
+    for i, part in enumerate(parts):
+        extra = len(part) + (1 if out else 0)
+        if out and used + extra > budget:
+            return " ".join(out), len(parts) - i
+        out.append(part)
+        used += extra
+    return " ".join(out), 0
+
+
+def _risks_by_engine(risks: list[dict]) -> list[dict[str, Any]]:
+    """Collapse a risk list into one entry per engine, worst-affected first.
+
+    The deck used to print one row per ``risk_id``. RISK-005 is meaningless to an executive
+    reader, and one engine appearing on two rows read as two unrelated problems when it is
+    one engine needing one decision. Grouping by engine also lets the severity be stated once
+    for the whole group instead of repeated on every line.
+
+    Each entry carries the combined prose (``what``), the summed affected-query count
+    (``queries``) and the combined mitigations (``fix``). Ordered by **risk count** so the
+    engine carrying the most findings leads; ties break on engine name for determinism.
+
+    Ordering on query count instead hid the worst engine: ElastiCache's MEDIUM risks carry no
+    per-query counts, so it sorted last and fell outside the panel cap despite holding 9 of
+    the 24 MEDIUM findings -- more than any other engine.
+    """
+    acc: dict[str, dict[str, Any]] = {}
+    for r in risks:
+        eng = risk_engine(str(r.get("description") or "")) or ""
+        desc, n_q = clean_risk_text(str(r.get("description") or ""))
+        desc = _lead_sentence(desc)
+        g = acc.setdefault(eng, {"engine": eng, "parts": [], "fixes": [], "queries": 0, "count": 0})
+        g["count"] += 1
+        if desc:
+            g["parts"].append(desc)
+        if (fix := _lead_sentence(r.get("mitigation") or "")) and fix not in g["fixes"]:
+            g["fixes"].append(fix)
+        if n_q.isdigit():
+            g["queries"] += int(n_q)
+    out = [
+        {
+            "engine": g["engine"],
+            "whats": g["parts"],
+            "fixes": g["fixes"],
+            "what": " ".join(g["parts"]),
+            "fix": " ".join(g["fixes"]),
+            "queries": g["queries"],
+            "count": g["count"],
+        }
+        for g in acc.values()
+    ]
+    out.sort(key=lambda g: (-g["count"], -g["queries"], g["engine"]))
+    return out
+
+
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     """All deck content, derived from the two artifacts."""
     arch = rep.get("recommended_architecture") or {}
@@ -489,7 +611,39 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 migrated += int(digits)
 
     ranking = [r for r in (rep.get("ranking") or []) if isinstance(r, dict)]
-    conf = {r.get("target"): float(r.get("confidence_score") or 0) for r in ranking}
+    # Two different measures, deliberately kept apart.
+    #
+    # ``fit`` -- mean confidence over only the tables an engine was actually assigned. This
+    # is what a reader means by "how sure are we about this recommendation", and it is what
+    # the deck shows. Falls back to the corpus-wide score when synthesis predates the field.
+    #
+    # ``breadth`` -- mean confidence over EVERY source table. A narrow-purpose engine scores
+    # low here by design (OpenSearch: 2%, because it is unsuitable for 303 of 311 tables and
+    # was only ever going to get the search ones). Never shown as "confidence"; retained
+    # because it is the right axis for wave sequencing -- a narrow engine is riskier to
+    # sequence early however well it fits its own slice.
+    breadth = {r.get("target"): float(r.get("confidence_score") or 0) for r in ranking}
+    fit = {
+        r.get("target"): float(
+            r["assigned_confidence"]
+            if r.get("assigned_confidence") is not None
+            else (r.get("confidence_score") or 0)
+        )
+        for r in ranking
+    }
+    conf = fit  # every "% confidence" the deck prints
+    # Why an engine's breadth is low: how many source tables it suits at all. Already
+    # computed by synthesis and never surfaced before, which is why the low-confidence
+    # card could only fall back to "limited supporting evidence".
+    suitability = {
+        r.get("target"): {
+            "suited": int(r.get("tables_highly_suitable") or 0)
+            + int(r.get("tables_suitable") or 0),
+            "scored": int(r.get("tables_analyzed") or 0),
+            "assigned": int(r.get("primary_table_count") or 0),
+        }
+        for r in ranking
+    }
     workload = {r.get("target"): float(r.get("workload_percent") or 0) for r in ranking}
     by_workload = sorted(
         ranking, key=lambda r: (-(r.get("workload_percent") or 0), str(r.get("target")))
@@ -578,18 +732,27 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         ]
         thinnest = min(thin, key=lambda s: (s["count"], s["name"])) if thin else None
         evidence = (
-            f"{thinnest['count']} {short_label(thinnest['name'])} queries in the whole " f"workload"
+            f"{thinnest['count']} {short_label(thinnest['name'])} queries in the whole workload"
             if thinnest
-            else "limited supporting evidence"
+            else ""
+        )
+        # State WHY the breadth is low instead of asserting low confidence. A narrow engine
+        # suits few tables by design, so "suits N of M source tables" is the actual reason,
+        # and the fit figure on what it was given is the number that answers "are we sure?".
+        su = suitability.get(eng) or {}
+        why = (
+            f"Suits {su['suited']} of {su['scored']} source tables — narrow by design"
+            if su.get("scored")
+            else "narrow fit across the source schema"
         )
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
-                "badge": f"{conf.get(eng, 0):.0f}% confidence",
+                "badge": f"{conf.get(eng, 0):.0f}% confidence on assigned scope",
                 "accent": ENGINE_COLOR.get(eng, ORANGE),
                 "against": (
-                    f"Lowest confidence of the {len(ranking)} engines · {evidence} · "
-                    f"{workload.get(eng, 0):.1f}% of workload"
+                    f"{why} · {workload.get(eng, 0):.1f}% of workload"
+                    + (f" · {evidence}" if evidence else "")
                 ),
                 "action": "Requirement validation pending.",
             }
@@ -631,7 +794,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # before the ones it is not.
     targets = sorted(
         (e for e in engines if e["role"] == "Migration target"),
-        key=lambda e: (-conf.get(e["engine"], 0), e["engine"]),
+        # Sequencing orders and splits on BREADTH, not fit: a narrow engine goes later
+        # even when it fits its own slice well. See the breadth/fit note above.
+        key=lambda e: (-breadth.get(e["engine"], 0), e["engine"]),
     )
     waves: list[dict[str, Any]] = []
     if no_move:
@@ -645,17 +810,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 ),
             }
         )
-    confident = [e for e in targets if conf.get(e["engine"], 0) >= CONFIDENCE_FLOOR]
-    unsure = [e for e in targets if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
+    confident = [e for e in targets if breadth.get(e["engine"], 0) >= CONFIDENCE_FLOOR]
+    unsure = [e for e in targets if breadth.get(e["engine"], 0) < CONFIDENCE_FLOOR]
     for group, accent in ((confident, YELLOW), (unsure, ORANGE)):
         if not group:
             continue
-        lo = min(conf.get(e["engine"], 0) for e in group)
+        lo = min(breadth.get(e["engine"], 0) for e in group)
         n_t = sum(int("".join(ch for ch in str(e["scope"]) if ch.isdigit()) or 0) for e in group)
         note = (
-            f"{n_t} source tables migrate · confidence from {lo:.0f}%"
+            f"{n_t} source tables migrate · scores {lo:.0f}+ across the whole schema"
             if group is confident
-            else f"{n_t} source tables · confidence {lo:.0f}% — re-scope after the gate"
+            else (
+                f"{n_t} source tables · scores {lo:.0f} across the whole schema, so narrow "
+                f"— re-scope after the gate"
+            )
         )
         waves.append({"engines": group, "accent": accent, "note": note})
     for w in waves:
@@ -676,6 +844,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "migrated": migrated,
         "ranking": by_workload,
         "conf": conf,
+        "breadth": breadth,
+        "suitability": suitability,
         "workload": workload,
         "summary": prettify_engines(strip_cost(str(rep.get("summary_deterministic") or ""))),
         "n_tables": len(rep.get("table_mappings") or []),
@@ -740,7 +910,17 @@ def slide_summary(prs, f):
         (f"{f['n_patterns']:,}", "query patterns analyzed", BLUE),
         (f"{len(f['engines'])}", "target engines", PURPLE),
         (f"{f['migrated']}", "source tables migrate", GREEN),
-        (f["risk_level"], f"overall risk, {len(f['risks'])} items", _risk_accent(f["risk_level"])),
+        # State the basis, not just the verdict: overall_risk_level is a HIGH-count
+        # threshold, so "HIGH" on its own reads as a judgement the reader cannot check.
+        (
+            f["risk_level"],
+            (
+                f"risk level · {f['sev'].get('HIGH', 0)} HIGH of {len(f['risks'])} findings"
+                if f["risks"]
+                else "risk level"
+            ),
+            _risk_accent(f["risk_level"]),
+        ),
     ]
     for i, (big, small, accent) in enumerate(tiles):
         x = 0.67 + i * 2.62
@@ -778,6 +958,7 @@ def slide_summary(prs, f):
         body_size=9.5,
         row_h=0.34,
         head_h=0.32,
+        right_cols=(3,),  # Scope: mixed prose and counts, so align the column as a whole
         emphasis=emph,
     )
     # Only engines that actually keep serving workload. Tested positively against the
@@ -840,21 +1021,35 @@ def slide_evidence(prs, f):
     para(tf, "Basis of the analysis", size=11.0, bold=True, color=BLUE, first=True)
     for line in (
         f"{a.get('in_scope_count', 0):,} of {a.get('query_count', 0):,} query patterns in scope",
-        f"{f['n_tables']} tables mapped to a named target, each with its own confidence score",
+        f"{f['n_tables']} tables mapped to a named target, each scored individually",
         f"{a.get('co_dependency_groups', 0)} co-dependency groups — table sets that must "
         "move together",
     ):
         para(tf, "•  " + line, size=11.5, color=PAPER)
 
-    card(s, 0.67, 5.15, 11.43, 0.95, PURPLE)
-    tf = textbox(s, 0.90, 5.28, 11.0, 0.75)
+    # The confidence definition lives here rather than on the decisions slide: this is where
+    # the reader meets a per-engine confidence figure for the first time, so the metric is
+    # defined before it is used to argue anything.
+    card(s, 0.67, 5.00, 11.43, 1.28, PURPLE)
+    tf = textbox(s, 0.90, 5.08, 11.0, 1.14)
+    para(
+        tf,
+        "Confidence is a weighted suitability score per table — pattern match 40%, migration "
+        "complexity 30%, performance 20%, cost 10% — averaged over the tables each engine was "
+        "actually assigned. It is not a forecast and not a probability. A table scoring 75+ is "
+        "rated highly suitable, 50+ suitable. An engine that suits few tables across the whole "
+        "schema is still sequenced last so it can be re-scoped after the gate.",
+        size=10.5,
+        color=WHITE,
+        first=True,
+        space_after=4,
+    )
     para(
         tf,
         "Pattern detection, scoring and assignment run with no language model. This deck is "
         "rendered from the stored results of that run.",
-        size=12.0,
+        size=10.5,
         color=WHITE,
-        first=True,
     )
     return s
 
@@ -960,18 +1155,20 @@ def slide_decisions(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
     d = f["decisions"]
     set_title(s, "Engine Confidence and Open Decisions")
-    weak = min(f["conf"].items(), key=lambda kv: (kv[1], kv[0])) if f["conf"] else None
+    # Narrowest by BREADTH, matching how the "Confirm <engine>?" card is chosen. Picking
+    # the lowest fit instead highlighted a different engine than the card below it.
+    weak = min(f["breadth"].items(), key=lambda kv: (kv[1], kv[0])) if f["breadth"] else None
     set_subtitle(
         s,
         (
-            f"{len(f['ranking'])} recommended engines  ·  lowest confidence "
-            f"{ENGINE_LABEL.get(weak[0], weak[0])} at {weak[1]:.0f}%"
+            f"{len(f['ranking'])} recommended engines  ·  {len(d)} decision"
+            f"{'' if len(d) == 1 else 's'} to confirm before build"
             if weak
             else f"{len(f['ranking'])} recommended engines"
         ),
     )
 
-    rows = [("Engine", "Workload", "Confidence", "HIGH risks", "Role")]
+    rows = [("Engine", "Workload", "Confidence", "Suits", "HIGH", "Role")]
     emph: dict[tuple[int, int], Any] = {}
     for i, r in enumerate(f["ranking"], start=1):
         eng = r.get("target")
@@ -982,6 +1179,7 @@ def slide_decisions(prs, f):
                 ENGINE_LABEL.get(eng, eng),
                 f"{f['workload'].get(eng, 0):.1f}%",
                 f"{c:.0f}%",
+                _confidence_basis(f["suitability"].get(eng) or {}),
                 str(f["high_by_engine"].get(eng, 0)),
                 role,
             )
@@ -997,7 +1195,7 @@ def slide_decisions(prs, f):
         BODY_TOP,
         5.55,
         rows,
-        col_w=[1.50, 0.85, 1.00, 0.90, 1.30],
+        col_w=[1.50, 0.70, 0.85, 0.75, 0.45, 1.30],  # sums to 5.55, the table width
         head_size=9.5,
         body_size=9.5,
         row_h=0.30,
@@ -1021,28 +1219,115 @@ def slide_decisions(prs, f):
         para(tf, dec["against"], size=9.0, color=MUTED, space_after=2)
         para(tf, dec["action"], size=10.0, bold=True, color=accent)
 
-    tf = textbox(s, 0.67, 4.05, 5.55, 2.00)
+    return s
+
+
+def _high_kind_gloss(f: dict) -> str:
+    """Plain-language meaning of the HIGH risks' kind, or "" when they are mixed.
+
+    Only emitted when every HIGH finding shares one ``risk_type`` -- glossing a single kind
+    while the set is mixed would be wrong, and the subtitle already says whether they share
+    a root cause.
+    """
+    kinds = sorted({str(r.get("risk_type") or "") for r in f["high"] if r.get("risk_type")})
+    if len(kinds) != 1:
+        return ""
+    gloss = RISK_GLOSS.get(RISK_KIND.get(kinds[0], ""))
+    if not gloss:
+        return ""
+    n = f["sev"].get("HIGH", 0)
+    return f"The {n} HIGH are {RISK_KIND[kinds[0]].lower()}: {gloss}. "
+
+
+def _overflow_note(*sections: tuple[str, list[dict[str, Any]]]) -> str:
+    """Name the engines that did not get a panel, with their risk counts.
+
+    Without this the per-engine counts on the slide do not add up to the chart totals: on the
+    discourse workload only three of the five engines carrying MEDIUM risks fit, so the visible
+    M-Risks summed to 15 of 24. Naming the remainder makes the arithmetic checkable.
+    """
+    parts = []
+    for label, overflow in sections:
+        if overflow:
+            names = ", ".join(
+                f"{ENGINE_LABEL.get(g['engine'], g['engine']) or 'General'} {g['count']}"
+                for g in overflow
+            )
+            parts.append(f"Also {label}: {names}.")
+    return " ".join(parts)
+
+
+def _risk_section(
+    s,
+    x: float,
+    label: str,
+    colour,
+    risks: list[dict],
+    count_label: str,
+    top: float = BODY_TOP - 0.06,
+    width: float = 6.05,
+    shown: int = 3,
+) -> list[dict[str, Any]]:
+    """A "<SEVERITY> RISKS" header plus one panel per engine, worst-affected first.
+
+    HIGH and MEDIUM render through this one function -- same heading, same engine/count line,
+    same what-and-do prose -- so the two severities cannot drift in wording or shape.
+
+    Returns the engines that did not fit, so the caller can name them in the footnote and the
+    per-engine counts still reconcile with the chart totals above.
+    """
+    if not risks:
+        return []
+    tf = textbox(s, x, top, width, 0.30)
     para(
         tf,
-        f"Confidence is the assessment's own measure of evidence strength, not a forecast. "
-        f"Anything under {CONFIDENCE_FLOOR}% is sequenced last so it can be re-scoped once "
-        f"the earlier waves have produced real measurements.",
-        size=11.0,
-        color=WHITE,
+        f"{label} RISKS — WHAT THEY ARE AND WHAT TO DO",
+        size=9.5,
+        bold=True,
+        color=MUTED,
         first=True,
-        space_after=8,
     )
-    if f["high_by_engine"]:
-        worst = sorted(f["high_by_engine"].items(), key=lambda kv: (-kv[1], kv[0]))[0]
-        para(
-            tf,
-            f"{worst[1]} of the {len(f['high'])} HIGH risks sit on "
-            f"{ENGINE_LABEL.get(worst[0], worst[0])} alone.",
-            size=11.0,
-            bold=True,
-            color=PINK,
-        )
-    return s
+    ordered = _risks_by_engine(risks)
+    groups, overflow = ordered[:shown], ordered[shown:]
+    y = top + 0.36
+    avail = RISK_BODY_BOTTOM - y
+    h = (avail - 0.10 * (len(groups) - 1)) / max(len(groups), 1)
+    for g in groups:
+        accent = ENGINE_COLOR.get(g["engine"], colour)
+        card(s, x, y, width, h, accent)
+        tf = textbox(s, x + 0.23, y + 0.06, width - 0.39, h - 0.10)
+        # No affected-query count here. It is an anti-pattern hit count scoped to the
+        # engine's assignment, which reads as "this engine has N queries" and invited a
+        # comparison with the workload slide's assigned totals. The risk count is what this
+        # panel is about.
+        head = ENGINE_LABEL.get(g["engine"], g["engine"]) or "General"
+        head += f"  ·  {count_label}: {g['count']}"
+        para(tf, head, size=10.0, bold=True, color=accent, first=True)
+        # Whole sentences only, never a clipped phrase: a summary deck must not hand the
+        # reader a severed line. Anything that does not fit is counted, not cut.
+        #
+        # Budgets are derived from the panel, not guessed: Amazon Ember at 8.5pt runs about
+        # 11.4 characters per inch, and a wrapped line is ~0.145" tall. The heading takes the
+        # first 0.18". Splitting the remaining lines between "what" and "Do" is what keeps the
+        # text inside the card -- a fixed character budget overflowed the shorter column.
+        per_line = int((width - 0.39) * 11.0)
+        lines = max(int((h - 0.18) / 0.145), 1)
+        do_lines = min(2, lines - 1) if g["fixes"] else 0
+        # The "(+N more)" suffix and the "Do: " prefix are part of what gets wrapped, so
+        # reserve room for them. Budgeting only the sentences let the affixes push the text
+        # onto an extra line and out of the card.
+        what, more = _join_within(g["whats"], per_line * max(lines - do_lines, 1) - 12)
+        para(tf, what + (f"  (+{more} more)" if more else ""), size=8.5, color=PAPER)
+        if do_lines:
+            fix, fix_more = _join_within(g["fixes"], per_line * do_lines - 16)
+            para(
+                tf,
+                f"Do: {fix}" + (f"  (+{fix_more} more)" if fix_more else ""),
+                size=8.5,
+                color=MUTED,
+            )
+        y += h + 0.10
+    return overflow
 
 
 def slide_risk(prs, f):
@@ -1070,43 +1355,44 @@ def slide_risk(prs, f):
         tf = textbox(s, 4.78, y - 0.05, 0.9, 0.32)
         para(tf, str(cnt), size=12.0, bold=True, color=PAPER, first=True)
 
-    card(s, 0.67, 3.30, 5.05, 1.05, MUTED)
-    tf = textbox(s, 0.90, 3.41, 4.7, 0.9)
-    para(tf, "BY TYPE", size=9.5, bold=True, color=MUTED, first=True)
-    para(tf, "  ·  ".join(f"{c} {t}" for t, c in f["by_type"][:3]), size=11.5, color=PAPER)
-
-    rows = [("#", "Engine", "What it is", "Queries")]
-    for r in f["high"][:4]:
-        desc, n_q = clean_risk_text(str(r.get("description") or ""))
-        eng = risk_engine(str(r.get("description") or "")) or "(general)"
-        rows.append((str(r.get("risk_id") or ""), ENGINE_LABEL.get(eng, eng), clip(desc, 78), n_q))
-    table(
-        s,
-        6.05,
-        BODY_TOP,
-        6.05,
-        rows,
-        col_w=[1.05, 1.55, 2.55, 0.90],
-        head_size=10.0,
-        body_size=9.0,
-        row_h=0.56,
-        head_h=0.32,
-        emphasis={(i, 1): PINK for i in range(1, len(rows))},
+    # One panel per engine, not one row per risk id. RISK-005 means nothing to an executive
+    # reader, and the same engine appearing on two rows read as two unrelated problems. The
+    # severity is stated once per section rather than repeated on every line.
+    medium = [r for r in f["risks"] if str(r.get("severity", "")).upper() == "MEDIUM"]
+    high_rest = _risk_section(s, 6.05, "HIGH", PINK, f["high"], "H-Risks")
+    # Two panels, not three: the MEDIUM column sits under the severity chart so it is half
+    # the height, and its lead sentences are long enough that three panels could not hold them
+    # without cutting. The footnote names the engines that do not fit so the counts still add
+    # up to the chart total.
+    med_rest = _risk_section(
+        s, 0.67, "MEDIUM", YELLOW, medium, "M-Risks", top=3.15, width=5.05, shown=2
     )
 
-    card(s, 0.67, 5.05, 11.43, 1.05, GREEN)
-    tf = textbox(s, 0.90, 5.17, 11.0, 0.9)
+    # A footnote rather than a full-width card: the panels carry the substance now, and the
+    # 1.05" the card occupied is height the risk sections need. Kept deliberately small.
+    tf = textbox(s, 0.67, RISK_BODY_BOTTOM + 0.10, 11.43, 0.58)
     mit = f["mitigations"][0] if f["mitigations"] else ""
+    # The panels now carry the per-engine "what" and "do", so this closing line states the
+    # cross-cutting mitigation and where the full register lives, rather than repeating that
+    # each risk has a count and a mitigation.
     para(
         tf,
-        "Each HIGH risk carries an affected-query count and a documented mitigation. "
+        # Mitigation strings from synthesis carry no terminal punctuation, so without the
+        # added stop the two sentences run together mid-line.
+        # The BY KIND card is gone, so the one-line explanation of what the dominant risk
+        # kind actually means lives here -- it was the answer to "risk is referenced but the
+        # type is never explained", and dropping it with the card would reopen that.
+        _high_kind_gloss(f)
+        + (f"{_overflow_note(('HIGH', high_rest), ('MEDIUM', med_rest))} ")
         + (
-            f"Specified mitigation: {mit}"
+            f"Across all engines: {mit.rstrip('.')}. "
             if mit
-            else "Mitigations are listed per risk in the Engineering Report."
-        ),
-        size=12.0,
-        color=WHITE,
+            else "Mitigations are recorded against every risk. "
+        )
+        + f"All {len(f['risks'])} risks, with affected tables and per-risk mitigations, are "
+        "listed in the Engineering Report.",
+        size=8.0,
+        color=MUTED,
         first=True,
     )
     return s
@@ -1170,6 +1456,93 @@ def slide_sequencing(prs, f):
     return s
 
 
+APPENDIX_WIDTH = 11.43  # full body width, so appendix prose needs no abbreviating
+APPENDIX_BOTTOM = 6.05
+# Amazon Ember at 8.5pt wraps at roughly 13.5 characters per inch, and a wrapped line is
+# ~0.15" tall. Measured off rendered output rather than guessed: an earlier 11 ch/in estimate
+# over-predicted ElastiCache's nine findings by three lines, leaving dead space in the panel
+# and pushing the appendix onto an extra page. Used to size each panel to its own text so the
+# appendix never clips and never truncates.
+APPENDIX_PER_LINE = int((APPENDIX_WIDTH - 0.39) * 13.5)
+APPENDIX_LINE_H = 0.15
+
+
+def _appendix_panel_height(g: dict[str, Any]) -> float:
+    """Height a panel needs to show all of an engine's risks and mitigations in full."""
+    what_lines = max(math.ceil(len(" ".join(g["whats"])) / APPENDIX_PER_LINE), 1)
+    fix_text = " ".join(g["fixes"])
+    fix_lines = math.ceil((len(fix_text) + 4) / APPENDIX_PER_LINE) if fix_text else 0
+    # Generous bottom padding: the character-per-line figure is an estimate, so a panel that
+    # is one line taller than needed costs nothing while one line short clips descenders.
+    return 0.22 + (what_lines + fix_lines) * APPENDIX_LINE_H + 0.18
+
+
+def slide_risk_appendix(prs, f) -> None:
+    """Appendix A — every risk, grouped by severity then engine, nothing abbreviated.
+
+    Slide 6 is the executive view: the worst engines, lead sentences only, with the remainder
+    named in its footnote. This is the complete register in the same shape, so a reader who
+    wants the detail does not have to switch to the Engineering Report.
+
+    Paginates by measured height rather than a fixed panel count -- ElastiCache alone needs
+    2.0" for its nine MEDIUM findings while DynamoDB needs 0.55" for one, so a fixed count
+    would either clip the big engines or waste most of a slide on the small ones. A panel is
+    never split across slides.
+    """
+    sections: list[tuple[str, Any, dict[str, Any]]] = []
+    for label, colour, sev in (("HIGH", PINK, "HIGH"), ("MEDIUM", YELLOW, "MEDIUM")):
+        group = [r for r in f["risks"] if str(r.get("severity", "")).upper() == sev]
+        sections += [(label, colour, g) for g in _risks_by_engine(group)]
+    if not sections:
+        return
+
+    # Pack panels onto pages, keeping each whole.
+    pages: list[list[tuple[str, Any, dict[str, Any]]]] = [[]]
+    used = 0.0
+    budget = APPENDIX_BOTTOM - (BODY_TOP + 0.30)
+    for item in sections:
+        h = _appendix_panel_height(item[2])
+        if pages[-1] and used + h + 0.10 > budget:
+            pages.append([])
+            used = 0.0
+        pages[-1].append(item)
+        used += h + 0.10
+
+    for page_no, page in enumerate(pages, start=1):
+        s = add_slide(prs, LAYOUT_CONTENT)
+        of = f" ({page_no} of {len(pages)})" if len(pages) > 1 else ""
+        set_title(s, f"Appendix A — Risk Detail{of}")
+        set_subtitle(
+            s,
+            f"{len(f['risks'])} risks in full: "
+            f"{f['sev'].get('HIGH', 0)} HIGH, {f['sev'].get('MEDIUM', 0)} MEDIUM",
+        )
+        y = BODY_TOP + 0.30
+        last_label = ""
+        for label, colour, g in page:
+            if label != last_label:
+                tf = textbox(s, 0.67, y - 0.28, APPENDIX_WIDTH, 0.26)
+                para(tf, f"{label} RISKS", size=9.5, bold=True, color=MUTED, first=True)
+                last_label = label
+            h = _appendix_panel_height(g)
+            accent = ENGINE_COLOR.get(g["engine"], colour)
+            card(s, 0.67, y, APPENDIX_WIDTH, h, accent)
+            tf = textbox(s, 0.90, y + 0.06, APPENDIX_WIDTH - 0.39, h - 0.10)
+            name = ENGINE_LABEL.get(g["engine"], g["engine"]) or "General"
+            para(
+                tf,
+                f"{name}  ·  {label[0]}-Risks: {g['count']}",
+                size=10.0,
+                bold=True,
+                color=accent,
+                first=True,
+            )
+            para(tf, " ".join(g["whats"]), size=8.5, color=PAPER)
+            if g["fixes"]:
+                para(tf, f"Do: {' '.join(g['fixes'])}", size=8.5, color=MUTED)
+            y += h + 0.10
+
+
 SLIDES = (
     slide_summary,
     slide_evidence,
@@ -1177,6 +1550,7 @@ SLIDES = (
     slide_decisions,
     slide_risk,
     slide_sequencing,
+    slide_risk_appendix,
 )
 
 

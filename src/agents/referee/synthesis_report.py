@@ -84,6 +84,52 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
     return result
 
 
+def _designed_source_tables(engine: str, schema: dict) -> set[str]:
+    """Source tables this engine's schema design actually covers.
+
+    Engines record their designs under different keys -- ``table_definitions`` for the
+    relational and key-value targets, ``index_designs``/``data_stream_designs`` for
+    OpenSearch, ``collections`` for DocumentDB -- so all three are read here.
+
+    Deliberately non-mutating. ``build_table_mappings`` normalises the same shapes by
+    appending into the list returned by ``schema.get("table_definitions", [])``, which
+    mutates ``artifacts.schema_design`` in place; doing that a second time from here would
+    duplicate every OpenSearch index and DocumentDB collection in its output.
+    """
+    out: set[str] = set()
+    for td in schema.get("table_definitions") or []:
+        out.update(td.get("source_tables") or [])
+    for idx in schema.get("index_designs") or []:
+        out.update(idx.get("source_tables") or [])
+    for ds in schema.get("data_stream_designs") or []:
+        out.update(ds.get("source_tables") or [])
+    for coll in schema.get("collections") or []:
+        out.update(coll.get("source_tables") or [])
+    return out
+
+
+def _assigned_confidence(analysis: dict, schema: dict, engine: str) -> int | None:
+    """Mean per-table confidence over the tables this engine was actually given.
+
+    ``confidence_score`` on a ranking entry is the mean across *every* source table, which
+    answers "how much of this database belongs in this engine?" -- not "how sure are we about
+    the recommendation we made?". For a narrow-purpose engine the two diverge violently: on
+    the discourse workload OpenSearch is unsuitable for 303 of 311 tables *by design*, giving
+    2%, while the 2 search tables it was actually assigned score 80%. Reporting the former
+    under the word "confidence" reads as no confidence in our own recommendation.
+
+    Returns ``None`` when the engine was assigned nothing, so callers can omit the figure
+    rather than print a misleading 0.
+    """
+    per_table = {
+        t.get("table_id"): t.get("confidence_score", 0)
+        for t in (analysis.get("table_recommendations") or [])
+    }
+    assigned = _designed_source_tables(engine, schema)
+    scores = [per_table[t] for t in sorted(assigned) if t in per_table]
+    return round(sum(scores) / len(scores)) if scores else None
+
+
 def build_ranking(data: SynthesisData) -> list[dict]:
     """Rank target engines by confidence, cost, and pattern coverage."""
     ranking = []
@@ -101,6 +147,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             if table_recs
             else 0
         )
+        assigned_conf = _assigned_confidence(analysis, artifacts.schema_design or {}, engine)
 
         patterns = workload.get("patterns_detected") or []
         anti_patterns = workload.get("anti_patterns_detected") or []
@@ -137,8 +184,16 @@ def build_ranking(data: SynthesisData) -> list[dict]:
 
         entry = {
             "target": engine,
+            # Mean over EVERY source table -- breadth of fit across the database, not
+            # confidence in the recommendation. Retained for backward compatibility and
+            # still the right axis for wave sequencing (a narrow engine is riskier to
+            # sequence early regardless of how well it fits its own slice).
             "confidence_score": round(avg_confidence),  # backward compat
             "analysis_confidence": round(avg_confidence),
+            # Mean over only the tables this engine was actually assigned -- "fit on
+            # assigned scope". None when it was assigned nothing. This is what a reader
+            # means by confidence in the recommendation; see _assigned_confidence.
+            "assigned_confidence": assigned_conf,
             "weight": weight,
             "monthly_cost_usd": monthly_cost,
             "tables_analyzed": len(table_recs),
@@ -430,6 +485,24 @@ def _estimate_rds_cost(rds_meta: dict) -> float:
     return base
 
 
+def _assigned_query_ids(data: SynthesisData) -> dict[str, set[str]]:
+    """In-scope query ids routed to each engine, keyed by engine.
+
+    Anti-pattern ``query_ids`` come from analysis, which scored **every** query against the
+    engine -- not just the ones the assignment later routed to it. Counting them directly
+    overstates exposure: on the discourse workload RISK-021 reported "161 remaining" for
+    OpenSearch, which had only 101 queries assigned in total. Intersecting with this map keeps
+    an affected-query count inside the engine's actual scope so the risk slide reconciles with
+    the workload slide.
+    """
+    out: dict[str, set[str]] = {}
+    for qa in (data.assignment or {}).get("query_assignments", []):
+        eng, qid = qa.get("assigned_engine"), qa.get("query_id")
+        if eng and qid and qa.get("in_scope", True):
+            out.setdefault(eng, set()).add(qid)
+    return out
+
+
 def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     """Engines the assignment actually routed in-scope queries to.
 
@@ -466,6 +539,7 @@ def build_risk_assessment(data: SynthesisData) -> dict:
     risks = []
     risk_id = 0
     assigned = _engines_with_assigned_queries(data)
+    assigned_qids = _assigned_query_ids(data)
 
     for engine, artifacts in data.engines.items():
         # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
@@ -497,6 +571,12 @@ def build_risk_assessment(data: SynthesisData) -> dict:
                 continue
 
             ap_query_ids = set(ap.get("query_ids", []))
+            # Analysis scored every query against this engine, so narrow to the ones the
+            # assignment actually routed here before counting exposure. Without this the
+            # count can exceed the engine's whole assigned workload. Fail open: no readable
+            # assignment leaves the analysis-wide set, as before.
+            if in_scope_qids := assigned_qids.get(engine):
+                ap_query_ids &= in_scope_qids
 
             # If all flagged queries are covered by the schema design, it's resolved
             if ap_query_ids and ap_query_ids.issubset(covered_query_ids):
@@ -649,8 +729,23 @@ def build_architecture_recommendation(
 
 
 def _engine_rationale(r: dict) -> str:
-    """Generate a rationale string for an engine recommendation."""
-    parts = [f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"]
+    """Generate a rationale string for an engine recommendation.
+
+    Leads with fit on the assigned scope rather than the corpus-wide average. "56% average
+    confidence across 311 tables" invites the reader to treat a breadth-of-fit measure as
+    confidence in the recommendation; for a narrow engine that number is low by design and
+    says nothing about the tables actually being moved. Breadth is still reported, but named
+    as what it is.
+    """
+    assigned = r.get("assigned_confidence")
+    suited = int(r.get("tables_highly_suitable") or 0) + int(r.get("tables_suitable") or 0)
+    if assigned is not None:
+        parts = [
+            f"{assigned}% confidence on the {r.get('primary_table_count') or 0} tables assigned "
+            f"(suits {suited} of {r['tables_analyzed']} source tables overall)"
+        ]
+    else:
+        parts = [f"suits {suited} of {r['tables_analyzed']} source tables; none assigned"]
     if r["patterns_detected"] > 0:
         parts.append(f"{r['patterns_detected']} matching workload patterns")
     if r.get("target_tables", 0) > 0:
@@ -772,7 +867,14 @@ def build_summary(
 
     # Other engines
     if len(ranking) > 1:
-        others = ", ".join(f"{r['target']} ({r['confidence_score']}%)" for r in ranking[1:])
+        # A bare "(2%)" reads as confidence in the recommendation. It is breadth of fit
+        # across the whole schema, so say so in words rather than leaving a naked number.
+        others = ", ".join(
+            f"{r['target']} (suits "
+            f"{int(r.get('tables_highly_suitable') or 0) + int(r.get('tables_suitable') or 0)}"
+            f" of {r.get('tables_analyzed') or 0} tables)"
+            for r in ranking[1:]
+        )
         parts.append(f"Other targets evaluated: {others}.")
 
     return " ".join(parts)

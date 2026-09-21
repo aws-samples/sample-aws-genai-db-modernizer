@@ -21,6 +21,7 @@ executive-summary block raised ``AttributeError`` straight into its own
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from datetime import UTC, datetime
@@ -29,7 +30,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.atx_orchestrator.runtime import artifacts
+from src.atx_orchestrator.runtime import artifacts, pptx_report
 from src.atx_orchestrator.tools import run_synthesis_via_a2a
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
@@ -360,3 +361,129 @@ class TestSynthesisDeliverables:
         # flows through unchanged. (A store is constructed once for version
         # resolution, which is best-effort and never fatal.)
         assert json.loads(out) == payload
+
+
+# =============================================================================
+# Risk panels are grouped by engine, not by risk id
+
+
+class TestRisksByEngine:
+    """The deck used to print one row per risk_id. RISK-005 means nothing to an executive
+    reader, and one engine on two rows read as two unrelated problems."""
+
+    RISKS = [
+        {
+            "risk_id": "RISK-005",
+            "severity": "HIGH",
+            "description": "[documentdb] Correlated subqueries. (0% resolved, 159 remaining)",
+            "mitigation": "Pre-denormalize at write time.",
+        },
+        {
+            "risk_id": "RISK-006",
+            "severity": "HIGH",
+            "description": "[documentdb] Recursive queries. (0% resolved, 1 remaining)",
+            "mitigation": "Use Materialized Path.",
+        },
+        {
+            "risk_id": "RISK-010",
+            "severity": "HIGH",
+            "description": "[dynamodb] Complex GROUP BY. (0% resolved, 108 remaining)",
+            "mitigation": "Pre-compute aggregates on write.",
+        },
+    ]
+
+    def test_one_entry_per_engine(self) -> None:
+        out = pptx_report._risks_by_engine(self.RISKS)
+        assert [g["engine"] for g in out] == ["documentdb", "dynamodb"]
+
+    def test_query_counts_sum_within_an_engine(self) -> None:
+        out = {g["engine"]: g for g in pptx_report._risks_by_engine(self.RISKS)}
+        assert out["documentdb"]["queries"] == 160  # 159 + 1
+        assert out["dynamodb"]["queries"] == 108
+
+    def test_ordered_by_exposure_then_name(self) -> None:
+        """Worst-affected engine leads; ties break on name so the deck stays deterministic."""
+        out = pptx_report._risks_by_engine(self.RISKS)
+        assert [g["queries"] for g in out] == [160, 108]
+        tied = [
+            {"description": "[zeta] a.", "mitigation": "x"},
+            {"description": "[alpha] b.", "mitigation": "y"},
+        ]
+        assert [g["engine"] for g in pptx_report._risks_by_engine(tied)] == ["alpha", "zeta"]
+
+    def test_mitigations_combined_and_deduplicated(self) -> None:
+        out = {g["engine"]: g for g in pptx_report._risks_by_engine(self.RISKS)}
+        assert "Pre-denormalize at write time." in out["documentdb"]["fix"]
+        assert "Use Materialized Path." in out["documentdb"]["fix"]
+        dupes = [
+            {"description": "[x] one.", "mitigation": "same fix"},
+            {"description": "[x] two.", "mitigation": "same fix"},
+        ]
+        assert pptx_report._risks_by_engine(dupes)[0]["fix"] == "same fix"
+
+    def test_risk_ids_never_reach_the_output(self) -> None:
+        out = pptx_report._risks_by_engine(self.RISKS)
+        blob = json.dumps(out)
+        for rid in ("RISK-005", "RISK-006", "RISK-010"):
+            assert rid not in blob
+
+    def test_engineless_risks_group_under_one_entry(self) -> None:
+        out = pptx_report._risks_by_engine([{"description": "no prefix here.", "mitigation": ""}])
+        assert out[0]["engine"] == ""
+
+
+# =============================================================================
+# Appendix A — the complete risk register
+
+
+class TestRiskAppendix:
+    def test_appendix_slides_are_appended(self, report: dict) -> None:
+        assert pptx_report.slide_risk_appendix in pptx_report.SLIDES
+
+    def test_panel_height_grows_with_content(self) -> None:
+        """Pagination is by measured height: one engine with nine findings needs far more
+        room than one with a single finding, so a fixed panel count would clip or waste."""
+        small = {"whats": ["Short."], "fixes": ["Fix."], "count": 1}
+        big = {"whats": ["A sentence." * 20], "fixes": ["A mitigation." * 20], "count": 9}
+        assert pptx_report._appendix_panel_height(big) > pptx_report._appendix_panel_height(small)
+
+    def test_every_engine_and_severity_appears_somewhere(self, report: dict) -> None:
+        """Slide 6 caps panels and names the rest in its footnote; the appendix must not cap."""
+        deck = pptx_report.render_executive_summary_pptx(report, None)
+        from pptx import Presentation
+
+        prs = Presentation(io.BytesIO(deck))
+        appendix = " ".join(
+            sh.text_frame.text
+            for s in prs.slides
+            for sh in s.shapes
+            if sh.has_text_frame and "Appendix A" not in sh.text_frame.text
+        )
+        risks = report["risk_assessment"]["risks"]
+        for sev in ("HIGH", "MEDIUM"):
+            group = [r for r in risks if str(r.get("severity", "")).upper() == sev]
+            for g in pptx_report._risks_by_engine(group):
+                label = artifacts_engine_label(g["engine"])
+                assert label in appendix, f"{sev} {g['engine']} missing from the deck"
+
+    def test_appendix_text_is_never_truncated(self, report: dict) -> None:
+        """The executive slide abbreviates with "(+N more)"; the appendix shows everything."""
+        deck = pptx_report.render_executive_summary_pptx(report, None)
+        from pptx import Presentation
+
+        prs = Presentation(io.BytesIO(deck))
+        pages = [
+            s
+            for s in prs.slides
+            if any(
+                sh.has_text_frame and sh.text_frame.text.startswith("Appendix A") for sh in s.shapes
+            )
+        ]
+        assert pages, "no appendix slides rendered"
+        blob = " ".join(sh.text_frame.text for s in pages for sh in s.shapes if sh.has_text_frame)
+        assert "more)" not in blob
+        assert "…" not in blob
+
+
+def artifacts_engine_label(engine: str) -> str:
+    return pptx_report.ENGINE_LABEL.get(engine, engine) or "General"
