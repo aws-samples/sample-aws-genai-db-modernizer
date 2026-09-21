@@ -339,6 +339,19 @@ def _make_orchestrator_server_class(base_server_cls):
                 # Fail-open: the greeting must never break job startup.
                 logger.warning("Welcome message step failed", exc_info=True)
 
+            # Raise the collection-upload HITL as the deterministic FIRST step,
+            # before any customer turn. This does not depend on the orchestrator
+            # LLM choosing to call a tool: the upload panel is the customer's very
+            # first interaction. job_id is resolved from the agent context inside
+            # the helper. Fail-open — a failure here must not block job start
+            # (dev/reference has no HITL transport and returns None).
+            try:
+                from src.atx_orchestrator.tools import declare_plan_and_request_upload
+
+                declare_plan_and_request_upload("")
+            except Exception:  # noqa: BLE001
+                logger.warning("Collection-upload gate step failed at job start", exc_info=True)
+
     return _OrchestratorServer
 
 

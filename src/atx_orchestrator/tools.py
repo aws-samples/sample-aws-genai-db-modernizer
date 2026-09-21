@@ -304,39 +304,39 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     )
 
 
-@tool
-def request_collection_upload(job_id: str, database_name: str) -> str:
-    """Ask the customer to upload their offline collection, as the FIRST step.
+def declare_plan_and_request_upload(job_id: str) -> str | None:
+    """Declare the pipeline plan and raise the BLOCKING collection-upload HITL.
 
-    Call this immediately AFTER ``declare_pipeline_plan`` and BEFORE
-    ``run_assessment_core_via_a2a``. It raises a BLOCKING file-upload task in the
-    WebApp (under the "upload" plan step) asking the customer to upload the JSON
-    produced by the collection script.
+    This is the deterministic FIRST step of every job. It runs at job start (from
+    the orchestrator server's ``_finalize_agent_setup`` hook), BEFORE any customer
+    turn — so the customer's very first interaction is the upload panel, not a
+    free-text prompt. It does not depend on the orchestrator LLM choosing to call
+    a tool.
 
-    This task is BLOCKING: after it returns, STOP and end your turn. Do NOT call
-    any other tool. Tell the customer their upload panel is open in the WebApp and
-    to submit the collection file. When they submit, the platform re-invokes you;
-    then call ``finalize_collection_upload`` to record the uploaded file and
-    proceed to the assessment.
+    ``database_name`` is intentionally NOT required here: the customer has not
+    told us the db name yet at job start. The plan and the upload HITL do not need
+    it (the plan step labels are fixed; the HITL just collects a file). The
+    pending-upload pointer is therefore job-scoped; ``finalize_collection_upload``
+    bridges to the db-scoped resolved-input-key pointer once the db name is known.
 
-    Outside the ATX runtime (local/reference harness), the HITL transport is
-    unavailable and this returns ``status="unavailable"``; in that case the
-    collection is expected pre-staged at the seed key and you may proceed directly
-    to ``run_assessment_core_via_a2a``.
-
-    Returns JSON with ``status`` (``"awaiting_upload"`` or ``"unavailable"``) and,
-    when raised, the ``hitl_task_id``.
+    Returns the HITL task id on success, or ``None`` outside the ATX runtime / on
+    any failure (dev and reference runs have no HITL transport and fall back to
+    the seed key). Never raises — a failure here must not block job start.
     """
     job_id = _platform_job_id(job_id)
     from src.atx_orchestrator.runtime import hitl as _hitl
 
     store = _make_store()
 
-    # Resolve the "upload" plan step so the HITL task renders under it. A task
-    # created without a stepId never surfaces in the WebApp tasks panel. The
-    # in-process registry is populated by declare_pipeline_plan; under
-    # raise-and-resume a fresh process falls back to reading the plan from the
-    # server.
+    # Declare the plan first so the "upload" step exists to attach the HITL to.
+    # declare_pipeline_plan is a @tool; call its underlying function directly.
+    # database_name is only used for progress-panel copy, not keying — a neutral
+    # placeholder is fine and is corrected on the first real phase.
+    try:
+        declare_pipeline_plan.__wrapped__(job_id, "")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - progress panel is best-effort
+        logger.warning("ATX: declare_pipeline_plan failed at job start", exc_info=True)
+
     step_id = get_step_id("upload")
     if not step_id:
         register_steps_from_server()
@@ -355,68 +355,52 @@ def request_collection_upload(job_id: str, database_name: str) -> str:
     )
 
     if hitl_task_id:
-        _record_pending_upload(store, database_name, job_id, hitl_task_id)
+        _record_pending_upload(store, job_id, hitl_task_id)
         mark_step_pending_human_input("upload", "Awaiting the customer's collection upload.")
-        return json.dumps(
-            {
-                "status": "awaiting_upload",
-                "job_id": job_id,
-                "hitl_task_id": hitl_task_id,
-                "message": (
-                    "A file-upload panel is open in the WebApp. Ask the customer to upload "
-                    "their collection JSON and submit. STOP here and end your turn; call "
-                    "finalize_collection_upload after they submit."
-                ),
-            }
+        logger.info(
+            "ATX: raised collection-upload HITL %s at job start (job_id=%s)",
+            hitl_task_id,
+            job_id,
         )
-
-    # HITL transport unavailable (outside the ATX runtime). Dev/reference runs
-    # stage the collection at the seed key, so the assessment can proceed.
-    logger.info(
-        "ATX request_collection_upload: HITL unavailable for job_id=%s; "
-        "collection is expected at the seed key (dev/reference).",
-        job_id,
-    )
-    return json.dumps(
-        {
-            "status": "unavailable",
-            "job_id": job_id,
-            "message": (
-                "File-upload HITL is unavailable (outside the ATX runtime). If the "
-                "collection is staged at the seed key, proceed to run_assessment_core_via_a2a."
-            ),
-        }
-    )
+    else:
+        logger.info(
+            "ATX: collection-upload HITL unavailable at job start for job_id=%s "
+            "(dev/reference — collection is expected at the seed key).",
+            job_id,
+        )
+    return hitl_task_id
 
 
 @tool
 def finalize_collection_upload(job_id: str, database_name: str) -> str:
     """Record the customer's uploaded collection and open the assessment.
 
-    Call this AFTER ``request_collection_upload`` once the customer has submitted
-    their upload in the WebApp (the platform re-invokes you on submission). It
-    reads the submission, resolves the uploaded file's artifact id, and records it
-    as the collection input for the assessment. Then call
+    The collection-upload panel is raised automatically at job start (it is the
+    first step every job shows). Call this once the customer has submitted their
+    upload AND told you the database name: it reads the submission, resolves the
+    uploaded file's artifact id, and records it (keyed by ``database_name``) as
+    the collection input for the assessment. Then call
     ``run_assessment_core_via_a2a``.
 
     Returns JSON with ``status``:
       * ``"recorded"`` — the upload was read; ``run_assessment_core_via_a2a`` may run.
       * ``"awaiting_upload"`` — the customer has not submitted yet; wait.
-      * ``"error"`` — the submission could not be read; ask them to re-upload.
+      * ``"error"`` — no upload panel was raised, or the submission could not be read.
     """
     job_id = _platform_job_id(job_id)
     from src.atx_orchestrator.runtime import hitl as _hitl
 
     store = _make_store()
-    pending = _read_pending_upload(store, database_name, job_id)
+    pending = _read_pending_upload(store, job_id)
     if not pending or not pending.get("hitl_task_id"):
         return json.dumps(
             {
                 "status": "error",
                 "job_id": job_id,
                 "message": (
-                    "No pending upload task was found. Call request_collection_upload first "
-                    "to open the upload panel for the customer."
+                    "No pending upload task was found for this job. The upload panel is "
+                    "raised at job start; if it is missing, the job may be running an older "
+                    "build or the upload transport was unavailable."
                 ),
             }
         )
@@ -1005,11 +989,12 @@ def run_assessment_core_via_a2a(
       - ``<db>/<job>/reality-check/output.json`` (+ ``assignment/v2/`` when it consolidates)
 
     The customer's uploaded offline collection is resolved from the file-upload
-    gate: call ``declare_pipeline_plan``, then ``request_collection_upload`` (the
-    customer uploads their collection in the WebApp), then
-    ``finalize_collection_upload`` (records the uploaded file's artifact id), and
-    THEN this tool. It reads that recorded ``artifact://<id>`` input and passes it
-    to the collector. You do NOT pass, construct, or ask for a storage path.
+    gate: the upload panel is raised automatically at job start; once the customer
+    uploads and gives the db name, ``finalize_collection_upload`` records the
+    uploaded file's artifact id, and THEN this tool reads that recorded
+    ``artifact://<id>`` input and passes it to the collector. You do NOT pass,
+    construct, or ask for a storage path. If the upload has not been recorded yet,
+    this tool returns ``status="blocked"`` rather than running.
 
     The subagent ticks its own plan steps (collector, triage, analysis with nested
     per-engine sub-steps, assignment, reality_check) as it progresses, so the
@@ -1028,22 +1013,48 @@ def run_assessment_core_via_a2a(
         dict if the A2A round-trip failed.
     """
     # The customer's collection is uploaded through the file-upload gate
-    # (request_collection_upload -> finalize_collection_upload), which records the
-    # uploaded file's artifact id as an ``artifact://<id>`` input_key on the store.
+    # (upload HITL raised at job start -> finalize_collection_upload), which records
+    # the uploaded file's artifact id as an ``artifact://<id>`` input_key on the store.
     # Read that here and pass it to the collector — no listing, no discovery
     # heuristics: the id was handed to us by the platform at submission, job-scoped
     # and unambiguous. Outside the ATX runtime (dev/reference harness) no gate ran,
     # input_key stays "", and the collector falls back to a pre-staged seed key.
     job_id = _platform_job_id(job_id)
-    input_key = _read_resolved_input_key(_make_store(), database_name, job_id)
+    store = _make_store()
+    input_key = _read_resolved_input_key(store, database_name, job_id)
     if input_key:
         logger.info("ATX assessment-core: collection input resolved to %s", input_key)
     else:
+        # Structural gate: an upload HITL is raised at job start, which writes a
+        # job-scoped pending pointer. If that pointer exists but no resolved
+        # input_key does, the customer has not finished uploading (or
+        # finalize_collection_upload has not run) — REFUSE rather than fall
+        # through to a seed key that isn't there, mirroring how schema-design
+        # refuses until the assignment-review gate is approved. Only when there is
+        # no pending pointer at all (dev/reference harness, no HITL transport) do
+        # we allow the empty-key seed fallback.
+        pending = _read_pending_upload(store, job_id)
+        if pending and pending.get("hitl_task_id"):
+            logger.info(
+                "ATX assessment-core blocked: collection not uploaded yet (job_id=%s)",
+                job_id,
+            )
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "reason": "awaiting_collection_upload",
+                    "job_id": job_id,
+                    "message": (
+                        "The assessment cannot run until the customer uploads their "
+                        "collection. An upload panel is open in the WebApp (the first job "
+                        "step). Ask the customer to upload their collection JSON and submit, "
+                        "then call finalize_collection_upload before running the assessment."
+                    ),
+                }
+            )
         logger.warning(
-            "ATX assessment-core: no uploaded collection recorded for job_id=%s; "
-            "passing empty input_key. The collect step will fall back to the seed key "
-            "and fail if none is staged. Was request_collection_upload / "
-            "finalize_collection_upload run first?",
+            "ATX assessment-core: no uploaded collection recorded and no pending upload "
+            "for job_id=%s; passing empty input_key (dev/reference seed fallback).",
             job_id,
         )
     message = json.dumps(
@@ -1491,16 +1502,23 @@ def _read_pending_hitl(store: object, database_name: str, job_id: str) -> dict |
 # ─────────────────────────────────────────────────────────────────────────────
 # Upload-gate transport state (collection ingestion)
 # ─────────────────────────────────────────────────────────────────────────────
-# The upload gate (request_collection_upload / finalize_collection_upload) is a
+# The upload gate (declare_plan_and_request_upload / finalize_collection_upload) is a
 # raise-and-resume flow like the assignment-review gate: the turn that raises the
 # HITL only knows the task id, and the resolved collection input_key is only known
 # once the customer submits and a later turn reads it back. Two small pointers on
 # the store carry that state across turns/processes.
 
 
-def _pending_upload_key(database_name: str, job_id: str) -> str:
-    """Store key for the pending upload HITL task pointer (transport state)."""
-    return f"{database_name}/{job_id}/uploads/pending_upload.json"
+def _pending_upload_key(job_id: str) -> str:
+    """Store key for the pending upload HITL task pointer (transport state).
+
+    Job-scoped only (no database_name): the upload HITL is raised at job start,
+    before the customer has told us the database name, so this pointer cannot be
+    keyed by db. finalize_collection_upload (which runs on the later LLM turn,
+    once the db name is known) reads it back and bridges to the db-scoped
+    resolved-input-key pointer.
+    """
+    return f"_pending/{job_id}/upload.json"
 
 
 def _resolved_input_key_key(database_name: str, job_id: str) -> str:
@@ -1508,13 +1526,11 @@ def _resolved_input_key_key(database_name: str, job_id: str) -> str:
     return f"{database_name}/{job_id}/uploads/input_key.json"
 
 
-def _record_pending_upload(
-    store: object, database_name: str, job_id: str, hitl_task_id: str
-) -> None:
-    """Persist the upload HITL task the gate is blocked on (best-effort)."""
+def _record_pending_upload(store: object, job_id: str, hitl_task_id: str) -> None:
+    """Persist the upload HITL task the gate is blocked on (best-effort). Job-scoped."""
     try:
         store.write_text(  # type: ignore[attr-defined]
-            _pending_upload_key(database_name, job_id),
+            _pending_upload_key(job_id),
             json.dumps({"hitl_task_id": hitl_task_id}),
             "application/json",
         )
@@ -1527,9 +1543,9 @@ def _record_pending_upload(
         )
 
 
-def _read_pending_upload(store: object, database_name: str, job_id: str) -> dict | None:
-    """Return the recorded pending upload HITL pointer, or None when absent."""
-    key = _pending_upload_key(database_name, job_id)
+def _read_pending_upload(store: object, job_id: str) -> dict | None:
+    """Return the recorded pending upload HITL pointer, or None when absent. Job-scoped."""
+    key = _pending_upload_key(job_id)
     try:
         if store.exists(key):  # type: ignore[attr-defined]
             data = store.read_json(key)  # type: ignore[attr-defined]
