@@ -84,6 +84,24 @@ class TestReopen:
         assert out["status"] == "reopened"
         mock_resume.assert_called_once()
 
+    def test_reopen_resets_schema_view_for_clean_slate(self, store) -> None:
+        # Re-entry must clear the previous round's schema-design and synthesis
+        # states so the panel does not show stale SUCCEEDED/FAILED/STOPPED icons
+        # that read as errors (ADR-029). The parent, all six per-engine sub-steps,
+        # and synthesis must be reset to NOT_STARTED.
+        _write_assignment(store, 1, [_qa("q1", "dynamodb")], previous=None)
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools.mark_step_not_started") as mock_reset,
+        ):
+            out = json.loads(tools.reopen_assignment_review(JOB, DB))
+        assert out["status"] == "reopened"
+        reset_phases = {call.args[0] for call in mock_reset.call_args_list}
+        expected = {"schema", "synthesis"} | {
+            f"schema_{engine}" for engine in set(tools._SCHEMA_ENGINES.values())
+        }
+        assert expected <= reset_phases
+
 
 class TestRedispatch:
     def _seed_v1_schema(self, store) -> None:
@@ -124,6 +142,30 @@ class TestRedispatch:
         assert copied["table_definitions"] == [{"table_name": "T"}]
         # eliminated opensearch is NOT carried forward.
         assert not store.exists(f"{DB}/{JOB}/schema-opensearch/v2/schema_output.json")
+
+    def test_reused_engines_marked_succeeded_and_parent_running(self, store) -> None:
+        # After reopen resets the schema view to NOT_STARTED, redispatch must
+        # re-mark the copied-forward engines SUCCEEDED (reused) and the parent box
+        # running, so reused engines do not linger at a pending clock while only
+        # the affected engine re-runs.
+        self._seed_v1_schema(store)
+        _write_assignment(
+            store,
+            2,
+            [_qa("q1", "dynamodb"), _qa("q2", "dynamodb"), _qa("q3", "aurora_postgresql")],
+            previous=1,
+        )
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded") as mock_succ,
+            patch("src.atx_orchestrator.tools.mark_step_running") as mock_run,
+        ):
+            out = json.loads(tools.redispatch_after_reroute(JOB, DB))
+        assert out["copied_forward_engines"] == ["dynamodb"]
+        succeeded_phases = {call.args[0] for call in mock_succ.call_args_list}
+        assert "schema_dynamodb" in succeeded_phases
+        running_phases = {call.args[0] for call in mock_run.call_args_list}
+        assert "schema" in running_phases
 
     def test_no_prior_schema_treats_all_as_affected(self, store) -> None:
         _write_assignment(store, 1, [_qa("q1", "dynamodb"), _qa("q3", "opensearch")], None)

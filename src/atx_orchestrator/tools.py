@@ -31,6 +31,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     get_step_id,
     mark_step_failed,
+    mark_step_not_started,
     mark_step_pending_human_input,
     mark_step_running,
     mark_step_skipped,
@@ -1416,6 +1417,36 @@ def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> No
         logger.info("ATX: marked schema_%s skipped (not selected)", engine)
 
 
+def _reset_schema_view_for_reentry(job_id: str, database_name: str) -> None:
+    """Reset the schema-design and synthesis plan steps to NOT_STARTED (ADR-029).
+
+    Called when the customer reopens the routing gate to change their selection.
+    After a completed round the "Design Target Schemas" box and its per-engine
+    sub-steps hold that round's terminal states (SUCCEEDED / FAILED / STOPPED),
+    and synthesis shows SUCCEEDED. On re-entry only the *affected* engines
+    re-run; a stale FAILED or STOPPED left on an engine this round copies forward
+    (or does not touch) reads to the customer as an error even though the round is
+    healthy. Resetting the parent, all six per-engine sub-steps, and synthesis to
+    NOT_STARTED gives a clean slate, so the panel clearly shows the schema work is
+    queued to run again for the new routing. redispatch_after_reroute then
+    re-marks each engine accurately (reused vs re-designing), and synthesis marks
+    the unselected engines skipped again.
+
+    Best-effort and fail-open: each mark is a no-op when the step is unregistered
+    or the plan API is unreachable (e.g. running outside the ATX runtime).
+    """
+    mark_step_not_started(
+        "schema", "Reopened routing — schema design will re-run for the updated selection."
+    )
+    for engine in sorted(set(_SCHEMA_ENGINES.values())):
+        mark_step_not_started(f"schema_{engine}")
+    mark_step_not_started("synthesis", "Will rebuild the report after schema design re-runs.")
+    logger.info(
+        "ATX: reset schema + synthesis plan steps for re-entry (job_id=%s)",
+        job_id,
+    )
+
+
 # =============================================================================
 # Assignment-review gate (ADR-028)
 #
@@ -1878,6 +1909,11 @@ def reopen_assignment_review(job_id: str, database_name: str) -> str:
     mark_step_pending_human_input(
         "assignment_review", "Reopened for customer routing changes (re-entry)."
     )
+    # Clear the previous round's schema-design and synthesis states so the panel
+    # shows a clean slate for the re-run instead of stale SUCCEEDED/FAILED/STOPPED
+    # icons that read as errors (ADR-029). redispatch_after_reroute re-marks each
+    # engine accurately once the customer applies their edit.
+    _reset_schema_view_for_reentry(job_id, database_name)
     return json.dumps(
         {
             "status": "reopened",
@@ -1937,6 +1973,16 @@ def redispatch_after_reroute(job_id: str, database_name: str) -> str:
             else:
                 affected.append(engine)  # nothing to copy forward -> must re-run
         affected = sorted(set(affected))
+
+    # Fill in the schema view that reopen reset to NOT_STARTED: the parent box is
+    # running again, and each reused engine shows SUCCEEDED with a "reused" note so
+    # it does not sit at a pending clock while only the affected engines re-run.
+    # The affected engines' own dispatch tools mark them running -> succeeded, and
+    # synthesis marks the unselected engines skipped.
+    if affected:
+        mark_step_running("schema", "Re-designing the engines affected by the routing change.")
+    for engine in sorted(set(copied)):
+        mark_step_succeeded(f"schema_{engine}", "Reused — routing for this engine did not change.")
 
     dispatch_tools = [
         f"run_schema_design_{_ENGINE_TO_SUFFIX.get(e, e).replace('-', '_')}_via_a2a"

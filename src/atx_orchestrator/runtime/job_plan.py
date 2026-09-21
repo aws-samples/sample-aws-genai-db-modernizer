@@ -392,3 +392,20 @@ def mark_step_pending_human_input(phase_name: str, detail: str = "") -> None:
     if step_id:
         desc = detail[:200] if detail else None
         update_job_plan_step(step_id, STATUS_PENDING_HUMAN_INPUT, description=desc)
+
+
+def mark_step_not_started(phase_name: str, detail: str = "") -> None:
+    """Reset a phase back to NOT_STARTED by phase_name lookup. Safe if unregistered.
+
+    Used for re-entry (ADR-029): when the customer reopens the routing gate to
+    change their selection, the downstream schema-design and synthesis steps still
+    carry the previous round's terminal states (SUCCEEDED / FAILED / STOPPED). A
+    stale FAILED or STOPPED on an engine this round does not re-run reads as an
+    error to the customer. Resetting those steps to NOT_STARTED gives a clean
+    slate so the panel shows the work is queued to run again. ``detail`` rides
+    along as the step description.
+    """
+    step_id = get_step_id(phase_name)
+    if step_id:
+        desc = detail[:200] if detail else None
+        update_job_plan_step(step_id, STATUS_NOT_STARTED, description=desc)
