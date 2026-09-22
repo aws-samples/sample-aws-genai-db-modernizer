@@ -1390,6 +1390,14 @@ def run_synthesis_core(
     # stability; the orchestrator populates the panel, not this subagent.
     published: dict[str, str] = {}
 
+    # Rebuild + publish the context graph at the synthesis boundary. Synthesis is
+    # its own process that runs AFTER the concurrent per-engine schema fan-out has
+    # joined, so this is the single-writer point where the design, load-test and
+    # synthesis contracts all exist — the graph built here is the complete
+    # read-model, folding in everything the assessment-core build could not yet
+    # see. Same JOURNEY_MODE gate; best-effort, never fails the phase.
+    _maybe_build_graph(store, job_id, database_name)
+
     return {
         "job_id": job_id,
         "database_name": database_name,

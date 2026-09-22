@@ -62,3 +62,34 @@ class TestMaybeBuildGraphGate:
         ):
             # Must not raise — the read-model build cannot fail the assessment.
             _maybe_build_graph(store, "job-1", "mydb")
+
+
+class TestSynthesisBoundaryBuildsGraph:
+    """run_synthesis_core must materialize the graph at its boundary (after the
+    schema fan-out has joined) via the same _maybe_build_graph gate. Patch the
+    synthesis internals so the test exercises only the boundary call, not the
+    full synthesis pipeline."""
+
+    def test_synthesis_core_calls_maybe_build_graph(self) -> None:
+        from src.atx_orchestrator import core
+
+        store = MagicMock()
+        store.exists.return_value = True
+        # Minimal report so the post-synthesis guards pass without raising.
+        store.read_json.return_value = {
+            "ranking": [{"target": "dynamodb", "schema_design_available": True}],
+            "recommended_architecture": {"databases": [{"service": "dynamodb"}]},
+            "risk_assessment": {"overall_risk_level": "LOW"},
+            "summary": "ok",
+            "assignment_summary": {"x": 1},
+        }
+
+        with (
+            patch("src.agents.referee.synthesis_handler.run_synthesis"),
+            patch("src.atx_orchestrator.core._maybe_build_graph") as mock_build,
+        ):
+            core.run_synthesis_core(
+                job_id="job-1", database_name="mydb", assignment_version=1, store=store
+            )
+
+        mock_build.assert_called_once_with(store, "job-1", "mydb")
