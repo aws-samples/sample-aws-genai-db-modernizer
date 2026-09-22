@@ -26,6 +26,7 @@ diverge.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import logging
@@ -225,7 +226,54 @@ def _project_journey(journey: dict) -> dict:
     return out
 
 
+def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> list[dict] | None:
+    """Serve the per-query journeys from the published context graph.
+
+    Returns the journey list (same projected shape as the JSON path), or ``None``
+    when the graph is unavailable for this job (never published, or the graph
+    module/deps are absent) so the caller falls back to the per-query artifacts.
+    The graph is the read-model under JOURNEY_MODE=graph; the JSON artifacts do
+    not exist there, so this is the primary path, not an optimization.
+    """
+    import tempfile
+
+    try:
+        from src.atx_orchestrator.runtime import graph_transport
+        from src.graph import GraphStore
+        from src.graph.queries import query_journeys
+    except Exception:  # noqa: BLE001 - graph deps unavailable; use the JSON path
+        return None
+
+    with tempfile.TemporaryDirectory(prefix=f"graph-read-{job_id}-") as tmpdir:
+        local_path = str(Path(tmpdir) / "context.lbug")
+        if not graph_transport.download_graph(store, database_name, job_id, local_path):
+            return None
+        graph_store = None
+        try:
+            graph_store = GraphStore(local_path)
+            return query_journeys(graph_store)
+        except Exception:  # noqa: BLE001 - a corrupt/unreadable graph -> JSON fallback
+            logger.warning(
+                "context graph unreadable for %s/%s; falling back to journey artifacts",
+                database_name,
+                job_id,
+                exc_info=True,
+            )
+            return None
+        finally:
+            if graph_store is not None:
+                with contextlib.suppress(Exception):
+                    graph_store.close()
+
+
 def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
+    # Prefer the published context graph (the read-model under JOURNEY_MODE=graph).
+    # Falls through to the per-query JSON artifacts when the graph isn't available
+    # (JOURNEY_MODE=json, or a job that predates the graph), so both modes render.
+    from_graph = _read_journeys_from_graph(store, database_name, job_id)
+    if from_graph is not None:
+        return from_graph
+
     prefix = f"{database_name}/{job_id}/query-journeys/"
     try:
         keys = sorted(store.list_prefix(prefix))
