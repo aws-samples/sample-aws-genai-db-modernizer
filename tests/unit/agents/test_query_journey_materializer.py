@@ -1250,3 +1250,104 @@ class TestMaterializeLoadTest:
         store = _mock_store()
         materialize_load_test([], "mydb", "job-001", store)
         store.write_json.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Parallel fan-out: many queries, dict-backed store shared across threads
+# ---------------------------------------------------------------------------
+
+
+class TestParallelMaterialization:
+    """The materializers fan reads/writes across a thread pool (perf on the ATX
+    backend, where each read_json/write_json is a network round trip). These
+    verify the parallel path produces correct results for every query and does
+    not drop or corrupt updates under concurrency."""
+
+    @staticmethod
+    def _dict_store(seed_query_ids):
+        import threading
+
+        data_store: dict[str, dict] = {
+            f"mydb/job-x/query-journeys/{qid}.json": {
+                "query_id": qid,
+                "source": {"query_text": f"q{qid}"},
+                "assignment": None,
+                "design": None,
+                "load_test": None,
+            }
+            for qid in seed_query_ids
+        }
+        lock = threading.Lock()
+        store = MagicMock()
+
+        def _write(path: str, data: dict) -> None:
+            with lock:
+                data_store[path] = dict(data)
+
+        def _read(path: str) -> dict:
+            with lock:
+                if path not in data_store:
+                    raise FileNotFoundError(path)
+                return dict(data_store[path])
+
+        store.write_json.side_effect = _write
+        store.read_json.side_effect = _read
+        store.exists.side_effect = lambda p: p in data_store
+        return store, data_store
+
+    def test_assignment_updates_every_journey(self):
+        qids = [f"q{i:04d}" for i in range(250)]
+        store, data_store = self._dict_store(qids)
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": qid,
+                    "assigned_engine": "dynamodb",
+                    "confidence": 90,
+                    "assignment_reason": "r",
+                    "in_scope": True,
+                    "customer_override": False,
+                    "warnings": [],
+                }
+                for qid in qids
+            ]
+        }
+
+        materialize_assignment(assignment, "mydb", "job-x", store)
+
+        # Every journey got its assignment section, and nothing was dropped or
+        # cross-contaminated (each keeps its own query_id + source).
+        assert store.write_json.call_count == len(qids)
+        for qid in qids:
+            j = data_store[f"mydb/job-x/query-journeys/{qid}.json"]
+            assert j["assignment"]["assigned_engine"] == "dynamodb"
+            assert j["query_id"] == qid
+            assert j["source"]["query_text"] == f"q{qid}"
+
+    def test_missing_journeys_are_skipped_not_fatal(self):
+        # Half the assignment entries have no journey file; those are skipped,
+        # the rest still update.
+        present = [f"q{i:04d}" for i in range(50)]
+        store, data_store = self._dict_store(present)
+        missing = [f"m{i:04d}" for i in range(50)]
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": qid,
+                    "assigned_engine": "opensearch",
+                    "confidence": 80,
+                    "assignment_reason": "r",
+                    "in_scope": True,
+                    "customer_override": False,
+                    "warnings": [],
+                }
+                for qid in present + missing
+            ]
+        }
+
+        materialize_assignment(assignment, "mydb", "job-x", store)
+
+        assert store.write_json.call_count == len(present)
+        for qid in present:
+            j = data_store[f"mydb/job-x/query-journeys/{qid}.json"]
+            assert j["assignment"]["assigned_engine"] == "opensearch"

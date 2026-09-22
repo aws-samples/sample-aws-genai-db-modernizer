@@ -7,12 +7,65 @@ the query's journey file in the ArtifactStore.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
+
 from src.storage.artifact_store import ArtifactStore
+
+logger = logging.getLogger(__name__)
+
+# Journey materialization is a per-query read-modify-write against the
+# ArtifactStore. Under the ATX backend each read_json/write_json is a network
+# round trip (create download/upload URL + S3 transfer), so a workload with
+# hundreds of queries (the reference discourse run has 1,654) is minutes of pure
+# serial latency. The reads/writes are independent per query, so fan them out —
+# mirrors the ThreadPoolExecutor(32) reader in
+# src/atx_orchestrator/runtime/analysis_report.py (same rationale documented
+# there). Local/S3 backends are unaffected; the pool just runs cheap calls.
+_MATERIALIZE_WORKERS = 32
 
 
 def _journey_path(db_name: str, job_id: str, query_id: str) -> str:
     """Return the S3/store path for a query journey file."""
     return f"{db_name}/{job_id}/query-journeys/{query_id}.json"
+
+
+def _materialize_parallel(
+    store: ArtifactStore,
+    db_name: str,
+    job_id: str,
+    query_ids: Iterable[str],
+    update_one: Callable[[str], None],
+) -> None:
+    """Run ``update_one(query_id)`` for every id across a thread pool.
+
+    ``update_one`` performs the per-query read-modify-write against ``store``.
+    Each query's journey is an independent artifact, so the work parallelizes
+    cleanly. The pool size is capped at the number of ids so small workloads
+    don't spin up idle threads.
+
+    The store's path->id index (ATX backend) is warmed once here, before the
+    pool starts, so worker threads all hit the already-built cache instead of
+    racing to rebuild it. ``exists`` on the ATX store is an index-only lookup,
+    which triggers that one-time build; on other backends it is a cheap no-op.
+    """
+    ids = list(query_ids)
+    if not ids:
+        return
+
+    # Warm the store index once on this thread (best-effort; a backend without an
+    # index simply returns quickly). Prevents N threads each doing a full listing.
+    try:
+        store.exists(_journey_path(db_name, job_id, ids[0]))
+    except Exception:  # noqa: BLE001 - warming is an optimization, not correctness
+        logger.debug("journey index warm-up skipped", exc_info=True)
+
+    workers = min(_MATERIALIZE_WORKERS, len(ids))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # list() forces evaluation so exceptions in a worker surface here rather
+        # than being silently dropped by a lazy map.
+        list(pool.map(update_one, ids))
 
 
 def materialize_source(
@@ -119,17 +172,18 @@ def materialize_assignment(
         job_id: Unique job identifier used as the second path segment.
         store: ArtifactStore instance for persistence.
     """
-    for entry in assignment["query_assignments"]:
-        query_id: str = entry["query_id"]
-        path = _journey_path(db_name, job_id, query_id)
+    by_query: dict[str, dict] = {e["query_id"]: e for e in assignment["query_assignments"]}
 
+    def _update(query_id: str) -> None:
+        path = _journey_path(db_name, job_id, query_id)
         try:
             journey = store.read_json(path)
-        except Exception:  # nosec B112
-            continue
-
-        journey["assignment"] = _project_assignment(entry)
+        except Exception:  # nosec B112 - a missing journey is skipped, not fatal
+            return
+        journey["assignment"] = _project_assignment(by_query[query_id])
         store.write_json(path, journey)
+
+    _materialize_parallel(store, db_name, job_id, by_query.keys(), _update)
 
 
 def materialize_load_test(
@@ -142,17 +196,19 @@ def materialize_load_test(
 
     Called by the load test handler after computing per-pattern results.
     """
-    for result in load_test_results:
-        query_id = result["query_id"]
-        path = _journey_path(database_name, job_id, query_id)
+    by_query: dict[str, dict] = {r["query_id"]: r for r in load_test_results}
 
+    def _update(query_id: str) -> None:
+        path = _journey_path(database_name, job_id, query_id)
         try:
             journey = store.read_json(path)
-        except Exception:  # nosec B112
-            continue
-
+        except Exception:  # nosec B112 - a missing journey is skipped, not fatal
+            return
+        result = by_query[query_id]
         journey["load_test"] = {k: v for k, v in result.items() if k != "query_id"}
         store.write_json(path, journey)
+
+    _materialize_parallel(store, database_name, job_id, by_query.keys(), _update)
 
 
 # ---------------------------------------------------------------------------
@@ -236,13 +292,12 @@ def materialize_design(
 
     all_query_ids = set(designed_map) | set(unsupported_map)
 
-    for query_id in all_query_ids:
+    def _update(query_id: str) -> None:
         path = _journey_path(db_name, job_id, query_id)
-
         try:
             journey = store.read_json(path)
-        except Exception:  # nosec B112
-            continue
+        except Exception:  # nosec B112 - a missing journey is skipped, not fatal
+            return
 
         if query_id in designed_map:
             journey["design"] = {
@@ -264,3 +319,5 @@ def materialize_design(
             }
 
         store.write_json(path, journey)
+
+    _materialize_parallel(store, db_name, job_id, all_query_ids, _update)
