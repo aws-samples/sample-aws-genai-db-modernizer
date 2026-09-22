@@ -207,3 +207,104 @@ def load_test_results(
         for row in rows
     ]
     return LoadTestResultsResponse(job_id=job_id, results=results)
+
+
+# ---------------------------------------------------------------------------
+# Query journeys — the per-query read-model the WebApp report + API serve.
+#
+# This replaces the ~1,654 per-query journey JSON artifacts: the same per-query
+# facts now live in the graph (Query node + READS_FROM + MIGRATES_TO + PART_OF),
+# so these return the SAME projected shape ``analysis_report._project_journey``
+# produced, sourced from the graph instead of one artifact read per query.
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402 - local alias, kept out of the module import block
+
+
+def _journey_from_row(row: dict) -> dict:
+    """Project one graph row into the journey read-model dict.
+
+    Mirrors ``analysis_report._project_journey``: ``source`` (with the nested
+    performance/characteristics decoded from their JSON columns), ``assignment``
+    (or None), ``design`` (engine + status, or None).
+    """
+
+    def _decode(blob: object) -> dict:
+        if not blob:
+            return {}
+        try:
+            out = _json.loads(blob)  # type: ignore[arg-type]
+            return out if isinstance(out, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+    source = {
+        "query_text": row.get("query_text"),
+        "query_type": row.get("query_type"),
+        "tables_accessed": [t for t in (row.get("tables_accessed") or []) if t is not None],
+        "frequency_per_hour": row.get("frequency_per_hour"),
+        "calls_per_second": row.get("calls_per_second"),
+        "performance": _decode(row.get("performance_json")),
+        "characteristics": _decode(row.get("characteristics_json")),
+    }
+
+    engine = row.get("assigned_engine")
+    assignment = (
+        {
+            "assigned_engine": engine,
+            "confidence": row.get("confidence"),
+            "in_scope": row.get("in_scope"),
+        }
+        if engine
+        else None
+    )
+
+    # A query that was designed has a PART_OF edge to an AccessPattern carrying the
+    # target engine. Presence == the design completed for that engine (the journey
+    # JSON's design section was {engine, status}; status was "completed" whenever a
+    # design existed for the query).
+    design_engine = row.get("design_engine")
+    design = {"engine": design_engine, "status": "completed"} if design_engine else None
+
+    return {
+        "query_id": row.get("query_id"),
+        "source": source,
+        "assignment": assignment,
+        "design": design,
+    }
+
+
+_JOURNEY_MATCH = (
+    "MATCH (q:Query) "
+    "OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) "
+    "OPTIONAL MATCH (q)-[m:MIGRATES_TO]->(d:Destination) "
+    "OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) "
+    "RETURN q.id AS query_id, q.sql_text AS query_text, "
+    "  q.operation_type AS query_type, q.calls_per_second AS calls_per_second, "
+    "  q.frequency_per_hour AS frequency_per_hour, q.in_scope AS in_scope, "
+    "  q.performance_json AS performance_json, "
+    "  q.characteristics_json AS characteristics_json, "
+    "  COLLECT(DISTINCT st.id) AS tables_accessed, "
+    "  d.engine AS assigned_engine, m.confidence AS confidence, "
+    "  COLLECT(DISTINCT ap.engine)[1] AS design_engine"
+)
+
+
+def query_journeys(store: GraphStore) -> list[dict]:
+    """Return every query's journey read-model, sourced from the graph.
+
+    Same shape as ``analysis_report._read_journeys`` returned from the per-query
+    JSON artifacts, so the report's flow aggregate and per-query drill-down render
+    identically. One graph query instead of N artifact reads.
+    """
+    rows = store.query(_JOURNEY_MATCH + " ORDER BY query_id")
+    return [_journey_from_row(r) for r in rows]
+
+
+def query_journey(store: GraphStore, query_id: str) -> dict | None:
+    """Return one query's journey read-model, or None if the query is unknown."""
+    rows = store.query(
+        _JOURNEY_MATCH.replace("MATCH (q:Query) ", "MATCH (q:Query {id: $qid}) ") + " LIMIT 1",
+        {"qid": query_id},
+    )
+    return _journey_from_row(rows[0]) if rows else None

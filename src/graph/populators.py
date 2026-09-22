@@ -56,6 +56,17 @@ def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
             "sql": p["query_text"],
             "cps": p["calls_per_second"],
             "op": p["query_type"],
+            # source.frequency_per_hour + the nested performance / characteristics
+            # blocks, carried so the report's per-query drill-down (General /
+            # Performance / Characteristics tabs) renders from the graph exactly as
+            # it did from the journey JSON. performance/characteristics are stored
+            # as JSON strings (display-only; nothing traverses into them).
+            # Default to 0.0 (a float), never None: LadybugDB infers the UNWIND
+            # struct column type from the values, and a None would type the column
+            # STRING and clash with the DOUBLE schema column.
+            "freq": float(p.get("frequency_per_hour") or 0.0),
+            "perf": json.dumps(p.get("performance") or {}),
+            "chars": json.dumps(p.get("characteristics") or {}),
         }
         for p in patterns
     ]
@@ -63,7 +74,9 @@ def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
         store.execute(
             "UNWIND $rows AS r MERGE (q:Query {id: r.id}) "
             "SET q.sql_text = r.sql, q.calls_per_second = r.cps, "
-            "q.operation_type = r.op, q.in_scope = true",
+            "q.operation_type = r.op, q.in_scope = true, "
+            "q.frequency_per_hour = r.freq, q.performance_json = r.perf, "
+            "q.characteristics_json = r.chars",
             {"rows": query_rows},
         )
 
