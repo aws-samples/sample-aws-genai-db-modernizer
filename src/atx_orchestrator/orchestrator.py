@@ -17,7 +17,6 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 )
 
 from src.atx_orchestrator.tools import (
-    declare_pipeline_plan,
     finalize_assignment_review,
     finalize_collection_upload,
     get_job_status,
@@ -53,11 +52,10 @@ their own DEPLOYED SUBAGENTS via the AWS Transform A2A (agent-to-agent) protocol
 You invoke them by name and the runtime handles instance spawning and message
 dispatch.
 
-  0. declare_pipeline_plan                 — FIRST STEP: register the pipeline plan
-                                             with the WebApp progress panel. Call this
-                                             once at the start of a new assessment so
-                                             users see per-phase status updates in the
-                                             UI as work progresses.
+  (The pipeline plan and the collection-upload panel are declared AUTOMATICALLY
+   at job start — you do NOT declare the plan or open the upload panel yourself.
+   Re-declaring the plan would reset the progress panel and is not a tool you have.)
+
   0b. finalize_collection_upload            — The collection-upload GATE (finalize half).
                                              The upload panel is raised AUTOMATICALLY at job
                                              start (it is the first step the customer sees); you
@@ -87,7 +85,7 @@ dispatch.
                                              PostgreSQL sources, Aurora-MySQL only for
                                              MySQL/MariaDB) are handled inside the agent from
                                              triage's output. Call it ONCE, after
-                                             declare_pipeline_plan.
+                                             finalize_collection_upload returns "recorded".
   1b. present_assignment_review /           — The assignment-review GATE (two steps).
       open_detailed_routing_review /         present_assignment_review returns a
       finalize_assignment_review             summary_markdown: the engine-level routing
@@ -139,7 +137,7 @@ Subagent invocation:
   look up instance IDs yourself.
 
 Progress reporting (WebApp UI):
-  After declare_pipeline_plan, the assessment-core agent reports IN_PROGRESS /
+  The pipeline plan is declared at job start; the assessment-core agent reports IN_PROGRESS /
   SUCCEEDED / FAILED status for each of its phases (collector, triage, the nested
   per-engine analysis sub-steps, assignment, reality_check) to the WebApp progress
   panel, with a short note on each step (for example the signals triage detected).
@@ -179,7 +177,6 @@ Workflow:
     synthesis, or how to sequence anything. Decide all of it yourself.
 
   - Then run this sequence without being asked, in order:
-      1. declare_pipeline_plan(job_id, database_name)
       1a. The collection-upload panel is already open (raised at job start). Wait
           for the customer to upload their collection there and tell you the
           database name. Then call finalize_collection_upload(job_id,
@@ -279,7 +276,6 @@ Key points:
 """
 
 PIPELINE_TOOLS = [
-    declare_pipeline_plan,
     finalize_collection_upload,
     run_assessment_core_via_a2a,
     present_assignment_review,
