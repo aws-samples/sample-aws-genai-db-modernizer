@@ -92,10 +92,10 @@ def materialize_source(
         store: ArtifactStore instance for persistence.
     """
     query_patterns: list[dict] = collector_output["queries"]["query_patterns"]
+    by_query: dict[str, dict] = {p["query_id"]: p for p in query_patterns}
 
-    for pattern in query_patterns:
-        query_id: str = pattern["query_id"]
-
+    def _write(query_id: str) -> None:
+        pattern = by_query[query_id]
         journey = {
             "query_id": query_id,
             "source": {
@@ -133,8 +133,14 @@ def materialize_source(
             "load_test": None,
             "sdk_code": None,
         }
-
         store.write_json(_journey_path(db_name, job_id, query_id), journey)
+
+    # Each journey is an independent write; fan them out so a workload with
+    # hundreds/thousands of queries isn't minutes of serial ATX upload latency
+    # (the reference discourse run writes 1,654 journeys here). Mirrors the three
+    # downstream materializers below. _write is create-only (no prior read), so
+    # the index warm-up in _materialize_parallel is a cheap no-op here.
+    _materialize_parallel(store, db_name, job_id, by_query.keys(), _write)
 
 
 def _project_assignment(entry: dict) -> dict:

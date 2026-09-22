@@ -344,15 +344,18 @@ class TestMaterializeSourceIdempotency:
             assert c1[0][1] == c2[0][1]  # same data
 
     def test_idempotent_does_not_read_existing_file(self):
-        """materialize_source overwrites without checking existence."""
+        """materialize_source overwrites without reading existing files."""
         store = _mock_store()
         collector_output = _make_collector_output()
 
         materialize_source(collector_output, "mydb", "job-001", store)
         materialize_source(collector_output, "mydb", "job-001", store)
 
-        # exists() should never be called — pure write, no conditional logic
-        store.exists.assert_not_called()
+        # read_json() is never called — pure create, no read-modify-write /
+        # conditional-on-existence logic. (exists() may be called once per run to
+        # warm the store's path->id index before the write fan-out; that is an
+        # optimization, not a correctness check on the journey.)
+        store.read_json.assert_not_called()
         assert store.write_json.call_count == 2
 
 
@@ -1351,3 +1354,28 @@ class TestParallelMaterialization:
         for qid in present:
             j = data_store[f"mydb/job-x/query-journeys/{qid}.json"]
             assert j["assignment"]["assigned_engine"] == "opensearch"
+
+    def test_source_creates_every_journey_across_threads(self):
+        # materialize_source is the initial fan-out: one create per query pattern,
+        # no prior read. Under the ATX backend this is the largest batch (the
+        # reference discourse run writes 1,654 here), so it must parallelize like
+        # the update materializers and still write exactly one correct journey
+        # per query with nothing dropped or cross-contaminated.
+        qids = [f"q{i:04d}" for i in range(250)]
+        # Empty seed: source materialization creates the journeys from scratch.
+        store, data_store = self._dict_store([])
+        patterns = [_make_query_pattern(query_id=qid) for qid in qids]
+        collector_output = _make_collector_output(patterns)
+
+        materialize_source(collector_output, "mydb", "job-x", store)
+
+        assert store.write_json.call_count == len(qids)
+        # read_json is never used — pure create, no read-modify-write.
+        store.read_json.assert_not_called()
+        for qid in qids:
+            j = data_store[f"mydb/job-x/query-journeys/{qid}.json"]
+            assert j["query_id"] == qid
+            assert j["source"]["query_text"] == "SELECT * FROM orders WHERE id = ?"
+            assert j["assignment"] is None
+            assert j["design"] is None
+            assert j["load_test"] is None
