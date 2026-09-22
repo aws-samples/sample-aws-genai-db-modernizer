@@ -570,6 +570,11 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     summary_key = f"{database_name}/{job_id}/assignment/review/summary-v{version}.md"
     try:
         store.write_text(summary_key, summary_md, "text/markdown")
+    except NotImplementedError:
+        # The ATX store is JSON-only and cannot hold markdown. Staging here is
+        # pure best-effort provenance — the summary is returned to the caller
+        # regardless — so this is expected on that backend, not a failure.
+        logger.debug("ATX store is JSON-only; skipped staging routing summary at %s", summary_key)
     except Exception:  # noqa: BLE001 - staging is best-effort; the markdown is returned regardless
         logger.warning("ATX: could not stage routing summary at %s", summary_key, exc_info=True)
 
@@ -686,6 +691,11 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     review_key = f"{database_name}/{job_id}/assignment/review/v{version}.md"
     try:
         store.write_text(review_key, review_md, "text/markdown")
+    except NotImplementedError:
+        # JSON-only ATX store cannot hold markdown; the review_md is published to
+        # the Artifacts panel and returned to chat below, so this staging copy is
+        # expected to be skipped on that backend.
+        logger.debug("ATX store is JSON-only; skipped staging review doc at %s", review_key)
     except Exception:  # noqa: BLE001 - staging is best-effort
         logger.warning("ATX: could not stage review doc at %s", review_key, exc_info=True)
     try:
@@ -1473,10 +1483,13 @@ def _record_pending_hitl(
     ``.meta`` ASSIGNMENT_REVIEW phase (ADR-028), so no approval artifact is added.
     """
     try:
-        store.write_text(  # type: ignore[attr-defined]
+        # write_json (not write_text): the ATX artifact store is JSON-only and
+        # raises on write_text, which would silently drop this pointer and break
+        # the resume path (the later turn would find no pending HITL and could not
+        # read the customer's submission back). Read side uses read_json.
+        store.write_json(  # type: ignore[attr-defined]
             _pending_hitl_key(database_name, job_id),
-            json.dumps({"hitl_task_id": hitl_task_id, "assignment_version": version}),
-            "application/json",
+            {"hitl_task_id": hitl_task_id, "assignment_version": version},
         )
     except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
         logger.warning(
