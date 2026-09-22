@@ -1527,12 +1527,16 @@ def _resolved_input_key_key(database_name: str, job_id: str) -> str:
 
 
 def _record_pending_upload(store: object, job_id: str, hitl_task_id: str) -> None:
-    """Persist the upload HITL task the gate is blocked on (best-effort). Job-scoped."""
+    """Persist the upload HITL task the gate is blocked on (best-effort). Job-scoped.
+
+    Uses ``write_json`` (not ``write_text``): the ATX artifact store is JSON-only
+    and raises on ``write_text``, so a text write would silently lose the pointer
+    and the assessment would fall through to an empty input_key.
+    """
     try:
-        store.write_text(  # type: ignore[attr-defined]
+        store.write_json(  # type: ignore[attr-defined]
             _pending_upload_key(job_id),
-            json.dumps({"hitl_task_id": hitl_task_id}),
-            "application/json",
+            {"hitl_task_id": hitl_task_id},
         )
     except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
         logger.warning(
@@ -1558,12 +1562,15 @@ def _read_pending_upload(store: object, job_id: str) -> dict | None:
 def _record_resolved_input_key(
     store: object, database_name: str, job_id: str, input_key: str
 ) -> None:
-    """Persist the resolved collection ``input_key`` (best-effort)."""
+    """Persist the resolved collection ``input_key`` (best-effort).
+
+    Uses ``write_json`` (not ``write_text``): the ATX artifact store is JSON-only
+    and raises on ``write_text``.
+    """
     try:
-        store.write_text(  # type: ignore[attr-defined]
+        store.write_json(  # type: ignore[attr-defined]
             _resolved_input_key_key(database_name, job_id),
-            json.dumps({"input_key": input_key}),
-            "application/json",
+            {"input_key": input_key},
         )
     except Exception:  # noqa: BLE001 - a lost pointer only degrades a later resume
         logger.warning(

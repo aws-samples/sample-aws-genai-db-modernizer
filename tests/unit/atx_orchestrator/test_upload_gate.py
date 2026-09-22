@@ -189,3 +189,66 @@ class TestAssessmentGate:
 
         message = json.loads(m.call_args[0][1])
         assert message["input_key"] == "artifact://file-77"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regression: the gate pointers must round-trip on the JSON-only ATX store.
+#
+# The ATX artifact store (production backend) is JSON-only — write_text RAISES.
+# An earlier version persisted the pending / resolved pointers via write_text,
+# which the store rejected, so the pointer was silently lost and the assessment
+# fell through to an empty input_key (collector FileNotFoundError). This test
+# drives the gate against a real TransformAtxStore (JSON-only) so that class of
+# bug fails here instead of only in the deployed runtime.
+
+
+class TestGateOnAtxStore:
+    def _atx_store(self):
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+        from tests.unit.atx_orchestrator.test_atx_store import _FakeSdkStore
+
+        return TransformAtxStore(sdk_store=_FakeSdkStore(), agent_instance_id="inst-1")
+
+    def test_pending_and_resolved_pointers_roundtrip(self) -> None:
+        store = self._atx_store()
+        # record_pending must not raise on the JSON-only store, and must be readable.
+        tools._record_pending_upload(store, JOB, "hitl-1")
+        assert tools._read_pending_upload(store, JOB) == {"hitl_task_id": "hitl-1"}
+        # resolved input_key likewise.
+        tools._record_resolved_input_key(store, DB, JOB, "artifact://file-9")
+        assert tools._read_resolved_input_key(store, DB, JOB) == "artifact://file-9"
+
+    def test_full_gate_flow_on_atx_store(self) -> None:
+        """Job-start raise -> finalize -> assessment reads the key, all on the ATX store."""
+        store = self._atx_store()
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._platform_job_id", side_effect=lambda x: x or JOB),
+            patch("src.atx_orchestrator.tools.declare_pipeline_plan"),
+            patch("src.atx_orchestrator.tools.get_step_id", return_value="step-upload"),
+            patch("src.atx_orchestrator.runtime.hitl.raise_file_upload", return_value="hitl-1"),
+            patch("src.atx_orchestrator.tools.mark_step_pending_human_input"),
+        ):
+            tools.declare_plan_and_request_upload(JOB)
+        # The pending pointer survived the JSON-only write.
+        assert tools._read_pending_upload(store, JOB) == {"hitl_task_id": "hitl-1"}
+
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._platform_job_id", side_effect=lambda x: x),
+            patch(
+                "src.atx_orchestrator.runtime.hitl.read_file_upload_submission",
+                return_value=("submitted", "file-9"),
+            ),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            result = json.loads(tools.finalize_collection_upload(job_id=JOB, database_name=DB))
+        assert result["status"] == "recorded"
+
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.atx_orchestrator.tools._platform_job_id", side_effect=lambda x: x),
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
+        ):
+            tools.run_assessment_core_via_a2a(job_id=JOB, database_name=DB)
+        assert json.loads(m.call_args[0][1])["input_key"] == "artifact://file-9"
