@@ -461,7 +461,7 @@ class TestRunLoadTestDocumentDB:
 
 class TestWriteArtifactsFanOut:
     """_write_artifacts fans the per-query result writes out through
-    run_parallel_io (one result artifact per load-tested query — ~1,654 on the
+    run_parallel (one result artifact per load-tested query — ~1,654 on the
     reference discourse run — is otherwise minutes of serial ATX upload latency).
     Verify every query's result lands at its own distinct key and the surrounding
     fixed-count artifacts are still written."""

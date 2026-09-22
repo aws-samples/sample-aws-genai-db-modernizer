@@ -9,7 +9,7 @@ import structlog
 from src.agents.load_test.base import BaseProvisioner, BaseRunner, BaseScriptGenerator, BaseSeeder
 from src.agents.load_test.dynamodb.script_generator import sanitize_metric_id
 from src.agents.load_test.models import RunResult
-from src.agents.query_journey_materializer import materialize_load_test, run_parallel_io
+from src.agents.query_journey_materializer import materialize_load_test
 from src.contracts.load_test_models import (
     InfrastructureManifest,
     LatencyPercentiles,
@@ -19,6 +19,7 @@ from src.contracts.load_test_models import (
     TestConfig,
 )
 from src.storage.artifact_store import ArtifactStore
+from src.storage.parallel import run_parallel
 
 logger = structlog.get_logger()
 
@@ -533,5 +534,5 @@ def _write_artifacts(
     def _write_result(pr: PatternResult) -> None:
         store.write_json(f"{base}/results/{pr.query_id}.json", pr.model_dump())
 
-    run_parallel_io(_write_result, pattern_results)
+    run_parallel(_write_result, pattern_results)
     store.write_json(f"{base}/results/summary.json", output.model_dump())

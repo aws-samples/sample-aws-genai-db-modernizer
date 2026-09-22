@@ -30,20 +30,15 @@ import html
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.storage.parallel import map_parallel
+
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-# A real job has one journey object per query pattern -- 1,654 for the reference
-# discourse run. Read serially against S3 that is ~2 minutes of pure round-trip
-# latency inside the synthesis step; fanned out it is a few seconds. boto3 clients
-# are thread-safe for calls, and every read here is independent.
-_JOURNEY_READ_WORKERS = 32
 
 # Colours are NOT defined here. The report palette lives in exactly one place -- the
 # ":root" block of REPORT_CSS in src/ui/src/utils/ExportReport.js, synced into
@@ -239,19 +234,11 @@ def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
         return []
 
     json_keys = [k for k in keys if k.endswith(".json")]
-    if not json_keys:
-        return []
 
-    def _one(key: str) -> dict | None:
-        try:
-            return _project_journey(store.read_json(key))
-        except Exception:  # noqa: BLE001 - skip an unreadable journey, keep the rest
-            return None
-
-    workers = min(_JOURNEY_READ_WORKERS, len(json_keys))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(_one, json_keys))
-    return [j for j in results if j is not None]
+    # One journey read per query (1,654 on the reference discourse run) — fan
+    # out through the shared store-IO helper, preserving order and skipping any
+    # unreadable journey.
+    return map_parallel(lambda k: _project_journey(store.read_json(k)), json_keys)
 
 
 # ---------------------------------------------------------------------------

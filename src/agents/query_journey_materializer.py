@@ -9,54 +9,23 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar
 
 from src.storage.artifact_store import ArtifactStore
+from src.storage.parallel import run_parallel
 
 logger = logging.getLogger(__name__)
 
-# Old-style TypeVar rather than PEP 695 (`def f[T](...)`): the project's mypy
-# does not yet support PEP 695 generics. noqa silences ruff's UP047 upgrade hint.
-T = TypeVar("T")
-
 # Journey materialization is a per-query read-modify-write against the
 # ArtifactStore. Under the ATX backend each read_json/write_json is a network
-# round trip (create download/upload URL + S3 transfer), so a workload with
-# hundreds of queries (the reference discourse run has 1,654) is minutes of pure
-# serial latency. The reads/writes are independent per query, so fan them out —
-# mirrors the ThreadPoolExecutor(32) reader in
-# src/atx_orchestrator/runtime/analysis_report.py (same rationale documented
-# there). Local/S3 backends are unaffected; the pool just runs cheap calls.
-_MATERIALIZE_WORKERS = 32
+# round trip, so a workload with hundreds of queries (the reference discourse
+# run has 1,654) is minutes of pure serial latency. The reads/writes are
+# independent per query, so they fan out through the shared store-IO helper in
+# src.storage.parallel (see that module for the full rationale).
 
 
 def _journey_path(db_name: str, job_id: str, query_id: str) -> str:
     """Return the S3/store path for a query journey file."""
     return f"{db_name}/{job_id}/query-journeys/{query_id}.json"
-
-
-def run_parallel_io(work_one: Callable[[T], None], items: Iterable[T]) -> None:  # noqa: UP047
-    """Run ``work_one(item)`` for every item across a bounded thread pool.
-
-    Generic fan-out for independent per-item ArtifactStore IO. On the ATX
-    backend each read_json/write_json is a network round trip (~0.3-0.5s), so a
-    loop over hundreds/thousands of items is minutes of pure serial latency;
-    fanning them out collapses that to roughly ``ceil(n / workers)``. Callers
-    must ensure each item's work touches a DISTINCT key (no shared accumulator,
-    no read-modify-write of a common key) — that independence is what makes the
-    fan-out safe. Local/S3 backends just run cheap calls in the pool.
-
-    The pool is capped at ``len(items)`` so small workloads don't spin up idle
-    threads. ``list()`` forces evaluation so an exception in any worker surfaces
-    here rather than being silently dropped by a lazy map.
-    """
-    work = list(items)
-    if not work:
-        return
-    workers = min(_MATERIALIZE_WORKERS, len(work))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(work_one, work))
 
 
 def _materialize_parallel(
@@ -89,7 +58,7 @@ def _materialize_parallel(
     except Exception:  # noqa: BLE001 - warming is an optimization, not correctness
         logger.debug("journey index warm-up skipped", exc_info=True)
 
-    run_parallel_io(update_one, ids)
+    run_parallel(update_one, ids)
 
 
 def materialize_source(

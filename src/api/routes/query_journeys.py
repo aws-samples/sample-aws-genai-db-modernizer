@@ -4,9 +4,9 @@ import math
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.agents.query_journey_materializer import run_parallel_io
 from src.api.services.step_functions import StepFunctionsService
 from src.storage.artifact_store import ArtifactStore
+from src.storage.parallel import map_parallel
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["query-journeys"])
 
@@ -57,20 +57,10 @@ async def list_query_journeys(
     page_keys = all_keys[start:end]
 
     # Read the page's journeys concurrently — on the ATX backend each read is a
-    # network round trip, so a full 200-item page is ~60-100s serially. Fan out
-    # but preserve page order (results indexed by position) and keep the
-    # skip-on-read-error behavior (a bad key is simply omitted).
+    # network round trip, so a full 200-item page is ~60-100s serially.
+    # map_parallel preserves page order and drops any unreadable journey.
     store = artifact_store
-    results: list[dict | None] = [None] * len(page_keys)
-
-    def _read_at(idx: int) -> None:
-        try:
-            results[idx] = store.read_json(page_keys[idx])
-        except Exception:  # noqa: BLE001 - a single unreadable journey is skipped, not fatal
-            results[idx] = None
-
-    run_parallel_io(_read_at, range(len(page_keys)))
-    items = [j for j in results if j is not None]
+    items = map_parallel(store.read_json, page_keys)
 
     return {
         "job_id": job_id,
