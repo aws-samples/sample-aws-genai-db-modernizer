@@ -124,3 +124,75 @@ class TestDownloadGraph:
             graph_transport.download_graph(cast(ArtifactStore, store), "mydb", "job-1", str(dest))
             is False
         )
+
+
+class TestBuildAndPublishGraph:
+    """build_and_publish_graph rebuilds the graph from the job's contract JSON
+    (via the real GraphStore + rebuild_graph) and publishes the .lbug + pointer.
+    Uses a real LadybugDB graph over the fake store, so it proves the whole
+    boundary path end to end."""
+
+    def _seed_contracts(self, store) -> None:
+        # Minimal collector + assignment contracts, written as STATE JSON the way
+        # a real phase would. rebuild_graph reads these by key.
+        store.write_json(
+            "mydb/job-1/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_text": "SELECT * FROM orders WHERE id = ?",
+                            "query_type": "SELECT",
+                            "tables_accessed": ["orders"],
+                            "calls_per_second": 10.0,
+                        }
+                    ]
+                }
+            },
+        )
+        store.write_json(
+            "mydb/job-1/assignment/v1/assignment.json",
+            {
+                "query_assignments": [
+                    {
+                        "query_id": "q1",
+                        "assigned_engine": "dynamodb",
+                        "confidence": 0.9,
+                        "source_tables": ["orders"],
+                        "assignment_reason": "kv",
+                        "in_scope": True,
+                    }
+                ],
+                "table_assignments": [],
+                "co_dependency_groups": [],
+            },
+        )
+
+    def test_builds_from_contracts_publishes_and_pointer(self) -> None:
+        store, sdk = _store()
+        self._seed_contracts(store)
+
+        captured: dict[str, bytes] = {}
+
+        def _fake_publish(items):
+            content = items[0][0]
+            captured["bytes"] = content
+            sdk._by_id["graph-art-1"] = ("Assessment Context Graph", "CUSTOMER_OUTPUT", content)
+            return {graph_transport._GRAPH_LABEL: "graph-art-1"}
+
+        with patch("src.atx_orchestrator.runtime.artifacts.publish", side_effect=_fake_publish):
+            aid = graph_transport.build_and_publish_graph(store, "mydb", "job-1")
+
+        assert aid == "graph-art-1"
+        # A non-empty .lbug was built and handed to publish().
+        assert captured["bytes"] and len(captured["bytes"]) > 0
+        # Pointer recorded.
+        pointer = store.read_json(graph_transport.pointer_key("mydb", "job-1"))
+        assert pointer["artifact_id"] == "graph-art-1"
+
+    def test_build_failure_is_swallowed(self) -> None:
+        # rebuild_graph blowing up must not raise out of build_and_publish_graph.
+        store, _sdk = _store()
+        with patch("src.graph.populators.rebuild_graph", side_effect=RuntimeError("boom")):
+            assert graph_transport.build_and_publish_graph(store, "mydb", "job-1") is None

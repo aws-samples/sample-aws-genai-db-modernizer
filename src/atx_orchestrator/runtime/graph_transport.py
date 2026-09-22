@@ -28,6 +28,7 @@ mechanism, no change to how the store lists artifacts.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -49,6 +50,60 @@ _GRAPH_LABEL = "Assessment Context Graph"
 def pointer_key(db_name: str, job_id: str) -> str:
     """STATE JSON key holding the published .lbug's artifact id."""
     return f"{db_name}/{job_id}/{_POINTER_SUFFIX}"
+
+
+def build_and_publish_graph(store: ArtifactStore, db_name: str, job_id: str) -> str | None:
+    """Rebuild the graph from the job's contract artifacts, then publish it.
+
+    Called at a single-writer pipeline boundary (end of assessment-core, and at
+    synthesis after the concurrent schema fan-out has joined). ``rebuild_graph``
+    reads whatever contract JSON exists so far and populates a fresh local
+    ``.lbug``; :func:`publish_graph` then uploads it EXTERNAL and records the
+    STATE pointer. Idempotent across boundaries — a later call rebuilds from the
+    now-richer artifact set and republishes, overwriting the pointer.
+
+    Entirely best-effort: any failure (graph deps unavailable, an unreadable
+    artifact, publishing unavailable outside the ATX runtime) is logged and
+    swallowed. Building the read-model must never fail the phase whose real work
+    (the contract JSON) already succeeded. Returns the published artifact id, or
+    ``None`` when nothing was published.
+    """
+    import tempfile
+
+    try:
+        from src.graph import GraphStore
+        from src.graph.populators import rebuild_graph
+    except Exception:  # noqa: BLE001 - graph deps unavailable; skip silently
+        logger.debug("graph module unavailable; skipping build_and_publish_graph", exc_info=True)
+        return None
+
+    # Build into a throwaway job-scoped dir. LadybugDB is single-file + single
+    # writer; this process is the only writer at this boundary, and the dir is
+    # discarded once the bytes are published.
+    with tempfile.TemporaryDirectory(prefix=f"graph-{job_id}-") as tmpdir:
+        local_path = str(Path(tmpdir) / "context.lbug")
+        graph_store = None
+        try:
+            graph_store = GraphStore(local_path)
+            stats = rebuild_graph(db_name, job_id, store, graph_store)
+            logger.info(
+                "Built context graph for %s/%s: %s nodes, %s edges (%sms)",
+                db_name,
+                job_id,
+                stats.get("nodes_created"),
+                stats.get("edges_created"),
+                stats.get("duration_ms"),
+            )
+        except Exception:  # noqa: BLE001 - a build failure must not fail the phase
+            logger.warning("context graph build failed for %s/%s", db_name, job_id, exc_info=True)
+            return None
+        finally:
+            # Release the file lock before reading the bytes to publish.
+            if graph_store is not None:
+                with contextlib.suppress(Exception):
+                    graph_store.close()
+
+        return publish_graph(store, db_name, job_id, local_path)
 
 
 def _graph_download_name(db_name: str, job_id: str) -> str:

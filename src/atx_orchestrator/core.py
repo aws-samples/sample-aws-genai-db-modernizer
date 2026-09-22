@@ -1183,7 +1183,7 @@ def run_assessment_core(
             detail = "No consolidation; assignment unchanged"
         on_phase_done("reality_check", reality_check_summary, detail)
 
-    return {
+    result = {
         "job_id": job_id,
         "database_name": database_name,
         "collector": collect_summary,
@@ -1211,6 +1211,41 @@ def run_assessment_core(
             "after_distribution": reality_check_summary.get("after_distribution", {}),
         },
     }
+
+    # Build + publish the context graph read-model from the contract artifacts
+    # just written (collector/triage/analysis/assignment/reality-check). This is
+    # a single-writer boundary — assessment-core is one process — so it is safe
+    # to build the graph here. Best-effort: never fails the assessment. Skipped
+    # under JOURNEY_MODE=json (the legacy per-query journeys are the read-model
+    # there); runs under the default graph mode and under both.
+    _maybe_build_graph(store, job_id, database_name)
+
+    return result
+
+
+def _maybe_build_graph(store, job_id: str, database_name: str) -> None:
+    """Build + publish the context graph unless JOURNEY_MODE is legacy 'json'.
+
+    Wrapped so a graph-build failure can never propagate into the phase. The
+    graph is the read-model that replaces the per-query journey artifacts, so it
+    is built whenever journeys are NOT the sole read-model (graph/both), and
+    skipped when the caller explicitly asked for legacy journeys only (json).
+    """
+    from src.agents.query_journey_materializer import _journey_mode
+
+    if _journey_mode() == "json":
+        return
+    try:
+        from src.atx_orchestrator.runtime.graph_transport import build_and_publish_graph
+
+        build_and_publish_graph(store, database_name, job_id)
+    except Exception:  # noqa: BLE001 - read-model build must never fail the phase
+        logger.warning(
+            "context graph build/publish skipped for %s/%s",
+            database_name,
+            job_id,
+            exc_info=True,
+        )
 
 
 def run_synthesis_core(
