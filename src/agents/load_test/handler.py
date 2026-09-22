@@ -9,7 +9,7 @@ import structlog
 from src.agents.load_test.base import BaseProvisioner, BaseRunner, BaseScriptGenerator, BaseSeeder
 from src.agents.load_test.dynamodb.script_generator import sanitize_metric_id
 from src.agents.load_test.models import RunResult
-from src.agents.query_journey_materializer import materialize_load_test
+from src.agents.query_journey_materializer import materialize_load_test, run_parallel_io
 from src.contracts.load_test_models import (
     InfrastructureManifest,
     LatencyPercentiles,
@@ -525,6 +525,13 @@ def _write_artifacts(
     )
     store.write_json(f"{base}/infrastructure.json", manifest.model_dump())
     store.write_json(f"{base}/seed-manifest.json", seed_manifest.model_dump())
-    for pr in pattern_results:
+
+    # One result artifact per load-tested query (scales with query count — the
+    # reference discourse run is ~1,654). Each write targets a distinct key, so
+    # fan them out instead of paying serial ATX upload latency; the surrounding
+    # fixed-count writes stay serial.
+    def _write_result(pr: PatternResult) -> None:
         store.write_json(f"{base}/results/{pr.query_id}.json", pr.model_dump())
+
+    run_parallel_io(_write_result, pattern_results)
     store.write_json(f"{base}/results/summary.json", output.model_dump())

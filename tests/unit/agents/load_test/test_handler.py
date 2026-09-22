@@ -457,3 +457,69 @@ class TestRunLoadTestDocumentDB:
         # Endpoint key was NOT added (no cluster found)
         passed_schema = seeder.seed.call_args.args[0]
         assert "_documentdb_endpoint" not in passed_schema
+
+
+class TestWriteArtifactsFanOut:
+    """_write_artifacts fans the per-query result writes out through
+    run_parallel_io (one result artifact per load-tested query — ~1,654 on the
+    reference discourse run — is otherwise minutes of serial ATX upload latency).
+    Verify every query's result lands at its own distinct key and the surrounding
+    fixed-count artifacts are still written."""
+
+    def _output(self, pattern_results):
+        from src.agents.load_test.models import SeedManifest
+        from src.contracts.load_test_models import InfrastructureManifest, TestConfig
+
+        return _build_output(
+            run_id="r",
+            schema_version=1,
+            target_engine="dynamodb",
+            test_config=TestConfig(duration_minutes=1, warmup_seconds=10),
+            manifest=InfrastructureManifest(resources=[], tags={}),
+            seed_manifest=SeedManifest(resources={}, total_items=0, duration_seconds=0.0),
+            pattern_results=pattern_results,
+        )
+
+    def test_writes_one_result_artifact_per_query(self):
+        import threading
+
+        from src.agents.load_test.handler import _write_artifacts
+        from src.agents.load_test.models import SeedManifest
+        from src.contracts.load_test_models import InfrastructureManifest, TestConfig
+
+        qids = [f"q{i:04d}" for i in range(200)]
+        pattern_results = [_pattern_result(q, total_requests=100, error_rate_pct=0.0) for q in qids]
+        output = self._output(pattern_results)
+
+        written: dict[str, dict] = {}
+        lock = threading.Lock()
+        store = MagicMock()
+
+        def _write(path, data):
+            with lock:
+                written[path] = data
+
+        store.write_json.side_effect = _write
+
+        _write_artifacts(
+            store=store,
+            base="test_db/j1/load-test-dynamodb/v1",
+            output=output,
+            manifest=InfrastructureManifest(resources=[], tags={}),
+            seed_manifest=SeedManifest(resources={}, total_items=0, duration_seconds=0.0),
+            pattern_results=pattern_results,
+            test_config=TestConfig(duration_minutes=1, warmup_seconds=10),
+            job_id="j1",
+            run_id="r",
+            database_name="test_db",
+        )
+
+        base = "test_db/j1/load-test-dynamodb/v1"
+        # Every per-query result artifact was written to its own distinct key,
+        # regardless of completion order under the thread pool.
+        for q in qids:
+            assert f"{base}/results/{q}.json" in written
+        # Fixed-count surrounding artifacts still written.
+        for name in ("config.json", "infrastructure.json", "seed-manifest.json"):
+            assert f"{base}/{name}" in written
+        assert f"{base}/results/summary.json" in written
