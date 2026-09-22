@@ -83,6 +83,42 @@ def _platform_job_id(supplied: str) -> str:
 # Opus advisor passes that step 2b removed.
 _AGENT_PREFIX = os.environ.get("AGENT_NAME_PREFIX", "db-modernization")
 
+# A2A wait ceiling for a single schema-design engine. These are the heaviest LLM
+# subagents (an engine's design is ~10-15 min of Bedrock work in practice), and
+# the default invoke_and_wait ceiling of 1800s (30 min) was tripping ElastiCache
+# and Aurora PostgreSQL. Set a wide ceiling so a slow-but-healthy design is not
+# killed mid-flight; a real hang still terminates well within the platform's own
+# limits. Overridable via env for tuning without a redeploy, clamped to a hard
+# 180-minute maximum.
+_SCHEMA_DESIGN_TIMEOUT_MAX_S = 180 * 60  # hard cap: 3 hours
+_SCHEMA_DESIGN_TIMEOUT_DEFAULT_S = 120 * 60  # default: 2 hours
+
+
+def _schema_design_timeout_s() -> float:
+    """Resolve the per-engine schema-design A2A timeout (seconds), env-overridable.
+
+    ``SCHEMA_DESIGN_TIMEOUT_MINUTES`` overrides the 120-minute default; any value
+    is clamped to (0, 180] minutes so a misconfiguration can neither disable the
+    timeout nor exceed the 3-hour hard cap.
+    """
+    default_min = _SCHEMA_DESIGN_TIMEOUT_DEFAULT_S / 60
+    raw = os.environ.get("SCHEMA_DESIGN_TIMEOUT_MINUTES")
+    minutes = default_min
+    if raw:
+        try:
+            minutes = float(raw)
+        except ValueError:
+            logger.warning(
+                "ATX: invalid SCHEMA_DESIGN_TIMEOUT_MINUTES=%r; using default %.0f min",
+                raw,
+                default_min,
+            )
+            minutes = default_min
+    # Clamp to (0, 180]: a non-positive value would mean "no wait", which is never
+    # intended; above 180 min exceeds the hard cap.
+    minutes = max(1.0, min(minutes, _SCHEMA_DESIGN_TIMEOUT_MAX_S / 60))
+    return minutes * 60.0
+
 
 @tool
 def declare_pipeline_plan(job_id: str, database_name: str) -> str:
@@ -1815,7 +1851,7 @@ def _run_schema_design_via_a2a(
     mark_step_running("schema")
     mark_step_running(step)
     try:
-        payload = invoke_and_wait(agent_id, message)
+        payload = invoke_and_wait(agent_id, message, timeout=_schema_design_timeout_s())
     except A2AError as e:
         logger.error("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
         mark_step_failed(step, str(e))
