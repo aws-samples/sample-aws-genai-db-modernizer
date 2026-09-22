@@ -1158,6 +1158,35 @@ def run_synthesis_via_a2a(
     return result
 
 
+def _stage_durable_copy(store: object, key: str, content: object) -> None:
+    """Write a rendered deliverable to the store as the durable "system of record"
+    copy, tolerating the JSON-only ATX backend.
+
+    On the S3/local backend this persists the deliverable so it survives the
+    customer stopping the job. On the ATX artifact-store backend the store is
+    JSON-only and raises ``NotImplementedError`` for text/bytes — there is no S3
+    bucket of ours to be the system of record, and the actual customer-facing
+    delivery is ``artifacts.publish`` (a direct byte upload), not this copy. So a
+    NotImplementedError here is EXPECTED and must be skipped, NOT allowed to abort
+    the caller before it reaches publish(). Any other error is logged and
+    swallowed too — a durable-copy failure must never withhold a rendered report.
+
+    ``content`` is ``str`` (written via ``write_text``) or ``bytes``/bytearray
+    (written via ``write_bytes``).
+    """
+    try:
+        if isinstance(content, (bytes, bytearray)):
+            store.write_bytes(key, content)  # type: ignore[attr-defined]
+        else:
+            store.write_text(key, content)  # type: ignore[attr-defined]
+    except NotImplementedError:
+        logger.debug(
+            "store is JSON-only; skipped durable copy at %s (publish is the delivery)", key
+        )
+    except Exception:  # noqa: BLE001 - durable copy is best-effort; publish still delivers
+        logger.warning("ATX: could not stage durable copy at %s", key, exc_info=True)
+
+
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
     """Render the audience-shaped deliverables from the synthesis report.json and
     publish them as CUSTOMER_OUTPUT.
@@ -1222,9 +1251,11 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         # into it would risk failing validation for the sake of a filename.
         data_json = json.dumps({"_artifact": data_prov, **report}, indent=2)
 
-        # S3-first: our bucket is the system of record (survives job stop).
-        store.write_text(f"{base}/{decision_prov['filename']}", decision_html, "text/html")
-        store.write_text(f"{base}/{engineering_prov['filename']}", engineering_md, "text/markdown")
+        # Durable "system of record" copy on the S3/local backend; skipped on the
+        # JSON-only ATX backend (where publish() below is the actual delivery).
+        # Must not abort before publish() — see _stage_durable_copy.
+        _stage_durable_copy(store, f"{base}/{decision_prov['filename']}", decision_html)
+        _stage_durable_copy(store, f"{base}/{engineering_prov['filename']}", engineering_md)
 
         items: list = [
             (
@@ -1267,7 +1298,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             analysis_html = _ar.render_analysis_report_html(
                 export_data, filename=analysis_prov["filename"]
             )
-            store.write_text(f"{base}/{analysis_prov['filename']}", analysis_html, "text/html")
+            _stage_durable_copy(store, f"{base}/{analysis_prov['filename']}", analysis_html)
             items.append(
                 (
                     analysis_html.encode("utf-8"),
@@ -1303,8 +1334,8 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             # deliverable and is called the same thing in every engagement. The
             # job it belongs to is already in the key prefix (and in the deck's
             # own core properties), so no date-stamped stem is needed.
-            store.write_bytes(f"{base}/{_pptx.FILENAME}", deck)
-            store.write_bytes(f"{base}/{_pdf.FILENAME}", deck_pdf)
+            _stage_durable_copy(store, f"{base}/{_pptx.FILENAME}", deck)
+            _stage_durable_copy(store, f"{base}/{_pdf.FILENAME}", deck_pdf)
             items.append(
                 (
                     deck_pdf,
