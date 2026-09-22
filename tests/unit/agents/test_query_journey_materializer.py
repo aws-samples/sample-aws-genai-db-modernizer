@@ -6,11 +6,22 @@ TDD: tests written before implementation.
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _journeys_on(monkeypatch: pytest.MonkeyPatch):
+    """These tests pin the journey WRITE behavior, which is now gated behind
+    JOURNEY_MODE. The default is 'graph' (journeys off), so force a write-enabled
+    mode for the whole module. The gate itself (no-op under 'graph') is covered
+    separately in TestJourneyModeGate."""
+    monkeypatch.setenv("JOURNEY_MODE", "both")
 
 
 def _mock_store() -> MagicMock:
@@ -1379,3 +1390,107 @@ class TestParallelMaterialization:
             assert j["assignment"] is None
             assert j["design"] is None
             assert j["load_test"] is None
+
+
+# ---------------------------------------------------------------------------
+# JOURNEY_MODE gate — the graph-backed replacement default no-ops the journey
+# writes; json/both keep them. This is the switch that removes the ~1,654
+# per-query ATX artifact writes (and their throttling).
+# ---------------------------------------------------------------------------
+
+
+class TestJourneyModeGate:
+    def _run_all_materializers(self, store) -> None:
+        from src.agents.query_journey_materializer import (
+            materialize_assignment,
+            materialize_design,
+            materialize_load_test,
+            materialize_source,
+        )
+
+        materialize_source(_make_collector_output(), "mydb", "job-1", store)
+        materialize_assignment(
+            {
+                "query_assignments": [
+                    {
+                        "query_id": "q_001",
+                        "assigned_engine": "dynamodb",
+                        "confidence": 90,
+                        "assignment_reason": "r",
+                        "in_scope": True,
+                        "customer_override": False,
+                        "warnings": [],
+                    }
+                ]
+            },
+            "mydb",
+            "job-1",
+            store,
+        )
+        materialize_design(
+            {"access_patterns": [], "unsupported_patterns": [], "trade_offs": []},
+            "dynamodb",
+            1,
+            "mydb",
+            "job-1",
+            store,
+        )
+        materialize_load_test(
+            [{"query_id": "q_001", "throughput_rps": 1.0}], "mydb", "job-1", store
+        )
+
+    def test_graph_mode_writes_nothing(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("JOURNEY_MODE", "graph")
+        store = _mock_store()
+        self._run_all_materializers(store)
+        store.write_json.assert_not_called()
+        store.read_json.assert_not_called()
+
+    def test_default_unset_is_graph_mode(self, monkeypatch: pytest.MonkeyPatch):
+        # No JOURNEY_MODE set at all -> default graph -> no writes.
+        monkeypatch.delenv("JOURNEY_MODE", raising=False)
+        store = _mock_store()
+        self._run_all_materializers(store)
+        store.write_json.assert_not_called()
+
+    def test_json_mode_writes_journeys(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("JOURNEY_MODE", "json")
+        store = _mock_store()
+        materialize_source_only = _make_collector_output([_make_query_pattern(query_id="q_001")])
+        from src.agents.query_journey_materializer import materialize_source
+
+        materialize_source(materialize_source_only, "mydb", "job-1", store)
+        store.write_json.assert_called_once()
+
+    def test_both_mode_writes_journeys(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("JOURNEY_MODE", "both")
+        store = _mock_store()
+        from src.agents.query_journey_materializer import materialize_source
+
+        materialize_source(
+            _make_collector_output([_make_query_pattern(query_id="q_001")]),
+            "mydb",
+            "job-1",
+            store,
+        )
+        store.write_json.assert_called_once()
+
+    def test_invalid_mode_falls_back_to_graph(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("JOURNEY_MODE", "nonsense")
+        store = _mock_store()
+        from src.agents.query_journey_materializer import materialize_source
+
+        materialize_source(_make_collector_output(), "mydb", "job-1", store)
+        store.write_json.assert_not_called()
+
+    def test_journeys_enabled_helper(self, monkeypatch: pytest.MonkeyPatch):
+        from src.agents.query_journey_materializer import journeys_enabled
+
+        monkeypatch.setenv("JOURNEY_MODE", "graph")
+        assert journeys_enabled() is False
+        monkeypatch.setenv("JOURNEY_MODE", "json")
+        assert journeys_enabled() is True
+        monkeypatch.setenv("JOURNEY_MODE", "both")
+        assert journeys_enabled() is True
+        monkeypatch.delenv("JOURNEY_MODE", raising=False)
+        assert journeys_enabled() is False

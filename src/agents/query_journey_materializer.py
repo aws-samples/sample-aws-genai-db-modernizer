@@ -8,6 +8,7 @@ the query's journey file in the ArtifactStore.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Iterable
 
 from src.storage.artifact_store import ArtifactStore
@@ -21,6 +22,34 @@ logger = logging.getLogger(__name__)
 # run has 1,654) is minutes of pure serial latency. The reads/writes are
 # independent per query, so they fan out through the shared store-IO helper in
 # src.storage.parallel (see that module for the full rationale).
+
+
+# JOURNEY_MODE gates this whole per-query read-model against the graph-backed
+# replacement (the LadybugDB graph now carries the same per-query facts, built
+# at single-writer pipeline boundaries). One flag, read here at the single
+# chokepoint, rather than threaded through the ~8 call sites:
+#   - "graph" (default): do NOT write per-query journey artifacts. On ATX this is
+#     what removes the ~1,654-artifact write storm (and its throttling); the read
+#     side serves per-query detail from the graph instead.
+#   - "json": legacy behavior — write journeys, no graph read-model. Escape hatch.
+#   - "both": write journeys AND build the graph, so a single job can be diffed
+#     graph-derived vs journey-derived to prove parity before the journeys are
+#     removed for good.
+_VALID_JOURNEY_MODES = frozenset({"graph", "json", "both"})
+
+
+def _journey_mode() -> str:
+    """Resolve JOURNEY_MODE (graph|json|both), defaulting to graph."""
+    mode = (os.environ.get("JOURNEY_MODE") or "graph").strip().lower()
+    if mode not in _VALID_JOURNEY_MODES:
+        logger.warning("invalid JOURNEY_MODE=%r; using 'graph'", mode)
+        return "graph"
+    return mode
+
+
+def journeys_enabled() -> bool:
+    """True when per-query journey artifacts should be written (json or both)."""
+    return _journey_mode() in ("json", "both")
 
 
 def _journey_path(db_name: str, job_id: str, query_id: str) -> str:
@@ -84,6 +113,9 @@ def materialize_source(
         job_id: Unique job identifier used as the second path segment.
         store: ArtifactStore instance for persistence.
     """
+    if not journeys_enabled():
+        logger.debug("JOURNEY_MODE=graph: skipping materialize_source (%s/%s)", db_name, job_id)
+        return
     query_patterns: list[dict] = collector_output["queries"]["query_patterns"]
     by_query: dict[str, dict] = {p["query_id"]: p for p in query_patterns}
 
@@ -171,6 +203,9 @@ def materialize_assignment(
         job_id: Unique job identifier used as the second path segment.
         store: ArtifactStore instance for persistence.
     """
+    if not journeys_enabled():
+        logger.debug("JOURNEY_MODE=graph: skipping materialize_assignment (%s/%s)", db_name, job_id)
+        return
     by_query: dict[str, dict] = {e["query_id"]: e for e in assignment["query_assignments"]}
 
     def _update(query_id: str) -> None:
@@ -195,6 +230,11 @@ def materialize_load_test(
 
     Called by the load test handler after computing per-pattern results.
     """
+    if not journeys_enabled():
+        logger.debug(
+            "JOURNEY_MODE=graph: skipping materialize_load_test (%s/%s)", database_name, job_id
+        )
+        return
     by_query: dict[str, dict] = {r["query_id"]: r for r in load_test_results}
 
     def _update(query_id: str) -> None:
@@ -275,6 +315,14 @@ def materialize_design(
         job_id: Unique job identifier used as the second path segment.
         store: ArtifactStore instance for persistence.
     """
+    if not journeys_enabled():
+        logger.debug(
+            "JOURNEY_MODE=graph: skipping materialize_design engine=%s (%s/%s)",
+            engine,
+            db_name,
+            job_id,
+        )
+        return
     trade_offs: list = schema_output.get("trade_offs", [])
 
     # Build query_id → access_pattern map
