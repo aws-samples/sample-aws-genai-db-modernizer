@@ -155,6 +155,21 @@ class AtxArtifactStore(ArtifactStore):
     def write_bytes(self, path: str, data: bytes) -> None:
         raise NotImplementedError(_NON_JSON_MSG)
 
+    # ------------------------------------------------ binary read-back by id
+    def download_artifact_to(self, artifact_id: str, dest_path: str) -> None:
+        """Download an artifact's raw bytes to ``dest_path`` by its artifact id.
+
+        The store is JSON-only for its own STATE writes, but a binary deliverable
+        published EXTERNAL via ``runtime.artifacts.publish`` (e.g. the ``.lbug``
+        graph) still needs a read-back path. The SDK's ``download_artifact`` writes
+        whatever bytes the artifact holds to a local file regardless of file type,
+        so this exposes that directly — bypassing ``read_json`` (which parses) and
+        the STATE-only index (published deliverables are not STATE). The caller
+        supplies the id, resolved out-of-band (e.g. from a STATE JSON pointer);
+        this does not touch the label index.
+        """
+        self._sdk.download_artifact(artifact_id, dest_path)
+
 
 class TransformAtxStore(AtxArtifactStore):
     """ATX backend plus the Transform-layer ``write_text`` signature (raises)."""

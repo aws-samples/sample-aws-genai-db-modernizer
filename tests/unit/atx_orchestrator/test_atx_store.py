@@ -250,3 +250,32 @@ class TestUpgradeStoreAtxBranch:
         store = TransformAtxStore(sdk_store=fake, agent_instance_id="inst1")
         result = upgrade_store(store)
         assert result is store
+
+
+class TestDownloadArtifactToById:
+    def test_downloads_bytes_by_id_bypassing_index(self, tmp_path) -> None:
+        # A binary deliverable (published EXTERNAL, not a STATE artifact) is read
+        # back by its id, straight through the SDK download — no label-index lookup.
+        store, sdk = _store()
+        # Seed a non-JSON artifact directly in the fake SDK by id.
+        sdk._by_id["graph-1"] = (
+            "Assessment Context Graph",
+            "CUSTOMER_OUTPUT",
+            b"\x00LBUG\x01bytes",
+        )
+        dest = tmp_path / "context.lbug"
+
+        store.download_artifact_to("graph-1", str(dest))
+
+        assert dest.read_bytes() == b"\x00LBUG\x01bytes"
+
+    def test_download_by_id_does_not_touch_state_index(self, tmp_path) -> None:
+        # download_artifact_to must not require the artifact to be in the STATE
+        # index (published deliverables are not STATE) — it resolves purely by id.
+        store, sdk = _store()
+        sdk._by_id["ext-9"] = ("x", "CUSTOMER_OUTPUT", b"payload")
+        dest = tmp_path / "out.bin"
+        store.download_artifact_to("ext-9", str(dest))
+        assert dest.read_bytes() == b"payload"
+        # The label index never learned about this id.
+        assert "ext-9" not in store._load_index().values()
