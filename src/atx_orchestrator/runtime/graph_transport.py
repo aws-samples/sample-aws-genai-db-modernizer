@@ -73,8 +73,16 @@ def build_and_publish_graph(store: ArtifactStore, db_name: str, job_id: str) -> 
     try:
         from src.graph import GraphStore
         from src.graph.populators import rebuild_graph
-    except Exception:  # noqa: BLE001 - graph deps unavailable; skip silently
-        logger.debug("graph module unavailable; skipping build_and_publish_graph", exc_info=True)
+    except Exception:  # noqa: BLE001 - graph deps unavailable; skip (but make it visible)
+        # WARNING, not debug: a missing graph dependency (e.g. ladybug not in the
+        # image's requirements) otherwise no-ops silently and no .lbug is ever
+        # produced, which is indistinguishable from "graph disabled". Surface it.
+        logger.warning(
+            "context graph unavailable (import failed); skipping build for %s/%s",
+            db_name,
+            job_id,
+            exc_info=True,
+        )
         return None
 
     # Build into a throwaway job-scoped dir. LadybugDB is single-file + single
