@@ -8,7 +8,8 @@ Two behaviours are pinned here:
 * ``_discover_uploaded_input`` (called by the orchestrator) finds the single
   customer-uploaded collection under the job's ``User Uploads/`` prefix, keyed by
   the platform job UUID from the agent context, excluding the auto-written
-  ``job_objective``.
+  ``job_objective`` and this pipeline's own ``STATE``-category writes, then
+  downloads and stages it at the seed key for the collector to read.
 
 The orchestrator wiring test confirms ``run_assessment_core_via_a2a``
 discovers the upload and passes its key to the assessment-core agent as
@@ -120,12 +121,16 @@ class _FakeArtifactStore:
 
 
 def _artifact(
-    artifact_id: str, label: str, file_type: str = "JSON", path: str | None = None
+    artifact_id: str,
+    label: str,
+    file_type: str = "JSON",
+    path: str | None = None,
+    category: str = "CUSTOMER_INPUT",
 ) -> dict:
     a = {
         "artifactId": artifact_id,
         "artifactLabel": label,
-        "artifactType": {"categoryType": "CUSTOMER_INPUT", "fileType": file_type},
+        "artifactType": {"categoryType": category, "fileType": file_type},
     }
     if path is not None:
         a["fileMetadata"] = {"path": path}
@@ -260,43 +265,75 @@ class TestDiscoverUploadedInput:
         _inject_sdk(monkeypatch, _FakeArtifactStore([]))
         assert core._discover_uploaded_input(_FakeStore(), "uuid1", "discourse") is None
 
+    def test_state_artifacts_excluded_no_false_ambiguity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Our own pipeline writes JSON artifacts under CategoryType.STATE into
+        the same job (e.g. collector/output.json) on a retry/resume. Those must
+        not be mistaken for the customer upload -- and must not create a false
+        ambiguity with the real upload."""
+        upload = _artifact("art-1", "default", path="user-upload.json")
+        own_state_write = _artifact(
+            "state-1",
+            "default",
+            path="discourse/uuid1/collector/output.json",
+            category="STATE",
+        )
+        fake = _FakeArtifactStore([upload, own_state_write], content={"collection_version": 9})
+        _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
+
+        result = core._discover_uploaded_input(store, "uuid1", "discourse")
+
+        assert result == seed
+        # The customer upload was downloaded and staged, not the STATE artifact.
+        assert fake.downloaded == ["art-1"]
+        assert store.read_json(seed) == {"collection_version": 9}
+
 
 # =============================================================================
-# orchestrator wiring: run_assessment_core_via_a2a discovers + passes the key
+# orchestrator wiring: run_assessment_core_via_a2a reads the upload-gate's key
 
 
-class TestOrchestratorPassesDiscoveredKey:
-    def test_discovered_key_passed_as_input_key(self) -> None:
-        seed = core.default_input_key("job", "db")
+class _FakeStoreWithText(_FakeStore):
+    """_FakeStore plus write_text, so the upload-gate pointers can round-trip."""
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        self._objects[path] = json.loads(content)
+
+
+class TestOrchestratorPassesResolvedKey:
+    def test_recorded_key_passed_as_input_key(self) -> None:
+        """The key recorded by finalize_collection_upload is passed to the collector."""
+        from src.atx_orchestrator.tools import _record_resolved_input_key
+
+        store = _FakeStoreWithText()
+        _record_resolved_input_key(store, "db", "job", "artifact://abc-123")
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=seed),
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
         message = json.loads(m.call_args[0][1])
-        assert message["input_key"] == seed
+        assert message["input_key"] == "artifact://abc-123"
 
     def test_no_upload_leaves_key_empty_for_seed_fallback(self) -> None:
+        """With no recorded upload (dev/reference), input_key is empty -> seed fallback."""
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None),
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStoreWithText()),
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
-        # empty input_key -> collect step falls back to the seed key
         assert json.loads(m.call_args[0][1])["input_key"] == ""
 
-    def test_discovery_receives_job_and_db(self) -> None:
-        """The orchestrator must pass job_id + database_name so discovery can stage
-        the download at the correct seed key."""
+    def test_does_not_call_discovery(self) -> None:
+        """The assessment tool no longer performs upload discovery; the upload gate
+        supplies the artifact id instead."""
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}),
-            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStore()),
-            patch("src.atx_orchestrator.core._discover_uploaded_input", return_value=None) as disc,
+            patch("src.atx_orchestrator.tools._make_store", return_value=_FakeStoreWithText()),
+            patch("src.atx_orchestrator.core._discover_uploaded_input") as disc,
         ):
             run_assessment_core_via_a2a(job_id="job", database_name="db")
-        # positional: (store, job_id, database_name)
-        args = disc.call_args[0]
-        assert args[1] == "job"
-        assert args[2] == "db"
+        disc.assert_not_called()

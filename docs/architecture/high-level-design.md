@@ -310,17 +310,19 @@ Customer AWS Account / VPC
 - Non-blocking: on failure, catches and proceeds to synthesis (results still valid without load test)
 - Per [ADR-020](decisions/ADR-020-load-testing-stage.md)
 
-**9. Query Journey Materialization (Cross-Cutting)**
+**9. Query Journey Read-Model (Cross-Cutting)**
 
-- Progressive per-query S3 files enriched at each pipeline stage
-- Four materialization functions called by respective handlers:
-  - `materialize_source()` — Collector creates initial journey file per query
-  - `materialize_assignment()` — Assignment resolver adds engine assignment
-  - `materialize_design()` — Schema design adds access pattern design details
-  - `materialize_load_test()` — Load testing adds latency/cost metrics
-- Enables O(1) per-query API lookups (single S3 GET) instead of cross-referencing multiple artifacts
-- Path: `{db}/{job}/query-journeys/{query_id}.json`
-- Per [ADR-019](decisions/ADR-019-query-journey-materialization.md)
+- The per-query modernization story (source → assignment → design → load test) is
+  materialized in the LadybugDB context graph, built at two single-writer pipeline
+  boundaries (end of assessment-core, end of synthesis) and published as a
+  downloadable `.lbug` artifact
+- Readers (`analysis_report`, the query-journeys API) serve per-query detail from
+  the graph, with a fallback to legacy per-query journey artifacts only for jobs
+  that predate the graph
+- Supersedes the progressive per-query journey files in [ADR-019]
+  (decisions/ADR-019-query-journey-materialization.md), which caused artifact-API
+  throttling on the ATX backend when writing ~1,654 files serially
+- Per [ADR-023](decisions/ADR-023-context-graph-layer.md)
 
 ### 3.2 Strands SDK Architecture
 

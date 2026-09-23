@@ -94,17 +94,11 @@ def mock_engine_components():
         yield {"provisioner": provisioner, "seeder": seeder, "runner": runner}
 
 
-@pytest.fixture
-def mock_materialize():
-    with patch("src.agents.load_test.handler.materialize_load_test") as mock:
-        yield mock
-
-
 @pytest.mark.skipif(
     not FIXTURES_DIR.exists(),
     reason="Real artifacts not available (run test_local_phased.py first)",
 )
-def test_handler_with_real_schema_output(mock_engine_components, mock_materialize):
+def test_handler_with_real_schema_output(mock_engine_components):
     """Handler should successfully process real wordpress schema design output."""
     from src.agents.load_test.handler import run_load_test
     from src.storage import create_artifact_store

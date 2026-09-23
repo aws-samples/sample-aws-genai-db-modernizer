@@ -465,3 +465,26 @@ class TestFeasibilityGate:
             assert out["status"] == "approved"
             assert tools._assignment_review_approved(JOB) is True
         assert out["feasibility_findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: the review-gate pending-HITL pointer must round-trip on the
+# JSON-only ATX store. It was persisted with write_text, which the ATX store
+# raises on, so the pointer was silently dropped and the resume path (reading
+# the customer's submitted routing table back) broke. Drive the pointer against
+# a real TransformAtxStore so that class of bug fails here, not in production.
+
+
+class TestPendingHitlOnAtxStore:
+    def _atx_store(self):
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+        from tests.unit.atx_orchestrator.test_atx_store import _FakeSdkStore
+
+        return TransformAtxStore(sdk_store=_FakeSdkStore(), agent_instance_id="inst-1")
+
+    def test_pending_hitl_pointer_roundtrips(self) -> None:
+        store = self._atx_store()
+        # Must not raise on the JSON-only store, and must be readable back.
+        tools._record_pending_hitl(store, DB, JOB, "hitl-123", 2)
+        pending = tools._read_pending_hitl(store, DB, JOB)
+        assert pending == {"hitl_task_id": "hitl-123", "assignment_version": 2}

@@ -96,7 +96,7 @@ if not offline_input.exists():
     )
 ok(f"Offline input present ({offline_input.stat().st_size:,} bytes)")
 
-with open(offline_input) as f:
+with open(offline_input, encoding="utf-8") as f:
     raw = json.load(f)
 n_raw_tables = len(raw.get("tables", []))
 n_raw_queries = len(raw.get("queries", []))
@@ -127,7 +127,7 @@ header("4. Validate contracts")
 from src.contracts.collector_output import CollectorOutputContract  # noqa: E402
 from src.contracts.triage_output import TriageOutputContract  # noqa: E402
 
-with open(ref_collector) as f:
+with open(ref_collector, encoding="utf-8") as f:
     collector_json = json.load(f)
 try:
     CollectorOutputContract.model_validate(collector_json)
@@ -135,7 +135,7 @@ except Exception as e:
     fail(f"Collector reference fails CollectorOutputContract: {type(e).__name__}: {e}")
 ok("Collector reference validates against CollectorOutputContract")
 
-with open(ref_triage) as f:
+with open(ref_triage, encoding="utf-8") as f:
     triage_json = json.load(f)
 try:
     TriageOutputContract.model_validate(triage_json)

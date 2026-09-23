@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 class TestConfig(BaseModel):
     """Configuration for a load test run."""
 
+    # Not a pytest test class despite the ``Test`` prefix — this is a domain
+    # model. Tells pytest's collector to skip it (silences PytestCollectionWarning).
+    __test__ = False
+
     duration_minutes: int = Field(default=15, ge=1, le=30)
     min_iterations_per_pattern: int = Field(default=10000, ge=10000)
     scale_factor: float = Field(default=1.0, ge=0.1, le=10.0)

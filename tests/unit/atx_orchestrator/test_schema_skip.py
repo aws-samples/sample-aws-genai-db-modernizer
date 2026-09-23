@@ -444,27 +444,66 @@ class TestSchemaDesignIdempotentSkip:
         mock_invoke.assert_called_once()  # no existing output -> designs normally
         assert out == {"ok": True}
 
-    def test_dispatch_uses_multi_hour_timeout(self, monkeypatch) -> None:
-        # Schema design is the longest phase; the heaviest engines (e.g.
-        # ElastiCache) can run past the generic 30-min A2A default. The dispatch
-        # must pass the multi-hour timeout so a slow but healthy run is not marked
-        # FAILED at 1800s.
-        monkeypatch.delenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", raising=False)
+
+# =============================================================================
+# _schema_design_timeout_s — env-overridable, clamped A2A wait ceiling
+#
+# The per-engine schema-design A2A wait must default wide (120 min) so a
+# slow-but-healthy design is not killed mid-flight (ElastiCache / Aurora
+# PostgreSQL were tripping the old 1800s default), stay tunable without a
+# redeploy via SCHEMA_DESIGN_TIMEOUT_MINUTES, and be clamped to (0, 180] min so
+# a misconfiguration can neither disable the timeout nor exceed the 3h hard cap.
+
+
+class TestSchemaDesignTimeoutResolution:
+    def test_default_is_120_minutes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", raising=False)
+        assert tools._schema_design_timeout_s() == 120 * 60.0
+
+    def test_env_override_is_honored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "90")
+        assert tools._schema_design_timeout_s() == 90 * 60.0
+
+    def test_clamped_to_180_minute_hard_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "10000")
+        assert tools._schema_design_timeout_s() == 180 * 60.0
+
+    def test_non_positive_clamped_to_one_minute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 0 would mean "no wait" — never intended; floor at 1 min.
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "0")
+        assert tools._schema_design_timeout_s() == 1 * 60.0
+
+    def test_invalid_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "not-a-number")
+        assert tools._schema_design_timeout_s() == 120 * 60.0
+
+
+class TestSchemaDesignDispatchTimeout:
+    def test_dispatch_passes_resolved_timeout_to_invoke_and_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A real dispatch must hand the resolved (default 120 min) ceiling to
+        # invoke_and_wait rather than falling back to its 1800s default. The
+        # store is faked so our idempotent-skip existence check resolves False
+        # (no prior schema output) and the dispatch proceeds.
+        monkeypatch.delenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", raising=False)
         store = _FakeStore(
-            {"discourse/job-1/assignment/v2/assignment.json": _assignment(["elasticache"])}
+            {"discourse/job-1/assignment/v1/assignment.json": _assignment(["dynamodb"])}
         )
         with (
             patch("src.atx_orchestrator.tools._make_store", return_value=store),
-            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=2),
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
             patch(
                 "src.atx_orchestrator.tools._engines_with_in_scope_queries",
-                return_value={"elasticache"},
+                return_value={"dynamodb"},
             ),
             patch(
-                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": True}
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
             ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
         ):
-            tools._run_schema_design_via_a2a("elasticache", "job-1", "discourse")
+            tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
 
-        mock_invoke.assert_called_once()
-        assert mock_invoke.call_args.kwargs["timeout"] == 4 * 60 * 60
+        assert mock_invoke.call_args.kwargs["timeout"] == 120 * 60.0

@@ -222,3 +222,61 @@ class TestGetQueryJourney:
 
         assert response.status_code == 503
         assert response.json()["detail"] == "Services not configured"
+
+
+class TestGraphBackedJourneys:
+    """When the context graph is available it is the source of journeys; the
+    per-query artifacts are the fallback for legacy / json-mode jobs."""
+
+    def test_list_served_from_graph_when_available(self, mock_services):
+        from unittest.mock import patch
+
+        graph_journeys = [
+            {"query_id": f"gq{i}", "source": {}, "assignment": None, "design": None}
+            for i in range(3)
+        ]
+        with patch.object(query_journeys, "_journeys_from_graph", return_value=graph_journeys):
+            resp = client.get("/api/v1/assessments/job-1/query-journeys?page=1&page_size=2")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 3
+        assert body["page_size"] == 2
+        assert [i["query_id"] for i in body["items"]] == ["gq0", "gq1"]
+        # The artifact path was not consulted when the graph served the list.
+        mock_services["store"].list_prefix.assert_not_called()
+
+    def test_list_falls_back_to_artifacts_when_graph_absent(self, mock_services):
+        from unittest.mock import patch
+
+        mock_services["store"].list_prefix.return_value = [
+            "test_db/job-1/query-journeys/q_001.json",
+        ]
+        mock_services["store"].read_json.side_effect = [
+            {"query_id": "q_001", "source": {}, "assignment": None, "design": None},
+        ]
+        with patch.object(query_journeys, "_journeys_from_graph", return_value=None):
+            resp = client.get("/api/v1/assessments/job-1/query-journeys")
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        mock_services["store"].list_prefix.assert_called_once()
+
+    def test_detail_served_from_graph_when_available(self, mock_services):
+        from unittest.mock import patch
+
+        from src.api.routes import graph as graph_route
+        from src.graph import queries as graph_queries
+
+        journey = {"query_id": "q_001", "source": {"query_type": "SELECT"}, "assignment": None}
+
+        with (
+            patch.object(graph_route, "_get_graph", return_value=(MagicMock(), "test_db")),
+            patch.object(graph_queries, "query_journey", return_value=journey),
+        ):
+            resp = client.get("/api/v1/assessments/job-1/query-journeys/q_001")
+
+        assert resp.status_code == 200
+        assert resp.json()["query_id"] == "q_001"
+        # Artifact read was not used when the graph served the query.
+        mock_services["store"].read_json.assert_not_called()

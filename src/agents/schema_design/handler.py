@@ -189,10 +189,6 @@ def finalize_schema_design(
     output_key = f"{prefix}/schema-{target_type}/v{version}/schema_output.json"
     store.write_json(output_key, output)
 
-    from src.agents.query_journey_materializer import materialize_design
-
-    materialize_design(output, target_type, version, database_name, job_id, store)
-
     return {"status": "complete", "output_path": output_key}
 
 
@@ -344,12 +340,6 @@ def run_schema_design(
         output_key = f"{database_name}/{job_id}/schema-{target_type}/schema_output.json"
     store.write_json(output_key, output_data)
 
-    # Materialize query journey files (design section) — ADR-019
-    from src.agents.query_journey_materializer import materialize_design
-
-    schema_version = assignment_version if assignment_version > 0 else 1
-    materialize_design(output_data, target_type, schema_version, database_name, job_id, store)
-
     # Write design trace via ArtifactStore
     if trace_json:
         trace_data_out = json.loads(trace_json)
@@ -495,11 +485,6 @@ def run_schema_merge(
             "groups": group_traces,
         }
         store.write_json(f"{base_key}/design_trace.json", combined_trace)
-
-    # Materialize query journey files (design section) — ADR-019
-    from src.agents.query_journey_materializer import materialize_design
-
-    materialize_design(merged, target_type, artifact_version, database_name, job_id, store)
 
     elapsed = time.time() - start_time
 

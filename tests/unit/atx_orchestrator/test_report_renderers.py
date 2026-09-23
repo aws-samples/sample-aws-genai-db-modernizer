@@ -272,6 +272,21 @@ class _FakeStore:
         self.byte_writes[path] = content
 
 
+class _JsonOnlyStore(_FakeStore):
+    """Models the ATX artifact store: JSON-only, raises on text/bytes writes.
+
+    Used to prove that when the durable "system of record" copy cannot be written
+    (ATX backend), the synthesis publish path still reaches artifacts.publish with
+    every deliverable — the customer must still get their downloadable reports.
+    """
+
+    def write_text(self, path: str, content: str, content_type: str = "text/plain") -> None:
+        raise NotImplementedError("ATX artifact store is JSON-only")
+
+    def write_bytes(self, path: str, content: bytes, content_type: str = "") -> None:
+        raise NotImplementedError("ATX artifact store is JSON-only")
+
+
 class TestSynthesisDeliverables:
     KEY = "discourse/job-x/synthesis/v1/report.json"
 
@@ -359,6 +374,32 @@ class TestSynthesisDeliverables:
         )
         assert "migration waves" in deck_text
         assert "target engines" not in deck_text
+
+    def test_publishes_all_five_on_json_only_store(self, report: dict) -> None:
+        """On the JSON-only ATX backend the durable store copies raise
+        NotImplementedError, but publish() must still deliver all five reports —
+        publish is the actual customer-facing delivery, the store copy is only a
+        system-of-record duplicate that backend has no place for."""
+        payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
+        store = _JsonOnlyStore({self.KEY: report})
+        captured: dict = {}
+        with (
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch(
+                "src.atx_orchestrator.runtime.artifacts.publish",
+                side_effect=lambda items: captured.update({"items": items}) or {},
+            ),
+        ):
+            run_synthesis_via_a2a("job-x", "discourse")
+
+        # No durable copies landed (the store rejected them) ...
+        assert store.text_writes == {}
+        assert store.byte_writes == {}
+        # ... but all five deliverables were still published to the customer.
+        items = captured["items"]
+        assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON", "HTML", "PDF"]
+        assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 
     def test_non_fatal_when_report_unreadable(self) -> None:
         payload = {"response": {"report_artifact": "missing/key.json"}}

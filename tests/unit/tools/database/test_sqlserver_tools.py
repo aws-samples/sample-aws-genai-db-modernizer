@@ -38,7 +38,7 @@ def collector(mock_ssm: MagicMock) -> SQLServerRemoteCollector:
         host="sqlserver-test.example.com",
         port=1433,
         database="testdb",
-        secret_arn="arn:aws:secretsmanager:us-east-1:123456789012:secret:test-AAAAAA",  # pragma: allowlist secret
+        secret_arn="arn:aws:secretsmanager:us-east-1:123456789012:secret:test-AAAAAA",  # pragma: allowlist secret  # nosec B106 — test fixture ARN/secret ref, not a real credential
         region="us-east-1",
     )
 
@@ -327,7 +327,7 @@ class TestQueryPatterns:
     ) -> None:
         mock_ssm.run_sql_json.return_value = [
             self._row(
-                query_text="SELECT a.* FROM Orders a JOIN Customers c ON a.cid = c.id "
+                query_text="SELECT a.* FROM Orders a JOIN Customers c ON a.cid = c.id "  # nosemgrep: string-concat-in-list -- intentional multi-line string
                 "WHERE c.name LIKE '%foo%' GROUP BY a.id"
             )
         ]

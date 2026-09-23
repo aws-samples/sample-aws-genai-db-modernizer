@@ -222,3 +222,138 @@ class TestExtractItems:
         assert hitl._extract_items(None) is None
         assert hitl._extract_items("not json") is None
         assert hitl._extract_items({"no_items": 1}) is None
+
+
+class TestRaiseFileUpload:
+    def test_returns_none_outside_runtime(self) -> None:
+        with patch.object(
+            hitl, "_resolve_client_and_context", side_effect=RuntimeError("no runtime")
+        ):
+            assert hitl.raise_file_upload(title="t", description="d", label="l") is None
+
+    def test_creates_and_starts_blocking_fileuploadv2_task(self) -> None:
+        client = _StubClient()
+        with (
+            patch.object(hitl, "_resolve_client_and_context", return_value=(client, {"ctx": 1})),
+            patch.object(hitl, "_upload_hitl_request", return_value="req-9"),
+        ):
+            task_id = hitl.raise_file_upload(
+                title="Upload",
+                description="upload your collection",
+                label="Collection JSON",
+                step_id="step-1",
+                tag="collection-upload",
+            )
+        assert task_id == "task-1"
+        kwargs = client.create_hitl_task.call_args.kwargs
+        assert kwargs["uxComponentId"] == "FileUploadV2"
+        assert kwargs["blockingType"] == "BLOCKING"
+        assert kwargs["hitlRequestArtifact"] == {"artifactId": "req-9"}
+        assert kwargs["stepId"] == "step-1"
+        assert kwargs["tag"] == "collection-upload"
+        client.start_hitl_task.assert_called_once()
+
+    def test_returns_none_on_client_error(self) -> None:
+        client = _StubClient()
+        client.create_hitl_task.side_effect = RuntimeError("boom")
+        with (
+            patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})),
+            patch.object(hitl, "_upload_hitl_request", return_value="req-9"),
+        ):
+            assert hitl.raise_file_upload(title="t", description="d", label="l") is None
+
+
+class TestReadFileUploadSubmission:
+    def test_unavailable_outside_runtime(self) -> None:
+        with patch.object(
+            hitl, "_resolve_client_and_context", side_effect=RuntimeError("no runtime")
+        ):
+            assert hitl.read_file_upload_submission("task-1") == ("unavailable", None)
+
+    def test_awaiting_when_no_human_artifact(self) -> None:
+        client = _StubClient(get_hitl_return={"hitlTask": {"hitlTaskStatus": "IN_PROGRESS"}})
+        with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+            assert hitl.read_file_upload_submission("task-1") == ("awaiting_submission", None)
+
+    def test_inline_manifest_uploadedartifacts(self) -> None:
+        manifest = {"uploadedArtifacts": [{"name": "c.json", "artifactId": "file-1"}]}
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"content": manifest},
+                }
+            }
+        )
+        with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+            status, artifact_id = hitl.read_file_upload_submission("task-1")
+        assert status == "submitted"
+        assert artifact_id == "file-1"
+
+    def test_downloaded_manifest_legacy_uploadedfiles_wrapper(self) -> None:
+        manifest = {"uploadedFiles": [{"name": "c.json", "artifactId": "file-2"}]}
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"artifactId": "resp-1"},
+                }
+            }
+        )
+        with (
+            patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})),
+            patch.object(hitl, "_download_artifact_json", return_value=manifest) as dl,
+        ):
+            status, artifact_id = hitl.read_file_upload_submission("task-1")
+        assert status == "submitted"
+        assert artifact_id == "file-2"
+        dl.assert_called_once()
+
+    def test_bare_list_manifest_tolerated(self) -> None:
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"content": [{"name": "c.json", "artifactId": "file-3"}]},
+                }
+            }
+        )
+        with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+            status, artifact_id = hitl.read_file_upload_submission("task-1")
+        assert status == "submitted"
+        assert artifact_id == "file-3"
+
+    def test_submitted_but_no_artifact_id_is_unreadable(self) -> None:
+        # A submission whose manifest has no resolvable artifactId must surface as
+        # "unreadable" (never a false "submitted") so the caller fails loudly.
+        client = _StubClient(
+            get_hitl_return={
+                "hitlTask": {
+                    "hitlTaskStatus": "SUBMITTED",
+                    "humanArtifact": {"content": {"unexpected": "shape"}},
+                }
+            }
+        )
+        with patch.object(hitl, "_resolve_client_and_context", return_value=(client, {})):
+            assert hitl.read_file_upload_submission("task-1") == ("unreadable", None)
+
+
+class TestFirstUploadedArtifactId:
+    def test_shapes(self) -> None:
+        item = {"name": "c.json", "artifactId": "a1", "mimeType": "application/json"}
+        assert hitl._first_uploaded_artifact_id([item]) == "a1"
+        assert hitl._first_uploaded_artifact_id({"uploadedArtifacts": [item]}) == "a1"
+        assert hitl._first_uploaded_artifact_id({"uploadedFiles": [item]}) == "a1"
+        assert (
+            hitl._first_uploaded_artifact_id({"properties": {"uploadedArtifacts": [item]}}) == "a1"
+        )
+
+    def test_picks_first_non_empty(self) -> None:
+        items = [{"name": "x"}, {"artifactId": ""}, {"artifactId": "good"}]
+        assert hitl._first_uploaded_artifact_id(items) == "good"
+
+    def test_none_shapes(self) -> None:
+        assert hitl._first_uploaded_artifact_id(None) is None
+        assert hitl._first_uploaded_artifact_id({}) is None
+        assert hitl._first_uploaded_artifact_id({"uploadedArtifacts": []}) is None
+        assert hitl._first_uploaded_artifact_id([{"name": "no-id"}]) is None

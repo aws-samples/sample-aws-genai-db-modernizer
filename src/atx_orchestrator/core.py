@@ -21,14 +21,24 @@ from typing import NamedTuple
 logger = logging.getLogger(__name__)
 
 
-def make_store():
-    """Create a text-capable ArtifactStore using the project's own factory.
+def _atx_backend_active() -> bool:
+    """True when the ATX Agentic Artifact Store backend is selected."""
+    return os.environ.get("STORAGE_BACKEND") == "atx"
 
-    core-modernizer's ``create_artifact_store()`` decides S3-vs-local from env;
-    ``upgrade_store`` re-homes that choice onto the Transform subclass that adds
-    ``write_text``. See src/atx_orchestrator/store.py for why that capability is
-    not on the shared ABC.
+
+def make_store():
+    """Create a text-capable ArtifactStore.
+
+    ``STORAGE_BACKEND=atx`` selects the ATX Agentic Artifact Store backend (ATX
+    runs store nothing in our S3). Otherwise core-modernizer's
+    ``create_artifact_store()`` decides S3-vs-local from env and ``upgrade_store``
+    re-homes it onto the Transform subclass that adds ``write_text``.
     """
+    if _atx_backend_active():
+        from src.atx_orchestrator.runtime.atx_store import TransformAtxStore
+
+        return TransformAtxStore()
+
     from src.atx_orchestrator.runtime.store import upgrade_store
     from src.storage import create_artifact_store
 
@@ -55,7 +65,7 @@ def default_input_key(job_id: str, database_name: str) -> str:
 
 def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -> str | None:
     """Locate a customer's WebApp-uploaded offline collection via the ATX
-    Artifact API and stage it at the seed key for the collector.
+    Artifact API, download it, and stage it at the seed key for the collector.
 
     A customer's upload is a platform **artifact** (category ``CUSTOMER_INPUT``),
     not an object in this pipeline's ``S3_BUCKET``. The Artifact Store owns where
@@ -67,16 +77,32 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     nothing. So discovery goes through ``ListArtifacts`` +
     ``CreateArtifactDownloadUrl`` instead, which is account/bucket-agnostic.
 
-    Flow (Option 1 — stage at the seed key so the collector's read path is
-    unchanged):
+    Discovery runs whenever we're in the ATX runtime -- it does NOT gate on
+    ``STORAGE_BACKEND=atx``. That flip is deferred: live ATX runs still set
+    ``STORAGE_BACKEND`` to something other than ``atx``, so gating on it made
+    discovery return ``None`` unconditionally in production, and the collector
+    fell back to a seed key nothing had staged. The customer's upload also has
+    an arbitrary ATX-assigned name/path we don't control, so the collector can't
+    read it directly under a fixed key either -- staging it ourselves at the
+    seed key is what makes the collector's read path work regardless of backend.
+    Once ``STORAGE_BACKEND=atx`` is eventually flipped, ``store.write_json`` for
+    the seed lands in the ATX artifact store as a ``STATE`` artifact rather than
+    our S3 -- so this still never touches our S3 for the customer's data.
+
+    Flow:
 
       1. Resolve the ATX agent context (workspace/job/agent-instance) and build
          the SDK ``ArtifactStore``. Outside the ATX runtime this raises, and we
          return ``None`` (local/dev falls back to a pre-staged seed key).
       2. ``list_artifacts(category=CUSTOMER_INPUT)`` for THIS agent instance (the
          orchestrator's), filter to JSON, exclude the auto-written
-         ``job_objective``. Expect exactly one; more than one is ambiguous and
-         raises.
+         ``job_objective`` AND our own ``STATE``-category artifacts (this
+         pipeline's own writes, e.g. ``{db}/{job}/collector/output.json`` on a
+         retry/resume). ``STATE`` is a category THIS pipeline assigns to its own
+         writes; we assume the platform never tags a customer WebApp upload as
+         ``STATE``. If it ever did, discovery would exclude the real upload and
+         fall back to the seed. Expect exactly one candidate after exclusions;
+         more than one is ambiguous and raises.
       3. Download it and stage it into ``store`` at the seed key
          ``{db}/{job}/uploads/collector-output.json``; return that key. The
          collector then reads it exactly as it does a dev/reference seed.
@@ -107,8 +133,10 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     # List the job's artifacts with NO server-side filter, then match in Python.
     # Server-side category/agent filters both returned listed=0 in the field even
     # though the WebApp Artifacts panel shows the upload — the customer upload's
-    # stored category is not necessarily CUSTOMER_INPUT, and it is surfaced by a
-    # "User Uploads/" ``fileMetadata.path`` rather than a category we can predict.
+    # stored category is not necessarily CUSTOMER_INPUT. (The WebApp Artifacts
+    # panel surfaces it under a "User Uploads/" grouping, but that path prefix is
+    # NOT relied upon for matching below -- matching is exclusion-based: a .json
+    # basename, minus the auto-written job_objective, minus our own STATE writes.)
     # The live-tested agentcore_list_artifacts.py reference defaults to no filter
     # for exactly this reason; we mirror that and inspect each artifact's real
     # categoryType / fileType / path. Paginate.
@@ -155,10 +183,23 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     def _basename(a: dict) -> str:
         return _path(a).rsplit("/", 1)[-1]
 
+    # Our own pipeline writes JSON artifacts under CategoryType.STATE into the
+    # same job (e.g. {db}/{job}/collector/output.json). Once the ATX backend is
+    # active, those land in the same ListArtifacts response as the customer's
+    # upload on a retry/resume and match the ".json" basename rule too -- so
+    # they must be excluded explicitly. STATE is a category THIS pipeline
+    # assigns to its own writes; we assume the platform never tags a customer
+    # WebApp upload as STATE. If it ever did, this would exclude the real
+    # upload and fall back to the seed (see docstring).
+    def _category(a: dict) -> str:
+        return (a.get("artifactType") or {}).get("categoryType") or ""
+
     candidates = [
         a
         for a in all_artifacts
-        if _basename(a).endswith(".json") and _basename(a) != "job_objective"
+        if _basename(a).endswith(".json")
+        and _basename(a) != "job_objective"
+        and _category(a) != "STATE"
     ]
     if len(candidates) > 1:
         paths = sorted(_path(a) or _label(a) for a in candidates)
@@ -181,10 +222,12 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
     artifact_id = candidates[0]["artifactId"]
     seed_key = default_input_key(job_id, database_name)
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = tmp.name
+        tmp_path = (
+            tmp.name
+        )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
     try:
         artifacts.download_artifact(artifact_id, tmp_path)
-        with open(tmp_path) as fh:
+        with open(tmp_path, encoding="utf-8") as fh:
             collection = json.load(fh)
         store.write_json(seed_key, collection)
     finally:
@@ -320,9 +363,6 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     store.write_json(collector_key, collector_data)
 
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(collector_data, database_name, job_id, store)
     return collector_data
 
 
@@ -1058,7 +1098,9 @@ def run_assessment_core(
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-            logger.exception("run_assessment_core: phase %s failed", label)
+            logger.exception(
+                "run_assessment_core: phase %s failed", label
+            )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
             if on_phase_error is not None:
                 on_phase_error(label, str(exc))
             raise
@@ -1099,7 +1141,9 @@ def run_assessment_core(
             on_engine_skipped=on_engine_skipped,
         )
     except Exception as exc:  # noqa: BLE001 - report then re-raise to stop the chain
-        logger.exception("run_assessment_core: phase analysis failed")
+        logger.exception(
+            "run_assessment_core: phase analysis failed"
+        )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
         if on_phase_error is not None:
             on_phase_error("analysis", str(exc))
         raise
@@ -1136,7 +1180,7 @@ def run_assessment_core(
             detail = "No consolidation; assignment unchanged"
         on_phase_done("reality_check", reality_check_summary, detail)
 
-    return {
+    result = {
         "job_id": job_id,
         "database_name": database_name,
         "collector": collect_summary,
@@ -1164,6 +1208,38 @@ def run_assessment_core(
             "after_distribution": reality_check_summary.get("after_distribution", {}),
         },
     }
+
+    # Build + publish the context graph read-model from the contract artifacts
+    # just written (collector/triage/analysis/assignment/reality-check). This is
+    # a single-writer boundary — assessment-core is one process — so it is safe
+    # to build the graph here. Best-effort: never fails the assessment.
+    _build_graph(store, job_id, database_name)
+
+    return result
+
+
+def _build_graph(store, job_id: str, database_name: str) -> None:
+    """Build + publish the context graph read-model.
+
+    Wrapped so a graph-build failure can never propagate into the phase. The
+    graph is the read-model that replaces the per-query journey artifacts.
+    """
+    logger.info(
+        "ATX: context graph boundary reached for %s/%s",
+        database_name,
+        job_id,
+    )
+    try:
+        from src.atx_orchestrator.runtime.graph_transport import build_and_publish_graph
+
+        build_and_publish_graph(store, database_name, job_id)
+    except Exception:  # noqa: BLE001 - read-model build must never fail the phase
+        logger.warning(
+            "context graph build/publish skipped for %s/%s",
+            database_name,
+            job_id,
+            exc_info=True,
+        )
 
 
 def run_synthesis_core(
@@ -1307,6 +1383,14 @@ def run_synthesis_core(
     # record, already durable). published_artifacts stays here for payload-shape
     # stability; the orchestrator populates the panel, not this subagent.
     published: dict[str, str] = {}
+
+    # Rebuild + publish the context graph at the synthesis boundary. Synthesis is
+    # its own process that runs AFTER the concurrent per-engine schema fan-out has
+    # joined, so this is the single-writer point where the design, load-test and
+    # synthesis contracts all exist — the graph built here is the complete
+    # read-model, folding in everything the assessment-core build could not yet
+    # see. Best-effort, never fails the phase.
+    _build_graph(store, job_id, database_name)
 
     return {
         "job_id": job_id,

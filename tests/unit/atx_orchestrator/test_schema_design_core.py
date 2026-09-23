@@ -243,7 +243,9 @@ class TestGroupingWiring:
         key = f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json"
         store.data[key] = store.data.pop(f"{DB}/{JOB}/schema-TARGET/v1/schema_output.json")
 
-        def _fake_auto(**kwargs: object) -> None:
+        def _fake_auto(
+            **kwargs: object,
+        ) -> None:  # nosemgrep: useless-inner-function -- test helper referenced indirectly
             # auto would write the versioned output; it is already staged here so
             # the core's read-back succeeds.
             return None

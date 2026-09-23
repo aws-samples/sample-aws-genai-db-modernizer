@@ -221,12 +221,6 @@ def main():
     store.write_json(collector_path, collector_data)
     print(f"[collector] Output written to {collector_path}")
 
-    # Materialize query journey files (source section) for each query
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(collector_data, db_name, job_id, store)
-    print(f"[collector] Query journey files materialized ({len(queries)} queries)")
-
     # ================================================================
     # Phase 1: TRIAGE
     # ================================================================

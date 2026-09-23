@@ -5,9 +5,16 @@ from __future__ import annotations
 from src.graph.store import GraphStore
 
 NODE_TABLES = [
+    # performance_json / characteristics_json hold the collector's nested
+    # ``source.performance`` and ``source.characteristics`` blocks as JSON strings.
+    # The report only DISPLAYS them (Performance / Characteristics drill-down tabs),
+    # never traverses into them, so a display-only string faithfully round-trips
+    # the payload without inventing ~20 queryable columns. frequency_per_hour is a
+    # scalar the General tab shows alongside calls_per_second.
     """CREATE NODE TABLE IF NOT EXISTS Query (
         id STRING, sql_text STRING, calls_per_second DOUBLE,
         operation_type STRING, in_scope BOOLEAN,
+        frequency_per_hour DOUBLE, performance_json STRING, characteristics_json STRING,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS SourceTable (

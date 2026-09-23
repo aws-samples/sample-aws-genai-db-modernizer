@@ -222,6 +222,12 @@ def _env_for(agent: Agent, prefix: str, model_id: str, s3_bucket: str) -> dict[s
         "S3_BUCKET": s3_bucket,
         "REGION": REGION,
         "STAGE": DEFAULT_STAGE,
+        # Route all pipeline state through the ATX Agentic Artifact Store so ATX
+        # runs store nothing in our S3 bucket. make_store() checks this first and
+        # takes precedence over S3_BUCKET; set on every runtime (orchestrator +
+        # subagents) so all phases share the same backend. Requires an image that
+        # includes the AtxArtifactStore backend.
+        "STORAGE_BACKEND": "atx",
     }
     if agent.orchestrator:
         # Only the orchestrator resolves subagents by name; the prefix is the
@@ -272,7 +278,7 @@ def cmd_build(args, clients) -> None:
     run_env = dict(os.environ)
     if builder == "docker":
         cfg_dir = tempfile.mkdtemp(prefix="atx-docker-cfg-")
-        with open(os.path.join(cfg_dir, "config.json"), "w") as fh:
+        with open(os.path.join(cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
             json.dump({"auths": {}}, fh)
         run_env["DOCKER_CONFIG"] = cfg_dir
 
@@ -280,13 +286,13 @@ def cmd_build(args, clients) -> None:
     user, pw = base64.b64decode(token["authorizationToken"]).decode().split(":", 1)
     # Fixed argv, shell=False; builder is docker/finch and all args are trusted
     # constants or ECR-issued values, so there is no shell-injection surface.
-    subprocess.run(  # nosec B603
+    subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
         [builder, "login", "--username", user, "--password-stdin", registry],
         input=pw.encode(),
         check=True,
         env=run_env,
     )
-    subprocess.run(  # nosec B603
+    subprocess.run(  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
         [
             builder,
             "build",
@@ -301,7 +307,9 @@ def cmd_build(args, clients) -> None:
         check=True,
         env=run_env,
     )
-    subprocess.run([builder, "push", f"{image}:{tag}"], check=True, env=run_env)  # nosec B603
+    subprocess.run(
+        [builder, "push", f"{image}:{tag}"], check=True, env=run_env
+    )  # nosec B603  # nosemgrep: dangerous-subprocess-use-audit,dangerous-subprocess-use-tainted-env-args -- fixed argv, shell=False, trusted builder/ECR values
 
     # Resolve the pushed digest so callers can pin by digest (what v2 does).
     desc = ecr.describe_images(repositoryName=repo, imageIds=[{"imageTag": tag}])
@@ -338,7 +346,7 @@ def _wait_ready(acc, runtime_id: str, timeout: float = 600.0) -> None:
             raise SystemExit(f"Runtime {runtime_id} reached {status}")
         if time.monotonic() - start > timeout:
             raise SystemExit(f"Runtime {runtime_id} still {status} after {timeout}s")
-        time.sleep(5)
+        time.sleep(5)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
 
 
 def _wait_deregistered(reg, name: str, timeout: float = 300.0) -> bool:
@@ -357,7 +365,7 @@ def _wait_deregistered(reg, name: str, timeout: float = 300.0) -> bool:
             return True
         if time.monotonic() - start > timeout:
             return False
-        time.sleep(5)
+        time.sleep(5)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
 
 
 def _upsert_runtime(acc, name: str, image_uri: str, role_arn: str, env: dict[str, str]) -> str:

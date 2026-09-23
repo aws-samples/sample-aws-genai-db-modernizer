@@ -26,24 +26,20 @@ diverge.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.storage.parallel import map_parallel
+
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-# A real job has one journey object per query pattern -- 1,654 for the reference
-# discourse run. Read serially against S3 that is ~2 minutes of pure round-trip
-# latency inside the synthesis step; fanned out it is a few seconds. boto3 clients
-# are thread-safe for calls, and every read here is independent.
-_JOURNEY_READ_WORKERS = 32
 
 # Colours are NOT defined here. The report palette lives in exactly one place -- the
 # ":root" block of REPORT_CSS in src/ui/src/utils/ExportReport.js, synced into
@@ -230,7 +226,55 @@ def _project_journey(journey: dict) -> dict:
     return out
 
 
+def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> list[dict] | None:
+    """Serve the per-query journeys from the published context graph.
+
+    Returns the journey list (same projected shape as the JSON path), or ``None``
+    when the graph is unavailable for this job (never published, or the graph
+    module/deps are absent) so the caller falls back to the per-query artifacts.
+    The graph is the read-model; per-query JSON artifacts are no longer written,
+    so this is the primary path, not an optimization. The artifact fallback below
+    remains only for jobs that predate the graph read-model.
+    """
+    import tempfile
+
+    try:
+        from src.atx_orchestrator.runtime import graph_transport
+        from src.graph import GraphStore
+        from src.graph.queries import query_journeys
+    except Exception:  # noqa: BLE001 - graph deps unavailable; use the JSON path
+        return None
+
+    with tempfile.TemporaryDirectory(prefix=f"graph-read-{job_id}-") as tmpdir:
+        local_path = str(Path(tmpdir) / "context.lbug")
+        if not graph_transport.download_graph(store, database_name, job_id, local_path):
+            return None
+        graph_store = None
+        try:
+            graph_store = GraphStore(local_path)
+            return query_journeys(graph_store)
+        except Exception:  # noqa: BLE001 - a corrupt/unreadable graph -> JSON fallback
+            logger.warning(
+                "context graph unreadable for %s/%s; falling back to journey artifacts",
+                database_name,
+                job_id,
+                exc_info=True,
+            )
+            return None
+        finally:
+            if graph_store is not None:
+                with contextlib.suppress(Exception):
+                    graph_store.close()
+
+
 def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
+    # Prefer the published context graph (the read-model). Falls through to the
+    # per-query JSON artifacts only for legacy jobs that predate the graph, which
+    # are the sole jobs that still have those artifacts written.
+    from_graph = _read_journeys_from_graph(store, database_name, job_id)
+    if from_graph is not None:
+        return from_graph
+
     prefix = f"{database_name}/{job_id}/query-journeys/"
     try:
         keys = sorted(store.list_prefix(prefix))
@@ -239,19 +283,11 @@ def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
         return []
 
     json_keys = [k for k in keys if k.endswith(".json")]
-    if not json_keys:
-        return []
 
-    def _one(key: str) -> dict | None:
-        try:
-            return _project_journey(store.read_json(key))
-        except Exception:  # noqa: BLE001 - skip an unreadable journey, keep the rest
-            return None
-
-    workers = min(_JOURNEY_READ_WORKERS, len(json_keys))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(_one, json_keys))
-    return [j for j in results if j is not None]
+    # One journey read per query (1,654 on the reference discourse run) — fan
+    # out through the shared store-IO helper, preserving order and skipping any
+    # unreadable journey.
+    return map_parallel(lambda k: _project_journey(store.read_json(k)), json_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +473,7 @@ def _data_keys_used_by_template() -> set[str]:
 
 def _engine_badges(after_distribution: dict) -> str:
     return "".join(
-        f'<span class="badge" data-engine="{html.escape(str(engine), quote=True)}">'
+        f'<span class="badge" data-engine="{html.escape(str(engine), quote=True)}">'  # nosemgrep: string-concat-in-list -- intentional multi-line string
         f"{html.escape(ENGINE_LABELS.get(engine, str(engine)))}</span>"
         for engine in after_distribution
     )

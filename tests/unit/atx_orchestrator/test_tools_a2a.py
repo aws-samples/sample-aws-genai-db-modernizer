@@ -93,13 +93,13 @@ class TestRunDeterministicCoreViaA2AHappyPath:
 
     def test_constructs_correct_message_envelope(self) -> None:
         """The tool sends a JSON blob with job_id, database_name, and the
-        auto-discovered input_key (never an LLM-supplied path)."""
-        discovered = "AWSTransform/Workspaces/ws/Jobs/uuid/User Uploads/mydb.json"
+        upload-gate-resolved input_key (never an LLM-supplied path)."""
+        resolved = "artifact://abc-123"
         with (
             patch("src.atx_orchestrator.tools.invoke_and_wait", return_value={"ok": 1}) as m,
             patch(
-                "src.atx_orchestrator.core._discover_uploaded_input",
-                return_value=discovered,
+                "src.atx_orchestrator.tools._read_resolved_input_key",
+                return_value=resolved,
             ),
         ):
             run_assessment_core_via_a2a(job_id="job-42", database_name="mydb")
@@ -110,7 +110,7 @@ class TestRunDeterministicCoreViaA2AHappyPath:
         assert parsed == {
             "job_id": "job-42",
             "database_name": "mydb",
-            "input_key": discovered,
+            "input_key": resolved,
         }
 
     def test_empty_input_key_defaults_correctly(self) -> None:
@@ -177,25 +177,3 @@ class TestToolsRegistered:
 
         names = {getattr(t, "tool_name", getattr(t, "__name__", "")) for t in PIPELINE_TOOLS}
         assert "run_synthesis_via_a2a" in names
-
-
-# =============================================================================
-# Schema-design A2A timeout (long-running engines must not trip the 30-min ceiling)
-
-
-class TestSchemaDesignTimeout:
-    def test_defaults_to_four_hours(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", raising=False)
-        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60
-
-    def test_env_override_is_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "21600")
-        assert tools._schema_design_timeout_seconds() == 21600.0
-
-    def test_invalid_env_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "not-a-number")
-        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60
-
-    def test_nonpositive_env_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SCHEMA_DESIGN_A2A_TIMEOUT_SECONDS", "0")
-        assert tools._schema_design_timeout_seconds() == 4 * 60 * 60

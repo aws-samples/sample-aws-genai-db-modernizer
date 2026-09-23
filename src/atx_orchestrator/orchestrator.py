@@ -18,8 +18,8 @@ from agent_builder_sdk.orchestrator_strands.tools.subagent_registry_tools import
 
 from src.atx_orchestrator.tools import (
     complete_assessment,
-    declare_pipeline_plan,
     finalize_assignment_review,
+    finalize_collection_upload,
     get_job_status,
     get_synthesis_report,
     open_detailed_routing_review,
@@ -55,20 +55,32 @@ their own DEPLOYED SUBAGENTS via the AWS Transform A2A (agent-to-agent) protocol
 You invoke them by name and the runtime handles instance spawning and message
 dispatch.
 
-  0. declare_pipeline_plan                 — FIRST STEP: register the pipeline plan
-                                             with the WebApp progress panel. Call this
-                                             once at the start of a new assessment so
-                                             users see per-phase status updates in the
-                                             UI as work progresses.
+  (The pipeline plan and the collection-upload panel are declared AUTOMATICALLY
+   at job start — you do NOT declare the plan or open the upload panel yourself.
+   Re-declaring the plan would reset the progress panel and is not a tool you have.)
+
+  0b. finalize_collection_upload            — The collection-upload GATE (finalize half).
+                                             The upload panel is raised AUTOMATICALLY at job
+                                             start (it is the first step the customer sees); you
+                                             do NOT open it. Once the customer has uploaded their
+                                             collection in that panel AND told you the database
+                                             name, call finalize_collection_upload(job_id,
+                                             database_name). It records the uploaded file so the
+                                             assessment can read it. run_assessment_core_via_a2a
+                                             is BLOCKED until this returns "recorded". If it
+                                             returns "awaiting_upload", the customer has not
+                                             uploaded yet — wait. (Outside the ATX runtime there
+                                             is no panel; the collection is read from the seed
+                                             key and you can proceed.)
   1. run_assessment_core_via_a2a           — ONE call runs the whole assessment
                                              front-half in order: Collect -> Triage ->
                                              Analyze (every selected engine) -> Assign ->
                                              Reality Check (CTO-level engine consolidation).
                                              Collect/Triage/Analyze/Assign are deterministic;
-                                             Reality Check adds one LLM pass. It auto-discovers
-                                             the customer's uploaded offline JSON from the
-                                             job's file uploads; pass only job_id +
-                                             database_name, never a path. The agent ticks
+                                             Reality Check adds one LLM pass. It reads the
+                                             collection recorded by finalize_collection_upload;
+                                             pass only job_id + database_name, never a path.
+                                             The agent ticks
                                              collector, triage, the nested per-engine analysis
                                              sub-steps, assignment, and reality_check in the
                                              progress panel as it goes. Engine selection and
@@ -76,7 +88,7 @@ dispatch.
                                              PostgreSQL sources, Aurora-MySQL only for
                                              MySQL/MariaDB) are handled inside the agent from
                                              triage's output. Call it ONCE, after
-                                             declare_pipeline_plan.
+                                             finalize_collection_upload returns "recorded".
   1b. present_assignment_review /           — The assignment-review GATE (two steps).
       open_detailed_routing_review /         present_assignment_review returns a
       finalize_assignment_review             summary_markdown: the engine-level routing
@@ -153,7 +165,7 @@ Subagent invocation:
   look up instance IDs yourself.
 
 Progress reporting (WebApp UI):
-  After declare_pipeline_plan, the assessment-core agent reports IN_PROGRESS /
+  The pipeline plan is declared at job start; the assessment-core agent reports IN_PROGRESS /
   SUCCEEDED / FAILED status for each of its phases (collector, triage, the nested
   per-engine analysis sub-steps, assignment, reality_check) to the WebApp progress
   panel, with a short note on each step (for example the signals triage detected).
@@ -193,7 +205,14 @@ Workflow:
     synthesis, or how to sequence anything. Decide all of it yourself.
 
   - Then run this sequence without being asked, in order:
-      1. declare_pipeline_plan(job_id, database_name)
+      1a. The collection-upload panel is already open (raised at job start). Wait
+          for the customer to upload their collection there and tell you the
+          database name. Then call finalize_collection_upload(job_id,
+          database_name). If it returns "awaiting_upload", they have not uploaded
+          yet — wait and ask them to upload in the panel. If it returns "error",
+          relay the message. Proceed only when it returns "recorded". (Outside the
+          WebApp there is no panel; finalize returns "error" and you proceed via
+          the seed-key fallback.)
       2. run_assessment_core_via_a2a — one call runs Collect, Triage, Analyze
          (every engine triage selected), Assign, and Reality Check
       3. STOP and write the assessment-core summary to the customer in chat (see
@@ -312,14 +331,15 @@ Key points:
     a CTO summary) and the synthesis executive summary; neither invents a
     per-query recommendation. Say "deterministic" about which engine handles a
     query, not about the whole report.
-  - The customer must upload their offline collection JSON before the assessment
-    core runs. They attach it through the WebApp's file uploads for this job (it
-    lands in the artifact store under "User Uploads/"), and
-    run_assessment_core_via_a2a discovers it automatically. You never construct,
-    pass, or ask for a storage path. If the run reports no upload found, tell the
-    customer to run the collection script for their engine and attach the resulting
-    JSON to this job's file uploads, then retry. Do not quote an S3 key, and do not
-    attempt to copy or re-upload the file yourself.
+  - The customer uploads their offline collection JSON through the upload panel
+    that is raised automatically at job start (the first step). You do NOT open
+    that panel. Once they have uploaded there and given you the database name,
+    call finalize_collection_upload; the uploaded file's id is captured and read
+    by run_assessment_core_via_a2a. You never construct, pass, or ask for a
+    storage path, and you do not copy or re-upload the file yourself. If the
+    customer has not produced a collection yet, tell them to run the collection
+    script for their engine (e.g. collect-postgresql.sql / collect-mysql.sql) and
+    upload the resulting JSON in the panel. Do not quote an S3 key.
   - table_mappings and query_groups are derived from schema-design output. The
     workflow runs schema-design (step 4) before synthesis, so they populate
     normally; they are empty only for an engine whose design produced no tables.
@@ -327,7 +347,7 @@ Key points:
 """
 
 PIPELINE_TOOLS = [
-    declare_pipeline_plan,
+    finalize_collection_upload,
     run_assessment_core_via_a2a,
     present_assignment_review,
     open_detailed_routing_review,

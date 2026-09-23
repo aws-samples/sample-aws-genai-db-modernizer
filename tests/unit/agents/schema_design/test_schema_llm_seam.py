@@ -312,36 +312,29 @@ class TestFinalizeSchemaDesign:
 
     def test_valid_input_returns_complete_status(self):
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design"):
-            result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
         assert result["status"] == "complete"
 
     def test_valid_input_returns_output_path(self):
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design"):
-            result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
         assert "output_path" in result
         assert "schema-dynamodb" in result["output_path"]
 
     def test_valid_input_writes_schema_output(self):
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design"):
-            finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        finalize_schema_design("job-001", "mydb", "dynamodb", store)
         written_keys = list(store._written.keys())
         assert any("schema_output.json" in k for k in written_keys)
 
     def test_versioned_output_path_uses_assignment_version(self):
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design"):
-            result = finalize_schema_design(
-                "job-001", "mydb", "dynamodb", store, assignment_version=3
-            )
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store, assignment_version=3)
         assert "v3" in result["output_path"]
 
     def test_default_version_is_v1(self):
         store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design"):
-            result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
+        result = finalize_schema_design("job-001", "mydb", "dynamodb", store)
         assert "v1" in result["output_path"]
 
     def test_invalid_output_returns_validation_failed(self):
@@ -355,12 +348,6 @@ class TestFinalizeSchemaDesign:
         finalize_schema_design("job-001", "mydb", "dynamodb", store)
         written_keys = list(store._written.keys())
         assert not any("schema_output.json" in k for k in written_keys)
-
-    def test_materialize_design_called_on_success(self):
-        store = self._store_with_llm_response(_VALID_DYNAMODB_OUTPUT)
-        with patch("src.agents.query_journey_materializer.materialize_design") as mock_mat:
-            finalize_schema_design("job-001", "mydb", "dynamodb", store)
-        mock_mat.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

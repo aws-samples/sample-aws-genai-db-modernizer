@@ -143,11 +143,6 @@ def main() -> None:
     collector_path = f"{db_name}/{job_id}/collector/output.json"
     store.write_json(collector_path, collector_data)
 
-    # Materialize query journey files
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(collector_data, db_name, job_id, store)
-
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])
 
