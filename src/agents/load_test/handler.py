@@ -9,7 +9,6 @@ import structlog
 from src.agents.load_test.base import BaseProvisioner, BaseRunner, BaseScriptGenerator, BaseSeeder
 from src.agents.load_test.dynamodb.script_generator import sanitize_metric_id
 from src.agents.load_test.models import RunResult
-from src.agents.query_journey_materializer import materialize_load_test
 from src.contracts.load_test_models import (
     InfrastructureManifest,
     LatencyPercentiles,
@@ -357,10 +356,6 @@ def run_load_test(
             run_id,
             database_name,
         )
-
-        # 13. Enrich query journeys
-        journey_data = [pr.model_dump() for pr in pattern_results]
-        materialize_load_test(journey_data, database_name, job_id, store)
 
         log.info("load_test_complete", patterns_tested=output.total_patterns_tested)
         return output

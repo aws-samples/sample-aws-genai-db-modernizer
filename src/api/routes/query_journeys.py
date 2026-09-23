@@ -33,7 +33,7 @@ def _journeys_from_graph(job_id: str) -> list[dict] | None:
     The graph is the read-model that replaces the per-query journey artifacts.
     Uses the same graph accessor the /graph routes use (build-on-demand + cache).
     Returns None when the graph layer is not wired (so the caller falls back to
-    the journey artifacts, which still exist for legacy/json-mode jobs)."""
+    the journey artifacts, which still exist for legacy jobs)."""
     try:
         from src.api.routes import graph as graph_route
         from src.graph import queries as graph_queries
@@ -57,7 +57,7 @@ async def list_query_journeys(
 
     Served from the context graph when available (the read-model that replaces
     the per-query journey artifacts), falling back to the journey artifacts for
-    legacy / JOURNEY_MODE=json jobs."""
+    legacy jobs that predate the graph read-model."""
     page_size = min(page_size, _MAX_PAGE_SIZE)
 
     graph_items = _journeys_from_graph(job_id)
@@ -79,7 +79,7 @@ async def list_query_journeys(
             "items": page_items,
         }
 
-    # Fallback: per-query journey artifacts (legacy / json mode).
+    # Fallback: per-query journey artifacts (legacy jobs only).
     if not artifact_store:
         raise HTTPException(status_code=503, detail="Services not configured")
 
@@ -121,7 +121,7 @@ async def get_query_journey(job_id: str, query_id: str):
     """Return the full modernization journey for a single query.
 
     Served from the context graph when available, falling back to the per-query
-    journey artifact for legacy / JOURNEY_MODE=json jobs."""
+    journey artifact for legacy jobs that predate the graph read-model."""
     try:
         from src.api.routes import graph as graph_route
         from src.graph import queries as graph_queries

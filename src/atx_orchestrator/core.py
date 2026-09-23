@@ -363,9 +363,6 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     store.write_json(collector_key, collector_data)
 
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(collector_data, database_name, job_id, store)
     return collector_data
 
 
@@ -1215,34 +1212,23 @@ def run_assessment_core(
     # Build + publish the context graph read-model from the contract artifacts
     # just written (collector/triage/analysis/assignment/reality-check). This is
     # a single-writer boundary — assessment-core is one process — so it is safe
-    # to build the graph here. Best-effort: never fails the assessment. Skipped
-    # under JOURNEY_MODE=json (the legacy per-query journeys are the read-model
-    # there); runs under the default graph mode and under both.
-    _maybe_build_graph(store, job_id, database_name)
+    # to build the graph here. Best-effort: never fails the assessment.
+    _build_graph(store, job_id, database_name)
 
     return result
 
 
-def _maybe_build_graph(store, job_id: str, database_name: str) -> None:
-    """Build + publish the context graph unless JOURNEY_MODE is legacy 'json'.
+def _build_graph(store, job_id: str, database_name: str) -> None:
+    """Build + publish the context graph read-model.
 
     Wrapped so a graph-build failure can never propagate into the phase. The
-    graph is the read-model that replaces the per-query journey artifacts, so it
-    is built whenever journeys are NOT the sole read-model (graph/both), and
-    skipped when the caller explicitly asked for legacy journeys only (json).
+    graph is the read-model that replaces the per-query journey artifacts.
     """
-    from src.agents.query_journey_materializer import _journey_mode
-
-    mode = _journey_mode()
     logger.info(
-        "ATX: assessment-core graph boundary reached (JOURNEY_MODE=%s) for %s/%s",
-        mode,
+        "ATX: context graph boundary reached for %s/%s",
         database_name,
         job_id,
     )
-    if mode == "json":
-        logger.info("ATX: JOURNEY_MODE=json — skipping context graph build")
-        return
     try:
         from src.atx_orchestrator.runtime.graph_transport import build_and_publish_graph
 
@@ -1403,8 +1389,8 @@ def run_synthesis_core(
     # joined, so this is the single-writer point where the design, load-test and
     # synthesis contracts all exist — the graph built here is the complete
     # read-model, folding in everything the assessment-core build could not yet
-    # see. Same JOURNEY_MODE gate; best-effort, never fails the phase.
-    _maybe_build_graph(store, job_id, database_name)
+    # see. Best-effort, never fails the phase.
+    _build_graph(store, job_id, database_name)
 
     return {
         "job_id": job_id,

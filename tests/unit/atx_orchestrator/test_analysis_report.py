@@ -553,8 +553,8 @@ def test_renderers_still_work_without_provenance():
 
 # ---------------------------------------------------------------------------
 # Graph-first journey read: prefer the published context graph, fall back to the
-# per-query JSON artifacts. Under JOURNEY_MODE=graph the artifacts don't exist,
-# so the graph is the primary source; json/legacy jobs keep the artifact path.
+# per-query JSON artifacts. Journeys are no longer written, so the graph is the
+# primary source; only legacy jobs that predate it keep the artifact path.
 # ---------------------------------------------------------------------------
 
 

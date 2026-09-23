@@ -74,10 +74,6 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
 
     store.write_json(key, json.loads(result.model_dump_json()))
 
-    # Materialize query journey files (source section) — ADR-019
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(json.loads(result.model_dump_json()), database_name, job_id, store)
     print(f"Collector output written to {key}")
     print(
         f"Tables: {len(result.database_schema.tables)}, Queries: {len(result.queries.query_patterns)}"

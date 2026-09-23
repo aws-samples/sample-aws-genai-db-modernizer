@@ -232,8 +232,9 @@ def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> li
     Returns the journey list (same projected shape as the JSON path), or ``None``
     when the graph is unavailable for this job (never published, or the graph
     module/deps are absent) so the caller falls back to the per-query artifacts.
-    The graph is the read-model under JOURNEY_MODE=graph; the JSON artifacts do
-    not exist there, so this is the primary path, not an optimization.
+    The graph is the read-model; per-query JSON artifacts are no longer written,
+    so this is the primary path, not an optimization. The artifact fallback below
+    remains only for jobs that predate the graph read-model.
     """
     import tempfile
 
@@ -267,9 +268,9 @@ def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> li
 
 
 def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
-    # Prefer the published context graph (the read-model under JOURNEY_MODE=graph).
-    # Falls through to the per-query JSON artifacts when the graph isn't available
-    # (JOURNEY_MODE=json, or a job that predates the graph), so both modes render.
+    # Prefer the published context graph (the read-model). Falls through to the
+    # per-query JSON artifacts only for legacy jobs that predate the graph, which
+    # are the sole jobs that still have those artifacts written.
     from_graph = _read_journeys_from_graph(store, database_name, job_id)
     if from_graph is not None:
         return from_graph

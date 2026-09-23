@@ -138,10 +138,9 @@ class TestRunLoadTest:
         assert result is None
         store.write_json.assert_called_once()
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_orchestrates_full_lifecycle(self, mock_factory, mock_creds, mock_materialize):
+    def test_orchestrates_full_lifecycle(self, mock_factory, mock_creds):
         mock_provisioner = MagicMock()
         mock_seeder = MagicMock()
         mock_generator = MagicMock()
@@ -271,10 +270,9 @@ class TestRunLoadTestDocumentDB:
         runner.extract_scenario_iterations.return_value = 1000
         return provisioner, seeder, generator, runner
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_documentdb_does_not_skip(self, mock_factory, mock_creds, mock_materialize):
+    def test_documentdb_does_not_skip(self, mock_factory, mock_creds):
         mock_factory.return_value = self._build_mocks()
         mock_creds.return_value = {}
 
@@ -297,11 +295,10 @@ class TestRunLoadTestDocumentDB:
         provisioner, _, _, _ = mock_factory.return_value
         provisioner.provision.assert_called_once()
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
     def test_documentdb_stuffs_collector_and_test_config_before_provision(
-        self, mock_factory, mock_creds, mock_materialize
+        self, mock_factory, mock_creds
     ):
         provisioner, seeder, generator, runner = self._build_mocks()
         mock_factory.return_value = (provisioner, seeder, generator, runner)
@@ -327,11 +324,10 @@ class TestRunLoadTestDocumentDB:
         assert passed_schema["_collector_output"] == collector_output
         assert "_test_config" in passed_schema
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
     def test_documentdb_stuffs_endpoint_and_replicas_after_provision(
-        self, mock_factory, mock_creds, mock_materialize
+        self, mock_factory, mock_creds
     ):
         provisioner, seeder, generator, runner = self._build_mocks(
             cluster_endpoint="loadtest-foo.cluster-bar.us-east-1.docdb.amazonaws.com",
@@ -363,12 +359,9 @@ class TestRunLoadTestDocumentDB:
         )
         assert passed_schema["_documentdb_replica_count"] == 2
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_dynamodb_does_not_get_documentdb_keys_added(
-        self, mock_factory, mock_creds, mock_materialize
-    ):
+    def test_dynamodb_does_not_get_documentdb_keys_added(self, mock_factory, mock_creds):
         from src.agents.load_test.models import RunResult, SeedManifest
         from src.contracts.load_test_models import InfrastructureManifest
 
@@ -410,12 +403,9 @@ class TestRunLoadTestDocumentDB:
         assert "_collector_output" not in passed_schema
         assert "_test_config" not in passed_schema
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_documentdb_handles_missing_cluster_resource_gracefully(
-        self, mock_factory, mock_creds, mock_materialize
-    ):
+    def test_documentdb_handles_missing_cluster_resource_gracefully(self, mock_factory, mock_creds):
         """If provisioner returns no DBCluster resource, post-provision stuffing skips."""
         from src.agents.load_test.models import RunResult, SeedManifest
         from src.contracts.load_test_models import InfrastructureManifest

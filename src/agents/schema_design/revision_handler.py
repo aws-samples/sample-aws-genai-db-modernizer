@@ -549,10 +549,6 @@ def execute_revision(
     base_path = f"{database_name}/{job_id}/schema-{engine}/v{new_version}"
     store.write_json(f"{base_path}/schema_output.json", new_schema)
 
-    # Materialize query journey files (design section) — ADR-019
-    from src.agents.query_journey_materializer import materialize_design
-
-    materialize_design(new_schema, engine, new_version, database_name, job_id, store)
     store.write_json(f"{base_path}/version_meta.json", meta.model_dump(mode="json"))
     store.write_json(f"{base_path}/revision_request.json", request.model_dump(mode="json"))
     store.write_json(
