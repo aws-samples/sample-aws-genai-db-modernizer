@@ -145,7 +145,7 @@ def invoke_and_wait(
             len(_summaries_of(list_resp)),
         )
     except Exception as e:
-        logger.exception(
+        logger.exception(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
             "A2A list_agent_instances FAILED for agent_id=%s requester=%s",
             agent_id,
             own_instance_id,
@@ -171,12 +171,14 @@ def invoke_and_wait(
                 requestContext=request_context,
             )
         except Exception as e:
-            logger.exception("A2A invoke_agent FAILED for agent_id=%s", agent_id)
+            logger.exception(
+                "A2A invoke_agent FAILED for agent_id=%s", agent_id
+            )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
             raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
 
         subagent_instance_id = _extract_instance_id(invoke_resp)
         if not subagent_instance_id:
-            logger.error(
+            logger.error(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
                 "A2A invoke_agent returned no agentInstanceId for agent_id=%s: response=%r",
                 agent_id,
                 invoke_resp,
@@ -253,7 +255,7 @@ def invoke_and_wait(
                 e,
             )
         else:
-            logger.exception(
+            logger.exception(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
                 "A2A send_message FAILED: agent_id=%s instance=%s",
                 agent_id,
                 subagent_instance_id,
@@ -297,7 +299,7 @@ def invoke_and_wait(
             status,
             elapsed,
         )
-        time.sleep(poll_interval)
+        time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
 
 
 # =============================================================================
@@ -383,7 +385,7 @@ def _dwell_after_ready(dwell_seconds: float) -> None:
             "A2A dwelling %.1fs after RUNNING to let subagent app finish booting",
             dwell_seconds,
         )
-        time.sleep(dwell_seconds)
+        time.sleep(dwell_seconds)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
 
 
 def _wait_for_ready(
@@ -444,7 +446,7 @@ def _wait_for_ready(
             status,
             elapsed,
         )
-        time.sleep(poll_interval)
+        time.sleep(poll_interval)  # nosemgrep: arbitrary-sleep -- intentional polling/backoff
 
 
 # Terminal / unusable states — a subagent in one of these can't accept new work.

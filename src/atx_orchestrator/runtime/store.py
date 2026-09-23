@@ -62,6 +62,15 @@ def upgrade_store(inner: ArtifactStore) -> ArtifactStore:
         return TransformS3Store(inner.bucket, inner.s3)
     if isinstance(inner, LocalArtifactStore):
         return TransformLocalStore(str(inner.base_dir))
+
+    from src.atx_orchestrator.runtime.atx_store import AtxArtifactStore, TransformAtxStore
+
+    if isinstance(inner, AtxArtifactStore):
+        return (
+            inner
+            if isinstance(inner, TransformAtxStore)
+            else TransformAtxStore(sdk_store=inner._sdk, agent_instance_id=inner._agent_instance_id)
+        )
     raise TypeError(
         f"No Transform store for {type(inner).__name__}. Add a subclass in "
         "src/atx_orchestrator/store.py that provides write_text()."

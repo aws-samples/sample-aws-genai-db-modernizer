@@ -85,10 +85,6 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     assignment_key = f"{database_name}/{job_id}/assignment/v{version}/assignment.json"
     store.write_json(assignment_key, assignment.model_dump(mode="json"))
 
-    # Materialize query journey files (assignment section) — ADR-019
-    from src.agents.query_journey_materializer import materialize_assignment
-
-    materialize_assignment(assignment.model_dump(mode="json"), database_name, job_id, store)
     print(f"[assignment] Assignment written to {assignment_key}")
 
     validation_key = f"{database_name}/{job_id}/assignment/v{version}/validation.json"

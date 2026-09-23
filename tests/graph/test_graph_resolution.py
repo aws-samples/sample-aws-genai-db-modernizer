@@ -8,7 +8,9 @@ from src.api.routes import graph as graph_routes
 def test_build_and_upload_on_download_miss(monkeypatch, tmp_path):
     """When nothing is cached, the graph is built then uploaded."""
     store = MagicMock()
-    store.is_populated.return_value = False
+    store.is_populated.return_value = (
+        False  # nosemgrep: is-function-without-parentheses -- property, not a method
+    )
     cache = MagicMock()
     cache.get.return_value = store
     cache.local_path.return_value = str(tmp_path / "context.lbug")
@@ -37,7 +39,9 @@ def test_download_hit_skips_build(monkeypatch, tmp_path):
     """When the graph is in the store, download and skip rebuild."""
     store = MagicMock()
     # Not populated on first check (fresh handle); populated after reopen.
-    store.is_populated.return_value = True
+    store.is_populated.return_value = (
+        True  # nosemgrep: is-function-without-parentheses -- property, not a method
+    )
     cache = MagicMock()
     cache.get.return_value = store
     cache.reopen.return_value = store
@@ -60,7 +64,10 @@ def test_download_hit_skips_build(monkeypatch, tmp_path):
 
     # Force the "not locally populated yet" path so download is attempted:
     # first is_populated() call returns False, then True after reopen.
-    store.is_populated.side_effect = [False, True]
+    store.is_populated.side_effect = [
+        False,
+        True,
+    ]  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     graph_routes._get_graph("job-1")
 

@@ -138,10 +138,9 @@ class TestRunLoadTest:
         assert result is None
         store.write_json.assert_called_once()
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_orchestrates_full_lifecycle(self, mock_factory, mock_creds, mock_materialize):
+    def test_orchestrates_full_lifecycle(self, mock_factory, mock_creds):
         mock_provisioner = MagicMock()
         mock_seeder = MagicMock()
         mock_generator = MagicMock()
@@ -271,10 +270,9 @@ class TestRunLoadTestDocumentDB:
         runner.extract_scenario_iterations.return_value = 1000
         return provisioner, seeder, generator, runner
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_documentdb_does_not_skip(self, mock_factory, mock_creds, mock_materialize):
+    def test_documentdb_does_not_skip(self, mock_factory, mock_creds):
         mock_factory.return_value = self._build_mocks()
         mock_creds.return_value = {}
 
@@ -297,11 +295,10 @@ class TestRunLoadTestDocumentDB:
         provisioner, _, _, _ = mock_factory.return_value
         provisioner.provision.assert_called_once()
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
     def test_documentdb_stuffs_collector_and_test_config_before_provision(
-        self, mock_factory, mock_creds, mock_materialize
+        self, mock_factory, mock_creds
     ):
         provisioner, seeder, generator, runner = self._build_mocks()
         mock_factory.return_value = (provisioner, seeder, generator, runner)
@@ -327,11 +324,10 @@ class TestRunLoadTestDocumentDB:
         assert passed_schema["_collector_output"] == collector_output
         assert "_test_config" in passed_schema
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
     def test_documentdb_stuffs_endpoint_and_replicas_after_provision(
-        self, mock_factory, mock_creds, mock_materialize
+        self, mock_factory, mock_creds
     ):
         provisioner, seeder, generator, runner = self._build_mocks(
             cluster_endpoint="loadtest-foo.cluster-bar.us-east-1.docdb.amazonaws.com",
@@ -363,12 +359,9 @@ class TestRunLoadTestDocumentDB:
         )
         assert passed_schema["_documentdb_replica_count"] == 2
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_dynamodb_does_not_get_documentdb_keys_added(
-        self, mock_factory, mock_creds, mock_materialize
-    ):
+    def test_dynamodb_does_not_get_documentdb_keys_added(self, mock_factory, mock_creds):
         from src.agents.load_test.models import RunResult, SeedManifest
         from src.contracts.load_test_models import InfrastructureManifest
 
@@ -410,12 +403,9 @@ class TestRunLoadTestDocumentDB:
         assert "_collector_output" not in passed_schema
         assert "_test_config" not in passed_schema
 
-    @patch("src.agents.load_test.handler.materialize_load_test")
     @patch("src.agents.load_test.handler._resolve_aws_credentials")
     @patch("src.agents.load_test.handler.create_engine_components")
-    def test_documentdb_handles_missing_cluster_resource_gracefully(
-        self, mock_factory, mock_creds, mock_materialize
-    ):
+    def test_documentdb_handles_missing_cluster_resource_gracefully(self, mock_factory, mock_creds):
         """If provisioner returns no DBCluster resource, post-provision stuffing skips."""
         from src.agents.load_test.models import RunResult, SeedManifest
         from src.contracts.load_test_models import InfrastructureManifest
@@ -457,3 +447,69 @@ class TestRunLoadTestDocumentDB:
         # Endpoint key was NOT added (no cluster found)
         passed_schema = seeder.seed.call_args.args[0]
         assert "_documentdb_endpoint" not in passed_schema
+
+
+class TestWriteArtifactsFanOut:
+    """_write_artifacts fans the per-query result writes out through
+    run_parallel (one result artifact per load-tested query — ~1,654 on the
+    reference discourse run — is otherwise minutes of serial ATX upload latency).
+    Verify every query's result lands at its own distinct key and the surrounding
+    fixed-count artifacts are still written."""
+
+    def _output(self, pattern_results):
+        from src.agents.load_test.models import SeedManifest
+        from src.contracts.load_test_models import InfrastructureManifest, TestConfig
+
+        return _build_output(
+            run_id="r",
+            schema_version=1,
+            target_engine="dynamodb",
+            test_config=TestConfig(duration_minutes=1, warmup_seconds=10),
+            manifest=InfrastructureManifest(resources=[], tags={}),
+            seed_manifest=SeedManifest(resources={}, total_items=0, duration_seconds=0.0),
+            pattern_results=pattern_results,
+        )
+
+    def test_writes_one_result_artifact_per_query(self):
+        import threading
+
+        from src.agents.load_test.handler import _write_artifacts
+        from src.agents.load_test.models import SeedManifest
+        from src.contracts.load_test_models import InfrastructureManifest, TestConfig
+
+        qids = [f"q{i:04d}" for i in range(200)]
+        pattern_results = [_pattern_result(q, total_requests=100, error_rate_pct=0.0) for q in qids]
+        output = self._output(pattern_results)
+
+        written: dict[str, dict] = {}
+        lock = threading.Lock()
+        store = MagicMock()
+
+        def _write(path, data):
+            with lock:
+                written[path] = data
+
+        store.write_json.side_effect = _write
+
+        _write_artifacts(
+            store=store,
+            base="test_db/j1/load-test-dynamodb/v1",
+            output=output,
+            manifest=InfrastructureManifest(resources=[], tags={}),
+            seed_manifest=SeedManifest(resources={}, total_items=0, duration_seconds=0.0),
+            pattern_results=pattern_results,
+            test_config=TestConfig(duration_minutes=1, warmup_seconds=10),
+            job_id="j1",
+            run_id="r",
+            database_name="test_db",
+        )
+
+        base = "test_db/j1/load-test-dynamodb/v1"
+        # Every per-query result artifact was written to its own distinct key,
+        # regardless of completion order under the thread pool.
+        for q in qids:
+            assert f"{base}/results/{q}.json" in written
+        # Fixed-count surrounding artifacts still written.
+        for name in ("config.json", "infrastructure.json", "seed-manifest.json"):
+            assert f"{base}/{name}" in written
+        assert f"{base}/results/summary.json" in written

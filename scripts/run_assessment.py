@@ -104,12 +104,12 @@ def _banner(title: str) -> None:
 def _read_state() -> dict:  # type: ignore[type-arg]
     if not os.path.exists(STATE_FILE):
         return {}
-    with open(STATE_FILE) as f:
+    with open(STATE_FILE, encoding="utf-8") as f:
         return json.load(f)  # type: ignore[no-any-return]
 
 
 def _write_state(state: dict) -> None:
-    with open(STATE_FILE, "w") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
         f.write("\n")
 
@@ -223,11 +223,6 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
     store.write_json(collector_path, collector_data)
-
-    # Materialize query journey files
-    from src.agents.query_journey_materializer import materialize_source
-
-    materialize_source(collector_data, db_name, job_id, store)
 
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])

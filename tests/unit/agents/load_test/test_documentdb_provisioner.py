@@ -388,7 +388,7 @@ class TestTeardown:
     def _build_manifest(self) -> InfrastructureManifest:
         from src.contracts.load_test_models import DeployedResource
 
-        secret_name = "LoadTest_abc_primary"  # pragma: allowlist secret
+        secret_name = "LoadTest_abc_primary"  # pragma: allowlist secret  # nosec B105 — test fixture string, not a real password
         return InfrastructureManifest(
             resources=[
                 DeployedResource(

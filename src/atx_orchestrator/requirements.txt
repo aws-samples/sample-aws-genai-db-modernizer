@@ -7,6 +7,12 @@ agent-builder-mcp-client-aws-transform>=1.0.0
 # Project core dependencies (subset needed inside the container)
 # Full list lives in pyproject.toml — only runtime deps are listed here.
 strands-agents>=1.0.0
+# LadybugDB — embedded graph DB backing the context-graph read-model that the
+# assessment-core and synthesis boundaries build + publish (graph_transport /
+# src.graph). Required in the agent image: without it, `from src.graph import
+# GraphStore` raises ModuleNotFoundError, build_and_publish_graph silently
+# no-ops, and no .lbug is ever produced. Pinned to match pyproject.toml.
+ladybug>=0.17.1
 pydantic>=2.7.2
 boto3>=1.34.0
 python-dotenv>=1.0.0

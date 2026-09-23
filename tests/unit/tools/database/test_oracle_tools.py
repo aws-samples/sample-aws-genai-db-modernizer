@@ -31,7 +31,7 @@ def collector(mock_ssm):
         host="oracle-test.us-east-1.rds.amazonaws.com",
         port=1521,
         database="ORCLPDB1",
-        secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:oracle-test",  # pragma: allowlist secret
+        secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:oracle-test",  # pragma: allowlist secret  # nosec B106 — test fixture ARN/secret ref, not a real credential
         region="us-east-1",
     )
 
@@ -348,7 +348,9 @@ class TestSplitQualified:
 
 class TestHash:
     def test_deterministic(self):
-        assert _hash("SELECT 1") == _hash("SELECT 1")
+        assert _hash("SELECT 1") == _hash(
+            "SELECT 1"
+        )  # nosemgrep: eqeq-is-bad -- intentional self-equality/hash-stability check in test
         assert len(_hash("SELECT 1")) == 16
 
 

@@ -106,6 +106,12 @@ markers = [
     "integration: marks tests as integration tests",
     "contract: marks tests as contract validation tests",
 ]
+filterwarnings = [
+    # Third-party: FastAPI's TestClient imports httpx via starlette, which warns
+    # under newer starlette. Not fixable in our code; scoped narrowly (by message
+    # and by starlette's own warning class) so our own deprecations still surface.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"

@@ -698,22 +698,30 @@ class TestBuildColumnsOracleFields:
     def test_mysql_extra_auto_increment_detected(self):
         c = self._base(is_identity=None, extra="auto_increment")
         columns = _build_columns([c])
-        assert columns[0].is_auto_increment is True
+        assert (
+            columns[0].is_auto_increment is True
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     def test_oracle_is_identity_yes_detected(self):
         """Oracle 12c+ IDENTITY column: is_identity='YES' should map."""
         columns = _build_columns([self._base(is_identity="YES")])
-        assert columns[0].is_auto_increment is True
+        assert (
+            columns[0].is_auto_increment is True
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     def test_oracle_is_identity_no_returns_false(self):
         columns = _build_columns([self._base(is_identity="NO")])
-        assert columns[0].is_auto_increment is False
+        assert (
+            columns[0].is_auto_increment is False
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     def test_missing_is_identity_and_extra_returns_false(self):
         c = self._base(is_identity=None)
         # No 'extra' key at all
         columns = _build_columns([c])
-        assert columns[0].is_auto_increment is False
+        assert (
+            columns[0].is_auto_increment is False
+        )  # nosemgrep: is-function-without-parentheses -- property, not a method
 
     # -- Mixed customer-JSON shape --------------------------------------------
 
@@ -738,7 +746,9 @@ class TestBuildColumnsOracleFields:
         c = columns[0]
         assert c.column_name == "d_obj#"
         assert c.nullable is False  # N → not null
-        assert c.is_auto_increment is False  # NO
+        assert (
+            c.is_auto_increment is False
+        )  # NO  # nosemgrep: is-function-without-parentheses -- property, not a method
 
 
 # ---------------------------------------------------------------------------

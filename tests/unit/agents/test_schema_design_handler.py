@@ -254,7 +254,9 @@ class TestRunSchemaDesignAutoRouting:
 
         store = _store_with_queries(tmp_path, "dynamodb", MAX_GROUP_SIZE + 10)
 
-        def _empty_manifest(job_id, database_name, target_type, store, assignment_version=0):
+        def _empty_manifest(
+            job_id, database_name, target_type, store, assignment_version=0
+        ):  # nosemgrep: useless-inner-function -- test helper referenced indirectly
             ver = assignment_version if assignment_version > 0 else 1
             store.write_json(
                 f"{database_name}/{job_id}/schema-{target_type}/v{ver}/groups_manifest.json",

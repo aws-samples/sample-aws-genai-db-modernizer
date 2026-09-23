@@ -393,3 +393,61 @@ class TestSchemaDesignConsolidatedDispatch:
         message = json.loads(mock_invoke.call_args.args[1])
         assert message["target_type"] == "aurora_postgresql"
         assert json.loads(out) == {"status": "complete"}
+
+
+# =============================================================================
+# _schema_design_timeout_s — env-overridable, clamped A2A wait ceiling
+#
+# The per-engine schema-design A2A wait must default wide (120 min) so a
+# slow-but-healthy design is not killed mid-flight (ElastiCache / Aurora
+# PostgreSQL were tripping the old 1800s default), stay tunable without a
+# redeploy via SCHEMA_DESIGN_TIMEOUT_MINUTES, and be clamped to (0, 180] min so
+# a misconfiguration can neither disable the timeout nor exceed the 3h hard cap.
+
+
+class TestSchemaDesignTimeoutResolution:
+    def test_default_is_120_minutes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", raising=False)
+        assert tools._schema_design_timeout_s() == 120 * 60.0
+
+    def test_env_override_is_honored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "90")
+        assert tools._schema_design_timeout_s() == 90 * 60.0
+
+    def test_clamped_to_180_minute_hard_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "10000")
+        assert tools._schema_design_timeout_s() == 180 * 60.0
+
+    def test_non_positive_clamped_to_one_minute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 0 would mean "no wait" — never intended; floor at 1 min.
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "0")
+        assert tools._schema_design_timeout_s() == 1 * 60.0
+
+    def test_invalid_value_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", "not-a-number")
+        assert tools._schema_design_timeout_s() == 120 * 60.0
+
+
+class TestSchemaDesignDispatchTimeout:
+    def test_dispatch_passes_resolved_timeout_to_invoke_and_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A real dispatch must hand the resolved (default 120 min) ceiling to
+        # invoke_and_wait rather than falling back to its 1800s default.
+        monkeypatch.delenv("SCHEMA_DESIGN_TIMEOUT_MINUTES", raising=False)
+        with (
+            patch("src.atx_orchestrator.tools._effective_assignment_version", return_value=1),
+            patch(
+                "src.atx_orchestrator.tools._engines_with_in_scope_queries",
+                return_value={"dynamodb"},
+            ),
+            patch(
+                "src.atx_orchestrator.tools.invoke_and_wait", return_value={"status": "complete"}
+            ) as mock_invoke,
+            patch("src.atx_orchestrator.tools.mark_step_skipped"),
+            patch("src.atx_orchestrator.tools.mark_step_running"),
+            patch("src.atx_orchestrator.tools.mark_step_succeeded"),
+        ):
+            tools._run_schema_design_via_a2a("dynamodb", "job-1", "discourse")
+
+        assert mock_invoke.call_args.kwargs["timeout"] == 120 * 60.0

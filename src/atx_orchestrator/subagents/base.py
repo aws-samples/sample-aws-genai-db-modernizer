@@ -280,7 +280,9 @@ def make_subagent_factory(
                     # reads agentOutput.serializedPayload written just above.
                     return _SubagentResult(_summary_line(summary))
                 except Exception as e:  # noqa: BLE001
-                    logger.exception("Subagent FAILED")
+                    logger.exception(
+                        "Subagent FAILED"
+                    )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
                     if manager and instance_id:
                         manager.update_status(instance_id, "FAILED", status_reason=str(e)[:1024])
                     raise
@@ -336,6 +338,22 @@ def _make_orchestrator_server_class(base_server_cls):
             except Exception:  # noqa: BLE001
                 # Fail-open: the greeting must never break job startup.
                 logger.warning("Welcome message step failed", exc_info=True)
+
+            # Raise the collection-upload HITL as the deterministic FIRST step,
+            # before any customer turn. This does not depend on the orchestrator
+            # LLM choosing to call a tool: the upload panel is the customer's very
+            # first interaction. job_id is resolved from the agent context inside
+            # the helper. Fail-open — a failure here must not block job start
+            # (dev/reference has no HITL transport and returns None).
+            #
+            # NOTE: the agent runtime serves whatever image was last built for this
+            # branch; changes here only take effect after a rebuild + redeploy.
+            try:
+                from src.atx_orchestrator.tools import declare_plan_and_request_upload
+
+                declare_plan_and_request_upload("")
+            except Exception:  # noqa: BLE001
+                logger.warning("Collection-upload gate step failed at job start", exc_info=True)
 
     return _OrchestratorServer
 

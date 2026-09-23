@@ -445,9 +445,9 @@ def architecture_svg(report: dict[str, Any]) -> str:
         )
 
     p = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '  # nosemgrep: string-concat-in-list -- intentional multi-line string
         f'viewBox="0 0 {width} {height}" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">',
-        '<defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" '
+        '<defs><marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" '  # nosemgrep: string-concat-in-list -- intentional multi-line string
         'orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#146EB4"/></marker></defs>',
         f'<rect width="{width}" height="{height}" fill="#fff"/>',
         box(left_x, src_y, box_w, box_h, str(src), "source database", "#232F3E"),
@@ -673,7 +673,7 @@ def render_decision_report_html(
         ]
         if not trust_generated_summary:
             out += [
-                "<p class=note>The generated narrative was withheld because it referenced "
+                "<p class=note>The generated narrative was withheld because it referenced "  # nosemgrep: string-concat-in-list -- intentional multi-line string
                 "schema work this run did not perform; the figures here are unaffected.</p>"
             ]
 
@@ -685,7 +685,7 @@ def render_decision_report_html(
     if engines:
         out += [
             "<div class=card><div class=card-b>",
-            "<table><thead><tr><th>Engine</th><th>Role</th><th>Workload</th>"
+            "<table><thead><tr><th>Engine</th><th>Role</th><th>Workload</th>"  # nosemgrep: string-concat-in-list -- intentional multi-line string
             "<th>Scope</th><th>Est. monthly</th></tr></thead><tbody>",
         ]
         total_cost = 0.0
@@ -763,7 +763,7 @@ def render_decision_report_html(
         out.append("</div></div>")
 
     out += [
-        "<footer>Engine and query assignments are produced deterministically \u2014 no language "
+        "<footer>Engine and query assignments are produced deterministically \u2014 no language "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "model decides which engine a table or query goes to. The executive summary is written "
         "over already-computed results and cannot change a recommendation. The complete "
         "machine-readable assessment is available as the Assessment Data (JSON) artifact.</footer>",
@@ -814,7 +814,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     out += [
         "# Database Modernization \u2014 Engineering Report",
         "",
-        f"Source database: `{db}`. This is the build companion to the Decision Report: "
+        f"Source database: `{db}`. This is the build companion to the Decision Report: "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "the source-to-target mapping, the per-engine target schemas, and the query "
         "co-dependency groups.",
         "",
@@ -971,7 +971,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     out += [
         "---",
         "",
-        "Assignments are deterministic. The complete machine-readable assessment is the "
+        "Assignments are deterministic. The complete machine-readable assessment is the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "Assessment Data (JSON) artifact.",
         "",
     ]

@@ -52,12 +52,13 @@ database to produce a collection file. The scripts ship with this project and \
 only need SELECT access — they do not modify your database:
    - PostgreSQL: `psql ... -f scripts/collect-postgresql.sql > my-collection.json`
    - MySQL: `mysql ... < scripts/collect-mysql.sql > my-collection.json`
-2. Upload the resulting JSON file to this job's file uploads (the paperclip / \
-Add files control).
+2. Upload the resulting JSON file using the **upload panel above** (the first \
+step of this job). That panel is where the assessment reads your collection.
 3. Tell me the name of the database you collected.
 
-When you're ready, reply with something like "I've uploaded my collection, the \
-database name is orders" and I'll take it from there."""
+When you're ready, upload your collection in the panel and reply with something \
+like "I've uploaded my collection, the database name is orders" and I'll take it \
+from there."""
 
 # Starter chips shown under the welcome message.
 DEFAULT_SUGGESTIONS = [

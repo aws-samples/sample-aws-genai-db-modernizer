@@ -26,6 +26,11 @@ class GraphPersistence:
 
     def download_if_exists(self, db_name: str, job_id: str, local_path: str) -> bool:
         """Download the graph to local_path. Return False if it isn't stored yet."""
+        # src/storage/ is kept byte-identical to upstream core-modernizer, so we
+        # can't add `supports_bytes` to the ArtifactStore ABC. Only the ATX
+        # backend sets it False; the True default preserves S3/local behavior.
+        if not getattr(self._store, "supports_bytes", True):
+            return False
         key = self.graph_key(db_name, job_id)
         if not self._store.exists(key):
             return False
@@ -37,5 +42,12 @@ class GraphPersistence:
 
     def upload(self, db_name: str, job_id: str, local_path: str) -> None:
         """Upload the freshly built graph file to the store."""
+        if not getattr(self._store, "supports_bytes", True):
+            logger.info(
+                "graph persistence skipped: backend %s does not support bytes; "
+                "the graph will be rebuilt on demand from STATE artifacts",
+                type(self._store).__name__,
+            )
+            return
         data = Path(local_path).read_bytes()
         self._store.write_bytes(self.graph_key(db_name, job_id), data)

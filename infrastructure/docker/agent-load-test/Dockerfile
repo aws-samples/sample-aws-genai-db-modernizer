@@ -9,6 +9,7 @@
 # Packages/versions are configurable via build args so we can swap the upstream
 # forks without modifying the Dockerfile (xk6-mongo has multiple community forks).
 
+# nosemgrep: dockerfile-source-not-pinned -- intentionally tracks the bookworm tag so community xk6-mongo forks can be swapped via build args (see above); digest-pinning would defeat that.
 FROM golang:1.25-bookworm AS xk6-builder
 
 ARG XK6_MONGO_PACKAGE=github.com/GhMartingit/xk6-mongo

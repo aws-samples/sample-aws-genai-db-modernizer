@@ -84,7 +84,7 @@ def _journey(qid: str, qtype: str, engine: str | None, cps: float) -> dict:
     return {
         "query_id": qid,
         "source": {
-            "query_text": f"SELECT * FROM t WHERE id = {qid}",
+            "query_text": f"SELECT * FROM t WHERE id = {qid}",  # nosec B608 — static test SQL, not user input
             "query_type": qtype,
             "tables_accessed": ["discourse.posts"],
             "frequency_per_hour": 100,
@@ -308,7 +308,7 @@ def test_journeys_are_read_concurrently():
             live += 1
             max_concurrent = max(max_concurrent, live)
         try:
-            time.sleep(0.005)
+            time.sleep(0.005)  # nosemgrep: arbitrary-sleep -- test timing assertion
             return inner(path)
         finally:
             with lock:
@@ -549,3 +549,44 @@ def test_renderers_still_work_without_provenance():
     report = _report()
     assert "<title>Decision Report" in render_decision_report_html(report)
     assert render_engineering_report_md(report).startswith("# Database Modernization")
+
+
+# ---------------------------------------------------------------------------
+# Graph-first journey read: prefer the published context graph, fall back to the
+# per-query JSON artifacts. Journeys are no longer written, so the graph is the
+# primary source; only legacy jobs that predate it keep the artifact path.
+# ---------------------------------------------------------------------------
+
+
+def test_read_journeys_prefers_graph_when_available(monkeypatch):
+    from unittest.mock import patch
+
+    graph_journeys = [
+        {"query_id": "gq1", "source": {"query_type": "SELECT"}, "assignment": None, "design": None}
+    ]
+    store = FakeStore(_objects())  # has JSON journeys too — must NOT be used
+    with patch.object(ar, "_read_journeys_from_graph", return_value=graph_journeys):
+        got = ar._read_journeys(store, DB, JOB)
+
+    assert got == graph_journeys
+    # The JSON artifact path was not touched when the graph served the journeys.
+    assert not any("/query-journeys/" in r for r in store.reads)
+
+
+def test_read_journeys_falls_back_to_json_when_graph_absent():
+    from unittest.mock import patch
+
+    store = FakeStore(_objects())
+    # Graph unavailable (no pointer / deps) -> None -> JSON artifact path used.
+    with patch.object(ar, "_read_journeys_from_graph", return_value=None):
+        got = ar._read_journeys(store, DB, JOB)
+
+    assert len(got) >= 1
+    assert any("/query-journeys/" in r for r in store.reads)
+
+
+def test_read_journeys_from_graph_returns_none_without_pointer():
+    # A store with no graph pointer and no download-by-id capability yields None
+    # (so the caller falls back), rather than raising.
+    store = FakeStore(_objects())
+    assert ar._read_journeys_from_graph(store, DB, JOB) is None

@@ -83,6 +83,42 @@ def _platform_job_id(supplied: str) -> str:
 # Opus advisor passes that step 2b removed.
 _AGENT_PREFIX = os.environ.get("AGENT_NAME_PREFIX", "db-modernization")
 
+# A2A wait ceiling for a single schema-design engine. These are the heaviest LLM
+# subagents (an engine's design is ~10-15 min of Bedrock work in practice), and
+# the default invoke_and_wait ceiling of 1800s (30 min) was tripping ElastiCache
+# and Aurora PostgreSQL. Set a wide ceiling so a slow-but-healthy design is not
+# killed mid-flight; a real hang still terminates well within the platform's own
+# limits. Overridable via env for tuning without a redeploy, clamped to a hard
+# 180-minute maximum.
+_SCHEMA_DESIGN_TIMEOUT_MAX_S = 180 * 60  # hard cap: 3 hours
+_SCHEMA_DESIGN_TIMEOUT_DEFAULT_S = 120 * 60  # default: 2 hours
+
+
+def _schema_design_timeout_s() -> float:
+    """Resolve the per-engine schema-design A2A timeout (seconds), env-overridable.
+
+    ``SCHEMA_DESIGN_TIMEOUT_MINUTES`` overrides the 120-minute default; any value
+    is clamped to (0, 180] minutes so a misconfiguration can neither disable the
+    timeout nor exceed the 3-hour hard cap.
+    """
+    default_min = _SCHEMA_DESIGN_TIMEOUT_DEFAULT_S / 60
+    raw = os.environ.get("SCHEMA_DESIGN_TIMEOUT_MINUTES")
+    minutes = default_min
+    if raw:
+        try:
+            minutes = float(raw)
+        except ValueError:
+            logger.warning(
+                "ATX: invalid SCHEMA_DESIGN_TIMEOUT_MINUTES=%r; using default %.0f min",
+                raw,
+                default_min,
+            )
+            minutes = default_min
+    # Clamp to (0, 180]: a non-positive value would mean "no wait", which is never
+    # intended; above 180 min exceeds the hard cap.
+    minutes = max(1.0, min(minutes, _SCHEMA_DESIGN_TIMEOUT_MAX_S / 60))
+    return minutes * 60.0
+
 
 @tool
 def declare_pipeline_plan(job_id: str, database_name: str) -> str:
@@ -97,11 +133,12 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     UI for the user during long-running phases (see F20 in
     ``docs-atx-poc/subagent-recipe.md``).
 
-    The declared plan includes 9 phases:
-      1. collector — ingest customer's offline collection
-      2. triage — select candidate target engines
-      3-8. analysis_{dynamodb,documentdb,elasticache,opensearch,aurora_postgresql,aurora_mysql}
-      9. assignment — route queries to engines
+    The declared plan includes these phases:
+      1. upload — customer uploads their offline collection (HITL file-upload gate)
+      2. collector — ingest customer's offline collection
+      3. triage — select candidate target engines
+      4-9. analysis_{dynamodb,documentdb,elasticache,opensearch,aurora_postgresql,aurora_mysql}
+      10. assignment — route queries to engines
 
     Unused analysis phases (engines not selected by triage) stay at
     ``NOT_STARTED`` — that's expected and shows the user which engines
@@ -132,6 +169,15 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     # dict[str, object] (not str): the "analysis" node carries a nested subSteps
     # list, so values are no longer all strings.
     steps: list[dict[str, object]] = [
+        # Upload gate (first step): the customer uploads their offline collection
+        # through a BLOCKING FileUploadV2 HITL task raised under this step, so the
+        # collector receives the uploaded file's artifactId directly (job-scoped,
+        # unambiguous) rather than discovering it by listing artifacts.
+        {
+            "stepLabel": "upload",
+            "stepName": "Upload Database Collection",
+            "description": "Upload the offline collection JSON produced by the collection script.",
+        },
         {
             "stepLabel": "collector",
             "stepName": "Collect Database Schema and Queries",
@@ -294,6 +340,162 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     )
 
 
+def declare_plan_and_request_upload(job_id: str) -> str | None:
+    """Declare the pipeline plan and raise the BLOCKING collection-upload HITL.
+
+    This is the deterministic FIRST step of every job. It runs at job start (from
+    the orchestrator server's ``_finalize_agent_setup`` hook), BEFORE any customer
+    turn — so the customer's very first interaction is the upload panel, not a
+    free-text prompt. It does not depend on the orchestrator LLM choosing to call
+    a tool.
+
+    ``database_name`` is intentionally NOT required here: the customer has not
+    told us the db name yet at job start. The plan and the upload HITL do not need
+    it (the plan step labels are fixed; the HITL just collects a file). The
+    pending-upload pointer is therefore job-scoped; ``finalize_collection_upload``
+    bridges to the db-scoped resolved-input-key pointer once the db name is known.
+
+    Returns the HITL task id on success, or ``None`` outside the ATX runtime / on
+    any failure (dev and reference runs have no HITL transport and fall back to
+    the seed key). Never raises — a failure here must not block job start.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    store = _make_store()
+
+    # Declare the plan first so the "upload" step exists to attach the HITL to.
+    # declare_pipeline_plan is a @tool; call its underlying function directly.
+    # database_name is only used for progress-panel copy, not keying — a neutral
+    # placeholder is fine and is corrected on the first real phase.
+    try:
+        declare_pipeline_plan.__wrapped__(job_id, "")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - progress panel is best-effort
+        logger.warning("ATX: declare_pipeline_plan failed at job start", exc_info=True)
+
+    step_id = get_step_id("upload")
+    if not step_id:
+        register_steps_from_server()
+        step_id = get_step_id("upload")
+
+    hitl_task_id = _hitl.raise_file_upload(
+        title="Upload your database collection",
+        description=(
+            "Upload the offline collection JSON produced by the collection script "
+            "(e.g. collect-postgresql.sql / collect-mysql.sql output). The assessment "
+            "runs on this file."
+        ),
+        label="Database collection JSON",
+        step_id=step_id,
+        tag="collection-upload",
+    )
+
+    if hitl_task_id:
+        _record_pending_upload(store, job_id, hitl_task_id)
+        mark_step_pending_human_input("upload", "Awaiting the customer's collection upload.")
+        logger.info(
+            "ATX: raised collection-upload HITL %s at job start (job_id=%s)",
+            hitl_task_id,
+            job_id,
+        )
+    else:
+        logger.info(
+            "ATX: collection-upload HITL unavailable at job start for job_id=%s "
+            "(dev/reference — collection is expected at the seed key).",
+            job_id,
+        )
+    return hitl_task_id
+
+
+@tool
+def finalize_collection_upload(job_id: str, database_name: str) -> str:
+    """Record the customer's uploaded collection and open the assessment.
+
+    The collection-upload panel is raised automatically at job start (it is the
+    first step every job shows). Call this once the customer has submitted their
+    upload AND told you the database name: it reads the submission, resolves the
+    uploaded file's artifact id, and records it (keyed by ``database_name``) as
+    the collection input for the assessment. Then call
+    ``run_assessment_core_via_a2a``.
+
+    Returns JSON with ``status``:
+      * ``"recorded"`` — the upload was read; ``run_assessment_core_via_a2a`` may run.
+      * ``"awaiting_upload"`` — the customer has not submitted yet; wait.
+      * ``"error"`` — no upload panel was raised, or the submission could not be read.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.atx_orchestrator.runtime import hitl as _hitl
+
+    store = _make_store()
+    pending = _read_pending_upload(store, job_id)
+    if not pending or not pending.get("hitl_task_id"):
+        return json.dumps(
+            {
+                "status": "error",
+                "job_id": job_id,
+                "message": (
+                    "No pending upload task was found for this job. The upload panel is "
+                    "raised at job start; if it is missing, the job may be running an older "
+                    "build or the upload transport was unavailable."
+                ),
+            }
+        )
+
+    status, artifact_id = _hitl.read_file_upload_submission(pending["hitl_task_id"])
+    if status == "awaiting_submission":
+        return json.dumps(
+            {
+                "status": "awaiting_upload",
+                "job_id": job_id,
+                "message": (
+                    "The customer has not uploaded the collection yet. Wait for their "
+                    "submission before finalizing."
+                ),
+            }
+        )
+    if status != "submitted" or not artifact_id:
+        # unreadable / unavailable: the customer submitted but we could not read
+        # the uploaded file's id, or the task could not be fetched. Fail loudly so
+        # the gate stays open rather than proceeding without a collection.
+        return json.dumps(
+            {
+                "status": "error",
+                "job_id": job_id,
+                "message": (
+                    "The uploaded collection could not be read back, so nothing was "
+                    "recorded. Ask the customer to upload and submit again; if it keeps "
+                    "failing, this is a bug to report."
+                ),
+            }
+        )
+
+    input_key = f"{_hitl_artifact_scheme()}{artifact_id}"
+    _record_resolved_input_key(store, database_name, job_id, input_key)
+    mark_step_succeeded("upload", "Collection uploaded.")
+    logger.info(
+        "ATX finalize_collection_upload: recorded collection input_key=%s (job_id=%s)",
+        input_key,
+        job_id,
+    )
+    return json.dumps(
+        {
+            "status": "recorded",
+            "job_id": job_id,
+            "message": (
+                "Collection upload recorded. Proceed to run_assessment_core_via_a2a to run "
+                "the assessment."
+            ),
+        }
+    )
+
+
+def _hitl_artifact_scheme() -> str:
+    """The ``artifact://`` key prefix the ATX store resolves to a direct read."""
+    from src.atx_orchestrator.runtime.atx_store import ARTIFACT_SCHEME
+
+    return ARTIFACT_SCHEME
+
+
 @tool
 def get_job_status(job_id: str, database_name: str) -> str:
     """Get the current phase progression status for a job.
@@ -404,6 +606,11 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     summary_key = f"{database_name}/{job_id}/assignment/review/summary-v{version}.md"
     try:
         store.write_text(summary_key, summary_md, "text/markdown")
+    except NotImplementedError:
+        # The ATX store is JSON-only and cannot hold markdown. Staging here is
+        # pure best-effort provenance — the summary is returned to the caller
+        # regardless — so this is expected on that backend, not a failure.
+        logger.debug("ATX store is JSON-only; skipped staging routing summary at %s", summary_key)
     except Exception:  # noqa: BLE001 - staging is best-effort; the markdown is returned regardless
         logger.warning("ATX: could not stage routing summary at %s", summary_key, exc_info=True)
 
@@ -520,6 +727,11 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     review_key = f"{database_name}/{job_id}/assignment/review/v{version}.md"
     try:
         store.write_text(review_key, review_md, "text/markdown")
+    except NotImplementedError:
+        # JSON-only ATX store cannot hold markdown; the review_md is published to
+        # the Artifacts panel and returned to chat below, so this staging copy is
+        # expected to be skipped on that backend.
+        logger.debug("ATX store is JSON-only; skipped staging review doc at %s", review_key)
     except Exception:  # noqa: BLE001 - staging is best-effort
         logger.warning("ATX: could not stage review doc at %s", review_key, exc_info=True)
     try:
@@ -822,10 +1034,13 @@ def run_assessment_core_via_a2a(
       - ``<db>/<job>/assignment/v1/assignment.json``
       - ``<db>/<job>/reality-check/output.json`` (+ ``assignment/v2/`` when it consolidates)
 
-    The customer's uploaded offline collection is located AUTOMATICALLY: this tool
-    discovers the file the customer uploaded through the WebApp (it lands under the
-    job's ``User Uploads/`` prefix) and hands the agent its key. You do NOT pass,
-    construct, or ask for a storage path.
+    The customer's uploaded offline collection is resolved from the file-upload
+    gate: the upload panel is raised automatically at job start; once the customer
+    uploads and gives the db name, ``finalize_collection_upload`` records the
+    uploaded file's artifact id, and THEN this tool reads that recorded
+    ``artifact://<id>`` input and passes it to the collector. You do NOT pass,
+    construct, or ask for a storage path. If the upload has not been recorded yet,
+    this tool returns ``status="blocked"`` rather than running.
 
     The subagent ticks its own plan steps (collector, triage, analysis with nested
     per-engine sub-steps, assignment, reality_check) as it progresses, so the
@@ -843,28 +1058,49 @@ def run_assessment_core_via_a2a(
         engines, query distribution, and consolidation to narrate), or an error
         dict if the A2A round-trip failed.
     """
-    # Resolve the customer's uploaded offline collection here, in the orchestrator:
-    # it reliably holds the Transform job context (workspace_id + platform job UUID
-    # + agent instance), so _discover_uploaded_input can find the WebApp upload via
-    # the ATX Artifact API (ListArtifacts CUSTOMER_INPUT) — which is account/bucket
-    # agnostic, unlike listing our own S3_BUCKET — download it, and stage it at the
-    # seed key. It returns that key. Discovery is the single source of truth for the
-    # path; the LLM never supplies one. Outside the ATX runtime (dev/reference
-    # harness) discovery returns None, input_key stays "", and the collector step
-    # falls back to a pre-staged seed key. An ambiguous upload (more than one
-    # CUSTOMER_INPUT JSON) raises with a clear message rather than picking one.
-    from src.atx_orchestrator.core import _discover_uploaded_input
-
+    # The customer's collection is uploaded through the file-upload gate
+    # (upload HITL raised at job start -> finalize_collection_upload), which records
+    # the uploaded file's artifact id as an ``artifact://<id>`` input_key on the store.
+    # Read that here and pass it to the collector — no listing, no discovery
+    # heuristics: the id was handed to us by the platform at submission, job-scoped
+    # and unambiguous. Outside the ATX runtime (dev/reference harness) no gate ran,
+    # input_key stays "", and the collector falls back to a pre-staged seed key.
     job_id = _platform_job_id(job_id)
-    input_key = _discover_uploaded_input(_make_store(), job_id, database_name) or ""
+    store = _make_store()
+    input_key = _read_resolved_input_key(store, database_name, job_id)
     if input_key:
-        logger.info("ATX assessment-core: using customer upload staged at %s", input_key)
+        logger.info("ATX assessment-core: collection input resolved to %s", input_key)
     else:
+        # Structural gate: an upload HITL is raised at job start, which writes a
+        # job-scoped pending pointer. If that pointer exists but no resolved
+        # input_key does, the customer has not finished uploading (or
+        # finalize_collection_upload has not run) — REFUSE rather than fall
+        # through to a seed key that isn't there, mirroring how schema-design
+        # refuses until the assignment-review gate is approved. Only when there is
+        # no pending pointer at all (dev/reference harness, no HITL transport) do
+        # we allow the empty-key seed fallback.
+        pending = _read_pending_upload(store, job_id)
+        if pending and pending.get("hitl_task_id"):
+            logger.info(
+                "ATX assessment-core blocked: collection not uploaded yet (job_id=%s)",
+                job_id,
+            )
+            return json.dumps(
+                {
+                    "status": "blocked",
+                    "reason": "awaiting_collection_upload",
+                    "job_id": job_id,
+                    "message": (
+                        "The assessment cannot run until the customer uploads their "
+                        "collection. An upload panel is open in the WebApp (the first job "
+                        "step). Ask the customer to upload their collection JSON and submit, "
+                        "then call finalize_collection_upload before running the assessment."
+                    ),
+                }
+            )
         logger.warning(
-            "ATX assessment-core: no customer upload discovered for job_id=%s; "
-            "passing empty input_key. The collect step will fall back to the seed "
-            "key and fail if none is staged. See upload-discovery log above for what "
-            "the Artifact API returned.",
+            "ATX assessment-core: no uploaded collection recorded and no pending upload "
+            "for job_id=%s; passing empty input_key (dev/reference seed fallback).",
             job_id,
         )
     message = json.dumps(
@@ -958,6 +1194,35 @@ def run_synthesis_via_a2a(
     return result
 
 
+def _stage_durable_copy(store: object, key: str, content: object) -> None:
+    """Write a rendered deliverable to the store as the durable "system of record"
+    copy, tolerating the JSON-only ATX backend.
+
+    On the S3/local backend this persists the deliverable so it survives the
+    customer stopping the job. On the ATX artifact-store backend the store is
+    JSON-only and raises ``NotImplementedError`` for text/bytes — there is no S3
+    bucket of ours to be the system of record, and the actual customer-facing
+    delivery is ``artifacts.publish`` (a direct byte upload), not this copy. So a
+    NotImplementedError here is EXPECTED and must be skipped, NOT allowed to abort
+    the caller before it reaches publish(). Any other error is logged and
+    swallowed too — a durable-copy failure must never withhold a rendered report.
+
+    ``content`` is ``str`` (written via ``write_text``) or ``bytes``/bytearray
+    (written via ``write_bytes``).
+    """
+    try:
+        if isinstance(content, (bytes, bytearray)):
+            store.write_bytes(key, content)  # type: ignore[attr-defined]
+        else:
+            store.write_text(key, content)  # type: ignore[attr-defined]
+    except NotImplementedError:
+        logger.debug(
+            "store is JSON-only; skipped durable copy at %s (publish is the delivery)", key
+        )
+    except Exception:  # noqa: BLE001 - durable copy is best-effort; publish still delivers
+        logger.warning("ATX: could not stage durable copy at %s", key, exc_info=True)
+
+
 def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: dict) -> None:
     """Render the audience-shaped deliverables from the synthesis report.json and
     publish them as CUSTOMER_OUTPUT.
@@ -1022,9 +1287,11 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         # into it would risk failing validation for the sake of a filename.
         data_json = json.dumps({"_artifact": data_prov, **report}, indent=2)
 
-        # S3-first: our bucket is the system of record (survives job stop).
-        store.write_text(f"{base}/{decision_prov['filename']}", decision_html, "text/html")
-        store.write_text(f"{base}/{engineering_prov['filename']}", engineering_md, "text/markdown")
+        # Durable "system of record" copy on the S3/local backend; skipped on the
+        # JSON-only ATX backend (where publish() below is the actual delivery).
+        # Must not abort before publish() — see _stage_durable_copy.
+        _stage_durable_copy(store, f"{base}/{decision_prov['filename']}", decision_html)
+        _stage_durable_copy(store, f"{base}/{engineering_prov['filename']}", engineering_md)
 
         items: list = [
             (
@@ -1067,7 +1334,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             analysis_html = _ar.render_analysis_report_html(
                 export_data, filename=analysis_prov["filename"]
             )
-            store.write_text(f"{base}/{analysis_prov['filename']}", analysis_html, "text/html")
+            _stage_durable_copy(store, f"{base}/{analysis_prov['filename']}", analysis_html)
             items.append(
                 (
                     analysis_html.encode("utf-8"),
@@ -1103,8 +1370,8 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             # deliverable and is called the same thing in every engagement. The
             # job it belongs to is already in the key prefix (and in the deck's
             # own core properties), so no date-stamped stem is needed.
-            store.write_bytes(f"{base}/{_pptx.FILENAME}", deck)
-            store.write_bytes(f"{base}/{_pdf.FILENAME}", deck_pdf)
+            _stage_durable_copy(store, f"{base}/{_pptx.FILENAME}", deck)
+            _stage_durable_copy(store, f"{base}/{_pdf.FILENAME}", deck_pdf)
             items.append(
                 (
                     deck_pdf,
@@ -1283,10 +1550,13 @@ def _record_pending_hitl(
     ``.meta`` ASSIGNMENT_REVIEW phase (ADR-028), so no approval artifact is added.
     """
     try:
-        store.write_text(  # type: ignore[attr-defined]
+        # write_json (not write_text): the ATX artifact store is JSON-only and
+        # raises on write_text, which would silently drop this pointer and break
+        # the resume path (the later turn would find no pending HITL and could not
+        # read the customer's submission back). Read side uses read_json.
+        store.write_json(  # type: ignore[attr-defined]
             _pending_hitl_key(database_name, job_id),
-            json.dumps({"hitl_task_id": hitl_task_id, "assignment_version": version}),
-            "application/json",
+            {"hitl_task_id": hitl_task_id, "assignment_version": version},
         )
     except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
         logger.warning(
@@ -1307,6 +1577,98 @@ def _read_pending_hitl(store: object, database_name: str, job_id: str) -> dict |
     except Exception:  # noqa: BLE001 - absence is normal (chat fallback / approve-as-is)
         logger.debug("ATX: no pending HITL pointer for job_id=%s", job_id, exc_info=True)
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Upload-gate transport state (collection ingestion)
+# ─────────────────────────────────────────────────────────────────────────────
+# The upload gate (declare_plan_and_request_upload / finalize_collection_upload) is a
+# raise-and-resume flow like the assignment-review gate: the turn that raises the
+# HITL only knows the task id, and the resolved collection input_key is only known
+# once the customer submits and a later turn reads it back. Two small pointers on
+# the store carry that state across turns/processes.
+
+
+def _pending_upload_key(job_id: str) -> str:
+    """Store key for the pending upload HITL task pointer (transport state).
+
+    Job-scoped only (no database_name): the upload HITL is raised at job start,
+    before the customer has told us the database name, so this pointer cannot be
+    keyed by db. finalize_collection_upload (which runs on the later LLM turn,
+    once the db name is known) reads it back and bridges to the db-scoped
+    resolved-input-key pointer.
+    """
+    return f"_pending/{job_id}/upload.json"
+
+
+def _resolved_input_key_key(database_name: str, job_id: str) -> str:
+    """Store key for the resolved collection ``input_key`` (artifact://<id>)."""
+    return f"{database_name}/{job_id}/uploads/input_key.json"
+
+
+def _record_pending_upload(store: object, job_id: str, hitl_task_id: str) -> None:
+    """Persist the upload HITL task the gate is blocked on (best-effort). Job-scoped.
+
+    Uses ``write_json`` (not ``write_text``): the ATX artifact store is JSON-only
+    and raises on ``write_text``, so a text write would silently lose the pointer
+    and the assessment would fall through to an empty input_key.
+    """
+    try:
+        store.write_json(  # type: ignore[attr-defined]
+            _pending_upload_key(job_id),
+            {"hitl_task_id": hitl_task_id},
+        )
+    except Exception:  # noqa: BLE001 - pointer loss only degrades a later resume
+        logger.warning(
+            "ATX: could not record pending upload HITL task %s (job_id=%s)",
+            hitl_task_id,
+            job_id,
+            exc_info=True,
+        )
+
+
+def _read_pending_upload(store: object, job_id: str) -> dict | None:
+    """Return the recorded pending upload HITL pointer, or None when absent. Job-scoped."""
+    key = _pending_upload_key(job_id)
+    try:
+        if store.exists(key):  # type: ignore[attr-defined]
+            data = store.read_json(key)  # type: ignore[attr-defined]
+            return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - absence is normal (dev/reference runs)
+        logger.debug("ATX: no pending upload pointer for job_id=%s", job_id, exc_info=True)
+    return None
+
+
+def _record_resolved_input_key(
+    store: object, database_name: str, job_id: str, input_key: str
+) -> None:
+    """Persist the resolved collection ``input_key`` (best-effort).
+
+    Uses ``write_json`` (not ``write_text``): the ATX artifact store is JSON-only
+    and raises on ``write_text``.
+    """
+    try:
+        store.write_json(  # type: ignore[attr-defined]
+            _resolved_input_key_key(database_name, job_id),
+            {"input_key": input_key},
+        )
+    except Exception:  # noqa: BLE001 - a lost pointer only degrades a later resume
+        logger.warning(
+            "ATX: could not record resolved input_key (job_id=%s)", job_id, exc_info=True
+        )
+
+
+def _read_resolved_input_key(store: object, database_name: str, job_id: str) -> str:
+    """Return the resolved collection ``input_key``, or ``""`` when absent."""
+    key = _resolved_input_key_key(database_name, job_id)
+    try:
+        if store.exists(key):  # type: ignore[attr-defined]
+            data = store.read_json(key)  # type: ignore[attr-defined]
+            if isinstance(data, dict):
+                return str(data.get("input_key") or "")
+    except Exception:  # noqa: BLE001 - absence is normal (dev/reference runs)
+        logger.debug("ATX: no resolved input_key for job_id=%s", job_id, exc_info=True)
+    return ""
 
 
 def _mark_assignment_review(job_id: str, status: PhaseStatus) -> None:
@@ -1489,7 +1851,7 @@ def _run_schema_design_via_a2a(
     mark_step_running("schema")
     mark_step_running(step)
     try:
-        payload = invoke_and_wait(agent_id, message)
+        payload = invoke_and_wait(agent_id, message, timeout=_schema_design_timeout_s())
     except A2AError as e:
         logger.error("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
         mark_step_failed(step, str(e))

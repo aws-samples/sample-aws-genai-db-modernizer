@@ -94,7 +94,9 @@ class TestDryRun:
         runner: OpenSearchRunner,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stderr="")
-        result = runner.dry_run("/tmp/scripts", {"AWS_REGION": "us-east-1"})
+        result = runner.dry_run(
+            "/tmp/scripts", {"AWS_REGION": "us-east-1"}
+        )  # nosec B108 — test-only temp path
         assert result is True
 
     @patch("subprocess.run")
@@ -104,7 +106,7 @@ class TestDryRun:
         runner: OpenSearchRunner,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
-        result = runner.dry_run("/tmp/scripts", {})
+        result = runner.dry_run("/tmp/scripts", {})  # nosec B108 — test-only temp path
         assert result is False
 
     @patch("subprocess.run")
@@ -114,7 +116,7 @@ class TestDryRun:
         runner: OpenSearchRunner,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stderr="")
-        runner.dry_run("/tmp/scripts", {})
+        runner.dry_run("/tmp/scripts", {})  # nosec B108 — test-only temp path
         cmd = mock_run.call_args[0][0]
         assert "inspect" in cmd
 
@@ -124,10 +126,12 @@ class TestDryRun:
         mock_run: MagicMock,
         runner: OpenSearchRunner,
     ) -> None:
-        import subprocess
+        import subprocess  # nosec B404 — subprocess import in test
 
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="k6", timeout=30)
-        result = runner.dry_run("/tmp/scripts", {})
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd="k6", timeout=30
+        )  # nosemgrep: dangerous-subprocess-use-audit -- test-controlled args
+        result = runner.dry_run("/tmp/scripts", {})  # nosec B108 — test-only temp path
         assert result is False
 
 
