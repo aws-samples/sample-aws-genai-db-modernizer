@@ -1233,7 +1233,15 @@ def _maybe_build_graph(store, job_id: str, database_name: str) -> None:
     """
     from src.agents.query_journey_materializer import _journey_mode
 
-    if _journey_mode() == "json":
+    mode = _journey_mode()
+    logger.info(
+        "ATX: assessment-core graph boundary reached (JOURNEY_MODE=%s) for %s/%s",
+        mode,
+        database_name,
+        job_id,
+    )
+    if mode == "json":
+        logger.info("ATX: JOURNEY_MODE=json — skipping context graph build")
         return
     try:
         from src.atx_orchestrator.runtime.graph_transport import build_and_publish_graph
