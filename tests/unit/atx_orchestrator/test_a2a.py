@@ -21,6 +21,7 @@ from src.atx_orchestrator.a2a import (
     _extract_reason,
     _extract_status,
     _is_expected_send_error,
+    _is_instance_not_ready_error,
     _parse_payload,
     invoke_and_wait,
 )
@@ -633,3 +634,112 @@ class TestStubListAgentInstances:
         client = StubAgenticApiClient(list_side_effect=ValueError("bad"))
         with pytest.raises(ValueError, match="bad"):
             client.list_agent_instances()
+
+
+# =============================================================================
+# Instance-reuse recovery (re-entry) — a terminal instance from a previous round
+# must never be reused, and a "not RUNNING or IDLE" send must respawn + retry
+# rather than surface as a phase failure (the schema-step red X on re-entry).
+
+
+class TestIsInstanceNotReadyError:
+    def test_detects_not_running_or_idle(self) -> None:
+        assert _is_instance_not_ready_error(
+            Exception("Agent instance status is not RUNNING or IDLE")
+        )
+
+    def test_ignores_unrelated_error(self) -> None:
+        assert not _is_instance_not_ready_error(Exception("connection refused"))
+
+
+class TestInstanceReuseRecovery:
+    @staticmethod
+    def _summary(agent_id: str, instance_id: str, status: str) -> dict[str, Any]:
+        return {
+            "agentInstanceId": instance_id,
+            "agentId": agent_id,
+            "agentType": "SUB_AGENT",
+            "agentInstanceStatus": status,
+        }
+
+    def test_completed_instance_is_not_reused_spawns_fresh(self) -> None:
+        # A finished instance from a previous round (COMPLETED) must be skipped by
+        # discovery so we spawn a fresh one instead of dispatching to a dead instance.
+        client = StubAgenticApiClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    self._summary("db-modernization-schema", "old-schema-1", "COMPLETED"),
+                ]
+            },
+        )
+        client.status_sequence = ["RUNNING", "COMPLETED"]
+        client.terminal_payload = {"ok": 1}
+
+        payload = invoke_and_wait(
+            "db-modernization-schema",
+            "x",
+            client=client,
+            poll_interval=FAST_POLL,
+            post_ready_dwell=0.0,
+        )
+
+        assert payload == {"ok": 1}
+        # Discovery skipped the COMPLETED instance -> spawned a fresh one.
+        assert len(client.invoke_calls) == 1
+        # send + poll target the freshly-spawned instance, never the dead one.
+        assert client.send_calls[0]["agentInstanceId"] == client.invoke_agent_instance_id
+        assert "old-schema-1" not in client.poll_calls
+
+    def test_send_not_ready_respawns_and_retries(self) -> None:
+        # A reused instance that rejects send with "not RUNNING or IDLE" (it went
+        # terminal between list and send) must trigger a fresh spawn and a retried
+        # send, not a phase failure.
+        client = StubAgenticApiClient(
+            list_agent_instances_response={
+                "agentInstanceSummaries": [
+                    self._summary("db-modernization-schema", "reused-1", "RUNNING"),
+                ]
+            },
+        )
+        client.status_sequence = ["RUNNING", "COMPLETED"]
+        client.terminal_payload = {"ok": 2}
+
+        sends: list[str] = []
+        record = client.send_calls.append
+
+        def fail_once(
+            *,
+            agentInstanceId: str,
+            params: dict[str, Any],
+            requestContext: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            record(
+                {
+                    "agentInstanceId": agentInstanceId,
+                    "params": params,
+                    "requestContext": requestContext,
+                }
+            )
+            sends.append(agentInstanceId)
+            if len(sends) == 1:
+                raise Exception(
+                    "An error occurred (ValidationException) when calling the SendMessage "
+                    "operation: Agent instance status is not RUNNING or IDLE"
+                )
+            return {"messageId": "ok"}
+
+        client.send_message = fail_once  # type: ignore[method-assign]
+
+        payload = invoke_and_wait(
+            "db-modernization-schema",
+            "x",
+            client=client,
+            poll_interval=FAST_POLL,
+            post_ready_dwell=0.0,
+        )
+
+        assert payload == {"ok": 2}
+        # First send hit the reused instance and failed; a respawn then retried.
+        assert len(client.invoke_calls) == 1
+        assert sends[0] == "reused-1"
+        assert sends[1] == client.invoke_agent_instance_id
