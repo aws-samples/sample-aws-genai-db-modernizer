@@ -89,6 +89,13 @@ OWNER_CONTACT = os.environ.get("ATX_OWNER_CONTACT", "")
 # Customer-facing job label in the AWS Transform WebApp. Overridable via ATX_CHAT_LABEL.
 BASE_CHAT_LABEL = os.environ.get("ATX_CHAT_LABEL", "DB Modernization Assessment")
 
+# Max concurrent group designs per engine on the schema runtime. The app default
+# is 5; on a small, shared Bedrock quota that over-subscribes the account and
+# triggers throttling (which stretches schema design past the orchestrator's chat
+# response window). We deploy a lower value (3) to reduce contention; tune via
+# ATX_SCHEMA_GROUP_CONCURRENCY without a code change.
+SCHEMA_GROUP_CONCURRENCY = os.environ.get("ATX_SCHEMA_GROUP_CONCURRENCY", "3")
+
 # Objective-negotiation prompt for the orchestrator. Set on the orchestrator's
 # published configuration so the WebApp opens a new job with a proactive greeting
 # instead of an empty chat that waits for the customer to type first. Kept concise
@@ -233,6 +240,9 @@ def _env_for(agent: Agent, prefix: str, model_id: str, s3_bucket: str) -> dict[s
         # Only the orchestrator resolves subagents by name; the prefix is the
         # environment's fleet prefix (e.g. dbmod-tebanieo).
         env["AGENT_NAME_PREFIX"] = prefix
+    if agent.agent_type == "schema":
+        # Cap concurrent group designs to ease Bedrock throttling on a shared quota.
+        env["SCHEMA_GROUP_CONCURRENCY"] = SCHEMA_GROUP_CONCURRENCY
     return env
 
 
