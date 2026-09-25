@@ -607,7 +607,7 @@ def build_architecture_recommendation(
         # fronts reach it only through the alternatives. Count them: a cache
         # reporting table_count 0 in an architecture whose whole point is to put
         # it in front of those tables reads as a cache with nothing to do.
-        # Counted once per table: one source table commonly backs several key
+        # Counted once per table: one (1) source table commonly backs several key
         # patterns (a user hash and a user-by-email lookup), each its own
         # alternative.
         for alt in mapping.get("alternatives") or []:
