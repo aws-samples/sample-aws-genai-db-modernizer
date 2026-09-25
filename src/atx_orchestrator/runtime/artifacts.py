@@ -28,11 +28,12 @@ either, so it is unproven and left as follow-up.
 
 from __future__ import annotations
 
-import html as _html
 import logging
 import re
 from datetime import UTC, datetime
 from typing import Any, Literal
+
+from . import escaping
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,7 @@ def architecture_svg(report: dict[str, Any]) -> str:
     engines = _architecture_engines(report)
 
     def esc(s: Any) -> str:
-        return _html.escape(str(s))
+        return escaping.svg_text(s)
 
     box_w, box_h, gap = 230, 54, 20
     left_x, right_x = 24, 380
@@ -545,7 +546,7 @@ _ENGINE_BADGE = {
 
 def _engine_badge(engine: str) -> str:
     color = _ENGINE_BADGE.get(engine, "#6b7280")
-    return f'<span class=badge style="background:{color}">{_html.escape(str(engine))}</span>'
+    return f'<span class=badge style="background:{color}">' f"{escaping.html_text(engine)}</span>"
 
 
 def _risk_tile_class(level: str) -> str:
@@ -587,7 +588,7 @@ def _meta_tags(prov: dict[str, str] | None) -> str:
     if not prov:
         return ""
     return "".join(
-        f'<meta name="x-dbmod-{k.replace("_", "-")}" content="{_html.escape(str(v))}">'
+        f'<meta name="x-dbmod-{k.replace("_", "-")}" content="{escaping.html_attr(v)}">'
         for k, v in prov.items()
         if v
     )
@@ -596,11 +597,11 @@ def _meta_tags(prov: dict[str, str] | None) -> str:
 def _provenance_footer_html(prov: dict[str, str] | None) -> str:
     if not prov:
         return ""
-    bits = f"{_html.escape(prov['filename'])}"
+    bits = f"{escaping.html_text(prov['filename'])}"
     if prov.get("job_id"):
-        bits += f" &middot; job {_html.escape(prov['job_id'])}"
+        bits += f" &middot; job {escaping.html_text(prov['job_id'])}"
     if prov.get("generated"):
-        bits += f" &middot; generated {_html.escape(prov['generated'])}"
+        bits += f" &middot; generated {escaping.html_text(prov['generated'])}"
     return f"<p class=note>{bits}</p>"
 
 
@@ -624,7 +625,7 @@ def render_decision_report_html(
     """
 
     def esc(s: Any) -> str:
-        return _html.escape(str(s))
+        return escaping.html_text(s)
 
     db = report.get("database_name", "?")
     arch = report.get("recommended_architecture") or {}
@@ -789,11 +790,11 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
     for i, t in enumerate(tables):
         tgt = t.get("table_name", f"t{i}")
         tnode = f"T{i}"
-        lines.append(f'    {tnode}["{tgt}"]')
+        lines.append(f'    {tnode}["{escaping.mermaid_label(tgt)}"]')
         for s in t.get("source_tables") or []:
             if s not in seen_src:
                 seen_src[s] = f"S{sid}"
-                lines.append(f'    {seen_src[s]}[("{s}")]')
+                lines.append(f'    {seen_src[s]}[("{escaping.mermaid_label(s)}")]')
                 sid += 1
             lines.append(f"    {seen_src[s]} --> {tnode}")
     lines.append("```")
@@ -808,13 +809,17 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     db = report.get("database_name", "?")
     out: list[str] = []
     if prov:
+        # Front-matter values are quoted so a value containing ``:`` or ``#`` cannot
+        # be misread as YAML structure, and the double quotes inside are escaped so
+        # the value cannot close its own quoting. ``db`` here is customer-derived.
         out += ["---"]
-        out += [f"{k}: {v}" for k, v in prov.items() if v]
+        out += [f'{k}: "{escaping.md_yaml_value(v)}"' for k, v in prov.items() if v]
         out += ["---", ""]
     out += [
         "# Database Modernization \u2014 Engineering Report",
         "",
-        f"Source database: `{db}`. This is the build companion to the Decision Report: "  # nosemgrep: string-concat-in-list -- intentional multi-line string
+        f"Source database: `{escaping.md_code(db)}`. This is the build companion to the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
+        "Decision Report: "
         "the source-to-target mapping, the per-engine target schemas, and the query "
         "co-dependency groups.",
         "",
@@ -830,9 +835,11 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         ]
         for m in mappings:
             out.append(
-                f"| `{m.get('source_table', '?')}` | {m.get('recommended_database', '?')} "
-                f"| `{m.get('target_table', '-')}` | {m.get('aggregate_pattern', '-')} "
-                f"| {m.get('confidence_score', '-')} |"
+                f"| `{escaping.md_code(m.get('source_table', '?'))}` "
+                f"| {escaping.md_cell(m.get('recommended_database', '?'))} "
+                f"| `{escaping.md_code(m.get('target_table', '-'))}` "
+                f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
+                f"| {escaping.md_cell(m.get('confidence_score', '-'))} |"
             )
         out.append("")
 
@@ -842,7 +849,8 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
             out += [
-                f"### {eng} ({len(tables)} target objects, {dz.get('access_pattern_count', 0)} access patterns)",
+                f"### {escaping.md_text(eng)} ({len(tables)} target objects, "
+                f"{dz.get('access_pattern_count', 0)} access patterns)",
                 "",
             ]
             if tables:
@@ -857,32 +865,35 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 out += ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
                 for t in tables:
                     row = [
-                        f"`{t.get('table_name', '?')}`",
-                        str(t.get("aggregate_pattern", "-")),
-                        ", ".join(f"`{s}`" for s in (t.get("source_tables") or [])) or "-",
-                        str(t.get("gsi_count", "-")),
+                        f"`{escaping.md_code(t.get('table_name', '?'))}`",
+                        escaping.md_cell(t.get("aggregate_pattern", "-")),
+                        ", ".join(
+                            f"`{escaping.md_code(s)}`" for s in (t.get("source_tables") or [])
+                        )
+                        or "-",
+                        escaping.md_cell(t.get("gsi_count", "-")),
                     ]
                     if has_ttl:
-                        row.append(str(t.get("ttl_seconds", "-")))
+                        row.append(escaping.md_cell(t.get("ttl_seconds", "-")))
                     if has_shards:
                         row += [
-                            str(t.get("shards", "-")),
-                            str(t.get("replicas", "-")),
-                            str(t.get("field_count", "-")),
+                            escaping.md_cell(t.get("shards", "-")),
+                            escaping.md_cell(t.get("replicas", "-")),
+                            escaping.md_cell(t.get("field_count", "-")),
                         ]
                     out.append("| " + " | ".join(row) + " |")
                 out.append("")
             unsupported = dz.get("unsupported_patterns") or []
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
-                out += [f"- {u}" for u in unsupported]
+                out += [f"- {escaping.md_text(u)}" for u in unsupported]
                 out.append("")
             notes = dz.get("migration_notes")
             if notes:
                 out += [
                     "**Migration notes:**",
                     "",
-                    (notes if isinstance(notes, str) else str(notes)),
+                    escaping.md_text(notes),
                     "",
                 ]
             er = _mermaid_er(eng, dz)
@@ -911,10 +922,10 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             aps = g.get("access_patterns")
             sqs = g.get("source_queries")
             out.append(
-                f"| {g.get('group_name', '?')} | {engines} "
-                f"| {len(aps) if isinstance(aps, list) else (aps or '-')} "
-                f"| {len(sqs) if isinstance(sqs, list) else (sqs or '-')} "
-                f"| {g.get('total_design_rps', '-')} |"
+                f"| {escaping.md_cell(g.get('group_name', '?'))} | {escaping.md_cell(engines)} "
+                f"| {len(aps) if isinstance(aps, list) else escaping.md_cell(aps or '-')} "
+                f"| {len(sqs) if isinstance(sqs, list) else escaping.md_cell(sqs or '-')} "
+                f"| {escaping.md_cell(g.get('total_design_rps', '-'))} |"
             )
         out.append("")
 
@@ -930,18 +941,21 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             by_eng.setdefault(eng, []).append(r)
         out += [f"## Risk register ({len(risks)})", ""]
         for eng, items in by_eng.items():
-            out += [f"### {eng}", ""]
+            out += [f"### {escaping.md_text(eng)}", ""]
             for r in items:
                 _, body = _risk_engine_and_body(r.get("description"))
                 sev = r.get("severity", "-")
                 rtype = str(r.get("risk_type", "")).replace("_", " ").lower()
                 rid = r.get("risk_id", "-")
-                out.append(f"- **{rid}** \u00b7 {sev} \u00b7 {rtype} \u2014 {body}")
+                out.append(
+                    f"- **{escaping.md_text(rid)}** \u00b7 {escaping.md_text(sev)} \u00b7 "
+                    f"{escaping.md_text(rtype)} \u2014 {escaping.md_text(body)}"
+                )
                 if r.get("mitigation"):
-                    out.append(f"  - Mitigation: {r.get('mitigation')}")
+                    out.append(f"  - Mitigation: {escaping.md_text(r.get('mitigation'))}")
                 aff = list(r.get("affected_tables") or [])
                 if aff:
-                    shown = ", ".join(f"`{a}`" for a in aff[:8])
+                    shown = ", ".join(f"`{escaping.md_code(a)}`" for a in aff[:8])
                     more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
                     out.append(f"  - Affects: {shown}{more}")
             out.append("")
@@ -953,17 +967,17 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
         out += [f"## Migration trade-offs ({len(tradeoffs)})", ""]
         for eng, items in by_engine.items():
-            out += [f"### {eng}", ""]
+            out += [f"### {escaping.md_text(eng)}", ""]
             for t in items:
                 desc = str(t.get("description", "")).strip()
                 impact = str(t.get("impact", "")).strip()
-                line = f"- **{desc}**"
+                line = f"- **{escaping.md_text(desc)}**"
                 if impact:
-                    line += f" \u2014 {impact}"
+                    line += f" \u2014 {escaping.md_text(impact)}"
                 out.append(line)
                 aff = list(t.get("source_tables") or [])
                 if aff:
-                    shown = ", ".join(f"`{s}`" for s in aff[:8])
+                    shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
                     more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
                     out.append(f"  - Affects: {shown}{more}")
             out.append("")

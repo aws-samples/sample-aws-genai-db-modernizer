@@ -27,7 +27,6 @@ diverge.
 from __future__ import annotations
 
 import contextlib
-import html
 import json
 import logging
 import re
@@ -36,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from src.storage.parallel import map_parallel
+
+from . import escaping
 
 logger = logging.getLogger(__name__)
 
@@ -473,8 +474,8 @@ def _data_keys_used_by_template() -> set[str]:
 
 def _engine_badges(after_distribution: dict) -> str:
     return "".join(
-        f'<span class="badge" data-engine="{html.escape(str(engine), quote=True)}">'  # nosemgrep: string-concat-in-list -- intentional multi-line string
-        f"{html.escape(ENGINE_LABELS.get(engine, str(engine)))}</span>"
+        f'<span class="badge" data-engine="{escaping.html_attr(engine)}">'  # nosemgrep: string-concat-in-list -- intentional multi-line string
+        f"{escaping.html_text(ENGINE_LABELS.get(engine, str(engine)))}</span>"
         for engine in after_distribution
     )
 
@@ -503,13 +504,16 @@ def _provenance_html(meta: dict) -> str:
     -- here and in the ``x-dbmod-*`` meta tags -- so any report can still be traced
     back to the job that produced it.
     """
+    # Each field is neutralized for the comment context: "--" (which can end the
+    # comment early) is collapsed and angle brackets are escaped, so a customer- or
+    # LLM-derived value such as the database name cannot alter the document.
     fields = (
-        f"{meta['filename']} | job {meta['job_id']} | database {meta['database']} | "
-        f"generated {meta['generated']} | source {meta['source_artifact']}"
+        f"{escaping.html_comment(meta['filename'])} | job {escaping.html_comment(meta['job_id'])} "
+        f"| database {escaping.html_comment(meta['database'])} "
+        f"| generated {escaping.html_comment(meta['generated'])} "
+        f"| source {escaping.html_comment(meta['source_artifact'])}"
     )
-    # A "--" inside a comment ends it early in some parsers; none of these values
-    # normally carry one, but a database or file name could.
-    return f"    <!-- dbmod provenance: {fields.replace('--', '-')} -->\n"
+    return f"    <!-- dbmod provenance: {fields} -->\n"
 
 
 def _meta_html(meta: dict) -> str:
@@ -522,7 +526,7 @@ def _meta_html(meta: dict) -> str:
         ("source-artifact", meta["source_artifact"]),
     ]
     return "\n".join(
-        f'  <meta name="x-dbmod-{name}" content="{html.escape(str(value))}">'
+        f'  <meta name="x-dbmod-{name}" content="{escaping.html_attr(value)}">'
         for name, value in rows
     )
 
@@ -615,11 +619,11 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__SCRIPT__": script,
         # The template's <title> already reads "Analysis Report - __TITLE__"; upstream
         # substitutes the bare job id there, so this must not repeat the prefix.
-        "__TITLE__": html.escape(f"{database_name} \u2014 {job_id[:8]}"),
-        "__JOB_ID__": html.escape(job_id),
-        "__EXPORT_DATE__": html.escape(exported_human),
-        "__DATABASE_NAME__": html.escape(str(database_name)),
-        "__SUMMARY__": html.escape(synthesis.get("summary") or "No summary available."),
+        "__TITLE__": escaping.html_text(f"{database_name} \u2014 {job_id[:8]}"),
+        "__JOB_ID__": escaping.html_text(job_id),
+        "__EXPORT_DATE__": escaping.html_text(exported_human),
+        "__DATABASE_NAME__": escaping.html_text(str(database_name)),
+        "__SUMMARY__": escaping.html_text(synthesis.get("summary") or "No summary available."),
         "__ENGINE_BADGES__": _engine_badges(after),
         "__PROJECTED_COST__": f"{projected:,.2f}",
         "__TOTAL_PATTERNS__": str(total_patterns),

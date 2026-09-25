@@ -535,7 +535,10 @@ def test_decision_report_and_engineering_report_carry_provenance():
 
     md = render_engineering_report_md(report, prov=md_prov)
     assert md.startswith("---\n")
-    assert f"job_id: {JOB}" in md
+    # Front-matter values are quoted YAML scalars (issue #140 / threat model R3): a
+    # value such as the database name is customer-derived and must not be able to
+    # break out of the block into new keys, so it is emitted as "..." rather than bare.
+    assert f'job_id: "{JOB}"' in md
     assert md_prov["filename"] in md
 
 
