@@ -304,12 +304,14 @@ def _engine_role(
 ) -> str:
     """Role of an engine in the target architecture.
 
-    ``recommended_architecture.databases`` still drops the retained relational
-    core, which by design has no migration design and so fails the
-    ``schema_design_available`` filter. It used to drop cache engines too
-    (defect (d): a completed set of ``key_designs`` the flag did not count),
-    fixed upstream in src/agents/referee/schema_shapes.py. Roles are derived from
-    the engine kind and its design status regardless, not from that list alone.
+    ``recommended_architecture.databases`` used to drop the retained relational
+    core (defect (f): no migration design, so it failed the
+    ``schema_design_available`` filter) and cache engines (defect (d): a completed
+    set of ``key_designs`` the flag did not count). Both are fixed upstream and
+    each entry now carries a ``role``, but reports written before that fix still
+    lack both, so roles are derived from the engine kind and its design status,
+    not from that list alone. ``recommended`` must therefore hold migration
+    targets only — see ``_architecture_engines``.
 
     An engine carrying **no workload** is ``Evaluated``: triage selected it, analysis
     scored it, and the assignment then routed nothing to it because another engine won
@@ -354,7 +356,10 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     ranking = [r for r in (report.get("ranking") or []) if isinstance(r, dict)]
     arch = report.get("recommended_architecture") or {}
     dbs = [d for d in (arch.get("databases") or []) if isinstance(d, dict)]
-    recommended = {d.get("service") for d in dbs}
+    # Synthesis now lists retained engines too, tagged role "retained". Being in
+    # the list no longer makes an engine a migration target.
+    retained = {d.get("service") for d in dbs if d.get("role") == "retained"}
+    recommended = {d.get("service") for d in dbs} - retained
     src_tables = {d.get("service"): d.get("table_count") for d in dbs}
     schema_designs = report.get("schema_designs") or {}
     costs = _engine_costs(report)
@@ -364,7 +369,11 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         eng = r.get("target")
         if not eng:
             continue
-        role = _engine_role(eng, recommended, schema_designs, r.get("workload_percent"))
+        role = (
+            "Retained"
+            if eng in retained
+            else _engine_role(eng, recommended, schema_designs, r.get("workload_percent"))
+        )
         objs = (schema_designs.get(eng) or {}).get("tables")
         objs = len(objs) if isinstance(objs, list) else None
         if role == "Migration target":

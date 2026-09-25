@@ -2100,9 +2100,10 @@ _SCHEMA_DOC = """Design the {label} target schema by invoking a deployed subagen
 
     Requires Collector, Triage, the matching Analysis, and Assignment to have run
     first. Produces the table definitions and access patterns that synthesis turns
-    into ``table_mappings``, ``query_groups`` and
-    ``recommended_architecture.databases`` — three fields that stay empty in the
-    report until this has run for at least one engine.
+    into ``table_mappings`` and ``query_groups`` — two fields that stay empty in the
+    report until this has run for at least one engine. Without it,
+    ``recommended_architecture.databases`` lists every engine as retained, with no
+    migration design.
 
     Call this for every engine triage selected, in parallel with the other
     schema-design tools, after assignment and before synthesis. A substantive

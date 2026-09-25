@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.atx_orchestrator.core import _build_graph
 
 
@@ -62,3 +64,49 @@ class TestSynthesisBoundaryBuildsGraph:
             )
 
         mock_build.assert_called_once_with(store, "job-1", "mydb")
+
+
+def _run_synthesis_core_on(report: dict) -> dict:
+    from src.atx_orchestrator import core
+
+    store = MagicMock()
+    store.exists.return_value = True
+    store.read_json.return_value = report
+    with (
+        patch("src.agents.referee.synthesis_handler.run_synthesis"),
+        patch("src.atx_orchestrator.core._build_graph"),
+    ):
+        result: dict = core.run_synthesis_core(
+            job_id="job-1", database_name="mydb", assignment_version=1, store=store
+        )
+    return result
+
+
+class TestSynthesisGuards:
+    """Retained engines now populate recommended_architecture.databases even when
+    no schema design ran, so an empty list no longer signals that case."""
+
+    def test_no_schema_design_warns_even_with_databases_populated(self) -> None:
+        result = _run_synthesis_core_on(
+            {
+                "ranking": [{"target": "aurora_postgresql", "schema_design_available": False}],
+                "recommended_architecture": {
+                    "databases": [{"service": "aurora_postgresql", "role": "retained"}]
+                },
+                "summary": "ok",
+                "assignment_summary": {"x": 1},
+            }
+        )
+
+        assert any("known pipeline gap" in w for w in result["warnings"])
+        assert result["recommended_databases"] == ["aurora_postgresql"]
+
+    def test_unread_assignment_with_empty_databases_still_raises(self) -> None:
+        with pytest.raises(ValueError, match="never read the assignment"):
+            _run_synthesis_core_on(
+                {
+                    "ranking": [{"target": "dynamodb"}],
+                    "recommended_architecture": {"databases": []},
+                    "summary": "ok",
+                }
+            )

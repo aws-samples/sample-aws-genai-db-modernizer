@@ -113,6 +113,13 @@ class DatabaseAllocation(BaseModel):
     confidence_score: int | None = Field(
         None, ge=0, le=100, description="Confidence score for this allocation"
     )
+    role: str | None = Field(
+        None,
+        description="Role in the target architecture: migration_target, cache or retained",
+    )
+    monthly_cost_usd: float | None = Field(
+        None, ge=0, description="Estimated monthly cost; matches tco_analysis.cost_breakdown"
+    )
 
 
 class TableMapping(BaseModel):

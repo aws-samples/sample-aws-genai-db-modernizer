@@ -1347,11 +1347,13 @@ def run_synthesis_core(
     #
     #   b) schema-design never ran -> build_table_mappings derives mappings from
     #      schema_design output rather than from the assignment, so table_mappings
-    #      and query_groups are empty and build_architecture_recommendation skips
-    #      every engine via `if not tables and not schema_design_available`. The
-    #      assignment IS read and everything else populates: ranking, workload
-    #      split, architecture_type, risk assessment, executive summary.
-    #      WARN — the report is a real answer with two documented gaps.
+    #      and query_groups are empty. recommended_architecture.databases is NOT
+    #      empty: it lists every engine carrying workload, with role "retained"
+    #      since none has a design. The assignment IS read and everything else
+    #      populates: ranking, workload split, architecture_type, risk
+    #      assessment, executive summary.
+    #      WARN — the report is a real answer with two documented gaps. Checked
+    #      independently of `databases`, which no longer signals this case.
     #
     # (b) was originally also a raise. That was wrong, and the way it was wrong is
     # worth remembering: the exception fired AFTER _write_synthesis_report had
@@ -1366,29 +1368,28 @@ def run_synthesis_core(
     # to a warning rather than failing. The orchestrator recomputes this from the
     # report when it renders the customer deliverables.
     any_schema_design = any(r.get("schema_design_available") for r in ranking)
-    if ranking and not databases:
-        assignment_was_read = bool(report.get("assignment_summary"))
-        if not assignment_was_read:
-            raise ValueError(
-                f"Synthesis ranked {len(ranking)} engine(s) but never read the "
-                f"assignment, so recommended_architecture is empty. This is the "
-                f"signature of a wrong assignment_version — it was "
-                f"{assignment_version}. At version 0 the assignment is skipped "
-                f"entirely and the schema design is looked up at an unversioned path "
-                f"that does not exist. Pass the version the assignment agent actually "
-                f"produced."
-            )
-        if not any_schema_design:
-            warnings.append(
-                f"No engine has schema-design output, so table_mappings, query_groups "
-                f"and recommended_architecture.databases are empty. The assignment "
-                f"(version {assignment_version}) was read correctly and every other "
-                f"section is populated: engine ranking, workload distribution, "
-                f"architecture type, risk assessment and executive summary. "
-                f"table_mappings is derived from schema-design output, not from the "
-                f"assignment, so running schema-design is what fills these three "
-                f"fields. This is a known pipeline gap, not a failure."
-            )
+    assignment_was_read = bool(report.get("assignment_summary"))
+    if ranking and not databases and not assignment_was_read:
+        raise ValueError(
+            f"Synthesis ranked {len(ranking)} engine(s) but never read the "
+            f"assignment, so recommended_architecture is empty. This is the "
+            f"signature of a wrong assignment_version — it was "
+            f"{assignment_version}. At version 0 the assignment is skipped "
+            f"entirely and the schema design is looked up at an unversioned path "
+            f"that does not exist. Pass the version the assignment agent actually "
+            f"produced."
+        )
+    if ranking and assignment_was_read and not any_schema_design:
+        warnings.append(
+            f"No engine has schema-design output, so table_mappings and query_groups "
+            f"are empty and recommended_architecture.databases lists every engine as "
+            f"retained, with no migration design. The assignment (version "
+            f"{assignment_version}) was read correctly and every other section is "
+            f"populated: engine ranking, workload distribution, architecture type, "
+            f"risk assessment and executive summary. table_mappings is derived from "
+            f"schema-design output, not from the assignment, so running schema-design "
+            f"is what fills these fields. This is a known pipeline gap, not a failure."
+        )
 
     # The customer-facing deliverables (Decision Report HTML, Engineering Report
     # MD) and their publication now live on the orchestrator, which owns the

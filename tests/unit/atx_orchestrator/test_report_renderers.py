@@ -198,6 +198,16 @@ class TestEngineRole:
         assert artifacts._engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
         assert artifacts._engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
 
+    def test_retained_entry_in_databases_is_not_a_migration_target(self, report: dict) -> None:
+        """Synthesis now lists the retained core in databases, tagged role
+        "retained". Membership alone used to mean "Migration target"."""
+        rep: dict = json.loads(json.dumps(report))
+        rep["recommended_architecture"]["databases"].append(
+            {"service": "aurora_postgresql", "role": "retained", "table_count": 3}
+        )
+        rows = {e["engine"]: e for e in artifacts._architecture_engines(rep)}
+        assert rows["aurora_postgresql"]["role"] == "Retained"
+
     def test_scope_reads_no_queries_assigned(self, zero_workload_report: dict) -> None:
         rows = {e["engine"]: e for e in artifacts._architecture_engines(zero_workload_report)}
         assert rows["documentdb"]["role"] == "Evaluated"

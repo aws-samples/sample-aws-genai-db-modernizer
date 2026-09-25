@@ -617,20 +617,47 @@ def build_architecture_recommendation(
                 if mapping["source_table"] not in cache_tables:
                     cache_tables.append(mapping["source_table"])
 
+    # A retained engine keeps its source schema, so it has no design and no
+    # table_mappings entry; the tables it keeps holding are known only from the
+    # assignment.
+    assigned_tables: dict[str, list[str]] = {}
+    for ta in (data.assignment or {}).get("table_assignments") or []:
+        if isinstance(ta, dict) and ta.get("primary_engine") and ta.get("table_id"):
+            assigned_tables.setdefault(ta["primary_engine"], []).append(ta["table_id"])
+
+    # Every engine carrying workload belongs in the architecture, not only the
+    # ones with net-new tables or a schema design. Filtering on those two alone
+    # dropped the retained relational core (no design by definition), so the
+    # list undercounted the allocation and did not reconcile to
+    # tco_analysis.cost_breakdown. Engines the assignment routed nothing to are
+    # already gone from ranking (load_synthesis_data), so this admits no
+    # evaluated-only engine.
     databases = []
     for r in ranking:
         engine = r["target"]
         tables = engine_tables.get(engine, [])
-        if not tables and not r.get("schema_design_available"):
+        designed = bool(tables) or r.get("schema_design_available")
+        if not designed and not r.get("assigned_queries", 0) > 0:
             continue
+
+        if is_cache_engine(engine):
+            role = "cache"
+        elif designed:
+            role = "migration_target"
+        else:
+            role = "retained"
+            tables = assigned_tables.get(engine, [])
 
         databases.append(
             {
                 "service": engine,
+                "role": role,
                 "table_count": len(tables),
                 "rationale": _engine_rationale(r),
                 "tables": tables,
                 "confidence_score": r["confidence_score"],
+                # Same source as cost_breakdown, so the two sum to the same total.
+                "monthly_cost_usd": r["monthly_cost_usd"],
             }
         )
 
