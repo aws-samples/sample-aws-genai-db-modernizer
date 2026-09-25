@@ -33,21 +33,23 @@ from src.agents.referee.synthesis_report import (
 
 # Shaped after the validated contract in src/contracts/elasticache_model_output.py:
 # key_designs (min_length=1) and access_patterns, never table_definitions.
+_EC_KEY_DESIGNS: list[dict] = [
+    {
+        "key_pattern": "session:{session_id}",
+        "data_type": "hash",
+        "source_tables": ["wp_usermeta"],
+        "ttl_seconds": 300,
+    },
+    {
+        "key_pattern": "post:{post_id}",
+        "data_type": "string",
+        "source_tables": ["wp_posts"],
+        "ttl_seconds": 600,
+    },
+]
+
 _EC_SCHEMA = {
-    "key_designs": [
-        {
-            "key_pattern": "session:{session_id}",
-            "data_type": "hash",
-            "source_tables": ["wp_usermeta"],
-            "ttl_seconds": 300,
-        },
-        {
-            "key_pattern": "post:{post_id}",
-            "data_type": "string",
-            "source_tables": ["wp_posts"],
-            "ttl_seconds": 600,
-        },
-    ],
+    "key_designs": _EC_KEY_DESIGNS,
     "access_patterns": [
         {"pattern_id": "EC-AP-1", "pattern_group": "session_lookup"},
         {"pattern_id": "EC-AP-2", "pattern_group": "post_read"},
@@ -182,6 +184,38 @@ class TestArchitectureWithAssignedQueries:
         cache = next(d for d in architecture["databases"] if d["service"] == "elasticache")
 
         assert architecture["architecture_type"] == "HYBRID_WITH_CACHE"
+        assert sorted(cache["tables"]) == ["wp_posts", "wp_usermeta"]
+        assert cache["table_count"] == 2
+
+    def test_table_backing_several_key_patterns_counts_once(self) -> None:
+        """Real designs put several key patterns on one table — the Discourse job
+        120be9e7 has two each on users, topics and categories. Counting per key
+        pattern reported 15 cache tables where there were 11."""
+        ec_schema = {
+            **_EC_SCHEMA,
+            "key_designs": [
+                *_EC_KEY_DESIGNS,
+                {"key_pattern": "post:{post_id}:views", "source_tables": ["wp_posts"]},
+                {"key_pattern": "session:by_user:{user_id}", "source_tables": ["wp_usermeta"]},
+            ],
+        }
+        data = SynthesisData(
+            job_id="job-130",
+            database_name="wordpress",
+            engines={
+                "dynamodb": EngineArtifacts(
+                    engine="dynamodb", analysis=_DDB_ANALYSIS, schema_design=_DDB_SCHEMA
+                ),
+                "elasticache": EngineArtifacts(
+                    engine="elasticache", analysis=_EC_ANALYSIS, schema_design=ec_schema
+                ),
+            },
+        )
+        mappings = build_table_mappings(data)
+
+        architecture = build_architecture_recommendation(data, build_ranking(data), mappings)
+        cache = next(d for d in architecture["databases"] if d["service"] == "elasticache")
+
         assert sorted(cache["tables"]) == ["wp_posts", "wp_usermeta"]
         assert cache["table_count"] == 2
 
