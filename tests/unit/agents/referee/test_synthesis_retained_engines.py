@@ -12,6 +12,8 @@ The ElastiCache half of (f) is covered in test_synthesis_elasticache_shapes.py.
 
 from __future__ import annotations
 
+from typing import Any
+
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import (
     build_architecture_recommendation,
@@ -20,20 +22,20 @@ from src.agents.referee.synthesis_report import (
     build_tco_analysis,
 )
 
-_DDB_SCHEMA = {
+_DDB_SCHEMA: dict[str, Any] = {
     "table_definitions": [
         {"table_name": "Orders", "source_tables": ["orders"], "aggregate_pattern": "separate"},
     ],
     "access_patterns": [{"pattern_id": "DDB-AP-1", "pattern_group": "order_lookup"}],
 }
 
-_DDB_ANALYSIS = {
+_DDB_ANALYSIS: dict[str, Any] = {
     "table_recommendations": [{"table_id": "orders", "confidence_score": 85}],
     "workload_analysis": {"patterns_detected": ["key_value"]},
     "cost_estimate": {"monthly_cost_usd": 120.0},
 }
 
-_AURORA_ANALYSIS = {
+_AURORA_ANALYSIS: dict[str, Any] = {
     "table_recommendations": [
         {"table_id": "customers", "confidence_score": 90},
         {"table_id": "invoices", "confidence_score": 88},
@@ -42,7 +44,7 @@ _AURORA_ANALYSIS = {
     "cost_estimate": {"monthly_cost_usd": 400.0},
 }
 
-_ASSIGNMENT = {
+_ASSIGNMENT: dict[str, Any] = {
     "query_assignments": [
         {"assigned_engine": "dynamodb", "assignment_reason": "key-value access", "in_scope": True},
         {"assigned_engine": "aurora_postgresql", "assignment_reason": "joins", "in_scope": True},
