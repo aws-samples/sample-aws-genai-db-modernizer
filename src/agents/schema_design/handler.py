@@ -27,6 +27,26 @@ from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_GROUP_CONCURRENCY = 5
+
+
+def _group_concurrency() -> int:
+    """Max concurrent group designs, overridable via SCHEMA_GROUP_CONCURRENCY.
+
+    Bounded below at 1. The effective ceiling is the account's Bedrock quota
+    shared across all engines running in parallel, not the thread count, so this
+    is a tuning knob rather than a pure speedup.
+    """
+    raw = os.environ.get("SCHEMA_GROUP_CONCURRENCY")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _DEFAULT_GROUP_CONCURRENCY
+
 
 def filter_collector_for_assignment(
     collector_output: dict,
@@ -606,6 +626,19 @@ def run_schema_design_auto(
 
     def _design_group(group: dict) -> None:
         idx = group["group_index"]
+        draft_key = (
+            f"{database_name}/{job_id}/schema-{target_type}"
+            f"/v{artifact_version}/schema_draft_group_{idx}.json"
+        )
+        # Group-level resume: if this group's draft already exists, it was designed
+        # on a prior (possibly recycled) run — skip it. The final schema_output.json
+        # is only merged once every group finishes, so without this a recycle
+        # mid-run would redo all groups from scratch (the heaviest engines split
+        # into dozens), and under a tight Bedrock quota that re-work is exactly what
+        # we cannot afford. Draft writes are per-group, so completed groups persist.
+        if store.exists(draft_key):
+            print(f"[schema-design/{target_type}] Group {idx} already designed — reusing draft")
+            return
         input_key = (
             f"{database_name}/{job_id}/schema-{target_type}"
             f"/v{artifact_version}/input_group_{idx}.json"
@@ -638,11 +671,7 @@ def run_schema_design_auto(
             os.unlink(collector_tmp.name)
             os.unlink(analysis_tmp.name)
 
-        # Write group draft
-        draft_key = (
-            f"{database_name}/{job_id}/schema-{target_type}"
-            f"/v{artifact_version}/schema_draft_group_{idx}.json"
-        )
+        # Write group draft (draft_key computed at the top for the resume check).
         store.write_json(draft_key, json.loads(output_json))
 
         # Write per-group trace
@@ -658,11 +687,15 @@ def run_schema_design_auto(
             f"({group['group_name']}, {n_q} queries)"
         )
 
-    # Run groups in parallel (max 5 concurrent) — paths are passed as params
-    # so there's no process-global env var contention between threads.
+    # Run groups in parallel — paths are passed as params so there's no
+    # process-global env var contention between threads. The cap is tunable via
+    # SCHEMA_GROUP_CONCURRENCY (default 5): under a small shared Bedrock quota,
+    # every engine's group workers compete for the same rate limit, so the useful
+    # ceiling is bounded by quota, not threads. Lower it to reduce throttling;
+    # raise it only if the account quota can absorb more concurrent calls.
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    max_workers = min(5, len(groups))
+    max_workers = min(_group_concurrency(), len(groups))
     print(
         f"[schema-design/{target_type}] Running {len(groups)} groups (max {max_workers} parallel)"
     )

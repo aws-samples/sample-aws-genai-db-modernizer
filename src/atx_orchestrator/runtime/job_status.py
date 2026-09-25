@@ -129,6 +129,58 @@ def complete_job(
         return False
 
 
+def _transition_job(status_name: str, *, job_id: str | None, job_manager: Any) -> bool:
+    """Set the platform job to a NON-terminal ``JobStatus``. Best-effort, fail-open.
+
+    Unlike :func:`complete_job` this is not guarded by ``_COMPLETED_JOB_IDS`` and
+    never drives a terminal state, so it can be called repeatedly across
+    assessment rounds. It also *clears* any completion latch for the job: a job
+    moved back to a live status is, by definition, no longer completed, so a later
+    round is allowed to complete it again.
+    """
+    manager = _resolve_job_manager(job_manager)
+    if manager is None:
+        logger.info("job status %s: skipped (no JobManager; outside ATX runtime?)", status_name)
+        return False
+    try:
+        from agent_builder_sdk.agentic_framework.job_manager import JobStatus  # noqa: PLC0415
+
+        manager.update_job_status(getattr(JobStatus, status_name))
+        logger.info("Job status set to %s", status_name)
+        guard_key = job_id or _job_id_from_env()
+        if guard_key:
+            _COMPLETED_JOB_IDS.discard(guard_key)
+        return True
+    except Exception:  # noqa: BLE001
+        # Fail-open: a status transition must not crash the turn. A terminal job
+        # rejects this (TerminalResourceException); the warning records why.
+        logger.warning("job status %s: update failed (best-effort)", status_name, exc_info=True)
+        return False
+
+
+def set_awaiting_human_input(*, job_id: str | None = None, job_manager: Any = None) -> bool:
+    """Rest the platform job at ``AWAITING_HUMAN_INPUT`` (non-terminal).
+
+    Called after each synthesis round instead of completing the job: the report
+    is ready and the job now waits for the customer to either accept it or ask for
+    a routing change. Because this is NOT terminal, the assignment-review gate,
+    HITL submit, and job-plan updates keep working, so the customer can re-enter
+    (ADR-029). A terminal ``COMPLETED`` job cannot be revived, which is why the
+    pipeline no longer auto-completes between rounds.
+    """
+    return _transition_job("AWAITING_HUMAN_INPUT", job_id=job_id, job_manager=job_manager)
+
+
+def resume_executing(*, job_id: str | None = None, job_manager: Any = None) -> bool:
+    """Move the platform job back to ``EXECUTING`` for a new round of work.
+
+    Called by re-entry (``reopen_assignment_review``) so the reopened gate runs on
+    a live job. Valid because the between-rounds rest state is the non-terminal
+    ``AWAITING_HUMAN_INPUT``, not terminal ``COMPLETED``.
+    """
+    return _transition_job("EXECUTING", job_id=job_id, job_manager=job_manager)
+
+
 def _job_id_from_env() -> str | None:
     """Best-effort platform job id from the agent context, for the guard key."""
     try:

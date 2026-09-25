@@ -30,6 +30,8 @@ Usage:
 
 import json
 import logging
+import os
+import random
 import time
 from typing import Any, TypeVar
 
@@ -46,6 +48,74 @@ T = TypeVar("T", bound=BaseModel)
 MAX_DESIGNER_RETRIES = 3
 MAX_PE_ITERATIONS = 2
 BASE_BACKOFF_SECONDS = 1.0
+
+# Throttling gets its own, larger retry budget so a Bedrock rate-limit storm does
+# not fail a group the way a genuine bug (e.g. an unparseable design) does. This
+# matters most under a small account quota: the heaviest engines split into dozens
+# of groups, and every engine runs in parallel, so the shared model quota is the
+# real bottleneck. Transient throttle / 5xx / read-timeout errors draw from this
+# budget with longer exponential backoff plus jitter (to de-synchronize the
+# concurrent group workers); all other errors draw from MAX_DESIGNER_RETRIES and
+# fail fast.
+_DEFAULT_THROTTLE_MAX_RETRIES = 8
+_THROTTLE_BASE_BACKOFF_SECONDS = 2.0
+_THROTTLE_MAX_BACKOFF_SECONDS = 60.0
+_THROTTLE_MARKERS = (
+    "throttl",
+    "serviceunavailable",
+    "service unavailable",
+    "toomanyrequests",
+    "too many requests",
+    "rate exceeded",
+    "rate limit",
+    "read timed out",
+    "timed out",
+    "modeltimeout",
+    "model not ready",
+    "slow down",
+    "429",
+    "503",
+)
+
+
+def _throttle_max_retries() -> int:
+    """Max transient/throttle retries, overridable via SCHEMA_THROTTLE_MAX_RETRIES."""
+    raw = os.environ.get("SCHEMA_THROTTLE_MAX_RETRIES")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _DEFAULT_THROTTLE_MAX_RETRIES
+
+
+def _is_throttle_error(exc: Exception) -> bool:
+    """True when the exception looks like Bedrock throttling / a transient 5xx.
+
+    Checks the botocore error code (when present) and the type name + message
+    against known throttle/transient markers, so we treat a rate-limit storm as
+    worth waiting out rather than a genuine failure to fail fast on.
+    """
+    code = ""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = str(response.get("Error", {}).get("Code", "")).lower()
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(marker in code or marker in text for marker in _THROTTLE_MARKERS)
+
+
+def _throttle_backoff(throttle_failures: int) -> float:
+    """Exponential backoff (seconds) on the throttle-failure count, capped, + jitter.
+
+    Jitter de-synchronizes the concurrent group workers so they do not retry in
+    lockstep and re-collide on the same quota.
+    """
+    base = _THROTTLE_BASE_BACKOFF_SECONDS * (2 ** max(0, throttle_failures - 1))
+    capped = min(base, _THROTTLE_MAX_BACKOFF_SECONDS)
+    jitter = random.uniform(0, capped * 0.25)  # nosec B311 - backoff jitter, not security-sensitive
+    return float(capped + jitter)
 
 
 class SchemaDesignTrace:
@@ -266,14 +336,18 @@ class SchemaDesignRunner:
         last_partial_text: str | None = None
         prefix = f"[schema-design/{self.target_type}]"
 
-        for attempt in range(MAX_DESIGNER_RETRIES):
-            if attempt > 0:
-                backoff = BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                print(f"{prefix} Retry {attempt + 1}/{MAX_DESIGNER_RETRIES} after {backoff}s")
-                time.sleep(backoff)  # nosemgrep: arbitrary-sleep
-
+        # Two independent budgets: genuine errors fail fast (MAX_DESIGNER_RETRIES),
+        # throttling waits it out (larger, backoff + jitter). The loop stops as
+        # soon as EITHER budget is exhausted.
+        regular_max = MAX_DESIGNER_RETRIES
+        throttle_max = _throttle_max_retries()
+        regular_failures = 0
+        throttle_failures = 0
+        attempt = 0
+        while regular_failures < regular_max and throttle_failures < throttle_max:
+            attempt += 1
             try:
-                print(f"{prefix} Invoking model (attempt {attempt + 1}/{MAX_DESIGNER_RETRIES})...")
+                print(f"{prefix} Invoking model (attempt {attempt})...")
                 result = self.designer(prompt)
                 output = getattr(result, "structured_output", None)
                 if isinstance(output, self.output_model):
@@ -289,7 +363,18 @@ class SchemaDesignRunner:
 
             except Exception as exc:
                 last_error = exc
-                print(f"{prefix} Attempt {attempt + 1} failed: {exc}")
+                if _is_throttle_error(exc):
+                    throttle_failures += 1
+                    kind, backoff = "throttle", _throttle_backoff(throttle_failures)
+                else:
+                    regular_failures += 1
+                    kind = "error"
+                    backoff = BASE_BACKOFF_SECONDS * (2 ** max(0, regular_failures - 1))
+                print(f"{prefix} Attempt {attempt} failed ({kind}): {exc}")
+                if regular_failures >= regular_max or throttle_failures >= throttle_max:
+                    break
+                print(f"{prefix} Retry after {backoff:.1f}s")
+                time.sleep(backoff)  # nosemgrep: arbitrary-sleep
 
         # --- Graceful fallback ---
         if previous_output is not None:
@@ -298,7 +383,7 @@ class SchemaDesignRunner:
                 previous_output,
                 [
                     (  # nosemgrep: string-concat-in-list
-                        f"[WARNING] Revision failed after {MAX_DESIGNER_RETRIES} attempts ({last_error}). "
+                        f"[WARNING] Revision failed after {attempt} attempts ({last_error}). "
                         f"Returning last valid design."
                     )
                 ],
@@ -317,7 +402,7 @@ class SchemaDesignRunner:
             except (json.JSONDecodeError, ValueError, TypeError):
                 logger.warning("Could not salvage partial output from last attempt")
 
-        raise RuntimeError(f"Designer failed after {MAX_DESIGNER_RETRIES} attempts: {last_error}")
+        raise RuntimeError(f"Designer failed after {attempt} attempts: {last_error}")
 
     def _append_trade_offs(self, output: BaseModel, notes: list[str]) -> None:
         """Append trade-off notes to the output if it has a trade_offs field.

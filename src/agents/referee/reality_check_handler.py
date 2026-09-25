@@ -11,6 +11,7 @@ import os
 from collections import defaultdict
 from datetime import UTC, datetime
 
+from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
     sanity_sweep,
@@ -295,6 +296,19 @@ def run_reality_check_handler(
             "query_assignments": det["revised_assignments"],
             "reality_check_applied": True,
         }
+        # ADR-029 Layers B+E: recompute derived views against the consolidated
+        # routing, refresh validation warnings, and drop per-query warnings that
+        # name an engine consolidation eliminated, instead of spreading the
+        # previous version's stale derived views and dead-engine warnings forward.
+        eliminated_engines = set(det["before_distribution"]) - {
+            engine for engine, count in det["after_distribution"].items() if count > 0
+        }
+        revised_assignment = refresh_consolidated_assignment(
+            revised_assignment,
+            det["collector_output"],
+            det["analysis_outputs"],
+            dead_engines=eliminated_engines,
+        )
         revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
         store.write_json(revised_key, revised_assignment)
         print(

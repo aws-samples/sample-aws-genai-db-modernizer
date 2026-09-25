@@ -271,3 +271,30 @@ class TestRunSchemaDesignAutoRouting:
         ):
             run_schema_design_auto("job-001", "mydb", "dynamodb", store, assignment_version=1)
         split.assert_called_once()
+
+
+class TestGroupConcurrency:
+    """SCHEMA_GROUP_CONCURRENCY tunes the parallel group cap for a constrained
+    Bedrock quota (default 5, positive-int, fail-safe fallback)."""
+
+    def test_default_is_five(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.agents.schema_design import handler
+
+        monkeypatch.delenv("SCHEMA_GROUP_CONCURRENCY", raising=False)
+        assert handler._group_concurrency() == 5
+
+    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.agents.schema_design import handler
+
+        monkeypatch.setenv("SCHEMA_GROUP_CONCURRENCY", "12")
+        assert handler._group_concurrency() == 12
+
+    def test_invalid_or_nonpositive_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.agents.schema_design import handler
+
+        monkeypatch.setenv("SCHEMA_GROUP_CONCURRENCY", "0")
+        assert handler._group_concurrency() == 5
+        monkeypatch.setenv("SCHEMA_GROUP_CONCURRENCY", "not-a-number")
+        assert handler._group_concurrency() == 5

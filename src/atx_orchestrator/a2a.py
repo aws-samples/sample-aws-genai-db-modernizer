@@ -156,64 +156,22 @@ def invoke_and_wait(
 
     subagent_instance_id = _find_subagent_by_agent_id(list_resp, agent_id)
 
-    # 2. If no existing instance, spawn one via invoke_agent (SDK canonical pattern
-    #    per prompts/test_orchestrator_prompt.md: "first check ... if not, invoke
-    #    an instance ... then send a message to it").
+    # 2. If no reusable instance was discovered, spawn a fresh one. Discovery only
+    #    returns non-terminal instances (see _find_subagent_by_agent_id /
+    #    _UNUSABLE_STATUSES), so a completed instance from a previous round is never
+    #    reused here — it falls through to a fresh spawn.
     if not subagent_instance_id:
         logger.info(
             "A2A no existing instance for agent_id=%s — spawning via invoke_agent",
             agent_id,
         )
-        try:
-            invoke_resp = client.invoke_agent(
-                agentId=agent_id,
-                agentType="SUB_AGENT",
-                requestContext=request_context,
-            )
-        except Exception as e:
-            logger.exception(
-                "A2A invoke_agent FAILED for agent_id=%s", agent_id
-            )  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
-            raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
-
-        subagent_instance_id = _extract_instance_id(invoke_resp)
-        if not subagent_instance_id:
-            logger.error(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
-                "A2A invoke_agent returned no agentInstanceId for agent_id=%s: response=%r",
-                agent_id,
-                invoke_resp,
-            )
-            raise A2AError(
-                f"invoke_agent for agent_id={agent_id!r} did not return "
-                f"agentInstanceId; response={invoke_resp!r}"
-            )
-        logger.info(
-            "A2A spawned new instance: agent_id=%s instance=%s",
-            agent_id,
-            subagent_instance_id,
-        )
-
-        # 2b. Wait for the freshly-spawned instance to reach RUNNING/IDLE state
-        #     before sending. SendMessage returns ValidationException
-        #     "Agent instance status is not RUNNING or IDLE" if called too
-        #     soon after invoke_agent (per Agentic API validation).
-        _wait_for_ready(
+        subagent_instance_id = _spawn_subagent(
             client,
-            subagent_instance_id,
+            agent_id,
             request_context,
-            agent_id=agent_id,
-            timeout=60.0,
             poll_interval=poll_interval,
+            post_ready_dwell=post_ready_dwell,
         )
-        # 2c. Additional dwell — the Agentic API reports RUNNING as soon as
-        #     the container slot is allocated, BEFORE the app inside finishes
-        #     booting (Python import + Uvicorn on port 8080). Empirically the
-        #     Uvicorn "listening" log appears ~4-5 seconds after the RUNNING
-        #     status transition. Without this dwell, send_message succeeds
-        #     but AgentCore then can't route the actual HTTP call to the
-        #     not-yet-listening container, and the instance transitions
-        #     RUNNING → FAILED.
-        _dwell_after_ready(post_ready_dwell)
     else:
         logger.info(
             "A2A found existing subagent: agent_id=%s instance=%s (requester=%s)",
@@ -234,12 +192,16 @@ def invoke_and_wait(
         "metadata": {a2a_source_ext: {"senderAgentInstanceId": own_instance_id}},
         "extensions": [a2a_source_ext],
     }
-    try:
+
+    def _send_to(instance_id: str) -> None:
         client.send_message(
-            agentInstanceId=subagent_instance_id,
+            agentInstanceId=instance_id,
             params={"message": a2a_message},
             requestContext=request_context,
         )
+
+    try:
+        _send_to(subagent_instance_id)
         logger.info(
             "A2A send_message OK: agent_id=%s instance=%s",
             agent_id,
@@ -254,6 +216,53 @@ def invoke_and_wait(
                 subagent_instance_id,
                 e,
             )
+        elif _is_instance_not_ready_error(e):
+            # The instance we resolved is no longer RUNNING/IDLE — typically a
+            # terminal instance from a previous round reused across a re-entry, or
+            # one that transitioned between list and send. Spawn a fresh instance
+            # and retry the send once, so a stale instance does not surface as a
+            # phase failure (e.g. a red X on the schema step) that only self-heals
+            # if the orchestrator LLM happens to retry.
+            logger.warning(
+                "A2A send_message to agent_id=%s instance=%s failed (instance not "
+                "ready) — spawning a fresh instance and retrying once: %s",
+                agent_id,
+                subagent_instance_id,
+                e,
+            )
+            subagent_instance_id = _spawn_subagent(
+                client,
+                agent_id,
+                request_context,
+                poll_interval=poll_interval,
+                post_ready_dwell=post_ready_dwell,
+            )
+            try:
+                _send_to(subagent_instance_id)
+                logger.info(
+                    "A2A send_message OK after respawn: agent_id=%s instance=%s",
+                    agent_id,
+                    subagent_instance_id,
+                )
+            except Exception as e2:
+                if tolerate_send_errors and _is_expected_send_error(e2):
+                    logger.info(
+                        "send_message to %s (instance=%s) returned expected -32603 "
+                        "after respawn (continuing to poll): %s",
+                        agent_id,
+                        subagent_instance_id,
+                        e2,
+                    )
+                else:
+                    logger.exception(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
+                        "A2A send_message FAILED after respawn: agent_id=%s instance=%s",
+                        agent_id,
+                        subagent_instance_id,
+                    )
+                    raise A2AError(
+                        f"send_message to {agent_id} (instance={subagent_instance_id}) "
+                        f"failed after respawn: {e2}"
+                    ) from e2
         else:
             logger.exception(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
                 "A2A send_message FAILED: agent_id=%s instance=%s",
@@ -343,6 +352,80 @@ def _is_expected_send_error(err: BaseException) -> bool:
             return True
     msg = str(err).lower()
     return "-32603" in msg or "internal error" in msg
+
+
+def _is_instance_not_ready_error(err: BaseException) -> bool:
+    """Detect a SendMessage failure caused by the target instance not being RUNNING/IDLE.
+
+    The Agentic API rejects ``send_message`` to an instance that is not RUNNING or
+    IDLE with a ValidationException whose message contains "Agent instance status
+    is not RUNNING or IDLE". This happens when a completed instance from a previous
+    round is reused across a re-entry, or when an instance transitions between the
+    list and send calls. Callers spawn a fresh instance and retry when this is True.
+    """
+    msg = str(err).lower()
+    return "not running or idle" in msg or "is not running" in msg
+
+
+def _spawn_subagent(
+    client: Any,
+    agent_id: str,
+    request_context: dict[str, Any],
+    *,
+    poll_interval: float,
+    post_ready_dwell: float,
+) -> str:
+    """Spawn a fresh subagent instance via ``invoke_agent`` and wait until it is ready.
+
+    Returns the new ``agentInstanceId``. Extracted so the initial-dispatch path and
+    the send-recovery path spawn identically. Waits for RUNNING/IDLE (SendMessage
+    rejects a not-yet-ready instance) and then dwells so the container's app has
+    finished booting before the caller sends.
+
+    Raises:
+        A2AError: ``invoke_agent`` failed, returned no id, or the instance never
+            reached RUNNING/IDLE.
+    """
+    try:
+        invoke_resp = client.invoke_agent(
+            agentId=agent_id,
+            agentType="SUB_AGENT",
+            requestContext=request_context,
+        )
+    except Exception as e:
+        logger.exception(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
+            "A2A invoke_agent FAILED for agent_id=%s", agent_id
+        )
+        raise A2AError(f"invoke_agent failed for agent_id={agent_id!r}: {e}") from e
+
+    instance_id = _extract_instance_id(invoke_resp)
+    if not instance_id:
+        logger.error(  # nosemgrep: logging-error-without-handling -- intentional: log-and-reraise for observability
+            "A2A invoke_agent returned no agentInstanceId for agent_id=%s: response=%r",
+            agent_id,
+            invoke_resp,
+        )
+        raise A2AError(
+            f"invoke_agent for agent_id={agent_id!r} did not return "
+            f"agentInstanceId; response={invoke_resp!r}"
+        )
+    logger.info("A2A spawned new instance: agent_id=%s instance=%s", agent_id, instance_id)
+
+    # Wait for RUNNING/IDLE — SendMessage returns ValidationException
+    # "Agent instance status is not RUNNING or IDLE" if called too soon after
+    # invoke_agent — then dwell so the container app (Python import + Uvicorn on
+    # 8080) has finished booting; sending before it listens transitions the
+    # instance RUNNING -> FAILED.
+    _wait_for_ready(
+        client,
+        instance_id,
+        request_context,
+        agent_id=agent_id,
+        timeout=60.0,
+        poll_interval=poll_interval,
+    )
+    _dwell_after_ready(post_ready_dwell)
+    return instance_id
 
 
 def _extract_status(response: Any) -> str:
@@ -450,7 +533,10 @@ def _wait_for_ready(
 
 
 # Terminal / unusable states — a subagent in one of these can't accept new work.
-_UNUSABLE_STATUSES = frozenset({"SHUTDOWN", "FAILED", "STOPPED", "STOPPING"})
+# COMPLETED is terminal: an instance that finished a prior round's work cannot be
+# reused (SendMessage rejects it with "not RUNNING or IDLE"). Including it here is
+# what stops a re-entry from reusing the previous round's finished instance.
+_UNUSABLE_STATUSES = frozenset({"SHUTDOWN", "FAILED", "STOPPED", "STOPPING", "COMPLETED"})
 
 
 def _summaries_of(list_response: Any) -> list[dict[str, Any]]:

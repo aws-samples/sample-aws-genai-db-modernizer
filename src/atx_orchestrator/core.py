@@ -673,7 +673,21 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
     mermaid_key: str | None = None
     if spec.mermaid_always or mermaid_diagram:
         mermaid_key = f"{prefix}/er-diagram.mmd"
-        store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+        try:
+            store.write_text(mermaid_key, mermaid_diagram, content_type="text/x-mermaid")
+        except NotImplementedError:
+            # The ATX artifact store is JSON-only and cannot hold the .mmd text
+            # deliverable (dynamodb / documentdb set mermaid_always=True, so they
+            # hit this every run). The ER diagram is a non-essential artifact —
+            # it is rebuilt on demand from the analysis contract — so a store that
+            # cannot hold it must not fail the whole engine's analysis. Drop the
+            # artifact reference and continue, mirroring the write_text guards in
+            # tools.py for the same JSON-only backend.
+            logger.debug(
+                "ATX analysis-%s: store is JSON-only; skipping er-diagram.mmd durable write",
+                spec.target_database,
+            )
+            mermaid_key = None
 
     level_counts = _confidence_band_counts(contract.table_recommendations)
 

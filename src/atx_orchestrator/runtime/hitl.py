@@ -299,17 +299,63 @@ def _describe_shape(payload: Any, limit: int = 800) -> str:
     return repr(obj)[:limit]
 
 
+def _is_effectively_empty(payload: Any) -> bool:
+    """True if a submission payload carries no data at all (an empty submit).
+
+    Decodes JSON first, then treats ``None``, empty/blank strings, and containers
+    whose contents are ALL themselves empty (``{}``, ``[]``, ``{"items": []}``) as
+    empty. A scalar, a non-empty string, or a bool counts as content (NOT empty),
+    so a payload we merely failed to parse is never mistaken for an empty submit.
+    This is what lets the caller tell "the customer changed nothing" apart from
+    "the submission had content we could not read".
+    """
+    if payload is None:
+        return True
+    if isinstance(payload, (bytes, bytearray, str)):
+        text = payload.decode("utf-8", errors="replace") if isinstance(payload, bytes) else payload
+        text = text.strip()
+        if text == "":
+            return True
+        try:
+            decoded = json.loads(text)
+        except (ValueError, TypeError):
+            # A non-empty, non-JSON string is real content, not an empty submit.
+            return False
+        return _is_effectively_empty(decoded)
+    if isinstance(payload, dict):
+        return all(_is_effectively_empty(v) for v in payload.values())
+    if isinstance(payload, list):
+        return all(_is_effectively_empty(v) for v in payload)
+    return False  # numbers / bools are real content
+
+
+def _raw_snippet(payload: Any, limit: int = 1000) -> str:
+    """A truncated raw repr of a payload, for diagnosing an unreadable submission."""
+    if payload is None:
+        return "None"
+    try:
+        text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+    except (TypeError, ValueError):
+        text = repr(payload)
+    return text[:limit]
+
+
 def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, Any]] | None]:
     """Fetch a HITL task and return ``(status, edited_items | None)``.
 
     ``status`` is a coarse label the caller can branch on:
 
-    * ``"submitted"`` — the customer submitted; ``edited_items`` is the row list
-      (possibly empty if the submission genuinely carried no rows).
+    * ``"submitted"`` — the customer submitted and we parsed one or more edited
+      rows; ``edited_items`` is the row list.
+    * ``"submitted_empty"`` — the customer submitted but the payload carries no
+      data (they opened the table, changed nothing, and submitted). This is a
+      valid "keep the routing as-is" action; ``edited_items`` is ``[]``. The
+      caller treats it as approve-as-is, NOT as an error.
     * ``"awaiting_submission"`` — the task exists but has no human response yet.
-    * ``"unreadable"`` — the customer submitted (humanArtifact present) but the
-      rows could not be parsed out of the payload. The caller MUST NOT treat this
-      as "no changes"; the edits are there but we failed to read them.
+    * ``"unreadable"`` — the customer submitted (humanArtifact present) and the
+      payload has content, but the rows could not be parsed out of it. The caller
+      MUST NOT treat this as "no changes"; the edits are there but we failed to
+      read them.
     * ``"unavailable"`` — outside the ATX runtime, or the task could not be
       fetched at all. ``edited_items`` is ``None`` for all non-submitted states.
 
@@ -349,19 +395,36 @@ def read_assignment_submission(hitl_task_id: str) -> tuple[str, list[dict[str, A
             downloaded = _download_artifact_json(client, request_context, artifact_id)
             items = _extract_items(downloaded)
 
-    if items is None:
-        # The customer DID submit (humanArtifact present) but we could not locate
-        # the rows. Log the actual payload shape so it can be parsed correctly,
-        # and report "unreadable" so the caller does not silently drop the edits.
-        logger.warning(
-            "HITL task %s submitted (status=%s) but rows unreadable. " "inline=%s downloaded=%s",
+    if items is not None:
+        return "submitted", items
+
+    # No rows parsed. Distinguish an EMPTY submission (the customer opened the
+    # table, changed nothing, and submitted — a valid "keep the routing as-is")
+    # from a genuinely UNREADABLE one (a payload carrying content we failed to
+    # parse). Empty is a normal approve-as-is; unreadable must fail loudly so real
+    # edits are never silently dropped.
+    seen = [p for p in (inline, downloaded) if p is not None]
+    if seen and all(_is_effectively_empty(p) for p in seen):
+        logger.info(
+            "HITL task %s submitted with no changes (empty payload) — approve-as-is.",
             hitl_task_id,
-            status,
-            _describe_shape(inline) if inline is not None else "None",
-            _describe_shape(downloaded) if downloaded is not None else "None",
         )
-        return "unreadable", None
-    return "submitted", items
+        return "submitted_empty", []
+
+    # Content we could not read (or nothing fetched at all). Log the shape AND a
+    # truncated raw snippet so an unparsed shape can be diagnosed and the parser
+    # extended, rather than guessed at.
+    logger.warning(
+        "HITL task %s submitted (status=%s) but rows unreadable. inline=%s downloaded=%s "
+        "raw_inline=%s raw_downloaded=%s",
+        hitl_task_id,
+        status,
+        _describe_shape(inline) if inline is not None else "None",
+        _describe_shape(downloaded) if downloaded is not None else "None",
+        _raw_snippet(inline),
+        _raw_snippet(downloaded),
+    )
+    return "unreadable", None
 
 
 # ═════════════════════════════════════════════════════════════════════════════

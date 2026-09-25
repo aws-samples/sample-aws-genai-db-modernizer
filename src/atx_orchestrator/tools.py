@@ -31,6 +31,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     clear_step_registry,
     get_step_id,
     mark_step_failed,
+    mark_step_not_started,
     mark_step_pending_human_input,
     mark_step_running,
     mark_step_skipped,
@@ -536,19 +537,36 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
     """
     job_id = _platform_job_id(job_id)
     store = _make_store()
-    report_key = f"{database_name}/{job_id}/synthesis/report.json"
 
-    if not store.exists(report_key):
-        return json.dumps(
-            {
-                "error": "Report not available yet. Run synthesis first.",
-                "job_id": job_id,
-                "report_artifact": report_key,
-            }
-        )
+    # The synthesis writer produces a VERSIONED key, synthesis/v{N}/report.json
+    # (keyed on the effective assignment version), or the legacy
+    # referee-synthesis/report.json when no versioned assignment exists. It never
+    # writes an unversioned synthesis/report.json, so resolve the effective
+    # version and read the versioned key first, then fall back. (ADR-029: the
+    # previous unversioned-only read meant this tool always reported "not
+    # available" for a normally-run synthesis.)
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
 
-    report = store.read_json(report_key)
-    return json.dumps(report)
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    candidate_keys: list[str] = []
+    if version > 0:
+        candidate_keys.append(f"{database_name}/{job_id}/synthesis/v{version}/report.json")
+    candidate_keys.append(f"{database_name}/{job_id}/referee-synthesis/report.json")
+    # Legacy/defensive: an older unversioned artifact, if one exists.
+    candidate_keys.append(f"{database_name}/{job_id}/synthesis/report.json")
+
+    for report_key in candidate_keys:
+        if store.exists(report_key):
+            return json.dumps(store.read_json(report_key))
+
+    return json.dumps(
+        {
+            "error": "Report not available yet. Run synthesis first.",
+            "job_id": job_id,
+            "report_artifact": candidate_keys[0],
+            "searched": candidate_keys,
+        }
+    )
 
 
 @tool
@@ -768,7 +786,12 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
 
 
 @tool
-def finalize_assignment_review(job_id: str, database_name: str, edited_markdown: str = "") -> str:
+def finalize_assignment_review(
+    job_id: str,
+    database_name: str,
+    edited_markdown: str = "",
+    accept_feasibility_risks: bool = False,
+) -> str:
     """Apply the customer's routing decision and open the schema-design gate.
 
     This is the single approval point of the review gate. It handles all three
@@ -787,8 +810,18 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
     the shared override path, then records approval so schema design may run. On a
     parse/validation failure nothing is applied and the gate stays closed.
 
-    Returns JSON with ``status`` ("approved" or "invalid_edit"), ``changed``,
-    ``applied_overrides``, and ``assignment_version`` (effective after any edit).
+    After applying edits (or approving as-is), a feasibility review runs on the
+    effective routing (ADR-029 Layer C). If it finds a blocking problem — a table
+    whose reads are routed away from its writes, or a co-dependent JOIN group split
+    onto an engine that cannot serve joins — the gate stays closed and this returns
+    ``status`` "infeasible" with ``feasibility_findings``; present them to the
+    customer, who must fix the routing and resubmit, or re-run with
+    ``accept_feasibility_risks=True`` to proceed with the risk recorded on the
+    artifact.
+
+    Returns JSON with ``status`` ("approved", "invalid_edit", or "infeasible"),
+    ``changed``, ``applied_overrides``, ``assignment_version`` (effective after any
+    edit), ``validation_warnings``, and ``feasibility_findings``.
     """
     job_id = _platform_job_id(job_id)
     from src.agents.referee.assignment_overrides import (
@@ -828,6 +861,7 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
     #   2. a pending HITL submission (WebApp editable table)
     #   3. nothing -> approve as-is (customer continued with the recommendation)
     overrides: list = []
+    no_changes_submission = False
     stripped = (edited_markdown or "").strip()
     pending = _read_pending_hitl(store, database_name, job_id)
 
@@ -851,11 +885,18 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
                 )
             if status == "submitted":
                 overrides = diff_review_items(current, edited_items or [])
+            elif status == "submitted_empty":
+                # The customer opened the routing table, changed nothing, and
+                # submitted — a valid "keep the routing as-is" action. Treat it as
+                # approve-as-is (no overrides) and proceed; the approved response
+                # notes that no changes were detected so a lost edit is noticeable.
+                overrides = []
+                no_changes_submission = True
             else:
                 # status in ("unreadable", "unavailable"): the customer submitted
-                # but we could not read their edits, or the task could not be
-                # fetched. Do NOT approve-as-is — that would silently drop the
-                # edits. Fail loudly so the gate stays open and nothing is lost.
+                # content we could not read, or the task could not be fetched. Do
+                # NOT approve-as-is — that would silently drop real edits. Fail
+                # loudly so the gate stays open and nothing is lost.
                 return json.dumps(
                     {
                         "status": "error",
@@ -882,7 +923,10 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
 
     changed = False
     applied = 0
+    warnings: list[str] = []
+    propagated: list[str] = []
     effective_version = version
+    effective_assignment: Assignment = current
     if overrides:
         try:
             result = apply_assignment_overrides(
@@ -909,11 +953,75 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         changed = True
         applied = len(overrides)
         effective_version = result.assignment.version
-    else:
-        # Approved as-is (no edits): record approval on the artifact too, by
-        # stamping the effective assignment CUSTOMER_APPROVED in place. No new
-        # version is written, so staleness detection is unaffected. Best-effort —
-        # the .meta phase below is the authoritative gate signal.
+        effective_assignment = result.assignment
+        # Surface the co-dependency-split (and scope) warnings the validator
+        # computed for this version so the orchestrator can show them to the
+        # customer, instead of leaving them buried on the artifact (ADR-029 B).
+        warnings = result.assignment.validation_warnings
+        # Queries moved automatically to stay co-located with a co-dependent query
+        # the customer re-routed (ADR-029 Amendment 3), so the orchestrator can
+        # tell the customer the group moved together.
+        propagated = result.propagated_query_ids
+    # Approve-as-is (no edits) is stamped CUSTOMER_APPROVED on the artifact only
+    # after the feasibility gate below passes, so a routing the reviewer blocks is
+    # never recorded as approved.
+
+    # Post-gate feasibility review (ADR-029 Layer C). Runs on the effective
+    # routing (first-pass approval or an edited version). Blocking findings loop
+    # the gate: the customer must fix the routing or re-run with
+    # accept_feasibility_risks=true. Advisory findings are surfaced but do not
+    # block. The reviewer pushes back rather than shipping a routing that fails
+    # in production.
+    from src.agents.referee.feasibility_review import review_assignment_feasibility
+    from src.contracts.feasibility_models import FindingSeverity
+
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
+    findings = review_assignment_feasibility(effective_assignment, collector_output)
+    blocking = [f for f in findings if f.severity is FindingSeverity.BLOCKING]
+    findings_json = [f.model_dump(mode="json") for f in findings]
+
+    if blocking and not accept_feasibility_risks:
+        # Keep the gate awaiting — do NOT open schema design. The edited version
+        # (if any) is already written; the customer either re-edits or accepts.
+        _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+        mark_step_pending_human_input(
+            "assignment_review",
+            "Routing is not feasible as submitted; awaiting customer fix or acceptance.",
+        )
+        return json.dumps(
+            {
+                "status": "infeasible",
+                "job_id": job_id,
+                "changed": changed,
+                "applied_overrides": applied,
+                "co_dependency_propagated": propagated,
+                "assignment_version": effective_version,
+                "validation_warnings": warnings,
+                "feasibility_findings": findings_json,
+                "message": (
+                    "The routing has blocking feasibility problems (see "
+                    "feasibility_findings). Present them to the customer plainly: this "
+                    "will not work as routed. They must either change the routing and "
+                    "resubmit, or explicitly accept the risks by re-running "
+                    "finalize_assignment_review with accept_feasibility_risks=true."
+                ),
+            }
+        )
+
+    if blocking and accept_feasibility_risks:
+        # Record the accepted blocking findings on the artifact for audit, then
+        # proceed. No new version — this stamps the effective version in place.
+        effective_assignment.accepted_feasibility_findings = blocking
+        store.write_json(
+            assignment_artifact_path(database_name, job_id, effective_version),
+            effective_assignment.model_dump(mode="json"),
+        )
+
+    if not changed:
+        # Approved as-is and feasible: stamp the effective assignment
+        # CUSTOMER_APPROVED in place (no new version) so the artifact is
+        # self-describing. Best-effort — the .meta phase is the authoritative gate.
         try:
             mark_assignment_customer_approved(store, database_name, job_id)
         except Exception:  # noqa: BLE001 - artifact stamp must not fail the gate
@@ -931,15 +1039,36 @@ def finalize_assignment_review(job_id: str, database_name: str, edited_markdown:
         detail += f" {applied} change(s) applied (assignment v{effective_version})."
     mark_step_succeeded("assignment_review", detail)
 
-    return json.dumps(
-        {
-            "status": "approved",
-            "job_id": job_id,
-            "changed": changed,
-            "applied_overrides": applied,
-            "assignment_version": effective_version,
-        }
-    )
+    approved: dict = {
+        "status": "approved",
+        "job_id": job_id,
+        "changed": changed,
+        "applied_overrides": applied,
+        "co_dependency_propagated": propagated,
+        "assignment_version": effective_version,
+        "validation_warnings": warnings,
+        "feasibility_findings": findings_json,
+    }
+    if propagated:
+        # Be transparent that co-dependent group-mates moved with the customer's
+        # explicit pick, so they are not surprised by engine changes they did not
+        # click (ADR-029 Amendment 3).
+        approved["message"] = (
+            f"Note: {len(propagated)} co-dependent quer{'y' if len(propagated) == 1 else 'ies'} "
+            f"({', '.join(propagated)}) moved to the same engine as your edit to keep the shared "
+            f"JOIN group together."
+        )
+    if no_changes_submission:
+        # Be transparent: the customer submitted without changes, so tell them the
+        # routing was kept as-is. If they actually intended a change, this makes a
+        # dropped edit visible so they can re-open the table and edit again.
+        approved["message"] = (
+            "You submitted the routing table without changing any cells, so the current "
+            "routing is kept as-is and the assessment continues. If you meant to change a "
+            "routing, re-open the table and edit the 'new engine' / 'in scope' cells before "
+            "submitting."
+        )
+    return json.dumps(approved)
 
 
 # =============================================================================
@@ -1183,14 +1312,17 @@ def run_synthesis_via_a2a(
         message=message,
         on_success=lambda payload: _publish_synthesis_deliverables(job_id, database_name, payload),
     )
-    # Synthesis is the last step of the assessment pipeline. When it succeeds the
-    # whole job is done, so mark the platform JOB terminal — the platform does not
-    # roll the job up when only plan steps and subagent instances finish, so
-    # without this the job stays EXECUTING forever. Only the orchestrator owns
-    # this transition; it is idempotent and fail-open. A synthesis error is left
-    # non-terminal on purpose so the LLM can retry.
+    # Synthesis produced the report, but the assessment is NOT necessarily done:
+    # the customer may want to re-route queries and re-run (ADR-029 re-entry). So
+    # rest the job at the non-terminal AWAITING_HUMAN_INPUT rather than completing
+    # it. A terminal COMPLETED job cannot be revived (the platform rejects updates
+    # on a terminal job), which is exactly what broke re-entry. The terminal
+    # COMPLETED is set once, explicitly, by complete_assessment when the customer
+    # confirms they are done. The platform still does not roll the job up on its
+    # own, so we own this transition; it is best-effort and fail-open. A synthesis
+    # error is left as-is so the LLM can retry.
     if not _is_error_result(result):
-        _complete_job_success(job_id)
+        _rest_job_awaiting_input(job_id)
     return result
 
 
@@ -1424,6 +1556,37 @@ def _complete_job_success(job_id: str) -> None:
         logger.warning("ATX: marking job COMPLETED failed (best-effort)", exc_info=True)
 
 
+def _rest_job_awaiting_input(job_id: str) -> None:
+    """Rest the platform job at AWAITING_HUMAN_INPUT after a synthesis round.
+
+    Replaces the old auto-COMPLETE-at-synthesis: a terminal job cannot be revived,
+    which broke ADR-029 re-entry (the reopened gate's HITL table was not
+    submittable on a terminal job). Resting at the non-terminal
+    AWAITING_HUMAN_INPUT keeps the job re-enterable; the terminal COMPLETED is set
+    once, explicitly, by ``complete_assessment`` when the customer is done.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import set_awaiting_human_input
+
+        set_awaiting_human_input(job_id=job_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ATX: resting job AWAITING_HUMAN_INPUT failed (best-effort)", exc_info=True)
+
+
+def _resume_job_executing(job_id: str) -> None:
+    """Move the platform job back to EXECUTING for a re-entry round.
+
+    Called by ``reopen_assignment_review`` so the reopened gate + HITL run on a
+    live (non-terminal) job. Best-effort and fail-open.
+    """
+    try:
+        from src.atx_orchestrator.runtime.job_status import resume_executing
+
+        resume_executing(job_id=job_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ATX: resuming job EXECUTING failed (best-effort)", exc_info=True)
+
+
 # Target engine per schema-design tool suffix, used in the plan step label and,
 # since ADR-027, sent as target_type in the payload to the one consolidated
 # `schema` agent. The suffix and engine differ because tool suffixes use hyphens
@@ -1519,6 +1682,36 @@ def _mark_unselected_schema_steps_skipped(job_id: str, database_name: str) -> No
             "Not selected — no queries routed to this engine.",
         )
         logger.info("ATX: marked schema_%s skipped (not selected)", engine)
+
+
+def _reset_schema_view_for_reentry(job_id: str, database_name: str) -> None:
+    """Reset the schema-design and synthesis plan steps to NOT_STARTED (ADR-029).
+
+    Called when the customer reopens the routing gate to change their selection.
+    After a completed round the "Design Target Schemas" box and its per-engine
+    sub-steps hold that round's terminal states (SUCCEEDED / FAILED / STOPPED),
+    and synthesis shows SUCCEEDED. On re-entry only the *affected* engines
+    re-run; a stale FAILED or STOPPED left on an engine this round copies forward
+    (or does not touch) reads to the customer as an error even though the round is
+    healthy. Resetting the parent, all six per-engine sub-steps, and synthesis to
+    NOT_STARTED gives a clean slate, so the panel clearly shows the schema work is
+    queued to run again for the new routing. redispatch_after_reroute then
+    re-marks each engine accurately (reused vs re-designing), and synthesis marks
+    the unselected engines skipped again.
+
+    Best-effort and fail-open: each mark is a no-op when the step is unregistered
+    or the plan API is unreachable (e.g. running outside the ATX runtime).
+    """
+    mark_step_not_started(
+        "schema", "Reopened routing — schema design will re-run for the updated selection."
+    )
+    for engine in sorted(set(_SCHEMA_ENGINES.values())):
+        mark_step_not_started(f"schema_{engine}")
+    mark_step_not_started("synthesis", "Will rebuild the report after schema design re-runs.")
+    logger.info(
+        "ATX: reset schema + synthesis plan steps for re-entry (job_id=%s)",
+        job_id,
+    )
 
 
 # =============================================================================
@@ -1755,6 +1948,42 @@ def _run_schema_design_via_a2a(
     # assignment when Reality Check consolidated, else v1.
     assignment_version = _effective_assignment_version(job_id, database_name)
 
+    # Idempotent skip (restore-safe reuse): if this engine's schema output already
+    # exists for the effective assignment version, return it instead of designing
+    # again. A substantive design runs ~10-35 min, and the schema subagent
+    # completes and writes its output INDEPENDENTLY of the orchestrator. So if the
+    # orchestrator is recycled mid-wait and restored (idle/hibernation) — or a
+    # dispatch is duplicated — re-running would redo a finished design and can
+    # loop. Reusing the existing output makes a recycle harmless and lets restore
+    # make forward progress. This also composes with redispatch_after_reroute,
+    # which copies unaffected engines' output forward to the new version: those are
+    # skipped here, and only the truly-affected engines (no vN output yet) run.
+    existing_key = (
+        f"{database_name}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+    )
+    _store = _make_store()
+    if _store.exists(existing_key):
+        logger.info(
+            "ATX: schema-design %s reused — output already exists at %s (restore-safe skip)",
+            suffix,
+            existing_key,
+        )
+        mark_step_succeeded(step, "Schema already designed for this version (reused).")
+        existing = _store.read_json(existing_key)
+        if isinstance(existing, dict):
+            existing["reused_existing"] = True
+            existing.setdefault("status", "already_designed")
+            return json.dumps(existing)
+        return json.dumps(
+            {
+                "status": "already_designed",
+                "reused_existing": True,
+                "target_type": engine,
+                "assignment_version": assignment_version,
+                "job_id": job_id,
+            }
+        )
+
     from src.atx_orchestrator.core import (
         IMPLEMENTED_SCHEMA_DESIGNERS,
         _source_engine,
@@ -1940,3 +2169,239 @@ for _fn, _label, _engine in (
 ):
     _target = getattr(_fn, "__wrapped__", _fn)
     _target.__doc__ = _SCHEMA_DOC.format(label=_label, engine=_engine)
+
+
+# =============================================================================
+# Staleness-driven re-entry (ADR-029 Layer A)
+#
+# After schema design and synthesis, a customer may change routing. Re-entry
+# reuses the review gate: reopen_assignment_review flips the gate back to
+# AWAITING_REVIEW so present/open/finalize run again; finalize appends a new
+# assignment version. redispatch_after_reroute then re-designs only the engines
+# whose in-scope query set changed and copies the unchanged engines' schema
+# forward to the new version, so the expensive fleet is not re-run wholesale.
+
+
+# engine identifier (aurora_postgresql) -> tool suffix (aurora-pg).
+_ENGINE_TO_SUFFIX: dict[str, str] = {engine: suffix for suffix, engine in _SCHEMA_ENGINES.items()}
+
+
+def _latest_schema_version_below(
+    store: object, database_name: str, job_id: str, below: int
+) -> int | None:
+    """Highest assignment version < ``below`` that has any schema output written.
+
+    This is the version schema was last built at, so an unaffected engine's
+    ``schema-<engine>/v<prev>/schema_output.json`` can be copied forward.
+    """
+    prefix = f"{database_name}/{job_id}/"
+    best: int | None = None
+    for key in store.list_prefix(prefix):  # type: ignore[attr-defined]
+        parts = str(key).replace(prefix, "").split("/")
+        if (
+            len(parts) == 3
+            and parts[0].startswith("schema-")
+            and parts[1].startswith("v")
+            and parts[2] == "schema_output.json"
+        ):
+            try:
+                version = int(parts[1][1:])
+            except ValueError:
+                continue
+            if version < below and (best is None or version > best):
+                best = version
+    return best
+
+
+def _copy_schema_forward(
+    store: object, database_name: str, job_id: str, engine: str, prev_version: int, new_version: int
+) -> bool:
+    """Copy an unaffected engine's schema output (+ design trace) to ``new_version``.
+
+    Restamps the embedded ``assignment_version`` so a reader sees the version it
+    now belongs to. Returns True when a schema output was copied. An engine whose
+    in-scope query set is unchanged produces a byte-identical design, so this
+    avoids re-running the LLM-heavy designer for it.
+    """
+    base_prev = f"{database_name}/{job_id}/schema-{engine}/v{prev_version}"
+    base_new = f"{database_name}/{job_id}/schema-{engine}/v{new_version}"
+    src = f"{base_prev}/schema_output.json"
+    if not store.exists(src):  # type: ignore[attr-defined]
+        return False
+    output = store.read_json(src)  # type: ignore[attr-defined]
+    if isinstance(output, dict):
+        output["assignment_version"] = new_version
+    store.write_json(f"{base_new}/schema_output.json", output)  # type: ignore[attr-defined]
+    trace_src = f"{base_prev}/design_trace.json"
+    if store.exists(trace_src):  # type: ignore[attr-defined]
+        store.write_json(  # type: ignore[attr-defined]
+            f"{base_new}/design_trace.json", store.read_json(trace_src)  # type: ignore[attr-defined]
+        )
+    return True
+
+
+@tool
+def reopen_assignment_review(job_id: str, database_name: str) -> str:
+    """Reopen the assignment-review gate so the customer can change routing.
+
+    Use this for staleness-driven re-entry: after schema design / synthesis, when
+    the customer wants to adjust the query-to-engine routing. It flips the
+    ASSIGNMENT_REVIEW phase back to awaiting review; then drive the normal gate
+    (``present_assignment_review`` -> optionally ``open_detailed_routing_review``
+    -> ``finalize_assignment_review``). After ``finalize`` applies the edit, call
+    ``redispatch_after_reroute`` to re-run only the affected engines.
+
+    Returns JSON with ``status`` ("reopened") and the current ``assignment_version``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+    store = _make_store()
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    if version == 0:
+        return json.dumps(
+            {"error": "No assignment to reopen. Run the assessment core first.", "job_id": job_id}
+        )
+    # Move the job back to EXECUTING FIRST. After a synthesis round the job rests
+    # at the non-terminal AWAITING_HUMAN_INPUT; resuming it to EXECUTING is what
+    # makes the subsequent job-plan updates and the re-raised HITL routing table
+    # submittable. Without this the reopened table renders but cannot be submitted.
+    _resume_job_executing(job_id)
+    _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
+    mark_step_pending_human_input(
+        "assignment_review", "Reopened for customer routing changes (re-entry)."
+    )
+    # Clear the previous round's schema-design and synthesis states so the panel
+    # shows a clean slate for the re-run instead of stale SUCCEEDED/FAILED/STOPPED
+    # icons that read as errors (ADR-029). redispatch_after_reroute re-marks each
+    # engine accurately once the customer applies their edit.
+    _reset_schema_view_for_reentry(job_id, database_name)
+    return json.dumps(
+        {
+            "status": "reopened",
+            "job_id": job_id,
+            "assignment_version": version,
+            "message": (
+                "Gate reopened. Present the routing, apply the customer's edit with "
+                "finalize_assignment_review, then call redispatch_after_reroute."
+            ),
+        }
+    )
+
+
+@tool
+def redispatch_after_reroute(job_id: str, database_name: str) -> str:
+    """Re-design only the engines a re-entry edit changed; copy the rest forward.
+
+    Call this after ``finalize_assignment_review`` applies a re-entry edit (a new
+    assignment version). It computes, deterministically from the assignment diff,
+    which engines' in-scope query set changed since schema was last built, copies
+    the unchanged engines' schema output forward to the new version, and returns
+    the affected engines to re-design.
+
+    Next steps (the tool does not run them, so the per-engine designs stay
+    parallel and within the response window): call the listed ``dispatch_tools``
+    for the ``affected_engines`` (in parallel, as in the first pass), then
+    ``run_synthesis_via_a2a`` to rebuild the report at the new version.
+
+    Returns JSON with ``affected_engines``, ``copied_forward_engines``,
+    ``dispatch_tools``, ``assignment_version`` and ``previous_schema_version``.
+    """
+    job_id = _platform_job_id(job_id)
+    from src.storage.assignment_versioning import (
+        assignment_engine_diff,
+        resolve_effective_assignment_version,
+    )
+
+    store = _make_store()
+    new_version = resolve_effective_assignment_version(store, database_name, job_id)
+    if new_version == 0:
+        return json.dumps({"error": "No assignment found.", "job_id": job_id})
+
+    prev_version = _latest_schema_version_below(store, database_name, job_id, new_version)
+    copied: list[str] = []
+    if prev_version is None:
+        # No prior schema to reuse (not a re-entry, or schema never ran): every
+        # engine with in-scope queries must be designed.
+        affected = sorted(_engines_with_in_scope_queries(job_id, database_name, new_version))
+    else:
+        diff = assignment_engine_diff(store, database_name, job_id, prev_version, new_version)
+        affected = list(diff["affected"])
+        for engine in diff["unaffected"]:
+            if _copy_schema_forward(
+                store, database_name, job_id, engine, prev_version, new_version
+            ):
+                copied.append(engine)
+            else:
+                affected.append(engine)  # nothing to copy forward -> must re-run
+        affected = sorted(set(affected))
+
+    # Fill in the schema view that reopen reset to NOT_STARTED: the parent box is
+    # running again, and each reused engine shows SUCCEEDED with a "reused" note so
+    # it does not sit at a pending clock while only the affected engines re-run.
+    # The affected engines' own dispatch tools mark them running -> succeeded, and
+    # synthesis marks the unselected engines skipped.
+    if affected:
+        mark_step_running("schema", "Re-designing the engines affected by the routing change.")
+    for engine in sorted(set(copied)):
+        mark_step_succeeded(f"schema_{engine}", "Reused — routing for this engine did not change.")
+
+    dispatch_tools = [
+        f"run_schema_design_{_ENGINE_TO_SUFFIX.get(e, e).replace('-', '_')}_via_a2a"
+        for e in affected
+    ]
+    logger.info(
+        "ATX redispatch: job_id=%s prev_schema_v=%s new_v=%s affected=%s copied=%s",
+        job_id,
+        prev_version,
+        new_version,
+        affected,
+        copied,
+    )
+    return json.dumps(
+        {
+            "status": "redispatch_ready",
+            "job_id": job_id,
+            "assignment_version": new_version,
+            "previous_schema_version": prev_version,
+            "affected_engines": affected,
+            "copied_forward_engines": copied,
+            "dispatch_tools": dispatch_tools,
+            "message": (
+                "Copied unchanged engines' schema forward. Now dispatch schema design for the "
+                "affected_engines (call the listed dispatch_tools in parallel), then call "
+                "run_synthesis_via_a2a to rebuild the report at this version."
+            ),
+        }
+    )
+
+
+@tool
+def complete_assessment(job_id: str, database_name: str) -> str:
+    """Mark the assessment DONE — the single terminal completion of the job.
+
+    Call this ONLY when the customer, after seeing the report, confirms they have
+    no further routing changes (they are done). It marks the platform job
+    COMPLETED, which is terminal and cannot be undone: no further re-entry,
+    routing edits, or schema/synthesis runs are possible on this job afterward.
+
+    Do NOT call it right after synthesis by default. Between rounds the job rests
+    at AWAITING_HUMAN_INPUT so the customer can re-route (reopen_assignment_review
+    -> ... -> redispatch_after_reroute). Only their explicit "I'm done" (or
+    equivalent) should trigger this.
+
+    Returns JSON with ``status`` ("completed").
+    """
+    job_id = _platform_job_id(job_id)
+    _complete_job_success(job_id)
+    logger.info("ATX: assessment marked COMPLETED (terminal) for job_id=%s", job_id)
+    return json.dumps(
+        {
+            "status": "completed",
+            "job_id": job_id,
+            "message": (
+                "Assessment marked complete. The job is now closed; no further routing "
+                "changes or re-runs are possible on it."
+            ),
+        }
+    )

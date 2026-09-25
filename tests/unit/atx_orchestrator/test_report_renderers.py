@@ -354,6 +354,27 @@ class TestSynthesisDeliverables:
             f"discourse_analysis-report_job-x_{day}.html",
         ]
 
+        # Waves alignment (ADR-029): the executive deck reframes the raw
+        # target-engine count as migration waves ("why move to 5 databases?" is
+        # the most common objection). Parse the rendered .pptx and confirm the
+        # summary tile dropped "target engines" for "migration waves".
+        import io as _io
+
+        from pptx import Presentation
+
+        deck_key = next(k for k in store.byte_writes if k.endswith(".pptx"))
+        prs = Presentation(_io.BytesIO(store.byte_writes[deck_key]))
+        deck_text = " ".join(
+            run.text
+            for slide in prs.slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+            for para in shape.text_frame.paragraphs
+            for run in para.runs
+        )
+        assert "migration waves" in deck_text
+        assert "target engines" not in deck_text
+
     def test_publishes_all_five_on_json_only_store(self, report: dict) -> None:
         """On the JSON-only ATX backend the durable store copies raise
         NotImplementedError, but publish() must still deliver all five reports —

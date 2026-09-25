@@ -67,3 +67,28 @@ class TestAssignmentSummarySource:
         s = AssignmentSummary.model_validate({**base, "source": "customer_gate"})
         assert s.source == "customer_gate"
         assert AssignmentSummary.model_validate(base).source is None
+
+
+class TestAcceptedFeasibilityFindings:
+    """ADR-029 Layer C: blocking findings the customer explicitly accepted are
+    recorded on the assignment; the field is optional and backward compatible."""
+
+    def test_defaults_to_empty_when_absent(self) -> None:
+        a = Assignment.model_validate(_assignment())
+        assert a.accepted_feasibility_findings == []
+
+    def test_round_trips_with_a_finding(self) -> None:
+        finding = {
+            "kind": "read_write_split",
+            "severity": "blocking",
+            "table": "t.orders",
+            "engines": ["dynamodb", "opensearch"],
+            "query_ids": ["q1", "q2"],
+            "message": "reads on opensearch depend on writes on dynamodb",
+        }
+        a = Assignment.model_validate(_assignment(accepted_feasibility_findings=[finding]))
+        assert len(a.accepted_feasibility_findings) == 1
+        assert a.accepted_feasibility_findings[0].table == "t.orders"
+        dumped = a.model_dump(mode="json")
+        assert dumped["accepted_feasibility_findings"][0]["kind"] == "read_write_split"
+        assert Assignment.model_validate(dumped) == a
