@@ -208,6 +208,19 @@ class Column(BaseModel):
         None, description="Normalized data type for cross-database comparison"
     )
     max_length: int | None = Field(None, ge=0, description="Maximum length for string types")
+    numeric_precision: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Total significant digits for exact-numeric types, e.g. 10 in DECIMAL(10,2). "
+            "Distinct from max_length, which is a character count for string types."
+        ),
+    )
+    numeric_scale: int | None = Field(
+        None,
+        ge=0,
+        description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)",
+    )
     nullable: bool = Field(..., description="Whether column allows NULL values")
     default_value: str | int | float | bool | None = Field(None, description="Default value")
     is_auto_increment: bool | None = Field(False, description="Whether column is auto-incrementing")
