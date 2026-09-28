@@ -34,9 +34,16 @@ class TestParseOracleVersion:
 
 
 class TestNormalizeMaxLength:
-    def test_number_uses_precision(self):
+    def test_number_returns_none_precision_travels_separately(self):
+        """NUMBER has no character length, so max_length is not the place for it.
+
+        This previously returned DATA_PRECISION, which overloaded a field
+        documented as a character count and consumed as one for
+        item_size_bytes estimation and VARCHAR(n) resolution. Precision now has
+        its own contract field.
+        """
         col = {"data_type": "NUMBER", "max_length": "22", "data_precision": "10", "char_used": None}
-        assert _normalize_max_length(col) == 10
+        assert _normalize_max_length(col) is None
 
     def test_number_no_precision(self):
         col = {"data_type": "NUMBER", "max_length": "22", "data_precision": None, "char_used": None}

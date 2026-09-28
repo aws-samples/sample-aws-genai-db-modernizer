@@ -96,7 +96,8 @@ class MySQLRemoteCollector:
         return self._query(f"""
             SELECT
                 column_name, ordinal_position, data_type, column_type,
-                character_maximum_length AS max_length, is_nullable,
+                character_maximum_length AS max_length,
+                numeric_precision, numeric_scale, is_nullable,
                 column_default, column_key, extra
             FROM information_schema.columns
             WHERE table_schema = DATABASE()

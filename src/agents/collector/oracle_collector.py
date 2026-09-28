@@ -353,6 +353,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("data_type", ""),
                 normalized_data_type=_ORACLE_TYPE_MAP.get(str(c.get("data_type", "")).lower()),
                 max_length=_normalize_max_length(c),
+                numeric_precision=c.get("data_precision"),
+                numeric_scale=c.get("data_scale"),
                 nullable=str(c.get("is_nullable", "Y")).upper() in ("Y", "YES", "TRUE", "1"),
                 default_value=c.get("column_default"),
                 is_auto_increment=str(c.get("is_identity", "NO")).upper() == "YES",
@@ -562,12 +564,15 @@ def _normalize_max_length(col: dict) -> int | None:
 
     Oracle reports DATA_LENGTH in bytes. For CHAR-semantic columns
     (CHAR_USED = 'C') with UTF-8, divide by 4 to get char count.
-    For NUMBER, use DATA_PRECISION.
+
+    NUMBER returns None: its DATA_PRECISION now travels in the column's own
+    numeric_precision field. Returning precision here overloaded max_length,
+    which is documented as a character count and is consumed as one for
+    item_size_bytes estimation and VARCHAR(n) resolution.
     """
     data_type = str(col.get("data_type") or "").lower()
     if data_type == "number":
-        p = col.get("data_precision")
-        return int(p) if p is not None else None
+        return None
     raw = col.get("max_length")
     if raw is None:
         return None

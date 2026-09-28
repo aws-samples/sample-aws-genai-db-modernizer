@@ -370,6 +370,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("data_type", ""),
                 normalized_data_type=_SQLSERVER_TYPE_MAP.get(str(c.get("data_type", "")).lower()),
                 max_length=_normalize_max_length(c.get("max_length"), c.get("data_type", "")),
+                numeric_precision=c.get("numeric_precision"),
+                numeric_scale=c.get("numeric_scale"),
                 nullable=str(c.get("is_nullable", "YES")).upper() in ("YES", "TRUE", "1"),
                 default_value=c.get("column_default"),
                 is_auto_increment=str(c.get("is_identity", "NO")).upper() == "YES",
