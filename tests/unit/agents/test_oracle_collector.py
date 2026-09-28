@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.agents.collector.oracle_collector import (
     _ORACLE_TYPE_MAP,
     _build_procedures,
@@ -50,40 +52,118 @@ class TestNormalizeMaxLength:
         assert _normalize_max_length(col) is None
 
     def test_varchar2_byte_semantic(self):
+        """CHAR_LENGTH is authoritative even where the byte count agrees."""
         col = {
             "data_type": "VARCHAR2",
             "max_length": "100",
+            "char_length": "100",
             "char_used": "B",
             "data_precision": None,
         }
         assert _normalize_max_length(col) == 100
 
-    def test_varchar2_char_semantic(self):
+    def test_varchar2_char_semantic_on_a_multibyte_charset(self):
+        """VARCHAR2(100 CHAR) on AL32UTF8: DATA_LENGTH 400, CHAR_LENGTH 100.
+
+        The byte count was previously returned as-is under a comment claiming
+        it was "already in chars", which inflated the width fourfold. That is
+        the safe direction but it still feeds item_size_bytes, so it oversized
+        the row and therefore the working set.
+        """
+        col = {
+            "data_type": "VARCHAR2",
+            "max_length": "400",
+            "char_length": "100",
+            "char_used": "C",
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 100
+
+    def test_nvarchar2_char_semantic_no_longer_truncates(self):
+        """NVARCHAR2(100) on AL16UTF16: DATA_LENGTH 200, CHAR_LENGTH 100.
+
+        This is the case that lost data. The old code divided the byte count by
+        4 as a "UTF-8 worst case" and returned 50, so the generated DDL said
+        VARCHAR(50) for a column holding 100 characters and the back half of
+        every wide value was truncated at load.
+        """
+        col = {
+            "data_type": "NVARCHAR2",
+            "max_length": "200",
+            "char_length": "100",
+            "char_used": "C",
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 100
+
+    def test_nchar_char_semantic_no_longer_truncates(self):
+        col = {
+            "data_type": "NCHAR",
+            "max_length": "20",
+            "char_length": "10",
+            "char_used": "C",
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 10
+
+    @pytest.mark.parametrize(
+        ("national_charset", "data_length"),
+        [("AL16UTF16", "200"), ("UTF8", "300")],
+    )
+    def test_same_column_reports_different_bytes_per_charset(
+        self, national_charset: str, data_length: str
+    ) -> None:
+        """No fixed divisor can work, which is why the catalog value is needed.
+
+        The same NVARCHAR2(100) declaration yields a different DATA_LENGTH
+        depending on the national character set, so the bytes-per-character
+        ratio is not a constant the collector can hardcode. CHAR_LENGTH is
+        unaffected.
+        """
+        col = {
+            "data_type": "NVARCHAR2",
+            "max_length": data_length,
+            "char_length": "100",
+            "char_used": "C",
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 100, national_charset
+
+    def test_char_length_absent_falls_back_to_bytes_without_converting(self):
+        """A collection predating the CHAR_LENGTH select must not truncate.
+
+        Returning the byte count unconverted is an upper bound on characters.
+        Over-wide costs estimate accuracy; under-wide loses data, so the
+        fallback deliberately errs large.
+        """
+        col = {
+            "data_type": "NVARCHAR2",
+            "max_length": "200",
+            "char_used": "C",
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 200
+
+    def test_char_length_zero_is_treated_as_absent(self):
+        """CHAR_LENGTH is 0, not NULL, for non-character types."""
+        col = {
+            "data_type": "RAW",
+            "max_length": "16",
+            "char_length": "0",
+            "char_used": None,
+            "data_precision": None,
+        }
+        assert _normalize_max_length(col) == 16
+
+    def test_non_numeric_char_length_falls_back(self):
         col = {
             "data_type": "VARCHAR2",
             "max_length": "100",
+            "char_length": "not-a-number",
             "char_used": "C",
             "data_precision": None,
         }
-        assert _normalize_max_length(col) == 100  # char_used=C means length IS in chars
-
-    def test_nvarchar2_byte_semantic(self):
-        col = {
-            "data_type": "NVARCHAR2",
-            "max_length": "200",
-            "char_used": "B",
-            "data_precision": None,
-        }
-        assert _normalize_max_length(col) == 100  # /2 for nvarchar2
-
-    def test_nvarchar2_char_semantic(self):
-        col = {
-            "data_type": "NVARCHAR2",
-            "max_length": "200",
-            "char_used": "C",
-            "data_precision": None,
-        }
-        assert _normalize_max_length(col) == 50  # /4 for UTF-8 worst case
+        assert _normalize_max_length(col) == 100
 
     def test_none_length(self):
         col = {"data_type": "CLOB", "max_length": None, "char_used": None, "data_precision": None}
