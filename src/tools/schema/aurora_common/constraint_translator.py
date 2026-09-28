@@ -1,16 +1,24 @@
-"""SQL-fragment helpers for Aurora PostgreSQL column/constraint generation.
+"""SQL-fragment helpers for Aurora PostgreSQL/MySQL column and constraint generation.
 
 Each helper returns a leading-space-prefixed fragment (or empty string) so the
-DDL generator can concatenate them without worrying about spacing.
+DDL generator can concatenate them without worrying about spacing. The one
+exception is ``resolve_default``, which returns a small result object because a
+column default is the one fragment that cannot always be derived — see its
+docstring.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from src.contracts.schema_design_input import ForeignKeyAction
 
-# Default values that are SQL expressions/keywords, not literals — passed through
-# verbatim rather than quoted.
-_SQL_KEYWORD_DEFAULTS = {
+# Expressions and keywords that mean the same thing on both Aurora engines and
+# can be passed through verbatim. Compared after normalisation, so "now ( )"
+# matches "NOW()".
+_PASSTHROUGH_DEFAULTS = {
     "CURRENT_TIMESTAMP",
     "CURRENT_DATE",
     "CURRENT_TIME",
@@ -19,6 +27,44 @@ _SQL_KEYWORD_DEFAULTS = {
     "TRUE",
     "FALSE",
 }
+
+# Source-engine expressions with an exact equivalent on the target. Keyed by
+# normalised source form. Values that differ per engine live in the Dialect's
+# own table rather than here.
+_PORTABLE_TRANSLATIONS = {
+    # Oracle
+    "SYSDATE": "CURRENT_TIMESTAMP",
+    "SYSTIMESTAMP": "CURRENT_TIMESTAMP",
+    # SQL Server
+    "GETDATE()": "CURRENT_TIMESTAMP",
+    "GETUTCDATE()": "CURRENT_TIMESTAMP",
+    "CURRENT_TIMESTAMP()": "CURRENT_TIMESTAMP",
+}
+
+# Shapes that are definitely not literals. A value matching any of these is an
+# expression in the source dialect, and guessing its target equivalent is the
+# thing this module must not do.
+_EXPRESSION_MARKERS = (
+    re.compile(r"\("),  # any function call
+    re.compile(r"::"),  # PostgreSQL cast
+    re.compile(r"\.\s*(NEXTVAL|CURRVAL)\b", re.IGNORECASE),  # Oracle sequence
+)
+
+
+@dataclass(frozen=True)
+class DefaultResolution:
+    """A rendered DEFAULT clause plus whether the script could derive it.
+
+    Mirrors ``TypeResolution`` so both halves of a column definition report
+    provenance the same way. Without this, ``default_clause`` was the one place
+    in the Aurora path that had to make a silent choice, because a bare string
+    return has nowhere to record doubt.
+    """
+
+    clause: str
+    needs_judgment: bool = False
+    reason: str = ""
+    source_expression: str | None = None
 
 
 def identity_clause(is_auto_increment: bool | None) -> str:
@@ -30,19 +76,167 @@ def not_null_clause(nullable: bool) -> str:
     return "" if nullable else " NOT NULL"
 
 
-def default_clause(default_value: str | int | float | bool | None) -> str:
-    """Render a column DEFAULT clause, quoting string literals safely."""
+def _normalise(raw: str) -> str:
+    """Upper-case and strip all whitespace, so ``now( )`` matches ``NOW()``."""
+    return re.sub(r"\s+", "", raw).upper()
+
+
+def _unwrap_parens(raw: str) -> str:
+    """Strip SQL Server's wrapping parentheses.
+
+    ``sys.default_constraints.definition`` returns ``((0))`` and ``('pending')``,
+    nested one or two deep. Only strip when the whole value is wrapped, so
+    ``(a) + (b)`` is left alone.
+    """
+    value = raw.strip()
+    while len(value) >= 2 and value[0] == "(" and value[-1] == ")":
+        depth = 0
+        for i, ch in enumerate(value):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(value) - 1:
+                    return value  # closed early: not a single wrapped group
+        value = value[1:-1].strip()
+    return value
+
+
+def _unquote_literal(raw: str) -> str | None:
+    """Return the inner text of a single-quoted literal, else None.
+
+    Oracle and SQL Server report string defaults already quoted, so quoting them
+    again produced ``DEFAULT '''N'''``.
+    """
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return None
+
+
+_NUMERIC_LITERAL = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+
+# A quoted literal carrying a redundant PostgreSQL cast, e.g.
+# ``'pending'::character varying``. information_schema reports string defaults
+# this way, and the cast restates the column's own type.
+_CAST_LITERAL = re.compile(r"^'((?:[^']|'')*)'\s*::\s*[A-Za-z_][\w \"]*$")
+
+
+def _looks_like_expression(value: str) -> bool:
+    return any(marker.search(value) for marker in _EXPRESSION_MARKERS)
+
+
+def resolve_default(
+    default_value: str | int | float | bool | None,
+    *,
+    escape_literal: Callable[[str], str],
+    translations: dict[str, str] | None = None,
+) -> DefaultResolution:
+    """Render a column DEFAULT clause, or report that it needs judgment.
+
+    The previous behaviour quoted anything outside a seven-entry allowlist, which
+    turned every unrecognised expression into a string literal. Two failure modes
+    came out of that, and the quiet one is worse:
+
+    * ``((0))`` on an integer column emits ``DEFAULT '((0))'`` and CREATE TABLE
+      rejects it, which at least fails loudly at provisioning.
+    * ``gen_random_uuid()`` emits ``DEFAULT 'gen_random_uuid()'``, which CREATE
+      TABLE accepts. Every row then gets that literal text, and a load test
+      seeds and measures a schema nobody would deploy.
+
+    An allowlist cannot fix this, because the space of source default
+    expressions is unbounded. So this classifies instead: unwrap the wrapping
+    the source engine added, translate the expressions that have an exact target
+    equivalent, quote genuine literals, and hand anything still expression-shaped
+    to the designer with the source text attached.
+
+    An unresolved expression emits **no** DEFAULT rather than a guess. A missing
+    default is visible in the DDL and in the residual; a wrong literal default is
+    invisible and survives into the measurements.
+    """
     if default_value is None:
-        return ""
+        return DefaultResolution("")
     if isinstance(default_value, bool):
-        return f" DEFAULT {'TRUE' if default_value else 'FALSE'}"
-    if isinstance(default_value, (int, float)):
-        return f" DEFAULT {default_value}"
-    # string
-    if default_value.strip().upper() in _SQL_KEYWORD_DEFAULTS:
-        return f" DEFAULT {default_value.strip()}"
-    escaped = default_value.replace("'", "''")
-    return f" DEFAULT '{escaped}'"
+        return DefaultResolution(f" DEFAULT {'TRUE' if default_value else 'FALSE'}")
+    if isinstance(default_value, int | float):
+        return DefaultResolution(f" DEFAULT {default_value}")
+
+    raw = default_value.strip()
+    if not raw:
+        return DefaultResolution(f" DEFAULT {escape_literal('')}")
+
+    unwrapped = _unwrap_parens(raw)
+    normalised = _normalise(unwrapped)
+
+    if normalised in _PASSTHROUGH_DEFAULTS:
+        return DefaultResolution(f" DEFAULT {normalised}")
+
+    table = {**_PORTABLE_TRANSLATIONS, **(translations or {})}
+    if normalised in table:
+        return DefaultResolution(f" DEFAULT {table[normalised]}")
+
+    inner = _unquote_literal(unwrapped)
+    if inner is not None:
+        # An already-quoted literal from Oracle or SQL Server.
+        return DefaultResolution(f" DEFAULT {escape_literal(inner)}")
+
+    # A number that arrived as text, usually after unwrapping SQL Server's
+    # parentheses: ((0)) must become DEFAULT 0, not DEFAULT '0'.
+    if _NUMERIC_LITERAL.match(unwrapped):
+        return DefaultResolution(f" DEFAULT {unwrapped}")
+
+    # 'pending'::character varying — a literal with a cast that restates the
+    # column's own type. The literal is what matters; the cast is noise.
+    cast_match = _CAST_LITERAL.match(unwrapped)
+    if cast_match:
+        # The captured group is still source-escaped, so undo that before
+        # re-escaping for the target — otherwise 'it''s'::text becomes 'it''''s'.
+        literal = cast_match.group(1).replace("''", "'")
+        return DefaultResolution(f" DEFAULT {escape_literal(literal)}")
+
+    if _looks_like_expression(unwrapped):
+        return DefaultResolution(
+            "",
+            needs_judgment=True,
+            reason=(
+                f"Source default {unwrapped!r} is an expression with no known Aurora "
+                "equivalent. No DEFAULT was emitted; supply one or confirm the column "
+                "should have none."
+            ),
+            source_expression=unwrapped,
+        )
+
+    return DefaultResolution(f" DEFAULT {escape_literal(unwrapped)}")
+
+
+def pg_escape_literal(value: str) -> str:
+    """Quote a string literal for PostgreSQL.
+
+    With ``standard_conforming_strings`` on, which is the default and is not
+    configurable on Aurora, a backslash is an ordinary character. Only the quote
+    needs doubling.
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
+def mysql_escape_literal(value: str) -> str:
+    """Quote a string literal for MySQL.
+
+    MySQL treats a backslash as an escape character inside string literals unless
+    ``NO_BACKSLASH_ESCAPES`` is set, so a literal backslash must be doubled. The
+    shared ``''`` handling alone would turn a source default of ``\\n`` into a
+    newline.
+    """
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def default_clause(default_value: str | int | float | bool | None) -> str:
+    """Back-compatible PostgreSQL-flavoured wrapper returning just the clause.
+
+    Retained for callers that cannot act on a residual. Prefer
+    ``resolve_default``, which does not discard the judgment signal.
+    """
+    return resolve_default(default_value, escape_literal=pg_escape_literal).clause
 
 
 def fk_on_delete_clause(action: ForeignKeyAction | None) -> str:
