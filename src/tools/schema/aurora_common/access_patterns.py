@@ -28,6 +28,7 @@ Never a silent guess.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from src.contracts.schema_design_input import AgentQueryPattern, AgentTable
 
@@ -207,6 +208,57 @@ def _design_rps(query: AgentQueryPattern) -> float:
     if query.frequency_per_hour:
         return round(float(query.frequency_per_hour) / 3600.0, 6)
     return 0.0
+
+
+def restored_access_pattern_dicts(
+    draft: dict,
+    llm_output: Any,
+) -> list[dict]:
+    """Rebuild ``access_patterns`` from the draft after the LLM has run.
+
+    The Aurora contracts are produced via ``structured_output_model``, so every
+    declared field is LLM-authored by default and the prompt asking the model not
+    to re-author the patterns is a request rather than a guarantee. This restores
+    them from the deterministic draft so provenance holds structurally.
+
+    ``index_used`` is the one field the LLM may legitimately have resolved. Where
+    the script flagged a pattern ``needs_judgment`` and the model returned a
+    different index for that same ``pattern_id``, the model's answer is kept and
+    ``needs_judgment`` cleared — that is the judgment we asked for. Every other
+    field, and every pattern the script resolved on its own, comes from the draft.
+
+    Returns plain dicts rather than contract models, and deliberately avoids a
+    generic. Each engine declares its own ``AccessPattern`` class, so the obvious
+    signature would be generic over it — but PEP 695 syntax is rejected by the
+    pinned mypy while the older ``TypeVar`` form is flagged by ruff. Returning
+    dicts sidesteps that disagreement and costs each caller one comprehension.
+    """
+    drafted: list[dict] = list(draft.get("access_patterns") or [])
+
+    llm_by_id: dict[str, Any] = {}
+    for p in getattr(llm_output, "access_patterns", None) or []:
+        pid = getattr(p, "pattern_id", None)
+        if pid:
+            llm_by_id[str(pid)] = p
+
+    restored: list[dict] = []
+    for spec in drafted:
+        merged = dict(spec)
+        if merged.get("needs_judgment"):
+            candidate = llm_by_id.get(str(merged.get("pattern_id")))
+            resolved = getattr(candidate, "index_used", None) if candidate else None
+            # Only accept a resolution that actually differs and is not the
+            # sentinel; echoing the fallback back at us is not a judgment.
+            if resolved and resolved != merged.get("index_used") and resolved != NO_INDEX:
+                merged["index_used"] = resolved
+                merged["needs_judgment"] = False
+                merged["judgment_reason"] = (
+                    f"Resolved by the designer: {resolved}. "
+                    f"Script could not choose — {merged.get('judgment_reason') or 'ambiguous'}"
+                )
+        restored.append(merged)
+
+    return restored
 
 
 def derive_access_patterns(

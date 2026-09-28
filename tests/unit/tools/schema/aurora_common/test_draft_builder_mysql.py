@@ -46,19 +46,19 @@ def _orders():
 
 
 def test_mysql_draft_carry_over_for_mysql_source():
-    draft, strategy = build_mysql_draft([_orders()], "mysql")
+    draft, strategy = build_mysql_draft([_orders()], "mysql", [])
     assert strategy == "carry_over"
     assert draft["migration_strategy"] == "carry_over"
     assert draft["source_family"] == "mysql"
 
 
 def test_mysql_draft_translate_for_other_source():
-    _, strategy = build_mysql_draft([_orders()], "oracle")
+    _, strategy = build_mysql_draft([_orders()], "oracle", [])
     assert strategy == "translate"
 
 
 def test_mysql_draft_uses_mysql_ddl_and_carries_structure():
-    draft, _ = build_mysql_draft([_orders()], "mysql")
+    draft, _ = build_mysql_draft([_orders()], "mysql", [])
     t = draft["tables"][0]
     assert t["table_name"] == "orders"
     assert t["primary_key"] == ["id"]
