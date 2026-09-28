@@ -100,6 +100,18 @@ class AgentColumn(BaseModel):
     ordinal_position: int | None = None
     normalized_data_type: NormalizedDataType | None = None
     max_length: int | None = Field(None, description="Used for item_size_bytes estimation")
+    numeric_precision: int | None = Field(
+        None,
+        description=(
+            "Total significant digits for exact-numeric types, e.g. 10 in DECIMAL(10,2). "
+            "Carried so a relational target can emit NUMERIC(p,s) / DECIMAL(p,s) rather "
+            "than an unconstrained type, and so the designer's 'confirm DECIMAL(p,s)' "
+            "residual is answerable from data instead of guessed at."
+        ),
+    )
+    numeric_scale: int | None = Field(
+        None, description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)"
+    )
     nullable: bool
     default_value: str | int | float | bool | None = None
     is_auto_increment: bool | None = False
@@ -353,6 +365,8 @@ def project_schema_design_input(
                             else None
                         ),
                         max_length=c.max_length,
+                        numeric_precision=c.numeric_precision,
+                        numeric_scale=c.numeric_scale,
                         nullable=c.nullable,
                         default_value=c.default_value,
                         is_auto_increment=c.is_auto_increment,  # nosemgrep: is-function-without-parentheses

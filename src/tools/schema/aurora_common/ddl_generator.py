@@ -88,7 +88,12 @@ class DdlResult:
 def _column_ddl(
     table_name: str, col: AgentColumn, residuals: list[dict], dialect: Dialect
 ) -> ColumnDDL:
-    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
+    resolution = dialect.resolve_type(
+        col.normalized_data_type,
+        max_length=col.max_length,
+        numeric_precision=col.numeric_precision,
+        numeric_scale=col.numeric_scale,
+    )
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     if resolution.needs_judgment:
         residuals.append(
