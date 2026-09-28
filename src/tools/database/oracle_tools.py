@@ -157,6 +157,7 @@ class OracleRemoteCollector:
                 COLUMN_ID AS ordinal_position,
                 DATA_TYPE AS data_type,
                 DATA_LENGTH AS max_length,
+                CHAR_LENGTH AS char_length,
                 CHAR_USED AS char_used,
                 NULLABLE AS is_nullable,
                 DATA_DEFAULT AS column_default,
