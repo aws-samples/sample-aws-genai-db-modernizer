@@ -137,7 +137,12 @@ def _resolve(
     )
     if resolution is not None:
         return resolution
-    return dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
+    return dialect.resolve_type(
+        col.normalized_data_type,
+        max_length=col.max_length,
+        numeric_precision=col.numeric_precision,
+        numeric_scale=col.numeric_scale,
+    )
 
 
 def _column_ddl(
