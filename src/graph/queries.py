@@ -6,6 +6,8 @@ No FastAPI/HTTP here — handlers in src/api/routes/graph.py call these.
 
 from __future__ import annotations
 
+from typing import Any
+
 from src.api.models.graph_responses import (
     AffectedQuery,
     EngineDestination,
@@ -160,11 +162,30 @@ def load_test_results(
     prefix: str | None = None,
 ) -> LoadTestResultsResponse:
     """Load test results grouped by the solution-generated access-pattern id."""
+    # Build the filter predicates only for the values actually supplied, rather than
+    # the ``($param IS NULL OR col = $param)`` guard. Under the newer LadybugDB binder
+    # a parameter that appears in ``$param IS NULL`` is type-inferred as BOOL, which
+    # then clashes with the real comparison ("Cannot compare types INT64 and BOOL" for
+    # the INT64 schema_version, "change parameter expression data type from BOOL to
+    # STRING" for the STRING engine/prefix). Only binding a param in its true-typed
+    # comparison removes that ambiguity, and an omitted filter contributes no parameter
+    # at all.
+    conditions: list[str] = []
+    params: dict[str, Any] = {}
+    if engine is not None:
+        conditions.append("ap.engine = $engine")
+        params["engine"] = engine
+    if version is not None:
+        conditions.append("ap.schema_version = $version")
+        params["version"] = version
+    if prefix is not None:
+        conditions.append("starts_with(ap.id, $prefix)")
+        params["prefix"] = prefix
+    where_clause = ("WHERE " + " AND ".join(conditions) + " ") if conditions else ""
+
     rows = store.query(
         "MATCH (ap:AccessPattern)<-[:PART_OF]-(q:Query)-[:TESTED_IN]-(lt:LoadTestRun) "
-        "WHERE ($engine IS NULL OR ap.engine = $engine) "
-        "  AND ($version IS NULL OR ap.schema_version = $version) "
-        "  AND ($prefix IS NULL OR starts_with(ap.id, $prefix)) "
+        f"{where_clause}"
         "RETURN ap.id AS pattern_id, ap.engine AS engine, "
         "  ap.schema_version AS schema_version, ap.description AS description, "
         "  ap.pattern_group AS pattern_group, ap.design_rps AS design_rps, "
@@ -181,7 +202,7 @@ def load_test_results(
         "    target_max: lt.target_max"
         "  }) AS queries "
         "ORDER BY pattern_id",
-        {"engine": engine, "version": version, "prefix": prefix},
+        params,
     )
 
     results = [
