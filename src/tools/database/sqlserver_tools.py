@@ -126,6 +126,8 @@ class SQLServerRemoteCollector:
                 c.column_id AS ordinal_position,
                 ty.name AS data_type,
                 c.max_length,
+                c.precision AS numeric_precision,
+                c.scale AS numeric_scale,
                 c.is_nullable,
                 CASE WHEN c.is_identity = 1 THEN 'YES' ELSE 'NO' END AS is_identity,
                 dc.definition AS column_default

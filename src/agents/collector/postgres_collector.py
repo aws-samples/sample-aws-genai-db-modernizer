@@ -351,6 +351,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("udt_name") or c.get("data_type", ""),
                 normalized_data_type=_PG_TYPE_MAP.get(c.get("data_type", "")),
                 max_length=c.get("max_length"),
+                numeric_precision=c.get("numeric_precision"),
+                numeric_scale=c.get("numeric_scale"),
                 nullable=c.get("is_nullable", "YES") == "YES",
                 default_value=c.get("column_default"),
                 is_auto_increment=("nextval" in str(c.get("column_default") or "")),
