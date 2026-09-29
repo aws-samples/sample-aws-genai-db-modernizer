@@ -20,7 +20,7 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
       - name: Ruff check
         run: uv run ruff check src/ tests/
       - name: Black check
@@ -38,11 +38,20 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
+      - name: Install AWS Transform SDK
+        # Not a project dependency (it ships only in the ATX container image), but
+        # the atx_orchestrator tests import it. Installing it here means those tests
+        # RUN in CI instead of being silently skipped — the gap that let issue #150
+        # (stale PIPELINE_TOOLS registry) merge green.
+        run: uv pip install "agent-builder-sdk-aws-transform>=1.0.0"
       - name: Run tests
         env:
           AWS_DEFAULT_REGION: us-east-1
-        run: uv run pytest tests/unit/ tests/contract/ -v --cov=src --cov-report=term --cov-fail-under=65
+        # Full suite (tests/), not just unit + contract. tests/graph, tests/integration
+        # and tests/property previously never ran at PR time, which is how the ladybug
+        # 0.20.4 binder break (tests/graph) reached the deploy pipeline unnoticed.
+        run: uv run pytest tests/ -v --cov=src --cov-report=term --cov-fail-under=65
 
   security:
     runs-on: ubuntu-latest
@@ -54,7 +63,7 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
       - name: Bandit security scan
         run: uv run bandit -r src/ -c pyproject.toml
       - name: Semgrep
@@ -77,7 +86,7 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --locked --extra dev
       - name: Validate contracts
         run: uv run python scripts/validate_contracts.py src/contracts/*.py
       - name: Contract tests
