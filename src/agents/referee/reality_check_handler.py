@@ -11,6 +11,10 @@ import os
 from collections import defaultdict
 from datetime import UTC, datetime
 
+from src.agents.prompt_framing import (
+    SYSTEM_PROMPT_DATA_DIRECTIVE,
+    frame_untrusted,
+)
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
@@ -509,8 +513,10 @@ def _generate_executive_summary(
         "- No markdown, bullet points, or headers\n"
         "- Write like a human engineer, not a language model\n"
         "- Keep it under 3 sentences total\n\n"
-        f"Context:\n{json.dumps(context, indent=2)}\n\n"
-        "Write the briefing now."
+        # R1: the context carries customer-derived strings (database name,
+        # consolidation reasons). Frame it as untrusted data, not instructions.
+        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
+        + "\n\nWrite the briefing now."
     )
 
     try:
@@ -532,7 +538,7 @@ def _generate_executive_summary(
                 "('Your workload presents...', 'The analysis identified...'). You NEVER "
                 "express doubt or recommend going back for more data. Complexity is your "
                 "job and you have handled it. Short, direct, confident, solution-oriented. "
-                "No filler, no hedging."
+                "No filler, no hedging.\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
             ),
             tools=[],
             callback_handler=None,

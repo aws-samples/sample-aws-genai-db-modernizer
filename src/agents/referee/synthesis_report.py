@@ -17,6 +17,8 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
 
@@ -905,8 +907,10 @@ def generate_executive_summary(
         "- No markdown, bullet points, or headers\n"
         "- Write like a human talking to another human, not a language model writing a document\n"
         "- Keep it under 4 sentences total\n\n"
-        f"Context:\n{json.dumps(context, indent=2)}\n\n"
-        "Write the briefing now."
+        # R1: the context carries customer-derived strings (query-group names,
+        # risk/trade-off descriptions). Frame it as untrusted data, not instructions.
+        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
+        + "\n\nWrite the briefing now."
     )
 
     try:
@@ -930,7 +934,8 @@ def generate_executive_summary(
                 "the result, not deliberating. You NEVER express doubt, recommend "
                 "going back for more data, or suggest the team is not ready. "
                 "Complexity is your job and you have handled it. Short, direct, "
-                "confident, solution-oriented. No filler, no hedging."
+                "confident, solution-oriented. No filler, no hedging.\n\n"
+                + SYSTEM_PROMPT_DATA_DIRECTIVE
             ),
             tools=[],
             callback_handler=None,
