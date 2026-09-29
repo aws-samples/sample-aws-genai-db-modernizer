@@ -16,7 +16,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple, cast
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,10 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         if next_token:
             kwargs["nextToken"] = next_token
         resp = artifacts.client.list_artifacts(**kwargs)
-        all_artifacts.extend(resp.get("artifacts") or [])
+        # The SDK types these as list[ArtifactTypeDef] (a TypedDict); every consumer
+        # below reads them as plain dicts via .get(), so narrow to list[dict] for the
+        # extend. Newer mypy treats the TypedDict as invariantly incompatible otherwise.
+        all_artifacts.extend(cast("list[dict[str, Any]]", resp.get("artifacts") or []))
         next_token = resp.get("nextToken")
         if not next_token:
             break

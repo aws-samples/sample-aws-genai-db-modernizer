@@ -25,6 +25,13 @@ jobs:
         run: uv run ruff check src/ tests/
       - name: Black check
         run: uv run black --check src/ tests/
+      - name: isort check
+        # Same args as the isort pre-commit hook, so the hook and CI agree.
+        run: uv run isort --profile=black --line-length=100 --check-only src/ tests/
+      - name: Pre-commit / CI version alignment
+        # Fail if the pre-commit linter revs drift from the locked versions CI
+        # runs, so a green hook always means a green CI lint.
+        run: uv run python scripts/check_precommit_ci_alignment.py
       - name: Mypy
         run: uv run mypy src/
 

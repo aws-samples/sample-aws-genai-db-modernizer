@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from . import escaping
 
@@ -160,10 +160,15 @@ def publish(items: list[PublishItem]) -> dict[str, str]:
             upload_from_presigned_url,
         )
         from agent_builder_sdk.env_var import get_agent_context_from_env
+        from agent_builder_types import type_defs as abt
 
         ctx = get_agent_context_from_env()
         client = get_agentic_api_client()
-        request_context = dict(ctx.to_dict())
+        # ctx.to_dict() is typed dict[str, object]; the generated client expects the
+        # RequestContextTypeDef TypedDict. The runtime shape is identical (this is
+        # exactly what the SDK's own _create_request_context returns), so cast rather
+        # than rebuild it. Without the cast the newer mypy flags all four SDK calls.
+        request_context = cast("abt.RequestContextTypeDef", dict(ctx.to_dict()))
 
         for item in items:
             content, file_type, label, category = item[0], item[1], item[2], item[3]
