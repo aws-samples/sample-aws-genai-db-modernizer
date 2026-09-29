@@ -593,3 +593,29 @@ def test_read_journeys_from_graph_returns_none_without_pointer():
     # (so the caller falls back), rather than raising.
     store = FakeStore(_objects())
     assert ar._read_journeys_from_graph(store, DB, JOB) is None
+
+
+def test_read_journeys_from_graph_returns_none_when_parse_fails():
+    # R2: even if a .lbug downloads and passes the transport-level integrity gate,
+    # a native parse failure (corrupt/hostile binary the digest could not catch,
+    # or an engine version mismatch) must route to the JSON fallback rather than
+    # propagate out of the read path.
+    from pathlib import Path
+    from unittest.mock import patch
+
+    store = FakeStore(_objects())
+
+    def _fake_download(_store, _db, _job, local_path):
+        # The bytes made it to disk (transport says OK) but they are not a valid
+        # graph — GraphStore will choke when it tries to open them.
+        Path(local_path).write_bytes(b"not-a-real-lbug")
+        return True
+
+    with (
+        patch(
+            "src.atx_orchestrator.runtime.graph_transport.download_graph",
+            side_effect=_fake_download,
+        ),
+        patch("src.graph.GraphStore", side_effect=RuntimeError("corrupt graph")),
+    ):
+        assert ar._read_journeys_from_graph(store, DB, JOB) is None
