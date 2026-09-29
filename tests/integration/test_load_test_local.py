@@ -13,6 +13,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Integration test: it runs the load-test handler end-to-end against artifacts
+# produced by `scripts/test_local_phased.py`, a manual local dev step. No CI or
+# deploy pipeline generates those artifacts (load testing is a customer-run
+# concern), so this is marked integration and DESELECTED from the gated unit run
+# rather than sitting there as a permanent silent skip. A developer with the
+# artifacts runs it via `pytest -m integration`.
+pytestmark = pytest.mark.integration
+
 # Use local artifact store
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -94,12 +102,16 @@ def mock_engine_components():
         yield {"provisioner": provisioner, "seeder": seeder, "runner": runner}
 
 
-@pytest.mark.skipif(
-    not FIXTURES_DIR.exists(),
-    reason="Real artifacts not available (run test_local_phased.py first)",
-)
 def test_handler_with_real_schema_output(mock_engine_components):
     """Handler should successfully process real wordpress schema design output."""
+    # These artifacts are produced by the manual `scripts/test_local_phased.py`
+    # step. This is an integration test (deselected from the gated unit run); when
+    # it is selected, the artifacts are required — a missing dir is a hard failure,
+    # not a silent skip.
+    assert FIXTURES_DIR.exists(), (
+        f"Required artifacts missing: {FIXTURES_DIR}. Generate them first with "
+        "`python scripts/test_local_phased.py`."
+    )
     from src.agents.load_test.handler import run_load_test
     from src.storage import create_artifact_store
 

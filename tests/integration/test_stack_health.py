@@ -12,6 +12,12 @@ import os
 import boto3
 import pytest
 
+# A real integration test: it calls CloudFormation against a live deployed stack.
+# Marked so it is DESELECTED from the gated unit run (`-m "not integration"`)
+# rather than silently skipped inside it. It runs post-deploy where STACK_NAME is
+# set (GitLab), or via the integration CI job.
+pytestmark = pytest.mark.integration
+
 STACK_NAME = os.environ.get("STACK_NAME")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 

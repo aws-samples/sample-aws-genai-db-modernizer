@@ -64,6 +64,12 @@ artifacts/
 
 # Example collector outputs (unzipped from .zip files)
 docs/examples/**/*.json
+# ...but the load-test schema fixture IS a committed test input (generated from
+# the DynamoDB output contract by tests/fixtures/generate_wordpress_dynamodb_schema.py).
+# It must be tracked, or tests/integration/test_load_test_contract_integration.py
+# has no data and would (as it long did) silently skip. The broad rule above is
+# what kept it uncommitted in the first place.
+!docs/examples/**/load-test-results/**/schema_output.json
 
 # Asciinema recordings (large binary files)
 *.cast

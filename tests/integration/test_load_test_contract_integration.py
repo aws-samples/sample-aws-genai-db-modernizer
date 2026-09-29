@@ -18,8 +18,14 @@ SCHEMA_PATH = Path(
 
 @pytest.fixture
 def wordpress_schema():
-    if not SCHEMA_PATH.exists():
-        pytest.skip("WordPress schema output not available")
+    # The fixture is committed (generated from the DynamoDB output contract by
+    # tests/fixtures/generate_wordpress_dynamodb_schema.py). It is required, not
+    # optional: a missing fixture is a hard failure, never a silent skip. These
+    # tests skipped on a fixture that was never committed and so never ran at all.
+    assert SCHEMA_PATH.exists(), (
+        f"Required fixture missing: {SCHEMA_PATH}. Regenerate with "
+        "`uv run python tests/fixtures/generate_wordpress_dynamodb_schema.py`."
+    )
     return json.loads(SCHEMA_PATH.read_text())
 
 

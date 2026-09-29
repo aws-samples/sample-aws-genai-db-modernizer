@@ -51,7 +51,13 @@ jobs:
         # Full suite (tests/), not just unit + contract. tests/graph, tests/integration
         # and tests/property previously never ran at PR time, which is how the ladybug
         # 0.20.4 binder break (tests/graph) reached the deploy pipeline unnoticed.
-        run: uv run pytest tests/ -v --cov=src --cov-report=term --cov-fail-under=65
+        #
+        # -m "not integration": integration tests need a live stack or manually
+        #   generated artifacts, so they are deselected here and run post-deploy.
+        # --fail-on-skip: a skipped test fails the build. Combined with the marker,
+        #   this means nothing in the gated run may silently skip — the failure mode
+        #   behind issues #150 and the dead load-test tests.
+        run: uv run pytest tests/ -m "not integration" --fail-on-skip -v --cov=src --cov-report=term --cov-fail-under=65
 
   security:
     runs-on: ubuntu-latest
