@@ -248,14 +248,27 @@ class TestTeardown:
             tags={"job_id": "job001"},
         )
 
-    def test_teardown_does_not_delete_by_default(
+    def test_teardown_deletes_domain_by_default(
         self,
         provisioner_with_mocks: OpenSearchProvisioner,
         mock_opensearch_client: MagicMock,
     ) -> None:
         manifest = self._make_manifest()
         provisioner_with_mocks.teardown(manifest)
-        mock_opensearch_client.delete_domain.assert_not_called()
+        mock_opensearch_client.delete_domain.assert_called_once_with(
+            DomainName="loadtest-mod-job001-run01"
+        )
+
+    def test_teardown_is_idempotent_when_not_found(
+        self,
+        provisioner_with_mocks: OpenSearchProvisioner,
+        mock_opensearch_client: MagicMock,
+    ) -> None:
+        mock_opensearch_client.delete_domain.side_effect = (
+            mock_opensearch_client.exceptions.ResourceNotFoundException()
+        )
+        manifest = self._make_manifest()
+        provisioner_with_mocks.teardown(manifest)
 
     def test_teardown_force_deletes_domain(
         self,
