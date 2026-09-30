@@ -17,9 +17,13 @@ import pytest
 # produced by `scripts/test_local_phased.py`, a manual local dev step. No CI or
 # deploy pipeline generates those artifacts (load testing is a customer-run
 # concern), so this is marked integration and DESELECTED from the gated unit run
-# rather than sitting there as a permanent silent skip. A developer with the
-# artifacts runs it via `pytest -m integration`.
-pytestmark = pytest.mark.integration
+# rather than sitting there as a permanent silent skip.
+#
+# local_only in addition to integration: the CI integration stage runs against a
+# deployed dev stack and does NOT generate the scripts/test_local_phased.py
+# artifacts this test needs, so it is deselected there (-m "not local_only") and
+# only runs for a developer who has produced those artifacts locally.
+pytestmark = [pytest.mark.integration, pytest.mark.local_only]
 
 # Use local artifact store
 os.environ.setdefault("RUNTIME_MODE", "local")

@@ -105,6 +105,7 @@ markers = [
     "slow: marks tests as slow",
     "integration: marks tests as integration tests",
     "contract: marks tests as contract validation tests",
+    "local_only: integration tests that need manually generated local artifacts (scripts/test_local_phased.py); deselected in CI",
 ]
 filterwarnings = [
     # Third-party: FastAPI's TestClient imports httpx via starlette, which warns
