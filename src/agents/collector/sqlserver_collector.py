@@ -370,6 +370,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("data_type", ""),
                 normalized_data_type=_SQLSERVER_TYPE_MAP.get(str(c.get("data_type", "")).lower()),
                 max_length=_normalize_max_length(c.get("max_length"), c.get("data_type", "")),
+                numeric_precision=c.get("numeric_precision"),
+                numeric_scale=c.get("numeric_scale"),
                 nullable=str(c.get("is_nullable", "YES")).upper() in ("YES", "TRUE", "1"),
                 default_value=c.get("column_default"),
                 is_auto_increment=str(c.get("is_identity", "NO")).upper() == "YES",
@@ -621,6 +623,13 @@ def _normalize_max_length(raw: int | str | None, data_type: str) -> int | None:
     twice the character count (each char is 2 bytes). ``-1`` means MAX
     (varchar(MAX), nvarchar(MAX), varbinary(MAX)) and we surface that as
     ``None`` (unbounded) per the contract convention.
+
+    The constant 2 is correct here and should not be "fixed" to match the
+    Oracle collector, which reads a catalog column instead. SQL Server's
+    national types are always UCS-2/UTF-16, so bytes-per-character really is
+    fixed at 2. Oracle's ratio depends on the database and national character
+    sets (AL32UTF8 up to 4, AL16UTF16 exactly 2, single-byte 1), so it has no
+    constant to divide by and must read ALL_TAB_COLUMNS.CHAR_LENGTH.
     """
     if raw is None:
         return None

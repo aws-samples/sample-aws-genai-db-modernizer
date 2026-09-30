@@ -353,6 +353,8 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 data_type=c.get("data_type", ""),
                 normalized_data_type=_ORACLE_TYPE_MAP.get(str(c.get("data_type", "")).lower()),
                 max_length=_normalize_max_length(c),
+                numeric_precision=c.get("data_precision"),
+                numeric_scale=c.get("data_scale"),
                 nullable=str(c.get("is_nullable", "Y")).upper() in ("Y", "YES", "TRUE", "1"),
                 default_value=c.get("column_default"),
                 is_auto_increment=str(c.get("is_identity", "NO")).upper() == "YES",
@@ -558,29 +560,53 @@ def _parse_oracle_version(raw: str) -> str:
 
 
 def _normalize_max_length(col: dict) -> int | None:
-    """Normalize Oracle column length.
+    """Normalize an Oracle column length to a CHARACTER count.
 
-    Oracle reports DATA_LENGTH in bytes. For CHAR-semantic columns
-    (CHAR_USED = 'C') with UTF-8, divide by 4 to get char count.
-    For NUMBER, use DATA_PRECISION.
+    Oracle reports two lengths for character columns and they are not
+    interchangeable. Per the ALL_TAB_COLUMNS reference, ``DATA_LENGTH`` is
+    "Length of the column (in bytes)" and is always bytes regardless of the
+    column's length semantics, while ``CHAR_LENGTH`` is "the length of the
+    column in characters" and is populated for exactly CHAR, VARCHAR2, NCHAR
+    and NVARCHAR2.
+
+    The contract documents max_length as a character count and both consumers
+    read it as one -- item_size_bytes estimation, and VARCHAR(n) in the
+    generated DDL -- so CHAR_LENGTH is the answer and no arithmetic is needed.
+
+    Deriving characters from DATA_LENGTH cannot work in general, because the
+    bytes-per-character ratio is a property of the database and national
+    character sets rather than a constant: AL32UTF8 is up to 4, AL16UTF16 is 2,
+    a single-byte set is 1. (SQL Server's collector legitimately divides by a
+    constant 2, because its nvarchar is always UCS-2. Oracle has no such
+    constant, which is why it needs the catalog to report the value.)
+
+    When CHAR_LENGTH is absent -- a collection captured before it was
+    selected -- fall back to the byte count *unconverted*, as an upper bound.
+    That is deliberate: an over-wide VARCHAR only costs estimate accuracy,
+    while an under-wide one truncates data at load.
+
+    NUMBER returns None: its DATA_PRECISION travels in the column's own
+    numeric_precision field. Returning precision here overloaded max_length,
+    which is documented as a character count and is consumed as one.
     """
     data_type = str(col.get("data_type") or "").lower()
     if data_type == "number":
-        p = col.get("data_precision")
-        return int(p) if p is not None else None
-    raw = col.get("max_length")
+        return None
+
+    # CHAR_LENGTH is 0, not NULL, for non-character types, so require > 0.
+    char_length = _coerce_positive_int(col.get("char_length"))
+    if char_length is not None:
+        return char_length
+
+    return _coerce_positive_int(col.get("max_length"))
+
+
+def _coerce_positive_int(raw: int | str | None) -> int | None:
+    """Return ``raw`` as an int when it is present and positive, else None."""
     if raw is None:
         return None
     try:
         ival = int(raw)
     except (TypeError, ValueError):
         return None
-    char_used = str(col.get("char_used") or "").upper()
-    if char_used == "C" and data_type in ("nvarchar2", "nchar"):
-        return ival // 4  # UTF-8 worst case
-    if char_used == "C":
-        return ival  # Already in chars
-    # Byte-semantic nvarchar2/nchar: divide by char width
-    if data_type in ("nvarchar2", "nchar"):
-        return ival // 2
-    return ival
+    return ival if ival > 0 else None

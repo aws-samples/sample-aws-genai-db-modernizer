@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,6 +100,18 @@ class AgentColumn(BaseModel):
     ordinal_position: int | None = None
     normalized_data_type: NormalizedDataType | None = None
     max_length: int | None = Field(None, description="Used for item_size_bytes estimation")
+    numeric_precision: int | None = Field(
+        None,
+        description=(
+            "Total significant digits for exact-numeric types, e.g. 10 in DECIMAL(10,2). "
+            "Carried so a relational target can emit NUMERIC(p,s) / DECIMAL(p,s) rather "
+            "than an unconstrained type, and so the designer's 'confirm DECIMAL(p,s)' "
+            "residual is answerable from data instead of guessed at."
+        ),
+    )
+    numeric_scale: int | None = Field(
+        None, description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)"
+    )
     nullable: bool
     default_value: str | int | float | bool | None = None
     is_auto_increment: bool | None = False
@@ -236,6 +248,34 @@ class AgentAggregateRecommendation(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class AgentCodeObject(BaseModel):
+    """Inventory entry for a non-table object the design must FLAG, not convert.
+
+    Both Aurora contracts declare an ``AppLayerNote`` whose ``feature`` field is
+    documented as "e.g. 'trigger', 'sequence', 'stored_procedure'" and whose
+    ``source_object`` names the object. All five collectors already gather views,
+    procedures and triggers, but the projection dropped every one, so the agent
+    was asked to name objects it had never been shown and could only invent or
+    omit them.
+
+    This carries the identity of each object and nothing else. ``definition`` is
+    deliberately excluded: converting procedural code is out of scope, the note
+    only needs to say what exists and where, and shipping bodies would put
+    source code into the agent input for no reachable purpose while inflating
+    the prompt.
+    """
+
+    object_name: str
+    object_type: str = Field(..., description="view | procedure | function | trigger")
+    schema_name: str | None = None
+    referenced_tables: list[str] | None = Field(
+        None, description="Tables this object reads or writes, when the source reports them"
+    )
+    attached_table: str | None = Field(
+        None, description="For triggers, the table the trigger fires on"
+    )
+
+
 class AgentCollectorInput(BaseModel):
     """Projection of CollectorOutputContract for schema design."""
 
@@ -246,6 +286,13 @@ class AgentCollectorInput(BaseModel):
     collection_timestamp: datetime
     tables: list[AgentTable]
     queries: AgentQueriesInput
+    code_objects: list[AgentCodeObject] | None = Field(
+        None,
+        description=(
+            "Views, procedures, functions and triggers present in the source. "
+            "Identity only — for flagging an application-layer handoff, not for conversion."
+        ),
+    )
 
     model_config = ConfigDict(extra="ignore")
 
@@ -311,6 +358,54 @@ class SchemaDesignGroupsManifest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _project_code_objects(database_schema: Any) -> list[AgentCodeObject] | None:
+    """Build the flag-don't-convert inventory from the collected code objects.
+
+    Identity only. ``definition`` is never read — see AgentCodeObject for why.
+
+    Returns None rather than [] when the source has none, so that "the source
+    reported no procedural objects" and "we did not look" stay distinguishable
+    in the serialized input.
+    """
+    objects: list[AgentCodeObject] = []
+
+    for v in database_schema.views or []:
+        objects.append(
+            AgentCodeObject(
+                object_name=v.view_name,
+                object_type="view",
+                schema_name=v.schema_name,
+                referenced_tables=v.referenced_tables,
+            )
+        )
+
+    for p in database_schema.procedures or []:
+        # ProcedureType distinguishes a procedure from a function, and the
+        # distinction survives into the note because the handoff differs: a
+        # function is usually inlined into a query, a procedure rewritten.
+        raw_type = getattr(p.procedure_type, "value", p.procedure_type)
+        objects.append(
+            AgentCodeObject(
+                object_name=p.procedure_name,
+                object_type=str(raw_type or "procedure").lower(),
+                schema_name=p.schema_name,
+                referenced_tables=p.referenced_tables,
+            )
+        )
+
+    for t in database_schema.triggers or []:
+        objects.append(
+            AgentCodeObject(
+                object_name=t.trigger_name,
+                object_type="trigger",
+                schema_name=t.schema_name,
+                attached_table=t.table_id,
+            )
+        )
+
+    return objects or None
+
+
 def project_schema_design_input(
     collector_output: CollectorOutputContract,
     analysis_output: AnalysisOutputContract,
@@ -353,6 +448,8 @@ def project_schema_design_input(
                             else None
                         ),
                         max_length=c.max_length,
+                        numeric_precision=c.numeric_precision,
+                        numeric_scale=c.numeric_scale,
                         nullable=c.nullable,
                         default_value=c.default_value,
                         is_auto_increment=c.is_auto_increment,  # nosemgrep: is-function-without-parentheses
@@ -433,6 +530,7 @@ def project_schema_design_input(
         source_database_engine=collector_output.metadata.source_database.engine.value,
         collection_timestamp=collector_output.metadata.collection_timestamp,
         tables=tables,
+        code_objects=_project_code_objects(collector_output.database_schema),
         queries=AgentQueriesInput(
             query_patterns=query_patterns,
             total_queries_analyzed=queries.total_queries_analyzed,

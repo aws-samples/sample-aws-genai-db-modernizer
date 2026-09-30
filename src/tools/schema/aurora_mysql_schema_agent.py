@@ -30,7 +30,11 @@ from src.agents.prompt_framing import (
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.collector_output import CollectorOutputContract
-from src.contracts.schema_design_input import AgentTable, project_schema_design_input
+from src.contracts.schema_design_input import (
+    AgentQueryPattern,
+    AgentTable,
+    project_schema_design_input,
+)
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
 
 logger = logging.getLogger(__name__)
@@ -222,7 +226,10 @@ def _build_draft(agent_input: dict) -> tuple[dict, str]:
             "draft will be empty and the designer will have nothing to translate."
         )
     tables = [AgentTable.model_validate(t) for t in raw_tables]
-    return build_mysql_draft(tables, source_engine)
+
+    raw_queries = (collector.get("queries") or {}).get("query_patterns") or []
+    queries = [AgentQueryPattern.model_validate(q) for q in raw_queries]
+    return build_mysql_draft(tables, source_engine, queries)
 
 
 # ---------------------------------------------------------------------------
@@ -337,11 +344,15 @@ def run_aurora_mysql_schema_agent(
     print("[schema-design/aurora_mysql] Loading agent input...")
     agent_input = load_agent_input()
 
+    # Run the deterministic core BEFORE compacting. Access-pattern derivation
+    # reads execution_time_ms_p95 and db_load_contribution_percent, and neither
+    # survives _compact_agent_input's keep_fields allowlist. Deriving first is
+    # also cheaper: those figures then travel once per access pattern instead of
+    # once per raw query.
+    draft, strategy = _build_draft(agent_input)
+
     # Compact input to fit within Bedrock token limits.
     _compact_agent_input(agent_input)
-
-    # Run the deterministic core to produce the authoritative draft.
-    draft, strategy = _build_draft(agent_input)
     # NOTE: the draft duplicates column info already in collector.tables.
     # Accepted overhead for now; a future pass can compact collector.tables columns
     # since the draft is authoritative for column types. See ADR-028.
@@ -366,7 +377,10 @@ def run_aurora_mysql_schema_agent(
         + f"The migration_strategy is '{strategy}'. The draft's column types are "
         "authoritative unless flagged in residuals. Resolve every residual, add "
         "Aurora optimizations from the query patterns, record app-layer notes for "
-        "untranslatable features, and return the complete "
+        "untranslatable features, carry draft.access_patterns through verbatim — "
+        "they are measured, not estimated, so do not re-author them or invent "
+        "design_rps; resolve only the index_used values listed in "
+        "draft.access_pattern_residuals — and return the complete "
         "AuroraMySQLModelOutputContract."
     )
 
@@ -408,4 +422,27 @@ def run_aurora_mysql_schema_agent(
         format_pe_feedback_fn=_format_pe_feedback,
     )
 
-    return runner.run(designer_prompt, input_summary)
+    output: AuroraMySQLModelOutputContract
+    trace: dict
+    output, trace = runner.run(designer_prompt, input_summary)
+
+    # Access patterns are script-derived, so they are restored from the draft
+    # rather than trusted from the model. The contract is produced via
+    # structured_output_model, which means every declared field is LLM-authored
+    # by default and the prompt asking it not to re-author them is a request,
+    # not a guarantee. design_rps in particular must stay the collector's
+    # measured calls_per_second — GitHub #136 is the same field going wrong on
+    # the DocumentDB path, where an LLM-authored design_rps forces the load-test
+    # handler to filter design_rps > 0 and can silently yield zero scenarios.
+    #
+    # index_used is the one field the LLM may legitimately have resolved, so a
+    # judgment it supplied for a flagged residual is kept; everything else is
+    # taken from the draft.
+    from src.contracts.aurora_mysql_model_output import AccessPattern
+    from src.tools.schema.aurora_common.access_patterns import restored_access_pattern_dicts
+
+    output.access_patterns = [
+        AccessPattern(**spec) for spec in restored_access_pattern_dicts(draft, output)
+    ]
+
+    return output, trace

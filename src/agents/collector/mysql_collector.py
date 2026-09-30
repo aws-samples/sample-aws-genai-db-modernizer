@@ -787,6 +787,8 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             data_type=c.get("column_type") or c.get("data_type", ""),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
+            numeric_precision=c.get("numeric_precision"),
+            numeric_scale=c.get("numeric_scale"),
             # Cross-engine boolean coercion:
             # MySQL/PostgreSQL emit 'YES'/'NO'; Oracle emits 'Y'/'N'.
             # Previously only matched 'YES' exactly, so Oracle 'Y' columns

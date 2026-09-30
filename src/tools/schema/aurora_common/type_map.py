@@ -28,10 +28,33 @@ class TypeResolution:
     reason: str = ""
 
 
-# Direct, unambiguous mappings that ignore length.
+def _exact_numeric(
+    base: str,
+    precision: int | None,
+    scale: int | None,
+) -> str | None:
+    """Render ``BASE(p,s)`` when precision is known, else ``None``.
+
+    Scale defaults to 0 when absent but precision is present: that is what both
+    engines mean by a bare ``DECIMAL(p)``, so it is a translation rather than a
+    guess. Precision without any digits is meaningless, so 0 is rejected.
+    """
+    if not precision or precision <= 0:
+        return None
+    s = scale if scale is not None and scale >= 0 else 0
+    if s > precision:
+        # Scale cannot exceed precision in either engine; treat as unusable
+        # rather than emitting DDL the target will reject.
+        return None
+    return f"{base}({precision},{s})"
+
+
+# Direct, unambiguous mappings that ignore length. `decimal` is deliberately
+# absent: unconstrained PG NUMERIC is exact, so it never loses data, but it
+# also enforces nothing. When precision is known we emit NUMERIC(p,s) so the
+# target rejects what the source rejected.
 _DIRECT: dict[NormalizedDataType, str] = {
     NormalizedDataType.integer: "BIGINT",
-    NormalizedDataType.decimal: "NUMERIC",
     NormalizedDataType.boolean: "BOOLEAN",
     NormalizedDataType.date: "DATE",
     NormalizedDataType.datetime: "TIMESTAMP",
@@ -49,6 +72,8 @@ def resolve_pg_type(
     normalized: NormalizedDataType | None,
     *,
     max_length: int | None = None,
+    numeric_precision: int | None = None,
+    numeric_scale: int | None = None,
 ) -> TypeResolution:
     """Resolve one column's Aurora PostgreSQL type from its normalized type."""
     if normalized is None:
@@ -56,6 +81,21 @@ def resolve_pg_type(
             aurora_type="TEXT",
             needs_judgment=True,
             reason="Source type was not normalized; confirm the intended column type.",
+        )
+
+    if normalized is NormalizedDataType.decimal:
+        exact = _exact_numeric("NUMERIC", numeric_precision, numeric_scale)
+        if exact:
+            return TypeResolution(aurora_type=exact, needs_judgment=False)
+        # Unconstrained NUMERIC is exact in PostgreSQL, so this is a loss of
+        # constraint rather than of data - flagged, not silent.
+        return TypeResolution(
+            aurora_type="NUMERIC",
+            needs_judgment=True,
+            reason=(
+                "Decimal precision/scale unknown; unconstrained NUMERIC stores the "
+                "values exactly but enforces no range. Confirm NUMERIC(p,s)."
+            ),
         )
 
     if normalized in _DIRECT:
@@ -100,6 +140,8 @@ def resolve_mysql_type(
     normalized: NormalizedDataType | None,
     *,
     max_length: int | None = None,
+    numeric_precision: int | None = None,
+    numeric_scale: int | None = None,
 ) -> TypeResolution:
     """Resolve one column's Aurora MySQL type from its normalized type."""
     if normalized is None:
@@ -109,6 +151,9 @@ def resolve_mysql_type(
             reason="Source type was not normalized; confirm the intended column type.",
         )
     if normalized is NormalizedDataType.decimal:
+        exact = _exact_numeric("DECIMAL", numeric_precision, numeric_scale)
+        if exact:
+            return TypeResolution(aurora_type=exact, needs_judgment=False)
         return TypeResolution(
             aurora_type="DECIMAL(38,10)",
             needs_judgment=True,

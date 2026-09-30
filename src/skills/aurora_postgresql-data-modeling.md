@@ -34,6 +34,12 @@ script's work.
    cannot be expressed as Aurora DDL (sequences, triggers, stored procedures,
    packages, identity quirks, ON UPDATE CURRENT_TIMESTAMP) goes in
    `app_layer_notes` with a concrete recommendation — never invent DDL for it.
+   `collector.code_objects` is the authoritative inventory of the views,
+   procedures, functions and triggers the source actually has: name each one
+   from that list rather than inferring what might exist, and do not report an
+   object that is absent from it. The inventory carries identity only, so base
+   your recommendation on the object's name, type and referenced tables — you
+   will not be shown the body, and converting it is out of scope.
 4. **Add Aurora optimizations** driven by the query patterns: partitioning for
    large hot tables, added indexes for frequent filter/sort columns without an
    index, read-replica routing for read-heavy patterns, I/O-Optimized when write

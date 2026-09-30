@@ -6,6 +6,7 @@ Description: Output contract for all Collector agents with RDS-specific enhancem
 """
 
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -208,6 +209,48 @@ class Column(BaseModel):
         None, description="Normalized data type for cross-database comparison"
     )
     max_length: int | None = Field(None, ge=0, description="Maximum length for string types")
+    numeric_precision: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Total significant digits for exact-numeric types, e.g. 10 in DECIMAL(10,2). "
+            "Distinct from max_length, which is a character count for string types."
+        ),
+    )
+    numeric_scale: int | None = Field(
+        None,
+        ge=0,
+        description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)",
+    )
+
+    @field_validator("numeric_precision", "numeric_scale", mode="before")
+    @classmethod
+    def _coerce_numeric_metadata(cls, v: object) -> int | None:
+        """Accept the text these values arrive as, and drop anything unusable.
+
+        Collectors shell out to database CLIs and parse the output, so precision
+        and scale arrive as strings — and as empty strings for types that have
+        neither. Coercing in one validator keeps four collectors from carrying
+        four copies of the same try/except.
+
+        A negative value is dropped rather than clamped: it means the source was
+        misparsed, and None ("unknown") is honest where 0 ("no decimal digits")
+        would be a fabricated constraint. ``bool`` is excluded even though it is
+        an ``int`` subclass, because a boolean here means the payload is wrong,
+        not that precision is 1.
+        """
+        if v is None or v == "" or isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return v if v >= 0 else None
+        if isinstance(v, str | float | Decimal):
+            try:
+                i = int(v)
+            except (TypeError, ValueError):
+                return None
+            return i if i >= 0 else None
+        return None
+
     nullable: bool = Field(..., description="Whether column allows NULL values")
     default_value: str | int | float | bool | None = Field(None, description="Default value")
     is_auto_increment: bool | None = Field(False, description="Whether column is auto-incrementing")

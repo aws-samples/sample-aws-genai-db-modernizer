@@ -37,7 +37,7 @@ def _users_table() -> AgentTable:
 
 def test_translate_strategy_for_heterogeneous_source():
     table = _users_table()
-    draft, strategy = build_pg_draft([table], "oracle")
+    draft, strategy = build_pg_draft([table], "oracle", [])
 
     assert strategy == "translate"
     assert draft["migration_strategy"] == "translate"
@@ -46,7 +46,7 @@ def test_translate_strategy_for_heterogeneous_source():
 
 def test_carry_over_strategy_for_homogeneous_source():
     table = _users_table()
-    draft, strategy = build_pg_draft([table], "postgresql")
+    draft, strategy = build_pg_draft([table], "postgresql", [])
 
     assert strategy == "carry_over"
     assert draft["migration_strategy"] == "carry_over"
@@ -86,7 +86,7 @@ def _orders_table_with_pk_index_and_fk() -> AgentTable:
 
 def test_draft_carries_primary_key_indexes_and_foreign_keys():
     table = _orders_table_with_pk_index_and_fk()
-    draft, _ = build_pg_draft([table], "postgresql")
+    draft, _ = build_pg_draft([table], "postgresql", [])
 
     table_draft = draft["tables"][0]
     assert table_draft["primary_key"] == ["id"]

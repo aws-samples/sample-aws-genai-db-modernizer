@@ -12,16 +12,19 @@ would collide (out of scope for Phase 1).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from src.contracts.schema_design_input import AgentColumn, AgentTable
 from src.tools.schema.aurora_common.constraint_translator import (
-    default_clause,
+    DefaultResolution,
     fk_on_delete_clause,
     identity_clause,
     mysql_auto_increment_clause,
+    mysql_escape_literal,
     not_null_clause,
+    pg_escape_literal,
+    resolve_default,
 )
 from src.tools.schema.aurora_common.type_map import (
     TypeResolution,
@@ -38,10 +41,22 @@ class Dialect:
     quote_char: str
     auto_increment: Callable[[bool | None], str]
     resolve_type: Callable[..., TypeResolution]
+    escape_literal: Callable[[str], str]
+    # Source expressions whose target equivalent differs per engine. The
+    # portable ones live in constraint_translator.
+    default_translations: Mapping[str, str] = field(default_factory=dict)
 
     def q(self, identifier: str) -> str:
         c = self.quote_char
         return c + identifier.replace(c, c + c) + c
+
+    def resolve_default(self, default_value: str | int | float | bool | None) -> DefaultResolution:
+        """Resolve a DEFAULT clause using this engine's escaping and vocabulary."""
+        return resolve_default(
+            default_value,
+            escape_literal=self.escape_literal,
+            translations=dict(self.default_translations),
+        )
 
 
 POSTGRES = Dialect(
@@ -49,12 +64,24 @@ POSTGRES = Dialect(
     quote_char='"',
     auto_increment=identity_clause,
     resolve_type=resolve_pg_type,
+    escape_literal=pg_escape_literal,
+    default_translations={
+        # SQL Server / MySQL UUID generators. pgcrypto's gen_random_uuid is
+        # core since PostgreSQL 13, so it is safe on every Aurora PG version.
+        "NEWID()": "gen_random_uuid()",
+        "UUID()": "gen_random_uuid()",
+    },
 )
 MYSQL = Dialect(
     name="aurora_mysql",
     quote_char="`",
     auto_increment=mysql_auto_increment_clause,
     resolve_type=resolve_mysql_type,
+    escape_literal=mysql_escape_literal,
+    default_translations={
+        "NEWID()": "UUID()",
+        "GEN_RANDOM_UUID()": "UUID()",
+    },
 )
 
 
@@ -88,7 +115,12 @@ class DdlResult:
 def _column_ddl(
     table_name: str, col: AgentColumn, residuals: list[dict], dialect: Dialect
 ) -> ColumnDDL:
-    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
+    resolution = dialect.resolve_type(
+        col.normalized_data_type,
+        max_length=col.max_length,
+        numeric_precision=col.numeric_precision,
+        numeric_scale=col.numeric_scale,
+    )
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     if resolution.needs_judgment:
         residuals.append(
@@ -103,9 +135,23 @@ def _column_ddl(
     auto_increment = dialect.auto_increment(
         col.is_auto_increment
     )  # nosemgrep: is-function-without-parentheses -- property, not a method
-    # Identity/auto-increment and default are mutually exclusive — a column
-    # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
-    default = "" if auto_increment else default_clause(col.default_value)
+    if auto_increment:
+        # Identity/auto-increment and DEFAULT are mutually exclusive.
+        default = ""
+    else:
+        resolved_default = dialect.resolve_default(col.default_value)
+        default = resolved_default.clause
+        if resolved_default.needs_judgment:
+            residuals.append(
+                {
+                    "table": table_name,
+                    "column": col.column_name,
+                    "source_type": source_type,
+                    "fallback_type": resolution.aurora_type,
+                    "source_default": resolved_default.source_expression,
+                    "reason": resolved_default.reason,
+                }
+            )
     fragment = (
         f"{dialect.q(col.column_name)} {resolution.aurora_type}"
         f"{auto_increment}"

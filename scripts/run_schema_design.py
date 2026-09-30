@@ -98,7 +98,9 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         agent_collector, _, _ = project_schema_design_input(collector, analysis)
         build_draft = _DRAFT_BUILDERS[engine]
         draft, strategy = build_draft(
-            agent_collector.tables, agent_collector.source_database_engine
+            agent_collector.tables,
+            agent_collector.source_database_engine,
+            agent_collector.queries.query_patterns,
         )
         llm_request["draft"] = draft
         llm_request["migration_strategy"] = strategy
