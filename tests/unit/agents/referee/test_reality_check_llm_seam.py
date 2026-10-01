@@ -647,3 +647,116 @@ class TestRunRealityCheckHandlerBackwardCompatible:
 
         written_keys = list(store._written.keys())
         assert any("assignment/v2/assignment.json" in k for k in written_keys)
+
+
+class TestAbsorptionRerunAfterLlmRestoresAurora:
+    """When the LLM brings Aurora back, small engines get a second absorption pass (#166)."""
+
+    @staticmethod
+    def _det_with_aurora_consolidated() -> dict:
+        join_ids = ["aq1", "aq2"]
+        os_ids = ["os1", "os2", "os3"]
+        ddb_ids = [f"dq{i}" for i in range(10)]
+        revised = (
+            [
+                {"query_id": qid, "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                for qid in ddb_ids
+            ]
+            + [
+                {
+                    "query_id": qid,
+                    "assigned_engine": "dynamodb",
+                    "assignment_reason": "reality check: consolidated from aurora_mysql → dynamodb",
+                }
+                for qid in join_ids
+            ]
+            + [
+                {
+                    "query_id": qid,
+                    "assigned_engine": "opensearch",
+                    "assignment_reason": "signal override: text_search → opensearch",
+                    "signal_override": "text_search",
+                }
+                for qid in os_ids
+            ]
+        )
+        return {
+            "revised_assignments": revised,
+            "consolidations": [
+                {
+                    "from_engine": "aurora_mysql",
+                    "to_engine": "dynamodb",
+                    "query_count": 2,
+                    "reason": "no unique value",
+                    "saved_cost_estimate": 550,
+                    "action": "full",
+                    "queries_retained": [],
+                    "retention_reason": None,
+                }
+            ],
+            "before_distribution": {"dynamodb": 10, "aurora_mysql": 2, "opensearch": 3},
+            "after_distribution": {"dynamodb": 12, "opensearch": 3},
+            "architectural_patterns": [],
+            "recommendations": [],
+            "unique_value_assessment": {},
+            "executive_summary": None,
+            "triage": {
+                "signals": [
+                    {"signal": "complex_joins", "query_ids": join_ids},
+                    {"signal": "text_search", "query_ids": os_ids},
+                ],
+                "query_capabilities": {qid: ["inverted_index"] for qid in os_ids},
+            },
+            "collector_output": {
+                "queries": {
+                    "query_patterns": [
+                        {"query_id": qid, "tables_accessed": ["db.options"]} for qid in ddb_ids
+                    ]
+                    + [{"query_id": qid, "tables_accessed": ["db.posts"]} for qid in join_ids]
+                    + [{"query_id": qid, "tables_accessed": ["db.users"]} for qid in os_ids]
+                }
+            },
+            "analysis_outputs": {
+                "aurora_mysql": {
+                    "table_recommendations": [
+                        {"table_id": "db.posts", "confidence_score": 80},
+                        {"table_id": "db.users", "confidence_score": 80},
+                    ]
+                },
+                "opensearch": {
+                    "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
+                },
+            },
+        }
+
+    @staticmethod
+    def _restore_aurora(det: dict) -> dict:
+        corrections = [
+            {"query_id": qid, "original_engine": "aurora_mysql", "reason": "multi-table join"}
+            for qid in ("aq1", "aq2")
+        ]
+        return apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
+
+    def test_tiny_engine_absorbed_into_restored_aurora(self):
+        result = self._restore_aurora(self._det_with_aurora_consolidated())
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert {engine_of[q] for q in ("os1", "os2", "os3")} == {"aurora_mysql"}
+        assert result["after_distribution"] == {"dynamodb": 10, "aurora_mysql": 5}
+
+    def test_rerun_absorption_is_recorded_as_consolidation(self):
+        result = self._restore_aurora(self._det_with_aurora_consolidated())
+
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert len(from_os) == 1
+        assert from_os[0]["to_engine"] == "aurora_mysql"
+        assert from_os[0]["query_count"] == 3
+
+    def test_no_rerun_when_aurora_was_never_consolidated(self):
+        det = self._det_with_aurora_consolidated()
+        det["after_distribution"] = {"dynamodb": 12, "opensearch": 3, "aurora_mysql": 0}
+        det["consolidations"] = []
+
+        result = apply_reality_check_llm_output(det, {"consolidation_corrections": []})
+
+        assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])

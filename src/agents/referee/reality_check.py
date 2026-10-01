@@ -139,6 +139,10 @@ AURORA_ABSORPTION_MIN_FIT = 50
 # If the specialist engine scores this much higher than Aurora, query is protected
 SPECIALIST_DELTA_THRESHOLD = 30
 
+# Mandatory engines (signal overrides) at or below this many queries can still be
+# absorbed, when Aurora covers each query's signal at a basic level (#165)
+TINY_MANDATORY_QUERY_THRESHOLD = 5
+
 # Set of Aurora engine identifiers
 AURORA_ENGINES = {"aurora_postgresql", "aurora_mysql"}
 
@@ -171,6 +175,13 @@ SIGNAL_TO_CAPABILITY: dict[str, str] = {
     "subqueries": "complex_joins",
     "transactions": "transactions",
     "referential_integrity": "referential_integrity",
+}
+
+# Signals whose specialist capability has a basic form in other engines.
+# Used only for tiny mandatory engines (#165): Aurora FULLTEXT can stand in for
+# OpenSearch when the search workload is a handful of queries.
+SIGNAL_TO_BASIC_CAPABILITY: dict[str, str] = {
+    "text_search": "text_search_basic",
 }
 
 # ---------------------------------------------------------------------------
@@ -283,11 +294,7 @@ def run_reality_check(
     if query_capabilities is None:
         query_capabilities = triage.get("query_capabilities", {})
 
-    # Build signal map: query_id → list of signal names
-    query_signals: dict[str, list[str]] = defaultdict(list)
-    for signal in signals:
-        for qid in signal.get("query_ids", []):
-            query_signals[qid].append(signal.get("signal", ""))
+    query_signals = _build_query_signals(signals)
 
     # Build engine query counts
     engine_queries: dict[str, list[dict]] = defaultdict(list)
@@ -295,11 +302,9 @@ def run_reality_check(
         engine_queries[qa["assigned_engine"]].append(qa)
 
     # Build set of queries with mandatory signal overrides (cannot be consolidated)
-    mandatory_query_ids: set[str] = set()
-    for qa in query_assignments:
-        reason = qa.get("assignment_reason", "")
-        if "signal override" in reason:
-            mandatory_query_ids.add(qa["query_id"])
+    mandatory_query_ids: set[str] = {
+        qa["query_id"] for qa in query_assignments if _is_signal_override(qa)
+    }
 
     # Engines committed via mandatory signal overrides (e.g., OpenSearch for text_search)
     mandatory_committed_engines: set[str] = set()
@@ -334,7 +339,7 @@ def run_reality_check(
         key=lambda e: (
             0 if e in mandatory_committed_engines else 1,  # mandatory = protected
             0 if e == primary_engine_name else 1,  # primary = protected
-            -ENGINE_BASE_COST.get(e, 100),  # most expensive first
+            ENGINE_BASE_COST.get(e, 100),  # most expensive first (reversed below)
         ),
         reverse=True,  # evaluate most expensive non-mandatory first
     )
@@ -438,35 +443,13 @@ def run_reality_check(
             engines_to_consolidate.append(engine)
         surviving_engines.discard(engine)
 
-    # Record absorption consolidations
-    absorption_consolidations = []
-    if aurora_absorption.absorbed_queries:
-        # Group absorbed queries by source engine
-        by_source: dict[str, list[dict]] = {}
-        for aq in aurora_absorption.absorbed_queries:
-            by_source.setdefault(aq["from_engine"], []).append(aq)
-
-        for from_engine, queries in by_source.items():
-            is_full = from_engine in aurora_absorption.engines_eliminated
-            base_cost = ENGINE_BASE_COST.get(from_engine, 100)
-            absorption_consolidations.append(
-                {
-                    "from_engine": from_engine,
-                    "to_engine": aurora_absorption.aurora_engine,
-                    "query_count": len(queries),
-                    "reason": (
-                        f"Aurora absorption: {from_engine} had "
-                        f"< {AURORA_ABSORPTION_QUERY_THRESHOLD} queries and Aurora "
-                        f"scores adequately on {'all' if is_full else 'absorbable subset'}"
-                    ),
-                    "saved_cost_estimate": (
-                        (base_cost + EXTRA_ENGINE_BURDEN_MONTHLY) if is_full else 0
-                    ),
-                    "action": "full" if is_full else "partial",
-                    "queries_retained": [],
-                    "retention_reason": None,
-                }
-            )
+    # Move absorbed queries now. Pass 2 skips them, so each query is
+    # placed (and counted in consolidations) exactly once.
+    revised = deepcopy(query_assignments)
+    absorbed_by_id = {aq["query_id"]: aq for aq in aurora_absorption.absorbed_queries}
+    absorption_consolidations = _apply_aurora_absorption(
+        revised, aurora_absorption, engine_queries, mandatory_committed_engines
+    )
 
     # -------------------------------------------------------------------
     # Pass 2: Consolidation — distribute queries from redundant engines
@@ -478,7 +461,6 @@ def run_reality_check(
     }
 
     consolidations = []
-    revised = deepcopy(query_assignments)
 
     lightweight_recommendations = []
 
@@ -488,7 +470,11 @@ def run_reality_check(
             continue
 
         # Filter out mandatory queries — they can't be moved
-        movable_qas = [qa for qa in qas if qa["query_id"] not in mandatory_query_ids]
+        movable_qas = [
+            qa
+            for qa in qas
+            if qa["query_id"] not in mandatory_query_ids and qa["query_id"] not in absorbed_by_id
+        ]
         if not movable_qas:
             continue
 
@@ -649,6 +635,116 @@ def run_reality_check(
     }
 
 
+def rerun_aurora_absorption(
+    revised_assignments: list[dict],
+    triage: dict,
+    analysis_outputs: dict[str, dict],
+    collector_output: dict,
+) -> tuple[list[dict], list[dict]]:
+    """Run Pass 1 again on an already-revised assignment (#166).
+
+    The LLM validator can restore an Aurora engine that Pass 0 removed, after
+    Pass 1 found no Aurora to absorb into. Call this once after corrections so
+    small engines get the same chance they would have had.
+
+    Returns (updated_assignments, new_consolidations). Assignments are copied.
+    """
+    revised = deepcopy(revised_assignments)
+    engine_queries: dict[str, list[dict]] = defaultdict(list)
+    for qa in revised:
+        engine_queries[qa["assigned_engine"]].append(qa)
+    mandatory_committed_engines = {
+        qa["assigned_engine"] for qa in revised if _is_signal_override(qa)
+    }
+    queries = collector_output.get("queries", {}).get("query_patterns", [])
+
+    absorption = _run_aurora_absorption_pass(
+        engine_queries=engine_queries,
+        surviving_engines={e for e, qas in engine_queries.items() if qas},
+        mandatory_committed_engines=mandatory_committed_engines,
+        query_signals=_build_query_signals(triage.get("signals", [])),
+        query_map={q["query_id"]: q for q in queries},
+        analysis_outputs=analysis_outputs,
+        query_capabilities=triage.get("query_capabilities", {}),
+    )
+    consolidations = _apply_aurora_absorption(
+        revised, absorption, engine_queries, mandatory_committed_engines
+    )
+    return revised, consolidations
+
+
+def _build_query_signals(signals: list[dict]) -> dict[str, list[str]]:
+    """Map query_id → triage signal names."""
+    query_signals: dict[str, list[str]] = defaultdict(list)
+    for signal in signals:
+        for qid in signal.get("query_ids", []):
+            query_signals[qid].append(signal.get("signal", ""))
+    return query_signals
+
+
+def _apply_aurora_absorption(
+    revised: list[dict],
+    absorption: AuroraAbsorptionResult,
+    engine_queries: dict[str, list[dict]],
+    mandatory_committed_engines: set[str],
+) -> list[dict]:
+    """Move absorbed queries in ``revised`` (in place) and return their consolidations (#168)."""
+    absorbed_by_id = {aq["query_id"]: aq for aq in absorption.absorbed_queries}
+    for qa in revised:
+        aq = absorbed_by_id.get(qa["query_id"])
+        if aq:
+            qa["assigned_engine"] = aq["to_engine"]
+            qa["assignment_reason"] = (
+                f"reality check: absorbed from {aq['from_engine']} → {aq['to_engine']} "
+                f"({aq['reason']})"
+            )
+
+    by_source: dict[str, list[dict]] = {}
+    for aq in absorption.absorbed_queries:
+        by_source.setdefault(aq["from_engine"], []).append(aq)
+
+    consolidations = []
+    for from_engine, queries in by_source.items():
+        is_full = from_engine in absorption.engines_eliminated
+        base_cost = ENGINE_BASE_COST.get(from_engine, 100)
+        consolidations.append(
+            {
+                "from_engine": from_engine,
+                "to_engine": absorption.aurora_engine,
+                "query_count": len(queries),
+                "reason": (
+                    f"Aurora absorption: {queries[0]['reason']}"
+                    if from_engine in mandatory_committed_engines
+                    else f"Aurora absorption: {from_engine} had "
+                    f"< {AURORA_ABSORPTION_QUERY_THRESHOLD} queries and Aurora "
+                    f"scores adequately on {'all' if is_full else 'absorbable subset'}"
+                ),
+                "saved_cost_estimate": (base_cost + EXTRA_ENGINE_BURDEN_MONTHLY) if is_full else 0,
+                "action": "full" if is_full else "partial",
+                "queries_retained": [
+                    qa["query_id"]
+                    for qa in engine_queries[from_engine]
+                    if qa["query_id"] not in absorbed_by_id
+                ],
+                "retention_reason": (
+                    None if is_full else "Specialist engine scores well ahead of Aurora"
+                ),
+            }
+        )
+    return consolidations
+
+
+def _is_signal_override(qa: dict) -> bool:
+    """True when a triage signal forced this query to its engine (#151).
+
+    Assignments written before ``signal_override`` existed carry the signal
+    only in ``assignment_reason``; fall back to that for legacy artifacts.
+    """
+    if "signal_override" in qa:
+        return bool(qa["signal_override"])
+    return str(qa.get("assignment_reason", "")).startswith("signal override")
+
+
 def _run_aurora_absorption_pass(
     engine_queries: dict[str, list[dict]],
     surviving_engines: set[str],
@@ -691,18 +787,38 @@ def _run_aurora_absorption_pass(
     engines_eliminated: list[str] = []
     engines_reduced: list[str] = []
 
-    # Identify candidates: non-Aurora, non-mandatory, < threshold queries
+    # Identify candidates: non-Aurora, < threshold queries. Mandatory engines
+    # qualify only when tiny, and are handled all-or-nothing below.
     candidates = [
         e
         for e in surviving_engines
         if e not in AURORA_ENGINES
-        and e not in mandatory_committed_engines
-        and len(engine_queries.get(e, [])) < AURORA_ABSORPTION_QUERY_THRESHOLD
         and len(engine_queries.get(e, [])) > 0
+        and (
+            len(engine_queries[e]) <= TINY_MANDATORY_QUERY_THRESHOLD
+            if e in mandatory_committed_engines
+            else len(engine_queries[e]) < AURORA_ABSORPTION_QUERY_THRESHOLD
+        )
     ]
 
     for candidate_engine in candidates:
         qas = engine_queries[candidate_engine]
+
+        if candidate_engine in mandatory_committed_engines:
+            mandatory_absorbed = _absorb_tiny_mandatory_engine(
+                candidate_engine,
+                aurora_engine,
+                qas,
+                query_signals,
+                query_map,
+                analysis_outputs,
+                query_capabilities,
+            )
+            if mandatory_absorbed:
+                absorbed_queries.extend(mandatory_absorbed)
+                engines_eliminated.append(candidate_engine)
+            continue
+
         absorbable = []
         protected = []
 
@@ -750,6 +866,76 @@ def _run_aurora_absorption_pass(
         engines_reduced=engines_reduced,
         aurora_engine=aurora_engine,
     )
+
+
+def _absorb_tiny_mandatory_engine(
+    candidate_engine: str,
+    aurora_engine: str,
+    qas: list[dict],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    analysis_outputs: dict[str, dict],
+    query_capabilities: dict[str, list[str]],
+) -> list[dict]:
+    """Absorb every query of a tiny mandatory engine into Aurora, or none (#165).
+
+    Each query must pass three checks:
+      - Aurora meets the query's hard capability requirements
+      - every capability signal is covered by Aurora directly or in basic form
+      - Aurora fit, scoring basic-covered signals as neutral, is at least
+        AURORA_ABSORPTION_MIN_FIT
+
+    The specialist delta check is skipped on purpose: the specialist always
+    wins it through the signal bonus, which is what made the engine mandatory.
+    Partial absorption is refused because the engine, and its cost, would stay.
+    """
+    aurora_caps = ENGINE_CAPABILITIES.get(aurora_engine, set())
+    fits: dict[str, int] = {}
+    coverage: set[str] = set()
+
+    for qa in qas:
+        qid = qa["query_id"]
+        if not can_engine_serve_capability(aurora_engine, query_capabilities.get(qid, [])):
+            return []
+
+        basic_covered: list[str] = []
+        for sig in query_signals.get(qid, []):
+            needed_cap = SIGNAL_TO_CAPABILITY.get(sig)
+            if not needed_cap or needed_cap in aurora_caps:
+                continue
+            basic_cap = SIGNAL_TO_BASIC_CAPABILITY.get(sig)
+            if basic_cap not in aurora_caps:
+                return []
+            basic_covered.append(sig)
+            coverage.add(basic_cap)
+
+        neutral_signals = {
+            qid: [sig for sig in query_signals.get(qid, []) if sig not in basic_covered]
+        }
+        fits[qid] = _engine_fit_score(
+            aurora_engine, qa, neutral_signals, query_map, analysis_outputs
+        )
+        if fits[qid] < AURORA_ABSORPTION_MIN_FIT:
+            return []
+
+    reason = (
+        f"{candidate_engine} carries only {len(qas)} queries and {aurora_engine} "
+        f"serves them (fit {min(fits.values())}-{max(fits.values())}"
+        + (f", via {', '.join(sorted(coverage))}" if coverage else "")
+        + f"), so a dedicated {candidate_engine} deployment is not justified"
+    )
+    return [
+        {
+            "query_id": qa["query_id"],
+            "from_engine": candidate_engine,
+            "to_engine": aurora_engine,
+            "fit_score": fits[qa["query_id"]],
+            "specialist_score": None,
+            "delta": None,
+            "reason": reason,
+        }
+        for qa in qas
+    ]
 
 
 def _engine_fit_score(

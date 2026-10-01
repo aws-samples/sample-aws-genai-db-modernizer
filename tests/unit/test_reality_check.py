@@ -3,6 +3,7 @@
 from src.agents.referee.reality_check import (
     BASIC_CRUD_SCORE,
     SIGNAL_MATCH_BONUS,
+    TINY_MANDATORY_QUERY_THRESHOLD,
     _can_engine_serve_query,
     _engine_fit_score,
     _run_aurora_absorption_pass,
@@ -348,6 +349,52 @@ class TestRunRealityCheck:
         )
         assert q2_engine == "opensearch"
 
+    def test_mandatory_detected_from_structured_field(self):
+        """Protection reads signal_override, so rewording the reason can't disable it (#151)."""
+        assignment = {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": "q1", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+                {
+                    "query_id": "q2",
+                    "assigned_engine": "opensearch",
+                    "assignment_reason": "routed for full-text search",
+                    "signal_override": "text_search",
+                },
+            ],
+        }
+        collector = _make_collector(["q1", "q2"])
+
+        result = run_reality_check(assignment, _make_triage(), {}, collector)
+
+        assert result["unique_value_assessment"]["opensearch"]["is_mandatory"] is True
+        q2 = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "q2")
+        assert q2["assigned_engine"] == "opensearch"
+
+    def test_pass0_evaluates_most_expensive_engine_first(self):
+        """Pass 0 removes the most expensive redundant engine before cheaper ones (#164)."""
+        assignment = _make_assignment(
+            [
+                ("q1", "dynamodb"),
+                ("q2", "elasticache"),
+                ("q3", "opensearch"),
+                ("q4", "documentdb"),
+                ("q5", "aurora_mysql"),
+            ]
+        )
+        collector = _make_collector(["q1", "q2", "q3", "q4", "q5"])
+
+        result = run_reality_check(assignment, _make_triage(), {}, collector)
+
+        # dynamodb is the primary and is evaluated last; the rest go by cost, highest first
+        assert list(result["unique_value_assessment"]) == [
+            "aurora_mysql",
+            "documentdb",
+            "opensearch",
+            "elasticache",
+            "dynamodb",
+        ]
+
 
 class TestAuroraAbsorptionPass:
     """Test the Aurora absorption pass (Pass 1)."""
@@ -508,12 +555,13 @@ class TestAuroraAbsorptionPass:
         assert result.engines_eliminated == []
         assert result.absorbed_queries == []
 
-    def test_mandatory_engine_never_absorbed(self):
-        """OpenSearch with mandatory signal override is protected regardless of count."""
+    def test_mandatory_engine_above_tiny_threshold_never_absorbed(self):
+        """OpenSearch with mandatory signal overrides is protected once it carries real volume."""
+        os_ids = [f"os{i}" for i in range(1, TINY_MANDATORY_QUERY_THRESHOLD + 2)]
         engine_queries = _make_engine_queries(
             {
                 "aurora_postgresql": [f"aq{i}" for i in range(30)],
-                "opensearch": ["os1", "os2", "os3"],
+                "opensearch": os_ids,
             }
         )
         analysis_outputs = {
@@ -524,11 +572,7 @@ class TestAuroraAbsorptionPass:
                 "table_recommendations": [{"table_id": "db.posts", "confidence_score": 60}]
             },
         }
-        query_map = {
-            "os1": {"tables_accessed": ["db.posts"]},
-            "os2": {"tables_accessed": ["db.posts"]},
-            "os3": {"tables_accessed": ["db.posts"]},
-        }
+        query_map = {qid: {"tables_accessed": ["db.posts"]} for qid in os_ids}
         query_map.update({f"aq{i}": {"tables_accessed": ["db.posts"]} for i in range(30)})
 
         result = _run_aurora_absorption_pass(
@@ -794,3 +838,271 @@ class TestAuroraAbsorptionIntegration:
         # DynamoDB should NOT be absorbed (delta = 95-40 = 55, well above threshold of 30)
         aurora_info = result.get("aurora_absorption", {})
         assert "dynamodb" not in aurora_info.get("engines_eliminated", [])
+
+
+class TestAbsorptionAppliedToAssignments:
+    """Consolidations and revised_assignments must agree (#168)."""
+
+    @staticmethod
+    def _run_partial_scenario() -> dict:
+        """Aurora owns 30 join queries; ElastiCache has 5 absorbable and 3 protected queries."""
+        aurora_ids = [f"aq{i}" for i in range(30)]
+        assignment = _make_assignment(
+            [(qid, "aurora_postgresql") for qid in aurora_ids]
+            + [(f"ec{i}", "elasticache") for i in range(1, 9)]
+        )
+        triage = {
+            "signals": [
+                {
+                    "signal": "complex_joins",
+                    "targets": ["aurora_postgresql"],
+                    "query_ids": aurora_ids,
+                }
+            ]
+        }
+        collector = {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": qid, "tables_accessed": ["db.cache"]} for qid in aurora_ids
+                ]
+                + [
+                    {
+                        "query_id": f"ec{i}",
+                        "tables_accessed": ["db.cache" if i < 6 else "db.sessions"],
+                    }
+                    for i in range(1, 9)
+                ]
+            }
+        }
+        analysis = {
+            "aurora_postgresql": {
+                "table_recommendations": [
+                    {"table_id": "db.cache", "confidence_score": 60},
+                    {"table_id": "db.sessions", "confidence_score": 20},
+                ]
+            },
+            "elasticache": {
+                "table_recommendations": [
+                    {"table_id": "db.cache", "confidence_score": 55},
+                    {"table_id": "db.sessions", "confidence_score": 85},
+                ]
+            },
+        }
+        return run_reality_check(assignment, triage, analysis, collector)
+
+    def test_partial_absorption_moves_absorbed_queries(self):
+        result = self._run_partial_scenario()
+        assert result["aurora_absorption"]["engines_reduced"] == ["elasticache"]
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert [engine_of[f"ec{i}"] for i in range(1, 6)] == ["aurora_postgresql"] * 5
+        assert [engine_of[f"ec{i}"] for i in range(6, 9)] == ["elasticache"] * 3
+
+    def test_partial_absorption_records_reason_on_moved_queries(self):
+        result = self._run_partial_scenario()
+        moved = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "ec1")
+        assert moved["assignment_reason"].startswith("reality check: absorbed from elasticache")
+
+    def test_full_absorption_counts_each_query_once(self):
+        """A fully absorbed engine yields one consolidation record set, not two."""
+        aurora_ids = [f"aq{i}" for i in range(30)]
+        doc_ids = [f"dq{i}" for i in range(1, 6)]
+        assignment = _make_assignment(
+            [(qid, "aurora_postgresql") for qid in aurora_ids]
+            + [(qid, "documentdb") for qid in doc_ids]
+        )
+        collector = {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": qid, "tables_accessed": ["db.main"]} for qid in aurora_ids
+                ]
+                + [{"query_id": qid, "tables_accessed": ["db.docs"]} for qid in doc_ids]
+            }
+        }
+        analysis = {
+            "aurora_postgresql": {
+                "table_recommendations": [
+                    {"table_id": "db.main", "confidence_score": 80},
+                    {"table_id": "db.docs", "confidence_score": 65},
+                ]
+            },
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.main", "confidence_score": 50},
+                    {"table_id": "db.docs", "confidence_score": 82},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, {"signals": []}, analysis, collector)
+
+        from_docdb = [c for c in result["consolidations"] if c["from_engine"] == "documentdb"]
+        assert sum(c["query_count"] for c in from_docdb) == 5
+        assert {c["to_engine"] for c in from_docdb} == {"aurora_postgresql"}
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert {engine_of[qid] for qid in doc_ids} == {"aurora_postgresql"}
+
+
+class TestTinyMandatoryAbsorption:
+    """A tiny mandatory engine can be absorbed when Aurora covers its signal at a basic level (#165)."""
+
+    @staticmethod
+    def _absorb(os_count: int, aurora_text_confidence: int = 70, required_caps=None):
+        os_ids = [f"os{i}" for i in range(1, os_count + 1)]
+        engine_queries = _make_engine_queries(
+            {"aurora_mysql": [f"aq{i}" for i in range(10)], "opensearch": os_ids}
+        )
+        query_map = {qid: {"tables_accessed": ["db.users"]} for qid in os_ids}
+        query_map.update({f"aq{i}": {"tables_accessed": ["db.posts"]} for i in range(10)})
+        analysis_outputs = {
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.users", "confidence_score": aurora_text_confidence}
+                ]
+            },
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
+            },
+        }
+        return _run_aurora_absorption_pass(
+            engine_queries=engine_queries,
+            surviving_engines={"aurora_mysql", "opensearch"},
+            mandatory_committed_engines={"opensearch"},
+            query_signals={qid: ["text_search"] for qid in os_ids},
+            query_map=query_map,
+            analysis_outputs=analysis_outputs,
+            query_capabilities={qid: required_caps or ["inverted_index"] for qid in os_ids},
+        )
+
+    def test_tiny_text_search_engine_absorbed_into_aurora_fulltext(self):
+        result = self._absorb(os_count=3)
+
+        assert result.engines_eliminated == ["opensearch"]
+        assert {aq["to_engine"] for aq in result.absorbed_queries} == {"aurora_mysql"}
+        assert len(result.absorbed_queries) == 3
+
+    def test_absorption_reason_names_the_basic_capability(self):
+        result = self._absorb(os_count=3)
+        assert "text_search_basic" in result.absorbed_queries[0]["reason"]
+
+    def test_tiny_mandatory_engine_kept_when_aurora_fit_is_low(self):
+        result = self._absorb(os_count=3, aurora_text_confidence=20)
+
+        assert result.engines_eliminated == []
+        assert result.absorbed_queries == []
+
+    def test_tiny_mandatory_engine_kept_when_hard_capability_missing(self):
+        result = self._absorb(os_count=3, required_caps=["vector_index"])
+
+        assert result.engines_eliminated == []
+        assert result.absorbed_queries == []
+
+    def test_tiny_mandatory_engine_never_partially_absorbed(self):
+        """Moving only some mandatory queries keeps the engine and its cost, so move none."""
+        os_ids = ["os1", "os2", "os3"]
+        engine_queries = _make_engine_queries(
+            {"aurora_mysql": [f"aq{i}" for i in range(10)], "opensearch": os_ids}
+        )
+        query_map = {
+            "os1": {"tables_accessed": ["db.users"]},
+            "os2": {"tables_accessed": ["db.users"]},
+            "os3": {"tables_accessed": ["db.logs"]},
+        }
+        analysis_outputs = {
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.users", "confidence_score": 70},
+                    {"table_id": "db.logs", "confidence_score": 10},
+                ]
+            },
+        }
+
+        result = _run_aurora_absorption_pass(
+            engine_queries=engine_queries,
+            surviving_engines={"aurora_mysql", "opensearch"},
+            mandatory_committed_engines={"opensearch"},
+            query_signals={qid: ["text_search"] for qid in os_ids},
+            query_map=query_map,
+            analysis_outputs=analysis_outputs,
+            query_capabilities={qid: ["inverted_index"] for qid in os_ids},
+        )
+
+        assert result.absorbed_queries == []
+        assert result.engines_reduced == []
+
+
+def test_aurora_mysql_serves_inverted_index():
+    """InnoDB FULLTEXT indexes give Aurora MySQL an inverted index (#165)."""
+    from src.agents.referee.capability_registry import can_engine_serve_capability
+
+    assert can_engine_serve_capability("aurora_mysql", ["inverted_index"])
+
+
+def test_tiny_opensearch_absorbed_end_to_end():
+    """WordPress shape: 3 text-search queries leave OpenSearch for Aurora MySQL (#165, #168)."""
+    join_ids = [f"aq{i}" for i in range(7)]
+    os_ids = ["os1", "os2", "os3"]
+    assignment = {
+        "version": 1,
+        "query_assignments": [
+            {"query_id": f"dq{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+            for i in range(20)
+        ]
+        + [
+            {"query_id": qid, "assigned_engine": "aurora_mysql", "assignment_reason": "t"}
+            for qid in join_ids
+        ]
+        + [
+            {
+                "query_id": qid,
+                "assigned_engine": "opensearch",
+                "assignment_reason": "signal override: text_search → opensearch",
+                "signal_override": "text_search",
+            }
+            for qid in os_ids
+        ],
+    }
+    triage = {
+        "signals": [
+            {"signal": "complex_joins", "targets": ["aurora_mysql"], "query_ids": join_ids},
+            {"signal": "text_search", "targets": ["opensearch"], "query_ids": os_ids},
+        ],
+        "query_capabilities": {qid: ["inverted_index"] for qid in os_ids},
+    }
+    collector = {
+        "queries": {
+            "query_patterns": [
+                {"query_id": f"dq{i}", "tables_accessed": ["db.options"]} for i in range(20)
+            ]
+            + [{"query_id": qid, "tables_accessed": ["db.posts"]} for qid in join_ids]
+            + [{"query_id": qid, "tables_accessed": ["db.users"]} for qid in os_ids]
+        }
+    }
+    analysis = {
+        "dynamodb": {
+            "table_recommendations": [
+                {"table_id": "db.options", "confidence_score": 90},
+                {"table_id": "db.posts", "confidence_score": 40},
+                {"table_id": "db.users", "confidence_score": 85},
+            ]
+        },
+        "aurora_mysql": {
+            "table_recommendations": [
+                {"table_id": "db.options", "confidence_score": 60},
+                {"table_id": "db.posts", "confidence_score": 80},
+                {"table_id": "db.users", "confidence_score": 80},
+            ]
+        },
+        "opensearch": {"table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]},
+    }
+
+    result = run_reality_check(assignment, triage, analysis, collector)
+
+    engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+    assert {engine_of[qid] for qid in os_ids} == {"aurora_mysql"}
+    from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+    assert len(from_os) == 1
+    assert from_os[0]["to_engine"] == "aurora_mysql"
+    assert from_os[0]["action"] == "full"
+    assert from_os[0]["query_count"] == 3
+    assert "text_search_basic" in from_os[0]["reason"]

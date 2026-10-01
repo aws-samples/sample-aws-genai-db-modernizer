@@ -27,7 +27,8 @@ ENGINE_CAPABILITIES: dict[str, set[str]] = {
     "documentdb": {"multi_doc_acid", "strong_consistency"},
     "opensearch": {"inverted_index", "scan_engine"},
     "aurora_postgresql": {"multi_doc_acid", "strong_consistency", "scan_engine", "inverted_index"},
-    "aurora_mysql": {"multi_doc_acid", "strong_consistency", "scan_engine"},
+    # InnoDB FULLTEXT indexes (MATCH ... AGAINST) since MySQL 5.6
+    "aurora_mysql": {"multi_doc_acid", "strong_consistency", "scan_engine", "inverted_index"},
 }
 
 # ---------------------------------------------------------------------------

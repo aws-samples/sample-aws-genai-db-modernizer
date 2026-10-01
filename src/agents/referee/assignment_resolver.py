@@ -129,6 +129,7 @@ class AssignmentResolver:
         assigned: dict[str, str] = {}
         assigned_confidence: dict[str, int] = {}
         assigned_reason: dict[str, str] = {}
+        assigned_signal: dict[str, str] = {}
 
         # Determine Aurora fallback engine from triage selection
         aurora_fallback = _resolve_aurora_fallback(selected_engines)
@@ -142,7 +143,7 @@ class AssignmentResolver:
                 continue
             best_engine = max(
                 analysis_outputs.keys(),
-                key=lambda e: (sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group)),
+                key=lambda e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group),
             )
             for qid in group:
                 assigned[qid] = best_engine
@@ -162,6 +163,7 @@ class AssignmentResolver:
                 assigned[qid] = engine
                 assigned_confidence[qid] = scores.get(qid, {}).get(engine, 0)
                 assigned_reason[qid] = f"signal override: {signal} → {engine}"
+                assigned_signal[qid] = signal
                 continue
 
             # Otherwise pick highest adjusted score
@@ -202,6 +204,7 @@ class AssignmentResolver:
                     confidence=confidence,
                     source_tables=query_tables.get(qid, []),
                     assignment_reason=reason,
+                    signal_override=assigned_signal.get(qid),
                 )
             )
 

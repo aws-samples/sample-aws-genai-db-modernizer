@@ -81,6 +81,13 @@ class QueryAssignment(BaseModel):
             "Distinct from customer_override, which marks the customer's own picks."
         ),
     )
+    signal_override: str | None = Field(
+        default=None,
+        description=(
+            "Triage signal that forced this query to its engine (e.g. text_search). "
+            "Reality Check treats these queries as mandatory for the engine."
+        ),
+    )
     warnings: list[str] = Field(
         default_factory=list,
         description="Warnings associated with this query assignment",

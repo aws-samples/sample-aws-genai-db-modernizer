@@ -21,7 +21,12 @@ from src.agents.referee.consolidation_validator import (
     sanity_sweep,
     validate_consolidations,
 )
-from src.agents.referee.reality_check import _build_recommendations, run_reality_check
+from src.agents.referee.reality_check import (
+    AURORA_ENGINES,
+    _build_recommendations,
+    rerun_aurora_absorption,
+    run_reality_check,
+)
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
@@ -171,6 +176,16 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                 surviving_engines=surviving_engines,
                 all_original_engines=all_original_engines,
             )
+            # The LLM can restore an Aurora that Pass 1 never saw; absorb again (#166)
+            corrected_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
+            if (AURORA_ENGINES & corrected_engines) - surviving_engines:
+                result["revised_assignments"], absorbed = rerun_aurora_absorption(
+                    result["revised_assignments"],
+                    result.get("triage", {}),
+                    result.get("analysis_outputs", {}),
+                    result.get("collector_output", {}),
+                )
+                result["consolidations"] = result["consolidations"] + absorbed
             # Rebuild recommendations to reflect corrected consolidations
             result["recommendations"] = _build_recommendations(
                 result["revised_assignments"],
@@ -363,10 +378,7 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
         )
 
         if corrections:
-            print(
-                f"[reality-check] LLM reversed {len(corrections)} queries — "
-                f"applying corrections"
-            )
+            print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
             llm_output["consolidation_corrections"] = corrections
 
     # Generate executive summary
