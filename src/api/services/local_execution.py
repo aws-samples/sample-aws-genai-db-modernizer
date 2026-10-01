@@ -5,6 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+_ENGINES = (
+    "dynamodb",
+    "documentdb",
+    "elasticache",
+    "opensearch",
+    "aurora_postgresql",
+    "aurora_mysql",
+)
+
 
 class LocalExecutionService:
     """Filesystem-backed execution service for local development.
@@ -73,6 +82,20 @@ class LocalExecutionService:
         if job_dir is None:
             return []
 
+        from src.storage.assignment_versioning import (
+            resolve_downstream_assignment_version,
+            synthesis_report_candidates,
+        )
+
+        # Schema design and synthesis key their output on the effective assignment
+        # version (v2 when Reality Check consolidated), ADR-028.
+        schema_version = resolve_downstream_assignment_version(self._store, db_name, job_id)
+        job_prefix = f"{db_name}/{job_id}/"
+        synthesis_candidates = [
+            key.removeprefix(job_prefix)
+            for key in synthesis_report_candidates(self._store, db_name, job_id)
+        ]
+
         stages = []
         # Use SFN-compatible state names so assessments.py routes work unchanged.
         # Order mirrors the cloud SFN execution sequence.
@@ -83,7 +106,7 @@ class LocalExecutionService:
         ]
 
         # Analysis stages (parallel in cloud, listed per-engine here)
-        for engine in ("dynamodb", "documentdb", "elasticache", "opensearch"):
+        for engine in _ENGINES:
             analysis_dir = job_dir / f"analysis-{engine}"
             if analysis_dir.exists():
                 stage_defs.append(
@@ -112,10 +135,7 @@ class LocalExecutionService:
         # In cloud SFN these appear after reality-check completes.
         # In local mode: if schema dirs exist, approval was implicitly given (completed).
         # If no schema dirs but reality-check is done, show approval as in-progress.
-        has_schema = any(
-            (job_dir / f"schema-{e}").exists()
-            for e in ("dynamodb", "documentdb", "elasticache", "opensearch")
-        )
+        has_schema = any((job_dir / f"schema-{e}").exists() for e in _ENGINES)
         has_reality_output = self._store.exists(f"{db_name}/{job_id}/reality-check/output.json")
 
         if has_schema:
@@ -146,7 +166,7 @@ class LocalExecutionService:
             # WaitForAssignmentApproval will be emitted as in-progress below
 
         # Schema design stages — only include if directories exist
-        for engine in ("dynamodb", "documentdb", "elasticache", "opensearch"):
+        for engine in _ENGINES:
             schema_dir = job_dir / f"schema-{engine}"
             if schema_dir.exists():
                 stage_defs.append(
@@ -154,7 +174,7 @@ class LocalExecutionService:
                         "RunSchemaDesign",
                         f"schema-{engine}",
                         [
-                            f"schema-{engine}/v1/schema_output.json",
+                            f"schema-{engine}/v{schema_version}/schema_output.json",
                             f"schema-{engine}/schema_output.json",
                         ],
                     )
@@ -166,8 +186,12 @@ class LocalExecutionService:
             stage_defs.append(
                 (
                     "RunRefereeSynthesis",
-                    "referee-synthesis",
-                    ["referee-synthesis/report.json", "synthesis/report.json"],
+                    (
+                        "referee-synthesis"
+                        if (job_dir / "referee-synthesis").exists()
+                        else "synthesis"
+                    ),
+                    synthesis_candidates,
                 )
             )
 
@@ -317,10 +341,14 @@ class LocalExecutionService:
 
     def _infer_status(self, job_dir: Path) -> tuple[str, str | None]:
         """Infer SUCCEEDED / RUNNING / FAILED from artifact presence."""
-        # Check both synthesis output locations
+        from src.storage.assignment_versioning import synthesis_report_candidates
+
+        # Every synthesis output location, versioned first (ADR-028)
+        db_name, job_id = job_dir.parent.name, job_dir.name
+        job_prefix = f"{db_name}/{job_id}/"
         completion_markers = [
-            job_dir / "referee-synthesis" / "report.json",
-            job_dir / "synthesis" / "report.json",
+            job_dir / key.removeprefix(job_prefix)
+            for key in synthesis_report_candidates(self._store, db_name, job_id)
         ]
         for marker in completion_markers:
             if marker.exists():

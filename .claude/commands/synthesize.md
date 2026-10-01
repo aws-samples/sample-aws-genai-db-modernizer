@@ -18,8 +18,10 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
    uv run python scripts/run_synthesis.py --job-id {job_id} --db {database_name} --llm-mode external
    ```
 
+   The script resolves the effective assignment version itself (v2 when Reality Check consolidated, else v1) and prints the exact `llm_request` and `llm_response` paths. Use those paths as printed. Do not build versioned paths yourself.
+
 3. **If status is `awaiting_llm`:**
-   a. Read LLM request: `.artifacts/{database_name}/{job_id}/synthesis/llm_input.json`
+   a. Read the LLM request at the `llm_request` path the script printed (under `./artifacts/`)
    b. Write a 3-4 sentence executive summary for a CTO audience. Rules:
       - Reference the deterministic summary provided for factual grounding
       - No confidence scores, no cost figures (those are in the report)
@@ -32,7 +34,7 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
       {"executive_summary": "..."}
       ```
 
-   d. Write to: `.artifacts/{database_name}/{job_id}/synthesis/llm_response.json`
+   d. Write to the `llm_response` path the script printed (under `./artifacts/`)
    e. Finalize:
 
       ```bash
@@ -49,4 +51,4 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
 
 5. **Update state**
    Set `phase_status.synthesis` = "complete"
-   Tell user: "Full report available at ./artifacts/{db}/{job}/referee-synthesis/report.json"
+   Tell user: "Full report available at ./artifacts/{report}", using the `report` path the finalize step printed

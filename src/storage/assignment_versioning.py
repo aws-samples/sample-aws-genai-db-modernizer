@@ -65,6 +65,34 @@ def resolve_effective_assignment_version(store: _Lister, database_name: str, job
     return max(versions) if versions else 0
 
 
+def resolve_downstream_assignment_version(store: _Lister, database_name: str, job_id: str) -> int:
+    """Return the effective assignment version for schema design and synthesis.
+
+    Same rule as :func:`resolve_effective_assignment_version`, with the ADR-026
+    "coerce to 1" policy applied: downstream phases always operate on at least
+    the v1 the assessment core writes, so they never receive 0.
+    """
+    return resolve_effective_assignment_version(store, database_name, job_id) or 1
+
+
+def synthesis_report_candidates(store: _Lister, database_name: str, job_id: str) -> list[str]:
+    """Return synthesis report keys to try, most authoritative first.
+
+    The synthesis writer produces ``synthesis/v<N>/report.json`` keyed on the
+    effective assignment version, or the legacy ``referee-synthesis/report.json``
+    when no versioned assignment exists. An unversioned ``synthesis/report.json``
+    is kept last for old jobs. Readers take the first key that exists.
+    """
+    prefix = f"{database_name}/{job_id}"
+    version = resolve_effective_assignment_version(store, database_name, job_id)
+    keys: list[str] = []
+    if version > 0:
+        keys.append(f"{prefix}/synthesis/v{version}/report.json")
+    keys.append(f"{prefix}/referee-synthesis/report.json")
+    keys.append(f"{prefix}/synthesis/report.json")
+    return keys
+
+
 def next_assignment_version(store: _Lister, database_name: str, job_id: str) -> int:
     """Return the version number a new assignment write should use (highest + 1).
 
@@ -140,6 +168,18 @@ def _in_scope_engine_query_sets(
         if engine and qid:
             result.setdefault(engine, set()).add(qid)
     return result
+
+
+def engines_with_in_scope_queries(
+    store: _Reader, database_name: str, job_id: str, version: int
+) -> set[str]:
+    """Return the engines with at least one in-scope query in one assignment version.
+
+    Pass the effective version so engines Reality Check consolidated away (or a
+    customer re-routed to zero) drop out. Empty when the version's artifact is
+    absent; callers treat that as "unknown" and keep their prior engine list.
+    """
+    return set(_in_scope_engine_query_sets(store, database_name, job_id, version))
 
 
 def assignment_engine_diff(

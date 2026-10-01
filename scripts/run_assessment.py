@@ -427,6 +427,25 @@ def phase_reality_check_finalize(store, job_id: str, db: str, assignment_version
     _output("reality_check", {"status": "complete", "finalized": True, "artifact": artifact})
 
 
+def _surviving_engines(store, job_id: str, db: str, selected: list[str]) -> list[str]:
+    """Return ``selected`` minus engines with no in-scope query in the effective assignment.
+
+    Reality Check can consolidate an engine away entirely (all its queries move
+    elsewhere). Schema design and synthesis must not run for it. Keeps the
+    triage order; falls back to ``selected`` when the assignment is unreadable.
+    """
+    from src.storage.assignment_versioning import (
+        engines_with_in_scope_queries,
+        resolve_downstream_assignment_version,
+    )
+
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    in_scope = engines_with_in_scope_queries(store, db, job_id, version)
+    if not in_scope:
+        return selected
+    return [e for e in selected if e in in_scope]
+
+
 # ============================================================
 # Phase: Schema Design
 # ============================================================
@@ -448,7 +467,10 @@ def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> None:
     # Post-schema routing
     orch._run_post_schema_routing(job_id, db)
 
-    artifact = f"{db}/{job_id}/schema-*/v1/schema_output.json"
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    artifact = f"{db}/{job_id}/schema-*/v{version}/schema_output.json"
     _log_artifact("schema-design", artifact)
     _output("schema_design", {"status": "complete", "artifact": artifact})
 
@@ -521,6 +543,9 @@ def main() -> None:
             _error("init", "--resume-reality-check requires --job-id and --db")
         phase_reality_check_finalize(store, args.job_id, args.db)
         state = _read_state()
+        state["selected_engines"] = _surviving_engines(
+            store, args.job_id, args.db, state.get("selected_engines", [])
+        )
         state["phase_status"]["reality_check"] = "complete"
         state["current_phase"] = "schema_design"
         _write_state(state)
@@ -601,6 +626,9 @@ def main() -> None:
         state["phase_status"]["reality_check"] = "awaiting_llm"
         _write_state(state)
         return  # Stop here — resume with --resume-reality-check after LLM response
+    state["selected_engines"] = _surviving_engines(
+        store, job_id, db_name, state["selected_engines"]
+    )
     state["phase_status"]["reality_check"] = "complete"
     state["current_phase"] = "schema_design"
     _write_state(state)

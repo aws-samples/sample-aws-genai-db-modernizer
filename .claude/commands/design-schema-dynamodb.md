@@ -14,32 +14,29 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 1. **Split queries into groups**
 
    ```bash
-   uv run python -c "
-   from src.storage.local_store import LocalArtifactStore
-   from src.agents.schema_design.handler import run_schema_split
-   store = LocalArtifactStore(base_dir='./artifacts')
-   run_schema_split(job_id='{job_id}', database_name='{database_name}', target_type='dynamodb', store=store, assignment_version=1)
-   "
+   uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split
    ```
 
+   The script resolves the effective assignment version itself (v2 when Reality Check consolidated, else v1) and prints it as `assignment_version` in its JSON status line. Use that number as `{N}` in every path below. Do not pick the version yourself.
+
    This produces:
-   - `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/groups_manifest.json` — group metadata
-   - `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/input_group_{N}.json` — per-group input
+   - `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/groups_manifest.json` — group metadata
+   - `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json` — per-group input (`{G}` is the group number)
 
 2. **Read the manifest**
 
-   Read `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/groups_manifest.json` to get the list of groups.
+   Read `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/groups_manifest.json` to get the list of groups.
 
 3. **Launch parallel subagents — one per group**
 
    For each group in the manifest, launch a subagent (ALL in a single message for true parallelism). Each subagent:
 
-   a. Reads its group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/input_group_{N}.json`
+   a. Reads its group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
       - Contains: `collector_output` (filtered queries + tables) and `analysis_output`
    b. Reads the domain expertise: `src/skills/dynamodb-data-modeling.md`
    c. Reads the output contract: `src/contracts/dynamodb_model_output.py`
    d. Designs the schema following Phase 3 from the skill
-   e. Writes output to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/schema_draft_group_{N}.json`
+   e. Writes output to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`
 
    Key rules for each group output:
    - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group)
@@ -55,15 +52,10 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 5. **Merge group drafts**
 
    ```bash
-   uv run python -c "
-   from src.storage.local_store import LocalArtifactStore
-   from src.agents.schema_design.handler import run_schema_merge
-   store = LocalArtifactStore(base_dir='./artifacts')
-   run_schema_merge(job_id='{job_id}', database_name='{database_name}', target_type='dynamodb', store=store, assignment_version=1)
-   "
+   uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --merge
    ```
 
-   This produces the final merged output at `artifacts/{database_name}/{job_id}/schema-dynamodb/v1/schema_output.json`.
+   This produces the final merged output at the `output_path` the script prints, `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_output.json`.
 
 6. **Update state**
    Set `phase_status.schema_design_dynamodb` = "complete"

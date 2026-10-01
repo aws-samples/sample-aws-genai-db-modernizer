@@ -545,15 +545,9 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
     # version and read the versioned key first, then fall back. (ADR-029: the
     # previous unversioned-only read meant this tool always reported "not
     # available" for a normally-run synthesis.)
-    from src.storage.assignment_versioning import resolve_effective_assignment_version
+    from src.storage.assignment_versioning import synthesis_report_candidates
 
-    version = resolve_effective_assignment_version(store, database_name, job_id)
-    candidate_keys: list[str] = []
-    if version > 0:
-        candidate_keys.append(f"{database_name}/{job_id}/synthesis/v{version}/report.json")
-    candidate_keys.append(f"{database_name}/{job_id}/referee-synthesis/report.json")
-    # Legacy/defensive: an older unversioned artifact, if one exists.
-    candidate_keys.append(f"{database_name}/{job_id}/synthesis/report.json")
+    candidate_keys = synthesis_report_candidates(store, database_name, job_id)
 
     for report_key in candidate_keys:
         if store.exists(report_key):
@@ -1626,9 +1620,8 @@ def _engines_with_in_scope_queries(
 ) -> set[str]:
     """Return the engines that have at least one in-scope query routed to them.
 
-    Reads ``<db>/<job>/assignment/v<N>/assignment.json`` and unions
-    ``assigned_engine`` over in-scope query assignments. Mirrors
-    ``local_orchestrator._get_engines_with_in_scope_queries``. Because the caller
+    Thin fail-open wrapper over the shared
+    ``assignment_versioning.engines_with_in_scope_queries``. Because the caller
     passes the *effective* version (v2 when Reality Check consolidated, else v1),
     this already reflects any engine consolidation.
 
@@ -1636,16 +1629,11 @@ def _engines_with_in_scope_queries(
     callers can leave the plan untouched rather than mismark it.
     """
     try:
-        store = _make_store()
-        key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
-        if not store.exists(key):
-            return set()
-        assignment = store.read_json(key)
-        return {
-            qa["assigned_engine"]
-            for qa in assignment.get("query_assignments", [])
-            if qa.get("in_scope", True) and qa.get("assigned_engine")
-        }
+        from src.storage.assignment_versioning import engines_with_in_scope_queries
+
+        return engines_with_in_scope_queries(
+            _make_store(), database_name, job_id, assignment_version
+        )
     except Exception:  # noqa: BLE001 - best-effort; leave the plan untouched on any error
         return set()
 
