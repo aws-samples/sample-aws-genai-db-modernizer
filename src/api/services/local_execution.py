@@ -61,7 +61,7 @@ class LocalExecutionService:
             "stopped_at": stopped_at,
             "input": {
                 "database_name": db_name,
-                "source_database_type": "postgresql",
+                "source_database_type": self._read_source_engine(db_name, job_id),
             },
         }
 
@@ -326,6 +326,21 @@ class LocalExecutionService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _read_source_engine(self, db_name: str, job_id: str) -> str | None:
+        """Return the source engine recorded by the collector, or None if unknown.
+
+        Jobs run by the local scripts and skills have no ``_meta.json``, so the
+        collector output is the only record of the source engine.
+        """
+        path = f"{db_name}/{job_id}/collector/output.json"
+        if not self._store.exists(path):
+            return None
+        try:
+            engine = self._store.read_json(path)["metadata"]["source_database"]["engine"]
+        except Exception:
+            return None
+        return str(engine) if engine else None
 
     def _find_job_dir(self, job_id: str) -> tuple[str, Path | None]:
         """Scan artifact root to find which {db}/{job_id} directory exists."""
