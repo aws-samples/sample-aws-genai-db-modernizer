@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_report import (
+    AURORA_ENGINES,
     build_architecture_recommendation,
     build_query_groups,
     build_ranking,
@@ -27,6 +28,7 @@ from src.agents.referee.synthesis_report import (
     build_table_mappings,
     build_tco_analysis,
     generate_executive_summary,
+    schema_table_defs,
 )
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.storage.artifact_store import ArtifactStore
@@ -324,6 +326,8 @@ def _build_schema_summaries(data):
             summaries[engine] = _build_elasticache_schema_summary(schema)
         elif engine == "documentdb" and schema.get("collections"):
             summaries[engine] = _build_documentdb_schema_summary(schema)
+        elif engine in AURORA_ENGINES and schema.get("table_definitions"):
+            summaries[engine] = _build_aurora_schema_summary(engine, schema)
         elif schema.get("table_definitions"):
             summaries[engine] = _build_standard_schema_summary(schema)
         else:
@@ -377,6 +381,46 @@ def _build_documentdb_schema_summary(schema):
         ],
         "access_pattern_count": len(access_patterns),
         "hot_partitions_at_risk": 0,
+        "trade_offs": schema.get("trade_offs", []),
+        "unsupported_patterns": schema.get("unsupported_patterns", []),
+        "migration_notes": schema.get("migration_notes", []),
+    }
+
+
+def _build_aurora_schema_summary(engine, schema):
+    """Build schema summary for Aurora MySQL/PostgreSQL (relational table format).
+
+    Aurora carries tables over 1:1, so the summary reports relational structure
+    (columns, indexes, foreign keys) plus the Aurora-specific optimizations and
+    app-layer notes. The full DDL stays in the schema artifact.
+    """
+    tables = schema_table_defs(engine, schema)
+    return {
+        "status": "completed",
+        "validation_passed": schema.get("validation_passed", False),
+        "migration_strategy": schema.get("migration_strategy"),
+        "tables": [
+            {
+                "table_name": t["table_name"],
+                "aggregate_pattern": t["aggregate_pattern"],
+                "source_tables": t["source_tables"],
+                "gsi_count": 0,
+                "item_count": 0,
+                "item_size_bytes": 0,
+                "column_count": len(t.get("columns", [])),
+                "primary_key": t.get("primary_key", []),
+                "index_count": len(t.get("indexes", [])),
+                "foreign_key_count": len(t.get("foreign_keys", [])),
+            }
+            for t in tables
+        ],
+        "index_count": sum(len(t.get("indexes", [])) for t in tables),
+        "foreign_key_count": sum(len(t.get("foreign_keys", [])) for t in tables),
+        "access_pattern_count": len(schema.get("access_patterns", [])),
+        "hot_partitions_at_risk": 0,
+        "optimizations": schema.get("optimizations", []),
+        "app_layer_notes": schema.get("app_layer_notes", []),
+        "ddl_available": bool(schema.get("generated_ddl")),
         "trade_offs": schema.get("trade_offs", []),
         "unsupported_patterns": schema.get("unsupported_patterns", []),
         "migration_notes": schema.get("migration_notes", []),

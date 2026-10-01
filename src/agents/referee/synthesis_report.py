@@ -24,6 +24,77 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+AURORA_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
+
+
+def schema_table_defs(engine: str, schema: dict) -> list[dict]:
+    """Return an engine's schema output as ``table_definitions``-shaped dicts.
+
+    Each entry has at least ``table_name``, ``source_tables`` and
+    ``aggregate_pattern``. DynamoDB already emits this shape. The other engines
+    use their own containers:
+
+    - OpenSearch: ``index_designs`` + ``data_stream_designs``
+    - DocumentDB: ``collections``
+    - ElastiCache: ``key_designs`` (one entry per key pattern)
+    - Aurora: ``table_definitions`` without ``source_tables``, because tables
+      carry over 1:1. Each maps back to ``<source_database>.<table_name>``, the
+      ``table_id`` form analysis uses.
+
+    Never mutates ``schema``.
+    """
+    table_defs = list(schema.get("table_definitions", []))
+
+    if engine in AURORA_ENGINES:
+        source_db = schema.get("source_database", "")
+        return [
+            {
+                **t,
+                "source_tables": t.get("source_tables")
+                or [f"{source_db}.{t['table_name']}" if source_db else t["table_name"]],
+                "aggregate_pattern": "relational_table",
+            }
+            for t in table_defs
+        ]
+    if table_defs:
+        return table_defs
+
+    if engine == "opensearch":
+        return [
+            {
+                "table_name": idx.get("index_name", ""),
+                "source_tables": idx.get("source_tables", []),
+                "aggregate_pattern": "search_index",
+            }
+            for idx in schema.get("index_designs", [])
+        ] + [
+            {
+                "table_name": ds.get("data_stream_name", ""),
+                "source_tables": ds.get("source_tables", []),
+                "aggregate_pattern": "data_stream",
+            }
+            for ds in schema.get("data_stream_designs", [])
+        ]
+    if engine == "documentdb":
+        return [
+            {
+                "table_name": coll.get("collection_name", ""),
+                "source_tables": coll.get("source_tables", []),
+                "aggregate_pattern": "document_collection",
+            }
+            for coll in schema.get("collections", [])
+        ]
+    if engine == "elasticache":
+        return [
+            {
+                "table_name": kd.get("key_pattern", ""),
+                "source_tables": kd.get("source_tables", []),
+                "aggregate_pattern": kd.get("data_type", "unknown"),
+            }
+            for kd in schema.get("key_designs", [])
+        ]
+    return []
+
 
 def _compute_assignment_distribution(data: SynthesisData) -> dict:
     """Compute per-engine workload distribution from assignment data.
@@ -126,11 +197,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
 
         # Schema design stats — handle engine-specific formats
         schema = artifacts.schema_design or {}
-        schema_tables = schema.get("table_definitions", [])
-        if engine == "opensearch" and not schema_tables:
-            schema_tables = schema.get("index_designs", []) + schema.get("data_stream_designs", [])
-        if engine == "documentdb" and not schema_tables:
-            schema_tables = schema.get("collections", [])
+        schema_tables = schema_table_defs(engine, schema)
         access_patterns = schema.get("access_patterns", [])
         pattern_groups: dict[str, list] = {}
         for ap in access_patterns:
@@ -206,36 +273,7 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
             for t in (analysis.get("table_recommendations") or [])
         }
 
-        # Collect table definitions — handle engine-specific formats
-        table_defs = schema.get("table_definitions", [])
-        if engine == "opensearch" and not table_defs:
-            # OpenSearch uses index_designs + data_stream_designs
-            for idx in schema.get("index_designs", []):
-                table_defs.append(
-                    {
-                        "table_name": idx.get("index_name", ""),
-                        "source_tables": idx.get("source_tables", []),
-                        "aggregate_pattern": "search_index",
-                    }
-                )
-            for ds in schema.get("data_stream_designs", []):
-                table_defs.append(
-                    {
-                        "table_name": ds.get("data_stream_name", ""),
-                        "source_tables": ds.get("source_tables", []),
-                        "aggregate_pattern": "data_stream",
-                    }
-                )
-        if engine == "documentdb" and not table_defs:
-            # DocumentDB uses collections with source_tables
-            for coll in schema.get("collections", []):
-                table_defs.append(
-                    {
-                        "table_name": coll.get("collection_name", ""),
-                        "source_tables": coll.get("source_tables", []),
-                        "aggregate_pattern": "document_collection",
-                    }
-                )
+        table_defs = schema_table_defs(engine, schema)
 
         for table_def in table_defs:
             target_table_name = table_def.get("table_name", "")

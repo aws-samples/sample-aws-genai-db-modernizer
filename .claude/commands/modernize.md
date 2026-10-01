@@ -115,9 +115,10 @@ Launch ONE subagent per engine in a SINGLE message:
 
 - Subagent 1: "Run /design-schema-dynamodb"
 - Subagent 2: "Run /design-schema-elasticache"
+- Subagent 3: "Run /design-schema-aurora-mysql"
 - etc.
 
-(Only for engines in `selected_engines` after reality check.)
+(Only for engines in `selected_engines` after reality check. Build the skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.)
 
 Wait for all to complete.
 
