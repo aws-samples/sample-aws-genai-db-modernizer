@@ -26,14 +26,17 @@ Before anything else, ask the user:
 # Start API server
 STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
 
-# Build and serve frontend (install deps on first run)
-cd src/ui && npm install && REACT_APP_API_URL=http://localhost:8000/api/v1/ npx react-scripts build && npx serve -s build -l 3000 &
+# Build and serve frontend. Installs deps only when serve is missing.
+(cd src/ui && { [ -x node_modules/.bin/serve ] || npm ci; } && REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build && npm run serve) &
 ```
 
-Wait a few seconds for both to start, then verify:
+`npm run serve` uses the `serve` dev dependency pinned in `src/ui/package.json`, in single-page-app mode, so deep links load on refresh. If `npm ci` fails with `E401`, the npm registry token has expired. Tell the user and stop. Do not swap in another static server, because one without SPA fallback returns 404 on every deep link.
+
+The build takes about a minute. Poll until both respond (up to 3 minutes), then verify:
 
 - API health: `curl -s http://localhost:8000/health`
 - Frontend: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` (expect 200)
+- Deep link: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/analysis/monitor` (expect 200)
 
 Tell the user:
 

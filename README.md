@@ -279,10 +279,12 @@ Run the React web interface locally to visualize results, browse query journeys,
 STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
 # Build and serve the UI (in another terminal)
-cd src/ui && npm install
-REACT_APP_API_URL=http://localhost:8000/api/v1/ npx react-scripts build
-npx serve -s build -l 3000
+cd src/ui && npm ci
+REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build
+npm run serve
 ```
+
+`npm run serve` uses the `serve` dev dependency pinned in `package.json`, so it works offline after the first install. It runs in single-page-app mode, so deep links such as `/analysis/monitor/summary/<job_id>` load on refresh.
 
 Then open `http://localhost:3000` to browse your modernization results.
 
