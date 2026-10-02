@@ -10,9 +10,7 @@ import pytest
 from src.report import deliverables as dl
 from src.storage.local_store import LocalArtifactStore
 
-FIXTURE = (
-    Path(__file__).resolve().parents[1] / "atx_orchestrator" / "fixtures" / "e2e09_report.json"
-)
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "e2e09_report.json"
 DB, JOB = "discourse", "job-x"
 KEY = f"{DB}/{JOB}/synthesis/v1/report.json"
 

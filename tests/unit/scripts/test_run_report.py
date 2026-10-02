@@ -8,9 +8,7 @@ from pathlib import Path
 from scripts import run_report
 from src.storage.local_store import LocalArtifactStore
 
-FIXTURE = (
-    Path(__file__).resolve().parents[1] / "atx_orchestrator" / "fixtures" / "e2e09_report.json"
-)
+FIXTURE = Path(__file__).resolve().parents[1] / "report" / "fixtures" / "e2e09_report.json"
 DB, JOB = "discourse", "job-x"
 
 

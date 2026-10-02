@@ -14,7 +14,7 @@ synthesis renderer substitutes into:
     src/report/templates/analysis_report.js        <- generateReportScript body
     src/report/templates/analysis_report.html.tpl  <- generateHTMLReport shell
 
-Because the extraction is mechanical, ``tests/unit/atx_orchestrator/test_report_template_sync.py``
+Because the extraction is mechanical, ``tests/unit/report/test_report_template_sync.py``
 can re-run it and assert the committed files still match. A UI change that is not
 propagated therefore fails CI instead of silently producing a stale ATX report.
 

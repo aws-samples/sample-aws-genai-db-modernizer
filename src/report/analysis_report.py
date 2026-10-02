@@ -20,7 +20,7 @@ Nothing here re-implements the report's rendering. ``generateHTMLReport`` is a p
 function of one JSON object: its CSS is a static constant and its ~13 client-side
 functions are static text, so the only thing that varies is ``const DATA``. Keeping
 it that way is what makes the ATX report incapable of drifting from the WebApp's --
-``tests/unit/atx_orchestrator/test_report_template_sync.py`` fails if the two
+``tests/unit/report/test_report_template_sync.py`` fails if the two
 diverge.
 """
 
