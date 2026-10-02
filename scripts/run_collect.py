@@ -86,7 +86,10 @@ def main() -> None:
         store.write_json(upload_path, input_data)
 
         # Parse using offline parser
-        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.database.offline_parser import (
+            detect_source_engine,
+            parse_offline_collection,
+        )
 
         parsed = parse_offline_collection(input_data)
 
@@ -110,12 +113,14 @@ def main() -> None:
         triggers = _build_triggers(parsed.get("triggers", []))
         metrics = _build_metrics(queries_built, None)
 
+        engine, port = detect_source_engine(parsed.get("metadata"))
+
         inp = CollectorInput.model_validate(
             {
                 "job_id": job_id,
-                "engine": "mysql",
+                "engine": engine,
                 "cluster_endpoint": "offline",
-                "port": 3306,
+                "port": port,
                 "database_name": db_name,
                 "mode": "offline",
                 "offline_config": {"s3_bucket": "local", "s3_key": upload_path},

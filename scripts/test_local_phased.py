@@ -132,7 +132,10 @@ def main():
 
         # Step 2: Parse offline collection locally (same as collector agent offline mode)
         print("[collector] Parsing raw collection output (offline mode)...")
-        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.database.offline_parser import (
+            detect_source_engine,
+            parse_offline_collection,
+        )
 
         parsed = parse_offline_collection(input_data)
 
@@ -159,13 +162,7 @@ def main():
         metrics = _build_metrics(queries_built, None)
 
         # Detect source engine from metadata version string
-        version_str = (parsed.get("metadata", {}).get("version") or "").lower()
-        if "postgresql" in version_str or "postgres" in version_str:
-            detected_engine = "postgresql"
-            detected_port = 5432
-        else:
-            detected_engine = "mysql"
-            detected_port = 3306
+        detected_engine, detected_port = detect_source_engine(parsed.get("metadata"))
 
         inp = CollectorInput.model_validate(
             {

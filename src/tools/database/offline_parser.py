@@ -261,3 +261,15 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
             }
         )
     return patterns
+
+
+def detect_source_engine(metadata: dict | None) -> tuple[str, int]:
+    """Return ``(engine, port)`` for an offline collection from its metadata.
+
+    Offline collector output only identifies the engine through the server
+    version string; anything that does not mention PostgreSQL is treated as MySQL.
+    """
+    version = str((metadata or {}).get("version") or "").lower()
+    if "postgres" in version:
+        return "postgresql", 5432
+    return "mysql", 3306

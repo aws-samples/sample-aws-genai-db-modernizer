@@ -154,7 +154,10 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
         store.write_json(upload_path, input_data)
 
         # Parse offline collection
-        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.database.offline_parser import (
+            detect_source_engine,
+            parse_offline_collection,
+        )
 
         parsed = parse_offline_collection(input_data)
 
@@ -180,13 +183,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
         triggers = _build_triggers(parsed.get("triggers", []))
         metrics = _build_metrics(queries_built, None)
 
-        version_str = (parsed.get("metadata", {}).get("version") or "").lower()
-        if "postgresql" in version_str or "postgres" in version_str:
-            detected_engine = "postgresql"
-            detected_port = 5432
-        else:
-            detected_engine = "mysql"
-            detected_port = 3306
+        detected_engine, detected_port = detect_source_engine(parsed.get("metadata"))
 
         inp = CollectorInput.model_validate(
             {
