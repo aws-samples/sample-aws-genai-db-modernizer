@@ -19,8 +19,8 @@ python-dotenv>=1.0.0
 structlog>=23.2.0
 pyyaml>=6.0.1
 jinja2>=3.1.0
-# Executive Summary Report deck (runtime/pptx_report.py) and its PDF
-# rendering (runtime/pdf_report.py). Pillow arrives with python-pptx and is
+# Executive Summary Report deck (src/report/pptx_report.py) and its PDF
+# rendering (src/report/pdf_report.py). Pillow arrives with python-pptx and is
 # what decodes the template's background images for the PDF.
 python-pptx>=1.0.2
 reportlab>=4.2.0

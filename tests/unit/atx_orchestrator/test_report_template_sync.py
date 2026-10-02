@@ -2,7 +2,7 @@
 
 ``src/ui/src/utils/ExportReport.js`` is the single source of truth for the
 interactive report's look. ``scripts/sync_report_template.py`` lifts its static
-parts into ``src/atx_orchestrator/runtime/templates/``. Without this test a UI
+parts into ``src/report/templates/``. Without this test a UI
 change would silently leave the ATX report rendering last month's layout, and the
 "matches the WebApp export exactly" property would be a claim rather than an
 invariant.
@@ -71,7 +71,7 @@ def test_engine_labels_match_the_python_renderer(sync):
     to one and not the other would show the raw engine key ("aurora_postgresql") in
     half the report, so pin them together here.
     """
-    from src.atx_orchestrator.runtime import analysis_report as ar
+    from src.report import analysis_report as ar
 
     source = "\n".join(sync._read_source())
     block = re.search(r"const ENGINE_LABELS = \{(.*?)\};", source, re.S)

@@ -15,7 +15,7 @@ every prompt that embeds customer content wraps it the same way.
 
 This is defense-in-depth, not a hard boundary: an LLM can still be swayed. It is
 paired with two other controls — the model's output is only ever rendered as
-escaped document content (finding R3, see ``runtime/escaping.py``), never executed,
+escaped document content (finding R3, see ``src/report/escaping.py``), never executed,
 and engine/query assignment is deterministic and not LLM-decided. Bedrock
 Guardrails' prompt-attack filter is tracked separately (#144) as a further layer.
 """

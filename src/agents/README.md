@@ -43,7 +43,7 @@ must preserve them:
   content, wrap that content with these helpers.
 - **Out of the LLM (R3):** LLM output is itself treated as untrusted. It is never
   executed and is only ever rendered as **escaped** document content
-  (`src/atx_orchestrator/runtime/escaping.py`). Engine and query assignment are
+  (`src/report/escaping.py`). Engine and query assignment are
   deterministic and are not decided by the LLM.
 
 This is defense-in-depth: framing reduces, but does not eliminate, prompt-injection

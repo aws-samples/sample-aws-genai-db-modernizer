@@ -41,7 +41,20 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
       uv run python scripts/run_synthesis.py --job-id {job_id} --db {database_name} --finalize
       ```
 
-4. **Present report**
+4. **Render deliverables**
+
+   ```bash
+   uv run python scripts/run_report.py --job-id {job_id} --db {database_name}
+   ```
+
+   Prints `{"status": ..., "files": [...], "errors": [...], "warnings": [...]}`.
+   `complete` means every deliverable rendered with nothing to flag; `partial`
+   covers both outright failures (in `errors`) and successful-but-suspect renders
+   (in `warnings`, e.g. an analysis report with zero query journeys embedded) —
+   tell the user what it says, then continue; `error` means no synthesis report
+   exists, or rendering itself blew up (stop and report it).
+
+5. **Present report**
    Show:
    - Engine ranking with scores
    - Architecture recommendation (single/multi/hybrid)
@@ -49,6 +62,8 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
    - Top risks and mitigations
    - Executive summary
 
-5. **Update state**
+6. **Update state**
    Set `phase_status.synthesis` = "complete"
-   Tell user: "Full report available at ./artifacts/{report}", using the `report` path the finalize step printed
+   Tell user where the deliverables are, using the `files` paths the render step printed
+   (under `./artifacts/`): the decision report and analysis report (open in a browser),
+   the engineering report (Markdown), and `summary-executive-report.pdf`.

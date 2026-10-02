@@ -136,11 +136,15 @@ Wait for all to complete.
 **If chat or both:**
 
 - Show final report summary (engines, architecture recommendation, TCO)
-- Show artifact location: `./artifacts/{db}/{job}/referee-synthesis/report.json`
+- Show the deliverables printed by the synthesize step's render command: decision report
+  (HTML), interactive analysis report (HTML), engineering report (Markdown), and
+  `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
 
 **If UI mode:**
 
-- Tell user "Final report available in the UI — includes engine rankings, TCO comparison, and migration roadmap."
+- Show the deliverables printed by the synthesize step's render command: decision report
+  (HTML), interactive analysis report (HTML), engineering report (Markdown), and
+  `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
 
 ## Subagent Dispatch Rules
 

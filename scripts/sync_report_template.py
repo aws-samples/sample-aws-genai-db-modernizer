@@ -10,9 +10,9 @@ client-side functions are static text, and the only data-dependent output is
 This script mechanically lifts those static parts into three files that the ATX
 synthesis renderer substitutes into:
 
-    src/atx_orchestrator/runtime/templates/analysis_report.css       <- REPORT_CSS
-    src/atx_orchestrator/runtime/templates/analysis_report.js        <- generateReportScript body
-    src/atx_orchestrator/runtime/templates/analysis_report.html.tpl  <- generateHTMLReport shell
+    src/report/templates/analysis_report.css       <- REPORT_CSS
+    src/report/templates/analysis_report.js        <- generateReportScript body
+    src/report/templates/analysis_report.html.tpl  <- generateHTMLReport shell
 
 Because the extraction is mechanical, ``tests/unit/atx_orchestrator/test_report_template_sync.py``
 can re-run it and assert the committed files still match. A UI change that is not
@@ -32,7 +32,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPO_ROOT / "src" / "ui" / "src" / "utils" / "ExportReport.js"
-TEMPLATE_DIR = REPO_ROOT / "src" / "atx_orchestrator" / "runtime" / "templates"
+TEMPLATE_DIR = REPO_ROOT / "src" / "report" / "templates"
 
 CSS_OUT = TEMPLATE_DIR / "analysis_report.css"
 JS_OUT = TEMPLATE_DIR / "analysis_report.js"
@@ -233,7 +233,7 @@ def _assert_no_unmapped_interpolations(shell: str) -> None:
             "ExportReport.js has interpolations this script does not know how to map: "
             + ", ".join(sorted(set(leftover)))
             + "\nAdd them to SHELL_SUBSTITUTIONS (and fill them in "
-            "src/atx_orchestrator/runtime/analysis_report.py)."
+            "src/report/analysis_report.py)."
         )
 
 
