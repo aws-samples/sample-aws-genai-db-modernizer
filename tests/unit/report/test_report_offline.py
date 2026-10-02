@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from src.report import analysis_report as ar
-
-FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
 
 def _minimal_export() -> dict:
