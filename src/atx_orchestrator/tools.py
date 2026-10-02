@@ -1370,7 +1370,10 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
 
     Every deliverable is rendered deterministically from artifacts already on the
     store -- no LLM call happens here, so two runs over the same report.json
-    produce byte-comparable content.
+    produce byte-comparable content. The rendering itself lives in
+    ``src.report.deliverables.render_deliverables``, shared with the local
+    scripts; this function only stages the durable copies and publishes the
+    result.
 
     Entirely non-fatal: a synthesis whose report is durable in S3 must not fail
     over a rendering or registration call. ``artifacts.publish`` never raises on
@@ -1388,137 +1391,37 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         return
     try:
         from src.atx_orchestrator.runtime import artifacts as _artifacts
-        from src.report import renderers as _renderers
+        from src.atx_orchestrator.runtime import graph_transport
+        from src.report.deliverables import render_deliverables
 
         store = _make_store()
-        report = store.read_json(report_key)
         base = report_key.rsplit("/", 1)[0]
-        trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
-
-        def _prov(artifact: str, ext: str) -> dict:
-            return _renderers.provenance(
-                report, artifact, ext, job_id=job_id, source_artifact=report_key
-            )
-
-        decision_prov = _prov("decision-report", "html")
-        engineering_prov = _prov("engineering-report", "md")
-        data_prov = _prov("assessment-data", "json")
-
-        decision_html = _renderers.render_decision_report_html(
-            report, trust_generated_summary=trust, prov=decision_prov
+        rendered = render_deliverables(
+            store,
+            job_id,
+            database_name,
+            report_key,
+            assignment_version=int(inner.get("assignment_version") or 1),
+            # The ATX store is JSON-only; the graph travels as a published artifact.
+            graph_fetcher=graph_transport.download_graph,
         )
-        engineering_md = _renderers.render_engineering_report_md(report, prov=engineering_prov)
-        # The published JSON is wrapped with an identity envelope; the object at
-        # report_key is NOT touched. That one is the system of record and is
-        # validated against the synthesis contract on re-read, so injecting a key
-        # into it would risk failing validation for the sake of a filename.
-        data_json = json.dumps({"_artifact": data_prov, **report}, indent=2)
-
-        # Durable "system of record" copy on the S3/local backend; skipped on the
-        # JSON-only ATX backend (where publish() below is the actual delivery).
-        # Must not abort before publish() — see _stage_durable_copy.
-        _stage_durable_copy(store, f"{base}/{decision_prov['filename']}", decision_html)
-        _stage_durable_copy(store, f"{base}/{engineering_prov['filename']}", engineering_md)
-
-        items: list = [
-            (
-                decision_html.encode("utf-8"),
-                "HTML",
-                f"Decision Report — {database_name}",
-                "CUSTOMER_OUTPUT",
-                decision_prov["filename"],
-            ),
-            (
-                engineering_md.encode("utf-8"),
-                "MARKDOWN",
-                f"Engineering Report — {database_name}",
-                "CUSTOMER_OUTPUT",
-                engineering_prov["filename"],
-            ),
-            (
-                data_json.encode("utf-8"),
-                "JSON",
-                f"Assessment Data (raw) — {database_name}",
-                "CUSTOMER_OUTPUT",
-                data_prov["filename"],
-            ),
-        ]
-
-        # Fourth deliverable: the interactive report the WebApp's "Export to HTML"
-        # produces. Assembled straight off the ArtifactStore because the API path is
-        # unreachable for an ATX job -- every route resolves database_name through
-        # Step Functions, and an A2A-orchestrated job has no execution. Isolated in
-        # its own try: it reads six more artifacts than the other three, and none of
-        # them failing is a reason to withhold reports that already rendered.
-        try:
-            from src.atx_orchestrator.runtime import graph_transport
-            from src.report import analysis_report as _ar
-
-            assignment_version = int(inner.get("assignment_version") or 1)
-            export_data = _ar.build_export_data(
-                store,
-                job_id,
-                database_name,
-                assignment_version=assignment_version,
-                graph_fetcher=graph_transport.download_graph,
-            )
-            analysis_prov = _prov("analysis-report", "html")
-            analysis_html = _ar.render_analysis_report_html(
-                export_data, filename=analysis_prov["filename"]
-            )
-            _stage_durable_copy(store, f"{base}/{analysis_prov['filename']}", analysis_html)
-            items.append(
-                (
-                    analysis_html.encode("utf-8"),
-                    "HTML",
-                    f"Interactive Analysis Report — {database_name}",
-                    "CUSTOMER_OUTPUT",
-                    analysis_prov["filename"],
+        for d in rendered.items:
+            if d.stage:
+                binary = d.file_type in ("PDF", "PPTX")
+                _stage_durable_copy(
+                    store,
+                    f"{base}/{d.filename}",
+                    d.content if binary else d.content.decode("utf-8"),
                 )
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("ATX interactive analysis report skipped: %s: %s", type(e).__name__, e)
-            export_data = None
-
-        # Fifth deliverable: the executive summary, rendered from the same report
-        # as the Decision Report HTML plus the export data above (slide 3 needs
-        # the collector query patterns; it degrades to a stated gap without them,
-        # which is why export_data is passed even when it failed to build).
-        #
-        # The PDF is what the customer gets in the Artifacts panel -- it opens
-        # anywhere and carries the deck's fonts with it. The .pptx is still
-        # written to S3 as the editable source for whoever presents it, just not
-        # registered. Both come from one render, so they cannot disagree.
-        #
-        # Its own try: this is the only part of the function with a binary
-        # dependency (python-pptx, reportlab, the bundled template and fonts),
-        # and a problem there must not withhold the four reports already rendered.
-        try:
-            from src.report import pdf_report as _pdf
-            from src.report import pptx_report as _pptx
-
-            deck, deck_pdf = _pdf.render_executive_summary_pdf(report, export_data)
-            # Fixed names, unlike the other four: this is the reusable executive
-            # deliverable and is called the same thing in every engagement. The
-            # job it belongs to is already in the key prefix (and in the deck's
-            # own core properties), so no date-stamped stem is needed.
-            _stage_durable_copy(store, f"{base}/{_pptx.FILENAME}", deck)
-            _stage_durable_copy(store, f"{base}/{_pdf.FILENAME}", deck_pdf)
-            items.append(
-                (
-                    deck_pdf,
-                    "PDF",
-                    f"Executive Summary Report — {database_name}",
-                    "CUSTOMER_OUTPUT",
-                    _pdf.FILENAME,
-                )
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("ATX executive summary skipped: %s: %s", type(e).__name__, e)
-
         # Register in the WebApp panel. CUSTOMER_OUTPUT is accepted from the agent
         # side (constraint C2, verified 2026-08-24).
-        _artifacts.publish(items)
+        _artifacts.publish(
+            [
+                (d.content, d.file_type, d.label, "CUSTOMER_OUTPUT", d.filename)
+                for d in rendered.items
+                if d.publish
+            ]
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "ATX synthesis deliverables skipped (report is durable in S3): %s: %s",
