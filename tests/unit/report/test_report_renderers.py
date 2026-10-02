@@ -232,3 +232,46 @@ class TestEngineRole:
         svg = renderers.architecture_svg(zero_workload_report)
         assert renderers._ROLE_STROKE["Evaluated"] in svg
         assert ">None<" not in svg
+
+
+# =============================================================================
+# Engine badges (accessibility)
+
+
+def _srgb_channel(value: float) -> float:
+    return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(hex_color: str) -> float:
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    return 0.2126 * _srgb_channel(r) + 0.7152 * _srgb_channel(g) + 0.0722 * _srgb_channel(b)
+
+
+def _contrast_ratio(hex_a: str, hex_b: str) -> float:
+    lum_a, lum_b = _relative_luminance(hex_a), _relative_luminance(hex_b)
+    lighter, darker = max(lum_a, lum_b), min(lum_a, lum_b)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+class TestEngineBadgeContrast:
+    """The decision report's engine badges render white text on these backgrounds
+    (``_engine_badge``). axe's ``color-contrast`` rule caught the un-darkened
+    "aurora" orange (#ff9900, 2.14:1) and "elasticache" red (#dc382d, 4.52:1 — a
+    margin thin enough to flip pass/fail between Chromium and WebKit). Every
+    badge colour, including the no-match fallback, must clear WCAG AA's 4.5:1
+    for normal-weight small text.
+    """
+
+    @pytest.mark.parametrize("engine", sorted(renderers._ENGINE_BADGE))
+    def test_badge_background_meets_aa_contrast_with_white_text(self, engine: str) -> None:
+        color = renderers._ENGINE_BADGE[engine]
+        ratio = _contrast_ratio("#ffffff", color)
+        assert (
+            ratio >= 4.5
+        ), f"{engine} badge {color} only has {ratio:.2f}:1 contrast with white text"
+
+    def test_fallback_badge_meets_aa_contrast_with_white_text(self) -> None:
+        html = renderers._engine_badge("some-unmapped-engine")
+        fallback = re.search(r"background:(#[0-9a-fA-F]{6})", html).group(1)
+        assert _contrast_ratio("#ffffff", fallback) >= 4.5

@@ -334,14 +334,18 @@ ul { margin:.4rem 0; padding-left:1.2rem; }
 footer { margin-top:2.5rem; padding:1.2rem 0 3rem; border-top:1px solid #e5e7eb; color:#6b7280; font-size:.83rem; }
 """
 
-# Engine badge colours, following the reference template's palette.
+# Engine badge colours, following the reference template's palette, darkened where
+# needed so white badge text keeps a WCAG AA contrast ratio of >= 4.5:1 (axe
+# "color-contrast" flagged the un-darkened "aurora" orange at 2.14:1 and the
+# un-darkened "elasticache" red at a razor-thin 4.52:1 that flipped pass/fail
+# between browsers).
 _ENGINE_BADGE = {
     "dynamodb": "#3b48cc",
-    "documentdb": "#13aa52",
-    "aurora_postgresql": "#ff9900",
-    "aurora_mysql": "#ff9900",
-    "elasticache": "#dc382d",
-    "memorydb": "#dc382d",
+    "documentdb": "#0c7838",
+    "aurora_postgresql": "#9c5700",
+    "aurora_mysql": "#9c5700",
+    "elasticache": "#c62f25",
+    "memorydb": "#c62f25",
     "opensearch": "#0e7c86",
     "neptune": "#7048e8",
     "keyspaces": "#8250df",
