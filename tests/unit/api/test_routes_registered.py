@@ -51,7 +51,7 @@ def _app_paths() -> set[str]:
     return paths
 
 
-# Route modules excluded from this check. TEMPORARY funknor: graph intermittently fails
+# Route modules excluded from this check. TEMPORARY funknor 10/2/26 : graph intermittently fails
 # in the GitLab pipeline only — with none of its paths on the app, so even an
 # "any one path" check failed there. Never reproduced locally, including under
 # random order and xdist; the cause is not yet known. main.py registers
