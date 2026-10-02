@@ -83,6 +83,10 @@ _SOURCE_FIELDS = (
 )
 _ASSIGNMENT_FIELDS = ("assigned_engine", "confidence", "in_scope")
 
+# ---------------------------------------------------------------------------
+# Graph access
+# ---------------------------------------------------------------------------
+
 # (store, database_name, job_id, local_path) -> True when a .lbug was written to local_path.
 GraphFetcher = Callable[[Any, str, str, str], bool]
 
@@ -90,9 +94,11 @@ GraphFetcher = Callable[[Any, str, str, str], bool]
 def default_graph_fetcher(store: Any, database_name: str, job_id: str, local_path: str) -> bool:
     """Materialise the job's context graph at ``local_path`` from any byte-capable store.
 
-    Prefers the persisted ``{db}/{job}/graph/context.lbug``; otherwise rebuilds it
-    from the JSON artifacts, which is what the local API does on a cache miss. The
-    AWS Transform store cannot do either and passes its own fetcher instead.
+    Prefers the persisted graph (needs a byte-capable store); otherwise rebuilds it
+    from the JSON artifacts -- which works on any store -- and persists it when the
+    store accepts bytes. The AWS Transform integration already published the graph
+    in an earlier phase, so it passes its own pointer-based fetcher instead of
+    rebuilding.
     """
     from src.graph import GraphStore, populators
     from src.graph.persistence import GraphPersistence
@@ -105,6 +111,9 @@ def default_graph_fetcher(store: Any, database_name: str, job_id: str, local_pat
         populators.rebuild_graph(database_name, job_id, store, graph_store)
     finally:
         graph_store.close()
+    # Self-heal like the local API: persist the rebuilt graph so the next read is a copy.
+    with contextlib.suppress(Exception):
+        GraphPersistence(store).upload(database_name, job_id, local_path)
     return True
 
 
@@ -148,9 +157,6 @@ def synthesis_report_key(
         f"No synthesis report found for job {job_id!r} under "
         f"'{database_name}/{job_id}/' (tried {', '.join(dict.fromkeys(candidates))})."
     )
-
-
-_synthesis_key = synthesis_report_key  # back-compat for existing tests
 
 
 def _read_schema_designs(store: Any, database_name: str, job_id: str) -> list[dict]:
