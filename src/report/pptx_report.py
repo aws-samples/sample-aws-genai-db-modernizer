@@ -44,7 +44,7 @@ from pptx.util import Inches, Pt
 # Reused rather than reimplemented: slide 1 must show the same architecture the
 # HTML Decision Report shows, and that view is non-trivial (ranking joined with
 # recommended_architecture.databases and schema_designs).
-from .artifacts import _architecture_engines
+from .renderers import _architecture_engines
 
 logger = logging.getLogger(__name__)
 

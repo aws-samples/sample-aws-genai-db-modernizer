@@ -71,7 +71,7 @@ def test_engine_labels_match_the_python_renderer(sync):
     to one and not the other would show the raw engine key ("aurora_postgresql") in
     half the report, so pin them together here.
     """
-    from src.atx_orchestrator.runtime import analysis_report as ar
+    from src.report import analysis_report as ar
 
     source = "\n".join(sync._read_source())
     block = re.search(r"const ENGINE_LABELS = \{(.*?)\};", source, re.S)

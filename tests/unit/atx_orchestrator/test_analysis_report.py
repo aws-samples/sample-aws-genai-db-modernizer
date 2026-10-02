@@ -14,8 +14,8 @@ from collections.abc import Callable
 
 import pytest
 
-from src.atx_orchestrator.runtime import analysis_report as ar
-from src.atx_orchestrator.runtime.artifacts import artifact_stem, provenance
+from src.report import analysis_report as ar
+from src.report.renderers import artifact_stem, provenance
 
 DB = "discourse"
 JOB = "29d77e81-6675-4942-9c34-4c5070d77860"
@@ -519,7 +519,7 @@ def test_provenance_carries_identity_and_filename():
 
 
 def test_decision_report_and_engineering_report_carry_provenance():
-    from src.atx_orchestrator.runtime.artifacts import (
+    from src.report.renderers import (
         render_decision_report_html,
         render_engineering_report_md,
     )
@@ -544,7 +544,7 @@ def test_decision_report_and_engineering_report_carry_provenance():
 
 def test_renderers_still_work_without_provenance():
     """Provenance is additive; the existing call shape must keep working."""
-    from src.atx_orchestrator.runtime.artifacts import (
+    from src.report.renderers import (
         render_decision_report_html,
         render_engineering_report_md,
     )

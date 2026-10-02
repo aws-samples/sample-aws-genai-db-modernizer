@@ -26,8 +26,8 @@ import json
 
 import pytest
 
-from src.atx_orchestrator.runtime import analysis_report as ar
-from src.atx_orchestrator.runtime import artifacts, escaping
+from src.report import analysis_report as ar
+from src.report import escaping, renderers
 
 # A payload that is hostile in every context at once: HTML/SVG markup, a script
 # element, a Markdown table pipe, an inline-code backtick, a Mermaid bracket and
@@ -233,7 +233,7 @@ def _analysis_export() -> dict:
 
 class TestDecisionReportEscaping:
     def test_no_live_script_element_from_injected_fields(self) -> None:
-        html = artifacts.render_decision_report_html(_report_with_injection())
+        html = renderers.render_decision_report_html(_report_with_injection())
         # The only <script substring allowed is none: this deliverable ships no JS,
         # and the injected </script>/<script> must have been neutralized to entities.
         assert "<script>alert(1)" not in html
@@ -241,8 +241,8 @@ class TestDecisionReportEscaping:
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
     def test_meta_attribute_cannot_be_broken_out_of(self) -> None:
-        prov = artifacts.provenance(_report_with_injection(), "decision-report", "html", job_id=JOB)
-        html = artifacts.render_decision_report_html(_report_with_injection(), prov=prov)
+        prov = renderers.provenance(_report_with_injection(), "decision-report", "html", job_id=JOB)
+        html = renderers.render_decision_report_html(_report_with_injection(), prov=prov)
         # The database name reaches a <meta content="..."> attribute via the filename;
         # a raw double quote there would let it inject further attributes.
         for line in html.splitlines():
@@ -261,7 +261,7 @@ class TestEngineeringReportEscaping:
         """A value rendered as plain cell text (not a code span) has its angle
         brackets escaped, so a ``<script>`` in it cannot be live HTML in a renderer
         that passes raw HTML through."""
-        md = artifacts.render_engineering_report_md(_report_with_injection())
+        md = renderers.render_engineering_report_md(_report_with_injection())
         # ``aggregate_pattern`` in the migration map is a plain cell (patx<INJECT>).
         assert "&lt;/td&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in md
 
@@ -270,7 +270,7 @@ class TestEngineeringReportEscaping:
         execute HTML, so stripping the span-terminating backtick (md_code) is the
         correct neutralization there. The contract we assert is that every raw
         ``<script>`` that survives is fenced inside a code span — never bare markup."""
-        md = artifacts.render_engineering_report_md(_report_with_injection())
+        md = renderers.render_engineering_report_md(_report_with_injection())
         for line in md.splitlines():
             if "<script>" in line:
                 # A bare '<' that is not inside a `...` span would be live markup.
@@ -280,7 +280,7 @@ class TestEngineeringReportEscaping:
     def test_code_spans_strip_terminating_backticks(self) -> None:
         """The payload carries a backtick; inside a code span it must be removed so the
         span cannot close early and let the remainder render as live Markdown."""
-        md = artifacts.render_engineering_report_md(_report_with_injection())
+        md = renderers.render_engineering_report_md(_report_with_injection())
         map_lines = [ln for ln in md.splitlines() if ln.startswith("| `src")]
         assert map_lines, "expected the injected source table in the migration map"
         # The code-span segments (between backticks) carry no stray backtick from the
@@ -290,13 +290,13 @@ class TestEngineeringReportEscaping:
         assert "``" not in first_cell
 
     def test_no_raw_newline_injected_mid_value(self) -> None:
-        md = artifacts.render_engineering_report_md(_report_with_injection())
+        md = renderers.render_engineering_report_md(_report_with_injection())
         # None of the single-value interpolations should have introduced the CR/LF
         # from the payload as a real line break (which would split a row/list item).
         assert "\r" not in md
 
     def test_mermaid_labels_are_neutralized(self) -> None:
-        md = artifacts.render_engineering_report_md(_report_with_injection())
+        md = renderers.render_engineering_report_md(_report_with_injection())
         assert "```mermaid" in md
         # Inside the fence, no label may contain a raw " or ] from the payload — either
         # would break the node grammar. The escaped forms are what we expect instead.
@@ -315,10 +315,10 @@ class TestEngineeringReportEscaping:
         scalar — proof it could not break out of its quoting into new YAML keys."""
         import yaml  # type: ignore[import-untyped]
 
-        prov = artifacts.provenance(
+        prov = renderers.provenance(
             _report_with_injection(), "engineering-report", "md", job_id=JOB
         )
-        md = artifacts.render_engineering_report_md(_report_with_injection(), prov=prov)
+        md = renderers.render_engineering_report_md(_report_with_injection(), prov=prov)
         fm = md.split("---", 2)[1]
         parsed = yaml.safe_load(fm)
         # Exactly the provenance keys, nothing injected in.

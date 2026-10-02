@@ -1388,6 +1388,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         return
     try:
         from src.atx_orchestrator.runtime import artifacts as _artifacts
+        from src.report import renderers as _renderers
 
         store = _make_store()
         report = store.read_json(report_key)
@@ -1395,7 +1396,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
 
         def _prov(artifact: str, ext: str) -> dict:
-            return _artifacts.provenance(
+            return _renderers.provenance(
                 report, artifact, ext, job_id=job_id, source_artifact=report_key
             )
 
@@ -1403,10 +1404,10 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         engineering_prov = _prov("engineering-report", "md")
         data_prov = _prov("assessment-data", "json")
 
-        decision_html = _artifacts.render_decision_report_html(
+        decision_html = _renderers.render_decision_report_html(
             report, trust_generated_summary=trust, prov=decision_prov
         )
-        engineering_md = _artifacts.render_engineering_report_md(report, prov=engineering_prov)
+        engineering_md = _renderers.render_engineering_report_md(report, prov=engineering_prov)
         # The published JSON is wrapped with an identity envelope; the object at
         # report_key is NOT touched. That one is the system of record and is
         # validated against the synthesis contract on re-read, so injecting a key
@@ -1450,7 +1451,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         # its own try: it reads six more artifacts than the other three, and none of
         # them failing is a reason to withhold reports that already rendered.
         try:
-            from src.atx_orchestrator.runtime import analysis_report as _ar
+            from src.report import analysis_report as _ar
 
             assignment_version = int(inner.get("assignment_version") or 1)
             export_data = _ar.build_export_data(
@@ -1488,8 +1489,8 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         # dependency (python-pptx, reportlab, the bundled template and fonts),
         # and a problem there must not withhold the four reports already rendered.
         try:
-            from src.atx_orchestrator.runtime import pdf_report as _pdf
-            from src.atx_orchestrator.runtime import pptx_report as _pptx
+            from src.report import pdf_report as _pdf
+            from src.report import pptx_report as _pptx
 
             deck, deck_pdf = _pdf.render_executive_summary_pdf(report, export_data)
             # Fixed names, unlike the other four: this is the reusable executive

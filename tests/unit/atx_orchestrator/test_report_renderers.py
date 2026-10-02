@@ -29,8 +29,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.atx_orchestrator.runtime import artifacts
 from src.atx_orchestrator.tools import run_synthesis_via_a2a
+from src.report import renderers
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
@@ -47,7 +47,7 @@ def report() -> dict:
 
 class TestDecisionReport:
     def test_renders_html_document(self, report: dict) -> None:
-        h = artifacts.render_decision_report_html(report)
+        h = renderers.render_decision_report_html(report)
         low = h.lstrip().lower()
         assert low.startswith("<!doctype html") or low.startswith("<html")
         assert len(h) > 3000
@@ -55,7 +55,7 @@ class TestDecisionReport:
     def test_offline_no_external_loads(self, report: dict) -> None:
         """Self-contained: no CDN/CSS/JS/font loads. The only URI allowed is the
         inline SVG xmlns."""
-        h = artifacts.render_decision_report_html(report)
+        h = renderers.render_decision_report_html(report)
         assert "https://" not in h
         assert set(re.findall(r"http://[^\s\"'>]+", h)) <= {"http://www.w3.org/2000/svg"}
         assert "<script" not in h.lower()
@@ -63,14 +63,14 @@ class TestDecisionReport:
         assert "cdn" not in h.lower()
 
     def test_five_engine_reconciliation(self, report: dict) -> None:
-        h = artifacts.render_decision_report_html(report)
+        h = renderers.render_decision_report_html(report)
         for eng in ("aurora", "elasticache", "documentdb", "dynamodb", "opensearch"):
             assert eng in h.lower()
         assert "814.12" in h
         assert "92" in h
 
     def test_architecture_engines_all_five_with_roles(self, report: dict) -> None:
-        engines = artifacts._architecture_engines(report)
+        engines = renderers._architecture_engines(report)
         assert len(engines) == 5
         total_workload = sum(e.get("workload", 0) for e in engines)
         assert 99.0 <= total_workload <= 101.0
@@ -83,19 +83,19 @@ class TestDecisionReport:
         assert any("ache" in r for r in roles)
 
     def test_no_per_risk_list_no_tradeoffs(self, report: dict) -> None:
-        h = artifacts.render_decision_report_html(report)
+        h = renderers.render_decision_report_html(report)
         assert "Risk posture" in h
         assert "Key trade-offs" not in h
         # no per-risk cards in the body
         assert 'class="risk ' not in h
 
     def test_risk_posture_counts_and_strategies(self, report: dict) -> None:
-        h = artifacts.render_decision_report_html(report)
+        h = renderers.render_decision_report_html(report)
         assert "22" in h
         assert "Mitigation strategies" in h
 
     def test_no_empty_unknown_risks(self, report: dict) -> None:
-        assert "unknown:" not in artifacts.render_decision_report_html(report)
+        assert "unknown:" not in renderers.render_decision_report_html(report)
 
 
 # =============================================================================
@@ -104,12 +104,12 @@ class TestDecisionReport:
 
 class TestEngineeringReport:
     def test_renders_markdown(self, report: dict) -> None:
-        m = artifacts.render_engineering_report_md(report)
+        m = renderers.render_engineering_report_md(report)
         assert m.startswith("# Database Modernization")
         assert len(m) > 5000
 
     def test_risk_register_present_and_filtered(self, report: dict) -> None:
-        m = artifacts.render_engineering_report_md(report)
+        m = renderers.render_engineering_report_md(report)
         assert "## Risk register (22)" in m
         # the six malformed empty risks ([engine] unknown: with no body) are dropped.
         # (Note "unknown:" can still appear as a sub-type label on a KEPT risk that
@@ -118,12 +118,12 @@ class TestEngineeringReport:
             assert rid not in m
 
     def test_tradeoffs_by_engine(self, report: dict) -> None:
-        m = artifacts.render_engineering_report_md(report)
+        m = renderers.render_engineering_report_md(report)
         assert "## Migration trade-offs (44)" in m
         assert "### documentdb" in m
 
     def test_has_mermaid_fences(self, report: dict) -> None:
-        m = artifacts.render_engineering_report_md(report)
+        m = renderers.render_engineering_report_md(report)
         assert "```mermaid" in m
 
 
@@ -134,19 +134,19 @@ class TestEngineeringReport:
 class TestRiskFilter:
     def test_filters_six_empty_risks(self, report: dict) -> None:
         risks = report["risk_assessment"]["risks"]
-        kept = [r for r in risks if artifacts._risk_has_content(r.get("description"))]
+        kept = [r for r in risks if renderers._risk_has_content(r.get("description"))]
         assert len(risks) == 28
         assert len(kept) == 22
 
     def test_engine_and_body_parse(self) -> None:
-        eng, body = artifacts._risk_engine_and_body("[documentdb] Queries joining 3+ tables")
+        eng, body = renderers._risk_engine_and_body("[documentdb] Queries joining 3+ tables")
         assert eng == "documentdb"
         assert body == "Queries joining 3+ tables"
 
     def test_has_content_predicate(self) -> None:
-        assert artifacts._risk_has_content("[elasticache] unknown: ") is False
-        assert artifacts._risk_has_content("[documentdb] a real risk") is True
-        assert artifacts._risk_has_content("") is False
+        assert renderers._risk_has_content("[elasticache] unknown: ") is False
+        assert renderers._risk_has_content("[documentdb] a real risk") is True
+        assert renderers._risk_has_content("") is False
 
 
 # =============================================================================
@@ -181,25 +181,25 @@ class TestEngineRole:
     def test_zero_workload_is_evaluated_not_retained(self) -> None:
         """The defect: a skipped design used to imply "Retained" regardless of workload."""
         assert (
-            artifacts._engine_role("documentdb", set(), {"documentdb": {"status": "skipped"}}, 0.0)
+            renderers._engine_role("documentdb", set(), {"documentdb": {"status": "skipped"}}, 0.0)
             == "Evaluated"
         )
-        assert artifacts._engine_role("documentdb", set(), {}, None) == "Evaluated"
+        assert renderers._engine_role("documentdb", set(), {}, None) == "Evaluated"
 
     def test_workload_carrying_engine_with_no_design_is_still_retained(self) -> None:
         """Guards against over-correcting: the source relational core keeps Retained."""
-        role = artifacts._engine_role(
+        role = renderers._engine_role(
             "aurora_postgresql", set(), {"aurora_postgresql": {"status": "not_available"}}, 49.3
         )
         assert role == "Retained"
 
     def test_cache_and_migration_target_keep_their_role_at_zero_workload(self) -> None:
         """Branch-order guard: the workload test must not outrank these two."""
-        assert artifacts._engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
-        assert artifacts._engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
+        assert renderers._engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
+        assert renderers._engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
 
     def test_scope_reads_no_queries_assigned(self, zero_workload_report: dict) -> None:
-        rows = {e["engine"]: e for e in artifacts._architecture_engines(zero_workload_report)}
+        rows = {e["engine"]: e for e in renderers._architecture_engines(zero_workload_report)}
         assert rows["documentdb"]["role"] == "Evaluated"
         assert rows["documentdb"]["scope"] == "no queries assigned"
         # the engines that do the work are unaffected
@@ -210,7 +210,7 @@ class TestEngineRole:
         self, zero_workload_report: dict
     ) -> None:
         """The HTML claimed DocumentDB was "retained as the relational core"."""
-        engines = artifacts._architecture_engines(zero_workload_report)
+        engines = renderers._architecture_engines(zero_workload_report)
         assert [e["engine"] for e in engines if e["role"] == "Retained"] == ["aurora_postgresql"]
 
     def test_evaluated_engine_excluded_from_wave_one(self, zero_workload_report: dict) -> None:
@@ -223,14 +223,14 @@ class TestEngineRole:
         the Evaluated engine happens to be the sole minimum, and asserting it here would
         encode a coincidence of that one report.
         """
-        engines = artifacts._architecture_engines(zero_workload_report)
+        engines = renderers._architecture_engines(zero_workload_report)
         no_move = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
         assert [e["engine"] for e in no_move] == ["aurora_postgresql", "elasticache"]
         assert "documentdb" not in {e["engine"] for e in no_move}
 
     def test_footer_names_and_percentage_agree(self, zero_workload_report: dict) -> None:
         """Tested positively on role, so an Evaluated engine is not named as "keeping" workload."""
-        engines = artifacts._architecture_engines(zero_workload_report)
+        engines = renderers._architecture_engines(zero_workload_report)
         kept = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
         assert [e["engine"] for e in kept] == ["aurora_postgresql", "elasticache"]
         assert abs(sum(e["workload"] for e in kept) - 78.7) < 0.05
@@ -238,8 +238,8 @@ class TestEngineRole:
     def test_architecture_svg_renders_the_evaluated_engine_muted(
         self, zero_workload_report: dict
     ) -> None:
-        svg = artifacts.architecture_svg(zero_workload_report)
-        assert artifacts._ROLE_STROKE["Evaluated"] in svg
+        svg = renderers.architecture_svg(zero_workload_report)
+        assert renderers._ROLE_STROKE["Evaluated"] in svg
         assert ">None<" not in svg
 
 

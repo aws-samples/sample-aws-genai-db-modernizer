@@ -122,7 +122,7 @@ def build_and_publish_graph(store: ArtifactStore, db_name: str, job_id: str) -> 
 
 
 def _graph_download_name(db_name: str, job_id: str) -> str:
-    from src.atx_orchestrator.runtime.artifacts import artifact_stem
+    from src.report.renderers import artifact_stem
 
     return f"{artifact_stem(db_name, 'context-graph', job_id)}.lbug"
 
