@@ -199,7 +199,7 @@ repos:
         name: Validate Claude Code skills
         entry: uv run python scripts/validate_skills.py
         language: system
-        files: '(\.claude/skills/.*\.md|scripts/run_.*\.py|src/contracts/.*\.py|src/skills/.*\.md)'
+        files: '(\.claude/commands/.*\.md|\.claude/skills/.*\.md|scripts/run_.*\.py|src/contracts/.*\.py|src/skills/.*\.md)'
         pass_filenames: false
 
 # Configuration

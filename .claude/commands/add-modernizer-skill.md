@@ -77,17 +77,12 @@ Ask the user for:
 2. Write the domain knowledge the LLM needs to make good decisions
 3. Keep it focused — principles and anti-patterns, not implementation details
 
-## Phase 5: Skill
+## Phase 5: Command
 
-1. Create `.claude/skills/{phase_name}/SKILL.md`
-2. Follow this exact template:
+1. Create `.claude/commands/{phase_name}.md`
+2. No frontmatter. Follow this exact template, matching the other shipped commands:
 
 ```markdown
----
-name: {phase_name}
-description: {one-line purpose}
----
-
 # /{phase_name}
 
 {Brief description.}
