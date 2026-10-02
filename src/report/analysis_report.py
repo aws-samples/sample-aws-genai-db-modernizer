@@ -98,11 +98,10 @@ def default_graph_fetcher(store: Any, database_name: str, job_id: str, local_pat
     A persisted ``{db}/{job}/graph/context.lbug`` cannot be trusted here: it may be an
     un-checkpointed copy missing its ``.wal`` file (the local API's ``GraphStoreCache``
     leaves the on-disk graph in exactly that state), which opens as an empty database
-    and raises on the first query. Rebuilding is cheap -- well under a second even for
-    thousands of queries -- and this fetcher only ever needs to serve one render, so
-    there is no cache to keep warm. The AWS Transform integration already published its
-    own graph in an earlier phase and passes its own pointer-based fetcher instead of
-    rebuilding.
+    and raises on the first query. Rebuilding is cheap -- ≈0.5 s for a 107-query job --
+    and this fetcher only ever needs to serve one render, so there is no cache to keep
+    warm. The AWS Transform integration already published its own graph in an earlier
+    phase and passes its own pointer-based fetcher instead of rebuilding.
     """
     from src.graph import GraphStore, populators
 
@@ -314,8 +313,9 @@ def _read_journeys(
     store: Any, database_name: str, job_id: str, graph_fetcher: GraphFetcher | None = None
 ) -> list[dict]:
     # Prefer the published context graph (the read-model). Falls through to the
-    # per-query JSON artifacts only for legacy jobs that predate the graph, which
-    # are the sole jobs that still have those artifacts written.
+    # per-query JSON artifacts only when the graph cannot be built or read -- and
+    # for legacy jobs that predate the graph, which are the sole jobs that still
+    # have those artifacts written.
     from_graph = _read_journeys_from_graph(store, database_name, job_id, graph_fetcher)
     if from_graph is not None:
         return from_graph
@@ -426,8 +426,8 @@ def build_export_data(
     is missing; every other artifact degrades to an empty section.
 
     ``graph_fetcher`` controls how to obtain the context graph; the default works
-    on local/S3 stores (persisted graph, else rebuilt from the JSON artifacts). The
-    AWS Transform integration passes its own fetcher instead.
+    on local/S3 stores (rebuilt from the JSON contracts each time). The AWS
+    Transform integration passes its own fetcher instead.
     """
     report_key = synthesis_report_key(store, database_name, job_id, assignment_version)
     report = store.read_json(report_key)

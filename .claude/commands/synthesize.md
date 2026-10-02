@@ -47,9 +47,12 @@ Produces the final synthesis report with rankings, TCO analysis, risk assessment
    uv run python scripts/run_report.py --job-id {job_id} --db {database_name}
    ```
 
-   Prints `{"status": ..., "files": [...]}`. `complete` means every deliverable
-   rendered; `partial` lists what failed in `errors` (tell the user, continue);
-   `error` means no synthesis report exists (stop and report it).
+   Prints `{"status": ..., "files": [...], "errors": [...], "warnings": [...]}`.
+   `complete` means every deliverable rendered with nothing to flag; `partial`
+   covers both outright failures (in `errors`) and successful-but-suspect renders
+   (in `warnings`, e.g. an analysis report with zero query journeys embedded) —
+   tell the user what it says, then continue; `error` means no synthesis report
+   exists, or rendering itself blew up (stop and report it).
 
 5. **Present report**
    Show:

@@ -117,3 +117,15 @@ def test_missing_report_raises(tmp_path: Path) -> None:
     empty = LocalArtifactStore(base_dir=str(tmp_path))
     with pytest.raises(FileNotFoundError):
         dl.render_deliverables(empty, JOB, DB, KEY, graph_fetcher=_no_graph)
+
+
+def test_zero_journeys_is_a_warning_not_a_silent_success(store) -> None:
+    """A graph that cannot be fetched (and no legacy query-journeys artifacts)
+    renders an analysis report with 0 journeys embedded. That must surface as a
+    warning -- not look identical to a job that genuinely has none."""
+    out = dl.render_deliverables(store, JOB, DB, KEY, graph_fetcher=_no_graph)
+
+    assert out.errors == []
+    assert out.journeys == 0
+    assert any("0 query journeys" in w for w in out.warnings)
+    assert "analysis-report" in {d.name for d in out.items}

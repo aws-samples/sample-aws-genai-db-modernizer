@@ -2,7 +2,8 @@
 
 Single entry point shared by the local scripts and the AWS Transform integration.
 It only renders; the caller decides where items go (``stage`` = write next to the
-report, ``publish`` = hand to a delivery channel). Deterministic: no LLM calls.
+report, ``publish`` = hand to a delivery channel). No LLM calls; content is a pure
+function of the artifacts apart from the export timestamp.
 """
 
 from __future__ import annotations
@@ -35,6 +36,10 @@ class Deliverable:
 class DeliverableSet:
     items: list[Deliverable] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    # Query journeys embedded in the analysis report, or None when that report
+    # itself failed to build (see ``errors``) and no count exists.
+    journeys: int | None = None
 
 
 def render_deliverables(
@@ -51,8 +56,8 @@ def render_deliverables(
     analysis report and the executive summary are optional: a failure in either is
     recorded in ``errors`` and the rest are still returned.
 
-    Each entry in ``errors`` is also logged here at WARNING; callers should
-    forward it, not re-log it.
+    Each entry in ``errors`` and ``warnings`` is also logged here at WARNING;
+    callers should forward them, not re-log them.
     """
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
@@ -90,6 +95,10 @@ def render_deliverables(
             stage=True,
             publish=True,
         ),
+        # The published JSON is wrapped with an identity envelope; the object at
+        # report_key is NOT touched. That one is the system of record and is
+        # validated against the synthesis contract on re-read, so injecting a key
+        # into it would risk failing validation for the sake of a filename.
         Deliverable(
             "assessment-data",
             json.dumps({"_artifact": data, **report}, indent=2).encode("utf-8"),
@@ -125,12 +134,25 @@ def render_deliverables(
                 publish=True,
             )
         )
+        out.journeys = (export_data.get("queryJourneys") or {}).get("total")
+        if out.journeys == 0:
+            out.warnings.append(
+                "analysis-report: 0 query journeys embedded (graph unavailable or "
+                "the job has no collector output)"
+            )
     except Exception as e:  # noqa: BLE001 - optional deliverable
         out.errors.append(f"analysis-report: {type(e).__name__}: {e}")
 
     try:
+        # export_data is passed even when the analysis report failed above (it is
+        # then None): slide 3 needs the collector query patterns and degrades to a
+        # stated gap without them, rather than losing the whole deck.
         deck, deck_pdf = pdf_report.render_executive_summary_pdf(report, export_data)
         out.items += [
+            # Fixed names, unlike the other deliverables above: this is the reusable
+            # executive deliverable, called the same thing in every engagement. The
+            # job it belongs to is already in the key prefix, so no date-stamped
+            # stem is needed.
             Deliverable(
                 "executive-summary-pptx",
                 deck,
@@ -138,6 +160,8 @@ def render_deliverables(
                 f"Executive Summary Deck — {database_name}",
                 pptx_report.FILENAME,
                 stage=True,
+                # The editable deck is staged but not published -- the PDF is the
+                # delivery, the deck is the editable source for whoever presents it.
                 publish=False,
             ),
             Deliverable(
@@ -155,4 +179,6 @@ def render_deliverables(
 
     for err in out.errors:
         logger.warning("deliverable skipped: %s", err)
+    for warn in out.warnings:
+        logger.warning("deliverable warning: %s", warn)
     return out

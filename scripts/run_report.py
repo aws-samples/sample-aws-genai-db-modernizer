@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None) -> dict:
+    from pathlib import Path
+
     from src.report import analysis_report
-    from src.report.deliverables import render_deliverables
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=artifact_root)
@@ -37,21 +38,31 @@ def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None
     m = re.search(r"/synthesis/v(\d+)/", report_key)
     version = int(m.group(1)) if m else 0
 
-    # No graph_fetcher: the default (persisted graph, else rebuild) is right for a local store.
-    rendered = render_deliverables(store, job_id, db, report_key, assignment_version=version)
-    base = report_key.rsplit("/", 1)[0]
-    files = []
-    for d in rendered.items:
-        if d.stage:
-            key = f"{base}/{d.filename}"
-            store.write_bytes(key, d.content)
-            files.append(key)
-    return {
-        "status": "complete" if not rendered.errors else "partial",
-        "report": report_key,
-        "files": files,
-        "errors": rendered.errors,
-    }
+    try:
+        from src.report.deliverables import render_deliverables
+
+        # No graph_fetcher: the default always rebuilds the context graph from the
+        # JSON contracts, which is right for a local store.
+        rendered = render_deliverables(store, job_id, db, report_key, assignment_version=version)
+        base = report_key.rsplit("/", 1)[0]
+        files = []
+        for d in rendered.items:
+            if d.stage:
+                key = f"{base}/{d.filename}"
+                store.write_bytes(key, d.content)
+                files.append(key)
+        status = "partial" if (rendered.errors or rendered.warnings) else "complete"
+        return {
+            "status": status,
+            "report": report_key,
+            "files": files,
+            "paths": [str(Path(artifact_root, k).resolve()) for k in files],
+            "errors": rendered.errors,
+            "warnings": rendered.warnings,
+            "journeys": rendered.journeys,
+        }
+    except Exception as e:  # noqa: BLE001 - this script must always print JSON
+        return {"status": "error", "message": f"{type(e).__name__}: {e}"}
 
 
 def main() -> None:
