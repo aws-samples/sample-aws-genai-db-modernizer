@@ -1451,11 +1451,16 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         # its own try: it reads six more artifacts than the other three, and none of
         # them failing is a reason to withhold reports that already rendered.
         try:
+            from src.atx_orchestrator.runtime import graph_transport
             from src.report import analysis_report as _ar
 
             assignment_version = int(inner.get("assignment_version") or 1)
             export_data = _ar.build_export_data(
-                store, job_id, database_name, assignment_version=assignment_version
+                store,
+                job_id,
+                database_name,
+                assignment_version=assignment_version,
+                graph_fetcher=graph_transport.download_graph,
             )
             analysis_prov = _prov("analysis-report", "html")
             analysis_html = _ar.render_analysis_report_html(

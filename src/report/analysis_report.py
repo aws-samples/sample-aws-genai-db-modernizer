@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -82,13 +83,39 @@ _SOURCE_FIELDS = (
 )
 _ASSIGNMENT_FIELDS = ("assigned_engine", "confidence", "in_scope")
 
+# (store, database_name, job_id, local_path) -> True when a .lbug was written to local_path.
+GraphFetcher = Callable[[Any, str, str, str], bool]
+
+
+def default_graph_fetcher(store: Any, database_name: str, job_id: str, local_path: str) -> bool:
+    """Materialise the job's context graph at ``local_path`` from any byte-capable store.
+
+    Prefers the persisted ``{db}/{job}/graph/context.lbug``; otherwise rebuilds it
+    from the JSON artifacts, which is what the local API does on a cache miss. The
+    AWS Transform store cannot do either and passes its own fetcher instead.
+    """
+    from src.graph import GraphStore, populators
+    from src.graph.persistence import GraphPersistence
+
+    if GraphPersistence(store).download_if_exists(database_name, job_id, local_path):
+        return True
+    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+    graph_store = GraphStore(local_path)
+    try:
+        populators.rebuild_graph(database_name, job_id, store, graph_store)
+    finally:
+        graph_store.close()
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Artifact reads
 # ---------------------------------------------------------------------------
 
 
-def _synthesis_key(store: Any, database_name: str, job_id: str, assignment_version: int) -> str:
+def synthesis_report_key(
+    store: Any, database_name: str, job_id: str, assignment_version: int
+) -> str:
     """Return the synthesis report key, preferring the highest version present.
 
     ``synthesis_handler`` writes ``synthesis/v{N}/report.json`` when
@@ -121,6 +148,9 @@ def _synthesis_key(store: Any, database_name: str, job_id: str, assignment_versi
         f"No synthesis report found for job {job_id!r} under "
         f"'{database_name}/{job_id}/' (tried {', '.join(dict.fromkeys(candidates))})."
     )
+
+
+_synthesis_key = synthesis_report_key  # back-compat for existing tests
 
 
 def _read_schema_designs(store: Any, database_name: str, job_id: str) -> list[dict]:
@@ -227,28 +257,36 @@ def _project_journey(journey: dict) -> dict:
     return out
 
 
-def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> list[dict] | None:
-    """Serve the per-query journeys from the published context graph.
+def _read_journeys_from_graph(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    graph_fetcher: GraphFetcher | None = None,
+) -> list[dict] | None:
+    """Serve the per-query journeys from the context graph.
 
     Returns the journey list (same projected shape as the JSON path), or ``None``
-    when the graph is unavailable for this job (never published, or the graph
-    module/deps are absent) so the caller falls back to the per-query artifacts.
-    The graph is the read-model; per-query JSON artifacts are no longer written,
-    so this is the primary path, not an optimization. The artifact fallback below
-    remains only for jobs that predate the graph read-model.
+    when the graph is unavailable or unreadable, so the caller falls back to the
+    legacy per-query artifacts.
     """
     import tempfile
 
     try:
-        from src.atx_orchestrator.runtime import graph_transport
         from src.graph import GraphStore
         from src.graph.queries import query_journeys
     except Exception:  # noqa: BLE001 - graph deps unavailable; use the JSON path
         return None
 
+    fetch = graph_fetcher or default_graph_fetcher
     with tempfile.TemporaryDirectory(prefix=f"graph-read-{job_id}-") as tmpdir:
         local_path = str(Path(tmpdir) / "context.lbug")
-        if not graph_transport.download_graph(store, database_name, job_id, local_path):
+        try:
+            if not fetch(store, database_name, job_id, local_path):
+                return None
+        except Exception:  # noqa: BLE001 - a failed fetch means "use the JSON path"
+            logger.warning(
+                "context graph fetch failed for %s/%s", database_name, job_id, exc_info=True
+            )
             return None
         graph_store = None
         try:
@@ -268,11 +306,13 @@ def _read_journeys_from_graph(store: Any, database_name: str, job_id: str) -> li
                     graph_store.close()
 
 
-def _read_journeys(store: Any, database_name: str, job_id: str) -> list[dict]:
+def _read_journeys(
+    store: Any, database_name: str, job_id: str, graph_fetcher: GraphFetcher | None = None
+) -> list[dict]:
     # Prefer the published context graph (the read-model). Falls through to the
     # per-query JSON artifacts only for legacy jobs that predate the graph, which
     # are the sole jobs that still have those artifacts written.
-    from_graph = _read_journeys_from_graph(store, database_name, job_id)
+    from_graph = _read_journeys_from_graph(store, database_name, job_id, graph_fetcher)
     if from_graph is not None:
         return from_graph
 
@@ -373,14 +413,19 @@ def build_export_data(
     database_name: str,
     assignment_version: int = 1,
     journey_budget: int = DEFAULT_JOURNEY_BUDGET,
+    graph_fetcher: GraphFetcher | None = None,
 ) -> dict:
     """Assemble the ``DATA`` object the interactive report's client code reads.
 
     Mirrors what ``AnalysisResults-02.js`` builds from four REST calls, but sourced
     from the ``ArtifactStore`` directly. Raises only if the synthesis report itself
     is missing; every other artifact degrades to an empty section.
+
+    ``graph_fetcher`` controls how to obtain the context graph; the default works
+    on local/S3 stores (persisted graph, else rebuilt from the JSON artifacts). The
+    AWS Transform integration passes its own fetcher instead.
     """
-    report_key = _synthesis_key(store, database_name, job_id, assignment_version)
+    report_key = synthesis_report_key(store, database_name, job_id, assignment_version)
     report = store.read_json(report_key)
 
     if "reality_check" not in report:
@@ -411,7 +456,7 @@ def build_export_data(
             job_id,
         )
 
-    all_journeys = _read_journeys(store, database_name, job_id)
+    all_journeys = _read_journeys(store, database_name, job_id, graph_fetcher)
     flow = _flow_aggregate(all_journeys)
     journeys, truncated = _apply_budget(all_journeys, journey_budget)
 

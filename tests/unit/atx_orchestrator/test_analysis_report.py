@@ -253,7 +253,7 @@ def test_existing_reality_check_is_left_alone():
 
 
 def test_all_journeys_are_read_with_no_page_clamp():
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB)
+    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, graph_fetcher=lambda *_: False)
     qj = data["queryJourneys"]
     assert qj["total"] == 3
     assert len(qj["items"]) == 3
@@ -261,7 +261,7 @@ def test_all_journeys_are_read_with_no_page_clamp():
 
 
 def test_journeys_are_projected_to_the_fields_the_report_reads():
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB)
+    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, graph_fetcher=lambda *_: False)
     item = next(i for i in data["queryJourneys"]["items"] if i["query_id"] == "q1")
     assert set(item) == {"query_id", "source", "assignment", "design"}
     assert set(item["assignment"]) == {"assigned_engine", "confidence", "in_scope"}
@@ -270,7 +270,9 @@ def test_journeys_are_projected_to_the_fields_the_report_reads():
 
 
 def test_budget_keeps_the_busiest_queries_and_says_so():
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, journey_budget=2)
+    data = ar.build_export_data(
+        FakeStore(_objects()), JOB, DB, journey_budget=2, graph_fetcher=lambda *_: False
+    )
     qj = data["queryJourneys"]
     assert qj["total"] == 3
     assert [i["query_id"] for i in qj["items"]] == ["q1", "q2"]
@@ -279,7 +281,9 @@ def test_budget_keeps_the_busiest_queries_and_says_so():
 
 def test_flow_aggregate_covers_every_journey_even_when_truncated():
     """The Sankey must never be silently sampled — that is Defect 4's failure mode."""
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, journey_budget=1)
+    data = ar.build_export_data(
+        FakeStore(_objects()), JOB, DB, journey_budget=1, graph_fetcher=lambda *_: False
+    )
     assert sum(row["count"] for row in data["flowAggregate"]) == 3
     assert {"query_type": "SELECT", "assigned_engine": "unassigned", "count": 1} in data[
         "flowAggregate"
@@ -315,7 +319,7 @@ def test_journeys_are_read_concurrently():
                 live -= 1
 
     store.read_json = slow  # type: ignore[method-assign]
-    data = ar.build_export_data(store, JOB, DB)
+    data = ar.build_export_data(store, JOB, DB, graph_fetcher=lambda *_: False)
     assert data["queryJourneys"]["total"] == 203
     assert max_concurrent > 1, "journeys were read serially"
 
@@ -331,13 +335,13 @@ def test_one_unreadable_journey_does_not_lose_the_rest():
         return inner(path)
 
     store.read_json = flaky  # type: ignore[method-assign]
-    data = ar.build_export_data(store, JOB, DB)
+    data = ar.build_export_data(store, JOB, DB, graph_fetcher=lambda *_: False)
     assert [i["query_id"] for i in data["queryJourneys"]["items"]] == ["q1", "q3"]
 
 
 def test_missing_journeys_degrade_to_empty():
     objects = {k: v for k, v in _objects().items() if "/query-journeys/" not in k}
-    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
     assert data["queryJourneys"]["items"] == []
     assert data["flowAggregate"] == []
 
@@ -349,7 +353,7 @@ def test_missing_journeys_degrade_to_empty():
 
 @pytest.fixture
 def rendered() -> str:
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB)
+    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, graph_fetcher=lambda *_: False)
     return ar.render_analysis_report_html(data, filename="discourse_analysis-report_29d77e81.html")
 
 
@@ -368,7 +372,7 @@ def test_unfilled_placeholder_in_the_template_raises(monkeypatch):
         return text + "\n<!-- __BRAND_NEW__ -->" if name.endswith(".tpl") else text
 
     monkeypatch.setattr(ar, "_read_template", fake)
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB)
+    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, graph_fetcher=lambda *_: False)
     with pytest.raises(ValueError, match="__BRAND_NEW__"):
         ar.render_analysis_report_html(data)
 
@@ -379,7 +383,9 @@ def test_upper_snake_tokens_in_customer_data_are_not_mistaken_for_placeholders()
     objects[f"{DB}/{JOB}/query-journeys/q1.json"]["source"][
         "query_text"
     ] = "SELECT COALESCE(x, '__NULL__') FROM posts WHERE k = '__SENTINEL_VALUE__'"
-    html = ar.render_analysis_report_html(ar.build_export_data(FakeStore(objects), JOB, DB))
+    html = ar.render_analysis_report_html(
+        ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    )
     assert "__NULL__" in html and "__SENTINEL_VALUE__" in html
 
 
@@ -465,7 +471,9 @@ def test_script_close_tag_in_data_cannot_break_the_report():
     objects[f"{DB}/{JOB}/query-journeys/q1.json"]["source"][
         "query_text"
     ] = "SELECT '</script><script>alert(1)</script>'"
-    html = ar.render_analysis_report_html(ar.build_export_data(FakeStore(objects), JOB, DB))
+    html = ar.render_analysis_report_html(
+        ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    )
     assert "</script><script>alert(1)" not in html
     # Only "<" needs escaping to keep the element from closing early.
     assert "\\u003c/script>" in html
@@ -474,7 +482,9 @@ def test_script_close_tag_in_data_cannot_break_the_report():
 
 
 def test_truncation_banner_appears_and_is_honest():
-    data = ar.build_export_data(FakeStore(_objects()), JOB, DB, journey_budget=1)
+    data = ar.build_export_data(
+        FakeStore(_objects()), JOB, DB, journey_budget=1, graph_fetcher=lambda *_: False
+    )
     html = ar.render_analysis_report_html(data)
     assert "Partial query detail" in html
     assert "busiest of 3 query journeys" in html
@@ -589,10 +599,9 @@ def test_read_journeys_falls_back_to_json_when_graph_absent():
 
 
 def test_read_journeys_from_graph_returns_none_without_pointer():
-    # A store with no graph pointer and no download-by-id capability yields None
-    # (so the caller falls back), rather than raising.
+    # A fetcher that cannot produce a graph yields None (so the caller falls back).
     store = FakeStore(_objects())
-    assert ar._read_journeys_from_graph(store, DB, JOB) is None
+    assert ar._read_journeys_from_graph(store, DB, JOB, graph_fetcher=lambda *_: False) is None
 
 
 def test_read_journeys_from_graph_returns_none_when_parse_fails():
@@ -611,11 +620,5 @@ def test_read_journeys_from_graph_returns_none_when_parse_fails():
         Path(local_path).write_bytes(b"not-a-real-lbug")
         return True
 
-    with (
-        patch(
-            "src.atx_orchestrator.runtime.graph_transport.download_graph",
-            side_effect=_fake_download,
-        ),
-        patch("src.graph.GraphStore", side_effect=RuntimeError("corrupt graph")),
-    ):
-        assert ar._read_journeys_from_graph(store, DB, JOB) is None
+    with patch("src.graph.GraphStore", side_effect=RuntimeError("corrupt graph")):
+        assert ar._read_journeys_from_graph(store, DB, JOB, graph_fetcher=_fake_download) is None
