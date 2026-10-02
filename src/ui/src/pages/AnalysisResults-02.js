@@ -73,6 +73,8 @@ const ENGINE_LABELS = {
   neptune: 'Neptune',
   keyspaces: 'Keyspaces',
   aurora: 'Aurora',
+  aurora_mysql: 'Aurora MySQL',
+  aurora_postgresql: 'Aurora PostgreSQL',
 };
 
 const OP_CATEGORY = {

@@ -38,6 +38,8 @@ const ENGINE_LABELS = {
   documentdb: 'DocumentDB',
   opensearch: 'OpenSearch',
   elasticache: 'ElastiCache',
+  aurora_mysql: 'Aurora MySQL',
+  aurora_postgresql: 'Aurora PostgreSQL',
 };
 
 const SIGNAL_DESCRIPTIONS = {

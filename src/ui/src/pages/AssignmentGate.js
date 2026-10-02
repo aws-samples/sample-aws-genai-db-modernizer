@@ -48,6 +48,8 @@ const ENGINE_COLORS = {
   neptune: { bg: '#7d2105', badge: 'red', label: 'Neptune' },
   keyspaces: { bg: '#8b6ccb', badge: 'blue', label: 'Keyspaces' },
   aurora: { bg: '#ec7211', badge: 'green', label: 'Aurora' },
+  aurora_mysql: { bg: '#9c5700', badge: 'green', label: 'Aurora MySQL' },
+  aurora_postgresql: { bg: '#9c5700', badge: 'green', label: 'Aurora PostgreSQL' },
 };
 
 const ENGINE_OPTIONS = Object.entries(ENGINE_COLORS).map(([key, val]) => ({
@@ -733,7 +735,10 @@ const AssignmentGatePage = memo(() => {
       {/* Consolidations & Architectural Patterns */}
       {(consolidations.length > 0 || patterns.length > 0) && (
         <ExpandableSection
-          headerText={t('assignment-gate.optimization-details.header', { consolidationCount: consolidations.length, patternCount: patterns.length })}
+          headerText={t('assignment-gate.optimization-details.header', {
+            consolidations: t('assignment-gate.optimization-details.header-consolidation-count', { count: consolidations.length }),
+            patterns: t('assignment-gate.optimization-details.header-pattern-count', { count: patterns.length }),
+          })}
           variant="container"
           defaultExpanded={false}
         >
