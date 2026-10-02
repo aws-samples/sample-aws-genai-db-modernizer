@@ -5,3 +5,7 @@
 # package.json version ranges are covered by the committed package-lock.json.
 # The package-dependencies-check rule is a false positive when lock files exist.
 src/ui/package.json
+
+# Vendored third-party code (e.g. Chart.js) is not our code to audit; its
+# minified form also trips unrelated findings like prototype-pollution-loop.
+src/report/templates/vendor/
