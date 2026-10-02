@@ -25,12 +25,14 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
+from src.atx_orchestrator.runtime import graph_transport
 from src.atx_orchestrator.tools import run_synthesis_via_a2a
 from src.report import renderers
+from src.report.deliverables import DeliverableSet
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
@@ -422,3 +424,26 @@ class TestSynthesisDeliverables:
         # flows through unchanged. (A store is constructed once for version
         # resolution, which is best-effort and never fatal.)
         assert json.loads(out) == payload
+
+    def test_pins_the_graph_fetcher_and_assignment_version(self, report: dict) -> None:
+        """render_deliverables must be called with the ATX graph transport's
+        download_graph -- not the local-rebuild default -- and the
+        assignment_version resolved from the payload. The ATX store is
+        JSON-only; the graph travels as a published artifact, so silently
+        falling back to the local default here would rebuild from JSON
+        contracts instead of reading what synthesis actually published."""
+        payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
+        store = _FakeStore({self.KEY: report})
+        mock_render = Mock(return_value=DeliverableSet())
+        with (
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.report.deliverables.render_deliverables", mock_render),
+            patch("src.atx_orchestrator.runtime.artifacts.publish", return_value={}),
+        ):
+            run_synthesis_via_a2a("job-x", "discourse")
+
+        assert mock_render.called
+        _, kwargs = mock_render.call_args
+        assert kwargs["graph_fetcher"] is graph_transport.download_graph
+        assert kwargs["assignment_version"] == 1
