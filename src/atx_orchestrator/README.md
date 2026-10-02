@@ -90,10 +90,11 @@ The current shape of this integration is recorded in `docs/architecture/decision
 | `runtime/job_plan.py` | WebApp progress-panel plan + per-phase status updates |
 | `runtime/job_status.py` | Job/phase status helpers |
 | `runtime/hitl.py` | Human-in-the-loop transport for the detailed routing-review table |
-| `runtime/artifacts.py` | Artifacts-panel publishing + Decision/Engineering report renderers |
-| `runtime/analysis_report.py`, `pdf_report.py`, `pptx_report.py` | Report renderers (analysis markdown, PDF, executive PPTX) |
+| `runtime/artifacts.py` | Artifacts-panel publishing |
+| `src/report/deliverables.py` | Shared entry point: renders every customer deliverable from one synthesis report |
+| `src/report/analysis_report.py`, `pdf_report.py`, `pptx_report.py` | Report renderers (analysis HTML, PDF, executive PPTX) |
 | `runtime/store.py` | Transform storage subclasses (adds `write_text`) |
-| `runtime/assets/`, `runtime/templates/` | Report template + static assets |
+| `src/report/assets/`, `src/report/templates/` | Report template + static assets |
 | `requirements.txt` | Container Python deps (SDK + project runtime deps) |
 
 ## Environment variables

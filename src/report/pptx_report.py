@@ -3,8 +3,9 @@
 Renders ``summary-executive-report.pptx`` from the synthesis report plus the
 report export data, using ``assets/template.pptx`` (the AWS Transform deck: its
 own theme, aurora layout backgrounds, AWS logo and Transform hexagon). Published
-alongside the Decision Report HTML by ``tools._publish_synthesis_deliverables``,
-from the same inputs, so the two never disagree.
+alongside the Decision Report HTML by
+``src.report.deliverables.render_deliverables``, from the same inputs, so the two
+never disagree.
 
 Three rules this module exists to honour:
 
@@ -1205,7 +1206,8 @@ def render_executive_summary_pptx(
 
     Raises:
         Whatever ``python-pptx`` raises on a malformed template. The caller
-        publishes best-effort and logs; see ``tools._publish_synthesis_deliverables``.
+        publishes best-effort and logs; see
+        ``src.report.deliverables.render_deliverables``.
     """
     f = derive(report, export_data or {})
     prs = open_deck(keep=1)

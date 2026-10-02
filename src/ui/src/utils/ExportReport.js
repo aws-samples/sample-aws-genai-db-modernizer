@@ -19,7 +19,7 @@
 // (via [data-engine] rules) and the charts (via paletteColor() at runtime) read it
 // from there, so re-theming the report is a single edit.
 // Display names for every engine key the pipeline emits. Kept in sync with
-// ENGINE_LABELS in src/atx_orchestrator/runtime/analysis_report.py by
+// ENGINE_LABELS in src/report/analysis_report.py by
 // tests/unit/atx_orchestrator/test_report_template_sync.py.
 const ENGINE_LABELS = {
   dynamodb: 'DynamoDB', documentdb: 'DocumentDB', opensearch: 'OpenSearch',

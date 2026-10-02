@@ -2,7 +2,7 @@
 
 ``src/ui/src/utils/ExportReport.js`` is the single source of truth for the
 interactive report's look. ``scripts/sync_report_template.py`` lifts its static
-parts into ``src/atx_orchestrator/runtime/templates/``. Without this test a UI
+parts into ``src/report/templates/``. Without this test a UI
 change would silently leave the ATX report rendering last month's layout, and the
 "matches the WebApp export exactly" property would be a claim rather than an
 invariant.
