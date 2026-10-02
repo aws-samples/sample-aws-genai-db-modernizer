@@ -127,7 +127,7 @@ Ask the user for:
 ## Phase 6: Integration
 
 1. Add the new phase to the `/modernize` orchestrator skill if it belongs in the main pipeline
-2. Update `.claude/skills/modernize/SKILL.md` with the new step in the correct position
+2. Update `.claude/commands/modernize.md` with the new step in the correct position
 3. Run the pre-commit hook to verify everything links up:
 
    ```bash
