@@ -74,6 +74,12 @@ dev = [
     "cfn-lint>=0.83.0",
     "moto[s3,stepfunctions,logs]>=5.2.2",
 ]
+e2e = [
+    "playwright>=1.47",
+    "pytest-playwright>=0.5",
+    "axe-playwright-python>=0.1.4",
+    "pypdf>=5.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -106,6 +112,7 @@ markers = [
     "integration: marks tests as integration tests",
     "contract: marks tests as contract validation tests",
     "local_only: integration tests that need manually generated local artifacts (scripts/test_local_phased.py); deselected in CI",
+    "e2e: end-to-end tests that run the deterministic pipeline and render deliverables (tests/e2e; run via ci/e2e.sh)",
 ]
 filterwarnings = [
     # Third-party: FastAPI's TestClient imports httpx via starlette, which warns
