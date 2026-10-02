@@ -92,28 +92,26 @@ GraphFetcher = Callable[[Any, str, str, str], bool]
 
 
 def default_graph_fetcher(store: Any, database_name: str, job_id: str, local_path: str) -> bool:
-    """Materialise the job's context graph at ``local_path`` from any byte-capable store.
+    """Materialise the job's context graph at ``local_path`` by rebuilding it from the
+    JSON artifacts -- the system of record -- every time.
 
-    Prefers the persisted graph (needs a byte-capable store); otherwise rebuilds it
-    from the JSON artifacts -- which works on any store -- and persists it when the
-    store accepts bytes. The AWS Transform integration already published the graph
-    in an earlier phase, so it passes its own pointer-based fetcher instead of
+    A persisted ``{db}/{job}/graph/context.lbug`` cannot be trusted here: it may be an
+    un-checkpointed copy missing its ``.wal`` file (the local API's ``GraphStoreCache``
+    leaves the on-disk graph in exactly that state), which opens as an empty database
+    and raises on the first query. Rebuilding is cheap -- well under a second even for
+    thousands of queries -- and this fetcher only ever needs to serve one render, so
+    there is no cache to keep warm. The AWS Transform integration already published its
+    own graph in an earlier phase and passes its own pointer-based fetcher instead of
     rebuilding.
     """
     from src.graph import GraphStore, populators
-    from src.graph.persistence import GraphPersistence
 
-    if GraphPersistence(store).download_if_exists(database_name, job_id, local_path):
-        return True
     Path(local_path).parent.mkdir(parents=True, exist_ok=True)
     graph_store = GraphStore(local_path)
     try:
         populators.rebuild_graph(database_name, job_id, store, graph_store)
     finally:
         graph_store.close()
-    # Self-heal like the local API: persist the rebuilt graph so the next read is a copy.
-    with contextlib.suppress(Exception):
-        GraphPersistence(store).upload(database_name, job_id, local_path)
     return True
 
 
