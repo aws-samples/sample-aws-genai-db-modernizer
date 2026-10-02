@@ -38,8 +38,12 @@ repos:
         exclude: package-lock.json
 
   # Python code formatting
+  # NOTE: linter revs below are kept in lockstep with the versions CI resolves
+  # from uv.lock (see .github/workflows/ci.yml). If they drift, the hook and CI
+  # run different tools and a green hook stops meaning a green CI. When bumping
+  # dependencies, bump these revs to match.
   - repo: https://github.com/psf/black
-    rev: 26.3.1
+    rev: 26.5.1
     hooks:
       - id: black
         name: Format Python code with Black
@@ -47,7 +51,7 @@ repos:
 
   # Python import sorting
   - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
+    rev: 9.0.1
     hooks:
       - id: isort
         name: Sort Python imports
@@ -56,7 +60,7 @@ repos:
 
   # Python linting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.16
+    rev: v0.16.8
     hooks:
       - id: ruff
         name: Lint Python code with Ruff
@@ -64,7 +68,7 @@ repos:
 
   # Python type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+    rev: v2.3.1
     hooks:
       - id: mypy
         name: Type check with mypy
@@ -73,7 +77,7 @@ repos:
 
   # Python security checks
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.6
+    rev: 1.9.4
     hooks:
       - id: bandit
         name: Security check with Bandit
@@ -106,6 +110,17 @@ repos:
         name: Validate commit message format
         stages: [commit-msg]
 
+
+  # Pre-commit / CI linter-version alignment
+  - repo: local
+    hooks:
+      - id: precommit-ci-alignment
+        name: Check pre-commit linter versions match CI (uv.lock)
+        entry: uv run python scripts/check_precommit_ci_alignment.py
+        language: system
+        pass_filenames: false
+        # Re-check whenever either side of the alignment changes.
+        files: ^(\.pre-commit-config\.yaml|uv\.lock)$
 
   # JSON Schema validation
   - repo: local

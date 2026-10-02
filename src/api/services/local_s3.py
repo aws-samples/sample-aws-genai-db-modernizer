@@ -175,7 +175,16 @@ class LocalS3Service:
         return self.read_artifact(database_name, job_id, f"analysis-{agent_type}", "analysis.json")
 
     def read_synthesis(self, database_name: str, job_id: str) -> dict | None:
-        return self.read_artifact(database_name, job_id, "referee-synthesis", "report.json")
+        from src.storage.assignment_versioning import synthesis_report_candidates
+
+        for key in synthesis_report_candidates(self._store, database_name, job_id):
+            if self._store.exists(key):
+                try:
+                    result: dict = self._store.read_json(key)
+                    return result
+                except Exception:
+                    return None
+        return None
 
     def read_reality_check(self, database_name: str, job_id: str) -> dict | None:
         data = self.read_artifact(database_name, job_id, "reality-check", "output.json")

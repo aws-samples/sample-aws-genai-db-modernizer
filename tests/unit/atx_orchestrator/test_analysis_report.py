@@ -535,7 +535,10 @@ def test_decision_report_and_engineering_report_carry_provenance():
 
     md = render_engineering_report_md(report, prov=md_prov)
     assert md.startswith("---\n")
-    assert f"job_id: {JOB}" in md
+    # Front-matter values are quoted YAML scalars (issue #140 / threat model R3): a
+    # value such as the database name is customer-derived and must not be able to
+    # break out of the block into new keys, so it is emitted as "..." rather than bare.
+    assert f'job_id: "{JOB}"' in md
     assert md_prov["filename"] in md
 
 
@@ -590,3 +593,29 @@ def test_read_journeys_from_graph_returns_none_without_pointer():
     # (so the caller falls back), rather than raising.
     store = FakeStore(_objects())
     assert ar._read_journeys_from_graph(store, DB, JOB) is None
+
+
+def test_read_journeys_from_graph_returns_none_when_parse_fails():
+    # R2: even if a .lbug downloads and passes the transport-level integrity gate,
+    # a native parse failure (corrupt/hostile binary the digest could not catch,
+    # or an engine version mismatch) must route to the JSON fallback rather than
+    # propagate out of the read path.
+    from pathlib import Path
+    from unittest.mock import patch
+
+    store = FakeStore(_objects())
+
+    def _fake_download(_store, _db, _job, local_path):
+        # The bytes made it to disk (transport says OK) but they are not a valid
+        # graph — GraphStore will choke when it tries to open them.
+        Path(local_path).write_bytes(b"not-a-real-lbug")
+        return True
+
+    with (
+        patch(
+            "src.atx_orchestrator.runtime.graph_transport.download_graph",
+            side_effect=_fake_download,
+        ),
+        patch("src.graph.GraphStore", side_effect=RuntimeError("corrupt graph")),
+    ):
+        assert ar._read_journeys_from_graph(store, DB, JOB) is None

@@ -11,13 +11,22 @@ import os
 from collections import defaultdict
 from datetime import UTC, datetime
 
+from src.agents.prompt_framing import (
+    SYSTEM_PROMPT_DATA_DIRECTIVE,
+    frame_untrusted,
+)
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
     sanity_sweep,
     validate_consolidations,
 )
-from src.agents.referee.reality_check import _build_recommendations, run_reality_check
+from src.agents.referee.reality_check import (
+    AURORA_ENGINES,
+    _build_recommendations,
+    rerun_aurora_absorption,
+    run_reality_check,
+)
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
@@ -167,6 +176,16 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                 surviving_engines=surviving_engines,
                 all_original_engines=all_original_engines,
             )
+            # The LLM can restore an Aurora that Pass 1 never saw; absorb again (#166)
+            corrected_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
+            if (AURORA_ENGINES & corrected_engines) - surviving_engines:
+                result["revised_assignments"], absorbed = rerun_aurora_absorption(
+                    result["revised_assignments"],
+                    result.get("triage", {}),
+                    result.get("analysis_outputs", {}),
+                    result.get("collector_output", {}),
+                )
+                result["consolidations"] = result["consolidations"] + absorbed
             # Rebuild recommendations to reflect corrected consolidations
             result["recommendations"] = _build_recommendations(
                 result["revised_assignments"],
@@ -359,10 +378,7 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
         )
 
         if corrections:
-            print(
-                f"[reality-check] LLM reversed {len(corrections)} queries — "
-                f"applying corrections"
-            )
+            print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
             llm_output["consolidation_corrections"] = corrections
 
     # Generate executive summary
@@ -509,8 +525,10 @@ def _generate_executive_summary(
         "- No markdown, bullet points, or headers\n"
         "- Write like a human engineer, not a language model\n"
         "- Keep it under 3 sentences total\n\n"
-        f"Context:\n{json.dumps(context, indent=2)}\n\n"
-        "Write the briefing now."
+        # R1: the context carries customer-derived strings (database name,
+        # consolidation reasons). Frame it as untrusted data, not instructions.
+        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
+        + "\n\nWrite the briefing now."
     )
 
     try:
@@ -532,7 +550,7 @@ def _generate_executive_summary(
                 "('Your workload presents...', 'The analysis identified...'). You NEVER "
                 "express doubt or recommend going back for more data. Complexity is your "
                 "job and you have handled it. Short, direct, confident, solution-oriented. "
-                "No filler, no hedging."
+                "No filler, no hedging.\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
             ),
             tools=[],
             callback_handler=None,

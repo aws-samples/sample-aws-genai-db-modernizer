@@ -10,7 +10,7 @@ Dispatches schema design to all selected engines in parallel using subagents.
 
 2. **Launch parallel subagents**
    Launch one subagent per selected engine in a SINGLE message:
-   - Each subagent invokes `/design-schema-{engine}`
+   - Each subagent invokes `/design-schema-{engine}`, with every `_` in the engine id replaced by `-` (`aurora_mysql` → `/design-schema-aurora-mysql`, `aurora_postgresql` → `/design-schema-aurora-postgresql`)
 
    CRITICAL: All launches MUST be in a single message for true parallelism.
 

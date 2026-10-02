@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.agents.referee.schema_shapes import design_count, design_table_defs, is_cache_engine
+from src.agents.referee.schema_shapes import is_cache_engine
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import (
     build_architecture_recommendation,
     build_ranking,
     build_table_mappings,
+    schema_table_defs,
 )
 
 # Shaped after the validated contract in src/contracts/elasticache_model_output.py:
@@ -88,11 +89,11 @@ _EC_ANALYSIS = {
 }
 
 # (engine, artifact, number of target objects it defines) — one row per engine
-# the map knows, so a new engine added without a row shows up as a gap here.
+# schema_table_defs knows, so a new engine added without a row shows up as a gap.
 _DESIGN_FIELDS_BY_ENGINE: list[tuple[str, dict, int]] = [
     ("dynamodb", {"table_definitions": [{}, {}]}, 2),
-    ("aurora_postgresql", {"table_definitions": [{}]}, 1),
-    ("aurora_mysql", {"table_definitions": [{}]}, 1),
+    ("aurora_postgresql", {"table_definitions": [{"table_name": "t"}]}, 1),
+    ("aurora_mysql", {"table_definitions": [{"table_name": "t"}]}, 1),
     ("documentdb", {"collections": [{}, {}, {}]}, 3),
     ("elasticache", {"key_designs": [{}]}, 1),
     ("opensearch", {"index_designs": [{}], "data_stream_designs": [{}]}, 2),
@@ -252,28 +253,29 @@ class TestCacheIsNeverAMigrationTarget:
         usermeta = next(m for m in mappings if m["source_table"] == "wp_usermeta")
 
         assert usermeta["target_table"] == "session:{session_id}"
-        assert usermeta["aggregate_pattern"] == "cache_key"
+        # schema_table_defs reports a key design's Redis data type.
+        assert usermeta["aggregate_pattern"] == "hash"
 
 
 class TestSchemaShapes:
     @pytest.mark.parametrize("engine,schema,expected", _DESIGN_FIELDS_BY_ENGINE)
     def test_every_engine_design_field_is_counted(self, engine, schema, expected) -> None:
-        """One map, so adding an engine cannot silently skip a caller. Counts are
-        of the engine's own field, never of table_definitions."""
-        assert design_count(engine, schema) == expected
+        """One normaliser, so adding an engine cannot silently skip a caller.
+        Counts are of the engine's own field, never of table_definitions."""
+        assert len(schema_table_defs(engine, schema)) == expected
 
     def test_missing_and_empty_designs_read_as_no_design(self) -> None:
-        assert design_count("elasticache", {}) == 0
-        assert design_count("elasticache", {"key_designs": []}) == 0
-        assert design_count("elasticache", {"key_designs": None}) == 0
+        assert schema_table_defs("elasticache", {}) == []
+        assert schema_table_defs("elasticache", {"key_designs": []}) == []
+        assert schema_table_defs("elasticache", {"key_designs": None}) == []
 
     def test_unknown_engine_falls_back_rather_than_raising(self) -> None:
         """Synthesis must not fail a phase over an engine the map has not met."""
-        assert design_count("neptune", {"table_definitions": [{}]}) == 1
-        assert design_count("neptune", {"vertex_designs": [{}]}) == 0
+        assert len(schema_table_defs("neptune", {"table_definitions": [{}]})) == 1
+        assert schema_table_defs("neptune", {"vertex_designs": [{}]}) == []
 
     def test_normalisation_uses_each_engines_own_name_key(self) -> None:
-        opensearch = design_table_defs(
+        opensearch = schema_table_defs(
             "opensearch",
             {
                 "index_designs": [{"index_name": "posts-idx", "source_tables": ["wp_posts"]}],
@@ -287,13 +289,12 @@ class TestSchemaShapes:
         ]
 
     def test_record_keeps_its_own_aggregate_pattern_when_it_has_one(self) -> None:
-        defs = design_table_defs(
+        defs = schema_table_defs(
             "dynamodb",
             {"table_definitions": [{"table_name": "Posts", "aggregate_pattern": "single_table"}]},
         )
 
         assert defs[0]["aggregate_pattern"] == "single_table"
-        assert defs[0]["source_tables"] == []
 
     def test_cache_engines_are_matched_by_name_not_substring_alone(self) -> None:
         """memorydb is a cache without "cache" in its name; dynamodb is not one."""

@@ -6,6 +6,12 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode external
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --finalize
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode bedrock
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --split
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
+
+The assignment version defaults to the effective one (ADR-028): v2 when Reality
+Check consolidated, else v1. Every status line reports it as
+``assignment_version`` so callers build ``schema-<engine>/v<N>/`` paths from it.
 """
 
 import argparse
@@ -67,6 +73,15 @@ def _get_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
     return dict(contract_cls.model_json_schema())  # type: ignore[attr-defined]
 
 
+def _resolve_version(store, job_id: str, db: str, requested: int | None) -> int:
+    """Return the explicit ``--assignment-version`` or the effective one (ADR-028)."""
+    if requested is not None:
+        return requested
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+
+    return resolve_downstream_assignment_version(store, db, job_id)
+
+
 def run_external(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Prepare LLM input payload and write it; print awaiting_llm status."""
     from src.agents.schema_design.handler import prepare_schema_design_input
@@ -109,6 +124,7 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
     _output(
         {
             "status": "awaiting_llm",
+            "assignment_version": assignment_version,
             "llm_request": llm_request_path,
             "skill_prompt": _SKILL_PROMPTS.get(engine, f"src/skills/{engine}-data-modeling.md"),
         }
@@ -127,7 +143,51 @@ def run_bedrock(store, job_id: str, db: str, engine: str, assignment_version: in
         assignment_version=assignment_version,
     )
 
-    _output({"status": "complete"})
+    _output({"status": "complete", "assignment_version": assignment_version})
+
+
+def run_split(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+    """Split schema design input into per-group files (DynamoDB split/merge flow)."""
+    from src.agents.schema_design.handler import run_schema_split
+
+    run_schema_split(
+        job_id=job_id,
+        database_name=db,
+        target_type=engine,
+        store=store,
+        assignment_version=assignment_version,
+    )
+
+    _output(
+        {
+            "status": "split",
+            "assignment_version": assignment_version,
+            "manifest": f"{db}/{job_id}/schema-{engine}/v{assignment_version}/groups_manifest.json",
+        }
+    )
+
+
+def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+    """Merge per-group schema drafts into the final schema output."""
+    from src.agents.schema_design.handler import run_schema_merge
+
+    run_schema_merge(
+        job_id=job_id,
+        database_name=db,
+        target_type=engine,
+        store=store,
+        assignment_version=assignment_version,
+    )
+
+    _output(
+        {
+            "status": "complete",
+            "assignment_version": assignment_version,
+            "output_path": (
+                f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+            ),
+        }
+    )
 
 
 def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
@@ -142,7 +202,7 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
         assignment_version=assignment_version,
     )
 
-    _output(result)
+    _output({**result, "assignment_version": assignment_version})
 
 
 def main() -> None:
@@ -169,10 +229,20 @@ def main() -> None:
         help="Finalize schema design by validating and storing external LLM response",
     )
     parser.add_argument(
+        "--split",
+        action="store_true",
+        help="Split schema design input into per-group files (DynamoDB)",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge per-group schema drafts into the final schema output (DynamoDB)",
+    )
+    parser.add_argument(
         "--assignment-version",
         type=int,
-        default=1,
-        help="Assignment version to use (default: 1)",
+        default=None,
+        help="Assignment version to use (default: the effective version, v2 after consolidation)",
     )
     parser.add_argument(
         "--artifact-root",
@@ -184,13 +254,18 @@ def main() -> None:
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
+    version = _resolve_version(store, args.job_id, args.db, args.assignment_version)
 
     if args.finalize:
-        run_finalize(store, args.job_id, args.db, args.engine, args.assignment_version)
+        run_finalize(store, args.job_id, args.db, args.engine, version)
+    elif args.split:
+        run_split(store, args.job_id, args.db, args.engine, version)
+    elif args.merge:
+        run_merge(store, args.job_id, args.db, args.engine, version)
     elif args.llm_mode == "external":
-        run_external(store, args.job_id, args.db, args.engine, args.assignment_version)
+        run_external(store, args.job_id, args.db, args.engine, version)
     else:
-        run_bedrock(store, args.job_id, args.db, args.engine, args.assignment_version)
+        run_bedrock(store, args.job_id, args.db, args.engine, version)
 
 
 if __name__ == "__main__":

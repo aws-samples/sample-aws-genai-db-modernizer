@@ -5,6 +5,10 @@ Usage:
     uv run python scripts/run_synthesis.py --job-id <id> --db <name>
     uv run python scripts/run_synthesis.py --job-id <id> --db <name> --llm-mode external
     uv run python scripts/run_synthesis.py --job-id <id> --db <name> --finalize
+
+The assignment version defaults to the effective one (ADR-028): v2 when Reality
+Check consolidated, else v1. Status lines report the resolved ``assignment_version``
+and the paths to read and write, so callers never build versioned keys themselves.
 """
 
 import argparse
@@ -25,6 +29,27 @@ def _error(message: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _resolve_version(store, job_id: str, db: str, requested: int | None) -> int:
+    """Return the explicit ``--assignment-version`` or the effective one (ADR-028)."""
+    if requested is not None:
+        return requested
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+
+    return resolve_downstream_assignment_version(store, db, job_id)
+
+
+def _synthesis_key(db: str, job_id: str, assignment_version: int, filename: str) -> str:
+    if assignment_version > 0:
+        return f"{db}/{job_id}/synthesis/v{assignment_version}/{filename}"
+    return f"{db}/{job_id}/synthesis/{filename}"
+
+
+def _report_key(db: str, job_id: str, assignment_version: int) -> str:
+    if assignment_version > 0:
+        return f"{db}/{job_id}/synthesis/v{assignment_version}/report.json"
+    return f"{db}/{job_id}/referee-synthesis/report.json"
+
+
 def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode: str) -> None:
     """Run synthesis (none, bedrock, or external LLM mode)."""
     from src.agents.referee.synthesis_handler import run_synthesis
@@ -32,17 +57,22 @@ def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode:
     run_synthesis(job_id, db, store, assignment_version, llm_mode=llm_mode)
 
     if llm_mode == "external":
-        if assignment_version > 0:
-            llm_input_key = f"{db}/{job_id}/synthesis/v{assignment_version}/llm_input.json"
-        else:
-            llm_input_key = f"{db}/{job_id}/synthesis/llm_input.json"
-
+        llm_input_key = _synthesis_key(db, job_id, assignment_version, "llm_input.json")
+        status: dict = {"status": "awaiting_llm", "assignment_version": assignment_version}
         if store.exists(llm_input_key):
-            _output({"status": "awaiting_llm", "llm_request": llm_input_key})
-        else:
-            _output({"status": "awaiting_llm"})
+            status["llm_request"] = llm_input_key
+            status["llm_response"] = _synthesis_key(
+                db, job_id, assignment_version, "llm_response.json"
+            )
+        _output(status)
     else:
-        _output({"status": "complete"})
+        _output(
+            {
+                "status": "complete",
+                "assignment_version": assignment_version,
+                "report": _report_key(db, job_id, assignment_version),
+            }
+        )
 
 
 def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
@@ -56,10 +86,7 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
 
     result = run_synthesis_deterministic(job_id, db, store, assignment_version)
 
-    if assignment_version > 0:
-        llm_response_path = f"{db}/{job_id}/synthesis/v{assignment_version}/llm_response.json"
-    else:
-        llm_response_path = f"{db}/{job_id}/synthesis/llm_response.json"
+    llm_response_path = _synthesis_key(db, job_id, assignment_version, "llm_response.json")
 
     if not store.exists(llm_response_path):
         _error(f"LLM response not found at {llm_response_path}")
@@ -69,7 +96,13 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
 
     _write_synthesis_report(store, result, assignment_version)
 
-    _output({"status": "complete"})
+    _output(
+        {
+            "status": "complete",
+            "assignment_version": assignment_version,
+            "report": _report_key(db, job_id, assignment_version),
+        }
+    )
 
 
 def main() -> None:
@@ -92,8 +125,8 @@ def main() -> None:
     parser.add_argument(
         "--assignment-version",
         type=int,
-        default=0,
-        help="Assignment version to load (default: 0)",
+        default=None,
+        help="Assignment version to load (default: the effective version, v2 after consolidation)",
     )
     parser.add_argument(
         "--artifact-root",
@@ -105,11 +138,12 @@ def main() -> None:
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
+    version = _resolve_version(store, args.job_id, args.db, args.assignment_version)
 
     if args.finalize:
-        run_finalize(store, args.job_id, args.db, args.assignment_version)
+        run_finalize(store, args.job_id, args.db, version)
     else:
-        run_standard(store, args.job_id, args.db, args.assignment_version, args.llm_mode)
+        run_standard(store, args.job_id, args.db, version, args.llm_mode)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 
+from src.agents.prompt_framing import (
+    SYSTEM_PROMPT_DATA_DIRECTIVE,
+    frame_customer_requests,
+    frame_untrusted,
+)
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.collector_output import CollectorOutputContract
@@ -247,13 +252,17 @@ def _invoke_pe_reviewer(
 
     prompt = (
         "Review the following Aurora MySQL schema design.\n\n"
-        f"## Source Database Summary\n"
-        f"Tables: {len(design_output.table_definitions)}, "
-        f"Migration strategy: {design_output.migration_strategy}, "
-        f"Source tables: {agent_input_summary.get('table_count', 0)}\n\n"
-        f"## Design Output\n```json\n{json.dumps(design_json, indent=2, default=str)}\n```\n\n"
-        "Evaluate this design following your review process. "
-        "Return a PEReviewResult with your verdict and any change requests."
+        + "## Source Database Summary\n"
+        + f"Tables: {len(design_output.table_definitions)}, "
+        + f"Migration strategy: {design_output.migration_strategy}, "
+        + f"Source tables: {agent_input_summary.get('table_count', 0)}\n\n"
+        + "## Design Output\n"
+        + frame_untrusted(
+            json.dumps(design_json, indent=2, default=str),
+            label="schema design output to review (JSON; echoes source names)",
+        )
+        + "\n\nEvaluate this design following your review process. "
+        + "Return a PEReviewResult with your verdict and any change requests."
     )
 
     result = pe_agent(prompt)
@@ -320,7 +329,9 @@ def run_aurora_mysql_schema_agent(
     _revision_context_path = revision_context_path
 
     model = _build_model()
-    system_prompt = _load_skill(skill_path or DEFAULT_SKILL_PATH)
+    system_prompt = (
+        _load_skill(skill_path or DEFAULT_SKILL_PATH) + "\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
+    )
 
     # Load input eagerly — don't rely on LLM calling the tool.
     print("[schema-design/aurora_mysql] Loading agent input...")
@@ -350,8 +361,9 @@ def run_aurora_mysql_schema_agent(
     designer_prompt = (
         "Here is the projected input plus the deterministic draft for your "
         "Aurora MySQL schema design:\n\n"
-        f"```json\n{input_json}\n```\n\n"
-        f"The migration_strategy is '{strategy}'. The draft's column types are "
+        + frame_untrusted(input_json, label="projected schema-design input (JSON)")
+        + "\n\n"
+        + f"The migration_strategy is '{strategy}'. The draft's column types are "
         "authoritative unless flagged in residuals. Resolve every residual, add "
         "Aurora optimizations from the query patterns, record app-layer notes for "
         "untranslatable features, and return the complete "
@@ -373,10 +385,10 @@ def run_aurora_mysql_schema_agent(
                 f"## New Patterns to Design\n{revision_ctx['new_patterns_instructions']}"
             )
         if revision_sections:
-            designer_prompt += (
-                "\n\n---\n# REVISION CONTEXT\n"
-                "This is a revision pass. Apply the following customer instructions:\n\n"
-                + "\n\n".join(revision_sections)
+            # R1: customer revision free-text framed as requested design changes
+            # (data), not as instructions to execute verbatim.
+            designer_prompt += "\n\n---\n# REVISION CONTEXT\n" + frame_customer_requests(
+                "\n\n".join(revision_sections)
             )
 
     input_summary = {

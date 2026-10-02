@@ -23,6 +23,7 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "serve": "serve -s build -l 3000",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -51,5 +52,8 @@
     "webpack-dev-server": "^5.2.5",
     "@tootallnate/once": "^3.0.1",
     "underscore": "^1.13.8"
+  },
+  "devDependencies": {
+    "serve": "^14.2.6"
   }
 }

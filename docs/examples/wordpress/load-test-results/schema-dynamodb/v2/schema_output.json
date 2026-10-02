@@ -1,0 +1,1653 @@
+{
+  "contract_version": "1.0",
+  "job_id": "b70de5dc",
+  "source_database": "wordpress",
+  "target_engine": "dynamodb",
+  "access_patterns": [
+    {
+      "pattern_id": "DDB-AP-1",
+      "pattern_group": "Posts reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q1"
+      ],
+      "source_tables": [
+        "Posts"
+      ],
+      "description": "Read Posts by key",
+      "operation": "GetItem",
+      "table_name": "Posts",
+      "gsi_name": null,
+      "key_condition": "PK=post_id",
+      "design_rps": 50.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-2",
+      "pattern_group": "Posts writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q2"
+      ],
+      "source_tables": [
+        "Posts"
+      ],
+      "description": "Write an item to Posts",
+      "operation": "PutItem",
+      "table_name": "Posts",
+      "gsi_name": null,
+      "key_condition": "PK=post_id",
+      "design_rps": 10.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-3",
+      "pattern_group": "Posts updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q3"
+      ],
+      "source_tables": [
+        "Posts"
+      ],
+      "description": "Update an existing Posts item",
+      "operation": "UpdateItem",
+      "table_name": "Posts",
+      "gsi_name": null,
+      "key_condition": "PK=post_id",
+      "design_rps": 20.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-11",
+      "pattern_group": "PostMeta reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q11"
+      ],
+      "source_tables": [
+        "PostMeta"
+      ],
+      "description": "Read PostMeta by key",
+      "operation": "Query",
+      "table_name": "PostMeta",
+      "gsi_name": null,
+      "key_condition": "PK=post_id AND SK begins_with 'X#'",
+      "design_rps": 49.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-12",
+      "pattern_group": "PostMeta writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q12"
+      ],
+      "source_tables": [
+        "PostMeta"
+      ],
+      "description": "Write an item to PostMeta",
+      "operation": "PutItem",
+      "table_name": "PostMeta",
+      "gsi_name": null,
+      "key_condition": "PK=post_id",
+      "design_rps": 11.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-13",
+      "pattern_group": "PostMeta updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q13"
+      ],
+      "source_tables": [
+        "PostMeta"
+      ],
+      "description": "Update an existing PostMeta item",
+      "operation": "UpdateItem",
+      "table_name": "PostMeta",
+      "gsi_name": null,
+      "key_condition": "PK=post_id",
+      "design_rps": 21.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-21",
+      "pattern_group": "Comments reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q21"
+      ],
+      "source_tables": [
+        "Comments"
+      ],
+      "description": "Read Comments by key",
+      "operation": "GetItem",
+      "table_name": "Comments",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 48.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-22",
+      "pattern_group": "Comments writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q22"
+      ],
+      "source_tables": [
+        "Comments"
+      ],
+      "description": "Write an item to Comments",
+      "operation": "PutItem",
+      "table_name": "Comments",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 12.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-23",
+      "pattern_group": "Comments updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q23"
+      ],
+      "source_tables": [
+        "Comments"
+      ],
+      "description": "Update an existing Comments item",
+      "operation": "UpdateItem",
+      "table_name": "Comments",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 22.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-31",
+      "pattern_group": "CommentMeta reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q31"
+      ],
+      "source_tables": [
+        "CommentMeta"
+      ],
+      "description": "Read CommentMeta by key",
+      "operation": "Query",
+      "table_name": "CommentMeta",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id AND SK begins_with 'X#'",
+      "design_rps": 47.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-32",
+      "pattern_group": "CommentMeta writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q32"
+      ],
+      "source_tables": [
+        "CommentMeta"
+      ],
+      "description": "Write an item to CommentMeta",
+      "operation": "PutItem",
+      "table_name": "CommentMeta",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 13.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-33",
+      "pattern_group": "CommentMeta updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q33"
+      ],
+      "source_tables": [
+        "CommentMeta"
+      ],
+      "description": "Update an existing CommentMeta item",
+      "operation": "UpdateItem",
+      "table_name": "CommentMeta",
+      "gsi_name": null,
+      "key_condition": "PK=comment_id",
+      "design_rps": 23.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-41",
+      "pattern_group": "Users reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q41"
+      ],
+      "source_tables": [
+        "Users"
+      ],
+      "description": "Read Users by key",
+      "operation": "GetItem",
+      "table_name": "Users",
+      "gsi_name": null,
+      "key_condition": "PK=user_id",
+      "design_rps": 46.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-42",
+      "pattern_group": "Users writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q42"
+      ],
+      "source_tables": [
+        "Users"
+      ],
+      "description": "Write an item to Users",
+      "operation": "PutItem",
+      "table_name": "Users",
+      "gsi_name": null,
+      "key_condition": "PK=user_id",
+      "design_rps": 14.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-43",
+      "pattern_group": "Users updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q43"
+      ],
+      "source_tables": [
+        "Users"
+      ],
+      "description": "Update an existing Users item",
+      "operation": "UpdateItem",
+      "table_name": "Users",
+      "gsi_name": null,
+      "key_condition": "PK=user_id",
+      "design_rps": 24.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-51",
+      "pattern_group": "UserMeta reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q51"
+      ],
+      "source_tables": [
+        "UserMeta"
+      ],
+      "description": "Read UserMeta by key",
+      "operation": "Query",
+      "table_name": "UserMeta",
+      "gsi_name": null,
+      "key_condition": "PK=user_id AND SK begins_with 'X#'",
+      "design_rps": 45.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-52",
+      "pattern_group": "UserMeta writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q52"
+      ],
+      "source_tables": [
+        "UserMeta"
+      ],
+      "description": "Write an item to UserMeta",
+      "operation": "PutItem",
+      "table_name": "UserMeta",
+      "gsi_name": null,
+      "key_condition": "PK=user_id",
+      "design_rps": 15.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-53",
+      "pattern_group": "UserMeta updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q53"
+      ],
+      "source_tables": [
+        "UserMeta"
+      ],
+      "description": "Update an existing UserMeta item",
+      "operation": "UpdateItem",
+      "table_name": "UserMeta",
+      "gsi_name": null,
+      "key_condition": "PK=user_id",
+      "design_rps": 25.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-61",
+      "pattern_group": "Options reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q61"
+      ],
+      "source_tables": [
+        "Options"
+      ],
+      "description": "Read Options by key",
+      "operation": "GetItem",
+      "table_name": "Options",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 44.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-62",
+      "pattern_group": "Options writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q62"
+      ],
+      "source_tables": [
+        "Options"
+      ],
+      "description": "Write an item to Options",
+      "operation": "PutItem",
+      "table_name": "Options",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 16.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-63",
+      "pattern_group": "Options updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q63"
+      ],
+      "source_tables": [
+        "Options"
+      ],
+      "description": "Update an existing Options item",
+      "operation": "UpdateItem",
+      "table_name": "Options",
+      "gsi_name": null,
+      "key_condition": "PK=option_name",
+      "design_rps": 26.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-71",
+      "pattern_group": "Terms reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q71"
+      ],
+      "source_tables": [
+        "Terms"
+      ],
+      "description": "Read Terms by key",
+      "operation": "GetItem",
+      "table_name": "Terms",
+      "gsi_name": null,
+      "key_condition": "PK=term_id",
+      "design_rps": 43.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-72",
+      "pattern_group": "Terms writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q72"
+      ],
+      "source_tables": [
+        "Terms"
+      ],
+      "description": "Write an item to Terms",
+      "operation": "PutItem",
+      "table_name": "Terms",
+      "gsi_name": null,
+      "key_condition": "PK=term_id",
+      "design_rps": 17.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-73",
+      "pattern_group": "Terms updates",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q73"
+      ],
+      "source_tables": [
+        "Terms"
+      ],
+      "description": "Update an existing Terms item",
+      "operation": "UpdateItem",
+      "table_name": "Terms",
+      "gsi_name": null,
+      "key_condition": "PK=term_id",
+      "design_rps": 27.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-81",
+      "pattern_group": "TermMeta reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q81"
+      ],
+      "source_tables": [
+        "TermMeta"
+      ],
+      "description": "Read TermMeta by key",
+      "operation": "Query",
+      "table_name": "TermMeta",
+      "gsi_name": null,
+      "key_condition": "PK=term_id AND SK begins_with 'X#'",
+      "design_rps": 42.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-82",
+      "pattern_group": "TermMeta writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q82"
+      ],
+      "source_tables": [
+        "TermMeta"
+      ],
+      "description": "Write an item to TermMeta",
+      "operation": "PutItem",
+      "table_name": "TermMeta",
+      "gsi_name": null,
+      "key_condition": "PK=term_id",
+      "design_rps": 18.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-91",
+      "pattern_group": "TermTaxonomy reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q91"
+      ],
+      "source_tables": [
+        "TermTaxonomy"
+      ],
+      "description": "Read TermTaxonomy by key",
+      "operation": "GetItem",
+      "table_name": "TermTaxonomy",
+      "gsi_name": null,
+      "key_condition": "PK=term_taxonomy_id",
+      "design_rps": 41.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-92",
+      "pattern_group": "TermTaxonomy writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q92"
+      ],
+      "source_tables": [
+        "TermTaxonomy"
+      ],
+      "description": "Write an item to TermTaxonomy",
+      "operation": "PutItem",
+      "table_name": "TermTaxonomy",
+      "gsi_name": null,
+      "key_condition": "PK=term_taxonomy_id",
+      "design_rps": 19.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-101",
+      "pattern_group": "TermRelationships reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q101"
+      ],
+      "source_tables": [
+        "TermRelationships"
+      ],
+      "description": "Read TermRelationships by key",
+      "operation": "Query",
+      "table_name": "TermRelationships",
+      "gsi_name": null,
+      "key_condition": "PK=object_id AND SK begins_with 'X#'",
+      "design_rps": 40.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-102",
+      "pattern_group": "TermRelationships writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q102"
+      ],
+      "source_tables": [
+        "TermRelationships"
+      ],
+      "description": "Write an item to TermRelationships",
+      "operation": "PutItem",
+      "table_name": "TermRelationships",
+      "gsi_name": null,
+      "key_condition": "PK=object_id",
+      "design_rps": 20.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-111",
+      "pattern_group": "Links reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q111"
+      ],
+      "source_tables": [
+        "Links"
+      ],
+      "description": "Read Links by key",
+      "operation": "GetItem",
+      "table_name": "Links",
+      "gsi_name": null,
+      "key_condition": "PK=link_id",
+      "design_rps": 39.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-112",
+      "pattern_group": "Links writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q112"
+      ],
+      "source_tables": [
+        "Links"
+      ],
+      "description": "Write an item to Links",
+      "operation": "PutItem",
+      "table_name": "Links",
+      "gsi_name": null,
+      "key_condition": "PK=link_id",
+      "design_rps": 21.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-121",
+      "pattern_group": "ActionSchedulerActions reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q121"
+      ],
+      "source_tables": [
+        "ActionSchedulerActions"
+      ],
+      "description": "Read ActionSchedulerActions by key",
+      "operation": "Query",
+      "table_name": "ActionSchedulerActions",
+      "gsi_name": null,
+      "key_condition": "PK=action_id AND SK begins_with 'X#'",
+      "design_rps": 38.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-122",
+      "pattern_group": "ActionSchedulerActions writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q122"
+      ],
+      "source_tables": [
+        "ActionSchedulerActions"
+      ],
+      "description": "Write an item to ActionSchedulerActions",
+      "operation": "PutItem",
+      "table_name": "ActionSchedulerActions",
+      "gsi_name": null,
+      "key_condition": "PK=action_id",
+      "design_rps": 22.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-131",
+      "pattern_group": "ActionSchedulerLogs reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q131"
+      ],
+      "source_tables": [
+        "ActionSchedulerLogs"
+      ],
+      "description": "Read ActionSchedulerLogs by key",
+      "operation": "Query",
+      "table_name": "ActionSchedulerLogs",
+      "gsi_name": null,
+      "key_condition": "PK=action_id AND SK begins_with 'X#'",
+      "design_rps": 37.0,
+      "avg_items_returned": 3.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-132",
+      "pattern_group": "ActionSchedulerLogs writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q132"
+      ],
+      "source_tables": [
+        "ActionSchedulerLogs"
+      ],
+      "description": "Write an item to ActionSchedulerLogs",
+      "operation": "PutItem",
+      "table_name": "ActionSchedulerLogs",
+      "gsi_name": null,
+      "key_condition": "PK=action_id",
+      "design_rps": 23.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-141",
+      "pattern_group": "ActionSchedulerGroups reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q141"
+      ],
+      "source_tables": [
+        "ActionSchedulerGroups"
+      ],
+      "description": "Read ActionSchedulerGroups by key",
+      "operation": "GetItem",
+      "table_name": "ActionSchedulerGroups",
+      "gsi_name": null,
+      "key_condition": "PK=group_id",
+      "design_rps": 36.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-142",
+      "pattern_group": "ActionSchedulerGroups writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q142"
+      ],
+      "source_tables": [
+        "ActionSchedulerGroups"
+      ],
+      "description": "Write an item to ActionSchedulerGroups",
+      "operation": "PutItem",
+      "table_name": "ActionSchedulerGroups",
+      "gsi_name": null,
+      "key_condition": "PK=group_id",
+      "design_rps": 24.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-151",
+      "pattern_group": "WcAdminNotes reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q151"
+      ],
+      "source_tables": [
+        "WcAdminNotes"
+      ],
+      "description": "Read WcAdminNotes by key",
+      "operation": "GetItem",
+      "table_name": "WcAdminNotes",
+      "gsi_name": null,
+      "key_condition": "PK=note_id",
+      "design_rps": 35.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-152",
+      "pattern_group": "WcAdminNotes writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q152"
+      ],
+      "source_tables": [
+        "WcAdminNotes"
+      ],
+      "description": "Write an item to WcAdminNotes",
+      "operation": "PutItem",
+      "table_name": "WcAdminNotes",
+      "gsi_name": null,
+      "key_condition": "PK=note_id",
+      "design_rps": 25.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-161",
+      "pattern_group": "WcCustomerLookup reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q161"
+      ],
+      "source_tables": [
+        "WcCustomerLookup"
+      ],
+      "description": "Read WcCustomerLookup by key",
+      "operation": "GetItem",
+      "table_name": "WcCustomerLookup",
+      "gsi_name": null,
+      "key_condition": "PK=customer_id",
+      "design_rps": 34.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-162",
+      "pattern_group": "WcCustomerLookup writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q162"
+      ],
+      "source_tables": [
+        "WcCustomerLookup"
+      ],
+      "description": "Write an item to WcCustomerLookup",
+      "operation": "PutItem",
+      "table_name": "WcCustomerLookup",
+      "gsi_name": null,
+      "key_condition": "PK=customer_id",
+      "design_rps": 26.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-171",
+      "pattern_group": "WcCategoryLookup reads",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q171"
+      ],
+      "source_tables": [
+        "WcCategoryLookup"
+      ],
+      "description": "Read WcCategoryLookup by key",
+      "operation": "GetItem",
+      "table_name": "WcCategoryLookup",
+      "gsi_name": null,
+      "key_condition": "PK=category_id",
+      "design_rps": 33.0,
+      "avg_items_returned": 1.0,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    },
+    {
+      "pattern_id": "DDB-AP-172",
+      "pattern_group": "WcCategoryLookup writes",
+      "analysis_pattern_ids": [],
+      "query_ids": [
+        "q172"
+      ],
+      "source_tables": [
+        "WcCategoryLookup"
+      ],
+      "description": "Write an item to WcCategoryLookup",
+      "operation": "PutItem",
+      "table_name": "WcCategoryLookup",
+      "gsi_name": null,
+      "key_condition": "PK=category_id",
+      "design_rps": 27.0,
+      "avg_items_returned": null,
+      "item_size_bytes": 512,
+      "strongly_consistent": false,
+      "in_scope": true,
+      "out_of_scope_reason": null
+    }
+  ],
+  "table_definitions": [
+    {
+      "table_name": "Posts",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_posts"
+      ],
+      "partition_key": {
+        "attribute_name": "post_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "post_id",
+          "type": "N",
+          "source_table": "wp_posts",
+          "source_column": "post_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "PostMeta",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_postmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "post_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "post_id",
+          "type": "N",
+          "source_table": "wp_postmeta",
+          "source_column": "post_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wp_postmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "Comments",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_comments"
+      ],
+      "partition_key": {
+        "attribute_name": "comment_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "comment_id",
+          "type": "N",
+          "source_table": "wp_comments",
+          "source_column": "comment_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "CommentMeta",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_commentmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "comment_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "comment_id",
+          "type": "N",
+          "source_table": "wp_commentmeta",
+          "source_column": "comment_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wp_commentmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "Users",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_users"
+      ],
+      "partition_key": {
+        "attribute_name": "user_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "user_id",
+          "type": "N",
+          "source_table": "wp_users",
+          "source_column": "user_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "UserMeta",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_usermeta"
+      ],
+      "partition_key": {
+        "attribute_name": "user_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "user_id",
+          "type": "N",
+          "source_table": "wp_usermeta",
+          "source_column": "user_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wp_usermeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "Options",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_options"
+      ],
+      "partition_key": {
+        "attribute_name": "option_name",
+        "attribute_type": "S"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "option_name",
+          "type": "S",
+          "source_table": "wp_options",
+          "source_column": "option_name",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "Terms",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_terms"
+      ],
+      "partition_key": {
+        "attribute_name": "term_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "term_id",
+          "type": "N",
+          "source_table": "wp_terms",
+          "source_column": "term_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "TermMeta",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_termmeta"
+      ],
+      "partition_key": {
+        "attribute_name": "term_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "meta_key",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "term_id",
+          "type": "N",
+          "source_table": "wp_termmeta",
+          "source_column": "term_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "meta_key",
+          "type": "S",
+          "source_table": "wp_termmeta",
+          "source_column": "meta_key",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "TermTaxonomy",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_term_taxonomy"
+      ],
+      "partition_key": {
+        "attribute_name": "term_taxonomy_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "term_taxonomy_id",
+          "type": "N",
+          "source_table": "wp_term_taxonomy",
+          "source_column": "term_taxonomy_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "TermRelationships",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_term_relationships"
+      ],
+      "partition_key": {
+        "attribute_name": "object_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "term_taxonomy_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "object_id",
+          "type": "N",
+          "source_table": "wp_term_relationships",
+          "source_column": "object_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "term_taxonomy_id",
+          "type": "N",
+          "source_table": "wp_term_relationships",
+          "source_column": "term_taxonomy_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "Links",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_links"
+      ],
+      "partition_key": {
+        "attribute_name": "link_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "link_id",
+          "type": "N",
+          "source_table": "wp_links",
+          "source_column": "link_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "ActionSchedulerActions",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_actionscheduler_actions"
+      ],
+      "partition_key": {
+        "attribute_name": "action_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "status",
+        "attribute_type": "S"
+      },
+      "attributes": [
+        {
+          "name": "action_id",
+          "type": "N",
+          "source_table": "wp_actionscheduler_actions",
+          "source_column": "action_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "status",
+          "type": "S",
+          "source_table": "wp_actionscheduler_actions",
+          "source_column": "status",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "ActionSchedulerLogs",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_actionscheduler_logs"
+      ],
+      "partition_key": {
+        "attribute_name": "action_id",
+        "attribute_type": "N"
+      },
+      "sort_key": {
+        "attribute_name": "log_id",
+        "attribute_type": "N"
+      },
+      "attributes": [
+        {
+          "name": "action_id",
+          "type": "N",
+          "source_table": "wp_actionscheduler_logs",
+          "source_column": "action_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        },
+        {
+          "name": "log_id",
+          "type": "N",
+          "source_table": "wp_actionscheduler_logs",
+          "source_column": "log_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "ActionSchedulerGroups",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_actionscheduler_groups"
+      ],
+      "partition_key": {
+        "attribute_name": "group_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "group_id",
+          "type": "N",
+          "source_table": "wp_actionscheduler_groups",
+          "source_column": "group_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "WcAdminNotes",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_wc_admin_notes"
+      ],
+      "partition_key": {
+        "attribute_name": "note_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "note_id",
+          "type": "N",
+          "source_table": "wp_wc_admin_notes",
+          "source_column": "note_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "WcCustomerLookup",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_wc_customer_lookup"
+      ],
+      "partition_key": {
+        "attribute_name": "customer_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "customer_id",
+          "type": "N",
+          "source_table": "wp_wc_customer_lookup",
+          "source_column": "customer_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    },
+    {
+      "table_name": "WcCategoryLookup",
+      "aggregate_pattern": "separate",
+      "source_tables": [
+        "wp_wc_category_lookup"
+      ],
+      "partition_key": {
+        "attribute_name": "category_id",
+        "attribute_type": "N"
+      },
+      "sort_key": null,
+      "attributes": [
+        {
+          "name": "category_id",
+          "type": "N",
+          "source_table": "wp_wc_category_lookup",
+          "source_column": "category_id",
+          "join": null,
+          "calculation": null,
+          "transformation": null,
+          "denormalized": false,
+          "justification": null
+        }
+      ],
+      "entities": null,
+      "gsis": [],
+      "item_count": 10000,
+      "item_size_bytes": 512
+    }
+  ],
+  "unsupported_patterns": [],
+  "migration_notes": [],
+  "hot_partition_analysis": [
+    {
+      "table_name": "Posts",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 50.0,
+      "partition_limit": 3000.0,
+      "utilization_pct": 1.7,
+      "at_risk": false,
+      "contributing_patterns": [
+        "q1"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "PostMeta",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 50.0,
+      "partition_limit": 3000.0,
+      "utilization_pct": 1.7,
+      "at_risk": false,
+      "contributing_patterns": [
+        "q11"
+      ],
+      "mitigation": null
+    },
+    {
+      "table_name": "Comments",
+      "gsi_name": null,
+      "operation": "read",
+      "rcu_or_wcu_per_second": 50.0,
+      "partition_limit": 3000.0,
+      "utilization_pct": 1.7,
+      "at_risk": false,
+      "contributing_patterns": [
+        "q21"
+      ],
+      "mitigation": null
+    }
+  ],
+  "trade_offs": [
+    {
+      "description": "Single-entity table per WordPress entity",
+      "impact": "Matches WordPress key lookups; extra tables vs. an item collection.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": ""
+    }
+  ],
+  "validation_passed": true,
+  "validation_failures": []
+}

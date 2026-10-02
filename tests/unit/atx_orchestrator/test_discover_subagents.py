@@ -35,8 +35,13 @@ class TestDiscoverSubagentsRegistration:
         with the tool that caused it, and documents what is registered.
         """
         expected = {
-            # plan declaration
-            "declare_pipeline_plan",
+            # collection-upload HITL: the pipeline's first tool, which finalizes
+            # the customer's uploaded collection before the assessment core runs.
+            "finalize_collection_upload",
+            # NOTE: declare_pipeline_plan is intentionally NOT registered. It
+            # remains a @tool in tools.py but was withdrawn from PIPELINE_TOOLS
+            # (commit c4b104b) because letting the LLM re-declare the plan reset
+            # the progress panel. Do not "helpfully" re-add it here.
             # A2A pipeline phases, in execution order. One consolidated
             # assessment-core tool (ADR-025, ADR-026) replaced the four separate
             # run_collect / run_triage / run_analysis / run_assignment _via_a2a

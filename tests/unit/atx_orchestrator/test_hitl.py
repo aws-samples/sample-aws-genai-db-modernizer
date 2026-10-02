@@ -167,7 +167,8 @@ class TestReadAssignmentSubmission:
             assert hitl.read_assignment_submission("task-1") == ("submitted_empty", [])
 
     def test_empty_inline_containers_are_submitted_empty(self) -> None:
-        for empty in ({}, [], {"items": []}, ""):
+        empties: tuple[object, ...] = ({}, [], {"items": []}, "")
+        for empty in empties:
             client = _StubClient(
                 get_hitl_return={
                     "hitlTask": {"hitlTaskStatus": "SUBMITTED", "humanArtifact": {"content": empty}}
@@ -180,7 +181,17 @@ class TestReadAssignmentSubmission:
 
 class TestIsEffectivelyEmpty:
     def test_empty_values(self) -> None:
-        for empty in (None, {}, [], "", "   ", {"items": []}, [{}], {"a": {}, "b": []}):
+        empties: tuple[object, ...] = (
+            None,
+            {},
+            [],
+            "",
+            "   ",
+            {"items": []},
+            [{}],
+            {"a": {}, "b": []},
+        )
+        for empty in empties:
             assert hitl._is_effectively_empty(empty) is True, f"{empty!r} should be empty"
 
     def test_non_empty_values(self) -> None:

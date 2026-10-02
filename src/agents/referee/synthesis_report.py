@@ -17,12 +17,84 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from src.agents.referee.schema_shapes import design_count, design_table_defs, is_cache_engine
+from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.schema_shapes import is_cache_engine
 
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
 
 logger = logging.getLogger(__name__)
+
+AURORA_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
+
+
+def schema_table_defs(engine: str, schema: dict) -> list[dict]:
+    """Return an engine's schema output as ``table_definitions``-shaped dicts.
+
+    Each entry has at least ``table_name``, ``source_tables`` and
+    ``aggregate_pattern``. DynamoDB already emits this shape. The other engines
+    use their own containers:
+
+    - OpenSearch: ``index_designs`` + ``data_stream_designs``
+    - DocumentDB: ``collections``
+    - ElastiCache: ``key_designs`` (one entry per key pattern)
+    - Aurora: ``table_definitions`` without ``source_tables``, because tables
+      carry over 1:1. Each maps back to ``<source_database>.<table_name>``, the
+      ``table_id`` form analysis uses.
+
+    Never mutates ``schema``.
+    """
+    table_defs = list(schema.get("table_definitions") or [])
+
+    if engine in AURORA_ENGINES:
+        source_db = schema.get("source_database", "")
+        return [
+            {
+                **t,
+                "source_tables": t.get("source_tables")
+                or [f"{source_db}.{t['table_name']}" if source_db else t["table_name"]],
+                "aggregate_pattern": "relational_table",
+            }
+            for t in table_defs
+        ]
+    if table_defs:
+        return table_defs
+
+    if engine == "opensearch":
+        return [
+            {
+                "table_name": idx.get("index_name", ""),
+                "source_tables": idx.get("source_tables", []),
+                "aggregate_pattern": "search_index",
+            }
+            for idx in schema.get("index_designs") or []
+        ] + [
+            {
+                "table_name": ds.get("data_stream_name", ""),
+                "source_tables": ds.get("source_tables", []),
+                "aggregate_pattern": "data_stream",
+            }
+            for ds in schema.get("data_stream_designs") or []
+        ]
+    if engine == "documentdb":
+        return [
+            {
+                "table_name": coll.get("collection_name", ""),
+                "source_tables": coll.get("source_tables", []),
+                "aggregate_pattern": "document_collection",
+            }
+            for coll in schema.get("collections") or []
+        ]
+    if engine == "elasticache":
+        return [
+            {
+                "table_name": kd.get("key_pattern", ""),
+                "source_tables": kd.get("source_tables", []),
+                "aggregate_pattern": kd.get("data_type", "unknown"),
+            }
+            for kd in schema.get("key_designs") or []
+        ]
+    return []
 
 
 def _compute_assignment_distribution(data: SynthesisData) -> dict:
@@ -124,11 +196,11 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         )
         weight = max(0.0, min(1.0, weight))
 
-        # Schema design stats. Counted through the shared shape map because each
+        # Schema design stats. Normalised through schema_table_defs because each
         # engine names its designs differently: testing table_definitions alone
         # reported ElastiCache's key_designs as no design at all.
         schema = artifacts.schema_design or {}
-        target_tables = design_count(engine, schema)
+        target_tables = len(schema_table_defs(engine, schema))
         access_patterns = schema.get("access_patterns", [])
         pattern_groups: dict[str, list] = {}
         for ap in access_patterns:
@@ -204,10 +276,10 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
             for t in (analysis.get("table_recommendations") or [])
         }
 
-        # Collect table definitions. The shared shape map normalises every
-        # engine's own vocabulary — collections, key_designs, index_designs — to
-        # one {table_name, source_tables, aggregate_pattern} record.
-        for table_def in design_table_defs(engine, schema):
+        # Collect table definitions. schema_table_defs normalises every engine's
+        # own vocabulary — collections, key_designs, index_designs — to one
+        # {table_name, source_tables, aggregate_pattern} record.
+        for table_def in schema_table_defs(engine, schema):
             target_table_name = table_def.get("table_name", "")
             aggregate_pattern = table_def.get("aggregate_pattern", "separate")
 
@@ -925,8 +997,10 @@ def generate_executive_summary(
         "- No markdown, bullet points, or headers\n"
         "- Write like a human talking to another human, not a language model writing a document\n"
         "- Keep it under 4 sentences total\n\n"
-        f"Context:\n{json.dumps(context, indent=2)}\n\n"
-        "Write the briefing now."
+        # R1: the context carries customer-derived strings (query-group names,
+        # risk/trade-off descriptions). Frame it as untrusted data, not instructions.
+        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
+        + "\n\nWrite the briefing now."
     )
 
     try:
@@ -950,7 +1024,8 @@ def generate_executive_summary(
                 "the result, not deliberating. You NEVER express doubt, recommend "
                 "going back for more data, or suggest the team is not ready. "
                 "Complexity is your job and you have handled it. Short, direct, "
-                "confident, solution-oriented. No filler, no hedging."
+                "confident, solution-oriented. No filler, no hedging.\n\n"
+                + SYSTEM_PROMPT_DATA_DIRECTIVE
             ),
             tools=[],
             callback_handler=None,

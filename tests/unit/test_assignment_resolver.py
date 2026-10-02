@@ -295,6 +295,24 @@ class TestAssignmentReasons:
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert "signal override: text_search" in q1.assignment_reason
 
+    def test_signal_override_recorded_as_structured_field(self):
+        """Mandatory status travels as data, not as reason text (#151)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[{"signal": "text_search", "targets": ["opensearch"], "query_ids": ["q1"]}],
+        )
+        collector = _make_collector(["q1", "q2"])
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        by_id = {qa.query_id: qa for qa in result.query_assignments}
+        assert by_id["q1"].signal_override == "text_search"
+        assert by_id["q2"].signal_override is None
+
     def test_highest_confidence_reason(self):
         resolver = AssignmentResolver()
         triage = _make_triage(["dynamodb", "opensearch"])

@@ -181,15 +181,9 @@ class LocalOrchestrator(Orchestrator):
         """Return engines that have at least one in-scope query assigned."""
         if assignment_version == 0:
             return set(self._get_selected_engines(job_id, database_name))
-        path = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
-        if not self.store.exists(path):
-            return set()
-        assignment = self.store.read_json(path)
-        engines: set[str] = set()
-        for qa in assignment.get("query_assignments", []):
-            if qa.get("in_scope", True):
-                engines.add(qa["assigned_engine"])
-        return engines
+        from src.storage.assignment_versioning import engines_with_in_scope_queries
+
+        return engines_with_in_scope_queries(self.store, database_name, job_id, assignment_version)
 
     def _run_phase(
         self,

@@ -59,6 +59,25 @@ class TestPublishGraph:
         pointer = store.read_json(graph_transport.pointer_key("mydb", "job-1"))
         assert pointer["artifact_id"] == "graph-art-1"
 
+    def test_pointer_records_sha256_of_published_bytes(self, tmp_path) -> None:
+        # R2: the pointer must carry a content digest so the download side can
+        # verify integrity before the native parser opens the file.
+        import hashlib
+
+        store, _sdk = _store()
+        data = b"\x00GRAPH-BYTES\x01"
+        lbug = tmp_path / "context.lbug"
+        lbug.write_bytes(data)
+
+        with patch(
+            "src.atx_orchestrator.runtime.artifacts.publish",
+            return_value={graph_transport._GRAPH_LABEL: "graph-art-1"},
+        ):
+            graph_transport.publish_graph(store, "mydb", "job-1", str(lbug))
+
+        pointer = store.read_json(graph_transport.pointer_key("mydb", "job-1"))
+        assert pointer["sha256"] == hashlib.sha256(data).hexdigest()
+
     def test_publish_unavailable_returns_none_no_pointer(self, tmp_path) -> None:
         store, _sdk = _store()
         lbug = tmp_path / "context.lbug"
@@ -93,6 +112,67 @@ class TestDownloadGraph:
 
         assert ok is True
         assert dest.read_bytes() == b"\x00ROUND-TRIP\x01"
+
+    def test_download_verifies_sha256_on_round_trip(self, tmp_path) -> None:
+        # The full publish->download path records and re-verifies the digest, so
+        # a clean round trip passes the integrity gate.
+        store, sdk = _store()
+        src = tmp_path / "context.lbug"
+        src.write_bytes(b"\x00VERIFIED\x01")
+
+        def _fake_publish(items):
+            content = items[0][0]
+            sdk._by_id["graph-art-1"] = ("Assessment Context Graph", "CUSTOMER_OUTPUT", content)
+            return {graph_transport._GRAPH_LABEL: "graph-art-1"}
+
+        with patch("src.atx_orchestrator.runtime.artifacts.publish", side_effect=_fake_publish):
+            graph_transport.publish_graph(store, "mydb", "job-1", str(src))
+
+        dest = tmp_path / "downloaded" / "context.lbug"
+        assert graph_transport.download_graph(store, "mydb", "job-1", str(dest)) is True
+        assert dest.read_bytes() == b"\x00VERIFIED\x01"
+
+    def test_corrupt_download_fails_integrity_and_routes_to_rebuild(self, tmp_path) -> None:
+        # R2 core case: the published bytes are tampered between publish and
+        # download. The recorded sha256 no longer matches, so download_graph must
+        # return False (caller rebuilds from contracts) and must NOT leave the bad
+        # bytes on disk for the native GraphStore parser to open.
+        store, sdk = _store()
+        src = tmp_path / "context.lbug"
+        src.write_bytes(b"\x00GOOD-GRAPH\x01")
+
+        # publish_graph records sha256(GOOD) in the pointer...
+        with patch(
+            "src.atx_orchestrator.runtime.artifacts.publish",
+            return_value={graph_transport._GRAPH_LABEL: "graph-art-1"},
+        ):
+            graph_transport.publish_graph(store, "mydb", "job-1", str(src))
+
+        # ...but the stored artifact bytes are hostile/corrupt (digest won't match).
+        sdk._by_id["graph-art-1"] = (
+            "Assessment Context Graph",
+            "CUSTOMER_OUTPUT",
+            b"TAMPERED-NOT-A-REAL-LBUG",
+        )
+
+        dest = tmp_path / "downloaded" / "context.lbug"
+        assert graph_transport.download_graph(store, "mydb", "job-1", str(dest)) is False
+        assert not dest.exists()
+
+    def test_download_allows_legacy_pointer_without_sha256(self, tmp_path) -> None:
+        # Pointers written before the digest field existed carry no "sha256".
+        # Those are allowed through unverified so older jobs keep working — the
+        # graph is best-effort and non-authoritative.
+        store, sdk = _store()
+        sdk._by_id["legacy-1"] = ("Assessment Context Graph", "CUSTOMER_OUTPUT", b"\x00LEGACY\x01")
+        store.write_json(
+            graph_transport.pointer_key("mydb", "job-1"),
+            {"artifact_id": "legacy-1", "label": graph_transport._GRAPH_LABEL, "bytes": 8},
+        )
+
+        dest = tmp_path / "downloaded" / "context.lbug"
+        assert graph_transport.download_graph(store, "mydb", "job-1", str(dest)) is True
+        assert dest.read_bytes() == b"\x00LEGACY\x01"
 
     def test_download_returns_false_without_pointer(self, tmp_path) -> None:
         store, _sdk = _store()

@@ -29,12 +29,19 @@ mechanism, no change to how the store lists artifacts.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 from pathlib import Path
 
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
+
+
+def _sha256(data: bytes) -> str:
+    """Content digest recorded on publish and verified before re-open (R2)."""
+    return hashlib.sha256(data).hexdigest()
+
 
 # STATE JSON pointer recording the published .lbug's artifact id. Lives next to
 # the graph key GraphPersistence uses on S3, so the two backends read parallel
@@ -156,7 +163,15 @@ def publish_graph(store: ArtifactStore, db_name: str, job_id: str, local_path: s
     try:
         store.write_json(
             pointer_key(db_name, job_id),
-            {"artifact_id": artifact_id, "label": _GRAPH_LABEL, "bytes": len(data)},
+            {
+                "artifact_id": artifact_id,
+                "label": _GRAPH_LABEL,
+                "bytes": len(data),
+                # sha256 of the published bytes. download_graph verifies this
+                # before the native GraphStore opens the file, so a tampered or
+                # truncated .lbug reaching the parser is rejected first (R2).
+                "sha256": _sha256(data),
+            },
         )
     except Exception:  # noqa: BLE001 - the artifact is published; a pointer write miss is non-fatal
         logger.warning(
@@ -217,4 +232,40 @@ def download_graph(store: ArtifactStore, db_name: str, job_id: str, local_path: 
             exc_info=True,
         )
         return False
+
+    # Integrity gate (R2): verify the downloaded bytes match the digest recorded
+    # at publish time before the native GraphStore parser is ever pointed at the
+    # file. A mismatch (tampered/truncated/corrupt binary) is treated exactly like
+    # a missing graph — return False so the caller rebuilds from the JSON
+    # contracts, which remain the system of record. Pointers written before this
+    # field existed carry no "sha256"; those are allowed through unverified so
+    # older jobs keep working (the graph is best-effort and non-authoritative).
+    expected = (pointer or {}).get("sha256")
+    if expected:
+        try:
+            actual = _sha256(dest.read_bytes())
+        except Exception:  # noqa: BLE001 - unreadable local file -> rebuild instead
+            logger.warning(
+                "graph downloaded for %s/%s but could not be read to verify; rebuilding",
+                db_name,
+                job_id,
+                exc_info=True,
+            )
+            with contextlib.suppress(Exception):
+                dest.unlink()
+            return False
+        if actual != expected:
+            logger.warning(
+                "graph integrity check failed for %s/%s (id=%s): expected sha256 %s, got %s; "
+                "rebuilding from contracts",
+                db_name,
+                job_id,
+                artifact_id,
+                expected,
+                actual,
+            )
+            # Remove the untrusted bytes so nothing downstream can open them.
+            with contextlib.suppress(Exception):
+                dest.unlink()
+            return False
     return True
