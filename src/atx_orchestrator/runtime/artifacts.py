@@ -82,6 +82,8 @@ def _default_path(label: str, file_type: str) -> str:
     return f"{stem}.{ext}"
 
 
+# An item is ``(content, file_type, label, category_type)`` or, with an explicit
+# download filename, ``(content, file_type, label, category_type, path)``.
 PublishItem = (
     tuple[bytes, FileType, str, CategoryType] | tuple[bytes, FileType, str, CategoryType, str]
 )

@@ -5,18 +5,13 @@ publishing."""
 
 from __future__ import annotations
 
-import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
 
 from . import escaping
 
-logger = logging.getLogger(__name__)
 
-
-# An item is ``(content, file_type, label, category_type)`` or, with an explicit
-# download filename, ``(content, file_type, label, category_type, path)``.
 def artifact_stem(
     database_name: str,
     artifact: str,
