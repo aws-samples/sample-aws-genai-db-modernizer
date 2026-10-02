@@ -10,19 +10,21 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from . import analysis_report, pdf_report, pptx_report, renderers
 from .analysis_report import GraphFetcher
 
 logger = logging.getLogger(__name__)
 
+FileType = Literal["HTML", "MARKDOWN", "JSON", "PDF", "PPTX"]
+
 
 @dataclass(frozen=True)
 class Deliverable:
     name: str  # stable id, e.g. "decision-report"
     content: bytes
-    file_type: str  # "HTML" | "MARKDOWN" | "JSON" | "PDF" | "PPTX"
+    file_type: FileType
     label: str  # human title, e.g. "Decision Report — discourse"
     filename: str  # download / on-disk filename
     stage: bool  # write a durable copy next to report.json
@@ -48,6 +50,9 @@ def render_deliverables(
     Raises ``FileNotFoundError`` if the report itself is missing. The interactive
     analysis report and the executive summary are optional: a failure in either is
     recorded in ``errors`` and the rest are still returned.
+
+    Each entry in ``errors`` is also logged here at WARNING; callers should
+    forward it, not re-log it.
     """
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
