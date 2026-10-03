@@ -117,6 +117,62 @@ class TestEngineeringReport:
         m = renderers.render_engineering_report_md(report)
         assert "```mermaid" in m
 
+    def test_unsupported_patterns_render_as_readable_markdown(self, report: dict) -> None:
+        """Issue #204: the engineering report used to print ``- {dict repr}`` for
+        each unsupported pattern. The fixture covers all four schema-design
+        contract shapes (dynamodb/opensearch key ids as ``query_ids``,
+        documentdb/elasticache as ``source_query_ids``; dynamodb has no
+        ``reason``, opensearch has both ``reason`` and ``recommendation``)."""
+        m = renderers.render_engineering_report_md(report)
+        assert "Unsupported patterns" in m
+        # No Python dict/list repr in the unsupported-patterns bullet list itself
+        # (bounded to the next bold heading / section break, since an unrelated
+        # field a few lines later -- migration_notes -- is out of scope for #204).
+        start = m.index("Unsupported patterns")
+        rest = m[start:]
+        end = min((i for i in (rest.find("\n\n**"), rest.find("\n\n##")) if i != -1), default=-1)
+        section = rest if end == -1 else rest[: end + 1]
+        for marker in ("{'", '{"', "': ", "[]", "query_ids", "source_query_ids"):
+            assert marker not in section, f"found raw repr marker {marker!r} in:\n{section}"
+
+    def test_unsupported_pattern_md_handles_all_schema_shapes(self) -> None:
+        dynamodb_style = {
+            "query_ids": ["254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787"],
+            "pattern_type": "aggregation",
+            "recommendation": "COUNT(*) on wp_postmeta: run a Query with Select=COUNT.",
+        }
+        line = renderers._unsupported_pattern_md(dynamodb_style)
+        assert "{" not in line and "[" not in line and "'" not in line
+        assert "aggregation" in line
+        assert "254f282c" in line
+        assert "COUNT(*) on wp_postmeta" in line
+
+        elasticache_style = {
+            "source_query_ids": ["59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bd"],
+            "reason": "LEFT JOIN with multiple LIKE predicates cannot be a key lookup.",
+            "workaround": "Maintain a secondary index set.",
+        }
+        line = renderers._unsupported_pattern_md(elasticache_style)
+        assert "{" not in line and "[" not in line and "'" not in line
+        assert "LEFT JOIN" in line
+        assert "Maintain a secondary index set" in line
+
+        opensearch_style = {
+            "query_ids": ["abc12345"],
+            "source_query": "SELECT * FROM t",
+            "reason": "full text search",
+            "recommendation": "use match query",
+        }
+        line = renderers._unsupported_pattern_md(opensearch_style)
+        assert "{" not in line and "[" not in line and "'" not in line
+        assert "full text search" in line
+        assert "use match query" in line
+
+    def test_unsupported_pattern_md_many_ids_truncated(self) -> None:
+        many = {"query_ids": [f"id{i}" * 4 for i in range(10)], "reason": "too many to list"}
+        line = renderers._unsupported_pattern_md(many)
+        assert "+7 more" in line
+
 
 # =============================================================================
 # Empty-risk filter helpers

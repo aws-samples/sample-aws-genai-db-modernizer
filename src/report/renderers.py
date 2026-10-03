@@ -634,6 +634,54 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
     return "\n".join(lines)
 
 
+def _unsupported_pattern_md(u: dict[str, Any]) -> str:
+    """One readable Markdown line for a schema-design ``unsupported_patterns`` entry.
+
+    The four engine contracts (``*_model_output.py``) disagree on field names:
+    dynamodb/opensearch key the source query ids as ``query_ids`` and the
+    alternative approach as ``recommendation``; documentdb/elasticache key them
+    as ``source_query_ids`` and ``workaround``, alongside a ``reason`` the
+    other two also carry (opensearch has both ``reason`` and
+    ``recommendation``; dynamodb has neither ``reason`` nor ``workaround``).
+    Printing ``str(u)`` for whichever shape showed up produced a raw Python
+    dict/list repr in the engineering report (issue #204); this reads whichever
+    keys are present into one sentence instead, escaped as Markdown flowing
+    text via ``escaping.md_text``/``escaping.md_code``.
+
+    Query ids are long hashes; showing every one of them wrecked readability,
+    so only the first three are shown with a "+N more" count, each truncated
+    to an 8-character prefix (enough to recognise, not to collide visibly).
+    """
+    ids = list(u.get("query_ids") or u.get("source_query_ids") or [])
+    id_bits = ", ".join(f"`{escaping.md_code(str(i)[:8])}`" for i in ids[:3])
+    if len(ids) > 3:
+        id_bits += f" (+{len(ids) - 3} more)"
+
+    pattern_type = u.get("pattern_type")
+    head_bits = []
+    if pattern_type:
+        head_bits.append(f"**{escaping.md_text(str(pattern_type).replace('_', ' '))}**")
+    if id_bits:
+        head_bits.append(f"({id_bits})")
+    head = " ".join(head_bits)
+
+    # reason / recommendation / workaround can repeat each other verbatim
+    # depending on which contract produced the entry; keep each distinct
+    # sentence once, in a fixed order.
+    seen: set[str] = set()
+    body_bits: list[str] = []
+    for key in ("reason", "recommendation", "workaround"):
+        val = str(u.get(key) or "").strip()
+        if val and val not in seen:
+            seen.add(val)
+            body_bits.append(escaping.md_text(val))
+    body = " ".join(body_bits)
+
+    if head and body:
+        return f"{head} \u2014 {body}"
+    return head or body or "(no detail provided)"
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -719,7 +767,10 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             unsupported = dz.get("unsupported_patterns") or []
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
-                out += [f"- {escaping.md_text(u)}" for u in unsupported]
+                out += [
+                    f"- {_unsupported_pattern_md(u) if isinstance(u, dict) else escaping.md_text(u)}"
+                    for u in unsupported
+                ]
                 out.append("")
             notes = dz.get("migration_notes")
             if notes:
