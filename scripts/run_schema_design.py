@@ -191,8 +191,9 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
 def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Merge per-group schema drafts into the final schema output.
 
-    Prints ``validation_failed`` with the scope ``errors`` when the merged design
-    references tables or queries the assignment gives another engine (#203).
+    Prints ``validation_failed`` with the ``errors`` when the merged design
+    references tables or queries the assignment gives another engine (#203), or
+    designs a source table in several tables without a trade-off saying why (#223).
     """
     from src.agents.schema_design.handler import run_schema_merge
 
@@ -222,10 +223,11 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     exists for the effective version, instead of failing on the missing LLM
     response (issue #197). The merged output is re-checked against the
     assignment's scope, so an out-of-scope design reports ``validation_failed``
-    here too (issue #203).
+    here too (issue #203), as does one with DynamoDB merge failures (#223).
     """
     if engine == "dynamodb":
-        from src.agents.schema_design.handler import apply_schema_scope
+        from src.agents.schema_design.group_merger import merge_failures
+        from src.agents.schema_design.handler import ScopeReport, apply_schema_scope
 
         output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
         if not store.exists(output_key):
@@ -234,6 +236,8 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
         checked, report = apply_schema_scope(store, db, job_id, engine, merged, assignment_version)
         if checked != merged:  # new violations, or stale ones cleared after a hand fix
             store.write_json(output_key, checked)
+        # Merge failures (#223) recorded by --merge fail finalize as well.
+        report = ScopeReport(report.violations + merge_failures(checked), report.warnings)
         _output({**_scope_fields(report, output_key), "assignment_version": assignment_version})
         return
 

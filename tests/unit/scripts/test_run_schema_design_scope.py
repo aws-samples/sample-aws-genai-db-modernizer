@@ -438,3 +438,68 @@ def test_bedrock_grouped_path_returns_merge_violations(monkeypatch, tmp_path):
     assert report.violations
     merged = store.read_json(f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json")
     assert merged["validation_passed"] is False
+
+
+# ---------------------------------------------------------------------------
+# DynamoDB merge: one home per source table (issue #223)
+# ---------------------------------------------------------------------------
+
+
+def _overlapping_drafts() -> list[dict]:
+    """Two groups design mydb.users in tables with different key schemas."""
+    first = _design("dynamodb", "mydb.users", "q-users")
+    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id"}
+    second = _design("dynamodb", "mydb.users", "q-users")
+    second["table_definitions"][0].update(
+        table_name="UsersByEmail", partition_key={"attribute_name": "email"}
+    )
+    return [first, second]
+
+
+def test_merge_unjustified_overlap_fails_validation(monkeypatch, capsys, tmp_path):
+    from src.agents.schema_design.group_merger import MERGE_FAILURE_PREFIX
+
+    store = _store(tmp_path, "dynamodb")
+    _write_groups(store, _overlapping_drafts())
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+
+    assert code == 0
+    assert status["status"] == "validation_failed"
+    [error] = status["errors"]
+    assert error.startswith(MERGE_FAILURE_PREFIX)
+    assert "Main (group 0; PK id)" in error and "UsersByEmail (group 1; PK email)" in error
+    merged = store.read_json(status["output_path"])
+    assert merged["validation_passed"] is False
+    assert merged["validation_failures"] == [error]
+
+
+def test_merge_overlap_justified_by_trade_off_is_complete(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path, "dynamodb")
+    drafts = _overlapping_drafts()
+    drafts[1]["trade_offs"].append(
+        {
+            "description": "login by email needs its own table; writes update both",
+            "impact": "i",
+            "source_tables": ["mydb.users"],
+            "target_tables": ["Main", "UsersByEmail"],
+        }
+    )
+    _write_groups(store, drafts)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+
+    assert status["status"] == "complete"
+    assert store.read_json(status["output_path"])["validation_passed"] is True
+
+
+def test_dynamodb_finalize_reports_merge_failures(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path, "dynamodb")
+    _write_groups(store, _overlapping_drafts())
+    _, merged = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--finalize")
+
+    assert code == 0
+    assert status["status"] == "validation_failed"
+    assert status["errors"] == merged["errors"]

@@ -574,11 +574,20 @@ def run_schema_merge(
     ``validation_failures`` in the written output, and are returned in the
     :class:`ScopeReport` (empty when the merged design stays in scope).
 
+    DynamoDB merge failures (a source table designed in several tables without
+    a trade-off saying why, issue #223; see ``group_merger``) are returned in
+    the report's ``violations`` too, after the scope violations, so callers
+    report ``validation_failed`` for either.
+
     Requirements: 6.3
     """
     import time
 
-    from src.agents.schema_design.group_merger import ENGINE_LIST_FIELDS, merge_schema_groups
+    from src.agents.schema_design.group_merger import (
+        ENGINE_LIST_FIELDS,
+        merge_failures,
+        merge_schema_groups,
+    )
 
     start_time = time.time()
     print(f"[schema-merge/{target_type}] Starting for {database_name}")
@@ -614,7 +623,8 @@ def run_schema_merge(
     if checked != merged:
         merged = checked
         store.write_json(f"{base_key}/schema_output.json", merged)
-    violations = report.violations
+    violations = report.violations + merge_failures(merged)
+    report = ScopeReport(violations, report.warnings)
 
     elapsed = time.time() - start_time
 
@@ -626,7 +636,7 @@ def run_schema_merge(
 
     if violations:
         print(
-            f"[schema-merge/{target_type}] ❌ {len(violations)} scope violation(s) "
+            f"[schema-merge/{target_type}] ❌ {len(violations)} validation failure(s) "
             f"in {elapsed:.1f}s:"
         )
         for message in violations:
@@ -721,8 +731,7 @@ def run_schema_design_auto(
 
     # Read manifest to get group count
     manifest_key = (
-        f"{database_name}/{job_id}/schema-{target_type}"
-        f"/v{artifact_version}/groups_manifest.json"
+        f"{database_name}/{job_id}/schema-{target_type}/v{artifact_version}/groups_manifest.json"
     )
     manifest = store.read_json(manifest_key)
     groups = manifest.get("groups", [])
@@ -802,8 +811,7 @@ def run_schema_design_auto(
             store.write_json(trace_key, json.loads(trace_json))
         n_q = len(group_collector.get("queries", {}).get("query_patterns", []))
         print(
-            f"[schema-design/{target_type}] Group {idx} done "
-            f"({group['group_name']}, {n_q} queries)"
+            f"[schema-design/{target_type}] Group {idx} done ({group['group_name']}, {n_q} queries)"
         )
 
     # Run groups in parallel — paths are passed as params so there's no

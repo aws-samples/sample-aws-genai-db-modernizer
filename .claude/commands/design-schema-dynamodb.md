@@ -59,6 +59,7 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    - `unsupported_patterns` for text search (LIKE '%...%') and aggregation (COUNT, GROUP BY) queries
    - Include `hot_partition_analysis` for each table
    - Set `validation_passed` to true only if all the skill's checks pass, including `--check-costs` returning `"passed": true` (step f)
+   - Give each source table one home. Groups run in parallel, so other groups may design the same source table (pass each subagent the other groups' `primary_tables` from the manifest). Name key attributes after the column that identifies the owning entity (e.g. `post_id` for a post and its meta, `term_id` for a term and its taxonomy rows), so the same rows designed in two groups get the same keys, entity types and SK templates and merge automatically. If this group also needs a source table's data in a second table (a denormalized copy, a different key schema), add a trade-off whose `source_tables` include it and whose `target_tables` name every table that holds it, saying which access patterns need each table and how writes keep the copies in sync
 
 4. **Wait for all subagents to complete**
 
@@ -70,7 +71,13 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 
    This produces the final merged output at the `output_path` the script prints, `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_output.json`.
 
-   If it prints `"status": "validation_failed"`, each entry in `errors` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them and re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are step 3). The merged output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) do not fail validation.
+   The merge gives each source table one DynamoDB home. Tables from different groups that design the same source table with compatible keys (same partition/sort key names and types, the same shape, at least one identical entity, no conflicting entity, SK prefix or GSI) are merged into the first one; access patterns, `hot_partition_analysis` and trade-offs are re-pointed to it and a trade-off records the merge. A source table that is still designed in more than one table needs a trade-off naming every one of those tables (in `target_tables`) and the source table (in `source_tables`); otherwise the merge fails validation.
+
+   If it prints `"status": "validation_failed"`, handle each entry in `errors`:
+   - `Out of scope for dynamodb: …` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them.
+   - `DynamoDB merge: …` names a source table designed in several tables (with each table's group and keys) or one table name used for two different designs. Reconcile the group drafts: either consolidate into one table (move the entities, attributes and GSIs the other group needs into the table the error lists first, point its `access_patterns[].table_name` and `hot_partition_analysis[].table_name` there, and delete the duplicate table), or, when the access patterns need a different key schema, keep both and add the trade-off the error describes to one of the drafts. Rename a table when two different designs share its name.
+
+   Then re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are step 3). The merged output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) do not fail validation.
 
    If the third attempt still prints `"status": "validation_failed"`, stop: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with the `errors` as your result. Do not mark the phase complete.
 
