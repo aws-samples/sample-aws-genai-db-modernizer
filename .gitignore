@@ -84,3 +84,6 @@ docs/superpowers/
 # LOCAL files
 workspace/
 CLAUDE.md
+
+# scripts/start_local_ui.py pid file and server logs
+.local-ui/

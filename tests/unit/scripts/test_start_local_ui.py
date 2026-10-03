@@ -24,9 +24,21 @@ class FakeProc:
         self.pid = pid
 
 
+@pytest.fixture(autouse=True)
+def _isolated_state_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    state_dir = tmp_path / "state" / ".local-ui"
+    monkeypatch.setattr(start_local_ui, "STATE_DIR", state_dir)
+    return state_dir
+
+
 def _patch_common(monkeypatch: pytest.MonkeyPatch, *, port_available: bool = True) -> None:
     monkeypatch.setattr(start_local_ui, "check_port_available", lambda port: port_available)
     monkeypatch.setattr(start_local_ui, "build_ui", lambda serve_bin: None)
+
+
+def _all_processes_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = {111: "python -m uvicorn src.api.main:app", 222: "node .bin/serve -s build"}
+    monkeypatch.setattr(start_local_ui, "process_command", lambda pid: commands.get(pid))
 
 
 def test_ready_when_both_servers_come_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -36,11 +48,7 @@ def test_ready_when_both_servers_come_up(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
 
     written: dict[str, Any] = {}
-    monkeypatch.setattr(
-        start_local_ui,
-        "write_pids",
-        lambda root, pids: written.update(pids),
-    )
+    monkeypatch.setattr(start_local_ui, "write_pids", lambda pids: written.update(pids))
 
     result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
 
@@ -61,7 +69,7 @@ def test_timeout_kills_the_children_it_started(
     monkeypatch.setattr(start_local_ui, "start_api", lambda root, log_dir: FakeProc(111))
     monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(222))
     monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: False)
-    monkeypatch.setattr(start_local_ui, "write_pids", lambda root, pids: None)
+    monkeypatch.setattr(start_local_ui, "write_pids", lambda pids: None)
 
     killed_with: dict[str, Any] = {}
     monkeypatch.setattr(
@@ -70,7 +78,7 @@ def test_timeout_kills_the_children_it_started(
         lambda pids: killed_with.update(pids) or dict(pids),
     )
     cleared = []
-    monkeypatch.setattr(start_local_ui, "clear_pids", lambda root: cleared.append(root))
+    monkeypatch.setattr(start_local_ui, "clear_pids", lambda: cleared.append(True))
 
     result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=0.01)
 
@@ -78,7 +86,7 @@ def test_timeout_kills_the_children_it_started(
     assert result["status"] == "error"
     assert "timeout" in result["reason"]
     assert killed_with == {"api": 111, "serve": 222}
-    assert cleared == [tmp_path]
+    assert cleared == [True]
 
 
 def test_port_in_use_fails_fast_without_building_or_starting_anything(
@@ -166,11 +174,12 @@ def test_run_npm_succeeds_silently_on_zero_exit(
 
 
 def test_stop_kills_pids_from_file_and_removes_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, _isolated_state_dir: Path
 ) -> None:
-    local_ui_dir = tmp_path / ".local-ui"
-    local_ui_dir.mkdir()
+    local_ui_dir = _isolated_state_dir
+    local_ui_dir.mkdir(parents=True)
     (local_ui_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    _all_processes_match(monkeypatch)
 
     killed = []
     monkeypatch.setattr(
@@ -179,7 +188,7 @@ def test_stop_kills_pids_from_file_and_removes_it(
         lambda pid, sig: killed.append((pid, sig)),
     )
 
-    result, code = start_local_ui.run_stop(tmp_path)
+    result, code = start_local_ui.run_stop()
 
     assert code == 0
     assert result == {"status": "stopped", "pids": {"api": 111, "serve": 222}}
@@ -190,8 +199,8 @@ def test_stop_kills_pids_from_file_and_removes_it(
     assert not (local_ui_dir / "pids.json").exists()
 
 
-def test_stop_with_no_prior_run_is_a_no_op(tmp_path: Path) -> None:
-    result, code = start_local_ui.run_stop(tmp_path)
+def test_stop_with_no_prior_run_is_a_no_op() -> None:
+    result, code = start_local_ui.run_stop()
 
     assert code == 0
     assert result == {"status": "stopped", "pids": {}}
@@ -203,10 +212,120 @@ def test_kill_pids_skips_processes_that_are_already_gone(monkeypatch: pytest.Mon
             raise ProcessLookupError
 
     monkeypatch.setattr(start_local_ui.os, "killpg", _killpg)
+    _all_processes_match(monkeypatch)
 
     killed = start_local_ui.kill_pids({"api": 111, "serve": 222})
 
     assert killed == {"api": 111}
+
+
+def test_kill_pids_never_signals_a_reused_pid_running_something_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands = {111: "/usr/sbin/sshd -D", 222: None, 333: "python -m uvicorn x"}
+    monkeypatch.setattr(start_local_ui, "process_command", lambda pid: commands.get(pid))
+    signalled = []
+    monkeypatch.setattr(start_local_ui.os, "killpg", lambda pid, sig: signalled.append(pid))
+
+    killed = start_local_ui.kill_pids({"api": 111, "serve": 222, "other": 333})
+
+    assert killed == {}
+    assert signalled == []
+
+
+def test_process_command_reads_a_real_process_and_none_for_a_dead_pid() -> None:
+    import os
+
+    assert start_local_ui.process_command(os.getpid())
+    assert start_local_ui.process_command(2**22 + 12345) is None
+
+
+def test_check_port_available_detects_a_real_ipv6_listening_socket() -> None:
+    # ci/test.sh runs with --fail-on-skip, so a host without IPv6 loopback
+    # (some containers) passes trivially instead of skipping.
+    try:
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError:
+        return
+    try:
+        sock.bind(("::1", 0))
+    except OSError:
+        sock.close()
+        return
+    sock.listen(1)
+    port = sock.getsockname()[1]
+    try:
+        assert start_local_ui.check_port_available(port) is False
+    finally:
+        sock.close()
+
+
+def test_run_npm_turns_timeout_and_missing_binary_into_build_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _timeout(*a: Any, **k: Any) -> None:
+        raise start_local_ui.subprocess.TimeoutExpired(cmd="npm", timeout=600)
+
+    monkeypatch.setattr(start_local_ui.subprocess, "run", _timeout)
+    with pytest.raises(start_local_ui.BuildError, match="timed out"):
+        start_local_ui._run_npm(["npm", "ci"], cwd=tmp_path, env={})
+
+    def _missing(*a: Any, **k: Any) -> None:
+        raise FileNotFoundError("npm")
+
+    monkeypatch.setattr(start_local_ui.subprocess, "run", _missing)
+    with pytest.raises(start_local_ui.BuildError, match="could not be started"):
+        start_local_ui._run_npm(["npm", "ci"], cwd=tmp_path, env={})
+
+
+def test_build_failure_from_missing_npm_is_a_json_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(start_local_ui, "check_port_available", lambda port: True)
+
+    def _missing(*a: Any, **k: Any) -> None:
+        raise FileNotFoundError("npm")
+
+    monkeypatch.setattr(start_local_ui.subprocess, "run", _missing)
+
+    result, code = start_local_ui.run_start(tmp_path, rebuild=True, timeout=30)
+
+    assert code == 1
+    assert result["status"] == "error"
+    assert "could not be started" in result["reason"]
+
+
+def test_serve_listens_on_ipv4_loopback_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def _popen(argv: list[str], **kwargs: Any) -> FakeProc:
+        seen["argv"] = argv
+        return FakeProc(1)
+
+    monkeypatch.setattr(start_local_ui.subprocess, "Popen", _popen)
+    start_local_ui.start_serve(tmp_path / "serve", tmp_path)
+
+    assert seen["argv"][seen["argv"].index("-l") + 1] == "tcp://127.0.0.1:3000"
+
+
+def test_wait_for_ready_probes_the_loopback_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    urls: list[str] = []
+
+    def _ok(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    monkeypatch.setattr(start_local_ui, "_check_http_ok", _ok)
+
+    assert start_local_ui.wait_for_ready(timeout=5) is True
+    assert urls and all(u.startswith("http://127.0.0.1:") for u in urls)
+
+
+def test_pid_and_log_state_dir_is_gitignored() -> None:
+    gitignore = (start_local_ui.REPO_ROOT / ".gitignore").read_text().splitlines()
+    assert ".local-ui/" in gitignore
 
 
 def test_check_port_available_detects_a_real_listening_socket() -> None:

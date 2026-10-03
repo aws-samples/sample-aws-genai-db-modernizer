@@ -21,6 +21,14 @@ Outputs JSON to stdout (the only output the caller parses):
 
 Exit codes: 0 ready/stopped, 1 generic error (timeout, port in use, build
 failure), 2 npm registry auth failure (E401).
+
+The pid file and server logs live in `.local-ui/` at the repo root
+(gitignored), not under the artifact root: the local API lists every
+directory under the artifact root as a database, and the headless CI
+permission allowlist may write anything under `artifacts/`, so neither should
+see this script's bookkeeping. `--stop` only signals a recorded pid whose
+command line still looks like the server it started (`uvicorn` / `serve`), so
+a stale pid file can never take down an unrelated process that reused the pid.
 """
 
 from __future__ import annotations
@@ -45,9 +53,21 @@ API_PORT = 8000
 UI_PORT = 3000
 API_URL = f"http://localhost:{API_PORT}"
 UI_URL = f"http://localhost:{UI_PORT}"
+# Health probes go to the loopback address both servers bind explicitly, so
+# they never depend on how "localhost" resolves (::1 first on macOS).
+API_PROBE_URL = f"http://127.0.0.1:{API_PORT}"
+UI_PROBE_URL = f"http://127.0.0.1:{UI_PORT}"
+UI_LISTEN = f"tcp://127.0.0.1:{UI_PORT}"
 UI_DIR = REPO_ROOT / "src" / "ui"
-LOCAL_UI_DIRNAME = ".local-ui"
+STATE_DIR = REPO_ROOT / ".local-ui"
 POLL_INTERVAL_SECONDS = 1.0
+LOOPBACK_HOSTS: tuple[tuple[int, str], ...] = (
+    (socket.AF_INET, "127.0.0.1"),
+    (socket.AF_INET6, "::1"),
+)
+# Substring each recorded process's command line must contain for --stop to
+# signal it (see the module docstring).
+PROCESS_MARKERS = {"api": "uvicorn", "serve": "serve"}
 
 
 class NpmAuthError(Exception):
@@ -58,54 +78,68 @@ class BuildError(Exception):
     """A build subprocess (npm ci / npm run build) failed for a reason other than auth."""
 
 
-def local_ui_dir(artifact_root: Path) -> Path:
-    directory = artifact_root / LOCAL_UI_DIRNAME
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+def local_ui_dir() -> Path:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    return STATE_DIR
 
 
-def pids_path(artifact_root: Path) -> Path:
-    return local_ui_dir(artifact_root) / "pids.json"
+def pids_path() -> Path:
+    return local_ui_dir() / "pids.json"
 
 
-def write_pids(artifact_root: Path, pids: dict[str, int]) -> None:
-    pids_path(artifact_root).write_text(json.dumps(pids))
+def write_pids(pids: dict[str, int]) -> None:
+    pids_path().write_text(json.dumps(pids))
 
 
-def read_pids(artifact_root: Path) -> dict[str, int]:
-    path = pids_path(artifact_root)
+def read_pids() -> dict[str, int]:
+    path = pids_path()
     if not path.exists():
         return {}
     try:
-        data: dict[str, int] = json.loads(path.read_text())
-    except json.JSONDecodeError:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
         return {}
-    return data
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, int)}
 
 
-def clear_pids(artifact_root: Path) -> None:
-    path = pids_path(artifact_root)
+def clear_pids() -> None:
+    path = pids_path()
     if path.exists():
         path.unlink()
 
 
 def check_port_available(port: int) -> bool:
-    """True if nothing else is listening on `port` (verified by binding it ourselves)."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        sock.bind(("localhost", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
+    """True if nothing accepts connections on `port` on either loopback
+    address (IPv4 127.0.0.1 or IPv6 ::1). Probes by connecting rather than
+    binding: a bind on one address family can succeed while another process
+    listens on the other one."""
+    for family, host in LOOPBACK_HOSTS:
+        try:
+            sock = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue  # address family unsupported on this host
+        try:
+            sock.settimeout(1.0)
+            if sock.connect_ex((host, port)) == 0:
+                return False
+        except OSError:
+            pass
+        finally:
+            sock.close()
+    return True
 
 
 def _run_npm(cmd: list[str], cwd: Path, env: dict[str, str]) -> None:
-    proc = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
-        cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600
-    )
+    try:
+        proc = subprocess.run(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
+            cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BuildError(f"`{' '.join(cmd)}` timed out after {exc.timeout:.0f}s") from exc
+    except (FileNotFoundError, OSError) as exc:
+        raise BuildError(f"`{' '.join(cmd)}` could not be started: {exc}") from exc
     combined = (proc.stdout or "") + (proc.stderr or "")
     if "E401" in combined:
         raise NpmAuthError(combined)
@@ -152,7 +186,7 @@ def start_serve(serve_bin: Path, log_dir: Path) -> subprocess.Popen:
     log_path = log_dir / "serve.log"
     with open(log_path, "ab") as log_file:
         return subprocess.Popen(  # nosec B603 # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use
-            [str(serve_bin), "-s", "build", "-l", str(UI_PORT), "--no-clipboard"],
+            [str(serve_bin), "-s", "build", "-l", UI_LISTEN, "--no-clipboard"],
             cwd=UI_DIR,
             stdout=log_file,
             stderr=log_file,
@@ -173,7 +207,7 @@ def _check_http_ok(url: str) -> bool:
 
 def wait_for_ready(timeout: float) -> bool:
     deadline = time.monotonic() + timeout
-    for url in (f"{API_URL}/health", UI_URL, f"{UI_URL}/analysis/monitor"):
+    for url in (f"{API_PROBE_URL}/health", UI_PROBE_URL, f"{UI_PROBE_URL}/analysis/monitor"):
         ok = False
         while time.monotonic() < deadline:
             if _check_http_ok(url):
@@ -185,13 +219,35 @@ def wait_for_ready(timeout: float) -> bool:
     return True
 
 
+def process_command(pid: int) -> str | None:
+    """The command line of ``pid`` per ``ps``, or None if it isn't running
+    (or ``ps`` can't be run)."""
+    try:
+        proc = subprocess.run(  # nosec B603 B607 -- fixed argv, integer pid
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 def kill_pids(pids: dict[str, int]) -> dict[str, int]:
-    """Kill the process group of each pid. Both children were started with
-    start_new_session=True, so each pid is also its process group id --
-    killing the group takes any children *they* spawned (e.g. npm -> node)
-    down too."""
+    """Kill the process group of each pid whose command line still matches
+    the server recorded under that name (see PROCESS_MARKERS). Both children
+    were started with start_new_session=True, so each pid is also its process
+    group id -- killing the group takes any children *they* spawned (e.g.
+    npm -> node) down too."""
     killed: dict[str, int] = {}
     for name, pid in pids.items():
+        marker = PROCESS_MARKERS.get(name)
+        command = process_command(pid)
+        if marker is None or command is None or marker not in command:
+            continue
         try:
             os.killpg(pid, signal.SIGTERM)
             killed[name] = pid
@@ -201,7 +257,7 @@ def kill_pids(pids: dict[str, int]) -> dict[str, int]:
 
 
 def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[str, Any], int]:
-    log_dir = local_ui_dir(artifact_root)
+    log_dir = local_ui_dir()
 
     for port in (API_PORT, UI_PORT):
         if not check_port_available(port):
@@ -234,23 +290,23 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
         kill_pids(pids)
         return {"status": "error", "reason": f"failed to start local servers: {exc}"}, 1
 
-    write_pids(artifact_root, pids)
+    write_pids(pids)
 
     if wait_for_ready(timeout):
         return {"status": "ready", "api": API_URL, "ui": UI_URL, "pids": pids}, 0
 
     kill_pids(pids)
-    clear_pids(artifact_root)
+    clear_pids()
     return {
         "status": "error",
         "reason": f"timeout waiting for local API/UI servers to become healthy after {timeout:.0f}s",
     }, 1
 
 
-def run_stop(artifact_root: Path) -> tuple[dict[str, Any], int]:
-    pids = read_pids(artifact_root)
+def run_stop() -> tuple[dict[str, Any], int]:
+    pids = read_pids()
     killed = kill_pids(pids)
-    clear_pids(artifact_root)
+    clear_pids()
     return {"status": "stopped", "pids": killed}, 0
 
 
@@ -277,7 +333,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--stop",
         action="store_true",
-        help="Stop the servers started by a previous run (reads artifacts/.local-ui/pids.json)",
+        help="Stop the servers started by a previous run (reads .local-ui/pids.json)",
     )
     return parser.parse_args(argv)
 
@@ -290,13 +346,17 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         return {"status": "error", "reason": violation}, 1
     artifact_root = Path(args.artifact_root).resolve()
     if args.stop:
-        return run_stop(artifact_root)
+        return run_stop()
     return run_start(artifact_root, rebuild=args.rebuild, timeout=args.timeout)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    result, code = run(args)
+    try:
+        result, code = run(args)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Callers parse stdout as JSON; never let a stray OS error print a traceback instead.
+        result, code = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}, 1
     print(json.dumps(result))
     sys.exit(code)
 
