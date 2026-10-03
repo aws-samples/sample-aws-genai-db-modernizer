@@ -172,3 +172,24 @@ def test_reality_check_finalize_is_owned_by_modernize_only() -> None:
             assert "on its own" in context and "not from `/modernize`" in context, (
                 "reality-check.md may only finalize when invoked on its own: " + block
             )
+
+
+def test_schema_design_failure_ends_with_failed_phase_result() -> None:
+    # A /design-schema-<engine> subagent that still fails validation after its
+    # attempts returns `failed`; under --auto that is a phase failure with the
+    # usual single retry, then a schema_design_<engine> MODERNIZE_RESULT (#203).
+    error_handling = _modernize_text().split("## Error Handling", 1)[1]
+    assert "MODERNIZE_RESULT: failed phase=schema_design_<engine>" in error_handling
+    assert "Retry it once with a fresh subagent" in error_handling
+
+
+def test_design_schema_commands_cap_attempts_and_fail_the_phase() -> None:
+    # Each engine command bounds its finalize/merge retries and ends `failed`
+    # instead of marking the phase complete when validation never passes (#203).
+    for path in sorted(COMMANDS_DIR.glob("design-schema-*.md")):
+        engine = path.stem.removeprefix("design-schema-").replace("-", "_")
+        text = path.read_text()
+        assert "at most 3" in text and "attempts in total" in text, path.name
+        assert f'`phase_status.schema_design_{engine}` = "failed"' in text, path.name
+        assert "Do not mark the phase complete" in text, path.name
+        assert "Design only the tables and queries assigned to this engine" in text, path.name

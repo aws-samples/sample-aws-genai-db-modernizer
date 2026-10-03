@@ -39,9 +39,11 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine opensearch --finalize
    ```
 
-   If validation fails, the errors tell you exactly which fields are wrong. Fix and retry up to 3 times.
+   If validation fails, the errors tell you exactly which fields are wrong. Fix the response file and re-run `--finalize`. Make **at most 3 `--finalize` attempts in total**, shared between contract-validation failures and scope failures.
 
-   A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope). Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until it passes.
+   A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope) and where the design references it. Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) do not fail validation.
+
+   If the third attempt still prints `"status": "validation_failed"`, stop: set `phase_status.schema_design_opensearch` = "failed" and return `failed` with the `errors` as your result. Do not mark the phase complete.
 
 5. **Update state**
-   Set `phase_status.schema_design_opensearch` = "complete"
+   Only after `--finalize` printed `"status": "complete"`: set `phase_status.schema_design_opensearch` = "complete"

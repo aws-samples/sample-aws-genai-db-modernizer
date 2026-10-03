@@ -28,4 +28,4 @@ Dispatches schema design to all selected engines in parallel using subagents.
    - Key trade-offs
 
 5. **Update state**
-   Set `phase_status.schema_design` = "complete", `current_phase` = "synthesis"
+   Only if every engine subagent completed: set `phase_status.schema_design` = "complete", `current_phase` = "synthesis". If any returned `failed` (its `phase_status.schema_design_<engine>` = "failed"), leave `phase_status.schema_design` unset and return `failed` with that engine and its errors.

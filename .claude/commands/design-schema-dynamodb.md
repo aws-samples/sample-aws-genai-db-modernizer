@@ -70,9 +70,11 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 
    This produces the final merged output at the `output_path` the script prints, `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_output.json`.
 
-   If it prints `"status": "validation_failed"`, each entry in `errors` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them and re-run `--merge` (up to 3 times); the merged output keeps `validation_passed: false` until it passes.
+   If it prints `"status": "validation_failed"`, each entry in `errors` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them and re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are step 3). The merged output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) do not fail validation.
+
+   If the third attempt still prints `"status": "validation_failed"`, stop: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with the `errors` as your result. Do not mark the phase complete.
 
    Do not run `--finalize` for DynamoDB; `--merge` is the final step. (DynamoDB never writes an `llm_responses/` file, so `--finalize --engine dynamodb` only reports whether the merged output exists.)
 
 6. **Update state**
-   Set `phase_status.schema_design_dynamodb` = "complete"
+   Only after `--merge` printed `"status": "complete"`: set `phase_status.schema_design_dynamodb` = "complete"

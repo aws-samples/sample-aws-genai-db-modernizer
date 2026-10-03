@@ -123,7 +123,7 @@ Launch ONE subagent per engine in a SINGLE message:
 
 (Only for engines in `selected_engines` after reality check. Build the skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.)
 
-Wait for all to complete.
+Wait for all to complete. A subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
 
 **If UI mode:** Tell user "Schema designs ready — browse table definitions, access patterns, and GSIs in the UI."
 
@@ -168,5 +168,6 @@ If any phase fails:
 - If skip: mark phase as "skipped" in state, continue
 - If abort: stop pipeline, preserve all artifacts produced so far
 - **With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
+- **Schema design under `--auto`:** a `/design-schema-<engine>` subagent returning `failed` (validation, contract or scope, still failing after its 3 `--finalize`/`--merge` attempts) is a phase failure like any other. Retry it once with a fresh subagent; if it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_<engine> reason=<first validation error>`. Never mark that engine's schema design complete.
 
 **Note on subagents under `--auto`:** every subagent dispatched by this pipeline (`/reality-check`, `/design-schema-*`, `/synthesize`) must also not ask the user anything. These sub-commands have no prompts today — keep it that way.
