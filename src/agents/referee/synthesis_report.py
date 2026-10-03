@@ -513,6 +513,13 @@ def build_risk_assessment(
     if all of an anti-pattern's query_ids are covered by in-scope access
     patterns, the risk is considered resolved and downgraded to a note.
 
+    Anti-pattern risks follow their queries (#221): the ``[engine]`` risk covers only the
+    queries the effective assignment keeps on that engine. Queries moved to another
+    engine whose schema design addresses them (or to Aurora, which runs the source SQL)
+    are resolved by the move; queries moved to an engine that does not address them stay
+    a risk, re-attributed to that engine with the original severity. Every resolved risk
+    is recorded in ``resolved_risks``.
+
     Only engines the assignment routed queries to contribute risks. An engine triage
     selected but the assignment then dropped is not part of the target architecture, so its
     anti-patterns describe a design that will never be built.
@@ -524,8 +531,32 @@ def build_risk_assessment(
     engines in the effective architecture (#202).
     """
     risks = []
+    resolved: list[dict] = []
     risk_id = 0
     assigned = _engines_with_assigned_queries(data)
+    # Effective engine of every in-scope query (built first: anti-pattern risks follow
+    # their queries to this engine, #221).
+    query_engine = {
+        qa["query_id"]: qa["assigned_engine"]
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("in_scope", True) and qa.get("assigned_engine") and qa.get("query_id")
+    }
+    assignment_ids = {
+        qa.get("query_id") for qa in (data.assignment or {}).get("query_assignments", [])
+    }
+    query_tables = {
+        q["query_id"]: set(q.get("tables_accessed") or [])
+        for q in data.source_queries
+        if q.get("query_id")
+    }
+    covered_by = {
+        engine: _covered_query_ids(artifacts.schema_design or {})
+        for engine, artifacts in data.engines.items()
+    }
+    addressed_by = {
+        engine: _addressed_query_ids(artifacts.schema_design or {})
+        for engine, artifacts in data.engines.items()
+    }
 
     for engine, artifacts in data.engines.items():
         # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
@@ -537,12 +568,6 @@ def build_risk_assessment(
             continue
         analysis = artifacts.analysis or {}
         schema = artifacts.schema_design or {}
-
-        # Build set of query_ids covered by in-scope schema design access patterns
-        covered_query_ids: set[str] = set()
-        for ap in schema.get("access_patterns", []):
-            if ap.get("in_scope", True):
-                covered_query_ids.update(ap.get("query_ids", []))
 
         # Anti-patterns from analysis — only include if NOT resolved by schema design
         # Source database anti-patterns (full scans, slow queries) are migration
@@ -557,32 +582,139 @@ def build_risk_assessment(
                 continue
 
             ap_query_ids = set(ap.get("query_ids", []))
+            severity = "HIGH" if ap.get("severity_weight", 0) >= 0.7 else "MEDIUM"
+            description = ap.get("description", ap.get("anti_pattern_type", "Unknown"))
+            ap_tables = [t for t in ap.get("table_ids", []) if t and t not in _PLACEHOLDER_TABLES]
 
-            # If all flagged queries are covered by the schema design, it's resolved
-            if ap_query_ids and ap_query_ids.issubset(covered_query_ids):
+            # Split the flagged queries by the engine the assignment routed them to
+            # (#221). Fail-open: when none of them is in the assignment, keep the
+            # analysis attribution.
+            if query_engine and ap_query_ids & assignment_ids:
+                on_engine: dict[str, set[str]] = {}
+                for q in ap_query_ids:
+                    if q in query_engine:
+                        on_engine.setdefault(query_engine[q], set()).add(q)
+            else:
+                on_engine = {engine: ap_query_ids}
+
+            if not on_engine:
+                resolved.append(
+                    _resolved_risk(
+                        engine,
+                        severity,
+                        description,
+                        ap_tables,
+                        ap_query_ids,
+                        None,
+                        "every flagged query is out of scope in the assignment",
+                    )
+                )
                 continue
 
-            # Partially resolved — note which queries are still uncovered
-            uncovered = ap_query_ids - covered_query_ids
-            risk_id += 1
-            severity = "HIGH" if ap.get("severity_weight", 0) >= 0.7 else "MEDIUM"
+            for target in sorted(on_engine, key=lambda e: (e != engine, e)):
+                ids = on_engine[target]
+                tables = _tables_for(ids, ap_tables, query_tables)
+                if target == engine:
+                    covered = covered_by.get(engine, set())
+                    # If all flagged queries are covered by the schema design, it's resolved
+                    if ids and ids.issubset(covered):
+                        resolved.append(
+                            _resolved_risk(
+                                engine,
+                                severity,
+                                description,
+                                tables,
+                                ids,
+                                engine,
+                                "the schema design covers every flagged query",
+                            )
+                        )
+                        continue
+                    # Partially resolved — note which queries are still uncovered
+                    uncovered = ids - covered
+                    text = description
+                    if uncovered and ids:
+                        pct_covered = round((1 - len(uncovered) / len(ids)) * 100)
+                        text += (
+                            f" ({pct_covered}% of queries resolved by schema design, "
+                            f"{len(uncovered)} remaining)"
+                        )
+                    risk_id += 1
+                    risks.append(
+                        {
+                            "risk_id": f"RISK-{risk_id:03d}",
+                            "risk_type": "PERFORMANCE_DEGRADATION",
+                            "severity": severity,
+                            "description": f"[{engine}] {text}",
+                            "affected_tables": tables,
+                            "mitigation": ap.get("recommendation"),
+                            "query_ids": sorted(ids),
+                        }
+                    )
+                    continue
 
-            description = ap.get("description", ap.get("anti_pattern_type", "Unknown"))
-            if uncovered and ap_query_ids:
-                pct_covered = round((1 - len(uncovered) / len(ap_query_ids)) * 100)
-                description += f" ({pct_covered}% of queries resolved by schema design, {len(uncovered)} remaining)"
-
-            risks.append(
-                {
-                    "risk_id": f"RISK-{risk_id:03d}",
-                    "risk_type": "PERFORMANCE_DEGRADATION",
-                    "severity": severity,
-                    "description": f"[{engine}] {description}",
-                    "affected_tables": ap.get("table_ids", []),
-                    "mitigation": ap.get("recommendation"),
-                    "query_ids": sorted(ap_query_ids),
-                }
-            )
+                # Queries moved to another engine. Aurora runs the source SQL as-is, so a
+                # non-relational engine's limitation does not follow them there.
+                if target in AURORA_ENGINES and engine not in AURORA_ENGINES:
+                    resolved.append(
+                        _resolved_risk(
+                            engine,
+                            severity,
+                            description,
+                            tables,
+                            ids,
+                            target,
+                            f"the queries run as SQL on {display_name(target)}",
+                        )
+                    )
+                    continue
+                remaining = ids - addressed_by.get(target, set())
+                if not remaining:
+                    resolved.append(
+                        _resolved_risk(
+                            engine,
+                            severity,
+                            description,
+                            tables,
+                            ids,
+                            target,
+                            f"the queries moved to {display_name(target)}, whose schema "
+                            "design addresses all of them",
+                        )
+                    )
+                    continue
+                risk_id += 1
+                pct_covered = round((1 - len(remaining) / len(ids)) * 100)
+                recommendation = ap.get("recommendation")
+                mitigation = (
+                    f"Cover the {len(remaining)} remaining "
+                    f"{'query' if len(remaining) == 1 else 'queries'} in the "
+                    f"{display_name(target)} schema design or route "
+                    f"{'it' if len(remaining) == 1 else 'them'} to an engine that serves "
+                    f"{'it' if len(remaining) == 1 else 'them'}."
+                )
+                if recommendation:
+                    mitigation += (
+                        f" The {display_name(engine)} analysis suggested: {recommendation}"
+                    )
+                risks.append(
+                    {
+                        "risk_id": f"RISK-{risk_id:03d}",
+                        "risk_type": "PERFORMANCE_DEGRADATION",
+                        "severity": severity,
+                        "description": (
+                            f"[{target}] {description} (Flagged by the "
+                            f"{display_name(engine)} analysis; the assignment moved "
+                            f"{len(ids)} of these queries to {display_name(target)}, whose "
+                            f"schema design resolves {pct_covered}%, {len(remaining)} "
+                            "remaining.)"
+                        ),
+                        "affected_tables": tables,
+                        "mitigation": mitigation,
+                        "query_ids": sorted(ids),
+                        "reattributed_from": engine,
+                    }
+                )
 
         # Unsupported patterns from schema design. The four schema-design
         # contracts disagree on field names (dynamodb/opensearch carry
@@ -620,12 +752,15 @@ def build_risk_assessment(
                 }
             )
 
-    query_engine = {
-        qa["query_id"]: qa["assigned_engine"]
-        for qa in (data.assignment or {}).get("query_assignments", [])
-        if qa.get("in_scope", True) and qa.get("assigned_engine") and qa.get("query_id")
-    }
     risks = ground_risks(risks, eliminated or {}, query_engine)
+    for r in resolved:
+        logger.info(
+            "Risk assessment: %s risk from %s resolved on %s (%s)",
+            r["severity"],
+            r["engine"],
+            r["resolved_on"],
+            r["reason"],
+        )
 
     # Determine overall risk level
     severities = [r["severity"] for r in risks]
@@ -642,6 +777,77 @@ def build_risk_assessment(
         "overall_risk_level": overall,
         "risks": risks,
         "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
+        # Anti-pattern risks the effective assignment resolved (#221): kept for the
+        # audit trail so no risk, HIGH or otherwise, disappears without a record.
+        "resolved_risks": resolved,
+    }
+
+
+# Table ids analysis emits when it cannot attribute a query to a table
+# (e.g. ``SELECT FOUND_ROWS()``).
+_PLACEHOLDER_TABLES = frozenset({"unknown", "UNKNOWN", "None", "null"})
+
+
+def _access_pattern_query_ids(ap: dict) -> list[str]:
+    """Source query ids of an access pattern.
+
+    DynamoDB/OpenSearch key them ``query_ids``; DocumentDB/ElastiCache use
+    ``source_query_ids`` (the same split as their unsupported patterns, #210).
+    """
+    return list(ap.get("query_ids") or ap.get("source_query_ids") or [])
+
+
+def _covered_query_ids(schema: dict) -> set[str]:
+    """Query ids served by the schema design's in-scope access patterns."""
+    covered: set[str] = set()
+    for ap in schema.get("access_patterns", []):
+        if ap.get("in_scope", True):
+            covered.update(_access_pattern_query_ids(ap))
+    return covered
+
+
+def _addressed_query_ids(schema: dict) -> set[str]:
+    """Query ids the schema design accounts for in any way.
+
+    An in-scope access pattern serves the query; an out-of-scope one is a deliberate
+    design decision; an unsupported pattern is already its own risk on that engine.
+    """
+    ids: set[str] = set()
+    for ap in schema.get("access_patterns", []):
+        ids.update(_access_pattern_query_ids(ap))
+    for up in schema.get("unsupported_patterns", []):
+        ids.update(unsupported_pattern_ids(up))
+    return ids
+
+
+def _tables_for(
+    query_ids: set[str], ap_tables: list[str], query_tables: dict[str, set[str]]
+) -> list[str]:
+    """The anti-pattern's tables that the given queries touch (all of them if unknown)."""
+    touched: set[str] = set()
+    for q in query_ids:
+        touched |= query_tables.get(q, set())
+    narrowed = sorted(t for t in ap_tables if t in touched)
+    return narrowed or sorted(ap_tables)
+
+
+def _resolved_risk(
+    engine: str,
+    severity: str,
+    description: str,
+    tables: list[str],
+    query_ids: set[str],
+    resolved_on: str | None,
+    reason: str,
+) -> dict:
+    return {
+        "engine": engine,
+        "severity": severity,
+        "description": f"[{engine}] {description}",
+        "affected_tables": tables,
+        "query_ids": sorted(query_ids),
+        "resolved_on": resolved_on,
+        "reason": reason,
     }
 
 
