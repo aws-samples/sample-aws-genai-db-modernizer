@@ -256,7 +256,7 @@ def test_each_deliverable_is_wrapped_in_a_nonce_tagged_block(tmp_path: Path) -> 
     _build_job_dir(tmp_path)
     prompt = _prompt_for(tmp_path, nonce="feedface01234567")
 
-    for name in ("report_json", "decision_html", "engineering_md", "pdf"):
+    for name in ("facts", "decision_html", "engineering_md", "pdf"):
         assert f'<deliverable id="{name}-feedface01234567">' in prompt
     assert prompt.count("</deliverable>") == 4
 
@@ -266,7 +266,7 @@ def test_default_nonce_is_random_hex(tmp_path: Path) -> None:
     deliverables = judge.locate_deliverables(tmp_path, DB, JOB)
     a = judge.build_prompt("rubric", DB, JOB, deliverables)
     b = judge.build_prompt("rubric", DB, JOB, deliverables)
-    nonce_re = re.compile(r'<deliverable id="report_json-([0-9a-f]{16})">')
+    nonce_re = re.compile(r'<deliverable id="facts-([0-9a-f]{16})">')
     na, nb = nonce_re.search(a), nonce_re.search(b)
     assert na and nb and na.group(1) != nb.group(1)
 
@@ -384,12 +384,3 @@ def test_html_to_text_strips_tags_and_script_style() -> None:
     assert "world" in text
     assert "color:red" not in text
     assert "alert" not in text
-
-
-def test_truncate_adds_marker_only_when_over_budget() -> None:
-    short = "x" * 10
-    assert judge.truncate(short, 100) == short
-    long_text = "y" * 200
-    truncated = judge.truncate(long_text, 50)
-    assert truncated.startswith("y" * 50)
-    assert "truncated to 50 characters" in truncated

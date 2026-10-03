@@ -1,0 +1,107 @@
+{
+ "effective_architecture": {
+  "rule": "Every engine and table claim in the summary must match effective_architecture: name a table under an engine only if that table is in the engine's tables list (the tables its assigned in-scope queries touch), never present an eliminated engine as part of the target, and do not generalise a table to an engine that merely shares a query group with it. A summary that attributes a table to an engine none of whose queries touch it is rejected and the deterministic summary is shown instead.",
+  "source_database": "wordpress",
+  "engines": [
+   {
+    "engine": "elasticache",
+    "display_name": "ElastiCache",
+    "tables": [
+     "wp_actionscheduler_actions",
+     "wp_actionscheduler_groups",
+     "wp_posts",
+     "wp_term_taxonomy",
+     "wp_terms",
+     "wp_usermeta",
+     "wp_users",
+     "wp_woocommerce_order_itemmeta",
+     "wp_woocommerce_order_items"
+    ],
+    "top_query_groups": [
+     "ungrouped"
+    ],
+    "assigned_queries": 34,
+    "workload_percent": 31.8,
+    "capabilities": [
+     "highest confidence for elasticache",
+     "signal override: leaderboard_pattern \u2192 elasticache",
+     "reality check: consolidated from aurora_mysql \u2192 elasticache (no unique value \u2014 fit=81, data synced for wordpress.wp_posts, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_woocommerce_order_items)"
+    ]
+   },
+   {
+    "engine": "dynamodb",
+    "display_name": "DynamoDB",
+    "tables": [
+     "wp_actionscheduler_actions",
+     "wp_actionscheduler_groups",
+     "wp_actionscheduler_logs",
+     "wp_commentmeta",
+     "wp_comments",
+     "wp_options",
+     "wp_postmeta",
+     "wp_posts",
+     "wp_term_relationships",
+     "wp_term_taxonomy",
+     "wp_termmeta",
+     "wp_terms",
+     "wp_users",
+     "wp_wc_admin_notes",
+     "wp_wc_product_meta_lookup",
+     "wp_wc_reserved_stock",
+     "wp_wc_tax_rate_classes",
+     "wp_woocommerce_api_keys",
+     "wp_woocommerce_downloadable_product_permissions",
+     "wp_woocommerce_order_itemmeta",
+     "wp_woocommerce_order_items"
+    ],
+    "top_query_groups": [
+     "Option lookups",
+     "Post meta reads",
+     "Post reads",
+     "Order item meta reads",
+     "Term lookups"
+    ],
+    "assigned_queries": 63,
+    "workload_percent": 58.9,
+    "capabilities": [
+     "highest confidence for dynamodb",
+     "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=99, data synced for wordpress.wp_postmeta)",
+     "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=79, data synced for wordpress.wp_postmeta)"
+    ]
+   },
+   {
+    "engine": "aurora_mysql",
+    "display_name": "Aurora MySQL",
+    "tables": [
+     "wp_postmeta",
+     "wp_posts",
+     "wp_term_relationships",
+     "wp_term_taxonomy",
+     "wp_termmeta",
+     "wp_terms",
+     "wp_usermeta",
+     "wp_users",
+     "wp_woocommerce_order_items"
+    ],
+    "top_query_groups": [],
+    "assigned_queries": 10,
+    "workload_percent": 9.3,
+    "capabilities": [
+     "reality check: absorbed from opensearch \u2192 aurora_mysql (opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified)",
+     "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Multi-table JOIN with aggregation across partitions; poor fit for a non-relational target)",
+     "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Complex JOIN with status filters; ad-hoc relational query not suited to key-value access)"
+    ]
+   }
+  ],
+  "eliminated_engines": [
+   {
+    "engine": "documentdb",
+    "absorbed_by": "dynamodb"
+   },
+   {
+    "engine": "opensearch",
+    "absorbed_by": "aurora_mysql"
+   }
+  ]
+ }
+}
