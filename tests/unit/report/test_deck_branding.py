@@ -108,6 +108,17 @@ class TestRenderedDeck:
         w, h = int(prs.slide_width or 0), int(prs.slide_height or 0)
         logo = [p for p in pictures if p.top < h // 4 and p.width < w // 4]
         assert len(logo) == 1
+        # The plain AWS logo (the same part as the footer logo), uncropped -- not
+        # the "aws migrations" lockup cropped down to its "aws" half.
+        blip = logo[0]._element.blipFill
+        assert logo[0].part.related_part(blip.blip.rEmbed).partname == "/ppt/media/image1.png"
+        assert blip.find(f"{pdf_report.A}srcRect") is None
+        # Same aspect ratio as the image, so nothing is stretched.
+        assert abs(logo[0].width / logo[0].height - 1254 / 750) < 0.01
+
+    def test_unused_wordmark_image_is_not_packaged(self, rendered) -> None:
+        with zipfile.ZipFile(io.BytesIO(rendered[0])) as z:
+            assert "ppt/media/image3.png" not in z.namelist()
 
     def test_core_properties_name_the_assessment(self, rendered) -> None:
         cp = Presentation(io.BytesIO(rendered[0])).core_properties
