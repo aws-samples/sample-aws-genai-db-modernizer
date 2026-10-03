@@ -105,3 +105,23 @@ in CI (`CI=true`, set automatically by GitHub Actions) — `--with-deps` pulls
 OS-level dependencies via `apt` and needs root, which Linux CI runners have.
 Locally (including macOS, where there is no `apt`) it drops `--with-deps` and
 installs just the browser binaries.
+
+## `../.claude/settings.ci.json`
+
+The permission allowlist for headless `claude -p "/modernize ..." --permission-mode
+dontAsk` runs. JSON has no comment syntax, so the rationale for its less
+obvious entries lives here instead:
+
+- `Bash(uv run python scripts/start_local_ui.py)` and `...py *)` (both forms):
+  this is the only command `/modernize --mode ui|both` runs to start the local
+  API + UI — see `scripts/start_local_ui.py`'s module docstring for why the
+  multi-command shell pipeline it replaced couldn't be allowlisted at all.
+  Both the bare and `*`-suffixed forms are listed because it's untested
+  whether a headless run ever invokes the script with zero arguments (it
+  always does, today) — keeping both avoids relying on that.
+- `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
+  in the pipeline needs any of these. They're explicit denies, not just
+  absent from `allow`, as defense in depth against a prompt-injected or
+  hallucinated command slipping through — an explicit deny always wins over
+  an allow rule, so even a future overly broad `Bash(* )`-style allow
+  addition couldn't reopen this door by accident.

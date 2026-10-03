@@ -75,3 +75,29 @@ def test_deny_blocks_network_search_fetch_and_push() -> None:
     assert "WebFetch" in deny
     assert "WebSearch" in deny
     assert any("git push" in rule for rule in deny)
+
+
+def test_deny_blocks_destructive_and_remote_fetch_commands() -> None:
+    # Defense in depth: nothing in the pipeline needs these, so they're
+    # explicitly denied rather than just absent from allow (see ci/README.md).
+    settings = _load_settings()
+    deny = settings["permissions"]["deny"]
+
+    for dangerous in ("rm", "sudo", "wget", "nc"):
+        assert any(
+            f"Bash({dangerous} " in rule for rule in deny
+        ), f"no explicit deny rule blocks '{dangerous}'"
+
+
+def test_start_local_ui_is_referenced_and_covered_by_an_allow_rule() -> None:
+    # The UI-start block in modernize.md used to be an uncovered multi-command
+    # shell pipeline (see scripts/start_local_ui.py's docstring). This is a
+    # named tripwire -- on top of the generic coverage test above -- so a
+    # future edit that removes the replacement script's reference, or its
+    # allow rule, fails loudly and specifically.
+    scripts = _referenced_scripts()
+    assert "scripts/start_local_ui.py" in scripts
+
+    settings = _load_settings()
+    allow = settings["permissions"]["allow"]
+    assert any("scripts/start_local_ui.py" in rule for rule in allow)

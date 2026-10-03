@@ -18,13 +18,8 @@
       "Bash(uv run python scripts/run_synthesis.py *)",
       "Bash(uv run python scripts/run_report.py *)",
       "Bash(uv run python scripts/check_decision.py *)",
-      "Bash(ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app *)",
-      "Bash(cd src/ui *)",
-      "Bash(npm ci *)",
-      "Bash(npm run build *)",
-      "Bash(npm run serve *)",
-      "Bash(curl -s *http://localhost:8000*)",
-      "Bash(curl -s *http://localhost:3000*)",
+      "Bash(uv run python scripts/start_local_ui.py)",
+      "Bash(uv run python scripts/start_local_ui.py *)",
       "Agent"
     ],
     "deny": [
@@ -34,7 +29,11 @@
       "Bash(git commit *)",
       "Read(.env)",
       "Read(**/.env)",
-      "Read(~/.aws/**)"
+      "Read(~/.aws/**)",
+      "Bash(rm *)",
+      "Bash(sudo *)",
+      "Bash(wget *)",
+      "Bash(nc *)"
     ]
   },
   "env": {

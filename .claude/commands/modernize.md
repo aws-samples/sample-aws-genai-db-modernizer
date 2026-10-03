@@ -21,31 +21,27 @@ Full end-to-end database modernization pipeline. The orchestrator is LIGHTWEIGHT
 >
 > (Pick 1, 2, or 3)
 
-**If user picks 2 or 3**, start the local services:
+**If user picks 2 or 3**, start the local API and UI with one allowlisted command:
 
 ```bash
-# Start API server
-ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
-
-# Build and serve frontend. Installs deps only when serve is missing.
-(cd src/ui && { [ -x node_modules/.bin/serve ] || npm ci; } && REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build && npm run serve) &
+uv run python scripts/start_local_ui.py
 ```
 
-`npm run serve` uses the `serve` dev dependency pinned in `src/ui/package.json`, in single-page-app mode, so deep links load on refresh. If `npm ci` fails with `E401`, the npm registry token has expired. Tell the user and stop. Do not swap in another static server, because one without SPA fallback returns 404 on every deep link.
+`npm run serve` (which this script runs for you, only when the UI isn't already built) uses the `serve` dev dependency pinned in `src/ui/package.json`, in single-page-app mode, so deep links load on refresh. Do not swap in another static server, because one without SPA fallback returns 404 on every deep link.
 
-The build takes about a minute. Poll until both respond (up to 3 minutes), then verify:
+The script does the build (if needed), starts both servers in the background, polls API health and the UI (including a deep link) for up to 180s, and prints exactly one JSON line to stdout. Read that line:
 
-- API health: `curl -s http://localhost:8000/health`
-- Frontend: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` (expect 200)
-- Deep link: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/analysis/monitor` (expect 200)
-
-Tell the user:
-
-- API running at <http://localhost:8000>
-- Frontend running at <http://localhost:3000>
-- Unless `--auto`, wait for the user to confirm the UI is loaded before proceeding. With `--auto`, continue as soon as the three checks pass; if they do not pass within 3 minutes, abort (UI mode is the point of the run).
+- **`"status": "ready"`** — tell the user:
+  - API running at <http://localhost:8000>
+  - Frontend running at <http://localhost:3000>
+  - Unless `--auto`, wait for the user to confirm the UI is loaded before proceeding. With `--auto`, continue immediately — `"ready"` already means the health and deep-link checks passed, so there is nothing left to wait for.
+- **`"status": "error"`** — report the `reason` field to the user (e.g. the npm registry token expired, a port was already taken, or the servers never became healthy in time).
+  - With `--auto`, do not ask anything: stop the pipeline and end the run with `MODERNIZE_RESULT: failed phase=setup reason=<reason>`.
+  - Without `--auto`, ask the user whether to continue in chat mode instead, or abort.
 
 Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`.
+
+Stop the servers later with `uv run python scripts/start_local_ui.py --stop`. `/modernize` itself never stops them at the end of a `ui`/`both` run — the user keeps browsing the results after the pipeline finishes; only CI's own cleanup stops them.
 
 ## CRITICAL: Subagent Isolation Rule
 
@@ -110,7 +106,6 @@ After reality check, present the final assignment to the user:
 - Any queries that were redirected by the LLM validator
 
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
-
 Only proceed to schema design after user approval (unless `--auto`).
 
 ### Phase 6: Schema Design (Parallel Subagents)
@@ -167,7 +162,6 @@ If any phase fails:
 - If retry: dispatch a new subagent for that phase
 - If skip: mark phase as "skipped" in state, continue
 - If abort: stop pipeline, preserve all artifacts produced so far
-
-**With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
+- **With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
 
 **Note on subagents under `--auto`:** every subagent dispatched by this pipeline (`/reality-check`, `/design-schema-*`, `/synthesize`) must also not ask the user anything. These sub-commands have no prompts today — keep it that way.

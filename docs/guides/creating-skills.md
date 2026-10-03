@@ -197,12 +197,13 @@ Run the validator to catch broken references before you commit:
 uv run python scripts/validate_skills.py
 ```
 
-It scans every file in `.claude/commands/*.md` and checks two things:
+It scans every file in `.claude/commands/*.md` and checks three things:
 
 1. Every `uv run python scripts/...py` reference points to a script that actually exists
 2. Every `src/skills/*.md` reference points to a prompt file that actually exists
+3. No command references `.artifacts/` — scripts write to `./artifacts/`, and a stray `.artifacts/` reference is a broken path waiting to happen
 
-It does not check anything else (it doesn't lint prose, verify `.artifacts/` paths, or validate JSON schemas) — those come from running the script itself. The pre-commit hook runs this automatically.
+It does not check anything else (it doesn't lint prose or validate JSON schemas) — those come from running the script itself. The pre-commit hook runs this automatically.
 
 ## Common Mistakes
 

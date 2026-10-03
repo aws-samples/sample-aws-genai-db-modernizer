@@ -28,11 +28,23 @@ DISPATCHED_SUBCOMMANDS = [
 # for them, UNLESS it is explicitly scoped to a non-headless/non---auto path.
 QUESTION_PATTERN = re.compile(r"\bAsk\b.*\?")
 WAIT_PATTERN = re.compile(r"Wait for the user")
+CONFIRM_PATTERN = re.compile(r"\bconfirm", re.IGNORECASE)
 AUTO_EXEMPTION_PATTERN = re.compile(r"--auto|headless|[Uu]nless `--auto`")
 
 
 def _modernize_text() -> str:
     return (COMMANDS_DIR / "modernize.md").read_text()
+
+
+def _paragraphs(text: str) -> list[str]:
+    """Split markdown into blank-line-delimited paragraphs -- the unit an
+    --auto exemption must appear within. A trigger word and its exemption
+    can be on different lines of the same paragraph (e.g. a bullet list with
+    no blank lines between items), but not in two paragraphs separated by a
+    blank line -- a reader (human or headless agent) skimming one paragraph
+    at a time should never see a question/wait/confirm with no escape hatch
+    in view."""
+    return [p for p in re.split(r"\n\s*\n", text) if p.strip()]
 
 
 def test_documents_mode_argument() -> None:
@@ -51,6 +63,28 @@ def test_modernize_result_line_documents_both_outcomes() -> None:
     text = _modernize_text()
     assert "MODERNIZE_RESULT: complete" in text
     assert "MODERNIZE_RESULT: failed" in text
+
+
+def test_modernize_md_paragraphs_with_user_prompts_are_auto_exempt() -> None:
+    text = _modernize_text()
+    for paragraph in _paragraphs(text):
+        triggered = (
+            QUESTION_PATTERN.search(paragraph)
+            or WAIT_PATTERN.search(paragraph)
+            or CONFIRM_PATTERN.search(paragraph)
+        )
+        if triggered:
+            assert AUTO_EXEMPTION_PATTERN.search(paragraph), (
+                "modernize.md: a paragraph asks/waits/confirms with the user "
+                f"without an --auto exemption in that same paragraph:\n{paragraph!r}"
+            )
+
+
+def test_setup_failure_also_ends_with_modernize_result_failed() -> None:
+    # The local-UI setup step (scripts/start_local_ui.py "error") must end a
+    # headless run the same way any other phase failure does.
+    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "MODERNIZE_RESULT: failed phase=setup" in step_0
 
 
 def test_dispatched_subcommands_have_no_unexempted_user_prompts() -> None:
