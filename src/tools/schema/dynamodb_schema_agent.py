@@ -9,6 +9,7 @@ Architecture:
   1. load_agent_input tool: reads collector + analysis, projects via
      project_schema_design_input(), fails hard if validation fails
   2. compute_performances_and_costs tool: validates hot partition entries
+     (wraps dynamodb_cost_check, which external mode runs via --check-costs)
   3. SchemaDesignRunner handles: designer invocation with retries,
      PE review loop, duplicate feedback detection, graceful fallback
   4. Skill prompt loaded from src/skills/dynamodb-data-modeling.md
@@ -32,10 +33,11 @@ from src.agents.prompt_framing import (
 )
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
-from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract, HotPartitionEntry
+from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
 from src.contracts.dynamodb_pe_review import PEReviewResult, ReviewVerdict  # noqa: F401
 from src.contracts.schema_design_input import project_schema_design_input
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
+from src.tools.schema.dynamodb_cost_check import compute_performances_and_costs_entries
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +140,8 @@ def compute_performances_and_costs(
     Returns:
         list of validated HotPartitionEntry dicts
     """
-    raw_entries = json.loads(hot_partition_entries_json)
-    validated = [HotPartitionEntry.model_validate(e) for e in raw_entries]
-    logger.info("Validated %d hot partition entries", len(validated))
-    return [e.model_dump(mode="json") for e in validated]
+    # Same computation as `run_schema_design.py --check-costs` (external mode).
+    return compute_performances_and_costs_entries(json.loads(hot_partition_entries_json))
 
 
 # ---------------------------------------------------------------------------

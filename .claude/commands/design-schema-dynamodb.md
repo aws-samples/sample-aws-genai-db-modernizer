@@ -37,6 +37,14 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
    c. Reads the output contract: `src/contracts/dynamodb_model_output.py`
    d. Designs the schema following Phase 3 from the skill
    e. Writes output to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`
+   f. Runs the cost / hot-partition check on that draft (the external-mode equivalent of the Bedrock agent's `compute_performances_and_costs` tool — same computation):
+
+      ```bash
+      uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --check-costs artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json
+      ```
+
+      It prints one JSON line `{"status": "complete", "passed": ..., "results": [...], "per_table": [...], "hot_partition_findings": [...], "errors": [...]}` and does **not** modify the draft. `"status": "error"` (exit 1) means the check could not run (e.g. the path is not under the job's `schema-dynamodb/` directory).
+   g. Sets `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
 
    Key rules for each group output:
    - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group)
@@ -45,7 +53,7 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
    - `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine
    - `unsupported_patterns` for text search (LIKE '%...%') and aggregation (COUNT, GROUP BY) queries
    - Include `hot_partition_analysis` for each table
-   - Set `validation_passed` to true if all checks pass
+   - Set `validation_passed` to true only if all the skill's checks pass, including `--check-costs` returning `"passed": true` (step f)
 
 4. **Wait for all subagents to complete**
 

@@ -8,6 +8,8 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode bedrock
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --split
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
+        --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
 
 DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
 its final step. ``--finalize --engine dynamodb`` only reports whether the merged
@@ -22,6 +24,8 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
+from typing import NoReturn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,7 +54,7 @@ def _output(data: dict) -> None:
     print(json.dumps(data))
 
 
-def _error(message: str, code: int = 1) -> None:
+def _error(message: str, code: int = 1) -> NoReturn:
     _output({"status": "error", "message": message})
     sys.exit(code)
 
@@ -234,6 +238,50 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     _output({**result, "assignment_version": assignment_version})
 
 
+def _contained_draft_path(artifact_root: str, db: str, job_id: str, draft: str) -> Path | str:
+    """Resolve ``draft`` and require it under ``{root}/{db}/{job}/schema-dynamodb/``.
+
+    Returns the resolved path, or an error message. Symlinks are followed, so a
+    link inside the job dir that points elsewhere is refused too.
+    """
+    for flag, name in (("--db", db), ("--job-id", job_id)):
+        if name in ("", ".", "..") or Path(name).name != name:
+            return f"{flag} {name!r} must be a single path component"
+    schema_dir = (Path(artifact_root) / db / job_id / "schema-dynamodb").resolve()
+    resolved = Path(draft).resolve()
+    if resolved == schema_dir or not resolved.is_relative_to(schema_dir):
+        return f"--check-costs {draft!r} must be a group draft under {schema_dir}"
+    return resolved
+
+
+def run_check_costs(artifact_root: str, job_id: str, db: str, engine: str, draft: str) -> None:
+    """Run the DynamoDB hot-partition/capacity check on one group draft (issue #198).
+
+    External-mode counterpart of the Bedrock agent's Strands tool
+    ``compute_performances_and_costs``: both call the same function. Read-only:
+    the draft is not modified; the caller records ``validation_passed`` /
+    ``validation_failures`` from the printed result per the skill's rules.
+    Exit 0 whenever the check ran (``passed`` says whether it passed); exit 1
+    only when it could not run (wrong engine, path outside the job, unreadable
+    draft).
+    """
+    if engine != "dynamodb":
+        _error("--check-costs is only available for --engine dynamodb")
+    path = _contained_draft_path(artifact_root, db, job_id, draft)
+    if isinstance(path, str):
+        _error(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _error(f"cannot read draft {draft!r}: {exc}")
+    if not isinstance(payload, dict):
+        _error(f"draft {draft!r} must be a JSON object")
+
+    from src.tools.schema.dynamodb_cost_check import check_draft_costs
+
+    _output({"status": "complete", "draft": draft, **check_draft_costs(payload)})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run schema design for a specific engine with configurable LLM mode."
@@ -268,6 +316,15 @@ def main() -> None:
         help="Merge per-group schema drafts into the final schema output (DynamoDB)",
     )
     parser.add_argument(
+        "--check-costs",
+        metavar="DRAFT",
+        default=None,
+        help=(
+            "Run the hot-partition/capacity check on a DynamoDB group draft under the "
+            "job's schema-dynamodb/ dir and print the result (read-only)"
+        ),
+    )
+    parser.add_argument(
         "--assignment-version",
         type=int,
         default=None,
@@ -287,6 +344,10 @@ def main() -> None:
         _error(violation)
 
     from src.storage.local_store import LocalArtifactStore
+
+    if args.check_costs is not None:
+        run_check_costs(args.artifact_root, args.job_id, args.db, args.engine, args.check_costs)
+        return
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
     version = _resolve_version(store, args.job_id, args.db, args.assignment_version)

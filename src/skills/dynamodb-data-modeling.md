@@ -269,7 +269,7 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 - Every source table with non-PK unique indexes has either a GSI for lookup or a dedicated lookup table, and the choice is documented in `trade_offs`
 - Every text search and aggregation query is in `unsupported_patterns`
 - All `hot_partition_analysis` entries where `at_risk=true` have a non-null `mitigation`
-- `compute_performances_and_costs` was called successfully
+- The cost / hot-partition check ran successfully on the final `hot_partition_analysis`: the `compute_performances_and_costs` tool returned without error (Bedrock mode), or `scripts/run_schema_design.py --engine dynamodb --check-costs <draft>` returned `"passed": true` (external / Claude Code mode). Both run the same computation.
 
 `validation_failures` — one string per failed check above when `validation_passed=false`.
 

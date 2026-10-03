@@ -138,3 +138,112 @@ def test_contract_artifacts_validate(run: PipelineResult) -> None:
     # are the bar any real run has to clear.
     assert run.report["warnings"] == []
     assert run.report["errors"] == []
+
+
+@pytest.mark.deterministic
+def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_path) -> None:
+    """External-mode DynamoDB group drafts can pass the skill's cost check (#198).
+
+    Splits a copy of the deterministic job, writes a minimal contract-valid
+    draft for a real group, and runs ``--check-costs`` on it. Then ``--finalize``
+    must refuse cleanly (no merged output yet) instead of crashing (#197).
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
+    from tests.e2e.pipeline import REPO, _env
+
+    root = tmp_path / "artifacts"
+    shutil.copytree(run.job_dir(), root / run.db / run.job_id)
+    common = ["--job-id", run.job_id, "--db", run.db, "--engine", "dynamodb"]
+    common += ["--artifact-root", str(root)]
+
+    def script(*extra: str) -> tuple[int, dict]:
+        proc = subprocess.run(
+            [sys.executable, "scripts/run_schema_design.py", *common, *extra],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            env=_env(),
+            timeout=300,
+        )
+        return proc.returncode, json.loads(proc.stdout.strip().splitlines()[-1])
+
+    code, split = script("--split")
+    assert code == 0 and split["status"] == "split", split
+    manifest_path = root / split["manifest"]
+    group_dir = manifest_path.parent
+    group = json.loads(manifest_path.read_text())["groups"][0]
+    group_input = json.loads((group_dir / group["input_file"]).read_text())
+    query_id = group_input["collector_output"]["queries"]["query_patterns"][0]["query_id"]
+    source_table = group["primary_tables"][0]
+
+    draft = {
+        "job_id": run.job_id,
+        "source_database": run.db,
+        "access_patterns": [
+            {
+                "pattern_id": "DDB-AP-1",
+                "pattern_group": "Reads",
+                "query_ids": [query_id],
+                "source_tables": [source_table],
+                "description": "Get item by key",
+                "operation": "GetItem",
+                "table_name": "Main",
+                "key_condition": "PK=id",
+                "design_rps": 5.0,
+                "item_size_bytes": 200,
+            }
+        ],
+        "table_definitions": [
+            {
+                "table_name": "Main",
+                "aggregate_pattern": "separate",
+                "source_tables": [source_table],
+                "partition_key": {"attribute_name": "id", "attribute_type": "S"},
+                "attributes": [
+                    {"name": "id", "type": "S", "source_table": source_table, "source_column": "id"}
+                ],
+                "item_count": 100,
+                "item_size_bytes": 200,
+            }
+        ],
+        "hot_partition_analysis": [
+            {
+                "table_name": "Main",
+                "operation": "read",
+                "rcu_or_wcu_per_second": 5.0,
+                "partition_limit": 3000,
+                "utilization_pct": 0.17,
+                "at_risk": False,
+                "contributing_patterns": [query_id],
+            }
+        ],
+        "trade_offs": [
+            {
+                "description": "Single-table key lookup",
+                "impact": "Lookups by key only",
+                "source_tables": [source_table],
+                "target_tables": ["Main"],
+                "query_ids": [query_id],
+                "engine": "dynamodb",
+            }
+        ],
+        "validation_passed": False,
+    }
+    DynamoDBModelOutputContract.model_validate(draft)
+    draft_path = group_dir / f"schema_draft_group_{group['group_index']}.json"
+    draft_path.write_text(json.dumps(draft))
+
+    code, check = script("--check-costs", str(draft_path))
+    assert code == 0, check
+    assert check["status"] == "complete"
+    assert check["passed"] is True, check["errors"]
+    assert check["per_table"][0]["table_name"] == "Main"
+
+    code, finalize = script("--finalize")
+    assert code == 1
+    assert finalize["status"] == "error"
+    assert "--merge" in finalize["message"]
