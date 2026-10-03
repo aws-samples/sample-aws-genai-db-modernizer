@@ -17,6 +17,7 @@ const ATTR = '" onmouseover="alert(1)';
 const END_SCRIPT = '</script><script>alert(1)</script>';
 const HOSTILE = [IMG, BREAKOUT, JS_URL, SQUOTE, ATTR, END_SCRIPT];
 const hostile = (i) => HOSTILE[i % HOSTILE.length];
+const MISSING_QID = 'q-missing-journey';
 
 const ACTIVE_TAGS = 'script, img, iframe, object, embed, svg script, link, meta[http-equiv], base, form';
 
@@ -195,7 +196,8 @@ const hostileExportData = () => {
           query_ids: qids,
         })),
         trade_offs: [
-          { description: IMG, impact: ATTR, query_ids: qids },
+          // MISSING_QID has no embedded journey (dropped by the journey budget).
+          { description: IMG, impact: ATTR, query_ids: [...qids, MISSING_QID] },
           { description: `[PE note] ${BREAKOUT}`, impact: SQUOTE, query_ids: qids },
         ],
       },
@@ -355,6 +357,27 @@ describe('generateHTMLReport (interactive export)', () => {
       }
       expect(errors).toEqual([]);
       expect(alerts).toEqual([]);
+    });
+
+    it('SQL id links without an embedded journey are inert and never alert', () => {
+      const { window: win, alerts } = loaded;
+      const doc = win.document;
+      const links = [...doc.querySelectorAll('#tradeoffs-container [data-query-id]')];
+      const missing = links.filter(el => el.getAttribute('data-query-id') === MISSING_QID);
+      expect(missing.length).toBeGreaterThan(0); // one per engine tab
+      for (const el of missing) {
+        expect(el.hasAttribute('onclick')).toBe(false);
+        expect(el.getAttribute('title')).toBe('Query journey not available');
+      }
+      expect(links.filter(el => el.hasAttribute('onclick')).length).toBeGreaterThan(0);
+
+      // Even a direct call (stale link, console) shows an inline notice, not alert().
+      alerts.length = 0;
+      win.showQueryJourney(MISSING_QID);
+      expect(alerts).toEqual([]);
+      expect(doc.getElementById('query-journey-modal').style.display).toBe('flex');
+      expect(doc.getElementById('query-modal-body').textContent).toContain('not embedded in this report');
+      expect(doc.getElementById('query-modal-body').textContent).toContain(MISSING_QID);
     });
 
     it('client-side escapeHtml matches the shared helper', () => {

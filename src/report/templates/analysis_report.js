@@ -37,6 +37,7 @@
       });
       console.log('Query Journey Lookup created with', Object.keys(QUERY_JOURNEY_LOOKUP).length, 'items');
     }
+    function hasJourney(queryId) { return Object.prototype.hasOwnProperty.call(QUERY_JOURNEY_LOOKUP, queryId); }
 
     let engineChart, operationChart;
     let activeFilters = { engines: [], operations: [], text: '' };
@@ -369,7 +370,9 @@
       if (!queryIds || queryIds.length === 0) return '';
       let out = '<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>';
       queryIds.forEach(function(qid) {
-        out += '<span class="link" onclick="showQueryJourney(' + jsArg(qid) + ')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">' + escapeHtml(qid.substring(0, 12)) + '...</span>';
+        const has = hasJourney(qid);
+        const attrs = has ? ' class="link" onclick="showQueryJourney(' + jsArg(qid) + ')" title="Click to view query journey"' : ' title="Query journey not available"';
+        out += '<span data-query-id="' + escapeHtml(qid) + '"' + attrs + ' style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;' + (has ? '' : ' opacity: 0.6; cursor: default;') + '">' + escapeHtml(qid.substring(0, 12)) + '...</span>';
       });
       return out + '</div></div>';
     }
@@ -483,10 +486,10 @@
       if (fullPattern.query_ids && fullPattern.query_ids.length > 0) {
         tabsHtml += '<div class="key-value-block"><div class="key-value-label">SQL IDs (' + fullPattern.query_ids.length + ')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">';
         fullPattern.query_ids.forEach(function(qid) {
-          const hasJourney = QUERY_JOURNEY_LOOKUP[qid];
-          const cursorStyle = hasJourney ? 'cursor: pointer;' : 'opacity: 0.6;';
-          const onclickAttr = hasJourney ? ' onclick="showQueryJourney(' + jsArg(qid) + ')"' : '';
-          const titleAttr = hasJourney ? 'Click to view query journey' : 'Query journey not available';
+          const journeyAvailable = hasJourney(qid);
+          const cursorStyle = journeyAvailable ? 'cursor: pointer;' : 'opacity: 0.6;';
+          const onclickAttr = journeyAvailable ? ' onclick="showQueryJourney(' + jsArg(qid) + ')"' : '';
+          const titleAttr = journeyAvailable ? 'Click to view query journey' : 'Query journey not available';
           tabsHtml += '<span class="badge badge-blue" style="' + cursorStyle + '" title="' + titleAttr + '"' + onclickAttr + '>' + escapeHtml(qid.slice(0, 8)) + '...</span>';
         });
         tabsHtml += '</div></div>';
@@ -611,13 +614,7 @@
     }
 
     function showQueryJourney(queryId) {
-      const journey = QUERY_JOURNEY_LOOKUP[queryId];
-      if (!journey) {
-        alert('Query journey data not found for: ' + queryId + '\n\nAvailable query IDs: ' + Object.keys(QUERY_JOURNEY_LOOKUP).length);  // nosemgrep: javascript-alert -- intentional user notice in standalone exported report
-        console.log('QUERY_JOURNEY_LOOKUP:', QUERY_JOURNEY_LOOKUP);
-        console.log('Requested queryId:', queryId);
-        return;
-      }
+      const journey = hasJourney(queryId) ? QUERY_JOURNEY_LOOKUP[queryId] : null;
       let modal = document.getElementById('query-journey-modal');
       if (!modal) {
         modal = document.createElement('div');
@@ -627,6 +624,11 @@
         document.body.appendChild(modal);
       }
       document.getElementById('query-modal-title').textContent = 'Query Journey: ' + queryId.substring(0, 16) + '...';
+      if (!journey) {
+        document.getElementById('query-modal-body').innerHTML = '<p style="color: var(--color-text-secondary);">The query journey for <code>' + escapeHtml(queryId) + '</code> is not embedded in this report.</p>';  // nosemgrep: insecure-innerhtml,insecure-document-method -- value HTML-escaped via escapeHtml()
+        modal.style.display = 'flex';
+        return;
+      }
       const source = journey.source || {};
       const assignment = journey.assignment || {};
       const performance = source.performance || {};

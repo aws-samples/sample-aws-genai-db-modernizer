@@ -207,6 +207,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      });\n';
   script += '      console.log(\'Query Journey Lookup created with\', Object.keys(QUERY_JOURNEY_LOOKUP).length, \'items\');\n';
   script += '    }\n';
+  script += '    function hasJourney(queryId) { return Object.prototype.hasOwnProperty.call(QUERY_JOURNEY_LOOKUP, queryId); }\n';
   script += '\n';
   script += '    let engineChart, operationChart;\n';
   script += '    let activeFilters = { engines: [], operations: [], text: \'\' };\n';
@@ -545,8 +546,13 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    function sqlIdsHtml(queryIds) {\n';
   script += '      if (!queryIds || queryIds.length === 0) return \'\';\n';
   script += '      let out = \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
+  // A journey can be missing (the renderer embeds only the busiest queries when the
+  // journey budget applies), so only ids with one are clickable -- the same rule
+  // the pattern modal uses.
   script += '      queryIds.forEach(function(qid) {\n';
-  script += '        out += \'<span class="link" onclick="showQueryJourney(\' + jsArg(qid) + \')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + escapeHtml(qid.substring(0, 12)) + \'...</span>\';\n';
+  script += '        const has = hasJourney(qid);\n';
+  script += '        const attrs = has ? \' class="link" onclick="showQueryJourney(\' + jsArg(qid) + \')" title="Click to view query journey"\' : \' title="Query journey not available"\';\n';
+  script += '        out += \'<span data-query-id="\' + escapeHtml(qid) + \'"\' + attrs + \' style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;\' + (has ? \'\' : \' opacity: 0.6; cursor: default;\') + \'">\' + escapeHtml(qid.substring(0, 12)) + \'...</span>\';\n';
   script += '      });\n';
   script += '      return out + \'</div></div>\';\n';
   script += '    }\n';
@@ -665,10 +671,10 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (fullPattern.query_ids && fullPattern.query_ids.length > 0) {\n';
   script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">SQL IDs (\' + fullPattern.query_ids.length + \')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">\';\n';
   script += '        fullPattern.query_ids.forEach(function(qid) {\n';
-  script += '          const hasJourney = QUERY_JOURNEY_LOOKUP[qid];\n';
-  script += '          const cursorStyle = hasJourney ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
-  script += '          const onclickAttr = hasJourney ? \' onclick="showQueryJourney(\' + jsArg(qid) + \')"\' : \'\';\n';
-  script += '          const titleAttr = hasJourney ? \'Click to view query journey\' : \'Query journey not available\';\n';
+  script += '          const journeyAvailable = hasJourney(qid);\n';
+  script += '          const cursorStyle = journeyAvailable ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
+  script += '          const onclickAttr = journeyAvailable ? \' onclick="showQueryJourney(\' + jsArg(qid) + \')"\' : \'\';\n';
+  script += '          const titleAttr = journeyAvailable ? \'Click to view query journey\' : \'Query journey not available\';\n';
   script += '          tabsHtml += \'<span class="badge badge-blue" style="\' + cursorStyle + \'" title="\' + titleAttr + \'"\' + onclickAttr + \'>\' + escapeHtml(qid.slice(0, 8)) + \'...</span>\';\n';
   script += '        });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
@@ -793,13 +799,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    }\n';
   script += '\n';
   script += '    function showQueryJourney(queryId) {\n';
-  script += '      const journey = QUERY_JOURNEY_LOOKUP[queryId];\n';
-  script += '      if (!journey) {\n';
-  script += '        alert(\'Query journey data not found for: \' + queryId + \'\\n\\nAvailable query IDs: \' + Object.keys(QUERY_JOURNEY_LOOKUP).length);  // nosemgrep: javascript-alert -- intentional user notice in standalone exported report\n';
-  script += '        console.log(\'QUERY_JOURNEY_LOOKUP:\', QUERY_JOURNEY_LOOKUP);\n';
-  script += '        console.log(\'Requested queryId:\', queryId);\n';
-  script += '        return;\n';
-  script += '      }\n';
+  script += '      const journey = hasJourney(queryId) ? QUERY_JOURNEY_LOOKUP[queryId] : null;\n';
   script += '      let modal = document.getElementById(\'query-journey-modal\');\n';
   script += '      if (!modal) {\n';
   script += '        modal = document.createElement(\'div\');\n';
@@ -809,6 +809,12 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        document.body.appendChild(modal);\n';
   script += '      }\n';
   script += '      document.getElementById(\'query-modal-title\').textContent = \'Query Journey: \' + queryId.substring(0, 16) + \'...\';\n';
+  // Missing journey: say so inside the modal rather than with a blocking alert().
+  script += '      if (!journey) {\n';
+  script += '        document.getElementById(\'query-modal-body\').innerHTML = \'<p style="color: var(--color-text-secondary);">The query journey for <code>\' + escapeHtml(queryId) + \'</code> is not embedded in this report.</p>\';  // nosemgrep: insecure-innerhtml,insecure-document-method -- value HTML-escaped via escapeHtml()\n';
+  script += '        modal.style.display = \'flex\';\n';
+  script += '        return;\n';
+  script += '      }\n';
   script += '      const source = journey.source || {};\n';
   script += '      const assignment = journey.assignment || {};\n';
   script += '      const performance = source.performance || {};\n';

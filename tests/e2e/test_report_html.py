@@ -221,3 +221,35 @@ def test_analysis_report_placeholder_smuggling_runs_no_script(page: Page, tmp_pa
     assert events == {"console": [], "pageerror": [], "blocked": []}
     assert page.evaluate("DATA.results.synthesis.database_name").startswith('wp", "pwn"')
     assert "__TITLE__" in page.inner_text("#query-modal-body")
+
+
+def test_sql_id_without_journey_is_inert_and_never_alerts(page: Page, tmp_path) -> None:
+    """A SQL id whose journey was not embedded (journey budget) must not pop an alert."""
+    from src.report.analysis_report import render_analysis_report_html
+
+    data = _export_data_with_patterns()
+    data["schemaDesigns"][0]["content"]["trade_offs"][0]["query_ids"] = ["q-0001", "q-dropped"]
+    path = tmp_path / "analysis-report.html"
+    path.write_text(render_analysis_report_html(data), encoding="utf-8")
+
+    dialogs: list[str] = []
+
+    def on_dialog(dialog) -> None:
+        dialogs.append(dialog.message)
+        dialog.dismiss()
+
+    page.on("dialog", on_dialog)
+    events = _open_offline(page, path)
+
+    missing = page.locator('#tradeoffs-container [data-query-id="q-dropped"]')
+    assert missing.get_attribute("onclick") is None
+    assert missing.get_attribute("title") == "Query journey not available"
+    missing.click()
+    assert not page.locator("#query-journey-modal").is_visible()
+
+    page.evaluate("showQueryJourney('q-dropped')")
+    assert page.locator("#query-journey-modal").is_visible()
+    assert "not embedded in this report" in page.inner_text("#query-modal-body")
+
+    assert dialogs == []
+    assert events == {"console": [], "pageerror": [], "blocked": []}
