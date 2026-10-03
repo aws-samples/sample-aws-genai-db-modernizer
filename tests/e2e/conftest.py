@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from tests.e2e.pipeline import PipelineResult, run_pipeline
+from tests.e2e.pipeline import PipelineResult, _env, run_pipeline
 
 SAMPLES = ["wordpress", "discourse"]
 
@@ -84,6 +85,16 @@ def e2e_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return Path(tmp_path_factory.mktemp("e2e"))
 
 
+def _version_sort_key(path: Path) -> tuple[int, str]:
+    """Sort key for synthesis "v<N>" directories: numeric on the digits after
+    "v" so "v10" sorts after "v2" (plain `sorted()` would put "v10" first,
+    lexically). Falls back to a string sort for anything that doesn't match."""
+    digits = path.name[1:]
+    if digits.isdigit():
+        return (int(digits), "")
+    return (-1, path.name)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _copy_deliverables_to_e2e_output() -> Iterator[None]:
     """If E2E_OUTPUT is set, copy each run's synthesis/v*/ deliverables into
@@ -101,7 +112,8 @@ def _copy_deliverables_to_e2e_output() -> Iterator[None]:
             continue
         dest = dest_root / result.db
         dest.mkdir(parents=True, exist_ok=True)
-        for version_dir in sorted(synthesis_dir.glob("v*")):
+        # Numeric sort, not lexical: "v10" must sort after "v2", not before.
+        for version_dir in sorted(synthesis_dir.glob("v*"), key=_version_sort_key):
             if not version_dir.is_dir():
                 continue
             for f in version_dir.iterdir():
@@ -115,14 +127,60 @@ def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
     return _run_pipeline_cached(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
 
 
-def _wait_for(port: int, timeout: float = 60) -> None:
+def _ensure_port_free(port: int) -> None:
+    """Fail fast, with a clear message, instead of silently talking to whatever
+    (possibly stale) process is already listening on ``port``."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError as exc:
+            pytest.fail(
+                f"port {port} is already in use ({exc}). Something -- maybe a "
+                "leftover `uvicorn` or `serve` from a previous e2e run -- is "
+                "already listening on it; stop it and re-run."
+            )
+
+
+def _log_path(name: str) -> Path:
+    """A file to redirect a subprocess's stdout/stderr to, instead of an
+    unread ``subprocess.PIPE`` (which deadlocks once its OS buffer fills,
+    since nothing ever drains it). Under $E2E_OUTPUT when set (so CI can
+    publish it as an artifact), else a throwaway tmp file."""
+    output = os.environ.get("E2E_OUTPUT")
+    if output:
+        path = Path(output) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    fd, tmp = tempfile.mkstemp(prefix=f"{name}-")
+    os.close(fd)
+    return Path(tmp)
+
+
+def _wait_for(port: int, proc: subprocess.Popen, log_path: Path, timeout: float = 60) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc.poll() is not None:
+            tail = log_path.read_text()[-4000:] if log_path.exists() else "(no log)"
+            raise RuntimeError(
+                f"process exited (code {proc.returncode}) before anything "
+                f"started listening on port {port}. {log_path} tail:\n{tail}"
+            )
         with socket.socket() as s:
             if s.connect_ex(("127.0.0.1", port)) == 0:
                 return
         time.sleep(0.5)
-    raise TimeoutError(f"nothing listening on {port}")
+    raise TimeoutError(f"nothing listening on {port} after {timeout}s")
+
+
+def _terminate(proc: subprocess.Popen, log_file) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+    log_file.close()
 
 
 @pytest.fixture(scope="session")
@@ -134,25 +192,32 @@ def all_runs(e2e_root: Path) -> list[PipelineResult]:
 
 @pytest.fixture(scope="session")
 def api(all_runs: list[PipelineResult]) -> Iterator[str]:
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("S3_BUCKET", "STATE_MACHINE_ARN", "AWS_PROFILE")
-    }
-    env.update(ARTIFACT_DIR=str(all_runs[0].artifact_root), AWS_DEFAULT_REGION="us-east-1")
+    _ensure_port_free(8000)
+    # Reuse pipeline._env() so the API subprocess is stripped of AWS_PROFILE /
+    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN the same way
+    # the deterministic pipeline steps are -- same proof: this suite needs no
+    # AWS credentials. S3_BUCKET / STATE_MACHINE_ARN are removed on top of that
+    # (not something _env() strips, since the pipeline scripts never set them)
+    # so src.api.main picks its local-mode services instead of the real
+    # S3/Step-Functions ones.
+    env = _env()
+    env.pop("S3_BUCKET", None)
+    env.pop("STATE_MACHINE_ARN", None)
+    env["ARTIFACT_DIR"] = str(all_runs[0].artifact_root)
+    log_path = _log_path("api.log")
+    log_file = log_path.open("w")
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "src.api.main:app", "--port", "8000"],
         cwd=REPO,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
     try:
-        _wait_for(8000)
+        _wait_for(8000, proc, log_path)
         yield "http://localhost:8000/api/v1/"
     finally:
-        proc.terminate()
-        proc.wait(timeout=10)
+        _terminate(proc, log_file)
 
 
 @pytest.fixture(scope="session")
@@ -161,15 +226,24 @@ def ui(api: str) -> Iterator[str]:
         pytest.fail(
             "UI not built. Run: cd src/ui && npm ci && REACT_APP_API_URL=http://localhost:8000/api/v1/ npx react-scripts build"
         )
+    serve_bin = REPO / "src" / "ui" / "node_modules" / ".bin" / "serve"
+    if not serve_bin.exists():
+        pytest.fail(f"{serve_bin} not found. Run: cd src/ui && npm ci")
+    _ensure_port_free(3000)
+    log_path = _log_path("serve.log")
+    log_file = log_path.open("w")
     proc = subprocess.Popen(
-        ["npx", "--no-install", "serve", "-s", "build", "-l", "3000"],
+        # Launched directly (not via `npx serve`): npx re-resolves and may
+        # re-install the package on every invocation, which is slower and,
+        # offline, can fail outright. The pinned dependency's own binary
+        # (installed by `npm ci`) is what we actually want to run.
+        [str(serve_bin), "-s", "build", "-l", "3000", "--no-clipboard"],
         cwd=REPO / "src" / "ui",
-        stdout=subprocess.PIPE,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
     try:
-        _wait_for(3000)
+        _wait_for(3000, proc, log_path)
         yield "http://localhost:3000"
     finally:
-        proc.terminate()
-        proc.wait(timeout=10)
+        _terminate(proc, log_file)
