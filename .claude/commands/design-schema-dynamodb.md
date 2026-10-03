@@ -52,7 +52,7 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 
    Key rules for each group output:
    - Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
-   - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group)
+   - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; `--merge` renumbers them `DDB-AP-1..N` across groups when group IDs collide)
    - `table_definitions[].gsis[].partition_key` and `sort_key` must be LISTS of KeyDefinition
    - Base table `partition_key` and `sort_key` are single KeyDefinition objects
    - `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine

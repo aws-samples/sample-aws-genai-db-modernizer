@@ -424,6 +424,29 @@ def _reconcile_dynamodb(merged: dict, origins: list[int]) -> list[str]:
     return failures
 
 
+def _unique_pattern_ids(access_patterns: Any) -> Any:
+    """Renumber ``DDB-AP-1..N`` in merged order when group-local IDs collide (#229).
+
+    Each group numbers its access patterns from ``DDB-AP-1``, and ``pattern_id``
+    keys graph nodes and revision drops. DynamoDB designs reference a pattern
+    only by its own ``pattern_id`` (trade-offs and hot partitions use query
+    IDs), so renumbering needs no other rewrite. Unique IDs are kept as they are.
+    """
+    if not isinstance(access_patterns, list):
+        return access_patterns
+    ids = [ap.get("pattern_id") for ap in access_patterns if isinstance(ap, dict)]
+    if len(ids) == len(set(ids)):
+        return access_patterns
+    renumbered: list = []
+    number = 0
+    for ap in access_patterns:
+        if isinstance(ap, dict):
+            number += 1
+            ap = {**ap, "pattern_id": f"DDB-AP-{number}"}
+        renumbered.append(ap)
+    return renumbered
+
+
 def _draft_passed(draft: dict) -> bool:
     """``validation_passed`` of a draft, ignoring stale DynamoDB merge messages."""
     if draft.get("validation_passed", True):
@@ -519,6 +542,8 @@ def merge_group_drafts(
             for _ in d.get("table_definitions") or []
         ]
         new_failures = _reconcile_dynamodb(merged, origins)
+        if len(drafts) > 1:
+            merged["access_patterns"] = _unique_pattern_ids(merged.get("access_patterns"))
         if "validation_failures" in merged or failures or new_failures:
             merged["validation_failures"] = failures + new_failures
         if new_failures:

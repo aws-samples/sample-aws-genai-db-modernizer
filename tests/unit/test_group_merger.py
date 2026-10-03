@@ -571,3 +571,34 @@ class TestDynamoDBOverlappingDesigns:
 
         assert result["validation_failures"] == []
         assert result["validation_passed"] is True
+
+
+class TestDynamoDBPatternIds:
+    """Group-local DDB-AP-n IDs must stay unique after the merge (issue #229)."""
+
+    def test_colliding_pattern_ids_are_renumbered_in_merged_order(self):
+        g0 = _ddb([_single("A", "users", "id")], [_ap("DDB-AP-1", "A"), _ap("DDB-AP-2", "A")])
+        g1 = _ddb([_single("B", "orders", "id")], [_ap("DDB-AP-1", "B")])
+
+        result = merge_group_drafts([g0, g1], "dynamodb")
+
+        assert [(ap["pattern_id"], ap["table_name"]) for ap in result["access_patterns"]] == [
+            ("DDB-AP-1", "A"),
+            ("DDB-AP-2", "A"),
+            ("DDB-AP-3", "B"),
+        ]
+
+    def test_unique_pattern_ids_are_kept(self):
+        g0 = _ddb([_single("A", "users", "id")], [_ap("DDB-AP-7", "A")])
+        g1 = _ddb([_single("B", "orders", "id")], [_ap("DDB-AP-2", "B")])
+
+        result = merge_group_drafts([g0, g1], "dynamodb")
+
+        assert [ap["pattern_id"] for ap in result["access_patterns"]] == ["DDB-AP-7", "DDB-AP-2"]
+
+    def test_single_draft_ids_are_not_touched(self):
+        draft = _ddb([_single("A", "users", "id")], [_ap("DDB-AP-1", "A"), _ap("DDB-AP-1", "A")])
+
+        result = merge_group_drafts([draft], "dynamodb")
+
+        assert [ap["pattern_id"] for ap in result["access_patterns"]] == ["DDB-AP-1", "DDB-AP-1"]
