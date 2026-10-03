@@ -1,0 +1,34 @@
+{
+  "case_id": "wordpress-trimmed",
+  "stage": "assignment",
+  "intent": "Trimmed real WordPress workload (5 representative queries from docs/examples/wordpress/wordpress-collection.json): three high-frequency single-table PK lookups/updates that belong on DynamoDB, and a taxonomy join plus a GROUP BY aggregation that belong on the relational engine.",
+  "authored_by": "human",
+  "reviewed": true,
+  "expected": {
+    "q_option_get": {
+      "acceptable": ["dynamodb"],
+      "ideal": "dynamodb",
+      "rationale": "Extremely high-frequency single-table PK lookup on wp_options — canonical DynamoDB shape."
+    },
+    "q_postmeta_point": {
+      "acceptable": ["dynamodb"],
+      "ideal": "dynamodb",
+      "rationale": "High-frequency single-table point lookup by meta_key+post_id — canonical DynamoDB shape."
+    },
+    "q_api_key_update": {
+      "acceptable": ["dynamodb"],
+      "ideal": "dynamodb",
+      "rationale": "High-frequency single-table PK update on wp_woocommerce_api_keys — canonical DynamoDB shape."
+    },
+    "q_term_join": {
+      "acceptable": ["aurora_mysql"],
+      "ideal": "aurora_mysql",
+      "rationale": "Multi-table taxonomy JOIN requires relational join support DynamoDB cannot provide natively."
+    },
+    "q_agg_group_by": {
+      "acceptable": ["aurora_mysql"],
+      "ideal": "aurora_mysql",
+      "rationale": "GROUP BY aggregation over post_status is a relational-engine operation."
+    }
+  }
+}
