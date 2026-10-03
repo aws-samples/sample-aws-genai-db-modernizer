@@ -69,6 +69,43 @@ class TestEscapingHelpers:
         assert "\n" not in out
         assert "<x>" not in out
 
+    def test_md_text_escapes_markdown_image_syntax(self) -> None:
+        """#211: an untrusted value containing image syntax must not render as
+        a live remote image fetch."""
+        out = escaping.md_text("![](http://example.com/x.png)")
+        assert out == "\\!\\[\\]\\(http://example.com/x.png\\)"
+
+    def test_md_text_escapes_markdown_link_syntax(self) -> None:
+        out = escaping.md_text("[click](http://example.com)")
+        assert out == "\\[click\\]\\(http://example.com\\)"
+
+    def test_md_text_escapes_emphasis_markers(self) -> None:
+        out = escaping.md_text("*bold* and _italic_")
+        assert "*" not in out.replace("\\*", "")
+        assert "_" not in out.replace("\\_", "")
+        assert out == "\\*bold\\* and \\_italic\\_"
+
+    def test_md_text_escapes_the_backslash_itself_first(self) -> None:
+        """A literal backslash must not be mistaken for part of one of these
+        escapes once the special characters are also escaped: each original
+        backslash is doubled, then each bracket gets its own escaping backslash."""
+        out = escaping.md_text("\\[not a link\\]")
+        assert out == "\\\\\\[not a link\\\\\\]"
+        # Unescaping once (collapsing the doubled backslash) must not reveal a
+        # live, unescaped link.
+        assert "\\[not a link\\]" not in out.replace("\\\\", "\\")
+
+    def test_md_text_hostile_input_battery(self) -> None:
+        """Pipe, backtick, newline, <, link, image -- the full battery #211 asks for."""
+        out = escaping.md_text("a|b`c\nd<e>![f](g)[h](i)")
+        assert "\n" not in out
+        assert "<e>" not in out
+        assert "![f](g)" not in out
+        assert "[h](i)" not in out
+        # Pipes and backticks are untouched -- not special outside a table
+        # cell / code span, which is what md_cell / md_code are for.
+        assert "a|b`c" in out
+
     def test_md_yaml_value_escapes_quotes_and_newlines(self) -> None:
         out = escaping.md_yaml_value('db"name\nleak: value')
         assert "\n" not in out

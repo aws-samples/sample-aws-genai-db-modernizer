@@ -145,7 +145,9 @@ class TestEngineeringReport:
         assert "{" not in line and "[" not in line and "'" not in line
         assert "aggregation" in line
         assert "254f282c" in line
-        assert "COUNT(*) on wp_postmeta" in line
+        # Parens/asterisks/underscores are backslash-escaped by md_text (#211),
+        # so check the content survived rather than the exact punctuation.
+        assert "COUNT" in line and "wp" in line and "postmeta" in line
 
         elasticache_style = {
             "source_query_ids": ["59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bd"],
@@ -230,7 +232,8 @@ class TestEngineeringReport:
         line = renderers._migration_note_md(note)
         assert "{" not in line and "'" not in line
         assert "trigger" in line
-        assert "category_permission_trigger" in line
+        # Underscores are backslash-escaped by md_text (#211).
+        assert "category" in line and "permission" in line and "trigger" in line
         assert "Implement a Change Stream listener" in line
 
     def test_migration_note_md_tolerant_of_missing_keys(self) -> None:

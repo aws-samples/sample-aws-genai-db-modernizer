@@ -116,10 +116,22 @@ def md_text(value: Any) -> str:
     Not inside a table, so pipes are fine, but newlines still have to be tamed so a
     single logical value cannot inject extra list items or break the block, and
     inline HTML is neutralized for the same reason as :func:`md_cell`.
+
+    Link/image syntax and emphasis markers (``[ ] ( ) ! * _``) are backslash-escaped
+    (#211): without this, untrusted text containing ``![](http://evil/x.png)`` or
+    ``[click](http://evil)`` renders as a live remote image fetch or a clickable
+    link, and ``*``/``_`` turn plain words into emphasis. The backslash itself is
+    escaped first, so a value already containing one is not mistaken for part of
+    one of these escapes once the special characters are escaped too. Backticks and
+    pipes are untouched here -- not special in flowing text, and :func:`md_code` /
+    :func:`md_cell` are the right helpers for the contexts where they are.
     """
     s = str(value)
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
     s = s.replace("<", "&lt;").replace(">", "&gt;")
+    s = s.replace("\\", "\\\\")
+    for ch in "[]()!*_":
+        s = s.replace(ch, "\\" + ch)
     return s
 
 
