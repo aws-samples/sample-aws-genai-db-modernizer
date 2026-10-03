@@ -20,7 +20,7 @@ DynamoDB. Aurora runs once, like OpenSearch.
    ```
 
 2. **Read input and domain expertise**
-   a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/schema_design_aurora_mysql.json`
+   a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_aurora_mysql.json`
       - Contains: filtered queries, tables, analysis results, `output_schema`
         (the exact JSON Schema your output must conform to), and — same as the
         automated Bedrock path (ADR-028) — a `draft` plus
@@ -69,7 +69,7 @@ DynamoDB. Aurora runs once, like OpenSearch.
    - No pattern-ID prefix — this contract is table-shaped, not access-pattern-shaped
 
 5. **Write, validate, persist**
-   Write to `.artifacts/{database_name}/{job_id}/llm_responses/schema_design_aurora_mysql.json`, then:
+   Write to `artifacts/{database_name}/{job_id}/llm_responses/schema_design_aurora_mysql.json`, then:
 
    ```bash
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine aurora_mysql --finalize

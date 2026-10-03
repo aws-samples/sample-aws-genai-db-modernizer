@@ -25,7 +25,7 @@ Runs the Aurora MySQL analysis phase. This phase is fully deterministic (no LLM 
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-aurora_mysql/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-aurora_mysql/analysis.json` and show:
    - Table recommendations (with score breakdown: pattern_match, complexity, performance, cost)
    - MySQL-specific patterns detected (ON DUPLICATE KEY, STRAIGHT_JOIN, GROUP_CONCAT)
    - Common relational patterns (complex joins, aggregations, transactions, pagination)

@@ -16,7 +16,7 @@ Designs OpenSearch index mappings, data streams, and ISM policies.
    ```
 
 2. **Read input and domain expertise**
-   a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/schema_design_opensearch.json`
+   a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_opensearch.json`
       - Contains: filtered queries, tables, analysis results, and `output_schema` (the exact JSON Schema your output must conform to)
    b. Read: `src/skills/opensearch-index-modeling.md` (domain expertise guide)
 
@@ -28,7 +28,7 @@ Designs OpenSearch index mappings, data streams, and ISM policies.
    - Pattern IDs must be prefixed with `OS-AP-`
 
 4. **Write, validate, persist**
-   Write to `.artifacts/{database_name}/{job_id}/llm_responses/schema_design_opensearch.json`, then:
+   Write to `artifacts/{database_name}/{job_id}/llm_responses/schema_design_opensearch.json`, then:
 
    ```bash
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine opensearch --finalize

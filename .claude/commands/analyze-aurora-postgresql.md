@@ -25,7 +25,7 @@ Runs the Aurora PostgreSQL analysis phase. This phase is fully deterministic (no
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-aurora_postgresql/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-aurora_postgresql/analysis.json` and show:
    - Table recommendations (with score breakdown: pattern_match, complexity, performance, cost)
    - PG-specific patterns detected (CTEs, window functions, JSONB, arrays, tsvector, upsert)
    - Common relational patterns (complex joins, aggregations, transactions, pagination)

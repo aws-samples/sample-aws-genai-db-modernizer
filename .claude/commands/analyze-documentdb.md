@@ -25,7 +25,7 @@ Runs the DocumentDB analysis phase. This phase is fully deterministic (no LLM ne
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-documentdb/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-documentdb/analysis.json` and show:
    - Table recommendations
    - Embedding candidates
    - Patterns detected

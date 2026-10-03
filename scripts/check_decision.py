@@ -13,7 +13,7 @@ import sys
 from src.storage.local_store import LocalArtifactStore
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Check whether a decision artifact exists for a given job."
     )
@@ -26,9 +26,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--artifact-root",
-        default=".artifacts",
-        help="Root directory for artifacts (default: .artifacts)",
+        default="./artifacts",
+        help="Root directory for artifacts (default: ./artifacts)",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
     store = LocalArtifactStore(base_dir=args.artifact_root)

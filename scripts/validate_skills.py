@@ -32,6 +32,7 @@ def validate(repo_root: Path) -> list[str]:
         name = f".claude/commands/{command_file.name}"
         errors.extend(_check_script_references(name, content, repo_root))
         errors.extend(_check_skill_prompt_references(name, content, repo_root))
+        errors.extend(_check_dot_artifacts_references(name, content))
 
     skills_dir = repo_root / ".claude" / "skills"
     if skills_dir.exists():
@@ -59,6 +60,14 @@ def _check_script_references(name: str, content: str, repo_root: Path) -> list[s
         if not script_path.exists():
             errors.append(f"{name}: references non-existent script '{match.group(1)}'")
     return errors
+
+
+def _check_dot_artifacts_references(name: str, content: str) -> list[str]:
+    """Flag `.artifacts/` references — scripts write to `./artifacts/`."""
+    pattern = r"(?<![\w/])\.artifacts/"
+    if re.search(pattern, content):
+        return [f"{name}: uses .artifacts/ — scripts write ./artifacts/"]
+    return []
 
 
 def _check_skill_prompt_references(name: str, content: str, repo_root: Path) -> list[str]:

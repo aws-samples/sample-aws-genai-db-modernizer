@@ -16,7 +16,7 @@ Designs Redis key patterns, data structures, and TTL policies.
    ```
 
 2. **Read input and domain expertise**
-   a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/schema_design_elasticache.json`
+   a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_elasticache.json`
       - Contains: filtered queries, tables, analysis results, and `output_schema` (the exact JSON Schema your output must conform to)
    b. Read: `src/skills/elasticache-data-modeling.md` (domain expertise guide)
 
@@ -28,7 +28,7 @@ Designs Redis key patterns, data structures, and TTL policies.
    - Pattern IDs must be prefixed with `EC-AP-`
 
 4. **Write, validate, persist**
-   Write to `.artifacts/{database_name}/{job_id}/llm_responses/schema_design_elasticache.json`, then:
+   Write to `artifacts/{database_name}/{job_id}/llm_responses/schema_design_elasticache.json`, then:
 
    ```bash
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine elasticache --finalize

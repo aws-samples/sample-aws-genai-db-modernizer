@@ -15,7 +15,7 @@ Runs the OpenSearch analysis phase. This phase is fully deterministic (no LLM ne
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-opensearch/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-opensearch/analysis.json` and show:
    - Text search patterns detected
    - Time-series / log patterns
    - Cost estimate

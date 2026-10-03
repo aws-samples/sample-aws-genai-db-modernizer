@@ -16,7 +16,7 @@ Designs DocumentDB collections: embedding decisions, index strategy, and access 
    ```
 
 2. **Read input and domain expertise**
-   a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/schema_design_documentdb.json`
+   a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_documentdb.json`
       - Contains: filtered queries, tables, analysis results, and `output_schema` (the exact JSON Schema your output must conform to)
    b. Read: `src/skills/documentdb-data-modeling.md` (domain expertise guide)
 
@@ -28,7 +28,7 @@ Designs DocumentDB collections: embedding decisions, index strategy, and access 
    - Pattern IDs must be prefixed with `DOC-AP-`
 
 4. **Write, validate, persist**
-   Write to `.artifacts/{database_name}/{job_id}/llm_responses/schema_design_documentdb.json`, then:
+   Write to `artifacts/{database_name}/{job_id}/llm_responses/schema_design_documentdb.json`, then:
 
    ```bash
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine documentdb --finalize

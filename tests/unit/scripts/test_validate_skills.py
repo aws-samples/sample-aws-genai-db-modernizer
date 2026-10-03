@@ -25,3 +25,13 @@ def test_real_repo_commands_are_valid() -> None:
     repo = Path(__file__).resolve().parents[3]
     assert list((repo / ".claude" / "commands").glob("*.md")), "no commands found"
     assert validate_skills.validate(repo) == []
+
+
+def test_flags_dot_artifacts_paths(tmp_path: Path) -> None:
+    cmds = tmp_path / ".claude" / "commands"
+    cmds.mkdir(parents=True)
+    (cmds / "x.md").write_text("Read `.artifacts/{db}/{job}/llm_requests/a.json`\n")
+
+    errors = validate_skills.validate(tmp_path)
+
+    assert any("x.md" in e and ".artifacts/" in e for e in errors)

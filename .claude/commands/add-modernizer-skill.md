@@ -100,11 +100,11 @@ Ask the user for:
    ```
 
 2. **If status is `awaiting_llm`:**
-   a. Read: `.artifacts/{database_name}/{job_id}/llm_requests/{phase_name}.json`
+   a. Read: `artifacts/{database_name}/{job_id}/llm_requests/{phase_name}.json`
       - Contains context data and `output_schema`
    b. Read: `src/skills/{phase_name}-expertise.md`
    c. Produce JSON conforming to `output_schema`
-   d. Write to: `.artifacts/{database_name}/{job_id}/llm_responses/{phase_name}.json`
+   d. Write to: `artifacts/{database_name}/{job_id}/llm_responses/{phase_name}.json`
    e. Finalize:
 
       ```bash

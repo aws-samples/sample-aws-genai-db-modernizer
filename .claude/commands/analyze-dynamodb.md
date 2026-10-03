@@ -25,7 +25,7 @@ Runs the DynamoDB analysis phase. This phase is fully deterministic (no LLM need
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-dynamodb/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-dynamodb/analysis.json` and show:
    - Table recommendations
    - Patterns detected
    - Anti-patterns

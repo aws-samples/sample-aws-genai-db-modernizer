@@ -15,7 +15,7 @@ Runs the ElastiCache/Redis analysis phase. This phase is fully deterministic (no
    ```
 
 3. **Present results**
-   Read `.artifacts/{database_name}/{job_id}/analysis-elasticache/analysis.json` and show:
+   Read `artifacts/{database_name}/{job_id}/analysis-elasticache/analysis.json` and show:
    - Caching patterns detected
    - Session / leaderboard patterns
    - Cost estimate
