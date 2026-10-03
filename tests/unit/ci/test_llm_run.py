@@ -1,11 +1,12 @@
 """Tests for ci/llm/run.py's transcript checking and results merging.
 
-Uses the small synthetic stream-json fixtures in tests/unit/ci/fixtures/
-(synthetic-*.jsonl) rather than a recorded real transcript -- see
-ci/llm/run.py's module docstring for why (Step 1's spike, recording real
-transcript shapes against the installed CLI, was explicitly skipped to avoid
-spending model tokens; the field names here are assumptions from public docs
-to be confirmed on the first internal-pipeline run).
+Most tests use the small synthetic stream-json fixtures in
+tests/unit/ci/fixtures/ (synthetic-*.jsonl), which exercise one behavior
+each in isolation. tests/unit/ci/fixtures/real-chat-wordpress-failed.jsonl
+is a trimmed, scrubbed copy of a real recorded transcript (the first
+internal-pipeline run) -- see ci/llm/run.py's module docstring for the
+confirmed field shapes it validates (aggregation across all `result`
+messages, `permission_denials` entries, nested `usage` fields).
 """
 
 from __future__ import annotations
@@ -72,6 +73,64 @@ def test_pipeline_command_denial_fails() -> None:
         run.check_transcript(FIXTURES / "synthetic-pipeline-denial.jsonl", "chat")
 
 
+def test_compound_exploratory_command_is_other_denial_not_a_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A denial of a compound/chained command that merely invokes an
+    allowlisted script partway through (``cd ... && uv run python
+    scripts/run_report.py ...``) does not *start with* the allowlisted
+    prefix -- it's the model's own exploratory chaining, not a denial of
+    the documented command itself, so it must warn, not fail."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=cmp00001 db=wordpress mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-1",
+                        "tool_input": {
+                            "command": (
+                                "cd /workspace/repo && uv run python scripts/run_report.py "
+                                "--artifact-root ./artifacts"
+                            )
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+    summary = run.check_transcript(path, "chat")
+    assert summary["job_id"] == "cmp00001"
+    assert summary["denials"]["count"] == 1
+    assert "exploratory" in capsys.readouterr().err
+
+
+def test_exact_pipeline_command_denied_fails(tmp_path: Path) -> None:
+    """A denial of the exact documented command (no chaining) must fail --
+    this is specifically what means the allowlist itself is broken."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=exact0001 db=wordpress mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-1",
+                        "tool_input": {
+                            "command": "uv run python scripts/run_report.py --artifact-root /"
+                        },
+                    }
+                ],
+            )
+        ],
+    )
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        run.check_transcript(path, "chat")
+
+
 def test_error_max_turns_fails() -> None:
     with pytest.raises(run.TranscriptError, match="is_error"):
         run.check_transcript(FIXTURES / "synthetic-error-max-turns.jsonl", "chat")
@@ -113,6 +172,67 @@ def test_mode_mismatch_fails() -> None:
     """The transcript says mode=chat; asserting --mode both against it must fail."""
     with pytest.raises(run.TranscriptError, match="does not match"):
         run.check_transcript(FIXTURES / "synthetic-success-chat.jsonl", "both")
+
+
+def test_subagent_decoy_complete_cannot_override_orchestrator_failed(tmp_path: Path) -> None:
+    """A subagent's assistant text (``parent_tool_use_id`` set -- the real
+    fixture confirms this is how a dispatched subagent's own turns are
+    marked) can echo or illustrate a MODERNIZE_RESULT line while reporting
+    status. That must never be mistaken for the authoritative sentinel: the
+    orchestrator's own (top-level, ``parent_tool_use_id`` null) failed
+    result still decides the outcome even though the decoy comes later."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line("MODERNIZE_RESULT: failed phase=schema_design reason=boom"),
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "For reference, the orchestrator previously reported "
+                                "MODERNIZE_RESULT: complete job_id=abc12345 db=wordpress "
+                                "mode=chat -- that status is now stale."
+                            ),
+                        }
+                    ],
+                },
+                "parent_tool_use_id": "toolu_dispatching_tool_use",
+            },
+        ],
+    )
+    with pytest.raises(run.TranscriptError, match=r"failed phase=schema_design"):
+        run.check_transcript(path, "chat")
+
+
+def test_subagent_decoy_failed_cannot_override_orchestrator_complete(tmp_path: Path) -> None:
+    """Same as above, inverted: a subagent decoy "failed" line must not
+    override the orchestrator's own top-level "complete" result."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line("MODERNIZE_RESULT: complete job_id=real00001 db=wordpress mode=chat"),
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Illustrating a failure case: MODERNIZE_RESULT: failed phase=x reason=y",
+                        }
+                    ],
+                },
+                "parent_tool_use_id": "toolu_dispatching_tool_use",
+            },
+        ],
+    )
+    summary = run.check_transcript(path, "chat")
+    assert summary["job_id"] == "real00001"
+    assert summary["db"] == "wordpress"
 
 
 def test_no_result_line_at_all_fails(tmp_path: Path) -> None:

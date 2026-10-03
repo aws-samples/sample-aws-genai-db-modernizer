@@ -401,9 +401,18 @@ def _iter_modernize_result_matches(
     document order, across both assistant ``text`` blocks and ``result``
     lines' ``result`` text. The real run repeats the same sentinel in an
     assistant text block and the ``result`` line that immediately follows
-    it; the caller wants the *last* one found overall ("last one wins")."""
+    it; the caller wants the *last* one found overall ("last one wins").
+
+    Only top-level messages (``parent_tool_use_id is None`` -- the real
+    fixture confirms this is ``null`` for the orchestrator and set for
+    anything running inside a dispatched subagent) are considered: a
+    subagent quoting or illustrating a ``MODERNIZE_RESULT`` line (e.g. when
+    reporting what the orchestrator previously said) must never be mistaken
+    for the authoritative one."""
     matches: list[tuple[str, re.Match[str]]] = []
     for rec in records:
+        if rec.get("parent_tool_use_id") is not None:
+            continue
         rtype = rec.get("type")
         texts: list[str] = []
         if rtype == "assistant" and isinstance(rec.get("message"), dict):
