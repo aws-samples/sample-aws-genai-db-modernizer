@@ -2,15 +2,17 @@
 
 This guide explains how to add a new phase to the modernizer pipeline. The key principle: **deterministic code first, skill second**. The skill is just the thin orchestration layer that tells the LLM how to interact with your already-working code.
 
+A "skill" here means a Claude Code command: a markdown file under `.claude/commands/` that Claude Code loads and follows when invoked as `/your-phase`.
+
 ## Priority Order
 
 1. **Pydantic contracts** — Define the input/output shapes
 2. **Deterministic logic** — The agent code that does the heavy lifting without an LLM
 3. **LLM seam functions** — `prepare_llm_input()` and `apply_llm_output()`
 4. **Script** — The CLI entry point that wires it all together
-5. **Skill** — The orchestration instructions for Claude Code
+5. **Command** — The orchestration instructions for Claude Code
 
-Do NOT start with the skill. If you can't run your phase from a script with `--llm-mode none`, it's not ready for a skill.
+Do NOT start with the command. If you can't run your phase from a script with `--llm-mode none`, it's not ready for a command.
 
 ## Architecture: The LLM Seam Pattern
 
@@ -128,16 +130,11 @@ def run_finalize(store, job_id, db):
 
 If validation fails, return `{"status": "validation_failed", "errors": [...]}` with the exact Pydantic errors.
 
-## Step 4: Write the Skill
+## Step 4: Write the Command
 
-Create `.claude/skills/your-phase/SKILL.md`:
+Create `.claude/commands/your-phase.md`. No frontmatter — just a `# /your-phase` heading followed by plain markdown. Match the shipped commands exactly (see `.claude/commands/collect.md`, `.claude/commands/synthesize.md`, or `.claude/commands/design-schema-documentdb.md` for real examples):
 
 ```markdown
----
-name: your-phase
-description: One-line description of what this phase does
----
-
 # /your-phase
 
 Brief description.
@@ -173,11 +170,14 @@ Brief description.
 
 ```
 
-**Rules for skills:**
+**Rules for commands:**
+- No `name`/`description` frontmatter — Claude Code loads anything under `.claude/commands/*.md` and the `# /your-phase` heading is the only identity it needs
 - Never reference Python source files — the schema is in the request payload
-- Never inline JSON schemas in the skill — the script handles that
+- Never inline JSON schemas in the command — the script handles that
 - Keep it short — the LLM reads one file (request), writes one file (response), runs one command (finalize)
-- Domain expertise goes in `src/skills/*.md`, not in the skill itself
+- Domain expertise goes in `src/skills/*.md` prompt files, not in the command itself
+
+If the new phase belongs in the main pipeline, also add it to `.claude/commands/modernize.md` in the correct position.
 
 ## The Pipeline Order
 
@@ -191,24 +191,30 @@ Each phase reads from the previous phase's artifacts. The `.modernizer-state.jso
 
 ## Validation
 
-Run the skill validator to ensure your skill doesn't reference non-existent files:
+Run the validator to catch broken references before you commit:
 
 ```bash
 uv run python scripts/validate_skills.py
 ```
 
-The pre-commit hook runs this automatically.
+It scans every file in `.claude/commands/*.md` and checks two things:
+
+1. Every `uv run python scripts/...py` reference points to a script that actually exists
+2. Every `src/skills/*.md` reference points to a prompt file that actually exists
+
+It does not check anything else (it doesn't lint prose, verify `.artifacts/` paths, or validate JSON schemas) — those come from running the script itself. The pre-commit hook runs this automatically.
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
-| Putting contract details in the skill | The script injects `output_schema` — skill just says "conform to it" |
+| Putting contract details in the command | The script injects `output_schema` — command just says "conform to it" |
 | Telling the LLM to read Python files | Never. The request file has everything. |
 | Large LLM output contracts | Push logic into deterministic code. LLM should only make judgment calls. |
 | Skipping Pydantic deserialization in finalize | Always `Model.model_validate(response)` before `apply_llm_output()` |
 | Hardcoding job IDs | Scripts generate them. State file tracks them. |
-| Testing the skill before the script works | Get `--llm-mode none` working first. |
+| Testing the command before the script works | Get `--llm-mode none` working first. |
+| Adding frontmatter or a `SKILL.md` file | Commands are plain `.claude/commands/<name>.md` files with a `# /<name>` heading — no frontmatter, no per-command directory |
 
 ## Checklist
 
@@ -219,6 +225,6 @@ Before your PR is ready:
 - [ ] LLM seam functions implemented and tested
 - [ ] Script injects `output_schema` in external mode
 - [ ] Script finalize deserializes through Pydantic
-- [ ] Skill references only: the script, the request file, and domain expertise
+- [ ] Command at `.claude/commands/your-phase.md` references only: the script, the request file, and domain expertise
 - [ ] `validate_skills.py` passes
 - [ ] Domain expertise in `src/skills/*.md` (if LLM phase exists)
