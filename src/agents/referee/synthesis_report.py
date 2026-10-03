@@ -749,6 +749,8 @@ def build_risk_assessment(
                     "description": f"[{engine}] {mn.get('object_type', '')}: {mn.get('object_name', '')} — {mn.get('application_logic_required', '')}",
                     "affected_tables": [mn["source_table"]] if mn.get("source_table") else [],
                     "mitigation": f"Implement as application logic: {mn.get('application_logic_required', '')}",
+                    "object_type": str(mn.get("object_type") or ""),
+                    "object_name": str(mn.get("object_name") or ""),
                 }
             )
 
@@ -852,44 +854,158 @@ def _resolved_risk(
 
 
 def _complementary_services(effective_engines: set[str]) -> list[str]:
-    """Services in the effective architecture that can take text search / aggregations."""
+    """Where unsupported patterns can go: services in the effective architecture that
+    take text search / aggregations, then application code."""
     services = []
     if "opensearch" in effective_engines:
         services.append(display_name("opensearch"))
     for engine in sorted(effective_engines & AURORA_ENGINES):
         services.append(f"{display_name(engine)} (full-text indexes, SQL aggregation)")
-    services.append("application-layer computation")
+    services.append("application code")
     return services
 
 
+_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+# Migration-note object types that are database-side code the application must absorb.
+_DB_CODE_OBJECTS = ("procedure", "trigger", "view")
+
+
+def _join_and(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _join_or(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} or {items[-1]}"
+
+
+def _tagged_engine(risk: dict) -> str | None:
+    text = str(risk.get("description") or "")
+    if text.startswith("[") and "]" in text:
+        return text[1 : text.index("]")]
+    return None
+
+
+def _engines_of(risks: list[dict]) -> list[str]:
+    """Display names of the engines the risks are tagged with, in first-seen order."""
+    seen: list[str] = []
+    for r in risks:
+        engine = _tagged_engine(r)
+        if engine and engine not in seen:
+            seen.append(engine)
+    return [display_name(e) for e in seen]
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _risk_scope(risk: dict) -> str:
+    tables = [t for t in risk.get("affected_tables") or [] if t]
+    if tables:
+        shown = ", ".join(tables[:3])
+        return shown + (f" and {len(tables) - 3} more" if len(tables) > 3 else "")
+    n = len(risk.get("query_ids") or [])
+    return f"{n} {'query' if n == 1 else 'queries'}" if n else "no table recorded"
+
+
 def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str]) -> list[str]:
-    """Generate high-level mitigation strategies from identified risks.
+    """Mitigation strategies derived from the risks actually present (#222).
 
-    Only engines in ``effective_engines`` (the post-reality-check architecture) are named.
+    The CRITICAL/HIGH risks come first, each with its engine, scope and own
+    mitigation; every other line names the risks, engines or objects it is about.
+    Only engines in ``effective_engines`` (the post-reality-check architecture) are
+    suggested as homes for unsupported patterns.
     """
-    strategies = []
-    risk_types = {r["risk_type"] for r in risks}
+    strategies: list[str] = []
+    severe = sorted(
+        (r for r in risks if r.get("severity") in ("CRITICAL", "HIGH")),
+        key=lambda r: (_SEVERITY_ORDER.get(r["severity"], 9), r.get("risk_id", "")),
+    )
+    for r in severe:
+        engine = _tagged_engine(r)
+        head = r.get("risk_id", "Risk")
+        label = f"{r['severity']}, {display_name(engine)}" if engine else r["severity"]
+        mitigation = r.get("mitigation")
+        body = (
+            _sentence(mitigation)
+            if mitigation
+            else "no mitigation recorded; define one before cutover."
+        )
+        strategies.append(f"{head} ({label}; {_risk_scope(r)}): {body}")
 
-    if "PERFORMANCE_DEGRADATION" in risk_types:
+    by_type: dict[str, list[dict]] = {}
+    for r in risks:
+        by_type.setdefault(r.get("risk_type", ""), []).append(r)
+
+    perf = by_type.get("PERFORMANCE_DEGRADATION", [])
+    if perf:
         strategies.append(
-            "Run load tests with production-scale data before migration to validate performance targets"
-        )
-    if "MIGRATION_COMPLEXITY" in risk_types:
-        strategies.append(
-            "Implement unsupported patterns (text search, aggregations) via "
-            + ", ".join(_complementary_services(effective_engines))
-        )
-    if "OPERATIONAL_RISK" in risk_types:
-        strategies.append(
-            "Refactor stored procedures, triggers, and views into application logic before migration"
-        )
-    if any(r["severity"] in ("HIGH", "CRITICAL") for r in risks):
-        strategies.append(
-            "Use blue-green deployment with rollback capability for high-risk table migrations"
+            f"Load-test the queries behind {_join_and([r['risk_id'] for r in perf])} on "
+            f"{_join_and(_engines_of(perf)) or 'the target databases'} with "
+            "production-scale data before cutover."
         )
 
+    unsupported = by_type.get("MIGRATION_COMPLEXITY", [])
+    if unsupported:
+        n = len(unsupported)
+        engines = _join_and(_engines_of(unsupported))
+        strategies.append(
+            f"Serve the {n} unsupported query {'pattern' if n == 1 else 'patterns'}"
+            + (f" on {engines}" if engines else "")
+            + f" ({', '.join(r['risk_id'] for r in unsupported)}) "
+            + _join_or([f"in {s}" for s in _complementary_services(effective_engines)])
+            + "."
+        )
+
+    notes = by_type.get("OPERATIONAL_RISK", [])
+    db_code = [r for r in notes if str(r.get("object_type", "")).lower() in _DB_CODE_OBJECTS]
+    other_notes = [r for r in notes if r not in db_code]
+    if db_code:
+        objects = _join_and(
+            [f"{r['object_type'].lower()} '{r.get('object_name', '')}'" for r in db_code]
+        )
+        strategies.append(
+            f"Re-implement the {objects} as application logic before migration "
+            f"({', '.join(r['risk_id'] for r in db_code)})."
+        )
+    if other_notes:
+        items = _join_and(
+            [
+                f"{r.get('object_name') or r.get('object_type') or 'migration note'} "
+                f"({r['risk_id']})"
+                for r in other_notes
+            ]
+        )
+        strategies.append(
+            f"Build the application-side {'replacement' if len(other_notes) == 1 else 'replacements'} "
+            f"for {items} before cutover."
+        )
+
+    if severe:
+        tables = sorted({t for r in severe for t in (r.get("affected_tables") or []) if t})
+        strategies.append(
+            "Use blue-green deployment with rollback for the tables behind the HIGH risks: "
+            + ", ".join(tables)
+            + "."
+            if tables
+            else "Use blue-green deployment with rollback for the migrations behind "
+            + _join_and([r["risk_id"] for r in severe])
+            + "."
+        )
+
+    # Every engine in the target, the ones carrying risks first.
+    watched = _engines_of(risks)
+    watched += [
+        display_name(e) for e in sorted(effective_engines) if display_name(e) not in watched
+    ]
     strategies.append(
-        "Monitor target database metrics closely during the first 2 weeks post-migration"
+        f"Monitor {_join_and(watched) or 'the target databases'} closely during the first "
+        "2 weeks post-migration."
     )
     return strategies
 

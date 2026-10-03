@@ -184,7 +184,7 @@ class TestEliminatedEngineNeverATarget:
     def test_mitigation_strategies_name_the_absorbing_engine(self, result) -> None:
         strategies = result["risk_assessment"]["mitigation_strategies"]
         assert not _mentions_opensearch(strategies)
-        complementary = [s for s in strategies if "unsupported patterns" in s]
+        complementary = [s for s in strategies if "unsupported query pattern" in s]
         assert complementary and "Aurora MySQL" in complementary[0]
 
     def test_description_kept_whole_mitigation_filtered(self, result) -> None:
