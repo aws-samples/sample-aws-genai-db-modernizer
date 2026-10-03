@@ -498,6 +498,15 @@ def main() -> None:
         help="Skip interactive pauses (auto-approve)",
     )
     parser.add_argument(
+        "--mode",
+        choices=["chat", "ui", "both"],
+        default=None,
+        help=(
+            "Experience mode to record as experience_mode in .modernizer-state.json "
+            "(default when the state is created: both)"
+        ),
+    )
+    parser.add_argument(
         "--artifact-root",
         default="./artifacts",
         help="Root directory for local artifacts (default: ./artifacts)",
@@ -550,7 +559,7 @@ def main() -> None:
             "current_phase": "triage",
             "selected_engines": [],
             "llm_mode": args.llm_mode,
-            "experience_mode": "both",
+            "experience_mode": args.mode or "both",
             "phase_status": {"collect": "complete"},
         }
         _write_state(state)
@@ -561,6 +570,9 @@ def main() -> None:
         if not db_name:
             _error("init", "--db is required when using --job-id")
         state = _read_state()
+        if state and args.mode:
+            state["experience_mode"] = args.mode
+            _write_state(state)
         if not state:
             state = {
                 "job_id": job_id,
@@ -568,7 +580,7 @@ def main() -> None:
                 "current_phase": "triage",
                 "selected_engines": [],
                 "llm_mode": args.llm_mode,
-                "experience_mode": "both",
+                "experience_mode": args.mode or "both",
                 "phase_status": {"collect": "complete"},
             }
     else:

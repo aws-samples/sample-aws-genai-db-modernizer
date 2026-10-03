@@ -43,7 +43,7 @@ The script does the build (if needed), starts both servers in the background, po
   - With `--auto`, do not ask anything: stop the pipeline and end the run with `MODERNIZE_RESULT: failed phase=setup reason=<reason>`.
   - Without `--auto`, ask the user whether to continue in chat mode instead, or abort.
 
-Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`, using the Edit/Write tools. The state file does not exist yet at this point: `scripts/run_assessment.py` (Phases 1-5) creates it, with `"experience_mode": "both"`. So remember the mode, and right after that command finishes, Edit `experience_mode` in `.modernizer-state.json` to the chosen value. Do not create any other file for it (no notes, placeholders or sidecar files next to `.modernizer-state.json`).
+Record the choice by passing it as `--mode {experience_mode}` (`chat`, `ui` or `both`) to `scripts/run_assessment.py` in Phases 1-5. That command creates `.modernizer-state.json` and stores `"experience_mode"` in it, so do not write the state file for this step. Do not create any other file for it (no notes, placeholders or sidecar files next to `.modernizer-state.json`).
 
 Stop the servers later with `uv run python scripts/start_local_ui.py --stop`. `/modernize` itself never stops them at the end of a `ui`/`both` run — the user keeps browsing the results after the pipeline finishes; only CI's own cleanup stops them.
 
@@ -75,7 +75,7 @@ The orchestrator NEVER:
 Run the full deterministic pipeline in one command (no subagent needed):
 
 ```bash
-uv run python scripts/run_assessment.py --file {collector_file} --db {database_name}
+uv run python scripts/run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}
 ```
 
 The database name is derived from the collector filename (e.g., `wordpress-collection.json` → `wordpress`). The script outputs one JSON line per phase to stdout and updates `.modernizer-state.json` after each phase so the UI shows progress.

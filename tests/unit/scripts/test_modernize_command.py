@@ -298,11 +298,18 @@ def test_design_schema_dispatcher_does_not_nest_dynamodb_groups() -> None:
 def test_experience_mode_is_recorded_after_the_state_file_exists() -> None:
     # Run 4 of #246: with --mode the orchestrator tried to Write a sidecar
     # `.modernizer-state.json.mode-note` before run_assessment.py had created
-    # the state file. The mode goes into .modernizer-state.json itself, once it
-    # exists, and no other file is created next to it.
-    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
-    assert "run_assessment.py" in step_0 and "creates" in step_0
+    # the state file. run_assessment.py now records the mode itself (--mode)
+    # when it creates the state, and no other file is created next to it.
+    text = _modernize_text()
+    step_0 = text.split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "`--mode {experience_mode}`" in step_0 and "creates" in step_0
     assert "Do not create any other file" in step_0
+    assert "Edit `experience_mode`" not in text
+    phases_1_5 = text.split("### Phases 1-5", 1)[1].split("###", 1)[0]
+    assert (
+        "run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}"
+        in (phases_1_5)
+    )
 
 
 def test_merge_drafts_pending_is_handled_as_missing_groups_not_validation() -> None:
