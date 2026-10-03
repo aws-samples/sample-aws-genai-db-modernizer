@@ -52,9 +52,24 @@ def test_success_ui() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_denial_present_fails() -> None:
-    with pytest.raises(run.TranscriptError, match="permission denial"):
-        run.check_transcript(FIXTURES / "synthetic-denial.jsonl", "chat")
+def test_exploratory_denial_passes_with_warning(capsys: pytest.CaptureFixture[str]) -> None:
+    """synthetic-denial.jsonl's one denial (``rm -rf /tmp/whatever``) is not
+    one of the pipeline's own allowlisted commands -- it's the model's own
+    exploratory tool use, so it must not fail the run. It's recorded in the
+    summary as ``denials`` and warned about on stderr instead."""
+    summary = run.check_transcript(FIXTURES / "synthetic-denial.jsonl", "chat")
+    assert summary["job_id"] == "dry00003"
+    assert summary["denials"] == {"count": 1, "commands": ["rm -rf /tmp/whatever"]}
+    assert "exploratory" in capsys.readouterr().err
+
+
+def test_pipeline_command_denial_fails() -> None:
+    """A denial of one of the pipeline's own allowlisted commands (here,
+    ``uv run python scripts/run_schema_design.py ...``) means the allowlist
+    itself is broken -- that must fail even though the run otherwise
+    reports MODERNIZE_RESULT: complete."""
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        run.check_transcript(FIXTURES / "synthetic-pipeline-denial.jsonl", "chat")
 
 
 def test_error_max_turns_fails() -> None:
@@ -148,7 +163,14 @@ def test_cli_check_transcript_failure_prints_error_json_and_exits_one(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        run.main(["check-transcript", str(FIXTURES / "synthetic-denial.jsonl"), "--mode", "chat"])
+        run.main(
+            [
+                "check-transcript",
+                str(FIXTURES / "synthetic-missing-modernize-result.jsonl"),
+                "--mode",
+                "chat",
+            ]
+        )
     assert exc_info.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert "error" in payload
@@ -608,11 +630,18 @@ def test_failed_transcript_still_reports_cost_turns_and_usage(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        run.main(["check-transcript", str(FIXTURES / "synthetic-denial.jsonl"), "--mode", "chat"])
+        run.main(
+            [
+                "check-transcript",
+                str(FIXTURES / "synthetic-pipeline-denial.jsonl"),
+                "--mode",
+                "chat",
+            ]
+        )
     assert exc_info.value.code == 1
     payload = json.loads(capsys.readouterr().out)
-    assert "permission denial" in payload["error"]
-    assert payload["cost_usd"] == 0.20
+    assert "allowlist" in payload["error"]
+    assert payload["cost_usd"] == 0.30
     assert payload["num_turns"] == 8
     assert payload["usage"] == {"input_tokens": 5000, "output_tokens": 1200}
 
@@ -662,6 +691,54 @@ def test_results_transcript_error_is_null_on_success(tmp_path: Path) -> None:
     assert row["transcript_error"] is None
 
 
+def test_results_carries_denials_summary_from_transcript_summary(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, denials={"count": 1, "commands": ["rm -rf /tmp/whatever"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["denials"] == {"count": 1, "commands": ["rm -rf /tmp/whatever"]}
+
+
+def test_results_wall_duration_s_parsed_from_claude_exit_file(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary)
+    claude_exit = tmp_path / "claude-exit.txt"
+    claude_exit.write_text("claude exit=0 duration=123s\n")
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+        claude_exit_path=claude_exit,
+    )
+    assert row["wall_duration_s"] == 123.0
+    # duration_s (from the transcript's own duration_ms) is a different,
+    # smaller number -- model API time only, not wall-clock.
+    assert row["duration_s"] == 45.0
+
+
+def test_results_wall_duration_s_is_null_when_claude_exit_missing(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary)
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["wall_duration_s"] is None
+
+
 @pytest.mark.parametrize(
     "job,db",
     [("../etc", "wordpress"), ("job1", "a/b"), ("..", "wordpress"), ("job1", "x`y`")],
@@ -675,7 +752,11 @@ def test_unsafe_job_or_db_in_modernize_result_fails(tmp_path: Path, job: str, db
         run.check_transcript(path, "chat")
 
 
-def test_tool_result_permission_error_counts_as_a_denial(tmp_path: Path) -> None:
+def test_tool_result_only_denial_is_an_other_denial_not_a_failure(tmp_path: Path) -> None:
+    """When a result line's own ``permission_denials`` is empty but a
+    ``tool_result`` block reports a denial (older/different CLI build),
+    that denial text carries no command to classify -- it's treated as an
+    "other" (non-pipeline) denial, which does not fail the run."""
     path = _transcript(
         tmp_path,
         [
@@ -695,8 +776,9 @@ def test_tool_result_permission_error_counts_as_a_denial(tmp_path: Path) -> None
             _result_line("MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat"),
         ],
     )
-    with pytest.raises(run.TranscriptError, match="permission"):
-        run.check_transcript(path, "chat")
+    summary = run.check_transcript(path, "chat")
+    assert summary["job_id"] == "j1"
+    assert summary["denials"]["count"] == 1
 
 
 def test_tool_result_error_without_permission_text_is_tolerated(tmp_path: Path) -> None:
@@ -741,6 +823,100 @@ def test_corrupt_junit_marks_its_buckets_false(tmp_path: Path) -> None:
     assert row["checks"]["pdf"] is False
     assert row["checks"]["ui"] is False
     assert row["pass"] is False
+
+
+# ---------------------------------------------------------------------------
+# aggregation across ALL `type == "result"` messages (not just the last) --
+# a real run emits one per background subagent plus the orchestrator.
+# ---------------------------------------------------------------------------
+
+
+def test_aggregates_turns_duration_cost_and_usage_across_all_result_messages(
+    tmp_path: Path,
+) -> None:
+    """Two result messages (e.g. one background subagent's and the
+    orchestrator's): num_turns and duration_ms sum, total_cost_usd (which is
+    cumulative on every line) takes the max, and usage sums numeric leaves."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "subagent notification, not final",
+                num_turns=3,
+                total_cost_usd=1.0,
+                duration_ms=1000,
+                usage={"input_tokens": 10, "output_tokens": 20},
+            ),
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat",
+                num_turns=5,
+                total_cost_usd=2.5,
+                duration_ms=2000,
+                usage={"input_tokens": 30, "output_tokens": 40},
+            ),
+        ],
+    )
+    summary = run.check_transcript(path, "chat")
+    assert summary["num_turns"] == 8
+    assert summary["duration_ms"] == 3000
+    assert summary["cost_usd"] == 2.5  # max, not sum -- cumulative on every line
+    assert summary["usage"] == {"input_tokens": 40, "output_tokens": 60}
+
+
+def test_merge_usage_sums_nested_numeric_leaves() -> None:
+    merged = run._merge_usage(
+        [
+            {"input_tokens": 2, "cache_creation": {"ephemeral_5m_input_tokens": 100}},
+            {"input_tokens": 3, "cache_creation": {"ephemeral_5m_input_tokens": 50}},
+        ]
+    )
+    assert merged == {"input_tokens": 5, "cache_creation": {"ephemeral_5m_input_tokens": 150}}
+
+
+def test_allowlisted_bash_prefixes_parses_both_rule_forms(tmp_path: Path) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": [
+                        "Bash(uv run python scripts/run_schema_design.py *)",
+                        "Bash(uv run python scripts/start_local_ui.py)",
+                        "Edit(artifacts/**)",
+                    ]
+                }
+            }
+        )
+    )
+    prefixes = run._allowlisted_bash_prefixes(settings)
+    assert prefixes == [
+        "uv run python scripts/run_schema_design.py",
+        "uv run python scripts/start_local_ui.py",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# the real (trimmed) transcript recorded on the first internal-pipeline run
+# ---------------------------------------------------------------------------
+
+
+def test_real_fixture_failed_run_reports_schema_design_failure_and_denials() -> None:
+    """tests/unit/ci/fixtures/real-chat-wordpress-failed.jsonl is a trimmed
+    copy of the first internal-pipeline run (chat/wordpress): DynamoDB
+    schema design failed, and the model's 14 denials were all its own
+    exploratory Bash commands the allowlist correctly blocked -- none of
+    them should fail the run by themselves (see
+    test_exploratory_denial_passes_with_warning), but the DynamoDB failure
+    still fails check-transcript, naming its phase/reason and still
+    reporting what the (11-subagent) run spent."""
+    with pytest.raises(run.TranscriptError) as exc_info:
+        run.check_transcript(FIXTURES / "real-chat-wordpress-failed.jsonl", "chat")
+    message = str(exc_info.value)
+    assert "phase=schema_design" in message
+    partial = exc_info.value.partial
+    assert partial["denials"]["count"] == 14
+    assert partial["cost_usd"] == pytest.approx(4.0624, abs=1e-3)
+    assert partial["num_turns"] > 1
 
 
 # ---------------------------------------------------------------------------

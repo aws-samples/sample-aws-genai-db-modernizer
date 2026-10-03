@@ -358,7 +358,8 @@ run_results() {
     --transcript-summary "$OUT/summary.json" \
     --pytest-junit "${JUNIT_ARGS[@]}" \
     --judge "$OUT/judge.json" \
-    --mode "$MODE" --fixture "$FIXTURE"
+    --mode "$MODE" --fixture "$FIXTURE" \
+    --claude-exit "$OUT/claude-exit.txt"
 }
 step results run_results
 

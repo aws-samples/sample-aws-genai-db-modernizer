@@ -217,12 +217,13 @@ model access. The transcript's `MODERNIZE_RESULT` line must name a job/db
 that actually exists under `E2E_LLM_ARTIFACT_ROOT` and must match the
 `<mode> <fixture>` arguments given on the command line.
 
-**Cost and time**: to be measured on the first internal-pipeline run (see
-`ci/llm/run.py`'s module docstring -- the stream-json field names it parses
-are assumptions from public docs, not yet confirmed against a real recorded
-transcript; Step 1 of the task that introduced this script, recording one,
-was explicitly skipped to avoid spending tokens outside of model access the
-user has approved).
+**Cost and time**: the first internal-pipeline run (chat/wordpress) cost
+$4.06 and ran 11 `result` messages (one per background subagent plus the
+orchestrator) across 493 transcript lines; see `ci/llm/run.py`'s module
+docstring for the confirmed stream-json shapes (aggregation across all
+`result` messages, `permission_denials` entries, nested `usage` fields) and
+`tests/unit/ci/fixtures/real-chat-wordpress-failed.jsonl` for a trimmed copy
+of that transcript.
 
 ## `../.claude/settings.ci.json`
 
