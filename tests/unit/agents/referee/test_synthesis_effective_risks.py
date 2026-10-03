@@ -187,10 +187,12 @@ class TestEliminatedEngineNeverATarget:
         complementary = [s for s in strategies if "unsupported patterns" in s]
         assert complementary and "Aurora MySQL" in complementary[0]
 
-    def test_recommending_sentence_dropped_other_sentence_kept(self, result) -> None:
+    def test_description_kept_whole_mitigation_filtered(self, result) -> None:
         risk = self._risk(result, "text_search")
         assert risk["description"] == (
-            "[dynamodb] text_search: Keep exact order-id lookups on the base table."
+            "[dynamodb] text_search: Stream orders to OpenSearch via OpenSearch Ingestion for "
+            "keyword search. Keep exact order-id lookups on the base table. (OpenSearch Service "
+            "is not part of the target architecture; its queries run on Aurora MySQL.)"
         )
         assert risk["mitigation"] == "Keep exact order-id lookups on the base table."
         assert "grounding_note" in risk
@@ -332,18 +334,50 @@ class TestGroundRisks:
 
     def test_abbreviations_do_not_split_sentences(self) -> None:
         risk = self._risk(
-            "[dynamodb] Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads. "
-            "Stream the rest to OpenSearch."
+            "[dynamodb] Sparse GSI needed.",
+            "Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads. "
+            "Stream the rest to OpenSearch.",
         )
         out = ground_risks([risk], self.ELIM)[0]
-        assert out["description"] == (
-            "[dynamodb] Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads."
+        assert out["mitigation"] == (
+            "Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads."
         )
 
     def test_engine_as_proposed_doer_is_a_recommendation(self) -> None:
-        risk = self._risk("[dynamodb] Keep keys short. OpenSearch can handle the facets.")
-        out = ground_risks([risk], self.ELIM)[0]
-        assert out["description"] == "[dynamodb] Keep keys short."
+        risk = self._risk(
+            "[dynamodb] Facets.", "Keep keys short. OpenSearch can handle the facets."
+        )
+        assert ground_risks([risk], self.ELIM)[0]["mitigation"] == "Keep keys short."
+
+    def test_description_never_loses_a_sentence(self) -> None:
+        desc = "[dynamodb] Keep keys short. Stream the rest to OpenSearch."
+        out = ground_risks([self._risk(desc)], self.ELIM)[0]
+        assert out["description"].startswith(desc + " (OpenSearch Service is not part")
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "Replace LIKE scans with OpenSearch full-text queries.",
+            "Use OpenSearch to remove full-table scans on wp_posts.",
+            "Stream posts to OpenSearch instead of running LIKE on Aurora.",
+            "Offload search to OpenSearch, which eliminates the table scans.",
+        ],
+    )
+    def test_recommendation_with_a_trade_off_word_elsewhere_is_dropped(self, sentence) -> None:
+        risk = self._risk("[aurora_mysql] Wildcard search.", f"Add an index. {sentence}")
+        assert ground_risks([risk], self.ELIM)[0]["mitigation"] == "Add an index."
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "Consolidating OpenSearch Service into Aurora MySQL loses BM25 relevance ranking.",
+            "Without OpenSearch, ranking uses MySQL FULLTEXT natural-language mode.",
+            "Accept simpler ranking instead of OpenSearch scoring.",
+        ],
+    )
+    def test_trade_off_mention_is_kept(self, sentence) -> None:
+        risk = self._risk("[aurora_mysql] Ranking.", sentence)
+        assert ground_risks([risk], self.ELIM) == [risk]
 
     def test_risk_without_eliminated_engine_is_untouched(self) -> None:
         risk = self._risk("[dynamodb] Use DynamoDB Streams to keep counters.")

@@ -503,6 +503,7 @@ def _attach_unsupported_query_ids(risks: list[dict], data: SynthesisData) -> Non
     The schema-design loop emits exactly one MIGRATION_COMPLEXITY risk per unsupported
     pattern, in order, tagged ``[engine]``; pairing them here keeps that loop untouched.
     Engines use ``query_ids`` (DynamoDB) or ``source_query_ids`` (the others).
+    TODO: move this into the unsupported-pattern loop once #210 (PR #208) rewrites it.
     """
     for engine, artifacts in data.engines.items():
         patterns = (artifacts.schema_design or {}).get("unsupported_patterns", [])

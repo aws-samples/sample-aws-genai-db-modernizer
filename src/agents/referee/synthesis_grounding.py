@@ -7,15 +7,16 @@ reality-check pattern suggestions) were written while that engine was still a
 candidate, so their free text can still recommend it. This module makes sure the
 customer-facing report only recommends engines that are part of the target.
 
-Rule for risks (never dropped, severity never changed): in a risk description or
-mitigation, a sentence is dropped only when it *recommends* an eliminated engine
-("stream to OpenSearch", "index in OpenSearch", "OpenSearch can handle ..."). Sentences
-that describe a trade-off or history ("consolidated from OpenSearch", "without
-OpenSearch", "instead of OpenSearch") always survive. A description left empty keeps
-its original text plus a note that the engine is not part of the target; an empty
-mitigation is replaced by a re-plan hint that names the absorbing engine only when the
-risk's queries are actually assigned to it. Every rewritten risk carries a
-``grounding_note``.
+Rule for risks (never dropped, severity never changed): a sentence *recommends* an
+eliminated engine when the nearest cue in the three words before the engine is a
+recommend cue ("with OpenSearch", "to OpenSearch", "use OpenSearch"), or, with no cue
+there and no sentence-wide trade-off cue, when the engine is the proposed doer
+("OpenSearch can handle ..."). A nearest trade-off cue ("without", "instead of",
+"consolidating", "from") keeps it. Descriptions never lose a sentence: one that
+recommends an eliminated engine gets a note that the engine is not part of the target.
+Mitigations drop recommending sentences; an emptied mitigation is replaced by a re-plan
+hint that names the absorbing engine only when the risk's queries are actually assigned
+to it. Every rewritten risk carries a ``grounding_note``.
 """
 
 from __future__ import annotations
@@ -115,6 +116,8 @@ def eliminated_engines(
     """
     if not reality_check:
         return {}
+    # Assumes reality_check belongs to the same lineage as the effective assignment;
+    # the lineage check (reality-check output versioning) is tracked in #215.
     effective_set = set(effective)
     consolidations = reality_check.get("consolidations") or []
     candidates = set(reality_check.get("before_distribution") or {}) | {
@@ -132,19 +135,25 @@ def eliminated_engines(
     return out
 
 
-# A sentence that describes a trade-off or the consolidation history. It explains
-# why the engine is gone rather than recommending it, so it always survives.
-_TRADE_OFF = re.compile(
-    r"\b(?:consolidat\w*|absorb\w*|eliminat\w*|remov\w*|replac\w*|without|instead\s+of|"
-    r"rather\s+than|los[et]\w*|no\s+longer|previously|formerly)\b",
+# Cue words in the <= 3 words before an eliminated-engine mention. The nearest cue
+# decides: a trade-off/history cue keeps the sentence ("Without OpenSearch",
+# "consolidating OpenSearch into ..."), a recommend cue drops it ("with OpenSearch",
+# "to OpenSearch", "use OpenSearch").
+_CUE_WINDOW = 3
+_TRADE_OFF_CUE = re.compile(
+    r"^(?:consolidat\w*|absorb\w*|without|replacing|from|than)$", re.IGNORECASE
+)
+_RECOMMEND_CUE = re.compile(
+    r"^(?:with|to|use|using|uses|via|in|into|on|through|offload\w*|adopt\w*|leverag\w*|"
+    r"consider\w*|move|moving|route|routing|stream|streaming|index|indexing|sync|syncing|"
+    r"replicate|export|push|send|requires?|requiring|add|deploy|introduce)$",
     re.IGNORECASE,
 )
-# Verbs/prepositions that, right before an engine, make the sentence recommend it.
-_RECOMMEND_BEFORE = re.compile(
-    r"\b(?:use|using|move|moving|route|routing|stream|streaming|index|indexing|sync|"
-    r"syncing|replicate|export|push|send|offload|offloading|adopt|leverage|consider|"
-    r"requires?|requiring|via|to|in|into|on|through|with|add|deploy|introduce)\b"
-    r"(?:\W+\w+){0,3}\W*$",
+# Sentence-wide trade-off cues; they only count when no recommend cue is adjacent to
+# the engine ("Offload search to OpenSearch, which eliminates scans" still recommends).
+_SENTENCE_TRADE_OFF = re.compile(
+    r"\b(?:los[et]\w*|no\s+longer|previously|formerly|consolidat\w*|absorb\w*|"
+    r"eliminat\w*|remov\w*|replac\w*)\b",
     re.IGNORECASE,
 )
 # "OpenSearch would/should/can handle ..." -- the engine as the proposed doer.
@@ -156,17 +165,37 @@ _RECOMMEND_AFTER = re.compile(
 )
 
 
+def _mention_cue(before: str) -> str | None:
+    """``"trade_off"``/``"recommend"`` for the nearest cue in the words before a mention."""
+    words = re.findall(r"[A-Za-z]+", before)[-_CUE_WINDOW:]
+    for i in range(len(words) - 1, -1, -1):
+        word = words[i]
+        if word.lower() == "of" and i > 0 and words[i - 1].lower() == "instead":
+            return "trade_off"  # "instead of OpenSearch"
+        if _TRADE_OFF_CUE.match(word):
+            return "trade_off"
+        if _RECOMMEND_CUE.match(word):
+            return "recommend"
+    return None
+
+
 def _recommends(sentence: str, engines: Iterable[str]) -> bool:
-    """True when ``sentence`` recommends one of ``engines`` (not a trade-off/history)."""
+    """True when ``sentence`` recommends one of ``engines``.
+
+    Decided per mention by the nearest cue in the three words before it; with no cue
+    there, a sentence-wide trade-off cue keeps it, else "X can/should handle ..."
+    after the mention makes it a recommendation.
+    """
     targets = set(engines)
-    mentions = [(e, s, t) for e, s, t in engine_mentions(sentence) if e in targets]
-    if not mentions or _TRADE_OFF.search(sentence):
-        return False
-    for _, start, end in mentions:
-        before = sentence[:start]
-        if re.search(r"\bfrom\W*$", before, re.IGNORECASE):
+    for engine, start, end in engine_mentions(sentence):
+        if engine not in targets:
             continue
-        if _RECOMMEND_BEFORE.search(before) or _RECOMMEND_AFTER.match(sentence[end:]):
+        cue = _mention_cue(sentence[:start])
+        if cue == "recommend":
+            return True
+        if cue == "trade_off" or _SENTENCE_TRADE_OFF.search(sentence):
+            continue
+        if _RECOMMEND_AFTER.match(sentence[end:]):
             return True
     return False
 
@@ -260,17 +289,15 @@ def ground_risks(
         own = _risk_engine(risk)
         notes = []
 
-        tag, body, changed = _drop_recommendations(description, eliminated)
+        # Descriptions explain the risk, so no sentence is ever dropped from them; a
+        # recommendation of the eliminated engine only earns a not-in-target note.
+        _, _, changed = _drop_recommendations(description, eliminated)
         if changed:
-            if body:
-                description = tag + body
-                notes.append(f"Dropped a description sentence recommending {display_name(engine)}.")
-            else:
-                description = f"{description.rstrip()} {_not_in_target(engine, absorber)}"
-                notes.append(
-                    f"Description kept; it named {display_name(engine)}, which is not in the "
-                    "target architecture."
-                )
+            description = f"{description.rstrip()} {_not_in_target(engine, absorber)}"
+            notes.append(
+                f"Description kept with a note; it recommended {display_name(engine)}, which "
+                "is not in the target architecture."
+            )
 
         if mitigation:
             tag, body, changed = _drop_recommendations(mitigation, eliminated)
