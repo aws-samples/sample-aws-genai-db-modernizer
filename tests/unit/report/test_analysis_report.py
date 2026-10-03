@@ -412,13 +412,63 @@ def test_placeholder_tokens_inside_inserted_values_are_not_substituted():
     assert payload["results"]["synthesis"]["database_name"] == smuggle
 
 
-def test_every_text_placeholder_sits_outside_script_context():
-    """Values filled with html_text must never land inside a <script> element."""
-    import re
+def _script_bodies(document: str) -> list[str]:
+    """Contents of every <script> element, as the browser's HTML parser sees them."""
+    from html.parser import HTMLParser
 
-    template = ar._read_template("analysis_report.html.tpl")
-    for block in re.findall(r"<script\b.*?</script>", template, re.S):
-        assert not re.findall(r"__[A-Z_]+__", block), block[:200]
+    class _Scripts(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.bodies: list[str] = []
+            self._current: list[str] | None = None
+
+        def handle_starttag(self, tag, attrs) -> None:
+            if tag == "script":  # HTMLParser lower-cases tag names
+                self._current = []
+
+        def handle_endtag(self, tag) -> None:
+            if tag == "script" and self._current is not None:
+                self.bodies.append("".join(self._current))
+                self._current = None
+
+        def handle_data(self, data) -> None:
+            if self._current is not None:
+                self._current.append(data)
+
+    parser = _Scripts()
+    parser.feed(document)
+    parser.close()
+    return parser.bodies
+
+
+def test_no_html_escaped_placeholder_value_lands_inside_a_script():
+    """Slots filled with html_text are HTML-context only; script context gets JSON.
+
+    Checked on the rendered document: each html_text slot gets a distinctive value
+    whose HTML-escaped form differs from its JSON form, and that escaped form must
+    not appear in any <script> element.
+    """
+    from src.report import escaping
+
+    objects = _objects()
+    # Tokens in customer data: a multi-pass substitution would fill these inside DATA.
+    objects[f"{DB}/{JOB}/query-journeys/q1.json"]["source"][
+        "query_text"
+    ] = "SELECT 1 -- __DATABASE_NAME__ __SUMMARY__ __JOB_ID__ __TITLE__"
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    synthesis = data["results"]["synthesis"]
+    synthesis["database_name"] = "DBNAME<&>sentinel"
+    synthesis["summary"] = "SUMMARY<&>sentinel"
+    data["jobId"] = "JOBID<&>sentinel-0000"
+    html = ar.render_analysis_report_html(data)
+
+    scripts = _script_bodies(html)
+    assert any("const DATA = " in body for body in scripts), "rendered report has no DATA script"
+    for raw in (synthesis["database_name"], synthesis["summary"], data["jobId"]):
+        escaped = escaping.html_text(raw)
+        assert escaped in html, f"{raw!r} is not rendered as HTML text at all"
+        for body in scripts:
+            assert escaped not in body, f"html_text value {escaped!r} inside a <script>"
 
 
 def test_render_keeps_every_report_section(rendered):
