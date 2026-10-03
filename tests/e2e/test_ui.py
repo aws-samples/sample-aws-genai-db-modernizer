@@ -72,10 +72,15 @@ def _watch(page: Page) -> dict[str, list[str]]:
 
 
 def _top_engine_label(r: PipelineResult) -> str:
-    """The highest-ranked target engine from the synthesis report, as the UI labels it."""
-    report_path = r.artifact_root / r.steps["synthesis"]["report"]
+    """The highest-ranked target engine from the synthesis report, as the UI labels it.
+
+    Reads the path off ``r.report`` (the "report" step), not ``r.steps["synthesis"]``:
+    the latter is only populated by the deterministic pipeline, while "report" is
+    populated in every mode, including a job wrapped by ``from_existing_job``.
+    """
+    report_path = r.artifact_root / r.report["report"]
     report = json.loads(report_path.read_text())
-    top = report["ranking"][0]["target"]
+    top: str = report["ranking"][0]["target"]
     return ENGINE_LABELS.get(top, top)
 
 

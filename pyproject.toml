@@ -113,6 +113,7 @@ markers = [
     "contract: marks tests as contract validation tests",
     "local_only: integration tests that need manually generated local artifacts (scripts/test_local_phased.py); deselected in CI",
     "e2e: end-to-end tests that run the deterministic pipeline and render deliverables (tests/e2e; run via ci/e2e.sh)",
+    "deterministic: e2e assertions that only hold for the no-LLM pipeline run (expected engines, phase statuses, journey == collected count)",
 ]
 filterwarnings = [
     # Third-party: FastAPI's TestClient imports httpx via starlette, which warns

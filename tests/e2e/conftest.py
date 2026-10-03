@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from tests.e2e.pipeline import PipelineResult, _env, run_pipeline
+from tests.e2e.pipeline import PipelineResult, _env, from_existing_job, run_pipeline
 
 SAMPLES = ["wordpress", "discourse"]
 
@@ -63,6 +63,48 @@ def _run_pipeline_cached(sample: str, artifact_root: Path, job_id: str) -> Pipel
     result = _run_pipeline_tracked(sample, artifact_root, job_id=job_id)
     _PIPELINE_CACHE[sample] = result
     return result
+
+
+# External-job mode: point the suite at a job produced elsewhere (e.g. a headless
+# Claude run) instead of running the deterministic pipeline. All three of
+# E2E_ARTIFACT_ROOT/E2E_DB/E2E_JOB must be set together, or none at all.
+_EXTERNAL_JOB_CACHE: PipelineResult | None = None
+
+
+def _external_env() -> tuple[str, str, str] | None:
+    root = os.environ.get("E2E_ARTIFACT_ROOT")
+    db = os.environ.get("E2E_DB")
+    job = os.environ.get("E2E_JOB")
+    if not any((root, db, job)):
+        return None
+    if not all((root, db, job)):
+        pytest.fail(
+            "E2E_ARTIFACT_ROOT, E2E_DB, and E2E_JOB must all be set together (or all "
+            f"unset) -- got E2E_ARTIFACT_ROOT={root!r}, E2E_DB={db!r}, E2E_JOB={job!r}."
+        )
+    return root, db, job  # type: ignore[return-value]
+
+
+def _external_job_result() -> PipelineResult:
+    global _EXTERNAL_JOB_CACHE
+    if _EXTERNAL_JOB_CACHE is None:
+        root, db, job = _external_env()  # type: ignore[misc]
+        result = from_existing_job(db, job, Path(root))
+        _RESULTS.append(result)
+        _EXTERNAL_JOB_CACHE = result
+    return _EXTERNAL_JOB_CACHE
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize the session `run` fixture: the two deterministic samples
+    normally, or a single "external" param when E2E_ARTIFACT_ROOT/E2E_DB/E2E_JOB
+    point the suite at an existing job instead."""
+    if "run" not in metafunc.fixturenames:
+        return
+    if _external_env() is not None:
+        metafunc.parametrize("run", ["external"], indirect=True)
+    else:
+        metafunc.parametrize("run", SAMPLES, indirect=True)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -121,9 +163,11 @@ def _copy_deliverables_to_e2e_output() -> Iterator[None]:
                     shutil.copy2(f, dest / f.name)
 
 
-@pytest.fixture(scope="session", params=SAMPLES)
+@pytest.fixture(scope="session")
 def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
     sample = request.param
+    if sample == "external":
+        return _external_job_result()
     return _run_pipeline_cached(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
 
 
@@ -185,7 +229,10 @@ def _terminate(proc: subprocess.Popen, log_file) -> None:
 
 @pytest.fixture(scope="session")
 def all_runs(e2e_root: Path) -> list[PipelineResult]:
-    """Both samples in ONE artifact root, so the UI lists both jobs."""
+    """Both samples in ONE artifact root, so the UI lists both jobs. In external-job
+    mode (E2E_ARTIFACT_ROOT/E2E_DB/E2E_JOB set) there's only the one job to list."""
+    if _external_env() is not None:
+        return [_external_job_result()]
     root = e2e_root / "ui-artifacts"
     return [_run_pipeline_tracked(s, root, job_id=f"ui-{s[:4]}") for s in SAMPLES]
 

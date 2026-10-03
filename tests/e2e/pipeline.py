@@ -96,3 +96,11 @@ def run_pipeline(sample: str, artifact_root: Path, job_id: str) -> PipelineResul
     _run("synthesis", ["scripts/run_synthesis.py", *common, "--llm-mode", "none"], result)
     _run("report", ["scripts/run_report.py", *common], result)
     return result
+
+
+def from_existing_job(db: str, job_id: str, artifact_root: Path) -> PipelineResult:
+    """Wrap a job produced elsewhere (e.g. a headless Claude run) and re-render its deliverables."""
+    result = PipelineResult(db=db, job_id=job_id, artifact_root=artifact_root)
+    common = ["--job-id", job_id, "--db", db, "--artifact-root", str(artifact_root)]
+    _run("report", ["scripts/run_report.py", *common], result)
+    return result
