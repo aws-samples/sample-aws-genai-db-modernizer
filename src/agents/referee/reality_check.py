@@ -1244,6 +1244,16 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
     )
 
 
+def _queries(n: int, engine: str = "") -> str:
+    """``"1 query"`` / ``"3 queries"`` (``"3 documentdb queries"`` with ``engine``).
+
+    Local on purpose: the report layer's ``plural_noun`` sits above the agents, and
+    importing it here would invert the layering.
+    """
+    noun = "query" if n == 1 else "queries"
+    return f"{n} {engine} {noun}" if engine else f"{n} {noun}"
+
+
 def reconcile_consolidations(
     before_assignments: list[dict],
     after_assignments: list[dict],
@@ -1260,14 +1270,16 @@ def reconcile_consolidations(
     - one record per (from, to) pair with a net move; its ``query_count`` is that move,
       so applying the records to the before distribution gives the after distribution;
     - a move with no record gets one; a record with no net move is dropped;
-    - ``action`` is ``full`` only when the source engine ends with no in-scope query,
-      and only then are savings claimed, once per eliminated engine;
-    - a record whose count or action changed gets a reason that states the final move.
+    - ``action`` is ``full`` only when the source engine had an in-scope query in the
+      input and ends with none, and only then are savings claimed, once per engine;
+    - a record whose count, action or retained queries changed gets a reason that
+      states the final move.
 
     Record order is kept; new records follow. Inputs are not mutated.
     """
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
     after_engine = {qa["query_id"]: qa["assigned_engine"] for qa in after_assignments}
+    had_in_scope = {qa["assigned_engine"] for qa in before_assignments if qa.get("in_scope", True)}
     remaining: dict[str, int] = defaultdict(int)
     for qa in after_assignments:
         if qa.get("in_scope", True):
@@ -1292,37 +1304,42 @@ def reconcile_consolidations(
     savings_claimed: set[str] = set()
     for src, dst in ordered:
         count = moves[(src, dst)]
-        full = remaining.get(src, 0) == 0
+        full = src in had_in_scope and remaining.get(src, 0) == 0
         action = "full" if full else "partial"
         record = dict(
             first_record.get((src, dst))
             or {"from_engine": src, "to_engine": dst, "queries_retained": []}
         )
-        if record.get("query_count") != count or record.get("action", "full") != action:
-            record["reason"] = (
-                f"{count} {src} queries moved to {dst}; no in-scope {src} query remains"
-                if full
-                else (
-                    f"Partial consolidation: {count} {src} queries moved to {dst}; "
-                    f"{src} stays for {remaining[src]} queries"
+        prior_retained = list(record.get("queries_retained") or [])
+        retained = [] if full else [q for q in prior_retained if after_engine.get(q) == src]
+        if (
+            record.get("query_count") != count
+            or record.get("action", "full") != action
+            or retained != prior_retained
+            or not record.get("reason")
+        ):
+            moved = f"{_queries(count, src)} moved to {dst}"
+            if full:
+                record["reason"] = f"{moved}; no in-scope {src} query remains"
+            elif src not in had_in_scope:
+                record["reason"] = f"Partial consolidation: {moved}; {src} had no in-scope query"
+            else:
+                record["reason"] = (
+                    f"Partial consolidation: {moved}; {src} stays for {_queries(remaining[src])}"
                 )
-            )
         saved = 0.0
         if full and src not in savings_claimed:
             savings_claimed.add(src)
             saved = recorded_saving.get(src) or (
                 ENGINE_BASE_COST.get(src, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
             )
-        retained = [q for q in record.get("queries_retained") or [] if after_engine.get(q) == src]
         record.update(
             {
                 "query_count": count,
                 "action": action,
                 "saved_cost_estimate": saved,
-                "queries_retained": [] if full else retained,
-                "retention_reason": (
-                    record.get("retention_reason") if retained and not full else None
-                ),
+                "queries_retained": retained,
+                "retention_reason": record.get("retention_reason") if retained else None,
             }
         )
         reconciled.append(record)
@@ -1368,7 +1385,8 @@ def _build_recommendations(
         if c.get("action") == "partial":
             # The source engine stays, so no cluster is avoided (#218).
             outcome = (
-                f"No operational savings are claimed because {source} stays in the architecture."
+                f"No operational savings are claimed: this move does not remove {source} "
+                "from the architecture."
             )
         elif saved:
             outcome = (
@@ -1378,7 +1396,7 @@ def _build_recommendations(
         else:
             outcome = f"{source} leaves the architecture."
         recs.append(
-            f"Consolidated {c['query_count']} queries from {source} → "
+            f"Consolidated {_queries(c['query_count'])} from {source} → "
             f"{c['to_engine']}: {c['reason']}. {outcome}"
         )
 

@@ -152,6 +152,15 @@ class TestApplyCorrections:
         assert "1 of 2 documentdb queries moved to dynamodb" in records[0]["reason"]
         assert "1 redirected to aurora_postgresql" in records[0]["reason"]
 
+    def test_a_single_reversal_reads_singular(self) -> None:
+        revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
+        _, records = apply_corrections(
+            [{"query_id": "d0", "original_engine": "documentdb", "reason": "joins"}],
+            revised,
+            [_record("documentdb", "dynamodb", 3, saved=500)],
+        )
+        assert "1 stays on documentdb" in records[0]["reason"]
+
 
 class TestReconcile:
     def test_records_reproduce_the_final_distribution(self) -> None:
@@ -216,6 +225,49 @@ class TestReconcile:
         final = reconcile_consolidations(before, after, [_record("documentdb", "dynamodb", 1, 500)])
         assert final[0]["action"] == "full" and final[0]["saved_cost_estimate"] == 500
 
+    def test_customer_override_left_on_an_emptied_engine_keeps_it(self) -> None:
+        before = [_qa("a", "documentdb"), _qa("b", "documentdb", customer_override=True)]
+        after = [_qa("a", "dynamodb"), _qa("b", "documentdb", customer_override=True)]
+        final = reconcile_consolidations(before, after, [_record("documentdb", "dynamodb", 1, 500)])
+        assert final[0]["action"] == "partial" and final[0]["saved_cost_estimate"] == 0
+
+    def test_engine_with_no_in_scope_query_in_the_input_claims_no_savings(self) -> None:
+        before = [_qa("a", "opensearch", in_scope=False), _qa("b", "dynamodb")]
+        after = [_qa("a", "dynamodb", in_scope=False), _qa("b", "dynamodb")]
+        final = reconcile_consolidations(before, after, [_record("opensearch", "dynamodb", 1, 450)])
+        assert final[0]["action"] == "partial" and final[0]["saved_cost_estimate"] == 0
+        _assert_invariant(before, after, final)
+
+    def test_reason_is_refreshed_when_the_retained_queries_change(self) -> None:
+        before = [_qa(q, "aurora_mysql") for q in ("a", "b", "c", "d")]
+        # b was retained on aurora_mysql, then the sweep moved it to elasticache.
+        after = [_qa("a", "dynamodb"), _qa("b", "elasticache"), _qa("c", "aurora_mysql")]
+        after.append(_qa("d", "aurora_mysql"))
+        record = {
+            **_record("aurora_mysql", "dynamodb", 1, action="partial"),
+            "reason": "Partial consolidation: 1 of 3 aurora_mysql queries moved to dynamodb; "
+            "2 stay on aurora_mysql (unserviceable on dynamodb)",
+            "queries_retained": ["b", "c"],
+        }
+        final = reconcile_consolidations(before, after, [record])
+        ddb = next(c for c in final if c["to_engine"] == "dynamodb")
+        assert ddb["queries_retained"] == ["c"]
+        assert "2 stay on" not in ddb["reason"]
+        assert "1 aurora_mysql query moved to dynamodb" in ddb["reason"]
+        assert "aurora_mysql stays for 2 queries" in ddb["reason"]
+
+    def test_counts_of_one_are_singular(self) -> None:
+        before = [_qa("a", "documentdb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
+        after = [_qa("a", "dynamodb"), _qa("b", "dynamodb"), _qa("c", "aurora_mysql")]
+        final = reconcile_consolidations(before, after, [])
+        text = " ".join(c["reason"] for c in final) + " ".join(
+            _build_recommendations([], final, [], {})
+        )
+        assert "1 documentdb query moved" in text
+        assert "stays for 1 query" in text
+        assert "Consolidated 1 query from" in text
+        assert "1 queries" not in text
+
 
 class TestRecommendations:
     def test_partial_consolidation_claims_no_avoided_cluster(self) -> None:
@@ -224,7 +276,7 @@ class TestRecommendations:
         )[0]
         assert "avoiding a dedicated aurora_mysql cluster" not in rec
         assert "Saves" not in rec
-        assert "aurora_mysql stays" in rec
+        assert "does not remove aurora_mysql" in rec
 
     def test_full_consolidation_keeps_its_savings_line(self) -> None:
         rec = _build_recommendations([], [_record("documentdb", "dynamodb", 6, saved=500)], [], {})[

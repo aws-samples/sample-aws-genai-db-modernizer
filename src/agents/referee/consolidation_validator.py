@@ -239,7 +239,7 @@ def apply_corrections(
         stayed = len(reversed_ids) - redirected
         parts = []
         if stayed:
-            parts.append(f"{stayed} stay on {from_engine}")
+            parts.append(f"{stayed} {'stays' if stayed == 1 else 'stay'} on {from_engine}")
         if redirected:
             parts.append(f"{redirected} redirected to {redirect_engine}")
         reason_suffix = " and ".join(parts) + f" (unserviceable on {to_engine})"
