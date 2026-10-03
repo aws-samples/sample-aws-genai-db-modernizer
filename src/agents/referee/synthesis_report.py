@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.synthesis_grounding import display_name, ground_risks
 
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
@@ -492,7 +493,10 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     }
 
 
-def build_risk_assessment(data: SynthesisData) -> dict:
+def build_risk_assessment(
+    data: SynthesisData,
+    eliminated: dict[str, str | None] | None = None,
+) -> dict:
     """Compile risks from anti-patterns, migration notes, and unsupported patterns.
 
     Anti-patterns are cross-referenced against schema design access patterns:
@@ -502,6 +506,12 @@ def build_risk_assessment(data: SynthesisData) -> dict:
     Only engines the assignment routed queries to contribute risks. An engine triage
     selected but the assignment then dropped is not part of the target architecture, so its
     anti-patterns describe a design that will never be built.
+
+    ``eliminated`` maps engines the reality check removed to the engine that absorbed
+    them (see ``synthesis_grounding.eliminated_engines``). Surviving engines' risk text
+    written while those engines were still candidates is rewritten so no risk or
+    mitigation recommends an eliminated engine, and the mitigation strategies only name
+    engines in the effective architecture (#202).
     """
     risks = []
     risk_id = 0
@@ -591,6 +601,8 @@ def build_risk_assessment(data: SynthesisData) -> dict:
                 }
             )
 
+    risks = ground_risks(risks, eliminated or {})
+
     # Determine overall risk level
     severities = [r["severity"] for r in risks]
     if "CRITICAL" in severities:
@@ -605,12 +617,26 @@ def build_risk_assessment(data: SynthesisData) -> dict:
     return {
         "overall_risk_level": overall,
         "risks": risks,
-        "mitigation_strategies": _build_mitigation_strategies(risks),
+        "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
     }
 
 
-def _build_mitigation_strategies(risks: list[dict]) -> list[str]:
-    """Generate high-level mitigation strategies from identified risks."""
+def _complementary_services(effective_engines: set[str]) -> list[str]:
+    """Services in the effective architecture that can take text search / aggregations."""
+    services = []
+    if "opensearch" in effective_engines:
+        services.append(display_name("opensearch"))
+    for engine in sorted(effective_engines & AURORA_ENGINES):
+        services.append(f"{display_name(engine)} (full-text indexes, SQL aggregation)")
+    services.append("application-layer computation")
+    return services
+
+
+def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str]) -> list[str]:
+    """Generate high-level mitigation strategies from identified risks.
+
+    Only engines in ``effective_engines`` (the post-reality-check architecture) are named.
+    """
     strategies = []
     risk_types = {r["risk_type"] for r in risks}
 
@@ -620,7 +646,8 @@ def _build_mitigation_strategies(risks: list[dict]) -> list[str]:
         )
     if "MIGRATION_COMPLEXITY" in risk_types:
         strategies.append(
-            "Implement unsupported patterns (text search, aggregations) via complementary services (OpenSearch, application-layer computation)"
+            "Implement unsupported patterns (text search, aggregations) via "
+            + ", ".join(_complementary_services(effective_engines))
         )
     if "OPERATIONAL_RISK" in risk_types:
         strategies.append(

@@ -1220,6 +1220,30 @@ def _detect_architectural_patterns(
     return patterns
 
 
+def format_pattern_recommendation(p: dict) -> str:
+    """Render one architectural pattern as a ``Recommended pattern: ...`` line.
+
+    Shared with synthesis, which regenerates these lines after grounding the patterns
+    in the effective architecture.
+    """
+    applies = p.get("applies_to", {})
+    if "write_engine" in applies:
+        return (
+            f"Recommended pattern: {p['name']}. "
+            f"Use {applies['write_engine']} for all write operations and "
+            f"{', '.join(applies.get('read_engines', []))} for specialized reads. "
+            f"{p['description']}"
+        )
+    if "source_engine" in applies and "view_engine" in applies:
+        return (
+            f"Recommended pattern: {p['name']}. "
+            f"{applies['source_engine']} is the source of truth; "
+            f"{applies['view_engine']} maintains a search-optimized projection. "
+            f"{p['description']}"
+        )
+    return f"Recommended pattern: {p['name']}. {p['description']}"
+
+
 def _build_recommendations(
     assignments: list[dict],
     consolidations: list[dict],
@@ -1240,24 +1264,7 @@ def _build_recommendations(
         )
 
     # Pattern recommendations
-    for p in patterns:
-        applies = p.get("applies_to", {})
-        if "write_engine" in applies:
-            recs.append(
-                f"Recommended pattern: {p['name']}. "
-                f"Use {applies['write_engine']} for all write operations and "
-                f"{', '.join(applies.get('read_engines', []))} for specialized reads. "
-                f"{p['description']}"
-            )
-        elif "source_engine" in applies and "view_engine" in applies:
-            recs.append(
-                f"Recommended pattern: {p['name']}. "
-                f"{applies['source_engine']} is the source of truth; "
-                f"{applies['view_engine']} maintains a search-optimized projection. "
-                f"{p['description']}"
-            )
-        else:
-            recs.append(f"Recommended pattern: {p['name']}. {p['description']}")
+    recs.extend(format_pattern_recommendation(p) for p in patterns)
 
     if not recs:
         recs.append("No consolidation opportunities found — current assignment is optimal.")

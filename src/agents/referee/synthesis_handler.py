@@ -18,6 +18,10 @@ LLM seam functions (for Skill Sync / external LLM integration):
 from datetime import UTC, datetime
 
 from src.agents.referee.synthesis_data import load_synthesis_data
+from src.agents.referee.synthesis_grounding import (
+    eliminated_engines,
+    ground_reality_check_summary,
+)
 from src.agents.referee.synthesis_report import (
     AURORA_ENGINES,
     build_architecture_recommendation,
@@ -83,8 +87,17 @@ def run_synthesis_deterministic(
     query_groups = build_query_groups(data)
     print("[synthesis] Building TCO analysis...")
     tco = build_tco_analysis(data)
+    # Engines the reality check removed from the effective assignment, mapped to the
+    # engine that absorbed them.
+    # Every target recommendation below is grounded in the effective set (#202).
+    effective = {
+        qa["assigned_engine"]
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("in_scope", True) and qa.get("assigned_engine")
+    } or set(data.engines)
+    eliminated = eliminated_engines(effective, reality_check_output)
     print("[synthesis] Building risk assessment...")
-    risk_assessment = build_risk_assessment(data)
+    risk_assessment = build_risk_assessment(data, eliminated)
     print("[synthesis] Building architecture recommendation...")
     architecture = build_architecture_recommendation(data, ranking, table_mappings)
     needs_deeper = any(
@@ -119,7 +132,8 @@ def run_synthesis_deterministic(
             "before_distribution": reality_check_output.get("before_distribution", {}),
             "after_distribution": reality_check_output.get("after_distribution", {}),
         }
-        for rec in reality_check_output.get("recommendations", []):
+        reality_check_summary = ground_reality_check_summary(reality_check_summary, eliminated)
+        for rec in reality_check_summary["recommendations"]:
             rec_desc = rec if isinstance(rec, str) else str(rec)
             if not any(t.get("description") == rec_desc for t in trade_offs):
                 trade_offs.append(
@@ -147,6 +161,7 @@ def run_synthesis_deterministic(
         "trade_offs": trade_offs,
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
+        "eliminated_engines": eliminated,
         "summary": deterministic_summary,
         "executive_summary": deterministic_summary,  # fallback; overwritten by LLM
         # Internal — holds the SynthesisData object for schema summaries in the writer
