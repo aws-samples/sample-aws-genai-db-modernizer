@@ -565,7 +565,6 @@
           if (!byDest[key]) byDest[key] = [];
           byDest[key].push(ap);
         });
-        const badgeClass = ENGINE_BADGE_CLASSES[engine] || 'badge-grey';
         const displayStyle = idx === 0 ? 'block' : 'none';
         const activeClass = idx === 0 ? ' active' : '';
         tabsHtml += '<div id="source-table-tab-' + escapeHtml(engine) + '" class="tab-content' + activeClass + '" style="display: ' + displayStyle + ';">';

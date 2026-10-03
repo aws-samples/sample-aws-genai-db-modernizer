@@ -747,7 +747,6 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '          if (!byDest[key]) byDest[key] = [];\n';
   script += '          byDest[key].push(ap);\n';
   script += '        });\n';
-  script += '        const badgeClass = ENGINE_BADGE_CLASSES[engine] || \'badge-grey\';\n';
   script += '        const displayStyle = idx === 0 ? \'block\' : \'none\';\n';
   script += '        const activeClass = idx === 0 ? \' active\' : \'\';\n';
   script += '        tabsHtml += \'<div id="source-table-tab-\' + escapeHtml(engine) + \'" class="tab-content\' + activeClass + \'" style="display: \' + displayStyle + \';">\';\n';

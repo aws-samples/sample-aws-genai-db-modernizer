@@ -228,9 +228,6 @@ const loadInteractiveReport = (markup) => {
 
   window.alert = (...args) => alerts.push(args);
   window.Chart = class { destroy() {} };
-  // showSourceTableDetails still reads a constant that no longer exists (#243);
-  // stub it so the source-table rows can be clicked. Remove with the #243 fix.
-  window.ENGINE_BADGE_CLASSES = {};
   jest.spyOn(console, 'log').mockImplementation(() => {});
   document.head.innerHTML = parsed.head.innerHTML;
   document.body.innerHTML = parsed.body.innerHTML;
@@ -303,6 +300,39 @@ describe('generateHTMLReport (interactive export)', () => {
       expect(alerts).toEqual([]); // "Pattern not found" would mean the id was mangled
       expect(doc.getElementById('pattern-modal').style.display).toBe('flex');
       expect(doc.getElementById('pattern-modal-body').textContent).toContain(END_SCRIPT);
+    });
+
+    it('opens the detail modal from a row in every view without script errors (#243)', () => {
+      const { window: win, alerts } = loaded;
+      const doc = win.document;
+      const errors = [];
+      const onError = (e) => errors.push(e.error || e.message);
+      win.addEventListener('error', onError);
+      const click = (el) => el.dispatchEvent(new win.MouseEvent('click'));
+      const modalShown = (id) => doc.getElementById(id) && doc.getElementById(id).style.display === 'flex';
+      try {
+        alerts.length = 0;
+        click(doc.querySelectorAll('.toggle-btn')[0]);
+        click(doc.querySelector('#access-patterns-container tbody tr'));
+        expect(modalShown('pattern-modal')).toBe(true);
+
+        click(doc.querySelectorAll('.toggle-btn')[1]);
+        const sourceRows = doc.querySelectorAll('#access-patterns-container tbody tr');
+        expect(sourceRows.length).toBeGreaterThan(0);
+        sourceRows.forEach(row => {
+          doc.getElementById('source-table-modal')?.style.setProperty('display', 'none');
+          click(row);
+          expect(modalShown('source-table-modal')).toBe(true);
+        });
+        expect(doc.querySelectorAll('#source-table-modal-body .tab-content').length).toBeGreaterThan(0);
+
+        click(doc.querySelector('#tradeoffs-container .link[onclick]'));
+        expect(modalShown('query-journey-modal')).toBe(true);
+      } finally {
+        win.removeEventListener('error', onError);
+      }
+      expect(errors).toEqual([]);
+      expect(alerts).toEqual([]);
     });
 
     it('client-side escapeHtml matches the shared helper', () => {

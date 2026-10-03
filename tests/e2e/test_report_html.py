@@ -116,3 +116,75 @@ def test_no_serious_accessibility_violations(page: Page, run: PipelineResult, ki
     if non_serious:
         print(f"\naxe non-serious findings for {kind} report: {non_serious}")
     assert serious == [], serious
+
+
+def _export_data_with_patterns() -> dict:
+    """Minimal export data with schema designs.
+
+    The deterministic pipeline run produces no schema designs (that phase needs an
+    LLM), so its explorer table is empty and has no rows to click.
+    """
+    qid = "q-0001"
+    patterns = [
+        {
+            "pattern_id": f"DDB-AP-{i}",
+            "operation": "Query" if i % 2 else "PutItem",
+            "source_tables": [f"wp.wp_{t}"],
+            "table_name": f"{t}_table",
+            "description": f"Access pattern {i}",
+            "query_ids": [qid],
+        }
+        for i, t in enumerate(["posts", "posts", "users"], start=1)
+    ]
+    return {
+        "jobId": "e2e-modal-check",
+        "exportDate": "2026-10-03T12:00:00+00:00",
+        "results": {
+            "synthesis": {
+                "database_name": "wordpress",
+                "summary": "Summary.",
+                "reality_check": {"after_distribution": {"dynamodb": 100.0}},
+                "tco_analysis": {
+                    "cost_breakdown": [{"database": "dynamodb", "monthly_cost_usd": 1.0}]
+                },
+            }
+        },
+        "schemaDesigns": [
+            {
+                "target_type": "dynamodb",
+                "content": {
+                    "access_patterns": patterns,
+                    "trade_offs": [{"description": "Trade-off", "query_ids": [qid]}],
+                },
+            }
+        ],
+        "queryJourneys": {"total": 1, "items": [{"query_id": qid, "source": {}, "assignment": {}}]},
+    }
+
+
+def test_analysis_report_detail_modals_open_from_every_view(page: Page, tmp_path) -> None:
+    """Row clicks open their modal in every explorer view without a script error (#243)."""
+    from src.report.analysis_report import render_analysis_report_html
+
+    path = tmp_path / "analysis-report.html"
+    path.write_text(render_analysis_report_html(_export_data_with_patterns()), encoding="utf-8")
+    events = _open_offline(page, path)
+
+    page.locator(".toggle-btn", has_text="By access pattern").click()
+    page.locator("#access-patterns-container tbody tr").first.click()
+    assert page.locator("#pattern-modal").is_visible()
+    page.locator("#pattern-modal .modal-close").click()
+
+    page.locator(".toggle-btn", has_text="By source table").click()
+    rows = page.locator("#access-patterns-container tbody tr")
+    assert rows.count() == 2  # wp_posts, wp_users
+    for i in range(rows.count()):
+        rows.nth(i).click()
+        assert page.locator("#source-table-modal").is_visible()
+        assert page.locator("#source-table-modal-body .tab-content").count() > 0
+        page.locator("#source-table-modal .modal-close").click()
+
+    page.locator("#tradeoffs-container .link").first.click()
+    assert page.locator("#query-journey-modal").is_visible()
+
+    assert events == {"console": [], "pageerror": [], "blocked": []}
