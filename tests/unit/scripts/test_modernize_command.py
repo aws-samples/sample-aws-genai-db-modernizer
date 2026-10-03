@@ -99,3 +99,15 @@ def test_dispatched_subcommands_have_no_unexempted_user_prompts() -> None:
                     f"{filename}: line asks/waits on a user without an "
                     f"--auto/headless exemption: {line!r}"
                 )
+
+
+def test_reality_check_finalize_is_owned_by_modernize_only() -> None:
+    # /modernize dispatches /reality-check as a subagent and then runs
+    # --resume-reality-check itself (the orchestration step owns finalize and
+    # the state update). The subagent only writes the response; finalizing in
+    # both places is redundant work (finalize is a no-op the second time) and
+    # an extra Bash call the subagent's context doesn't need.
+    assert "--resume-reality-check" in _modernize_text()
+    reality_check = (COMMANDS_DIR / "reality-check.md").read_text()
+    assert "--resume-reality-check" not in reality_check
+    assert "llm_responses/reality_check.json" in reality_check

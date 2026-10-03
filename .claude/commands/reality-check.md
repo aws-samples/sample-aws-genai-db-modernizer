@@ -122,14 +122,11 @@ Do NOT flag:
    - No em dashes, no marketing buzzwords ('leverage', 'robust', 'seamless')
    - Frame as the confident recommendation of a senior architect
 
-5. **Finalize**
+5. **Stop and report back**
 
-   ```bash
-   uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
-   ```
+   Return a one-paragraph summary to the caller: how many consolidations you
+   reviewed, how many you reversed (with query IDs), and the response path.
 
-6. **Present results**
-   Show: consolidations made/reversed, architectural patterns detected, updated engine distribution.
-
-7. **Update state**
-   Set `phase_status.reality_check` = "complete", `current_phase` = "schema_design"
+   Do NOT finalize the reality check and do NOT update `.modernizer-state.json`.
+   The `/modernize` orchestration step that dispatched you merges your response
+   and advances the state after you return.
