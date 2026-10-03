@@ -214,3 +214,32 @@ obvious entries lives here instead:
   hallucinated command slipping through — an explicit deny always wins over
   an allow rule, so even a future overly broad `Bash(* )`-style allow
   addition couldn't reopen this door by accident.
+- No `Read`/`Glob`/`Grep` allow rule at all: per the permissions docs,
+  `dontAsk` still runs "file reads in your working directories" without a
+  rule, and a bare `Read` allow would extend that to the whole filesystem.
+  The `Read(...)` denies (`//proc`, `//sys`, `//run/secrets`,
+  `//var/run/secrets`, `//root`, `~/.aws`, `~/.ssh`, `~/.config`,
+  `~/.docker`, `~/.npmrc`, `~/.netrc`, `~/.claude.json`, `.env`, `.env.*`,
+  `.npmrc` anywhere) cover reads that would otherwise be reachable through an
+  `--add-dir` or a future broadening. `//` anchors an absolute path and `~/`
+  the home directory (gitignore-style patterns). Read denies apply to the
+  built-in file tools and to file commands Claude Code recognizes in Bash
+  (`cat`, `head`, ...), **not** to what an allowlisted script opens itself --
+  that is what `MODERNIZER_CI_SANDBOX=1` / `scripts/_sandbox.py` is for (see
+  `e2e-llm.sh` below).
+- `Edit`/`Write` of `.local-ui/**` (and the old `artifacts/.local-ui/**`) are
+  denied: that is `scripts/start_local_ui.py`'s pid file, and `--stop` signals
+  the pids it lists.
+- `Skill(reality-check)`, `Skill(synthesize)`, `Skill(design-schema-*)` plus
+  each `Skill(design-schema-<engine>)` by exact name: the sub-commands
+  `/modernize` dispatches to subagents. The prefix form is documented, but
+  whether a `.claude/commands/*.md` command dispatched from a subagent goes
+  through the `Skill` tool (and so needs these rules at all) is **to be
+  confirmed on the first real run** -- a missing rule shows up as a
+  `permission_denials` entry, which fails `check-transcript`.
+- `BASH_DEFAULT_TIMEOUT_MS=600000` / `BASH_MAX_TIMEOUT_MS=900000` in `env`:
+  analysis and schema-design phases can run for minutes inside one Bash tool
+  call, well past the 2-minute default. These variables are not on the
+  public env-var page as of this writing; to be confirmed on the first real
+  run (a timeout shows up as a killed Bash call in the transcript).
+- `Bash(curl *)` joins `wget`/`nc` in `deny` for the same reason.

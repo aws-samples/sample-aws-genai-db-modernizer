@@ -1,9 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Read",
-      "Glob",
-      "Grep",
       "Edit(artifacts/**)",
       "Write(artifacts/**)",
       "Edit(.modernizer-state.json)",
@@ -20,7 +17,16 @@
       "Bash(uv run python scripts/check_decision.py *)",
       "Bash(uv run python scripts/start_local_ui.py)",
       "Bash(uv run python scripts/start_local_ui.py *)",
-      "Agent"
+      "Agent",
+      "Skill(reality-check)",
+      "Skill(synthesize)",
+      "Skill(design-schema-*)",
+      "Skill(design-schema-aurora-mysql)",
+      "Skill(design-schema-aurora-postgresql)",
+      "Skill(design-schema-documentdb)",
+      "Skill(design-schema-dynamodb)",
+      "Skill(design-schema-elasticache)",
+      "Skill(design-schema-opensearch)"
     ],
     "deny": [
       "WebFetch",
@@ -29,15 +35,35 @@
       "Bash(git commit *)",
       "Read(.env)",
       "Read(**/.env)",
+      "Read(**/.env.*)",
       "Read(~/.aws/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.config/**)",
+      "Read(~/.docker/**)",
+      "Read(~/.npmrc)",
+      "Read(**/.npmrc)",
+      "Read(~/.netrc)",
+      "Read(~/.claude.json)",
+      "Read(//proc/**)",
+      "Read(//sys/**)",
+      "Read(//var/run/secrets/**)",
+      "Read(//run/secrets/**)",
+      "Read(//root/**)",
+      "Edit(.local-ui/**)",
+      "Write(.local-ui/**)",
+      "Edit(artifacts/.local-ui/**)",
+      "Write(artifacts/.local-ui/**)",
       "Bash(rm *)",
       "Bash(sudo *)",
+      "Bash(curl *)",
       "Bash(wget *)",
       "Bash(nc *)"
     ]
   },
   "env": {
     "DISABLE_AUTOUPDATER": "1",
-    "DISABLE_TELEMETRY": "1"
+    "DISABLE_TELEMETRY": "1",
+    "BASH_DEFAULT_TIMEOUT_MS": "600000",
+    "BASH_MAX_TIMEOUT_MS": "900000"
   }
 }

@@ -101,3 +101,63 @@ def test_start_local_ui_is_referenced_and_covered_by_an_allow_rule() -> None:
     settings = _load_settings()
     allow = settings["permissions"]["allow"]
     assert any("scripts/start_local_ui.py" in rule for rule in allow)
+
+
+def test_no_bare_read_glob_grep_allow() -> None:
+    # In-cwd reads need no rule (docs: dontAsk "file reads in your working
+    # directories ... still run"); a bare Read/Glob/Grep allow would extend
+    # that to the whole filesystem.
+    allow = _load_settings()["permissions"]["allow"]
+    for tool in ("Read", "Glob", "Grep"):
+        assert tool not in allow, f"bare '{tool}' allow grants reads outside the repo"
+
+
+def test_deny_blocks_credential_and_system_paths() -> None:
+    deny = set(_load_settings()["permissions"]["deny"])
+    required = {
+        "Read(//proc/**)",
+        "Read(//sys/**)",
+        "Read(//var/run/secrets/**)",
+        "Read(//run/secrets/**)",
+        "Read(//root/**)",
+        "Read(~/.aws/**)",
+        "Read(~/.ssh/**)",
+        "Read(~/.config/**)",
+        "Read(~/.docker/**)",
+        "Read(~/.npmrc)",
+        "Read(**/.npmrc)",
+        "Read(~/.netrc)",
+        "Read(~/.claude.json)",
+        "Read(.env)",
+        "Read(**/.env)",
+        "Read(**/.env.*)",
+    }
+    missing = required - deny
+    assert not missing, f"missing deny rules: {sorted(missing)}"
+
+
+def test_deny_blocks_writes_to_local_ui_state() -> None:
+    deny = set(_load_settings()["permissions"]["deny"])
+    for tool in ("Edit", "Write"):
+        assert f"{tool}(.local-ui/**)" in deny
+        assert f"{tool}(artifacts/.local-ui/**)" in deny
+
+
+def test_deny_blocks_curl_like_wget() -> None:
+    deny = _load_settings()["permissions"]["deny"]
+    assert "Bash(curl *)" in deny
+
+
+def test_every_dispatched_subcommand_has_a_skill_allow() -> None:
+    from tests.unit.scripts.test_modernize_command import DISPATCHED_SUBCOMMANDS
+
+    allow = _load_settings()["permissions"]["allow"]
+    for filename in DISPATCHED_SUBCOMMANDS:
+        name = filename.removesuffix(".md")
+        assert f"Skill({name})" in allow, f"no Skill({name}) allow rule"
+
+
+def test_bash_timeouts_cover_long_pipeline_phases() -> None:
+    env = _load_settings()["env"]
+    assert int(env["BASH_DEFAULT_TIMEOUT_MS"]) >= 600_000
+    assert int(env["BASH_MAX_TIMEOUT_MS"]) >= int(env["BASH_DEFAULT_TIMEOUT_MS"])
