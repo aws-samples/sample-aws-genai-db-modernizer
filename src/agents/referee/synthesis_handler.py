@@ -118,7 +118,7 @@ def run_synthesis_deterministic(
         for r in ranking
     )
     deterministic_summary = build_summary(
-        data, ranking, table_mappings, tco, risk_assessment, query_groups
+        data, ranking, table_mappings, tco, risk_assessment, query_groups, eliminated
     )
     trade_offs = _collect_trade_offs(data)
 

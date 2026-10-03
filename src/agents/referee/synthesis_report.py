@@ -1106,8 +1106,16 @@ def build_summary(
     tco: dict,
     risks: dict,
     query_groups: list[dict],
+    eliminated: dict[str, str | None] | None = None,
 ) -> str:
-    """Build a comprehensive executive summary."""
+    """Build a comprehensive executive summary.
+
+    With assignment data the summary describes the whole workload split: schema-design
+    totals over every engine that carries queries, and "other targets" are only the
+    engines that carry none (left empty by the assignment, or eliminated by the
+    reality check, see ``synthesis_grounding.eliminated_engines``). ``ranking[0]`` is
+    an analysis-weight ordering, not the main engine (#219).
+    """
     if not ranking:
         return "No analysis results available."
 
@@ -1123,44 +1131,53 @@ def build_summary(
         f"across {len(ranking)} target database(s)."
     )
 
-    # Top recommendation — show workload split when assignment data is available
     has_assignment = any("assigned_queries" in r for r in ranking)
+    with_workload = sorted(
+        (r for r in ranking if r.get("assigned_queries", 0) > 0),
+        key=lambda r: r.get("assigned_queries", 0),
+        reverse=True,
+    )
     if has_assignment:
-        # Workload split view
-        engine_parts = []
-        for r in ranking:
-            aq = r.get("assigned_queries", 0)
-            wp = r.get("workload_percent", 0)
-            if aq > 0:
-                engine_parts.append(f"{r['target']} handles {aq} queries ({wp}%)")
-        if engine_parts:
+        # Workload split view, largest share first
+        if with_workload:
+            engine_parts = [
+                f"{r['target']} handles {r['assigned_queries']} queries "
+                f"({r.get('workload_percent', 0)}%)"
+                for r in with_workload
+            ]
             parts.append(f"Workload split: {', '.join(engine_parts)}.")
-        mapped_engines = sorted({m["recommended_database"] for m in table_mappings})
-        if table_mappings:
+        designed = [r for r in with_workload if r.get("schema_design_available")]
+        if designed:
+            engines = {r["target"] for r in designed}
+            groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
+            per_engine = "; ".join(
+                f"{r['target']}: {r.get('target_tables', 0)} tables"
+                + (f", {r['access_patterns']} access patterns" if r.get("access_patterns") else "")
+                for r in designed
+            )
             parts.append(
-                f"{len(table_mappings)} source tables mapped across "
-                f"{len(mapped_engines)} engine(s)."
+                f"Schema design produced "
+                f"{sum(r.get('target_tables', 0) for r in designed)} target tables and "
+                f"{sum(r.get('access_patterns', 0) for r in designed)} access patterns "
+                f"across {groups} query groups ({per_engine})."
             )
     else:
         parts.append(
             f"Top recommendation: {top['target']} with {top['confidence_score']}% "
             f"average confidence."
         )
-
-    # Schema design summary
-    if top.get("schema_design_available"):
-        parts.append(
-            f"Schema design produced {top['target_tables']} target tables with "
-            f"{top['access_patterns']} access patterns across "
-            f"{top['pattern_groups']} query groups."
-        )
+        # Schema design summary
+        if top.get("schema_design_available"):
+            parts.append(
+                f"Schema design produced {top['target_tables']} target tables with "
+                f"{top['access_patterns']} access patterns across "
+                f"{top['pattern_groups']} query groups."
+            )
 
     # Table mapping summary
     if table_mappings:
         engines_used = sorted({m["recommended_database"] for m in table_mappings})
-        parts.append(
-            f"{len(table_mappings)} source tables mapped to " f"{', '.join(engines_used)}."
-        )
+        parts.append(f"{len(table_mappings)} source tables mapped to {', '.join(engines_used)}.")
 
     # Cost
     if tco["projected_monthly_cost"] > 0:
@@ -1183,10 +1200,27 @@ def build_summary(
         top_groups = [g["group_name"] for g in query_groups[:3]]
         parts.append(f"Top query groups by throughput: {', '.join(top_groups)}.")
 
-    # Other engines
-    if len(ranking) > 1:
-        others = ", ".join(f"{r['target']} ({r['confidence_score']}%)" for r in ranking[1:])
-        parts.append(f"Other targets evaluated: {others}.")
+    # Other engines: evaluated but carrying no workload in the target
+    if has_assignment:
+        others = [
+            f"{r['target']} (no queries assigned)"
+            for r in ranking
+            if r.get("assigned_queries", 0) == 0
+        ]
+        listed = {r["target"] for r in ranking}
+        for engine, absorber in (eliminated or {}).items():
+            if engine in listed:
+                continue
+            others.append(
+                f"{engine} (consolidated into {absorber} by the reality check)"
+                if absorber
+                else f"{engine} (eliminated by the reality check)"
+            )
+        if others:
+            parts.append(f"Other targets evaluated: {', '.join(others)}.")
+    elif len(ranking) > 1:
+        others_txt = ", ".join(f"{r['target']} ({r['confidence_score']}%)" for r in ranking[1:])
+        parts.append(f"Other targets evaluated: {others_txt}.")
 
     return " ".join(parts)
 
