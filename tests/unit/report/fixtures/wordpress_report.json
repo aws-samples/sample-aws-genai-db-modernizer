@@ -2432,27 +2432,27 @@
       },
       {
         "severity": "MEDIUM",
-        "description": "[elasticache] unknown: ",
+        "description": "[elasticache] unsupported pattern: LEFT JOIN with multiple LIKE predicates on hook, args and extended_args combined with claim_id and status filters cannot be expressed as key lookups; Redis has no substring search. Keep in MySQL (or use a per-hook sorted set and filter args in the application after fetching candidates).",
         "risk_id": "RISK-007",
         "risk_type": "MIGRATION_COMPLEXITY",
         "affected_tables": [],
-        "mitigation": null
+        "mitigation": "Keep in MySQL (or use a per-hook sorted set and filter args in the application after fetching candidates)."
       },
       {
         "severity": "MEDIUM",
-        "description": "[elasticache] unknown: ",
+        "description": "[elasticache] unsupported pattern: JOIN of wp_users and wp_usermeta with LIKE on meta_value (capabilities) ordered by display_name is an ad-hoc pattern match not supported by Redis. Maintain a set per role, for example wp_usermeta:role:{role}, or move to OpenSearch.",
         "risk_id": "RISK-008",
         "risk_type": "MIGRATION_COMPLEXITY",
         "affected_tables": [],
-        "mitigation": null
+        "mitigation": "Maintain a set per role, for example wp_usermeta:role:{role}, or move to OpenSearch."
       },
       {
         "severity": "MEDIUM",
-        "description": "[elasticache] unknown: ",
+        "description": "[elasticache] unsupported pattern: SHOW FULL FIELDS and SET SESSION are relational metadata and session-configuration statements with no Redis equivalent. Not needed in Redis; the application stops issuing them for cached paths.",
         "risk_id": "RISK-009",
         "risk_type": "MIGRATION_COMPLEXITY",
         "affected_tables": [],
-        "mitigation": null
+        "mitigation": "Not needed in Redis; the application stops issuing them for cached paths."
       },
       {
         "severity": "HIGH",

@@ -23,6 +23,12 @@ from src.agents.referee.synthesis_grounding import (
     display_name,
     ground_risks,
 )
+from src.shared.unsupported_pattern import (
+    unsupported_pattern_ids,
+    unsupported_pattern_label,
+    unsupported_pattern_mitigation,
+    unsupported_pattern_text,
+)
 
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
@@ -497,29 +503,6 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     }
 
 
-def _attach_unsupported_query_ids(risks: list[dict], data: SynthesisData) -> None:
-    """Carry each unsupported pattern's query ids onto the risk built from it.
-
-    The schema-design loop emits exactly one MIGRATION_COMPLEXITY risk per unsupported
-    pattern, in order, tagged ``[engine]``; pairing them here keeps that loop untouched.
-    Engines use ``query_ids`` (DynamoDB) or ``source_query_ids`` (the others).
-    TODO: move this into the unsupported-pattern loop once #210 (PR #208) rewrites it.
-    """
-    for engine, artifacts in data.engines.items():
-        patterns = (artifacts.schema_design or {}).get("unsupported_patterns", [])
-        engine_risks = [
-            r
-            for r in risks
-            if r.get("risk_type") == "MIGRATION_COMPLEXITY"
-            and str(r.get("description", "")).startswith(f"[{engine}]")
-        ]
-        if len(engine_risks) != len(patterns):
-            continue
-        for risk, up in zip(engine_risks, patterns, strict=True):
-            ids = up.get("query_ids") or up.get("source_query_ids") or []
-            risk.setdefault("query_ids", sorted(ids))
-
-
 def build_risk_assessment(
     data: SynthesisData,
     eliminated: dict[str, str | None] | None = None,
@@ -601,7 +584,13 @@ def build_risk_assessment(
                 }
             )
 
-        # Unsupported patterns from schema design
+        # Unsupported patterns from schema design. The four schema-design
+        # contracts disagree on field names (dynamodb/opensearch carry
+        # pattern_type/recommendation; documentdb/elasticache carry
+        # reason/workaround instead) -- read via the shared helper so every
+        # engine's unsupported patterns become risks with real text, not
+        # "[engine] unknown: " for the engines whose contract this code used
+        # to not read (#210).
         for up in schema.get("unsupported_patterns", []):
             risk_id += 1
             risks.append(
@@ -609,9 +598,11 @@ def build_risk_assessment(
                     "risk_id": f"RISK-{risk_id:03d}",
                     "risk_type": "MIGRATION_COMPLEXITY",
                     "severity": "MEDIUM",
-                    "description": f"[{engine}] {up.get('pattern_type', 'unknown')}: {up.get('recommendation', '')}",
+                    "description": f"[{engine}] {unsupported_pattern_label(up)}: "
+                    f"{unsupported_pattern_text(up)}",
                     "affected_tables": [],
-                    "mitigation": up.get("recommendation"),
+                    "mitigation": unsupported_pattern_mitigation(up),
+                    "query_ids": sorted(unsupported_pattern_ids(up)),
                 }
             )
 
@@ -629,7 +620,6 @@ def build_risk_assessment(
                 }
             )
 
-    _attach_unsupported_query_ids(risks, data)
     query_engine = {
         qa["query_id"]: qa["assigned_engine"]
         for qa in (data.assignment or {}).get("query_assignments", [])

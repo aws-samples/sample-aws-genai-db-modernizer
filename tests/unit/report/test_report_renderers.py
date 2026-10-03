@@ -173,6 +173,40 @@ class TestEngineeringReport:
         line = renderers._unsupported_pattern_md(many)
         assert "+7 more" in line
 
+    def test_unsupported_pattern_md_documentdb_shape(self) -> None:
+        """documentdb: source_query_ids + reason, workaround optional (often None)."""
+        documentdb_style = {
+            "source_query_ids": ["abc123"],
+            "reason": "CTE queries with window functions are not supported.",
+            "workaround": None,
+        }
+        line = renderers._unsupported_pattern_md(documentdb_style)
+        assert "{" not in line and "[" not in line and "'" not in line
+        assert "CTE queries with window functions" in line
+        assert "unsupported pattern" in line  # no pattern_type -> generic label
+
+    def test_unsupported_pattern_md_string_query_ids_is_one_id(self) -> None:
+        """A bare string under query_ids is one malformed id, not a list to
+        explode into characters (minor #204 follow-up)."""
+        line = renderers._unsupported_pattern_md({"query_ids": "abc12345", "reason": "x"})
+        assert "`abc12345`" in line
+        # exploding into characters would produce many single-char code spans
+        assert "`a`" not in line
+
+    def test_unsupported_pattern_md_drops_falsy_ids(self) -> None:
+        line = renderers._unsupported_pattern_md(
+            {"query_ids": ["real-id", "", None], "reason": "x"}
+        )
+        assert "`real-id`" in line
+        assert line.count("`") == 2
+
+    def test_unsupported_pattern_md_strips_asterisks_from_pattern_type(self) -> None:
+        line = renderers._unsupported_pattern_md({"pattern_type": "*aggregation*", "reason": "x"})
+        # Exactly the Markdown-bold wrapper around the stripped label -- not the
+        # original value's own asterisks plus the wrapper's.
+        assert line.count("*") == 4
+        assert "**aggregation**" in line
+
 
 # =============================================================================
 # Empty-risk filter helpers

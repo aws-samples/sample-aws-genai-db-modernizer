@@ -9,6 +9,12 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared.unsupported_pattern import (
+    unsupported_pattern_ids,
+    unsupported_pattern_label,
+    unsupported_pattern_text,
+)
+
 from . import escaping
 
 
@@ -98,8 +104,21 @@ def _risk_engine_and_body(desc: Any) -> tuple[str, str]:
 
 
 def _risk_has_content(desc: Any) -> bool:
-    """False for the malformed empty risks synthesis emits as ``[engine] unknown:``
-    with nothing after — noise that should not reach either report."""
+    """Defensive guard against a risk description with no real text after its
+    ``[engine]`` prefix.
+
+    This is no longer the primary line of defense it once was: before #210,
+    synthesis could emit ``[engine] unknown:`` with nothing after it for an
+    unsupported-pattern risk on an engine whose contract has neither
+    ``pattern_type`` nor ``recommendation`` (documentdb/elasticache carry
+    ``reason``/``workaround`` instead, which that code didn't read).
+    ``build_risk_assessment`` now reads whichever fields a contract actually
+    has (``src.shared.unsupported_pattern``), so a genuinely contentless
+    risk should no longer occur there in practice. This filter remains as a
+    general-purpose guard -- against any other producer emitting a risk with
+    no body, and against the historical ``unknown:`` pattern surviving in
+    already-generated ``report.json`` files.
+    """
     _, body = _risk_engine_and_body(desc)
     if body.lower().startswith("unknown:"):
         body = body[len("unknown:") :].strip()
@@ -109,14 +128,15 @@ def _risk_has_content(desc: Any) -> bool:
 def filtered_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The one risk list every deliverable renders and counts from.
 
-    ``risk_assessment.risks`` can contain malformed empty entries (``[engine]
-    unknown:`` with nothing after — see ``_risk_has_content``). The decision
-    report and engineering report dropped those before counting; the PDF/PPTX
-    deck counted the raw list, so the same job reported disagreeing risk
-    totals across deliverables (issue #201: "9 migration risks identified" in
-    the decision report vs. 12 in ``report.json`` and the PDF). Every
-    deliverable must build its risk count and its risk list from this one
-    function instead of re-deriving the filter.
+    ``risk_assessment.risks`` can in principle contain contentless entries
+    (see ``_risk_has_content``); the decision report and engineering report
+    dropped those before counting while the PDF/PPTX deck counted the raw
+    list, so a report with any such entries produced disagreeing risk totals
+    across deliverables (#201: "9 migration risks identified" in the decision
+    report vs. 12 in ``report.json`` and the PDF, because 3 of the 12 were
+    the contentless unsupported-pattern risks #210 also fixes at the source).
+    Every deliverable must build its risk count and its risk list from this
+    one function instead of re-deriving the filter.
     """
     risk = report.get("risk_assessment") or {}
     return [
@@ -658,45 +678,33 @@ def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
 def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     """One readable Markdown line for a schema-design ``unsupported_patterns`` entry.
 
-    The four engine contracts (``*_model_output.py``) disagree on field names:
-    dynamodb/opensearch key the source query ids as ``query_ids`` and the
-    alternative approach as ``recommendation``; documentdb/elasticache key them
-    as ``source_query_ids`` and ``workaround``, alongside a ``reason`` the
-    other two also carry (opensearch has both ``reason`` and
-    ``recommendation``; dynamodb has neither ``reason`` nor ``workaround``).
-    Printing ``str(u)`` for whichever shape showed up produced a raw Python
-    dict/list repr in the engineering report (issue #204); this reads whichever
-    keys are present into one sentence instead, escaped as Markdown flowing
-    text via ``escaping.md_text``/``escaping.md_code``.
+    The four engine contracts (``*_model_output.py``) disagree on field names
+    -- see ``src.shared.unsupported_pattern`` for the full picture, and for
+    why that module (not this one) owns reading them: the same field-reading
+    is also needed by ``synthesis_report.build_risk_assessment`` (#210), in a
+    package this one must not depend on. Printing ``str(u)`` for whichever
+    shape showed up produced a raw Python dict/list repr in the engineering
+    report (#204); this reads the shared helpers' output into one sentence
+    instead, escaped as Markdown flowing text via ``escaping.md_text``/
+    ``escaping.md_code``. ``source_query`` (opensearch's original SQL text)
+    is never shown here -- see ``unsupported_pattern_text``.
 
     Query ids are long hashes; showing every one of them wrecked readability,
     so only the first three are shown with a "+N more" count, each truncated
     to an 8-character prefix (enough to recognise, not to collide visibly).
     """
-    ids = list(u.get("query_ids") or u.get("source_query_ids") or [])
-    id_bits = ", ".join(f"`{escaping.md_code(str(i)[:8])}`" for i in ids[:3])
+    ids = unsupported_pattern_ids(u)
+    id_bits = ", ".join(f"`{escaping.md_code(i[:8])}`" for i in ids[:3])
     if len(ids) > 3:
         id_bits += f" (+{len(ids) - 3} more)"
 
-    pattern_type = u.get("pattern_type")
-    head_bits = []
-    if pattern_type:
-        head_bits.append(f"**{escaping.md_text(str(pattern_type).replace('_', ' '))}**")
+    label = unsupported_pattern_label(u)
+    head_bits = [f"**{escaping.md_text(label)}**"]
     if id_bits:
         head_bits.append(f"({id_bits})")
     head = " ".join(head_bits)
 
-    # reason / recommendation / workaround can repeat each other verbatim
-    # depending on which contract produced the entry; keep each distinct
-    # sentence once, in a fixed order.
-    seen: set[str] = set()
-    body_bits: list[str] = []
-    for key in ("reason", "recommendation", "workaround"):
-        val = str(u.get(key) or "").strip()
-        if val and val not in seen:
-            seen.add(val)
-            body_bits.append(escaping.md_text(val))
-    body = " ".join(body_bits)
+    body = escaping.md_text(unsupported_pattern_text(u))
 
     if head and body:
         return f"{head} \u2014 {body}"
