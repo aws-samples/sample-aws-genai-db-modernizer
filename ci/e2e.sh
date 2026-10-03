@@ -46,11 +46,7 @@ else
   uv run playwright install chromium webkit
 fi
 
-log "build UI"
-# No registry is hardcoded here: locally npm may be configured to use an internal
-# mirror (.npmrc / NPM_CONFIG_REGISTRY), and CI uses the public default. Both are
-# respected by leaving npm's registry resolution alone.
-( cd src/ui && npm ci --no-audit --no-fund && REACT_APP_API_URL=http://localhost:8000/api/v1/ CI=false npx react-scripts build )
+build_ui
 
 log "pipeline + report checks (chromium, webkit)"
 # --output is its own subdirectory, not $E2E_OUTPUT itself: pytest-playwright's

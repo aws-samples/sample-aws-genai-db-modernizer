@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "session_id": "sess-maxturns-1"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-1", "name": "Bash", "input": {"command": "uv run python scripts/run_assessment.py --file /tmp/input/wordpress-collection.json --db wordpress"}}]}, "session_id": "sess-maxturns-1"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu-1", "content": "{\"status\": \"complete\", \"phase\": \"triage\"}"}]}, "session_id": "sess-maxturns-1"}
+{"type": "result", "subtype": "error_max_turns", "is_error": true, "duration_ms": 180000, "duration_api_ms": 170000, "num_turns": 200, "total_cost_usd": 3.10, "usage": {"input_tokens": 90000, "output_tokens": 18000}, "permission_denials": [], "result": null, "session_id": "sess-maxturns-1", "model": "global.anthropic.claude-sonnet-5"}

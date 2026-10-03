@@ -181,7 +181,7 @@ create-test-user: ## Create a test user in Cognito
 # Local Development
 # =====================================================================
 
-.PHONY: local local-api local-ui test lint e2e setup
+.PHONY: local local-api local-ui test lint e2e e2e-llm setup
 
 setup: ## Install dependencies and pre-commit hooks
 	./scripts/setup_dev.sh
@@ -206,6 +206,12 @@ lint: ## Run all linters
 
 e2e: ## Deterministic end-to-end run (pipeline, HTML/PDF checks, UI smoke)
 	./ci/e2e.sh
+
+E2E_LLM_MODE     ?= chat
+E2E_LLM_FIXTURE  ?= wordpress
+
+e2e-llm: ## Headless /modernize run + deliverable checks + quality judge (needs model access; see ci/README.md)
+	./ci/e2e-llm.sh $(E2E_LLM_MODE) $(E2E_LLM_FIXTURE)
 
 assess: ## Run sample assessment (WordPress)
 	uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json

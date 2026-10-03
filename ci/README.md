@@ -9,9 +9,12 @@ scripts directly — they all accept extra pytest args after the script name).
 
 ## `lib.sh`
 
-Shared helpers (`log`, `require_env`). Sourced by the other scripts, not run
-directly. `set -euo pipefail` and `cd` to the repo root live here so every
-script behaves the same regardless of the caller's working directory.
+Shared helpers (`log`, `require_env`, `build_ui`). Sourced by the other
+scripts, not run directly. `set -euo pipefail` and `cd` to the repo root live
+here so every script behaves the same regardless of the caller's working
+directory. `build_ui` (install deps, build the production bundle under
+`src/ui/build/`) is used by both `e2e.sh` and `e2e-llm.sh` so the UI build
+step has one implementation.
 
 ## `lint.sh`
 
@@ -105,6 +108,92 @@ in CI (`CI=true`, set automatically by GitHub Actions) — `--with-deps` pulls
 OS-level dependencies via `apt` and needs root, which Linux CI runners have.
 Locally (including macOS, where there is no `apt`) it drops `--with-deps` and
 installs just the browser binaries.
+
+## `e2e-llm.sh`
+
+Headless `/modernize` run on model access (Bedrock or the Anthropic API):
+`claude -p "/modernize ... --auto --mode <chat|ui|both>" --permission-mode
+dontAsk --output-format stream-json` against one of the two sample fixtures,
+then the same deliverable checks `e2e.sh` runs (contracts, HTML, PDF, and --
+for `ui`/`both` -- the UI smoke test) pointed at the job the headless run
+produced, plus a rubric-based quality judge (`ci/llm/judge.py` /
+`ci/llm/rubric.md`) grading the rendered deliverables. Everything is merged
+into one `results.json` row by `ci/llm/run.py results`.
+
+```
+make e2e-llm                                        # chat / wordpress (defaults)
+make e2e-llm E2E_LLM_MODE=ui E2E_LLM_FIXTURE=discourse
+./ci/e2e-llm.sh both wordpress                       # or invoke the script directly
+```
+
+**What it checks**: the transcript's final `type == "result"` line
+(`ci/llm/run.py check-transcript`) is healthy -- no `is_error`, no
+`permission_denials`, a `MODERNIZE_RESULT: complete job_id=... db=... mode=...`
+line -- and that the run's mode matches what actually happened (`chat` never
+started the local UI; `ui`/`both` started it via
+`scripts/start_local_ui.py` and got back a `{"status": "ready"}` tool
+result). Then the deliverable checks (`tests/e2e`, pointed at the headless
+job via `E2E_ARTIFACT_ROOT`/`E2E_DB`/`E2E_JOB` -- see "external-job mode"
+under `e2e.sh`'s own test suite) and the judge run exactly as they do for a
+deterministic job.
+
+**Outputs**, all under `$E2E_OUTPUT/llm-<mode>-<fixture>/` (default
+`test-results/llm-<mode>-<fixture>/`):
+
+- `claude-version.txt`, `claude-flags.txt` -- the installed CLI's version and
+  the exact flags this run chose (see "CLI flag feature-detection" below).
+- `input/` -- the sample fixture, unzipped here rather than into the repo
+  root.
+- `transcript.jsonl` -- the full stream-json transcript.
+- `claude-exit.txt`, `summary.json` -- the claude process's exit code/duration,
+  and `ci/llm/run.py check-transcript`'s parsed summary (or `{"error": ...}`).
+- `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
+  same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
+- `judge.json` -- `ci/llm/judge.py`'s rubric scores.
+- `steps.json` -- exit code of every step (`claude`, `check-transcript`,
+  `install-browsers`, `build-ui`, `report-tests`, `ui-tests`, `judge`,
+  `results`); a step failing never stops the script early, so `results.json`
+  always gets written.
+- `results.json` -- the one merged row (`schema_version`, `timestamp`,
+  `git_sha`, `mode`, `fixture`, `model`, `job_id`, `db`, `cost_usd`,
+  `num_turns`, `tokens_in`/`tokens_out`, `duration_s`, `checks: {transcript,
+  contracts, html, pdf, ui, judge}` (`ui` is `null` for `chat`), `judge:
+  {mean, scores}`, `pass`). Plan 3b uploads this to the results store, so it's
+  kept flat and JSON-shaped on purpose.
+
+**Env vars**: `CLAUDE_BIN` (default `claude`), `CLAUDE_CODE_VERSION` (npm
+version to install when `$CLAUDE_BIN` is missing, default `latest`),
+`ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_USE_BEDROCK` +
+`AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default 3600),
+`E2E_LLM_MAX_TURNS` (default 200, only passed as `--max-turns` if the CLI's
+own `--help` mentions it), `E2E_LLM_ARTIFACT_ROOT` (default
+`$REPO_ROOT/artifacts` -- shared between the headless run and the deliverable
+checks), `E2E_OUTPUT` (as in `e2e.sh`).
+
+**CLI flag feature-detection**: the CLI build installed locally while writing
+this script (an internal v2.1.288 build) does not list `--max-turns` in its
+own `--help`; CI installs the public `@anthropic-ai/claude-code` npm package,
+which does, and additionally requires `--verbose` alongside
+`--output-format stream-json`. Rather than hardcode either CLI's behavior,
+the script captures `"$CLAUDE_BIN" --help` once and only adds `--max-turns`
+/ `--verbose` if the help text mentions them, logging the chosen flags (and
+`claude --version`) into the output directory either way.
+
+**Dry-run mode** (`E2E_LLM_DRY_RUN=1`, plus `E2E_LLM_TRANSCRIPT=<path>`):
+skips the claude call entirely and copies the given transcript `.jsonl` in
+its place, so the rest of the script -- `check-transcript`, the deliverable
+checks, the judge (still a real subprocess call, typically pointed at a stub
+via `CLAUDE_BIN`), and `results.json` -- can be exercised locally with no
+model access. The transcript's `MODERNIZE_RESULT` line must name a job/db
+that actually exists under `E2E_LLM_ARTIFACT_ROOT` and must match the
+`<mode> <fixture>` arguments given on the command line.
+
+**Cost and time**: to be measured on the first internal-pipeline run (see
+`ci/llm/run.py`'s module docstring -- the stream-json field names it parses
+are assumptions from public docs, not yet confirmed against a real recorded
+transcript; Step 1 of the task that introduced this script, recording one,
+was explicitly skipped to avoid spending tokens outside of model access the
+user has approved).
 
 ## `../.claude/settings.ci.json`
 

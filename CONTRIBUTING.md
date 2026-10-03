@@ -237,6 +237,11 @@ Common scopes in this project:
    make e2e         # deterministic end-to-end (needs the `e2e` extra, Node 22,
                      # Playwright browsers, and a UI build -- ci/e2e.sh handles
                      # all of that); or: ./ci/e2e.sh
+   make e2e-llm     # headless /modernize run against a real model -- needs
+                     # model access (CLAUDE_CODE_USE_BEDROCK+AWS_REGION or
+                     # ANTHROPIC_API_KEY); see ci/README.md. Not required for
+                     # every PR -- only when touching /modernize, the agent
+                     # skills, or ci/llm/*.
    ```
 
    `make test` also runs the `atx_orchestrator` tests, which need the AWS
@@ -332,6 +337,10 @@ make test                              # or: ./ci/test.sh --cov=src --cov-report
 # Deterministic end-to-end (pipeline + rendered HTML/PDF + UI smoke)
 make e2e                               # or: ./ci/e2e.sh
 
+# Headless /modernize against a real model, same deliverable checks + a
+# rubric-based quality judge (needs model access -- see ci/README.md)
+make e2e-llm                           # or: ./ci/e2e-llm.sh chat wordpress
+
 # Run only contract tests
 uv run pytest tests/contract/ -v
 ```
@@ -340,7 +349,10 @@ uv run pytest tests/contract/ -v
 (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`; see
 `tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
 extra (`uv sync --extra e2e`), Node 22, and Playwright's browsers (`ci/e2e.sh`
-installs the browsers and builds the UI itself).
+installs the browsers and builds the UI itself). `make e2e-llm` needs all of
+that plus model access and costs real tokens -- its approximate cost/time
+per run is to be measured on the first internal-pipeline run (see
+`ci/README.md`'s `e2e-llm.sh` section).
 
 ### Local Pipeline Testing
 
