@@ -16,7 +16,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.referee.synthesis_grounding import check_summary_grounding
+from src.agents.referee.synthesis_grounding import (
+    build_effective_architecture,
+    check_summary_grounding,
+)
 from src.agents.referee.synthesis_handler import (
     _write_synthesis_report,
     apply_synthesis_llm_output,
@@ -36,10 +39,14 @@ def wordpress() -> dict:
     return data
 
 
-def _check(summary: str, wordpress: dict, scope: dict | None = None) -> list[str]:
+def _check(summary: str, wordpress: dict, scope: dict | None = None) -> list[dict]:
     return check_summary_grounding(
         summary, scope or wordpress["engine_tables"], wordpress["database_name"]
     )
+
+
+def _high(findings: list[dict]) -> list[dict]:
+    return [f for f in findings if f["high_confidence"]]
 
 
 # ---------------------------------------------------------------------------
@@ -61,23 +68,49 @@ class TestRealEvidence:
         """
         assert _check(wordpress["llm_executive_summary"], wordpress) == []
 
-    def test_recommended_database_alone_would_have_flagged_it(self, wordpress) -> None:
-        """Documents why the check uses the assignment scope, not table_mappings."""
+    def test_recommended_database_alone_would_only_warn(self, wordpress) -> None:
+        """Against recommended_database alone "post meta" mismatches, but it sits in a
+        list clause that inherits DynamoDB, so it is low confidence: a warning, not a
+        rejection."""
         by_recommended: dict[str, list[str]] = {}
         for table, engine in wordpress["recommended_engine"]:
             by_recommended.setdefault(engine, []).append(table)
-        warnings = _check(wordpress["llm_executive_summary"], wordpress, by_recommended)
-        assert len(warnings) == 1 and "wordpress.wp_postmeta" in warnings[0]
+        findings = _check(wordpress["llm_executive_summary"], wordpress, by_recommended)
+        assert [f["table"] for f in findings] == ["wordpress.wp_postmeta"]
+        assert _high(findings) == []
+
+    def test_effective_architecture_stays_compact(self, wordpress) -> None:
+        mappings = [
+            {"source_table": t, "recommended_database": e}
+            for t, e in wordpress["recommended_engine"]
+        ]
+        eff = build_effective_architecture(
+            wordpress["engine_tables"],
+            mappings,
+            wordpress["ranking"],
+            wordpress["query_groups"],
+            wordpress["database_name"],
+            wordpress["eliminated"],
+        )
+        size = len(json.dumps(eff))
+        # Measured 4,091 bytes on this run (llm_input.json was 96 KB); 2x headroom.
+        assert size < 8_000, size
+        assert {e["engine"] for e in eff["engines"]} == {"dynamodb", "elasticache", "aurora_mysql"}
 
 
 class TestPostCheckSynthetic:
     """Synthetic summaries against the reconstructed wordpress scope."""
 
-    def test_wrong_engine_is_flagged(self, wordpress) -> None:
-        warnings = _check("ElastiCache serves the post meta lookups.", wordpress)
-        assert len(warnings) == 1
-        assert "wordpress.wp_postmeta" in warnings[0] and "ElastiCache" in warnings[0]
-        assert "DynamoDB" in warnings[0]  # names the engines that do serve it
+    def test_wrong_engine_is_high_confidence(self, wordpress) -> None:
+        findings = _check("ElastiCache serves the post meta lookups.", wordpress)
+        assert len(_high(findings)) == 1
+        message = findings[0]["message"]
+        assert "wordpress.wp_postmeta" in message and "ElastiCache" in message
+        assert "DynamoDB" in message  # names the engines that do serve it
+
+    def test_one_word_stem_is_only_low_confidence(self, wordpress) -> None:
+        findings = _check("ElastiCache serves comments lookups.", wordpress)
+        assert len(findings) == 1 and _high(findings) == []
 
     def test_correct_summary_is_kept(self, wordpress) -> None:
         summary = (
@@ -90,40 +123,73 @@ class TestPostCheckSynthetic:
 
     @pytest.mark.parametrize("name", ["wp_usermeta", "wordpress.wp_usermeta", "user meta"])
     def test_table_matched_with_and_without_db_prefix(self, wordpress, name) -> None:
-        assert _check(f"DynamoDB stores {name} rows.", wordpress)
+        assert _high(_check(f"DynamoDB stores {name} rows.", wordpress))
         assert _check(f"Aurora MySQL stores {name} rows.", wordpress) == []
 
     def test_a_table_served_by_several_engines_is_fine_under_each(self, wordpress) -> None:
         for engine in ("DynamoDB", "ElastiCache", "Aurora MySQL"):
             assert _check(f"{engine} serves wp_posts.", wordpress) == [], engine
 
-    def test_attribution_uses_the_nearest_engine_in_the_sentence(self, wordpress) -> None:
-        ok = "Aurora MySQL keeps wp_usermeta, while DynamoDB takes wp_posts and wp_options."
-        assert _check(ok, wordpress) == []
+    def test_clause_order_does_not_matter(self, wordpress) -> None:
+        ok = [
+            "While Aurora MySQL keeps wp_usermeta, DynamoDB serves wp_posts.",
+            "wp_usermeta stays on Aurora MySQL, while wp_posts moves to DynamoDB.",
+            "Aurora MySQL keeps wp_usermeta, while DynamoDB takes wp_posts and wp_options.",
+        ]
+        for summary in ok:
+            assert _check(summary, wordpress) == [], summary
         bad = "DynamoDB keeps wp_usermeta, while ElastiCache takes wp_comments."
-        assert len(_check(bad, wordpress)) == 2
+        assert len(_high(_check(bad, wordpress))) == 2
 
-    def test_engine_named_after_the_table_counts(self, wordpress) -> None:
-        assert _check("User meta lookups move to DynamoDB.", wordpress)
+    def test_any_engine_in_the_clause_may_serve_it(self, wordpress) -> None:
+        assert _check("DynamoDB or Aurora MySQL serves wp_usermeta.", wordpress) == []
+
+    def test_list_continuation_is_low_confidence(self, wordpress) -> None:
+        findings = _check("DynamoDB serves wp_options, wp_posts and wp_usermeta.", wordpress)
+        assert [f["table"] for f in findings] == ["wordpress.wp_usermeta"]
+        assert _high(findings) == []
+
+    def test_engine_named_after_the_table_in_the_same_clause(self, wordpress) -> None:
+        assert _high(_check("User meta lookups move to DynamoDB.", wordpress))
         assert _check("User meta lookups stay on Aurora MySQL.", wordpress) == []
 
-    def test_negated_engine_is_not_an_attribution(self, wordpress) -> None:
+    def test_only_not_or_no_directly_before_the_engine_negates(self, wordpress) -> None:
+        assert _check("Aurora MySQL, not DynamoDB, keeps wp_usermeta.", wordpress) == []
+        # "cannot" no longer negates; Aurora MySQL in the clause serves the table.
         assert (
             _check("User meta queries that DynamoDB cannot serve stay on Aurora MySQL.", wordpress)
             == []
         )
-        assert _check("wp_usermeta stays relational instead of DynamoDB.", wordpress) == []
 
-    def test_eliminated_engine_claim_is_flagged(self, wordpress) -> None:
-        assert _check("OpenSearch Service indexes wp_posts for search.", wordpress)
+    def test_history_clauses_attribute_nothing(self, wordpress) -> None:
+        for summary in (
+            "wp_usermeta moved from DynamoDB to Aurora MySQL.",
+            "Text search was consolidated from OpenSearch into Aurora MySQL, which serves wp_posts.",
+            "Previously OpenSearch indexed wp_posts.",
+        ):
+            assert _check(summary, wordpress) == [], summary
 
-    def test_common_word_without_access_noun_is_not_a_table(self, wordpress) -> None:
-        # "comments" alone is ordinary English; wp_comments is not on ElastiCache.
-        assert _check("With ElastiCache, comments load instantly.", wordpress) == []
-        assert _check("ElastiCache serves comments lookups.", wordpress)
+    def test_respectively_keeps_the_sentence_as_one_unit(self, wordpress) -> None:
+        summary = "DynamoDB and Aurora MySQL serve wp_options and wp_usermeta, respectively."
+        assert _check(summary, wordpress) == []
+
+    def test_eliminated_engine_claim_is_high_confidence(self, wordpress) -> None:
+        assert _high(_check("OpenSearch Service indexes wp_posts for search.", wordpress))
+
+    def test_generic_words_users_and_options(self, wordpress) -> None:
+        assert _check("With ElastiCache, users see cached pages instantly.", wordpress) == []
+        assert _check("DynamoDB options for scaling are simple.", wordpress) == []
+        # "options ... reads" reads as wp_options, which ElastiCache does not serve: a
+        # one-word stem, so only a warning.
+        findings = _check("ElastiCache gives users and options faster reads.", wordpress)
+        assert findings and _high(findings) == []
 
     def test_sentence_without_an_engine_is_not_checked(self, wordpress) -> None:
         assert _check("User meta keeps its relational shape.", wordpress) == []
+
+    def test_text_search_capability_claims_are_not_checked(self, wordpress) -> None:
+        """Documented limit: only table-to-engine claims are checked, not capabilities."""
+        assert _check("DynamoDB handles the text search.", wordpress) == []
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +276,7 @@ class TestLlmInput:
 
 class TestFinalize:
     def test_wrong_attribution_falls_back_to_deterministic(self, det) -> None:
-        llm = "Aurora MySQL serves the orders table and the product lookups."
+        llm = "Aurora MySQL serves the shop.orders table and the product lookups."
         out = apply_synthesis_llm_output(det, {"executive_summary": llm})
         assert out["executive_summary"] == det["summary"]
         assert out["summary_llm"] == llm
@@ -226,8 +292,30 @@ class TestFinalize:
         assert out["summary_source"] == "llm"
         assert out["summary_validation_warnings"] == []
 
+    def test_low_confidence_finding_keeps_the_llm_text(self, det) -> None:
+        llm = "Aurora MySQL keeps the orders table hot."  # one-word stem: warning only
+        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
+        assert out["executive_summary"] == llm
+        assert out["summary_source"] == "llm"
+        assert out["summary_validation_warnings"][0].startswith("[low confidence]")
+
+    def test_bedrock_path_rejects_end_to_end(self, det) -> None:
+        from src.agents.referee.synthesis_handler import run_synthesis
+
+        store = det["_store"]
+        with patch(
+            "src.agents.referee.synthesis_handler.generate_executive_summary",
+            return_value="Aurora MySQL serves the shop.orders table for every order lookup.",
+        ):
+            run_synthesis(JOB, DB, store, assignment_version=2, llm_mode="bedrock")
+        report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+        assert report["summary_source"] == "deterministic_fallback"
+        assert report["summary_llm"].startswith("Aurora MySQL serves the shop.orders")
+        assert report["summary_validation_warnings"][0].startswith("[high confidence]")
+        assert "shop.orders" not in report["summary"]
+
     def test_report_keeps_llm_text_for_audit(self, det) -> None:
-        llm = "Aurora MySQL serves the orders table."
+        llm = "Aurora MySQL serves the shop.orders table."
         apply_synthesis_llm_output(det, {"executive_summary": llm})
         store = det["_store"]
         _write_synthesis_report(store, det, 2)
@@ -287,7 +375,7 @@ def test_bedrock_prompt_carries_the_effective_architecture(det) -> None:
 @pytest.mark.parametrize(
     ("summary", "source"),
     [
-        ("Aurora MySQL serves the orders table.", "deterministic_fallback"),
+        ("Aurora MySQL serves the shop.orders table.", "deterministic_fallback"),
         ("Aurora MySQL keeps the products table.", "llm"),
     ],
 )

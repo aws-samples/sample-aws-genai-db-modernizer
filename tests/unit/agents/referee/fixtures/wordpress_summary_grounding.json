@@ -1,5 +1,5 @@
 {
-  "_source": "Headless /modernize run on the wordpress sample (internal validation pipeline, 2026-10-03; deliverables/wordpress/report.json + llm_response.json). The run did not retain assignment/v2/assignment.json, so engine_tables is RECONSTRUCTED from report.json: each engine's schema design is built only from its in-scope queries (filter_collector_for_assignment), so the tables its design covers (table_mappings primary + alternatives) and the tables touched by the queries linked to its in-scope access patterns are in that engine's assignment scope. recommended_engine lists [source_table, table_mappings[].recommended_database] pairs (secondary info only). llm_executive_summary is the summary the rubric judge flagged (#205), verbatim.",
+  "_source": "Headless /modernize run on the wordpress sample (internal validation pipeline, 2026-10-03; deliverables/wordpress/report.json + llm_response.json). The run did not retain assignment/v2/assignment.json, so engine_tables is RECONSTRUCTED from report.json: each engine's schema design is built only from its in-scope queries (filter_collector_for_assignment), so the tables its design covers (table_mappings primary + alternatives) and the tables touched by the queries linked to its in-scope access patterns are in that engine's assignment scope. recommended_engine lists [source_table, table_mappings[].recommended_database] pairs (secondary info only). llm_executive_summary is the summary the rubric judge flagged (#205), verbatim. ranking/query_groups are trimmed copies of report.json (for the effective_architecture size check); eliminated is from reality_check.consolidations (action=full).",
   "database_name": "wordpress",
   "engine_tables": {
     "aurora_mysql": [
@@ -136,5 +136,446 @@
       "elasticache"
     ]
   ],
-  "llm_executive_summary": "The WordPress workload moves to a hybrid architecture with a cache tier: DynamoDB serves the majority of queries, including option, post, post meta and term lookups, while ElastiCache handles the high-frequency leaderboard and cached reads. Aurora MySQL keeps the multi-table joins with aggregation and the text search queries that DynamoDB and ElastiCache cannot serve, which removes the need for a separate OpenSearch Service deployment. Each engine takes the queries it fits best, so key-value reads scale without row-locking contention on the relational store. The migration leaves Aurora MySQL with a small, well-defined set of relational queries and gives the hot read paths single-digit millisecond access."
+  "llm_executive_summary": "The WordPress workload moves to a hybrid architecture with a cache tier: DynamoDB serves the majority of queries, including option, post, post meta and term lookups, while ElastiCache handles the high-frequency leaderboard and cached reads. Aurora MySQL keeps the multi-table joins with aggregation and the text search queries that DynamoDB and ElastiCache cannot serve, which removes the need for a separate OpenSearch Service deployment. Each engine takes the queries it fits best, so key-value reads scale without row-locking contention on the relational store. The migration leaves Aurora MySQL with a small, well-defined set of relational queries and gives the hot read paths single-digit millisecond access.",
+  "ranking": [
+    {
+      "target": "elasticache",
+      "assigned_queries": 34,
+      "workload_percent": 31.8,
+      "assignment_reason_summary": [
+        "highest confidence for elasticache",
+        "signal override: leaderboard_pattern → elasticache",
+        "reality check: consolidated from aurora_mysql → elasticache (no unique value — fit=81, data synced for wordpress.wp_posts, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_woocommerce_order_items)"
+      ]
+    },
+    {
+      "target": "dynamodb",
+      "assigned_queries": 63,
+      "workload_percent": 58.9,
+      "assignment_reason_summary": [
+        "highest confidence for dynamodb",
+        "reality check: consolidated from aurora_mysql → dynamodb (no unique value — fit=99, data synced for wordpress.wp_postmeta)",
+        "reality check: consolidated from aurora_mysql → dynamodb (no unique value — fit=79, data synced for wordpress.wp_postmeta)"
+      ]
+    },
+    {
+      "target": "aurora_mysql",
+      "assigned_queries": 10,
+      "workload_percent": 9.3,
+      "assignment_reason_summary": [
+        "reality check: absorbed from opensearch → aurora_mysql (opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified)",
+        "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Multi-table join with aggregation (GROUP BY) across partitions is not servable by DynamoDB or ElastiCache)",
+        "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Complex joins combined with status filters cannot be served without a known partition key on DynamoDB)"
+      ]
+    }
+  ],
+  "query_groups": [
+    {
+      "group_name": "Option reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 151.67
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 20.24
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 2.88
+        }
+      ]
+    },
+    {
+      "group_name": "Post meta reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 14.550729
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 13.040324
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 4.803113
+        }
+      ]
+    },
+    {
+      "group_name": "Post reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 10.6925
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 3.190694
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 2.739618
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.7617
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.76
+        }
+      ]
+    },
+    {
+      "group_name": "Order item meta reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 8.714433
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 6.367882
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.937338
+        }
+      ]
+    },
+    {
+      "group_name": "Term lookups",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 12.742998
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 2.016609
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.2422
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.6996
+        }
+      ]
+    },
+    {
+      "group_name": "API key maintenance",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 8.2765
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.8275
+        }
+      ]
+    },
+    {
+      "group_name": "Option writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 4.9
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 2.1
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.6
+        }
+      ]
+    },
+    {
+      "group_name": "Post meta writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 3.429896
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.540995
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.178611
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.177894
+        }
+      ]
+    },
+    {
+      "group_name": "Action scheduler reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 3.590301
+        }
+      ]
+    },
+    {
+      "group_name": "Order item reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 3.284236
+        }
+      ]
+    },
+    {
+      "group_name": "User lookups",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 2.4828
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.3735
+        }
+      ]
+    },
+    {
+      "group_name": "Term metadata reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.6076
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.7506
+        }
+      ]
+    },
+    {
+      "group_name": "Order item meta writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.922257
+        }
+      ]
+    },
+    {
+      "group_name": "Post term relationships",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.6346
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.5359
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.5359
+        }
+      ]
+    },
+    {
+      "group_name": "Aggregations",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.0694
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.5035
+        }
+      ]
+    },
+    {
+      "group_name": "Tax rate class reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 1.2633
+        }
+      ]
+    },
+    {
+      "group_name": "Comment reads and writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.2662
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.2662
+        },
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.2662
+        }
+      ]
+    },
+    {
+      "group_name": "Result count helpers",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.6776
+        }
+      ]
+    },
+    {
+      "group_name": "Post metadata reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.5358
+        }
+      ]
+    },
+    {
+      "group_name": "Product meta lookup writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.3565
+        }
+      ]
+    },
+    {
+      "group_name": "Term meta writes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.178623
+        }
+      ]
+    },
+    {
+      "group_name": "Reserved stock",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.1517
+        }
+      ]
+    },
+    {
+      "group_name": "Action scheduler logs",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.0971
+        }
+      ]
+    },
+    {
+      "group_name": "Download permissions",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.0971
+        }
+      ]
+    },
+    {
+      "group_name": "Comment metadata reads",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.0491
+        }
+      ]
+    },
+    {
+      "group_name": "Admin notes",
+      "access_patterns": [
+        {
+          "engine": "dynamodb",
+          "design_rps": 0.0434
+        }
+      ]
+    },
+    {
+      "group_name": "ungrouped",
+      "access_patterns": [
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        },
+        {
+          "engine": "elasticache",
+          "design_rps": 0
+        }
+      ]
+    }
+  ],
+  "eliminated": {
+    "documentdb": "dynamodb",
+    "opensearch": "aurora_mysql"
+  }
 }

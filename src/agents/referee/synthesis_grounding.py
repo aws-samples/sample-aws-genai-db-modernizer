@@ -359,7 +359,7 @@ def engine_table_scope(
     assignment: dict | None,
     source_queries: list[dict],
     table_mappings: list[dict],
-    known_tables: set[str],
+    known_tables: Iterable[str],
 ) -> dict[str, list[str]]:
     """Tables each engine serves in the effective assignment.
 
@@ -372,6 +372,7 @@ def engine_table_scope(
     Without an assignment (unversioned run) the schema designs stand in: every engine
     whose design covers a table (``table_mappings`` primary and alternatives).
     """
+    known = set(known_tables)
     scope: dict[str, set[str]] = {}
     qas = (assignment or {}).get("query_assignments") or []
     if qas:
@@ -381,9 +382,7 @@ def engine_table_scope(
             if not engine or not qa.get("in_scope", True):
                 continue
             tables = qa.get("source_tables") or accessed.get(qa.get("query_id"), [])
-            scope.setdefault(engine, set()).update(
-                t for t in tables if not known_tables or t in known_tables
-            )
+            scope.setdefault(engine, set()).update(t for t in tables if not known or t in known)
     else:
         for m in table_mappings:
             scope.setdefault(m["recommended_database"], set()).add(m["source_table"])
@@ -462,14 +461,16 @@ _ACCESS_NOUNS = frozenset(
     "table tables item items entry entries traffic access".split()
 )
 _ACCESS_WINDOW = 4
-_NEG_BEFORE = re.compile(
-    r"\b(?:without|instead\s+of|rather\s+than|need\s+for|replac\w*|eliminat\w*|remov\w*|"
-    r"than|no|not)\b(?:\W+\w+){0,3}\W*$",
-    re.IGNORECASE,
+# Only "not"/"no" directly before the engine negates it ("not DynamoDB").
+_NEG_DIRECT = re.compile(r"\b(?:not|no)\s+$", re.IGNORECASE)
+# Clause boundaries for attribution: punctuation and clause-joining words.
+_CLAUSE_SPLIT = re.compile(
+    r"[,;:\u2014\u2013()]|\b(?:while|whereas|but|and|leaving|freeing)\b", re.IGNORECASE
 )
-_NEG_AFTER = re.compile(
-    r"^(?:\W+\w+){0,3}?\W+(?:cannot|can't|can\s+not|could\s+not|couldn't|does\s+not|"
-    r"doesn't|do\s+not|don't|won't|will\s+not|is\s+not|isn't|no\s+longer)\b",
+# A clause narrating history ("moved from OpenSearch to Aurora MySQL") attributes nothing.
+_HISTORY = re.compile(
+    r"\bfrom\b.+\bto\b|\b(?:consolidat\w*|absorb\w*|moved|previously|formerly|"
+    r"migrated\s+from)\b",
     re.IGNORECASE,
 )
 
@@ -508,8 +509,8 @@ def _table_keys(tables: set[str], database_name: str) -> dict[str, set[str]]:
 
 def _table_mentions(
     sentence: str, keys: dict[str, set[str]], skip: list[tuple[int, int]]
-) -> list[tuple[set[str], int, str]]:
-    """Return ``(tables, position, matched_text)`` for table references in ``sentence``."""
+) -> list[tuple[set[str], int, str, int]]:
+    """Return ``(tables, position, matched_text, word_count)`` for table references."""
     words = [m for m in _WORD.finditer(sentence) if not any(s <= m.start() < e for s, e in skip)]
     found = []
     i = 0
@@ -534,80 +535,120 @@ def _table_mentions(
             match = (tables, run[0].start(), span, n)
             break
         if match:
-            found.append(match[:3])
+            found.append(match)
             i += match[3]
         else:
             i += 1
     return found
 
 
-def _engine_refs(sentence: str, engines_in_play: set[str]) -> list[tuple[str, int, int, bool]]:
+def _engine_refs(clause: str, engines_in_play: set[str]) -> list[tuple[str, int, int, bool]]:
     """Engine mentions as ``(engine, start, end, negated)``.
 
     Bare "Aurora" resolves to the single Aurora engine in play, if there is exactly one.
+    Only "not"/"no" directly before the engine negates it.
     """
-    refs = [(e, s, t) for e, s, t in engine_mentions(sentence)]
+    refs = [(e, s, t) for e, s, t in engine_mentions(clause)]
     aurora = sorted(engines_in_play & {"aurora_mysql", "aurora_postgresql"})
     if len(aurora) == 1:
-        for m in re.finditer(r"\baurora\b(?![\s_-]?(?:mysql|postgre))", sentence, re.IGNORECASE):
+        for m in re.finditer(r"\baurora\b(?![\s_-]?(?:mysql|postgre))", clause, re.IGNORECASE):
             refs.append((aurora[0], m.start(), m.end()))
     refs.sort(key=lambda r: r[1])
-    return [
-        (e, s, t, bool(_NEG_BEFORE.search(sentence[:s]) or _NEG_AFTER.match(sentence[t:])))
-        for e, s, t in refs
-    ]
+    return [(e, s, t, bool(_NEG_DIRECT.search(clause[:s]))) for e, s, t in refs]
+
+
+def _clauses(sentence: str) -> list[str]:
+    if re.search(r"\brespectively\b", sentence, re.IGNORECASE):
+        return [sentence]  # "A and B serve X and Y, respectively": one unit
+    return [c for c in _CLAUSE_SPLIT.split(sentence) if c.strip()]
 
 
 def check_summary_grounding(
     summary: str,
     engine_tables: dict[str, list[str]],
     database_name: str,
-    known_tables: set[str] | None = None,
-) -> list[str]:
-    """Flag summary sentences that attribute a table to an engine that does not serve it.
+    known_tables: Iterable[str] | None = None,
+) -> list[dict]:
+    """Find summary clauses that attribute a table to an engine that does not serve it.
 
     Rule (deterministic, documented in /synthesize):
 
     - An engine serves a table when at least one in-scope query assigned to it touches
       the table (``engine_tables``, from ``engine_table_scope``). A table can be served
-      by several engines; naming it under any of them is correct. The table mapping's
-      single ``recommended_database`` is not the test.
+      by several engines. The table mapping's single ``recommended_database`` is not
+      the test.
     - Tables are recognised as ``<db>.<table>``, ``<table>`` or the humanised stem
       without the shared naming prefix (``post meta`` for ``wp_postmeta``). A one-word
       stem without an underscore only counts when an access noun ("lookups",
       "queries", "table", ...) follows within four words.
-    - Within a sentence, each table is attributed to the nearest engine named before
-      it, or else the first engine named after it. Engines in a negated context
-      ("cannot serve", "instead of", "removes the need for") are not attributions.
-    - Sentences naming no engine, and names that are not known source tables, are not
-      checked. Naming an engine outside the effective architecture with a table (an
-      eliminated engine) is always a mis-attribution.
+    - Sentences are split into clauses at , ; : dashes and parentheses and at
+      while/whereas/but/and/leaving/freeing (a sentence using "respectively" stays one
+      unit). A table is checked against the live engines named in its clause; a clause
+      naming none inherits the engines of the nearest earlier clause in the sentence
+      (list continuation), or else of the next one. It passes if ANY of those engines
+      serves it. Engines directly preceded by "not"/"no" are not attributions, and
+      history clauses (from ... to, consolidated, absorbed, moved, previously,
+      formerly, migrated from) are skipped.
+    - A mismatch is high confidence when the table is written as an identifier
+      (``wp_x``, ``db.x``) or a multi-word stem AND its own clause names exactly one
+      live engine, or when the clause names an engine outside the effective
+      architecture (an eliminated engine) as the server. Only high-confidence
+      mismatches reject a summary; the rest are recorded as warnings.
 
-    Returns one human-readable warning per mis-attribution (empty list = grounded).
+    Returns findings ``{"table", "text", "engines", "high_confidence", "sentence",
+    "message"}``; an empty list means grounded.
     """
     tables = set(known_tables or ()) | {t for ts in engine_tables.values() for t in ts}
     if not summary or not tables:
         return []
     served = {engine: set(ts) for engine, ts in engine_tables.items()}
     keys = _table_keys(tables, database_name)
-    warnings: list[str] = []
+    findings: list[dict] = []
+
+    def judge(named, text, n, engines, own, sentence) -> None:
+        if any(named & served.get(e, set()) for e in engines):
+            return
+        table = sorted(named)[0]
+        precise = n > 1 or "_" in text or "." in text
+        outside = [e for e in engines if e not in served]
+        high = bool(outside) or (own and len(engines) == 1 and precise)
+        owners = sorted(e for e, ts in served.items() if table in ts)
+        where = ", ".join(display_name(e) for e in owners) or "no engine"
+        said = " or ".join(display_name(e) for e in engines)
+        level = "high confidence" if high else "low confidence"
+        findings.append(
+            {
+                "table": table,
+                "text": text,
+                "engines": list(engines),
+                "high_confidence": high,
+                "sentence": sentence,
+                "message": (
+                    f'[{level}] Summary attributes {table} ("{text}") to {said}, but no '
+                    f"in-scope query of that engine touches it (served by {where}): {sentence}"
+                ),
+            }
+        )
+
     for sentence in split_sentences(summary):
-        refs = _engine_refs(sentence, set(served))
-        live = [r for r in refs if not r[3]]
-        if not live:
-            continue
-        spans = [(s, t) for _, s, t, _ in refs]
-        for named, pos, text in _table_mentions(sentence, keys, spans):
-            before = [r for r in live if r[2] <= pos]
-            engine = before[-1][0] if before else next(r[0] for r in live if r[1] > pos)
-            if named & served.get(engine, set()):
+        inherited: list[str] | None = None
+        pending: list[tuple] = []
+        for clause in _clauses(sentence):
+            if _HISTORY.search(clause):
                 continue
-            table = sorted(named)[0]
-            owners = sorted(e for e, ts in served.items() if table in ts)
-            where = ", ".join(display_name(e) for e in owners) or "no engine"
-            warnings.append(
-                f'Summary attributes {table} ("{text}") to {display_name(engine)}, but no '
-                f"in-scope {display_name(engine)} query touches it (served by {where}): "
-                f"{sentence}"
-            )
-    return warnings
+            refs = _engine_refs(clause, set(served))
+            live = list(dict.fromkeys(e for e, _, _, neg in refs if not neg))
+            mentions = _table_mentions(clause, keys, [(s, t) for _, s, t, _ in refs])
+            if live:
+                for named, _, text, n in mentions:
+                    judge(named, text, n, live, True, sentence)
+                for named, _, text, n in pending:
+                    judge(named, text, n, live, False, sentence)
+                pending = []
+                inherited = live
+            elif inherited:
+                for named, _, text, n in mentions:
+                    judge(named, text, n, inherited, False, sentence)
+            else:
+                pending.extend(mentions)
+    return findings

@@ -34,10 +34,14 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
         present an engine from `eliminated_engines` as part of the target; its work
         now runs on `absorbed_by`. Do not generalise a table to an engine because it
         shares a query group.
-      - Finalize checks this deterministically: a sentence that names a table under an
-        engine none of whose in-scope queries touch it rejects the whole summary, and
-        the report shows the deterministic summary instead (your text is kept in
-        `summary_llm`, the findings in `summary_validation_warnings`)
+      - Finalize checks this deterministically, clause by clause: a table named in a
+        clause must be served by an engine named in that clause (or in the clause it
+        continues). A clear mismatch (the table written as `wp_x`/`db.x` or as a
+        multi-word name like "post meta" in a clause naming a single engine, or an
+        eliminated engine named as the server) rejects the whole summary and the
+        report shows a deterministic summary instead. Your text is kept in
+        `summary_llm` and every finding in `summary_validation_warnings`; weaker
+        findings are recorded without rejecting
       - Reference the deterministic summary provided for factual grounding
       - No confidence scores, no cost figures (those are in the report)
       - Mention specific AWS service names (DynamoDB, OpenSearch Service, etc.)

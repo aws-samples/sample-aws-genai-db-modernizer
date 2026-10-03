@@ -101,9 +101,10 @@ def run_synthesis_deterministic(
     eliminated = eliminated_engines(effective, reality_check_output)
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).
-    known_tables: set[str] = {
-        str(t["table_id"]) for t in data.source_tables if t.get("table_id")
-    } | {m["source_table"] for m in table_mappings}
+    known_tables: list[str] = sorted(
+        {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+        | {m["source_table"] for m in table_mappings}
+    )
     engine_tables = engine_table_scope(
         data.assignment, data.source_queries, table_mappings, known_tables
     )
@@ -224,9 +225,10 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
     """Merge the LLM-generated executive summary into the deterministic result.
 
     If ``llm_output`` contains an ``executive_summary`` it is post-checked against the
-    effective assignment (``check_summary_grounding``). A grounded summary replaces
-    the deterministic fallback. A summary that attributes a table to an engine none of
-    whose in-scope queries touch it is rejected: ``executive_summary`` stays
+    effective assignment (``check_summary_grounding``). It is used unless the check
+    finds a high-confidence mis-attribution (a table named under an engine none of
+    whose in-scope queries touch it); lower-confidence findings are only recorded. On
+    rejection: ``executive_summary`` stays
     deterministic, and the LLM text plus the warnings are kept for audit in
     ``summary_llm`` / ``summary_validation_warnings`` (#205). ``summary_source``
     records which one the customer sees: ``llm`` or ``deterministic_fallback``.
@@ -241,17 +243,17 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
         engine_tables = engine_table_scope(
             None, [], deterministic_result.get("table_mappings") or [], set()
         )
-    warnings = check_summary_grounding(
+    findings = check_summary_grounding(
         str(llm_summary or ""),
         engine_tables,
         deterministic_result.get("database_name", ""),
         deterministic_result.get("known_tables"),
     )
     deterministic_result["summary_llm"] = llm_summary
-    deterministic_result["summary_validation_warnings"] = warnings
-    if warnings:
-        for w in warnings:
-            print(f"[synthesis] WARNING: LLM summary rejected: {w}")
+    deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
+    for f in findings:
+        print(f"[synthesis] WARNING: {f['message']}")
+    if any(f["high_confidence"] for f in findings):
         deterministic_result["executive_summary"] = deterministic_result["summary"]
         deterministic_result["summary_source"] = "deterministic_fallback"
     else:
