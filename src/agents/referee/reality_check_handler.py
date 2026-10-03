@@ -32,7 +32,7 @@ from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
     next_assignment_version,
-    reality_check_is_current,
+    reality_check_run_for_lineage,
     resolve_reality_check_input_version,
 )
 
@@ -94,10 +94,22 @@ def run_reality_check_deterministic(
     for qa in assignment.get("query_assignments", []):
         before_distribution[qa["assigned_engine"]] += 1
 
-    # Run the core reality check (deterministic consolidation logic)
+    # Run the core reality check (deterministic consolidation logic). Queries the
+    # customer re-routed (customer_override) are not consolidation candidates:
+    # Reality Check never moves them, so they are held out and re-attached as-is.
+    all_qas = assignment.get("query_assignments", [])
+    pinned = [qa for qa in all_qas if qa.get("customer_override")]
+    candidates = [qa for qa in all_qas if not qa.get("customer_override")]
     result = run_reality_check(
-        assignment, triage, analysis_outputs, collector_output, query_capabilities
+        {**assignment, "query_assignments": candidates} if pinned else assignment,
+        triage,
+        analysis_outputs,
+        collector_output,
+        query_capabilities,
     )
+    if pinned:
+        revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
+        result["revised_assignments"] = [revised_by_id.get(qa["query_id"], qa) for qa in all_qas]
 
     # Count queries per engine after reality check
     after_distribution: dict[str, int] = defaultdict(int)
@@ -240,10 +252,12 @@ def run_reality_check_handler(
 
     Args:
         assignment_version: the version to consolidate. ``None`` (the default)
-                  resolves it with ``resolve_reality_check_input_version`` and
-                  skips the run when ``reality_check_is_current`` (that input was
-                  already consolidated and nothing newer arrived). An explicit
-                  version always runs and still writes to the next version.
+                  skips the run when Reality Check already ran for the current
+                  lineage (``reality_check_run_for_lineage``: its own output, or a
+                  customer edit made after it), else resolves the input with
+                  ``resolve_reality_check_input_version``. An explicit version
+                  always runs and still writes to the next version. Either way,
+                  queries with ``customer_override`` are never moved.
         llm_mode: "bedrock" (default) — validate consolidations + generate executive summary
                   "external" — write LLM input to store and mark as awaiting; the
                                revised assignment is written by the finalize step
@@ -251,26 +265,24 @@ def run_reality_check_handler(
 
     Returns ``{"status", "input_version", "output_version"}``: status is
     ``"complete"``, ``"awaiting_llm"`` (external) or ``"skipped"`` (already
-    current); ``output_version`` is the revised version written (or, when
-    skipped, the existing consolidation), else None.
+    for this lineage); ``output_version`` is the revised version written (or,
+    when skipped, the earlier run's), else None. A run that consolidates nothing
+    writes no version.
     """
     import time
 
     start_time = time.time()
 
     if assignment_version is None:
-        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
-        if reality_check_is_current(store, database_name, job_id):
-            current = next_assignment_version(store, database_name, job_id) - 1
+        previous_run = reality_check_run_for_lineage(store, database_name, job_id)
+        if previous_run is not None:
             print(
-                f"[reality-check] Assignment v{assignment_version} already consolidated "
-                f"into v{current}; nothing new to check — skipping"
+                f"[reality-check] Already ran for this lineage (v{previous_run.input_version}"
+                f" -> {previous_run.output_version or 'unchanged'}); skipping so later "
+                "customer edits are not re-consolidated"
             )
-            return {
-                "status": "skipped",
-                "input_version": assignment_version,
-                "output_version": current,
-            }
+            return _skipped(previous_run)
+        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
 
     print(f"[reality-check] Starting for {database_name} (assignment v{assignment_version})")
 
@@ -361,6 +373,7 @@ def write_reality_check_result(
     Returns the version written, or None when nothing was consolidated (or
     ``write_revision`` is False).
     """
+    _restore_customer_overrides(result)
     consolidated = bool(result["consolidations"]) and write_revision
     # max() guards a store whose listing lags its reads: the revision must land
     # above its own input even then.
@@ -386,6 +399,11 @@ def write_reality_check_result(
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"
     store.write_json(output_key, output.model_dump(mode="json"))
+    awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
+    if write_revision and store.exists(awaiting_key):
+        # A completed run supersedes any external-mode preview; from here on the
+        # output counts as this lineage's run (reality_check_run_for_lineage).
+        store.write_json(awaiting_key, {"status": "finalized"})
 
     if new_version is None:
         if not result["consolidations"]:
@@ -436,19 +454,16 @@ def finalize_reality_check(
     ``scripts/run_assessment.py --resume-reality-check`` and
     ``scripts/run_reality_check.py --finalize``. Resolves the input version the
     same way as :func:`run_reality_check_handler` (so it consolidates the version
-    the external run prepared) and is a no-op when that input was already
-    consolidated, so finalizing twice never writes a duplicate version.
+    the external run prepared) and is a no-op when Reality Check already ran for
+    the lineage, so finalizing twice never writes a duplicate version.
 
     Returns the same summary shape as :func:`run_reality_check_handler`.
     """
     if assignment_version is None:
+        previous_run = reality_check_run_for_lineage(store, database_name, job_id)
+        if previous_run is not None:
+            return _skipped(previous_run)
         assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
-        if reality_check_is_current(store, database_name, job_id):
-            return {
-                "status": "skipped",
-                "input_version": assignment_version,
-                "output_version": next_assignment_version(store, database_name, job_id) - 1,
-            }
 
     det = run_reality_check_deterministic(job_id, database_name, store, assignment_version)
     result = apply_reality_check_llm_output(det, llm_response)
@@ -465,6 +480,48 @@ def finalize_reality_check(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _skipped(previous_run) -> dict:
+    """Summary for a run skipped because Reality Check already ran for the lineage."""
+    return {
+        "status": "skipped",
+        "input_version": previous_run.input_version,
+        "output_version": previous_run.output_version,
+    }
+
+
+def _restore_customer_overrides(result: dict) -> None:
+    """Put every ``customer_override`` query back on the engine the customer chose.
+
+    Defense in depth behind the candidate exclusion in
+    :func:`run_reality_check_deterministic`: the LLM corrections and the sanity
+    sweep operate on the full revised list and could still move one. Mutates
+    ``result`` and recomputes ``after_distribution`` when anything was restored.
+    """
+    chosen = {
+        qa["query_id"]: qa
+        for qa in result["assignment"].get("query_assignments", [])
+        if qa.get("customer_override")
+    }
+    if not chosen:
+        return
+    restored = 0
+    revised: list[dict] = []
+    for qa in result["revised_assignments"]:
+        original = chosen.get(qa.get("query_id"))
+        if original is not None and qa.get("assigned_engine") != original["assigned_engine"]:
+            qa = {**qa, "assigned_engine": original["assigned_engine"]}
+            restored += 1
+        revised.append(qa)
+    if not restored:
+        return
+    print(f"[reality-check] Kept {restored} customer-overridden queries on their chosen engine")
+    result["revised_assignments"] = revised
+    after: dict[str, int] = defaultdict(int)
+    for qa in revised:
+        after[qa["assigned_engine"]] += 1
+    result["after_distribution"] = dict(after)
 
 
 def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:

@@ -106,8 +106,10 @@ def _dispatch_agent():
     elif AGENT_TYPE == "reality-check":
         from src.agents.referee.reality_check_handler import run_reality_check_handler
 
-        assignment_ver = int(ASSIGNMENT_VERSION) if ASSIGNMENT_VERSION else 1
-        run_reality_check_handler(JOB_ID, DATABASE_NAME, store, assignment_version=assignment_ver)
+        # Unset -> the handler resolves the input and skips when Reality Check
+        # already ran for this lineage (issue #189); never force-consolidate v1.
+        rc_ver = int(ASSIGNMENT_VERSION) if ASSIGNMENT_VERSION else None
+        run_reality_check_handler(JOB_ID, DATABASE_NAME, store, assignment_version=rc_ver)
     elif AGENT_TYPE == "schema-design":
         target_type = os.environ.get("TARGET_TYPE", "")
         if not target_type:

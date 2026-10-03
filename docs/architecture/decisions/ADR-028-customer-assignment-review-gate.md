@@ -345,37 +345,54 @@ superseded by `finalize_assignment_review`. Structured additions live in
 ## Amendment (2026-10-02): Reality Check input/output versions (issue #189)
 
 **Status:** Accepted. **Trigger:** every Reality Check caller pinned
-`assignment_version=1` and wrote `v{N+1}`, so after an ADR-029 re-entry (v3) a
-re-run consolidated the stale v1 and overwrote the earlier consolidation at v2.
+`assignment_version=1` and wrote `v{N+1}`, so a re-run consolidated the stale
+v1 and overwrote the earlier consolidation at v2.
 
 The "highest committed version" rule (Decision C) is unchanged for every
-consumer. Reality Check, the one stage that both reads and writes the lineage,
-gets its own rule in `src/storage/assignment_versioning.py`:
+consumer. Reality Check is the one stage that both reads and writes the
+lineage, so it gets its own rules in `src/storage/assignment_versioning.py`.
 
-- **Input** — `resolve_reality_check_input_version()`: the highest version that
-  Reality Check did not produce itself. Coerced to 1 when none exists (ADR-026),
-  so the existing missing-`assignment/v1` error fires.
-- **Marker** — `is_reality_check_produced()`: the `source = reality_check`
+**Reality Check runs once per lineage.** The order is Reality Check -> review
+gate -> schema design, and ADR-029 re-entry reopens the gate and re-dispatches
+schema design and synthesis, not Reality Check. A customer edit made after
+Reality Check is deliberate and must never be consolidated again.
+
+- **Marker:** `is_reality_check_produced()` checks for the `source = reality_check`
   stamp. `reality_check_applied` is not a marker on its own, because override
-  writers copy it forward. Legacy artifacts without `source` count as Reality
-  Check output when they carry `reality_check_applied` and no
-  `previous_version` (the pre-ADR-028 writer never set it; every override writer
-  always did).
-- **Output** — always `next_assignment_version()`, stamped
-  `previous_version = <input>`; `reality-check/output.json` records it as
-  `output_assignment_version` (contract 1.2) next to `source_assignment_version`.
-- **Re-run** — `reality_check_is_current()`: when the newest version is a Reality
-  Check output, its input has already been consolidated and nothing newer has
-  arrived, so a run that leaves the input to be resolved does nothing. Writing a
-  second consolidation of the same input would only advance the effective version
-  and make every schema output stale. An explicit input version always runs (and
-  still writes the next free version). This is also what makes the external-mode
-  finalize step safe to repeat.
-- In `llm_mode="external"` the revised assignment is written by the finalize
-  step only, so a provisional consolidation never takes a version number.
+  writers copy it forward. A legacy artifact with no `source` counts as Reality
+  Check output when it has `reality_check_applied` and a null `previous_version`.
+  The pre-ADR-028 writer spread a model dump in which `previous_version` was
+  always null, while override writers always set an int.
+- **Already ran:** `reality_check_run_for_lineage()` / `reality_check_is_current()`
+  walk back from the newest version along `previous_version`, through customer
+  edits (`source = customer_gate`, or a legacy int `previous_version`). The run
+  counts as done if the walk reaches either of these:
+  - a Reality Check output;
+  - the version a completed `reality-check/output.json` checked without
+    consolidating anything (`output_assignment_version` null).
+
+  An external-mode preview (`awaiting_llm.json` still `awaiting_llm`) does not
+  count. A fresh assignment resolution, for example after the assignment phase
+  is re-run, starts a new lineage.
+- **Default runs** (no explicit version) skip when the run is already done. This
+  also makes repeated finalize calls and container retries no-ops. Otherwise the
+  input is `resolve_reality_check_input_version()`, the highest version Reality
+  Check did not produce. It is coerced to 1 when none exists (ADR-026), so the
+  existing missing-`assignment/v1` error fires.
+- **Output:** always `next_assignment_version()`, stamped
+  `previous_version = <input>`. `reality-check/output.json` records it as
+  `output_assignment_version` (contract 1.2), next to `source_assignment_version`.
+  A run that consolidates nothing writes no version.
+- **Customer overrides are never moved**, not even by an explicit-version run.
+  Queries with `customer_override` are left out of the consolidation candidates.
+  The writer then puts any that the LLM corrections or the sanity sweep moved
+  back on the engine the customer chose.
+- In `llm_mode="external"`, only the finalize step writes the revised
+  assignment, so a provisional consolidation never takes a version number.
 
 Downstream is unchanged: schema design, synthesis and the report read
-`resolve_downstream_assignment_version()` (the highest version), so after
-re-entry v3 and Reality Check v4 they read v4. The ATX schema/synthesis
-subagents and the deliverables renderer now resolve an absent
-`assignment_version` the same way instead of defaulting to 1.
+`resolve_downstream_assignment_version()`, which returns the highest version.
+After Reality Check v2 and a gate edit v3, they read v3. After a re-resolution
+v3 and Reality Check v4, they read v4. The ATX schema/synthesis subagents, the
+container entrypoint and the deliverables renderer resolve an absent version the
+same way, instead of defaulting to 1 (or to 0 for `run_synthesis_core`).

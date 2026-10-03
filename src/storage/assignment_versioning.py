@@ -19,7 +19,7 @@ policy themselves; this module reports the raw truth (0 when nothing exists).
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 
 class _Lister(Protocol):
@@ -102,6 +102,7 @@ def next_assignment_version(store: _Lister, database_name: str, job_id: str) -> 
 
 
 _REALITY_CHECK_SOURCE = "reality_check"
+_CUSTOMER_GATE_SOURCE = "customer_gate"
 
 
 def is_reality_check_produced(assignment: dict) -> bool:
@@ -114,14 +115,31 @@ def is_reality_check_produced(assignment: dict) -> bool:
     consolidated version it edits.
 
     Legacy artifacts (written before ``source`` existed) fall back to the shape
-    each writer produced then: the old Reality Check writer set
-    ``reality_check_applied`` but never ``previous_version``, while every override
-    writer always set ``previous_version``.
+    each writer produced then: the old Reality Check writer spread a model dump
+    whose ``previous_version`` was always null and set ``reality_check_applied``,
+    while every override writer always set ``previous_version`` to an int.
     """
     source = assignment.get("source")
     if source is not None:
         return bool(source == _REALITY_CHECK_SOURCE)
-    return bool(assignment.get("reality_check_applied")) and "previous_version" not in assignment
+    return bool(assignment.get("reality_check_applied")) and (
+        assignment.get("previous_version") is None
+    )
+
+
+def _is_override_edit(assignment: dict) -> bool:
+    """Return True when an assignment version is an edit of an earlier version.
+
+    Override writers (the customer gate, REST and ATX) stamp
+    ``source = customer_gate`` and always set ``previous_version`` to the version
+    they edited. Legacy artifacts without ``source`` are recognised by that int
+    ``previous_version``. A fresh assignment resolution is never an edit: it
+    starts a new lineage.
+    """
+    source = assignment.get("source")
+    if source is not None:
+        return bool(source == _CUSTOMER_GATE_SOURCE)
+    return isinstance(assignment.get("previous_version"), int)
 
 
 def _versions_newest_first(
@@ -139,10 +157,12 @@ def resolve_reality_check_input_version(store: _ListReader, database_name: str, 
 
     Rule: the highest assignment version that Reality Check did not produce
     itself (see :func:`is_reality_check_produced`). On a fresh job that is the v1
-    the assignment resolver wrote; after a re-entry (ADR-029) or a customer-gate
-    edit it is that newer version, so Reality Check consolidates what the
-    customer approved instead of the stale v1. Reality Check's own consolidations
-    are never fed back into it.
+    the assignment resolver wrote; after the assignment phase re-runs it is that
+    newer resolution. Reality Check's own consolidations are never fed back into
+    it. Callers that resolve the input should first check
+    :func:`reality_check_is_current`: when Reality Check already ran for
+    the current lineage (including a customer edit made after it), it must not
+    run again.
 
     Its output always goes to :func:`next_assignment_version`, so an existing
     version is never overwritten.
@@ -156,23 +176,103 @@ def resolve_reality_check_input_version(store: _ListReader, database_name: str, 
     return 1
 
 
-def reality_check_is_current(store: _ListReader, database_name: str, job_id: str) -> bool:
-    """Return True when the newest assignment version is a Reality Check output.
+class RealityCheckRun(NamedTuple):
+    """A Reality Check run already recorded for the current lineage."""
 
-    Because Reality Check reads the newest non-Reality-Check version and writes
-    the next version, a newest version produced by Reality Check means its input
-    (:func:`resolve_reality_check_input_version`) has already been consolidated
-    and nothing newer arrived since. Re-running Reality Check without an explicit
-    input version is then a no-op: writing another consolidation of the same
-    input would only advance the effective version, mark every schema output
-    stale (:func:`stale_schema_versions`) and force a needless re-dispatch.
+    input_version: int
+    """The assignment version that run consolidated."""
+    output_version: int | None
+    """The version it wrote, or None when it consolidated nothing."""
 
-    False on a fresh job, after a re-entry/customer-gate version, when the last
-    run found nothing to consolidate (it wrote no version), or when nothing exists.
+
+def _completed_reality_check_output(store: _Reader, database_name: str, job_id: str) -> dict:
+    """Return ``reality-check/output.json`` if a completed run wrote it, else ``{}``.
+
+    An external-mode run writes a deterministic preview of the output before the
+    LLM response arrives, with ``reality-check/awaiting_llm.json`` at
+    ``status = awaiting_llm`` until the finalize step completes. That preview does
+    not count as a run.
     """
-    for _version, assignment in _versions_newest_first(store, database_name, job_id):
-        return is_reality_check_produced(assignment)
-    return False
+    prefix = f"{database_name}/{job_id}/reality-check"
+    awaiting_key = f"{prefix}/awaiting_llm.json"
+    if store.exists(awaiting_key) and (
+        store.read_json(awaiting_key).get("status") == "awaiting_llm"
+    ):
+        return {}
+    output_key = f"{prefix}/output.json"
+    return store.read_json(output_key) if store.exists(output_key) else {}
+
+
+def reality_check_run_for_lineage(
+    store: _ListReader, database_name: str, job_id: str
+) -> RealityCheckRun | None:
+    """Return the Reality Check run the effective assignment descends from, if any.
+
+    Walks from the newest version back along ``previous_version`` through
+    override edits (:func:`_is_override_edit`). The walk finds a run when it
+    reaches:
+
+    - a version Reality Check produced: that run consolidated its
+      ``previous_version`` into it; or
+    - the version a completed ``reality-check/output.json`` records as its
+      ``source_assignment_version`` with no output version: that run found
+      nothing to consolidate.
+
+    It returns None when it reaches a version that is neither and is not an edit
+    (a fresh assignment resolution, which starts a new lineage), or a missing
+    version.
+
+    The pipeline order is Reality Check -> customer review gate -> schema design
+    (ADR-028), and ADR-029 re-entry reopens the gate, not Reality Check. So a
+    customer edit that descends from a run was made *after* consolidation, on
+    purpose. Consolidating it again would undo the customer's routing.
+    """
+    newest = next(iter(_versions_newest_first(store, database_name, job_id)), None)
+    if newest is None:
+        return None
+    rc_output = _completed_reality_check_output(store, database_name, job_id)
+    rc_source = rc_output.get("source_assignment_version")
+    rc_wrote = rc_output.get("output_assignment_version")
+
+    version: int | None = newest[0]
+    seen: set[int] = set()
+    while version is not None and version not in seen:
+        seen.add(version)
+        path = assignment_artifact_path(database_name, job_id, version)
+        if not store.exists(path):
+            return None
+        assignment = store.read_json(path)
+        if is_reality_check_produced(assignment):
+            previous = assignment.get("previous_version")
+            if not isinstance(previous, int):
+                # Legacy Reality Check output: its input is the one the output records.
+                previous = rc_source if isinstance(rc_source, int) else version - 1
+            return RealityCheckRun(input_version=previous, output_version=version)
+        if rc_output and version == rc_source and rc_wrote is None:
+            return RealityCheckRun(input_version=version, output_version=None)
+        if not _is_override_edit(assignment):
+            return None
+        previous = assignment.get("previous_version")
+        version = previous if isinstance(previous, int) else None
+    return None
+
+
+def reality_check_is_current(store: _ListReader, database_name: str, job_id: str) -> bool:
+    """Return True when Reality Check already ran for the current lineage.
+
+    Reality Check runs once per lineage. True when the newest version is a
+    Reality Check output, a customer edit that descends from one, or a version
+    (or customer edit of a version) a completed run checked and left unchanged
+    (:func:`reality_check_run_for_lineage`). A run that resolves its own input is
+    then a no-op: re-consolidating would either duplicate the existing
+    consolidation (advancing the effective version and marking every schema
+    output stale, :func:`stale_schema_versions`) or undo the customer's edits.
+
+    False on a fresh job, after the assignment phase re-resolves (a new
+    lineage), while an external-mode run awaits its finalize step, or when
+    nothing exists.
+    """
+    return reality_check_run_for_lineage(store, database_name, job_id) is not None
 
 
 def stale_schema_versions(store: _Lister, database_name: str, job_id: str) -> dict[str, int]:

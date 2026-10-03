@@ -51,8 +51,16 @@ def main() -> None:
 
     run_assignment_resolver(args.job_id, args.db, store)
 
-    # Read results
-    assignment_path = f"{args.db}/{args.job_id}/assignment/v1/assignment.json"
+    # Read results: the resolver writes next_assignment_version (v1 on a fresh
+    # job, v3+ on a re-run), so read the version it just wrote.
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_downstream_assignment_version,
+    )
+
+    assignment_path = assignment_artifact_path(
+        args.db, args.job_id, resolve_downstream_assignment_version(store, args.db, args.job_id)
+    )
     if not store.exists(assignment_path):
         _error("Assignment output not produced. Check logs for errors.")
 

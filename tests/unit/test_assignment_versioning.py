@@ -12,10 +12,12 @@ from datetime import UTC, datetime
 
 from src.contracts.assignment_models import Assignment, AssignmentSource, AssignmentStatus
 from src.storage.assignment_versioning import (
+    RealityCheckRun,
     assignment_artifact_path,
     is_reality_check_produced,
     next_assignment_version,
     reality_check_is_current,
+    reality_check_run_for_lineage,
     resolve_downstream_assignment_version,
     resolve_effective_assignment_version,
     resolve_reality_check_input_version,
@@ -189,11 +191,35 @@ def _versioned(*docs: dict) -> _DictStore:
 
 
 _RESOLUTION = {"source": "assignment_resolution"}
-_GATE = {"source": "customer_gate", "previous_version": 2, "reality_check_applied": True}
+_RC_OUTPUT_KEY = "db/job/reality-check/output.json"
+
+
+def _gate(previous: int) -> dict:
+    return {"source": "customer_gate", "previous_version": previous, "reality_check_applied": True}
 
 
 def _rc(previous: int) -> dict:
     return {"source": "reality_check", "previous_version": previous, "reality_check_applied": True}
+
+
+def _legacy_dump(version: int) -> dict:
+    """A pre-ADR-028 artifact: a full model dump without ``source``.
+
+    ``model_dump`` always includes ``previous_version`` (null unless set), which
+    is the shape the old Reality Check writer spread forward.
+    """
+    d = Assignment(
+        job_id="job",
+        version=version,
+        status=AssignmentStatus.AUTO_GENERATED,
+        timestamp=datetime.now(UTC),
+        query_assignments=[],
+        table_assignments=[],
+        co_dependency_groups=[],
+        validation_warnings=[],
+    ).model_dump(mode="json")
+    d.pop("source")
+    return d
 
 
 class TestIsRealityCheckProduced:
@@ -204,20 +230,22 @@ class TestIsRealityCheckProduced:
         assert is_reality_check_produced(_RESOLUTION) is False
         # A customer-gate copy of a consolidated version carries the copied
         # reality_check_applied marker; the explicit source wins.
-        assert is_reality_check_produced(_GATE) is False
+        assert is_reality_check_produced(_gate(2)) is False
 
-    def test_legacy_reality_check_write_without_source(self) -> None:
-        # Pre-ADR-028 Reality Check wrote reality_check_applied but neither
-        # `source` nor `previous_version`.
-        assert is_reality_check_produced({"reality_check_applied": True}) is True
+    def test_legacy_reality_check_write_has_null_previous_version(self) -> None:
+        # Pre-ADR-028 Reality Check spread a model dump (previous_version: null)
+        # and added reality_check_applied.
+        legacy = {**_legacy_dump(2), "reality_check_applied": True}
+        assert "previous_version" in legacy and legacy["previous_version"] is None
+        assert is_reality_check_produced(legacy) is True
 
     def test_legacy_override_of_consolidated_version_is_not_reality_check(self) -> None:
         # Legacy REST overrides always set previous_version and copied the marker.
-        legacy_override = {"reality_check_applied": True, "previous_version": 2}
+        legacy_override = {**_legacy_dump(3), "reality_check_applied": True, "previous_version": 2}
         assert is_reality_check_produced(legacy_override) is False
 
     def test_legacy_resolution_without_marker(self) -> None:
-        assert is_reality_check_produced({}) is False
+        assert is_reality_check_produced(_legacy_dump(1)) is False
 
 
 class TestResolveRealityCheckInputVersion:
@@ -228,12 +256,8 @@ class TestResolveRealityCheckInputVersion:
         store = _versioned(_RESOLUTION, _rc(1))
         assert resolve_reality_check_input_version(store, "db", "job") == 1
 
-    def test_reentry_version_above_consolidation_is_the_input(self) -> None:
-        store = _versioned(_RESOLUTION, _rc(1), _GATE)
-        assert resolve_reality_check_input_version(store, "db", "job") == 3
-
-    def test_after_second_consolidation_input_is_still_the_reentry_version(self) -> None:
-        store = _versioned(_RESOLUTION, _rc(1), _GATE, _rc(3))
+    def test_re_resolution_above_consolidation_is_the_input(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _RESOLUTION)
         assert resolve_reality_check_input_version(store, "db", "job") == 3
 
     def test_no_versions_coerces_to_one(self) -> None:
@@ -246,24 +270,55 @@ class TestResolveRealityCheckInputVersion:
         assert resolve_reality_check_input_version(store, "db", "job") == 1
 
 
-class TestRealityCheckIsCurrent:
-    def test_false_on_fresh_job(self) -> None:
+class TestRealityCheckRunForLineage:
+    def test_none_on_fresh_job(self) -> None:
+        assert reality_check_run_for_lineage(_versioned(_RESOLUTION), "db", "job") is None
         assert reality_check_is_current(_versioned(_RESOLUTION), "db", "job") is False
 
-    def test_true_when_latest_is_consolidation_of_input(self) -> None:
-        assert reality_check_is_current(_versioned(_RESOLUTION, _rc(1)), "db", "job") is True
+    def test_newest_consolidation(self) -> None:
+        run = reality_check_run_for_lineage(_versioned(_RESOLUTION, _rc(1)), "db", "job")
+        assert run == RealityCheckRun(input_version=1, output_version=2)
 
-    def test_false_after_reentry(self) -> None:
-        store = _versioned(_RESOLUTION, _rc(1), _GATE)
+    def test_customer_edit_after_consolidation_is_current(self) -> None:
+        # RC -> gate ordering (ADR-028): the edit was made after Reality Check.
+        store = _versioned(_RESOLUTION, _rc(1), _gate(2), _gate(3))
+        assert reality_check_run_for_lineage(store, "db", "job") == RealityCheckRun(1, 2)
+        assert reality_check_is_current(store, "db", "job") is True
+
+    def test_re_resolution_starts_a_new_lineage(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _gate(2), _RESOLUTION)
         assert reality_check_is_current(store, "db", "job") is False
 
-    def test_false_when_no_versions(self) -> None:
+    def test_run_that_consolidated_nothing_then_customer_edit(self) -> None:
+        store = _versioned(_RESOLUTION, _gate(1))
+        store.artifacts[_RC_OUTPUT_KEY] = {
+            "source_assignment_version": 1,
+            "output_assignment_version": None,
+        }
+        assert reality_check_run_for_lineage(store, "db", "job") == RealityCheckRun(1, None)
+
+    def test_pending_external_preview_is_not_a_run(self) -> None:
+        store = _versioned(_RESOLUTION)
+        store.artifacts[_RC_OUTPUT_KEY] = {"source_assignment_version": 1}
+        store.artifacts["db/job/reality-check/awaiting_llm.json"] = {"status": "awaiting_llm"}
+        assert reality_check_is_current(store, "db", "job") is False
+
+    def test_legacy_consolidation_and_legacy_override(self) -> None:
+        legacy_rc = {**_legacy_dump(2), "reality_check_applied": True}
+        legacy_edit = {**_legacy_dump(3), "reality_check_applied": True, "previous_version": 2}
+        store = _versioned(_legacy_dump(1), legacy_rc, legacy_edit)
+        store.artifacts[_RC_OUTPUT_KEY] = {"source_assignment_version": 1}
+        assert reality_check_run_for_lineage(store, "db", "job") == RealityCheckRun(1, 2)
+
+    def test_none_when_nothing_exists(self) -> None:
         assert reality_check_is_current(_DictStore({}), "db", "job") is False
 
 
-class TestDownstreamReadsLatestConsolidation:
-    def test_downstream_reads_second_consolidation(self) -> None:
-        # Re-entry wrote v3, Reality Check consolidated it to v4: schema design,
-        # synthesis and the report must read v4.
-        store = _versioned(_RESOLUTION, _rc(1), _GATE, _rc(3))
+class TestDownstreamReadsNewestVersion:
+    def test_customer_edit_after_consolidation(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _gate(2))
+        assert resolve_downstream_assignment_version(store, "db", "job") == 3
+
+    def test_consolidation_of_re_resolution(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _RESOLUTION, _rc(3))
         assert resolve_downstream_assignment_version(store, "db", "job") == 4
