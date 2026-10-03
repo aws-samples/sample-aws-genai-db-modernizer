@@ -47,7 +47,10 @@ from pptx.util import Inches, Pt
 # recommended_architecture.databases and schema_designs). ``filtered_risks`` is
 # reused for the same reason the risk count must agree with the decision and
 # engineering reports (issue #201): one filter, one count, everywhere.
-from .renderers import _architecture_engines, filtered_risks
+# ``plural_noun`` is the one place every count+noun string in this deck and in
+# the decision/engineering reports agrees on English count agreement
+# (issue #206).
+from .renderers import _architecture_engines, filtered_risks, plural_noun
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +474,19 @@ def clean_risk_text(description: str) -> tuple[str, str]:
     return " ".join(desc.split()), n_q
 
 
+def _evidence_text(thinnest: dict[str, Any] | None) -> str:
+    """The "N <signal> query/queries in the whole workload" sentence used when
+    the assessment's weakest-confidence engine is backed by just one signal.
+
+    Extracted so the exact #206 regression ("1 session store queries") has a
+    direct unit test independent of building a full ``derive()`` input.
+    """
+    if not thinnest:
+        return "limited supporting evidence"
+    n = thinnest["count"]
+    return f"{n} {short_label(thinnest['name'])} {plural_noun(n, 'query', 'queries')} in the whole workload"
+
+
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     """All deck content, derived from the two artifacts."""
     arch = rep.get("recommended_architecture") or {}
@@ -577,19 +593,15 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             in (next((x.get("targets") or [] for x in signals if x.get("signal") == s["name"]), []))
         ]
         thinnest = min(thin, key=lambda s: (s["count"], s["name"])) if thin else None
-        evidence = (
-            f"{thinnest['count']} {short_label(thinnest['name'])} queries in the whole " f"workload"
-            if thinnest
-            else "limited supporting evidence"
-        )
+        evidence = _evidence_text(thinnest)
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
                 "badge": f"{conf.get(eng, 0):.0f}% confidence",
                 "accent": ENGINE_COLOR.get(eng, ORANGE),
                 "against": (
-                    f"Lowest confidence of the {len(ranking)} engines · {evidence} · "
-                    f"{workload.get(eng, 0):.1f}% of workload"
+                    f"Lowest confidence of the {len(ranking)} {plural_noun(len(ranking), 'engine')} · "
+                    f"{evidence} · {workload.get(eng, 0):.1f}% of workload"
                 ),
                 "action": "Requirement validation pending.",
             }
@@ -599,7 +611,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         decisions.append(
             {
                 "question": f"Scope {ENGINE_LABEL.get(eng, eng)}?",
-                "badge": f"{high_by_engine[eng]} of {len(high)} HIGH risks",
+                "badge": f"{high_by_engine[eng]} of {len(high)} HIGH {plural_noun(len(high), 'risk')}",
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
                     f"Carries the most HIGH risks · {conf.get(eng, 0):.0f}% confidence · "
@@ -612,6 +624,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     if no_move:
         names = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in no_move)
         pct = sum(workload.get(e["engine"], 0) for e in no_move)
+        no_move_high = sum(high_by_engine.get(e["engine"], 0) for e in no_move)
         decisions.append(
             {
                 "question": "Start with the no-migration step?",
@@ -619,7 +632,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": BLUE,
                 "against": (
                     f"{names} · no data migration · "
-                    f"{sum(high_by_engine.get(e['engine'], 0) for e in no_move)} HIGH risks"
+                    f"{no_move_high} HIGH {plural_noun(no_move_high, 'risk')}"
                 ),
                 "action": "Source database remains authoritative; step is reversible.",
             }
@@ -652,10 +665,11 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             continue
         lo = min(conf.get(e["engine"], 0) for e in group)
         n_t = sum(int("".join(ch for ch in str(e["scope"]) if ch.isdigit()) or 0) for e in group)
+        tables_word = plural_noun(n_t, "table")
         note = (
-            f"{n_t} source tables migrate · confidence from {lo:.0f}%"
+            f"{n_t} source {tables_word} migrate · confidence from {lo:.0f}%"
             if group is confident
-            else f"{n_t} source tables · confidence {lo:.0f}% — re-scope after the gate"
+            else f"{n_t} source {tables_word} · confidence {lo:.0f}% — re-scope after the gate"
         )
         waves.append({"engines": group, "accent": accent, "note": note})
     for w in waves:
@@ -744,7 +758,11 @@ def slide_summary(prs, f):
         (f"{f['n_patterns']:,}", "query patterns analyzed", BLUE),
         (f"{len(f.get('waves') or [])}", "migration waves", PURPLE),
         (f"{f['migrated']}", "source tables migrate", GREEN),
-        (f["risk_level"], f"overall risk, {len(f['risks'])} items", _risk_accent(f["risk_level"])),
+        (
+            f["risk_level"],
+            f"overall risk, {len(f['risks'])} {plural_noun(len(f['risks']), 'item')}",
+            _risk_accent(f["risk_level"]),
+        ),
     ]
     for i, (big, small, accent) in enumerate(tiles):
         x = 0.67 + i * 2.62
@@ -792,7 +810,8 @@ def slide_summary(prs, f):
     kept_pct = sum(e.get("workload") or 0 for e in kept)
     footer_note(
         s,
-        f"{f['migrated']} source tables move to a purpose-built engine; "
+        f"{f['migrated']} source {plural_noun(f['migrated'], 'table')} move to a purpose-built "
+        "engine; "
         + (
             f"{' and '.join(ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept)} "
             f"keep {kept_pct:.1f}% of the workload with no data migration. "
@@ -811,9 +830,10 @@ def slide_evidence(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
     a = f["assignment"]
     set_title(s, "Workload Coverage and Engine Assignment")
+    query_count = a.get("query_count", 0)
     set_subtitle(
         s,
-        f"{a.get('query_count', 0):,} production query patterns analyzed, "
+        f"{query_count:,} production query {plural_noun(query_count, 'pattern')} analyzed, "
         f"{a.get('in_scope_count', 0):,} in scope",
     )
 
@@ -830,10 +850,11 @@ def slide_evidence(prs, f):
         y = 2.78 + i * 0.42
         bar(s, left, y + 0.05, 0.16, 0.16, ENGINE_COLOR.get(eng, BLUE))
         tf = textbox(s, left + 0.28, y, 5.6, 0.34)
+        assigned = r.get("assigned_queries", 0)
         para(
             tf,
             f"{ENGINE_LABEL.get(eng, eng)}   {f['workload'].get(eng, 0):.1f}%   ·   "
-            f"{r.get('assigned_queries', 0):,} queries   ·   "
+            f"{assigned:,} {plural_noun(assigned, 'query', 'queries')}   ·   "
             f"{f['conf'].get(eng, 0):.0f}% confidence",
             size=11.5,
             first=True,
@@ -842,10 +863,13 @@ def slide_evidence(prs, f):
     card(s, 6.60, 2.72, 5.5, 2.10, BLUE)
     tf = textbox(s, 6.85, 2.86, 5.05, 1.85)
     para(tf, "Basis of the analysis", size=11.0, bold=True, color=BLUE, first=True)
+    co_dep = a.get("co_dependency_groups", 0)
     for line in (
-        f"{a.get('in_scope_count', 0):,} of {a.get('query_count', 0):,} query patterns in scope",
-        f"{f['n_tables']} tables mapped to a named target, each with its own confidence score",
-        f"{a.get('co_dependency_groups', 0)} co-dependency groups — table sets that must "
+        f"{a.get('in_scope_count', 0):,} of {query_count:,} query "
+        f"{plural_noun(query_count, 'pattern')} in scope",
+        f"{f['n_tables']} {plural_noun(f['n_tables'], 'table')} mapped to a named target, each "
+        "with its own confidence score",
+        f"{co_dep} co-dependency {plural_noun(co_dep, 'group')} — table sets that must "
         "move together",
     ):
         para(tf, "•  " + line, size=11.5, color=PAPER)
@@ -895,7 +919,14 @@ def slide_workload(prs, f):
     set_subtitle(s, "  ·  ".join(bits))
 
     tf = textbox(s, 0.67, BODY_TOP, 4.6, 0.3)
-    para(tf, f"OPERATION MIX  ({n:,} patterns)", size=9.5, bold=True, color=MUTED, first=True)
+    para(
+        tf,
+        f"OPERATION MIX  ({n:,} {plural_noun(n, 'pattern')})",
+        size=9.5,
+        bold=True,
+        color=MUTED,
+        first=True,
+    )
     op_colors = {"SELECT": BLUE, "UPDATE": PURPLE, "DELETE": PINK, "OTHER": MUTED, "INSERT": GREEN}
     biggest = f["ops"][0][1] if f["ops"] else 1
     for i, (op, cnt) in enumerate(f["ops"][:5]):
@@ -937,7 +968,7 @@ def slide_workload(prs, f):
     para(tf, "Table fan-out", size=10.5, bold=True, color=GREEN, first=True)
     para(
         tf,
-        f"{f['fan1']:,} queries touch a single table "
+        f"{f['fan1']:,} {plural_noun(f['fan1'], 'query', 'queries')} touch a single table "
         f"({f['fan1'] / f['n_patterns'] * 100:.1f}%). Only {f['fan3']:,} touch three or more "
         f"({f['fan3'] / f['n_patterns'] * 100:.1f}%), and just {f['n_max_fan']} reach "
         f"{f['max_fan']}.",
@@ -965,13 +996,15 @@ def slide_decisions(prs, f):
     d = f["decisions"]
     set_title(s, "Engine Confidence and Open Decisions")
     weak = min(f["conf"].items(), key=lambda kv: (kv[1], kv[0])) if f["conf"] else None
+    n_ranking = len(f["ranking"])
+    engines_word = plural_noun(n_ranking, "engine")
     set_subtitle(
         s,
         (
-            f"{len(f['ranking'])} recommended engines  ·  lowest confidence "
+            f"{n_ranking} recommended {engines_word}  ·  lowest confidence "
             f"{ENGINE_LABEL.get(weak[0], weak[0])} at {weak[1]:.0f}%"
             if weak
-            else f"{len(f['ranking'])} recommended engines"
+            else f"{n_ranking} recommended {engines_word}"
         ),
     )
 
@@ -1038,10 +1071,11 @@ def slide_decisions(prs, f):
     )
     if f["high_by_engine"]:
         worst = sorted(f["high_by_engine"].items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        n_high = len(f["high"])
         para(
             tf,
-            f"{worst[1]} of the {len(f['high'])} HIGH risks sit on "
-            f"{ENGINE_LABEL.get(worst[0], worst[0])} alone.",
+            f"{worst[1]} of the {n_high} HIGH {plural_noun(n_high, 'risk')} "
+            f"{plural_noun(n_high, 'sits', 'sit')} on {ENGINE_LABEL.get(worst[0], worst[0])} alone.",
             size=11.0,
             bold=True,
             color=PINK,
@@ -1056,9 +1090,13 @@ def slide_risk(prs, f):
     mix = ", ".join(
         f"{f['sev'][k]} {k}" for k in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if f["sev"].get(k)
     )
-    sub = f"{len(f['risks'])} risks: {mix}"
+    n_risks = len(f["risks"])
+    sub = f"{n_risks} {plural_noun(n_risks, 'risk')}: {mix}"
     if f["one_root_cause"]:
-        sub += f"  ·  all {n_high} HIGH risks are {f['high_type']}"
+        sub += (
+            f"  ·  all {n_high} HIGH {plural_noun(n_high, 'risk')} "
+            f"{plural_noun(n_high, 'is', 'are')} {f['high_type']}"
+        )
     set_subtitle(s, sub)
 
     present = [
@@ -1134,7 +1172,7 @@ def slide_sequencing(prs, f):
         stats = (
             f"{w['workload']:.1f}% workload",
             f"{min(f['conf'].get(e['engine'], 0) for e in w['engines']):.0f}% confidence",
-            f"{w['high']} HIGH risk" + ("" if w["high"] == 1 else "s"),
+            f"{w['high']} HIGH {plural_noun(w['high'], 'risk')}",
         )
         for j, val in enumerate(stats):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)
@@ -1163,10 +1201,14 @@ def slide_sequencing(prs, f):
     card(s, 0.67, y + 0.08, 11.43, 0.98, GREEN)
     tf = textbox(s, 0.90, y + 0.17, 11.0, 0.85)
     para(tf, "Sequencing constraints", size=10.5, bold=True, color=GREEN, first=True, space_after=2)
+    co_dep = f["assignment"].get("co_dependency_groups", 0)
+    n_tradeoffs = f["n_tradeoffs"]
     para(
         tf,
-        f"{f['assignment'].get('co_dependency_groups', 0)} co-dependency groups constrain "
-        f"wave boundaries; {f['n_tradeoffs']} trade-offs are documented in the Engineering "
+        f"{co_dep} co-dependency {plural_noun(co_dep, 'group')} "
+        f"{plural_noun(co_dep, 'constrains', 'constrain')} wave boundaries; "
+        f"{n_tradeoffs} {plural_noun(n_tradeoffs, 'trade-off')} "
+        f"{plural_noun(n_tradeoffs, 'is', 'are')} documented in the Engineering "
         f"Report. Later waves are re-scoped from wave 1's measurements.",
         size=11.5,
         color=WHITE,

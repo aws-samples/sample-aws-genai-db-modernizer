@@ -42,6 +42,24 @@ def artifact_stem(
     return f"{db}_{artifact}_{job_id[:8]}_{day}"
 
 
+def plural_noun(n: Any, singular: str, plural: str | None = None) -> str:
+    """The correctly agreed noun for a count, e.g. ``f"{n} {plural_noun(n, 'risk')}"``.
+
+    Every count+noun string across the decision report, engineering report and
+    executive summary deck must agree on the English singular/plural rule.
+    Before this helper existed, each call site wrote its own — most just hardcoded
+    the plural form, which is how the deck printed "1 session store queries"
+    (issue #206). Composing the count and the noun is left to the caller (who may
+    need ``:,`` thousands separators or other formatting around the number); this
+    only decides which form of the word to use.
+    """
+    try:
+        is_one = float(n) == 1
+    except (TypeError, ValueError):
+        is_one = False
+    return singular if is_one else (plural or f"{singular}s")
+
+
 def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
@@ -195,10 +213,12 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         if role == "Migration target":
             n = src_tables.get(eng)
             scope = (
-                f"{n} tables" if n is not None else (f"{objs} target objects" if objs else "\u2014")
+                f"{n} {plural_noun(n, 'table')}"
+                if n is not None
+                else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
             )
         elif role == "Cache layer":
-            scope = f"{objs} key designs" if objs else "cache"
+            scope = f"{objs} key {plural_noun(objs, 'design')}" if objs else "cache"
         elif role == "Retained":
             scope = "source schema retained"
         elif role == "Evaluated":
@@ -542,7 +562,7 @@ def render_decision_report_html(
         out.append(
             f"<tr><td colspan=2>Total</td>"
             f"<td>{total_wl:.0f}%</td>"
-            f"<td>{migrated} tables migrate</td>"
+            f"<td>{migrated} {plural_noun(migrated, 'table')} migrate</td>"
             f"<td>{_fmt_usd(total_cost)}</td></tr>"
         )
         out.append("</tbody></table></div></div>")
@@ -562,7 +582,7 @@ def render_decision_report_html(
             )
         if migr:
             note_bits.append(
-                f"The migration moves the {migrated} tables assigned to "
+                f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned to "
                 f"{', '.join(esc(x) for x in migr)}; the per-engine costs above reconcile to the "
                 "projected total."
             )
@@ -585,7 +605,8 @@ def render_decision_report_html(
             )
             types_txt = ", ".join(types) if types else "several areas"
             out.append(
-                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} migration risks identified "
+                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} migration "
+                f"{plural_noun(len(risks), 'risk')} identified "
                 f"({hi} high, {med} medium) across {esc(types_txt)}. The full risk register, with "
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"
@@ -709,7 +730,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     if mappings:
         out += [
-            f"## Migration map ({len(mappings)} tables)",
+            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')})",
             "",
             "| Source table | Target engine | Target | Pattern | Confidence |",
             "|---|---|---|---|---|",
@@ -729,9 +750,11 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out += ["## Target schemas by engine", ""]
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
+            n_aps = dz.get("access_pattern_count", 0)
             out += [
-                f"### {escaping.md_text(eng)} ({len(tables)} target objects, "
-                f"{dz.get('access_pattern_count', 0)} access patterns)",
+                f"### {escaping.md_text(eng)} ({len(tables)} target "
+                f"{plural_noun(len(tables), 'object')}, "
+                f"{n_aps} access {plural_noun(n_aps, 'pattern')})",
                 "",
             ]
             if tables:
@@ -785,7 +808,8 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 out += [er, ""]
             elif tables:
                 out += [
-                    f"_ER diagram omitted ({len(tables)} target objects); see the table above._",
+                    f"_ER diagram omitted ({len(tables)} target "
+                    f"{plural_noun(len(tables), 'object')}); see the table above._",
                     "",
                 ]
 
