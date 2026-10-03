@@ -14,9 +14,9 @@ path, and stamp non-reproducible PDF dates. reportlab is ~2 MB and, with
 ``invariant``, byte-deterministic.
 
 What is supported is exactly what the deck contains (verified against it, not
-guessed): solid-filled rectangles and rounded rectangles, pictures, tables,
-and text frames with per-run size/weight/colour/font, paragraph alignment, space-after
-and vertical anchoring. Slide backgrounds resolve ``schemeClr`` with
+guessed): solid-filled rectangles and rounded rectangles, pictures (honouring
+``srcRect`` crops), tables, and text frames with per-run size/weight/colour/font,
+paragraph alignment, space-after and vertical anchoring. Slide backgrounds resolve ``schemeClr`` with
 ``lumMod``/``lumOff``. Anything outside that set is skipped rather than
 approximated, and logged once at debug level.
 
@@ -35,6 +35,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from PIL import Image as PILImage
 from pptx import Presentation
 from pptx.util import Emu
 from reportlab.lib.colors import Color
@@ -383,9 +384,40 @@ def draw_text_frame(
 # ---------------------------------------------------------------------------
 # shapes
 # ---------------------------------------------------------------------------
+def _crop_box(shape, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """Pixel box of the picture's ``<a:srcRect>`` crop, or None when uncropped.
+
+    ``l``/``t``/``r``/``b`` are the fractions trimmed from each edge, in
+    1/100000ths. Negative values (PowerPoint pads the image) are clamped to the
+    bitmap: the frame is still filled, without the padding.
+    """
+    rect = shape._element.find(f"{P}blipFill/{A}srcRect")
+    if rect is None:
+        return None
+    frac = {k: max(int(rect.get(k) or 0), 0) / 100000 for k in ("l", "t", "r", "b")}
+    if not any(frac.values()):
+        return None
+    left, top = round(frac["l"] * width), round(frac["t"] * height)
+    right, bottom = round(width - frac["r"] * width), round(height - frac["b"] * height)
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right, bottom)
+
+
 def draw_picture(c: Canvas, shape, page_h: float) -> None:
+    """Draw a picture into its frame, cropped as the deck crops it."""
     try:
-        img = ImageReader(io.BytesIO(shape.image.blob))
+        pil = PILImage.open(io.BytesIO(shape.image.blob))
+        box = _crop_box(shape, *pil.size)
+        if box:
+            # A cropped PIL image is handed to reportlab directly, which cannot
+            # draw palette images carrying byte transparency: normalise to RGBA.
+            cropped = pil.crop(box)
+            if cropped.mode not in ("RGB", "RGBA", "L"):
+                cropped = cropped.convert("RGBA")
+            img = ImageReader(cropped)
+        else:
+            img = ImageReader(io.BytesIO(shape.image.blob))
     except Exception as e:  # noqa: BLE001 — a bad image must not lose the page
         logger.debug("picture %s skipped: %s", shape.name, e)
         return
