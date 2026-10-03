@@ -111,3 +111,14 @@ class TestUnsupportedPatternRisksCarryRealText:
         for risk in out["risks"]:
             _, _, body = risk["description"].partition("] ")
             assert body.strip(), f"risk {risk['risk_id']} has no body: {risk['description']!r}"
+
+    def test_elasticache_risk_carries_its_source_query_ids(self) -> None:
+        """ElastiCache keys its ids as source_query_ids, not query_ids (dynamodb's
+        field name); the risk built from it must still carry them under
+        query_ids, the one field name every risk uses regardless of which
+        schema-design contract produced it (used by synthesis_grounding to
+        reattribute a risk when its engine is eliminated)."""
+        out = build_risk_assessment(_data({"elasticache": _ELASTICACHE_UNSUPPORTED}))
+        assert len(out["risks"]) == 3
+        for risk, pattern in zip(out["risks"], _ELASTICACHE_UNSUPPORTED, strict=True):
+            assert risk["query_ids"] == sorted(pattern["source_query_ids"])

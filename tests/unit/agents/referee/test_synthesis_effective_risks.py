@@ -188,9 +188,9 @@ class TestEliminatedEngineNeverATarget:
         assert complementary and "Aurora MySQL" in complementary[0]
 
     def test_description_kept_whole_mitigation_filtered(self, result) -> None:
-        risk = self._risk(result, "text_search")
+        risk = self._risk(result, "text search")
         assert risk["description"] == (
-            "[dynamodb] text_search: Stream orders to OpenSearch via OpenSearch Ingestion for "
+            "[dynamodb] text search: Stream orders to OpenSearch via OpenSearch Ingestion for "
             "keyword search. Keep exact order-id lookups on the base table. (OpenSearch Service "
             "is not part of the target architecture; its queries run on Aurora MySQL.)"
         )
@@ -216,7 +216,7 @@ class TestEliminatedEngineNeverATarget:
         )
 
     def test_absorber_named_when_the_queries_moved_there(self, result) -> None:
-        risk = self._risk(result, "full_text")
+        risk = self._risk(result, "full text")
         assert risk["mitigation"] == (
             "Handle this on Aurora MySQL, where the assignment now routes these queries."
         )
@@ -250,7 +250,7 @@ def test_surviving_opensearch_is_still_recommended(store) -> None:
     strategies = result["risk_assessment"]["mitigation_strategies"]
     assert any("OpenSearch Service" in s for s in strategies)
     text_search = next(
-        r for r in result["risk_assessment"]["risks"] if "text_search" in r["description"]
+        r for r in result["risk_assessment"]["risks"] if "text search" in r["description"]
     )
     assert "OpenSearch Ingestion" in text_search["mitigation"]
 
