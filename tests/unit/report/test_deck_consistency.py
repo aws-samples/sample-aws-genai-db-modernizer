@@ -255,6 +255,24 @@ class TestEvidenceFromEffectiveAssignment:
         assert "lookups queries" not in against
 
 
+class TestTruncatedJourneys:
+    """#228 review: a truncated journey list covers only part of the workload, so
+    counting "routed to" from it would undercount. Truncated journeys are treated
+    as missing and the evidence falls back to triage targets."""
+
+    def test_truncated_journeys_fall_back_to_triage_targets(self) -> None:
+        exp = _export_with_journeys(RUN3_JOURNEYS)
+        exp["queryJourneys"]["truncated"] = {"kept": 10, "total": 107, "criterion": "budget"}
+        against = _confirm(pptx_report.derive(_report(), exp))["against"]
+        assert "15 leaderboard / top-n queries in the whole workload" in against
+        assert "routed to" not in against
+
+    def test_untruncated_journeys_still_count_the_effective_assignment(self) -> None:
+        exp = _export_with_journeys(RUN3_JOURNEYS)
+        against = _confirm(pptx_report.derive(_report(), exp))["against"]
+        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
+
+
 def _aurora_weakest() -> dict[str, Any]:
     rep = _report(reasons=[])
     rep["ranking"][0]["confidence_score"] = 60
@@ -329,3 +347,30 @@ class TestJoinNames:
     )
     def test_join(self, names: list[str], expected: str) -> None:
         assert pptx_report.join_names(names) == expected
+
+
+class TestRiskMitigationClip:
+    """#228 review: the Risk Profile's quoted mitigation is free text from the
+    report; an unbounded one overflowed the 1.05in card."""
+
+    def test_long_mitigation_is_clipped_on_a_word_boundary(self) -> None:
+        rep = _report()
+        long_mit = " ".join(f"step{i} validate the access pattern under load" for i in range(40))
+        rep["risk_assessment"] = {
+            "mitigation_strategies": [long_mit],
+            "risks": [
+                {"risk_id": "RISK-001", "severity": "HIGH", "description": "DynamoDB hot key"}
+            ],
+        }
+        text = " ".join(_deck_text(rep, _export([])).split())
+        quoted = text.split("Specified mitigation: ", 1)[1].split("\n", 1)[0]
+        mit = quoted[: quoted.index("…") + 1]
+        assert len(mit) <= pptx_report.MITIGATION_MAX_CHARS + 1
+        assert long_mit.startswith(mit[:-1])
+
+    def test_short_mitigation_is_quoted_whole(self) -> None:
+        rep = _report()
+        rep["risk_assessment"] = {"mitigation_strategies": ["Run load tests first"], "risks": []}
+        text = " ".join(_deck_text(rep, _export([])).split())
+        assert "Specified mitigation: Run load tests first" in text
+        assert "Run load tests first…" not in text

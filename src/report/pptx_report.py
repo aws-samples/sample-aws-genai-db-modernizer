@@ -121,6 +121,10 @@ SIGNAL_LABEL = {
     "text_search": "Full-text search (LIKE, MATCH, tsvector)",
     "time_series": "Time-series / event log",
 }
+# The Risk Profile quotes one mitigation in a 1.05in card at 12pt: four lines of
+# ~150 characters, less the fixed lead-in sentence. Free text from the report, so
+# it is clipped rather than allowed to overflow the card.
+MITIGATION_MAX_CHARS = 380
 # A migration target the assessment is at least this confident in is sequenced before
 # the ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
@@ -777,11 +781,21 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     weakest = ranked_conf[0] if ranked_conf else None
     if weakest and float(weakest.get("confidence_score") or 0) < CONFIDENCE_FLOOR:
         eng = str(weakest.get("target") or "")
-        assigned = {
-            str(j.get("query_id")): str((j.get("assignment") or {}).get("assigned_engine") or "")
-            for j in ((exp.get("queryJourneys") or {}).get("items") or [])
-            if isinstance(j, dict)
-        }
+        # A truncated journey list holds only part of the workload, so counting
+        # "routed to" from it would undercount: treat it as missing and let the
+        # triage targets stand in (#220).
+        journeys = exp.get("queryJourneys") or {}
+        assigned = (
+            {}
+            if journeys.get("truncated")
+            else {
+                str(j.get("query_id")): str(
+                    (j.get("assignment") or {}).get("assigned_engine") or ""
+                )
+                for j in (journeys.get("items") or [])
+                if isinstance(j, dict)
+            }
+        )
         evidence = _evidence_text(
             _evidence_signal(eng, weakest, q_signals, signals, assigned),
             eng if assigned else None,
@@ -1367,7 +1381,7 @@ def slide_risk(prs, f):
         tf,
         "Each HIGH risk carries an affected-query count and a documented mitigation. "
         + (
-            f"Specified mitigation: {mit}"
+            f"Specified mitigation: {clip(mit, MITIGATION_MAX_CHARS)}"
             if mit
             else "Mitigations are listed per risk in the Engineering Report."
         ),
