@@ -240,6 +240,18 @@ class TestEngineeringReport:
         assert "{" not in line and "'" not in line
         assert "x" in line
 
+    def test_migration_notes_as_a_bare_string_renders_one_bullet_not_one_per_char(
+        self, report: dict
+    ) -> None:
+        """migration_notes is contractually a list of dicts, but a malformed
+        report could carry a bare string; iterating it would silently produce
+        one bullet per character instead of raising or rendering sanely."""
+        rep = json.loads(json.dumps(report))
+        rep["schema_designs"]["documentdb"]["migration_notes"] = "a free-text note"
+        m = renderers.render_engineering_report_md(rep)
+        assert "- a free-text note" in m
+        assert "- a\n" not in m
+
 
 # =============================================================================
 # Empty-risk filter helpers

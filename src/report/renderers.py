@@ -825,6 +825,12 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     out.append("| " + " | ".join(row) + " |")
                 out.append("")
             unsupported = dz.get("unsupported_patterns") or []
+            if isinstance(unsupported, str):
+                # Same malformed-shape guard as migration_notes below: a bare
+                # string must be one entry, not one character per entry.
+                unsupported = [unsupported]
+            elif not isinstance(unsupported, list):
+                unsupported = []
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
                 out += [
@@ -833,6 +839,13 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 ]
                 out.append("")
             notes = dz.get("migration_notes") or []
+            if isinstance(notes, str):
+                # Contractually a list of dicts; a bare string is a malformed
+                # shape that `for mn in notes` would otherwise iterate one
+                # character at a time, rather than treat as one note.
+                notes = [notes]
+            elif not isinstance(notes, list):
+                notes = []
             if notes:
                 out += ["**Migration notes:**", ""]
                 out += [
