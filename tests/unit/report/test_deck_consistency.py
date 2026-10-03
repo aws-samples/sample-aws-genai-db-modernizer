@@ -147,7 +147,7 @@ class TestSequencingRule:
         # ... and the stated rule says exactly that.
         text = " ".join(_deck_text(rep, exp).split())
         assert (
-            "Steps that need no data migration (ElastiCache, 48%) go first at any confidence"
+            "Steps that need no data migration (ElastiCache at 48%) go first at any confidence"
             in text
         )
         assert "Migration targets under 50% are sequenced last" in text
@@ -163,7 +163,7 @@ class TestSequencingRule:
         rep["ranking"][0]["confidence_score"] = 70
         text = " ".join(_deck_text(rep, _export(WORDPRESS_SIGNALS)).split())
         assert "Steps that need no data migration go first" in text
-        assert "ElastiCache, 70%" not in text
+        assert "ElastiCache at 70%" not in text
 
 
 class TestKeptVerb:
@@ -186,3 +186,146 @@ class TestKeptVerb:
         text = " ".join(_deck_text(rep, _export(WORDPRESS_SIGNALS)).split())
         assert expected in text
         assert "ElastiCache keep 31.8%" not in text
+
+
+def _export_with_journeys(
+    signals: dict[str, tuple[list[str], dict[str, int]]],
+) -> dict[str, Any]:
+    """Signals with real query_ids plus the journeys that say where each query
+    was effectively assigned. ``signals`` maps name -> (triage targets,
+    {assigned engine: number of the signal's queries assigned there})."""
+    sigs, items = [], []
+    for name, (targets, split) in signals.items():
+        ids = []
+        for engine, n in split.items():
+            for i in range(n):
+                qid = f"{name}-{engine}-{i}"
+                ids.append(qid)
+                items.append({"query_id": qid, "assignment": {"assigned_engine": engine}})
+        sigs.append({"signal": name, "query_count": len(ids), "targets": targets, "query_ids": ids})
+    return {
+        "results": {"triage_summary": {"signals": sigs}},
+        "queryJourneys": {"total": len(items), "items": items},
+    }
+
+
+# The run-3 wordpress split of the signals that target ElastiCache, by effective
+# assignment (from the query journeys).
+RUN3_JOURNEYS = {
+    "key_value_lookups": (
+        ["dynamodb", "elasticache", "documentdb"],
+        {"dynamodb": 23, "elasticache": 14},
+    ),
+    "leaderboard_pattern": (["elasticache"], {"elasticache": 14, "aurora_mysql": 1}),
+    "high_frequency_reads": (["dynamodb", "elasticache", "documentdb"], {"dynamodb": 6}),
+    "session_store": (["dynamodb", "elasticache", "documentdb"], {"elasticache": 1}),
+}
+
+
+class TestEvidenceFromEffectiveAssignment:
+    def test_override_signal_counts_only_queries_routed_to_the_engine(self) -> None:
+        f = pptx_report.derive(_report(), _export_with_journeys(RUN3_JOURNEYS))
+        against = _confirm(f)["against"]
+        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
+        assert "15 " not in against
+
+    def test_without_override_picks_the_signal_serving_the_most_queries(self) -> None:
+        journeys = dict(RUN3_JOURNEYS)
+        journeys["low_frequency_reads"] = (["dynamodb", "documentdb"], {"elasticache": 20})
+        f = pptx_report.derive(_report(reasons=[]), _export_with_journeys(journeys))
+        # Triage did not target ElastiCache with low_frequency_reads, but the
+        # effective assignment routed 20 of its queries there: that is the evidence.
+        assert "20 low-frequency read queries routed to ElastiCache" in _confirm(f)["against"]
+
+    def test_signal_served_elsewhere_is_not_evidence(self) -> None:
+        journeys = {
+            "high_frequency_reads": (["dynamodb", "elasticache"], {"dynamodb": 6}),
+            "session_store": (["elasticache"], {"elasticache": 1}),
+        }
+        f = pptx_report.derive(_report(reasons=[]), _export_with_journeys(journeys))
+        against = _confirm(f)["against"]
+        assert "high-frequency read" not in against
+        assert "1 session store query routed to ElastiCache" in against
+
+    def test_no_double_noun(self) -> None:
+        journeys = {"key_value_lookups": (["elasticache"], {"elasticache": 14})}
+        f = pptx_report.derive(_report(reasons=[]), _export_with_journeys(journeys))
+        against = _confirm(f)["against"]
+        assert "14 key-value lookup queries routed to ElastiCache" in against
+        assert "lookups queries" not in against
+
+
+def _aurora_weakest() -> dict[str, Any]:
+    rep = _report(reasons=[])
+    rep["ranking"][0]["confidence_score"] = 60
+    rep["ranking"][2]["confidence_score"] = 30
+    rep["ranking"][2]["assignment_reason_summary"] = []
+    return rep
+
+
+class TestAuroraFamily:
+    def test_fallback_matches_aurora_family_triage_target(self) -> None:
+        exp = _export([("complex_joins", 7, ["documentdb", "aurora"])])
+        f = pptx_report.derive(_aurora_weakest(), exp)
+        assert _confirm(f)["question"] == "Confirm Aurora MySQL?"
+        assert "7 complex-join queries in the whole workload" in _confirm(f)["against"]
+
+    def test_journeys_match_aurora_flavour(self) -> None:
+        exp = _export_with_journeys(
+            {"complex_joins": (["documentdb", "aurora"], {"aurora_mysql": 7})}
+        )
+        f = pptx_report.derive(_aurora_weakest(), exp)
+        assert "7 complex-join queries routed to Aurora MySQL" in _confirm(f)["against"]
+
+
+def _with_retained_documentdb(conf: int) -> dict[str, Any]:
+    rep = _report()
+    rep["ranking"].append(
+        {"target": "documentdb", "confidence_score": conf, "workload_percent": 3.0}
+    )
+    rep["schema_designs"]["documentdb"] = {"status": "skipped"}
+    return rep
+
+
+class TestSeveralNoMigrationEngines:
+    def test_every_no_migration_engine_under_the_floor_is_named(self) -> None:
+        text = " ".join(_deck_text(_with_retained_documentdb(44), _export([])).split())
+        assert (
+            "Steps that need no data migration (ElastiCache at 48%, DocumentDB at 44%) go first"
+            in text
+        )
+
+    def test_only_the_ones_under_the_floor_are_named(self) -> None:
+        text = " ".join(_deck_text(_with_retained_documentdb(80), _export([])).split())
+        assert "(ElastiCache at 48%) go first" in text
+        assert "DocumentDB at" not in text
+
+    def test_none_under_the_floor(self) -> None:
+        rep = _with_retained_documentdb(80)
+        rep["ranking"][0]["confidence_score"] = 70
+        text = " ".join(_deck_text(rep, _export([])).split())
+        assert "Steps that need no data migration go first at any confidence" in text
+
+    def test_three_kept_engines_join(self) -> None:
+        rep = _with_retained_documentdb(44)
+        rep["recommended_architecture"]["databases"] = [{"service": "dynamodb", "table_count": 19}]
+        rep["schema_designs"]["aurora_mysql"] = {"status": "skipped"}
+        text = " ".join(_deck_text(rep, _export([])).split())
+        assert "ElastiCache, Aurora MySQL and DocumentDB keep" in text
+
+
+class TestNoMigrationTargets:
+    def test_migration_clause_dropped_when_nothing_migrates(self) -> None:
+        engines: list[dict[str, Any]] = [{"engine": "elasticache", "role": "Cache layer"}]
+        text = pptx_report._sequencing_rule_text(engines, {"elasticache": 48.0})
+        assert "Migration targets under" not in text
+        assert text.endswith("so they are reversible.")
+
+
+class TestJoinNames:
+    @pytest.mark.parametrize(
+        ("names", "expected"),
+        [(["A"], "A"), (["A", "B"], "A and B"), (["A", "B", "C"], "A, B and C")],
+    )
+    def test_join(self, names: list[str], expected: str) -> None:
+        assert pptx_report.join_names(names) == expected

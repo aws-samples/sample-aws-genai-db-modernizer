@@ -477,17 +477,67 @@ def clean_risk_text(description: str) -> tuple[str, str]:
     return " ".join(desc.split()), n_q
 
 
-def _evidence_text(signal: dict[str, Any] | None) -> str:
-    """The "N <signal> query/queries in the whole workload" sentence for the
-    signal ``_evidence_signal`` picked for the weakest-confidence engine.
+# Triage signal -> singular modifier for "N <modifier> queries" in a sentence.
+# The SIGNAL_LABEL forms are plural nouns ("Key-value lookups"), which read as
+# "key-value lookups queries" when a count + "queries" is appended (#220).
+SIGNAL_MODIFIER = {
+    "aggregations": "aggregation",
+    "complex_joins": "complex-join",
+    "eav_pattern": "entity-attribute-value",
+    "high_frequency_reads": "high-frequency read",
+    "json_columns": "JSON-column",
+    "junction_tables": "junction-table",
+    "key_value_lookups": "key-value lookup",
+    "leaderboard_pattern": "leaderboard / top-n",
+    "low_frequency_reads": "low-frequency read",
+    "low_frequency_writes": "low-frequency write",
+    "metadata_config": "metadata / config",
+    "range_queries": "range",
+    "session_store": "session store",
+    "status_filters": "status-filter",
+    "subqueries": "correlated-subquery",
+    "text_search": "full-text search",
+    "time_series": "time-series",
+    "write_heavy": "write-heavy",
+}
+
+
+def signal_modifier(name: str) -> str:
+    """``key_value_lookups`` -> ``key-value lookup``, for "14 key-value lookup queries"."""
+    return SIGNAL_MODIFIER.get(name, name.replace("_", " ").lower())
+
+
+def join_names(names: list[str]) -> str:
+    """``["A"]`` -> ``A``; ``["A", "B"]`` -> ``A and B``; ``["A", "B", "C"]`` -> ``A, B and C``."""
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _evidence_text(signal: dict[str, Any] | None, engine: str | None = None) -> str:
+    """The evidence sentence for the signal ``_evidence_signal`` picked.
+
+    With ``engine`` (and the signal's ``served`` count, from the effective
+    assignment): "14 leaderboard / top-n queries routed to ElastiCache". Without
+    it (no query journeys to count from): "N <signal> queries in the whole
+    workload".
 
     Extracted so the exact #206 regression ("1 session store queries") has a
     direct unit test independent of building a full ``derive()`` input.
     """
     if not signal:
         return "limited supporting evidence"
+    if engine is not None and "served" in signal:
+        n = signal["served"]
+        return (
+            f"{n} {signal_modifier(signal['name'])} {plural_noun(n, 'query', 'queries')} "
+            f"routed to {ENGINE_LABEL.get(engine, engine)}"
+        )
     n = signal["count"]
-    return f"{n} {short_label(signal['name'])} {plural_noun(n, 'query', 'queries')} in the whole workload"
+    return (
+        f"{n} {signal_modifier(signal['name'])} {plural_noun(n, 'query', 'queries')} "
+        f"in the whole workload"
+    )
 
 
 # "signal override: leaderboard_pattern → elasticache" in a ranking entry's
@@ -495,25 +545,34 @@ def _evidence_text(signal: dict[str, Any] | None) -> str:
 _SIGNAL_OVERRIDE = re.compile(r"signal override:\s*([A-Za-z0-9_]+)\s*(?:→|->)\s*([A-Za-z0-9_]+)")
 
 
+def _triage_family(engine: str) -> str:
+    """Triage targets name the Aurora family (``aurora``); rankings name the
+    flavour (``aurora_mysql``, ``aurora_postgresql``)."""
+    return "aurora" if engine.startswith("aurora") else engine
+
+
 def _evidence_signal(
     engine: str,
     ranking_row: dict[str, Any],
     q_signals: list[dict[str, Any]],
     signals: list[dict[str, Any]],
+    assigned: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """The triage signal that best explains why ``engine`` was chosen.
 
-    Preference order: a signal the ranking itself names as a "signal override"
-    for this engine (traceable to ``report.json``); otherwise the largest signal
-    that targets the engine. Several signals usually target one engine
-    (key-value lookups, session store, ... all list ElastiCache), so the
-    *smallest* of them -- what this used to pick (#220) -- is the one least
-    likely to be the reason, and made the evidence look thinner than it is.
+    ``assigned`` maps query_id -> the engine the *effective* assignment gave it
+    (from the query journeys). When present, each signal is scored by how many
+    of its queries actually landed on ``engine`` (returned as ``served``); a
+    signal whose queries all went elsewhere is not evidence for this engine,
+    whatever triage targeted. Preference: a signal the ranking names as a
+    "signal override" for the engine (traceable to ``report.json``), else the
+    one serving the most queries. Without journeys, triage targets stand in
+    (Aurora flavours matched to the ``aurora`` family) and the largest
+    targeting signal is used.
+
+    Several signals usually point at one engine, so the *smallest* of them --
+    what this used to pick (#220) -- is the one least likely to be the reason.
     """
-    targets = {str(x.get("signal")): x.get("targets") or [] for x in signals}
-    candidates = [s for s in q_signals if engine in targets.get(s["name"], [])]
-    if not candidates:
-        return None
     reasons = ranking_row.get("assignment_reason_summary") or []
     if isinstance(reasons, str):
         reasons = [reasons]
@@ -523,8 +582,26 @@ def _evidence_signal(
         for m in _SIGNAL_OVERRIDE.finditer(str(r))
         if m.group(2) == engine
     }
+    by_name = {str(x.get("signal")): x for x in signals}
+    if assigned:
+        candidates = []
+        for s in q_signals:
+            ids = by_name.get(s["name"], {}).get("query_ids") or []
+            served = sum(1 for q in ids if assigned.get(str(q)) == engine)
+            if served:
+                candidates.append({**s, "served": served})
+        candidates.sort(key=lambda s: (-s["served"], s["name"]))
+    else:
+        family = _triage_family(engine)
+        candidates = [
+            s
+            for s in q_signals
+            if family
+            in {_triage_family(str(t)) for t in by_name.get(s["name"], {}).get("targets") or []}
+        ]
+    if not candidates:
+        return None
     pool = [s for s in candidates if s["name"] in cited] or candidates
-    # q_signals is already sorted by (-count, name): the first is the largest.
     return pool[0]
 
 
@@ -534,17 +611,19 @@ def _sequencing_rule_text(engines: list[dict[str, Any]], conf: dict[str, float])
     No-migration steps (cache layer, retained engine) always form Wave 1 because
     they are reversible; ``CONFIDENCE_FLOOR`` only orders the migration targets.
     The slide used to state the floor as a universal rule ("anything under 50% is
-    sequenced last") while Wave 1 held a 48% cache layer (#220). A no-migration
-    engine under the floor is named, so the exception is explicit.
+    sequenced last") while Wave 1 held a 48% cache layer (#220). Every
+    no-migration engine under the floor is named, so the exception is explicit;
+    the migration-target clause is dropped when there are none.
     """
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
+    has_targets = any(e["role"] == "Migration target" for e in engines)
     text = "Confidence is the assessment's own measure of evidence strength, not a forecast. "
     if no_move:
         low = [e for e in no_move if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
         named = (
             " ("
             + ", ".join(
-                f"{ENGINE_LABEL.get(e['engine'], e['engine'])}, {conf.get(e['engine'], 0):.0f}%"
+                f"{ENGINE_LABEL.get(e['engine'], e['engine'])} at {conf.get(e['engine'], 0):.0f}%"
                 for e in low
             )
             + ")"
@@ -553,13 +632,14 @@ def _sequencing_rule_text(engines: list[dict[str, Any]], conf: dict[str, float])
         )
         text += (
             f"Steps that need no data migration{named} go first at any confidence: "
-            f"the source database stays authoritative, so they are reversible. "
+            f"the source database stays authoritative, so they are reversible."
         )
-    text += (
-        f"Migration targets under {CONFIDENCE_FLOOR}% are sequenced last so they can be "
-        f"re-scoped once the earlier waves have produced real measurements."
-    )
-    return text
+    if has_targets:
+        text += (
+            f" Migration targets under {CONFIDENCE_FLOOR}% are sequenced last so they can be "
+            f"re-scoped once the earlier waves have produced real measurements."
+        )
+    return text.strip()
 
 
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
@@ -661,7 +741,15 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     weakest = ranked_conf[0] if ranked_conf else None
     if weakest and float(weakest.get("confidence_score") or 0) < CONFIDENCE_FLOOR:
         eng = str(weakest.get("target") or "")
-        evidence = _evidence_text(_evidence_signal(eng, weakest, q_signals, signals))
+        assigned = {
+            str(j.get("query_id")): str((j.get("assignment") or {}).get("assigned_engine") or "")
+            for j in ((exp.get("queryJourneys") or {}).get("items") or [])
+            if isinstance(j, dict)
+        }
+        evidence = _evidence_text(
+            _evidence_signal(eng, weakest, q_signals, signals, assigned),
+            eng if assigned else None,
+        )
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
@@ -888,7 +976,7 @@ def slide_summary(prs, f):
         f"{f['migrated']} source {plural_noun(f['migrated'], 'table')} "
         f"{plural_verb(f['migrated'], 'moves', 'move')} to a purpose-built engine; "
         + (
-            f"{' and '.join(ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept)} "
+            f"{join_names([ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept])} "
             f"{plural_verb(len(kept), 'keeps', 'keep')} {kept_pct:.1f}% of the workload "
             f"with no data migration. "
             if kept
