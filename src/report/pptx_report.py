@@ -44,8 +44,10 @@ from pptx.util import Inches, Pt
 
 # Reused rather than reimplemented: slide 1 must show the same architecture the
 # HTML Decision Report shows, and that view is non-trivial (ranking joined with
-# recommended_architecture.databases and schema_designs).
-from .renderers import _architecture_engines
+# recommended_architecture.databases and schema_designs). ``filtered_risks`` is
+# reused for the same reason the risk count must agree with the decision and
+# engineering reports (issue #201): one filter, one count, everywhere.
+from .renderers import _architecture_engines, filtered_risks
 
 logger = logging.getLogger(__name__)
 
@@ -497,10 +499,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ---- risks --------------------------------------------------------------
-    risks = sorted(
-        (r for r in (risk.get("risks") or []) if isinstance(r, dict)),
-        key=lambda r: str(r.get("risk_id")),
-    )
+    risks = sorted(filtered_risks(rep), key=lambda r: str(r.get("risk_id")))
     sev: dict[str, int] = {}
     for r in risks:
         k = str(r.get("severity", "")).upper()

@@ -1,0 +1,4545 @@
+{
+  "contract_version": "1.1",
+  "job_id": "7c6e6af2",
+  "database_name": "wordpress",
+  "agent_type": "referee-synthesis",
+  "status": "completed",
+  "timestamp": "2026-10-03T14:47:48.168180Z",
+  "needs_deeper_analysis": false,
+  "ranking": [
+    {
+      "target": "elasticache",
+      "confidence_score": 48,
+      "pattern_score": null,
+      "complexity_score": null,
+      "performance_score": null,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "assigned_queries": 34,
+      "workload_percent": 31.8,
+      "analysis_confidence": 48,
+      "weight": 0.64,
+      "monthly_cost_usd": 165.55,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 9,
+      "tables_suitable": 6,
+      "tables_marginal": 5,
+      "tables_not_suitable": 30,
+      "patterns_detected": 4,
+      "anti_patterns_detected": 0,
+      "aggregate_count": 0,
+      "schema_design_available": true,
+      "target_tables": 12,
+      "access_patterns": 15,
+      "pattern_groups": 1,
+      "assigned_queries_in_scope": 34,
+      "primary_tables": 5,
+      "assignment_reason_summary": [
+        "highest confidence for elasticache",
+        "signal override: leaderboard_pattern \u2192 elasticache",
+        "reality check: consolidated from aurora_mysql \u2192 elasticache (no unique value \u2014 fit=81, data synced for wordpress.wp_posts, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_woocommerce_order_items)"
+      ]
+    },
+    {
+      "target": "dynamodb",
+      "confidence_score": 50,
+      "pattern_score": null,
+      "complexity_score": null,
+      "performance_score": null,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "assigned_queries": 63,
+      "workload_percent": 58.9,
+      "analysis_confidence": 50,
+      "weight": 0.501,
+      "monthly_cost_usd": 98.41,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 11,
+      "tables_suitable": 11,
+      "tables_marginal": 0,
+      "tables_not_suitable": 28,
+      "patterns_detected": 8,
+      "anti_patterns_detected": 2,
+      "aggregate_count": 41,
+      "schema_design_available": true,
+      "target_tables": 18,
+      "access_patterns": 52,
+      "pattern_groups": 26,
+      "assigned_queries_in_scope": 63,
+      "primary_tables": 19,
+      "assignment_reason_summary": [
+        "highest confidence for dynamodb",
+        "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=99, data synced for wordpress.wp_postmeta)",
+        "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=79, data synced for wordpress.wp_postmeta)"
+      ]
+    },
+    {
+      "target": "aurora_mysql",
+      "confidence_score": 50,
+      "pattern_score": null,
+      "complexity_score": null,
+      "performance_score": null,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "assigned_queries": 10,
+      "workload_percent": 9.3,
+      "analysis_confidence": 50,
+      "weight": 0.397,
+      "monthly_cost_usd": 318.8,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 11,
+      "tables_suitable": 8,
+      "tables_marginal": 3,
+      "tables_not_suitable": 28,
+      "patterns_detected": 20,
+      "anti_patterns_detected": 3,
+      "aggregate_count": 0,
+      "schema_design_available": true,
+      "target_tables": 9,
+      "access_patterns": 0,
+      "pattern_groups": 0,
+      "assigned_queries_in_scope": 10,
+      "primary_tables": 1,
+      "assignment_reason_summary": [
+        "reality check: absorbed from opensearch \u2192 aurora_mysql (opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified)",
+        "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Multi-table join with aggregation (GROUP BY) across partitions is not servable by DynamoDB or ElastiCache)",
+        "reality check: redirected to aurora_mysql (unserviceable on consolidation target: Complex joins combined with status filters cannot be served without a known partition key on DynamoDB)"
+      ]
+    }
+  ],
+  "summary": "The WordPress workload moves to a hybrid architecture with a cache tier: DynamoDB serves the majority of queries, including option, post, post meta and term lookups, while ElastiCache handles the high-frequency leaderboard and cached reads. Aurora MySQL keeps the multi-table joins with aggregation and the text search queries that DynamoDB and ElastiCache cannot serve, which removes the need for a separate OpenSearch Service deployment. Each engine takes the queries it fits best, so key-value reads scale without row-locking contention on the relational store. The migration leaves Aurora MySQL with a small, well-defined set of relational queries and gives the hot read paths single-digit millisecond access.",
+  "summary_deterministic": "Analyzed 50 source tables and 107 query patterns across 3 target database(s). Workload split: elasticache handles 34 queries (31.8%), dynamodb handles 63 queries (58.9%), aurora_mysql handles 10 queries (9.3%). 22 source tables mapped across 3 engine(s). Schema design produced 12 target tables with 15 access patterns across 1 query groups. 22 source tables mapped to aurora_mysql, dynamodb, elasticache. Estimated monthly cost: $582.76. 12 risk(s) identified (overall: MEDIUM). Top query groups by throughput: Option reads, Post meta reads, Post reads. Other targets evaluated: dynamodb (50%), aurora_mysql (50%).",
+  "recommended_architecture": {
+    "databases": [
+      {
+        "service": "elasticache",
+        "table_count": 1,
+        "rationale": "48% average confidence across 50 tables. 4 matching workload patterns. schema design: 12 target tables, 15 access patterns. estimated $165.55/month.",
+        "tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "confidence_score": 48
+      },
+      {
+        "service": "dynamodb",
+        "table_count": 19,
+        "rationale": "50% average confidence across 50 tables. 8 matching workload patterns. schema design: 18 target tables, 52 access patterns. estimated $98.41/month.",
+        "tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups",
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_terms",
+          "wordpress.wp_users",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "confidence_score": 50
+      },
+      {
+        "service": "aurora_mysql",
+        "table_count": 2,
+        "rationale": "50% average confidence across 50 tables. 20 matching workload patterns. schema design: 9 target tables, 0 access patterns. estimated $318.80/month.",
+        "tables": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_usermeta"
+        ],
+        "confidence_score": 50
+      }
+    ],
+    "architecture_type": "HYBRID_WITH_CACHE",
+    "rationale": "Hybrid architecture: dynamodb for primary data storage and elasticache for caching hot data."
+  },
+  "table_mappings": [
+    {
+      "source_table": "wordpress.wp_actionscheduler_actions",
+      "recommended_database": "dynamodb",
+      "confidence_score": 85,
+      "alternatives": [
+        {
+          "database": "elasticache",
+          "target_table": "wp_actionscheduler_actions:pending:{hook}:{status}",
+          "confidence_score": 81
+        }
+      ],
+      "target_table": "WpActionSchedulerActions",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_actionscheduler_groups",
+      "recommended_database": "dynamodb",
+      "confidence_score": 90,
+      "alternatives": [
+        {
+          "database": "elasticache",
+          "target_table": "wp_actionscheduler_groups:slug:{slug}",
+          "confidence_score": 89
+        }
+      ],
+      "target_table": "WpActionSchedulerActions",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_actionscheduler_logs",
+      "recommended_database": "dynamodb",
+      "confidence_score": 72,
+      "alternatives": [],
+      "target_table": "ActionSchedulerLogs",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_commentmeta",
+      "recommended_database": "dynamodb",
+      "confidence_score": 64,
+      "alternatives": [],
+      "target_table": "CommentMeta",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_comments",
+      "recommended_database": "dynamodb",
+      "confidence_score": 71,
+      "alternatives": [],
+      "target_table": "Comments",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_options",
+      "recommended_database": "dynamodb",
+      "confidence_score": 89,
+      "alternatives": [],
+      "target_table": "wp_options",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_postmeta",
+      "recommended_database": "aurora_mysql",
+      "confidence_score": 81,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "WpPostContent",
+          "confidence_score": 79
+        },
+        {
+          "database": "dynamodb",
+          "target_table": "posts",
+          "confidence_score": 79
+        }
+      ],
+      "target_table": "wp_postmeta",
+      "aggregate_pattern": "relational_table"
+    },
+    {
+      "source_table": "wordpress.wp_posts",
+      "recommended_database": "dynamodb",
+      "confidence_score": 82,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "posts",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:{ID}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:slug:{post_type}:{post_name}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:type:{post_type}:{post_status}:by_date",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:parent:{post_parent}:{post_type}:{post_status}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:title:{post_type}:{post_title_hash}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_posts:status_counts:{post_type}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_woocommerce_order_items:daily:{date}",
+          "confidence_score": 82
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_posts",
+          "confidence_score": 81
+        }
+      ],
+      "target_table": "WpPostContent",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_term_relationships",
+      "recommended_database": "dynamodb",
+      "confidence_score": 86,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "posts",
+          "confidence_score": 86
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_term_relationships",
+          "confidence_score": 84
+        }
+      ],
+      "target_table": "WpPostContent",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_term_taxonomy",
+      "recommended_database": "dynamodb",
+      "confidence_score": 84,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "WpTerms",
+          "confidence_score": 84
+        },
+        {
+          "database": "dynamodb",
+          "target_table": "terms",
+          "confidence_score": 84
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_terms:slug:{taxonomy}:{slug}",
+          "confidence_score": 82
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_term_taxonomy:{taxonomy}:terms",
+          "confidence_score": 82
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_term_taxonomy",
+          "confidence_score": 82
+        }
+      ],
+      "target_table": "WpPostContent",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_termmeta",
+      "recommended_database": "dynamodb",
+      "confidence_score": 85,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "terms",
+          "confidence_score": 85
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_termmeta",
+          "confidence_score": 82
+        }
+      ],
+      "target_table": "WpTerms",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_terms",
+      "recommended_database": "dynamodb",
+      "confidence_score": 85,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "WpTerms",
+          "confidence_score": 85
+        },
+        {
+          "database": "dynamodb",
+          "target_table": "terms",
+          "confidence_score": 85
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_terms",
+          "confidence_score": 84
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_terms:slug:{taxonomy}:{slug}",
+          "confidence_score": 83
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_term_taxonomy:{taxonomy}:terms",
+          "confidence_score": 83
+        }
+      ],
+      "target_table": "WpPostContent",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_usermeta",
+      "recommended_database": "aurora_mysql",
+      "confidence_score": 80,
+      "alternatives": [],
+      "target_table": "wp_usermeta",
+      "aggregate_pattern": "relational_table"
+    },
+    {
+      "source_table": "wordpress.wp_users",
+      "recommended_database": "dynamodb",
+      "confidence_score": 89,
+      "alternatives": [
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_users",
+          "confidence_score": 83
+        }
+      ],
+      "target_table": "users",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_wc_admin_notes",
+      "recommended_database": "dynamodb",
+      "confidence_score": 62,
+      "alternatives": [],
+      "target_table": "WcAdminNotes",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_wc_product_meta_lookup",
+      "recommended_database": "dynamodb",
+      "confidence_score": 69,
+      "alternatives": [],
+      "target_table": "WcProductMetaLookup",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_wc_reserved_stock",
+      "recommended_database": "dynamodb",
+      "confidence_score": 72,
+      "alternatives": [],
+      "target_table": "WcReservedStock",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_wc_tax_rate_classes",
+      "recommended_database": "dynamodb",
+      "confidence_score": 95,
+      "alternatives": [],
+      "target_table": "WcTaxRateClasses",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_woocommerce_api_keys",
+      "recommended_database": "dynamodb",
+      "confidence_score": 95,
+      "alternatives": [],
+      "target_table": "WooApiKeys",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "recommended_database": "dynamodb",
+      "confidence_score": 69,
+      "alternatives": [],
+      "target_table": "WooDownloadablePermissions",
+      "aggregate_pattern": "separate"
+    },
+    {
+      "source_table": "wordpress.wp_woocommerce_order_itemmeta",
+      "recommended_database": "dynamodb",
+      "confidence_score": 79,
+      "alternatives": [
+        {
+          "database": "dynamodb",
+          "target_table": "woocommerce_order_itemmeta",
+          "confidence_score": 79
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_woocommerce_order_items:daily:{date}",
+          "confidence_score": 79
+        },
+        {
+          "database": "elasticache",
+          "target_table": "wp_woocommerce_order_itemmeta:{order_item_id}",
+          "confidence_score": 79
+        }
+      ],
+      "target_table": "WpOrderItems",
+      "aggregate_pattern": "item_collection"
+    },
+    {
+      "source_table": "wordpress.wp_woocommerce_order_items",
+      "recommended_database": "elasticache",
+      "confidence_score": 83,
+      "alternatives": [
+        {
+          "database": "elasticache",
+          "target_table": "wp_woocommerce_order_itemmeta:{order_item_id}",
+          "confidence_score": 83
+        },
+        {
+          "database": "aurora_mysql",
+          "target_table": "wp_woocommerce_order_items",
+          "confidence_score": 83
+        },
+        {
+          "database": "dynamodb",
+          "target_table": "WpOrderItems",
+          "confidence_score": 73
+        }
+      ],
+      "target_table": "wp_woocommerce_order_items:daily:{date}",
+      "aggregate_pattern": "hash"
+    }
+  ],
+  "query_groups": [
+    {
+      "group_name": "Option reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-1",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "wp_options",
+          "key_condition": "PK=option_name",
+          "design_rps": 151.67,
+          "description": "Fetch the value of a single option by name (replaces SELECT option_value ... WHERE option_name = ? LIMIT ?).",
+          "in_scope": true,
+          "query_ids": [
+            "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-2",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "wp_options",
+          "key_condition": "PK=option_name",
+          "design_rps": 20.24,
+          "description": "Fetch the autoload flag of a single option by name.",
+          "in_scope": true,
+          "query_ids": [
+            "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-4",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "wp_options",
+          "key_condition": "PK=autoload",
+          "design_rps": 2.88,
+          "description": "Load all options with a given autoload flag (name and value). Served by the OptionsByAutoload GSI instead of a scan.",
+          "in_scope": true,
+          "query_ids": [
+            "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "query_text": "SELECT `option_value` FROM `wp_options` WHERE `option_name` = ? LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 273002.4583333333,
+          "execution_time_ms_avg": 0.2,
+          "tables_accessed": [
+            "wordpress.wp_options"
+          ],
+          "linked_patterns": [
+            "DDB-AP-1"
+          ]
+        },
+        {
+          "query_id": "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0",
+          "query_text": "SELECT `autoload` FROM `wp_options` WHERE `option_name` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 36440.0,
+          "execution_time_ms_avg": 0.172,
+          "tables_accessed": [
+            "wordpress.wp_options"
+          ],
+          "linked_patterns": [
+            "DDB-AP-2"
+          ]
+        },
+        {
+          "query_id": "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+          "query_text": "SELECT `option_name` , `option_value` FROM `wp_options` WHERE `autoload` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 5177.5,
+          "execution_time_ms_avg": 1.268,
+          "tables_accessed": [
+            "wordpress.wp_options"
+          ],
+          "linked_patterns": [
+            "DDB-AP-4"
+          ]
+        }
+      ],
+      "total_design_rps": 174.79
+    },
+    {
+      "group_name": "Post meta reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-1",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 14.550729,
+          "description": "Look up the meta_id of a post meta row by post_id and meta_key (replaces secondary index scan on meta_key).",
+          "in_scope": true,
+          "query_ids": [
+            "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-2",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK begins_with 'META#'",
+          "design_rps": 13.040324,
+          "description": "Bulk-load all meta rows for a set of post_ids (one Query per post_id, issued in parallel by the application).",
+          "in_scope": true,
+          "query_ids": [
+            "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-7",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK begins_with 'META#'",
+          "design_rps": 4.803113,
+          "description": "Load all meta rows for one post.",
+          "in_scope": true,
+          "query_ids": [
+            "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+          "query_text": "SELECT `meta_id` FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 52382.625,
+          "execution_time_ms_avg": 0.322,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-1"
+          ]
+        },
+        {
+          "query_id": "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+          "query_text": "SELECT `post_id` , `meta_key` , `meta_value` FROM `wp_postmeta` WHERE `post_id` IN (...) ORDER BY `meta_id` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 46945.166666666664,
+          "execution_time_ms_avg": 0.394,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-2"
+          ]
+        },
+        {
+          "query_id": "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+          "query_text": "SELECT `meta_id` AS `meta_id` , `meta_key` , `meta_value` FROM `wp_postmeta` WHERE `post_id` = ? ORDER BY `meta_id`",
+          "query_type": "SELECT",
+          "frequency_per_hour": 17291.208333333332,
+          "execution_time_ms_avg": 0.378,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-7"
+          ]
+        }
+      ],
+      "total_design_rps": 32.394166
+    },
+    {
+      "group_name": "Post reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-4",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK='POST'",
+          "design_rps": 10.6925,
+          "description": "Fetch a single post by ID.",
+          "in_scope": true,
+          "query_ids": [
+            "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-11",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_parent AND SK post_type=<type> (ScanIndexForward=false on post_date)",
+          "design_rps": 3.190694,
+          "description": "List child posts of a parent by post_type, newest first; the OR-list of post_status values is a FilterExpression on the projected post_status attribute. Full items fetched with BatchGetItem.",
+          "in_scope": true,
+          "query_ids": [
+            "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-12",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_name AND SK post_type=<type>",
+          "design_rps": 2.739618,
+          "description": "Check slug (post_name) uniqueness within a post_type excluding the current post ID (ID != ? is a FilterExpression on the always-projected post_id).",
+          "in_scope": true,
+          "query_ids": [
+            "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-2",
+          "engine": "dynamodb",
+          "operation": "BatchGetItem",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK=item_sk 'POST'",
+          "design_rps": 1.7617,
+          "description": "Fetch several posts by ID list (WHERE ID IN (...)); replaces a range scan",
+          "in_scope": true,
+          "query_ids": [
+            "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-6",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_name AND SK post_type=:t AND post_status=:s (ScanIndexForward=false)",
+          "design_rps": 0.76,
+          "description": "Find published posts by slug (post_name) and type, excluding given IDs, newest first",
+          "in_scope": true,
+          "query_ids": [
+            "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2",
+          "query_text": "SELECT * FROM `wp_posts` WHERE `ID` = ? LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 38493.0,
+          "execution_time_ms_avg": 0.256,
+          "tables_accessed": [
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-4"
+          ]
+        },
+        {
+          "query_id": "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+          "query_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_parent` = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_status` = ? OR `wp_po",
+          "query_type": "SELECT",
+          "frequency_per_hour": 11486.5,
+          "execution_time_ms_avg": 0.612,
+          "tables_accessed": [
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-11"
+          ]
+        },
+        {
+          "query_id": "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675",
+          "query_text": "SELECT `post_name` FROM `wp_posts` WHERE `post_name` = ? AND `post_type` = ? AND `ID` != ? LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 9862.625,
+          "execution_time_ms_avg": 0.374,
+          "tables_accessed": [
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-12"
+          ]
+        },
+        {
+          "query_id": "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+          "query_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE `ID` IN (...)",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2114.0833333333335,
+          "execution_time_ms_avg": 0.379,
+          "tables_accessed": [
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-2"
+          ]
+        },
+        {
+          "query_id": "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+          "query_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` = ? AND `wp_posts` . `ID` NOT IN (...) AND `wp_posts` . `post_type` IN (...) AND ( ( `wp_posts` . `post_status` = ? ) ) O",
+          "query_type": "SELECT",
+          "frequency_per_hour": 911.9583333333334,
+          "execution_time_ms_avg": 0.641,
+          "tables_accessed": [
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-6"
+          ]
+        }
+      ],
+      "total_design_rps": 19.144512000000006
+    },
+    {
+      "group_name": "Order item meta reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-5",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpOrderItems",
+          "key_condition": "PK=order_item_id AND SK begins_with 'META#'",
+          "design_rps": 8.714433,
+          "description": "Bulk-load meta rows for a set of order_item_ids (one Query per order_item_id, issued in parallel).",
+          "in_scope": true,
+          "query_ids": [
+            "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-6",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpOrderItems",
+          "key_condition": "PK=order_item_id AND SK begins_with 'META#'",
+          "design_rps": 6.367882,
+          "description": "Load all meta rows for one order item.",
+          "in_scope": true,
+          "query_ids": [
+            "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-14",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpOrderItems",
+          "key_condition": "PK=order_item_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 1.937338,
+          "description": "Look up the meta_id of an order item meta row by order_item_id and meta_key.",
+          "in_scope": true,
+          "query_ids": [
+            "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+          "query_text": "SELECT `order_item_id` , `meta_key` , `meta_value` FROM `wp_woocommerce_order_itemmeta` WHERE `order_item_id` IN (...) ORDER BY `meta_id` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 31371.958333333332,
+          "execution_time_ms_avg": 0.281,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-5"
+          ]
+        },
+        {
+          "query_id": "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+          "query_text": "SELECT `meta_id` AS `meta_id` , `meta_key` , `meta_value` FROM `wp_woocommerce_order_itemmeta` WHERE `order_item_id` = ? ORDER BY `meta_id`",
+          "query_type": "SELECT",
+          "frequency_per_hour": 22924.375,
+          "execution_time_ms_avg": 0.286,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-6"
+          ]
+        },
+        {
+          "query_id": "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+          "query_text": "SELECT `meta_id` FROM `wp_woocommerce_order_itemmeta` WHERE `meta_key` = ? AND `order_item_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 6974.416666666667,
+          "execution_time_ms_avg": 0.352,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-14"
+          ]
+        }
+      ],
+      "total_design_rps": 17.019652999999998
+    },
+    {
+      "group_name": "Term lookups",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-3",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK begins_with 'TERM#'",
+          "design_rps": 12.742998,
+          "description": "Find the terms attached to objects (posts) filtered by taxonomy; term_id, taxonomy and name are denormalized onto the relationship item so the 3-table join becomes one Query. Taxonomy filter via FilterExpression, name ordering in the application.",
+          "in_scope": true,
+          "query_ids": [
+            "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-13",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpTerms",
+          "key_condition": "PK=term_id AND SK begins_with 'TAXONOMY#' or SK='TERM'",
+          "design_rps": 2.016609,
+          "description": "Fetch term and taxonomy rows for a set of term_ids (one Query per term_id); replaces a query that triggered full table scans in MySQL.",
+          "in_scope": true,
+          "query_ids": [
+            "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-4",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "terms",
+          "key_condition": "PK=taxonomy",
+          "design_rps": 1.2422,
+          "description": "List term_ids for a taxonomy ordered by term name (replaces terms-taxonomy join)",
+          "in_scope": true,
+          "query_ids": [
+            "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-8",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "terms",
+          "key_condition": "PK=taxonomy AND SK name=:name",
+          "design_rps": 0.6996,
+          "description": "Find a term_id by taxonomy and term name",
+          "in_scope": true,
+          "query_ids": [
+            "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonom",
+          "query_type": "SELECT",
+          "frequency_per_hour": 45874.791666666664,
+          "execution_time_ms_avg": 0.466,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_term_relationships"
+          ],
+          "linked_patterns": [
+            "DDB-AP-3"
+          ]
+        },
+        {
+          "query_id": "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+          "query_text": "SELECT `t` . * , `tt` . * FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `t` . `term_id` IN (...)",
+          "query_type": "SELECT",
+          "frequency_per_hour": 7259.791666666667,
+          "execution_time_ms_avg": 0.29,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "linked_patterns": [
+            "DDB-AP-13"
+          ]
+        },
+        {
+          "query_id": "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+          "query_text": "SELECT `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...) ORDER BY `t` . `name` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 1490.5833333333333,
+          "execution_time_ms_avg": 0.437,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "linked_patterns": [
+            "DDB-AP-4"
+          ]
+        },
+        {
+          "query_id": "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+          "query_text": "SELECT `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...) AND `t` . `name` IN (...) LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 839.5,
+          "execution_time_ms_avg": 0.372,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "linked_patterns": [
+            "DDB-AP-8"
+          ]
+        }
+      ],
+      "total_design_rps": 16.701407
+    },
+    {
+      "group_name": "API key maintenance",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-1",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WooApiKeys",
+          "key_condition": "PK=key_id",
+          "design_rps": 8.2765,
+          "description": "Update last_access timestamp of an API key by key_id",
+          "in_scope": true,
+          "query_ids": [
+            "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-3",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WooApiKeys",
+          "key_condition": "PK=consumer_key",
+          "design_rps": 0.8275,
+          "description": "Authenticate an API request by looking up the key by consumer_key",
+          "in_scope": true,
+          "query_ids": [
+            "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+          "query_text": "UPDATE `wp_woocommerce_api_keys` SET `last_access` = ? WHERE `key_id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 29795.375,
+          "execution_time_ms_avg": 14.07,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_api_keys"
+          ],
+          "linked_patterns": [
+            "DDB-AP-1"
+          ]
+        },
+        {
+          "query_id": "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26",
+          "query_text": "SELECT `key_id` , `user_id` , `permissions` , `consumer_key` , `consumer_secret` , `nonces` FROM `wp_woocommerce_api_keys` WHERE `consumer_key` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2979.1666666666665,
+          "execution_time_ms_avg": 0.3,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_api_keys"
+          ],
+          "linked_patterns": [
+            "DDB-AP-3"
+          ]
+        }
+      ],
+      "total_design_rps": 9.104000000000001
+    },
+    {
+      "group_name": "Option writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-3",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "wp_options",
+          "key_condition": "PK=option_name",
+          "design_rps": 4.9,
+          "description": "Update the value of an existing option by name.",
+          "in_scope": true,
+          "query_ids": [
+            "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-5",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "wp_options",
+          "key_condition": "PK=option_name (item: option_name, option_id, option_value, autoload)",
+          "design_rps": 2.1,
+          "description": "Upsert an option (INSERT ... ON DUPLICATE KEY UPDATE) keyed by option name.",
+          "in_scope": true,
+          "query_ids": [
+            "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-6",
+          "engine": "dynamodb",
+          "operation": "DeleteItem",
+          "table_name": "wp_options",
+          "key_condition": "PK=option_name",
+          "design_rps": 1.6,
+          "description": "Delete an option by name.",
+          "in_scope": true,
+          "query_ids": [
+            "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+          "query_text": "UPDATE `wp_options` SET `option_value` = ? WHERE `option_name` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 8814.541666666666,
+          "execution_time_ms_avg": 8.155,
+          "tables_accessed": [
+            "wordpress.wp_options"
+          ],
+          "linked_patterns": [
+            "DDB-AP-3"
+          ]
+        },
+        {
+          "query_id": "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+          "query_text": "INSERT INTO `wp_options` ( `option_name` , `option_value` , `autoload` ) VALUES (...) ON DUPLICATE KEY UPDATE `option_name` = VALUES ( `option_name` ) , `option_value` = VALUES ( `option_value` ) , `a",
+          "query_type": "INSERT",
+          "frequency_per_hour": 3781.0416666666665,
+          "execution_time_ms_avg": 8.995,
+          "tables_accessed": [
+            "wordpress.wp_options",
+            "option_name"
+          ],
+          "linked_patterns": [
+            "DDB-AP-5"
+          ]
+        },
+        {
+          "query_id": "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+          "query_text": "DELETE FROM `wp_options` WHERE `option_name` = ?",
+          "query_type": "DELETE",
+          "frequency_per_hour": 2873.9166666666665,
+          "execution_time_ms_avg": 8.566,
+          "tables_accessed": [
+            "wordpress.wp_options"
+          ],
+          "linked_patterns": [
+            "DDB-AP-6"
+          ]
+        }
+      ],
+      "total_design_rps": 8.6
+    },
+    {
+      "group_name": "Post meta writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-9",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK='META#<meta_key>#<meta_id>' (item being written)",
+          "design_rps": 3.429896,
+          "description": "Insert a post meta row.",
+          "in_scope": true,
+          "query_ids": [
+            "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-16",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK='META#<meta_key>#<meta_id>'",
+          "design_rps": 0.540995,
+          "description": "Overwrite meta_value of a post meta row identified by post_id and meta_key (meta_id resolved first via DDB-AP-1).",
+          "in_scope": true,
+          "query_ids": [
+            "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-18",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK='META#<meta_key>#<meta_id>'",
+          "design_rps": 0.178611,
+          "description": "Decrement a numeric post meta value (meta_value = meta_value - ?) using an atomic update expression on a numeric-valued meta item.",
+          "in_scope": true,
+          "query_ids": [
+            "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-19",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WpPostContent",
+          "key_condition": "PK=post_id AND SK='META#<meta_key>#<meta_id>'",
+          "design_rps": 0.177894,
+          "description": "Increment a numeric post meta value (meta_value = meta_value + ?) using an atomic update expression on a numeric-valued meta item.",
+          "in_scope": true,
+          "query_ids": [
+            "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+          "query_text": "INSERT INTO `wp_postmeta` ( `post_id` , `meta_key` , `meta_value` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 12347.625,
+          "execution_time_ms_avg": 8.268,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-9"
+          ]
+        },
+        {
+          "query_id": "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+          "query_text": "UPDATE `wp_postmeta` SET `meta_value` = ? WHERE `post_id` = ? AND `meta_key` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 1947.5833333333333,
+          "execution_time_ms_avg": 8.882,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-16"
+          ]
+        },
+        {
+          "query_id": "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+          "query_text": "UPDATE `wp_postmeta` SET `meta_value` = `meta_value` - ? WHERE `post_id` = ? AND `meta_key` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 643.0,
+          "execution_time_ms_avg": 8.701,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-18"
+          ]
+        },
+        {
+          "query_id": "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+          "query_text": "UPDATE `wp_postmeta` SET `meta_value` = `meta_value` + ? WHERE `post_id` = ? AND `meta_key` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 640.4166666666666,
+          "execution_time_ms_avg": 8.772,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-19"
+          ]
+        }
+      ],
+      "total_design_rps": 4.327396
+    },
+    {
+      "group_name": "Action scheduler reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-8",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "WpActionSchedulerActions",
+          "key_condition": "PK=action_id",
+          "design_rps": 3.590301,
+          "description": "Fetch one scheduled action with its group slug; slug is denormalized so the LEFT JOIN becomes a GetItem.",
+          "in_scope": true,
+          "query_ids": [
+            "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+          "query_text": "SELECT `a` . * , `g` . `slug` AS `group` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `a` . `group_id` = `g` . `group_id` WHERE `a` . `action_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 12925.083333333334,
+          "execution_time_ms_avg": 0.282,
+          "tables_accessed": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_groups"
+          ],
+          "linked_patterns": [
+            "DDB-AP-8"
+          ]
+        }
+      ],
+      "total_design_rps": 3.590301
+    },
+    {
+      "group_name": "Order item reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-10",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WpOrderItems",
+          "key_condition": "PK=order_id",
+          "design_rps": 3.284236,
+          "description": "List the order items of an order ordered by order_item_id.",
+          "in_scope": true,
+          "query_ids": [
+            "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835",
+          "query_text": "SELECT `order_item_type` , `order_item_id` , `order_id` , `order_item_name` FROM `wp_woocommerce_order_items` WHERE `order_id` = ? ORDER BY `order_item_id`",
+          "query_type": "SELECT",
+          "frequency_per_hour": 11823.25,
+          "execution_time_ms_avg": 0.307,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_order_items"
+          ],
+          "linked_patterns": [
+            "DDB-AP-10"
+          ]
+        }
+      ],
+      "total_design_rps": 3.284236
+    },
+    {
+      "group_name": "User lookups",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-1",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "users",
+          "key_condition": "PK=user_id",
+          "design_rps": 2.4828,
+          "description": "Fetch a single user by ID",
+          "in_scope": true,
+          "query_ids": [
+            "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-14",
+          "engine": "dynamodb",
+          "operation": "BatchGetItem",
+          "table_name": "users",
+          "key_condition": "PK=user_id",
+          "design_rps": 0.3735,
+          "description": "Fetch users by ID list (WHERE ID IN (...))",
+          "in_scope": true,
+          "query_ids": [
+            "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+          "query_text": "SELECT * FROM `wp_users` WHERE `ID` = ? LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2979.2083333333335,
+          "execution_time_ms_avg": 0.219,
+          "tables_accessed": [
+            "wordpress.wp_users"
+          ],
+          "linked_patterns": [
+            "DDB-AP-1"
+          ]
+        },
+        {
+          "query_id": "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c",
+          "query_text": "SELECT * FROM `wp_users` WHERE `ID` IN (...)",
+          "query_type": "SELECT",
+          "frequency_per_hour": 448.1666666666667,
+          "execution_time_ms_avg": 0.195,
+          "tables_accessed": [
+            "wordpress.wp_users"
+          ],
+          "linked_patterns": [
+            "DDB-AP-14"
+          ]
+        }
+      ],
+      "total_design_rps": 2.8563
+    },
+    {
+      "group_name": "Term metadata reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-3",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "terms",
+          "key_condition": "PK=term_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 1.6076,
+          "description": "Look up termmeta rows by term_id and meta_key",
+          "in_scope": true,
+          "query_ids": [
+            "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-7",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "terms",
+          "key_condition": "PK=term_id AND SK begins_with 'META#'",
+          "design_rps": 0.7506,
+          "description": "Read all termmeta for a list of term_ids (one Query per term_id); replaces a full table scan",
+          "in_scope": true,
+          "query_ids": [
+            "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034",
+          "query_text": "SELECT `meta_id` FROM `wp_termmeta` WHERE `meta_key` = ? AND `term_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 1929.125,
+          "execution_time_ms_avg": 0.238,
+          "tables_accessed": [
+            "wordpress.wp_termmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-3"
+          ]
+        },
+        {
+          "query_id": "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+          "query_text": "SELECT `term_id` , `meta_key` , `meta_value` FROM `wp_termmeta` WHERE `term_id` IN (...) ORDER BY `meta_id` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 900.75,
+          "execution_time_ms_avg": 0.237,
+          "tables_accessed": [
+            "wordpress.wp_termmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-7"
+          ]
+        }
+      ],
+      "total_design_rps": 2.3582
+    },
+    {
+      "group_name": "Order item meta writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-15",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "WpOrderItems",
+          "key_condition": "PK=order_item_id AND SK='META#<meta_key>#<meta_id>' (item being written)",
+          "design_rps": 1.922257,
+          "description": "Insert an order item meta row.",
+          "in_scope": true,
+          "query_ids": [
+            "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+          "query_text": "INSERT INTO `wp_woocommerce_order_itemmeta` ( `order_item_id` , `meta_key` , `meta_value` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 6920.125,
+          "execution_time_ms_avg": 8.369,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-15"
+          ]
+        }
+      ],
+      "total_design_rps": 1.922257
+    },
+    {
+      "group_name": "Post term relationships",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-9",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK begins_with 'TERM#'",
+          "design_rps": 0.6346,
+          "description": "Terms (term_id, object_id) attached to a set of objects filtered by taxonomy, ordered by name; served by denormalized TERM# items under each post, sorted by term_name in the application",
+          "in_scope": true,
+          "query_ids": [
+            "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-10",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK begins_with 'TERM#'",
+          "design_rps": 0.5359,
+          "description": "Distinct term_ids attached to a set of objects filtered by taxonomy",
+          "in_scope": true,
+          "query_ids": [
+            "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-11",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK=item_sk 'TERM#<term_taxonomy_id>'",
+          "design_rps": 0.5359,
+          "description": "Check whether an object is linked to a term_taxonomy_id",
+          "in_scope": true,
+          "query_ids": [
+            "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` , `tr` . `object_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON",
+          "query_type": "SELECT",
+          "frequency_per_hour": 761.5,
+          "execution_time_ms_avg": 0.9,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_term_relationships"
+          ],
+          "linked_patterns": [
+            "DDB-AP-9"
+          ]
+        },
+        {
+          "query_id": "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonom",
+          "query_type": "SELECT",
+          "frequency_per_hour": 643.0416666666666,
+          "execution_time_ms_avg": 0.547,
+          "tables_accessed": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_term_relationships"
+          ],
+          "linked_patterns": [
+            "DDB-AP-10"
+          ]
+        },
+        {
+          "query_id": "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a",
+          "query_text": "SELECT `term_taxonomy_id` FROM `wp_term_relationships` WHERE `object_id` = ? AND `term_taxonomy_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 643.0416666666666,
+          "execution_time_ms_avg": 0.199,
+          "tables_accessed": [
+            "wordpress.wp_term_relationships"
+          ],
+          "linked_patterns": [
+            "DDB-AP-11"
+          ]
+        }
+      ],
+      "total_design_rps": 1.7064000000000001
+    },
+    {
+      "group_name": "Aggregations",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-5",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 1.0694,
+          "description": "COUNT(*) of postmeta rows for a post_id and meta_key",
+          "in_scope": false,
+          "query_ids": [
+            "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-13",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 0.5035,
+          "description": "SUM of postmeta.meta_value for child posts of a parent by type and meta_key",
+          "in_scope": false,
+          "query_ids": [
+            "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 1283.3333333333333,
+          "execution_time_ms_avg": 0.428,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-5"
+          ]
+        },
+        {
+          "query_id": "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+          "query_text": "SELECT SUM ( `postmeta` . `meta_value` ) FROM `wp_postmeta` AS `postmeta` INNER JOIN `wp_posts` AS `posts` ON ( `posts` . `post_type` = ? AND `posts` . `post_parent` = ? ) WHERE `postmeta` . `meta_key",
+          "query_type": "SELECT",
+          "frequency_per_hour": 604.1666666666666,
+          "execution_time_ms_avg": 0.462,
+          "tables_accessed": [
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts"
+          ],
+          "linked_patterns": [
+            "DDB-AP-13"
+          ]
+        }
+      ],
+      "total_design_rps": 1.5728999999999997
+    },
+    {
+      "group_name": "Tax rate class reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-2",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WcTaxRateClasses",
+          "key_condition": "PK=class_scope",
+          "design_rps": 1.2633,
+          "description": "List all tax rate classes ordered by name (replaces full table scan with a Query on a constant partition key)",
+          "in_scope": true,
+          "query_ids": [
+            "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+          "query_text": "SELECT * FROM `wp_wc_tax_rate_classes` ORDER BY NAME",
+          "query_type": "SELECT",
+          "frequency_per_hour": 4548.0,
+          "execution_time_ms_avg": 0.253,
+          "tables_accessed": [
+            "wordpress.wp_wc_tax_rate_classes"
+          ],
+          "linked_patterns": [
+            "DDB-AP-2"
+          ]
+        }
+      ],
+      "total_design_rps": 1.2633
+    },
+    {
+      "group_name": "Comment reads and writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-6",
+          "engine": "dynamodb",
+          "operation": "GetItem",
+          "table_name": "Comments",
+          "key_condition": "PK=comment_id",
+          "design_rps": 0.2662,
+          "description": "Fetch a single comment by comment_ID",
+          "in_scope": true,
+          "query_ids": [
+            "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-7",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "Comments",
+          "key_condition": "PK=comment_id (full item written, condition attribute_not_exists(comment_id))",
+          "design_rps": 0.2662,
+          "description": "Insert a new comment",
+          "in_scope": true,
+          "query_ids": [
+            "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+          ]
+        },
+        {
+          "pattern_id": "DDB-AP-8",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "Comments",
+          "key_condition": "N/A (aggregation not supported)",
+          "design_rps": 0.2662,
+          "description": "COUNT of approved comments for a post",
+          "in_scope": false,
+          "query_ids": [
+            "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "query_text": "SELECT * FROM `wp_comments` WHERE `comment_ID` = ? LIMIT ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 958.4166666666666,
+          "execution_time_ms_avg": 0.242,
+          "tables_accessed": [
+            "wordpress.wp_comments"
+          ],
+          "linked_patterns": [
+            "DDB-AP-6"
+          ]
+        },
+        {
+          "query_id": "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da",
+          "query_text": "INSERT INTO `wp_comments` ( `comment_post_ID` , `comment_author_IP` , `comment_author` , `comment_author_email` , `comment_author_url` , `comment_date` , `comment_date_gmt` , `comment_content` , `comm",
+          "query_type": "INSERT",
+          "frequency_per_hour": 958.375,
+          "execution_time_ms_avg": 8.501,
+          "tables_accessed": [
+            "wordpress.wp_comments"
+          ],
+          "linked_patterns": [
+            "DDB-AP-7"
+          ]
+        },
+        {
+          "query_id": "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_comments` WHERE `comment_post_ID` = ? AND `comment_approved` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 958.375,
+          "execution_time_ms_avg": 0.405,
+          "tables_accessed": [
+            "wordpress.wp_comments"
+          ],
+          "linked_patterns": [
+            "DDB-AP-8"
+          ]
+        }
+      ],
+      "total_design_rps": 0.7986
+    },
+    {
+      "group_name": "Result count helpers",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-4",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "N/A",
+          "key_condition": "N/A (not expressible in DynamoDB)",
+          "design_rps": 0.6776,
+          "description": "SELECT FOUND_ROWS() - MySQL session-level row count of the previous query",
+          "in_scope": false,
+          "query_ids": [
+            "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e",
+          "query_text": "SELECT `FOUND_ROWS` ( )",
+          "query_type": "SELECT",
+          "frequency_per_hour": 2439.3333333333335,
+          "execution_time_ms_avg": 0.116,
+          "tables_accessed": [
+            "unknown"
+          ],
+          "linked_patterns": [
+            "DDB-AP-4"
+          ]
+        }
+      ],
+      "total_design_rps": 0.6776
+    },
+    {
+      "group_name": "Post metadata reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-12",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "posts",
+          "key_condition": "PK=post_id AND SK begins_with 'META#<meta_key>#'",
+          "design_rps": 0.5358,
+          "description": "Read meta_value for a post_id and meta_key",
+          "in_scope": true,
+          "query_ids": [
+            "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+          "query_text": "SELECT `meta_value` FROM `wp_postmeta` WHERE `post_id` = ? AND `meta_key` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 643.0,
+          "execution_time_ms_avg": 0.352,
+          "tables_accessed": [
+            "wordpress.wp_postmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-12"
+          ]
+        }
+      ],
+      "total_design_rps": 0.5358
+    },
+    {
+      "group_name": "Product meta lookup writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-5",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "WcProductMetaLookup",
+          "key_condition": "PK=product_id (full item written)",
+          "design_rps": 0.3565,
+          "description": "Upsert product lookup row (REPLACE INTO) keyed by product_id",
+          "in_scope": true,
+          "query_ids": [
+            "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+          "query_text": "REPLACE INTO `wp_wc_product_meta_lookup` ( `product_id` , `sku` , `virtual` , `downloadable` , `min_price` , `max_price` , `onsale` , `stock_quantity` , `stock_status` , `rating_count` , `average_rati",
+          "query_type": "INSERT",
+          "frequency_per_hour": 1283.3333333333333,
+          "execution_time_ms_avg": 8.593,
+          "tables_accessed": [
+            "wordpress.wp_wc_product_meta_lookup"
+          ],
+          "linked_patterns": [
+            "DDB-AP-5"
+          ]
+        }
+      ],
+      "total_design_rps": 0.3565
+    },
+    {
+      "group_name": "Term meta writes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-17",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WpTerms",
+          "key_condition": "PK=term_id AND SK='META#<meta_key>#<meta_id>'",
+          "design_rps": 0.178623,
+          "description": "Overwrite meta_value of a term meta row identified by term_id and meta_key.",
+          "in_scope": true,
+          "query_ids": [
+            "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+          "query_text": "UPDATE `wp_termmeta` SET `meta_value` = ? WHERE `term_id` = ? AND `meta_key` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 643.0416666666666,
+          "execution_time_ms_avg": 8.665,
+          "tables_accessed": [
+            "wordpress.wp_termmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-17"
+          ]
+        }
+      ],
+      "total_design_rps": 0.178623
+    },
+    {
+      "group_name": "Reserved stock",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-9",
+          "engine": "dynamodb",
+          "operation": "BatchWriteItem",
+          "table_name": "WcReservedStock",
+          "key_condition": "PK=order_id (keys enumerated via Query PK=order_id, then DeleteRequest per SK)",
+          "design_rps": 0.1517,
+          "description": "Release all stock reservations of an order (Query by order_id, then delete the returned items)",
+          "in_scope": true,
+          "query_ids": [
+            "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+          "query_text": "DELETE FROM `wp_wc_reserved_stock` WHERE `order_id` = ?",
+          "query_type": "DELETE",
+          "frequency_per_hour": 546.25,
+          "execution_time_ms_avg": 7.193,
+          "tables_accessed": [
+            "wordpress.wp_wc_reserved_stock"
+          ],
+          "linked_patterns": [
+            "DDB-AP-9"
+          ]
+        }
+      ],
+      "total_design_rps": 0.1517
+    },
+    {
+      "group_name": "Action scheduler logs",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-10",
+          "engine": "dynamodb",
+          "operation": "PutItem",
+          "table_name": "ActionSchedulerLogs",
+          "key_condition": "PK=action_id AND SK=log_id (full item written)",
+          "design_rps": 0.0971,
+          "description": "Append a log entry for a scheduled action",
+          "in_scope": true,
+          "query_ids": [
+            "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212",
+          "query_text": "INSERT INTO `wp_actionscheduler_logs` ( `action_id` , `message` , `log_date_gmt` , `log_date_local` ) VALUES (...)",
+          "query_type": "INSERT",
+          "frequency_per_hour": 349.6666666666667,
+          "execution_time_ms_avg": 8.682,
+          "tables_accessed": [
+            "wordpress.wp_actionscheduler_logs"
+          ],
+          "linked_patterns": [
+            "DDB-AP-10"
+          ]
+        }
+      ],
+      "total_design_rps": 0.0971
+    },
+    {
+      "group_name": "Download permissions",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-11",
+          "engine": "dynamodb",
+          "operation": "UpdateItem",
+          "table_name": "WooDownloadablePermissions",
+          "key_condition": "PK=order_id AND SK=permission_id (keys enumerated via Query PK=order_id)",
+          "design_rps": 0.0971,
+          "description": "Reassign user_id and user_email on all permissions of an order (Query by order_id, then UpdateItem per item)",
+          "in_scope": true,
+          "query_ids": [
+            "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17",
+          "query_text": "UPDATE `wp_woocommerce_downloadable_product_permissions` SET `user_id` = ? , `user_email` = ? WHERE `order_id` = ?",
+          "query_type": "UPDATE",
+          "frequency_per_hour": 349.625,
+          "execution_time_ms_avg": 7.398,
+          "tables_accessed": [
+            "wordpress.wp_woocommerce_downloadable_product_permissions"
+          ],
+          "linked_patterns": [
+            "DDB-AP-11"
+          ]
+        }
+      ],
+      "total_design_rps": 0.0971
+    },
+    {
+      "group_name": "Comment metadata reads",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-12",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "CommentMeta",
+          "key_condition": "PK=comment_id",
+          "design_rps": 0.0491,
+          "description": "Fetch metadata of one or more comments (IN list), ordered by meta_id; executed as one Query per comment_id",
+          "in_scope": true,
+          "query_ids": [
+            "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca",
+          "query_text": "SELECT `comment_id` , `meta_key` , `meta_value` FROM `wp_commentmeta` WHERE `comment_id` IN (...) ORDER BY `meta_id` ASC",
+          "query_type": "SELECT",
+          "frequency_per_hour": 176.79166666666666,
+          "execution_time_ms_avg": 0.254,
+          "tables_accessed": [
+            "wordpress.wp_commentmeta"
+          ],
+          "linked_patterns": [
+            "DDB-AP-12"
+          ]
+        }
+      ],
+      "total_design_rps": 0.0491
+    },
+    {
+      "group_name": "Admin notes",
+      "engines": [
+        "dynamodb"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "DDB-AP-13",
+          "engine": "dynamodb",
+          "operation": "Query",
+          "table_name": "WcAdminNotes",
+          "key_condition": "N/A (aggregation not supported)",
+          "design_rps": 0.0434,
+          "description": "COUNT of admin notes filtered by type, status and is_deleted",
+          "in_scope": false,
+          "query_ids": [
+            "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d"
+          ]
+        }
+      ],
+      "source_queries": [
+        {
+          "query_id": "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_wc_admin_notes` WHERE ? = ? AND TYPE IN (...) AND STATUS IN (...) AND `is_deleted` = ?",
+          "query_type": "SELECT",
+          "frequency_per_hour": 156.29166666666666,
+          "execution_time_ms_avg": 0.318,
+          "tables_accessed": [
+            "wordpress.wp_wc_admin_notes"
+          ],
+          "linked_patterns": [
+            "DDB-AP-13"
+          ]
+        }
+      ],
+      "total_design_rps": 0.0434
+    },
+    {
+      "group_name": "ungrouped",
+      "engines": [
+        "elasticache"
+      ],
+      "access_patterns": [
+        {
+          "pattern_id": "EC-AP-1",
+          "engine": "elasticache",
+          "operation": "HGETALL",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Fetch a cached post by primary key (SELECT wp_posts.* WHERE ID = ? AND post_type = ?)",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-2",
+          "engine": "elasticache",
+          "operation": "GET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Resolve post IDs by slug, type and status, newest first (post_name IN ... queries); then fetch rows with MGET-style pipelined HGETALL",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-3",
+          "engine": "elasticache",
+          "operation": "ZREVRANGE",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Paged list of post IDs by type and status ordered by post_date DESC, with total count replacing SQL_CALC_FOUND_ROWS",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-4",
+          "engine": "elasticache",
+          "operation": "ZREVRANGE",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "List child posts of a parent ordered by date or title",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-5",
+          "engine": "elasticache",
+          "operation": "ZRANGE",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Find post IDs by exact title, type and status ordered by post_date_gmt (about 10K calls per hour)",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-6",
+          "engine": "elasticache",
+          "operation": "HGETALL",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Post counts grouped by status for a post type",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-7",
+          "engine": "elasticache",
+          "operation": "HGETALL",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Daily WooCommerce analytics (item counts, order counts, discounts) over a date range, read as pipelined per-day hashes",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-8",
+          "engine": "elasticache",
+          "operation": "ZRANGE",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Next pending scheduled actions for a hook ordered by scheduled date",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-9",
+          "engine": "elasticache",
+          "operation": "GET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Resolve action scheduler group id from slug",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-10",
+          "engine": "elasticache",
+          "operation": "GET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Resolve term_id by taxonomy and slug (pre-joined terms and term_taxonomy)",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-11",
+          "engine": "elasticache",
+          "operation": "SCARD",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Count terms within a taxonomy",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-12",
+          "engine": "elasticache",
+          "operation": "HSET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Write-through update of individual post fields (comment_count, modified timestamps, guid, full-row update)",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-13",
+          "engine": "elasticache",
+          "operation": "HSET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Insert a new post: populate the hash and add to the listing sorted sets after the MySQL insert returns the ID",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-14",
+          "engine": "elasticache",
+          "operation": "ZADD",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Insert a scheduled action and enqueue it in the pending sorted set",
+          "in_scope": true,
+          "query_ids": []
+        },
+        {
+          "pattern_id": "EC-AP-15",
+          "engine": "elasticache",
+          "operation": "HSET",
+          "table_name": null,
+          "key_condition": null,
+          "design_rps": 0,
+          "description": "Order item inserts and meta value updates applied to the order item meta hash",
+          "in_scope": true,
+          "query_ids": []
+        }
+      ],
+      "source_queries": [],
+      "total_design_rps": 0
+    }
+  ],
+  "tco_analysis": {
+    "current_monthly_cost": 0.0,
+    "projected_monthly_cost": 582.76,
+    "savings_percent": 0.0,
+    "cost_breakdown": [
+      {
+        "database": "dynamodb",
+        "monthly_cost_usd": 98.41,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "elasticache",
+        "monthly_cost_usd": 165.55,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "aurora_mysql",
+        "monthly_cost_usd": 318.8,
+        "pricing_mode": "on-demand"
+      }
+    ],
+    "assumptions": [
+      "On-demand capacity mode for all target databases",
+      "Region: us-east-1",
+      "Current RDS cost estimated from instance class (actual billing may differ)",
+      "Does not include data transfer, backups, or global tables"
+    ]
+  },
+  "risk_assessment": {
+    "overall_risk_level": "MEDIUM",
+    "risks": [
+      {
+        "severity": "HIGH",
+        "description": "[dynamodb] Complex GROUP BY / HAVING / multi-table aggregations. DynamoDB doesn't support server-side aggregation \u2014 these need to move to application layer, pre-computed aggregates, or a separate analytics store. (0% of queries resolved by schema design, 9 remaining)",
+        "risk_id": "RISK-001",
+        "risk_type": "PERFORMANCE_DEGRADATION",
+        "affected_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "mitigation": "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[dynamodb] aggregation: COUNT(*) on wp_postmeta by post_id and meta_key: run a Query on posts (PK=post_id, SK begins_with META#<meta_key>#) with Select=COUNT in the application, or treat as an existence check; maintain a counter via UpdateItem if needed.",
+        "risk_id": "RISK-002",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": "COUNT(*) on wp_postmeta by post_id and meta_key: run a Query on posts (PK=post_id, SK begins_with META#<meta_key>#) with Select=COUNT in the application, or treat as an existence check; maintain a counter via UpdateItem if needed."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[dynamodb] aggregation: SUM(meta_value) over child posts: compute in the application by Querying each child post's META# items, or maintain a materialized total on the parent via DynamoDB Streams + Lambda; alternatively export to S3/Athena.",
+        "risk_id": "RISK-003",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": "SUM(meta_value) over child posts: compute in the application by Querying each child post's META# items, or maintain a materialized total on the parent via DynamoDB Streams + Lambda; alternatively export to S3/Athena."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[dynamodb] aggregation: COUNT(*) of approved comments per post: maintain a materialized counter on a post-level item via UpdateItem (ADD) on comment insert/approve, or compute in the application.",
+        "risk_id": "RISK-004",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": "COUNT(*) of approved comments per post: maintain a materialized counter on a post-level item via UpdateItem (ADD) on comment insert/approve, or compute in the application."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[dynamodb] aggregation: COUNT(*) of admin notes by type/status: table has about 2 rows; read the notes and count in the application.",
+        "risk_id": "RISK-005",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": "COUNT(*) of admin notes by type/status: table has about 2 rows; read the notes and count in the application."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[dynamodb] aggregation: FOUND_ROWS() is MySQL session state; replace with application-side counting or cursor-based pagination (LastEvaluatedKey).",
+        "risk_id": "RISK-006",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": "FOUND_ROWS() is MySQL session state; replace with application-side counting or cursor-based pagination (LastEvaluatedKey)."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[elasticache] unknown: ",
+        "risk_id": "RISK-007",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": null
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[elasticache] unknown: ",
+        "risk_id": "RISK-008",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": null
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[elasticache] unknown: ",
+        "risk_id": "RISK-009",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "affected_tables": [],
+        "mitigation": null
+      },
+      {
+        "severity": "HIGH",
+        "description": "[aurora_mysql] Single-row SELECT by primary key at very high frequency (>100 calls/second). DynamoDB provides single-digit millisecond latency for key-value lookups at any scale \u2014 Aurora adds unnecessary overhead for this access pattern. (0% of queries resolved by schema design, 1 remaining)",
+        "risk_id": "RISK-010",
+        "risk_type": "PERFORMANCE_DEGRADATION",
+        "affected_tables": [
+          "wordpress.wp_options"
+        ],
+        "mitigation": "Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[aurora_mysql] Table with no foreign keys and no join participation \u2014 all queries are single-table CRUD. This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups). (0% of queries resolved by schema design, 18 remaining)",
+        "risk_id": "RISK-011",
+        "risk_type": "PERFORMANCE_DEGRADATION",
+        "affected_tables": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "mitigation": "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+      },
+      {
+        "severity": "MEDIUM",
+        "description": "[aurora_mysql] Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. This is a key-value workload wearing a relational costume \u2014 no query optimizer benefit. (0% of queries resolved by schema design, 10 remaining)",
+        "risk_id": "RISK-012",
+        "risk_type": "PERFORMANCE_DEGRADATION",
+        "affected_tables": [
+          "unknown",
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "mitigation": "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+      }
+    ],
+    "mitigation_strategies": [
+      "Run load tests with production-scale data before migration to validate performance targets",
+      "Implement unsupported patterns (text search, aggregations) via complementary services (OpenSearch, application-layer computation)",
+      "Use blue-green deployment with rollback capability for high-risk table migrations",
+      "Monitor target database metrics closely during the first 2 weeks post-migration"
+    ]
+  },
+  "schema_designs": {
+    "dynamodb": {
+      "status": "completed",
+      "validation_passed": true,
+      "tables": [
+        {
+          "table_name": "WpActionSchedulerActions",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_groups"
+          ],
+          "gsi_count": 0,
+          "item_count": 12537,
+          "item_size_bytes": 600
+        },
+        {
+          "table_name": "WpOrderItems",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_items",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "gsi_count": 1,
+          "item_count": 268752,
+          "item_size_bytes": 131
+        },
+        {
+          "table_name": "WpPostContent",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_term_relationships",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_terms"
+          ],
+          "gsi_count": 2,
+          "item_count": 461479,
+          "item_size_bytes": 159
+        },
+        {
+          "table_name": "WpTerms",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_termmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 30,
+          "item_size_bytes": 160
+        },
+        {
+          "table_name": "posts",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_term_relationships"
+          ],
+          "gsi_count": 1,
+          "item_count": 461479,
+          "item_size_bytes": 159
+        },
+        {
+          "table_name": "terms",
+          "aggregate_pattern": "item_collection",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_termmeta"
+          ],
+          "gsi_count": 1,
+          "item_count": 30,
+          "item_size_bytes": 350
+        },
+        {
+          "table_name": "users",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_users"
+          ],
+          "gsi_count": 0,
+          "item_count": 1,
+          "item_size_bytes": 600
+        },
+        {
+          "table_name": "woocommerce_order_itemmeta",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 244039,
+          "item_size_bytes": 131
+        },
+        {
+          "table_name": "wp_options",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "gsi_count": 1,
+          "item_count": 23163,
+          "item_size_bytes": 360
+        },
+        {
+          "table_name": "ActionSchedulerLogs",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_logs"
+          ],
+          "gsi_count": 0,
+          "item_count": 12910,
+          "item_size_bytes": 168
+        },
+        {
+          "table_name": "CommentMeta",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_commentmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 500
+        },
+        {
+          "table_name": "Comments",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_comments"
+          ],
+          "gsi_count": 0,
+          "item_count": 29651,
+          "item_size_bytes": 552
+        },
+        {
+          "table_name": "WcAdminNotes",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_wc_admin_notes"
+          ],
+          "gsi_count": 0,
+          "item_count": 2,
+          "item_size_bytes": 1500
+        },
+        {
+          "table_name": "WcProductMetaLookup",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_wc_product_meta_lookup"
+          ],
+          "gsi_count": 0,
+          "item_count": 150,
+          "item_size_bytes": 909
+        },
+        {
+          "table_name": "WcReservedStock",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_wc_reserved_stock"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 172
+        },
+        {
+          "table_name": "WcTaxRateClasses",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_wc_tax_rate_classes"
+          ],
+          "gsi_count": 0,
+          "item_count": 2,
+          "item_size_bytes": 447
+        },
+        {
+          "table_name": "WooApiKeys",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_woocommerce_api_keys"
+          ],
+          "gsi_count": 1,
+          "item_count": 0,
+          "item_size_bytes": 582
+        },
+        {
+          "table_name": "WooDownloadablePermissions",
+          "aggregate_pattern": "separate",
+          "source_tables": [
+            "wordpress.wp_woocommerce_downloadable_product_permissions"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 714
+        }
+      ],
+      "access_pattern_count": 52,
+      "hot_partitions_at_risk": 0,
+      "trade_offs": [
+        {
+          "description": "wp_posts, wp_postmeta and wp_term_relationships are stored as one item collection keyed by post_id instead of three joined tables.",
+          "impact": "Reading a post with its meta and terms is a single-partition Query, but the three entity types now share one table's backup, scaling and stream settings, and meta row order (ORDER BY meta_id) becomes meta_key order unless the application re-sorts.",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_term_relationships"
+          ],
+          "target_tables": [
+            "WpPostContent"
+          ],
+          "query_ids": [
+            "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+            "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+            "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+            "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The 3-table join of terms, term_taxonomy and term_relationships is replaced by denormalizing term_id, taxonomy and term_name onto the relationship item.",
+          "impact": "Term lookups for a post need no join, but renaming a term or changing its taxonomy requires an application-driven fan-out update over that term's relationship items, and the taxonomy filter and name sort run in the application.",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_term_relationships"
+          ],
+          "target_tables": [
+            "WpPostContent"
+          ],
+          "query_ids": [
+            "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Reverse lookup of posts by term_taxonomy_id (index on wp_term_relationships.term_taxonomy_id) is not provided because no query in this group uses it.",
+          "impact": "If the site later needs 'all posts in category X', a GSI on term_taxonomy_id must be added; today that access path is not supported.",
+          "source_tables": [
+            "wordpress.wp_term_relationships"
+          ],
+          "target_tables": [
+            "WpPostContent"
+          ],
+          "query_ids": [
+            "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "PostsByParent and PostsBySlug are sparse GSIs with multi-attribute keys; post_parent is omitted when 0 and GSI items exist only for POST entities.",
+          "impact": "GSI reads are eventually consistent, so a just-written post may briefly be missing from parent/slug lookups, and queries for post_parent=0 are not served; the post_status filter and full-item fetch (BatchGetItem) add a round trip.",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "target_tables": [
+            "WpPostContent.PostsByParent",
+            "WpPostContent.PostsBySlug"
+          ],
+          "query_ids": [
+            "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+            "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Order items and their meta are an item collection keyed by order_item_id, with an OrderItemsByOrder GSI for order_id lookups.",
+          "impact": "Meta reads are single-partition Queries; listing items for an order uses an eventually consistent GSI with INCLUDE projection (type and name) so no second fetch is needed.",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_items",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "target_tables": [
+            "WpOrderItems",
+            "WpOrderItems.OrderItemsByOrder"
+          ],
+          "query_ids": [
+            "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+            "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+            "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+            "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "wp_terms, wp_term_taxonomy and wp_termmeta are an item collection keyed by term_id; the unique (term_id, taxonomy) index is enforced by the sort key TAXONOMY#<taxonomy>.",
+          "impact": "Uniqueness of term_id plus taxonomy is enforced by the database through the primary key, but lookup by slug or name is not supported and would need a new GSI.",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_termmeta"
+          ],
+          "target_tables": [
+            "WpTerms"
+          ],
+          "query_ids": [
+            "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+            "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The MySQL query on wp_terms and wp_term_taxonomy that caused full table scans is replaced by Queries on the term_id partition key.",
+          "impact": "No DynamoDB Scan is needed, but the application must issue one Query per term_id instead of a single IN list.",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "target_tables": [
+            "WpTerms"
+          ],
+          "query_ids": [
+            "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "IN-list reads of meta rows (post_id IN, order_item_id IN) become parallel per-key Queries.",
+          "impact": "Latency is governed by the slowest parallel Query and the application owns fan-out and result ordering instead of the database.",
+          "source_tables": [
+            "wordpress.wp_postmeta",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "target_tables": [
+            "WpPostContent",
+            "WpOrderItems"
+          ],
+          "query_ids": [
+            "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+            "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Action scheduler group slug is denormalized onto each action item and the groups table is consolidated into WpActionSchedulerActions.",
+          "impact": "The action-plus-group read is a single GetItem, but renaming a group slug needs an application-driven update of all its actions, and status/hook/schedule-date lookups used by the scheduler runner are not covered by this group's queries.",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_groups"
+          ],
+          "target_tables": [
+            "WpActionSchedulerActions"
+          ],
+          "query_ids": [
+            "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "meta_value increments and decrements (meta_value = meta_value +/- ?) use UpdateItem with atomic ADD on numeric values after the application resolves meta_id.",
+          "impact": "Counters must be stored as numbers rather than longtext strings for those meta keys, and the update is a two-step lookup then write instead of one SQL statement.",
+          "source_tables": [
+            "wordpress.wp_postmeta"
+          ],
+          "target_tables": [
+            "WpPostContent"
+          ],
+          "query_ids": [
+            "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+            "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+            "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "wp_posts, wp_postmeta and wp_term_relationships are consolidated into one item collection keyed by post_id with typed sort keys (POST, META#key#id, TERM#id).",
+          "impact": "Reading a post with its metadata or terms becomes a single-partition Query instead of joins, but items of different shapes share one table, so the application must interpret the sort-key prefix and the table loses per-entity scaling and backup settings.",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_term_relationships"
+          ],
+          "target_tables": [
+            "posts"
+          ],
+          "query_ids": [
+            "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+            "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+            "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Term name, taxonomy and term_id are denormalized onto TERM# relationship items and the term name onto TAXONOMY items, replacing the terms/term_taxonomy/term_relationships joins.",
+          "impact": "Renaming a term or changing a taxonomy now requires updating every related item (fan-out writes) and ordering by name happens in the application; in exchange the hot join queries become key lookups.",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy",
+            "wordpress.wp_term_relationships"
+          ],
+          "target_tables": [
+            "posts",
+            "terms"
+          ],
+          "query_ids": [
+            "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+            "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+            "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+            "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "GSIs PostsBySlug (sparse on post_name, multi-attribute sort key post_type/post_status/post_date) and TermsByTaxonomy (sparse on taxonomy, sort key name/term_id) replace index-driven lookups; both use KEYS_ONLY projection.",
+          "impact": "GSI reads are eventually consistent and a GetItem on the base table is needed for full post content; writes to post_name/post_status/post_date or taxonomy/name cause index delete+insert, which is negligible at current write volume.",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "target_tables": [
+            "posts.PostsBySlug",
+            "terms.TermsByTaxonomy"
+          ],
+          "query_ids": [
+            "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+            "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+            "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The unique index term_id_taxonomy (term_id, taxonomy) on wp_term_taxonomy is enforced by the key design: the TAXONOMY item uses PK=term_id and SK=TAXONOMY#<taxonomy>.",
+          "impact": "Duplicate (term_id, taxonomy) pairs are impossible at the database level via a conditional PutItem (attribute_not_exists), without needing a lookup table; lookup by term_taxonomy_id alone is not indexed because no captured query uses it.",
+          "source_tables": [
+            "wordpress.wp_term_taxonomy"
+          ],
+          "target_tables": [
+            "terms"
+          ],
+          "query_ids": [
+            "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The full-scan termmeta query (WHERE term_id IN (...)) is replaced by one Query per term_id on the terms item collection.",
+          "impact": "An IN list now costs one request per term_id instead of one SQL statement; results are ordered by meta_key then meta_id rather than meta_id, so the application re-sorts if strict meta_id order matters.",
+          "source_tables": [
+            "wordpress.wp_termmeta"
+          ],
+          "target_tables": [
+            "terms"
+          ],
+          "query_ids": [
+            "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "COUNT and SUM queries over wp_postmeta are moved out of DynamoDB scope.",
+          "impact": "DynamoDB has no server-side aggregation; these totals must be computed in application code, kept as materialized counters updated on write, or produced in an analytics store.",
+          "source_tables": [
+            "wordpress.wp_postmeta",
+            "wordpress.wp_posts"
+          ],
+          "target_tables": [
+            "posts"
+          ],
+          "query_ids": [
+            "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+            "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Only tables with collector metadata and captured queries are modeled; wp_actionscheduler_actions, wp_actionscheduler_groups and wp_woocommerce_order_items have no schema or in-scope query data in this input, and wp_woocommerce_order_itemmeta is kept as a standalone table keyed by order_item_id/meta_id. Design RPS assumes a peak-to-average ratio of 2.0 and growth multiplier of 1.5; wp_users and wp_terms item sizes are approximated because size_mb is dominated by page overhead for 1 and 15 rows.",
+          "impact": "Those omitted tables need a separate design pass once query telemetry exists; capacity figures are small estimates and should be revisited if traffic assumptions change.",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_itemmeta",
+            "wordpress.wp_users"
+          ],
+          "target_tables": [
+            "woocommerce_order_itemmeta",
+            "users"
+          ],
+          "query_ids": [
+            "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+            "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "option_name (unique, non-PK in MySQL) becomes the DynamoDB partition key and the surrogate option_id is kept only as a plain attribute.",
+          "impact": "Every lookup, update and delete is a single-key operation with no index, and uniqueness of option names is enforced by the database itself; option_id is no longer a lookup key, which is acceptable because no observed query filters on it.",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "target_tables": [
+            "wp_options"
+          ],
+          "query_ids": [
+            "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+            "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+            "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+            "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+            "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The autoload=? listing is served by the OptionsByAutoload GSI (INCLUDE option_value) instead of an indexed MySQL range read.",
+          "impact": "GSI reads are eventually consistent, so a just-written option may briefly be missing from the autoload list; the low-cardinality autoload key is safe here only because the measured load (about 3 reads/s and 9 writes/s at design peak) is under 3% of a partition limit, and should be revisited (shard suffix) if write volume grows by more than an order of magnitude.",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "target_tables": [
+            "wp_options.OptionsByAutoload"
+          ],
+          "query_ids": [
+            "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Mutable autoload and option_value are GSI-projected, so each option write also writes the GSI (amplification of 2x).",
+          "impact": "Write cost for option updates roughly doubles, but at about 9 writes/s the extra cost is small (under 1% of the per-partition write limit).",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "target_tables": [
+            "wp_options.OptionsByAutoload"
+          ],
+          "query_ids": [
+            "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+            "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+            "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Introspection query SHOW FULL FIELDS FROM wp_options (query_type OTHER, performs full scans in MySQL) has no DynamoDB equivalent and is not migrated.",
+          "impact": "DynamoDB is schemaless, so there is no column-metadata call to replace; the application must stop issuing it, which removes a source of full scans.",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "target_tables": [
+            "wp_options"
+          ],
+          "query_ids": [
+            "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Design RPS assumes peak_to_avg_ratio 2.0 and growth_multiplier 1.0 because no context overrides were supplied; the hot-key check assumes all traffic for a pattern could hit one option_name.",
+          "impact": "Capacity figures are conservative for a single hot option (for example siteurl) but should be re-run if actual peak or growth factors are higher.",
+          "source_tables": [
+            "wordpress.wp_options"
+          ],
+          "target_tables": [
+            "wp_options"
+          ],
+          "query_ids": [
+            "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "wp_woocommerce_api_keys is keyed by key_id with a GSI on consumer_key (INCLUDE projection) instead of making consumer_key the base key.",
+          "impact": "The hot update path (last_access, about 8 writes/s) hits the base table only and never touches the index because last_access is not projected. Authentication lookups via the index are eventually consistent, so a just-created or just-revoked key may take a moment to be visible. Uniqueness of consumer_key is enforced by the application, not the database.",
+          "source_tables": [
+            "wordpress.wp_woocommerce_api_keys"
+          ],
+          "target_tables": [
+            "WooApiKeys",
+            "WooApiKeys.ApiKeysByConsumerKey"
+          ],
+          "query_ids": [
+            "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+            "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "The full-scan listing of wp_wc_tax_rate_classes is replaced by a Query on a constant partition key (class_scope='ALL') sorted by name.",
+          "impact": "Behaves like a small ordered list; fine for about 2 rows at 1.3 reads/s, but all reads target one partition so it must stay small. Uniqueness of slug is enforced at the application layer rather than the database layer; if strict database-level enforcement is required, a dedicated lookup table with TransactWriteItems can be added.",
+          "source_tables": [
+            "wordpress.wp_wc_tax_rate_classes"
+          ],
+          "target_tables": [
+            "WcTaxRateClasses"
+          ],
+          "query_ids": [
+            "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "Set-based writes by order_id (DELETE on wp_wc_reserved_stock, UPDATE on download permissions) become Query by partition key followed by per-item BatchWriteItem/UpdateItem.",
+          "impact": "A single SQL statement becomes two steps and is not atomic across items unless wrapped in TransactWriteItems; the application must handle partial failure and retries. Volumes are low (under 0.2 ops/s).",
+          "source_tables": [
+            "wordpress.wp_wc_reserved_stock",
+            "wordpress.wp_woocommerce_downloadable_product_permissions"
+          ],
+          "target_tables": [
+            "WcReservedStock",
+            "WooDownloadablePermissions"
+          ],
+          "query_ids": [
+            "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+            "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "wp_commentmeta is a separate table keyed by comment_id (partition) and meta_id (sort); the IN (...) lookup becomes one Query per comment_id.",
+          "impact": "Multi-comment metadata loads need several parallel queries instead of one SQL statement; metadata is not stored with the comment, so a comment plus its metadata needs two reads.",
+          "source_tables": [
+            "wordpress.wp_commentmeta",
+            "wordpress.wp_comments"
+          ],
+          "target_tables": [
+            "CommentMeta",
+            "Comments"
+          ],
+          "query_ids": [
+            "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "COUNT(*) queries and FOUND_ROWS() on comments, admin notes and session state are moved out of DynamoDB.",
+          "impact": "Counts must be computed in application code or kept as materialized counters updated on write; this adds application logic and small consistency windows that a SQL COUNT did not have.",
+          "source_tables": [
+            "wordpress.wp_comments",
+            "wordpress.wp_wc_admin_notes",
+            "unknown"
+          ],
+          "target_tables": [
+            "Comments",
+            "WcAdminNotes"
+          ],
+          "query_ids": [
+            "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+            "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+            "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+          ],
+          "engine": "dynamodb"
+        },
+        {
+          "description": "No GSIs were created for secondary MySQL indexes (comment_post_ID, comment_author_email, sku, price, stock, log_date_gmt, etc.) because no observed query uses them.",
+          "impact": "Lookups by those columns (for example all comments of a post) are not supported by this design until an access pattern is confirmed; adding a GSI later is possible without downtime but requires a backfill.",
+          "source_tables": [
+            "wordpress.wp_comments",
+            "wordpress.wp_wc_product_meta_lookup",
+            "wordpress.wp_actionscheduler_logs"
+          ],
+          "target_tables": [
+            "Comments",
+            "WcProductMetaLookup",
+            "ActionSchedulerLogs"
+          ],
+          "query_ids": [
+            "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+            "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+            "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+          ],
+          "engine": "dynamodb"
+        }
+      ],
+      "unsupported_patterns": [
+        {
+          "query_ids": [
+            "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c"
+          ],
+          "pattern_type": "aggregation",
+          "recommendation": "COUNT(*) on wp_postmeta by post_id and meta_key: run a Query on posts (PK=post_id, SK begins_with META#<meta_key>#) with Select=COUNT in the application, or treat as an existence check; maintain a counter via UpdateItem if needed."
+        },
+        {
+          "query_ids": [
+            "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915"
+          ],
+          "pattern_type": "aggregation",
+          "recommendation": "SUM(meta_value) over child posts: compute in the application by Querying each child post's META# items, or maintain a materialized total on the parent via DynamoDB Streams + Lambda; alternatively export to S3/Athena."
+        },
+        {
+          "query_ids": [
+            "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"
+          ],
+          "pattern_type": "aggregation",
+          "recommendation": "COUNT(*) of approved comments per post: maintain a materialized counter on a post-level item via UpdateItem (ADD) on comment insert/approve, or compute in the application."
+        },
+        {
+          "query_ids": [
+            "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d"
+          ],
+          "pattern_type": "aggregation",
+          "recommendation": "COUNT(*) of admin notes by type/status: table has about 2 rows; read the notes and count in the application."
+        },
+        {
+          "query_ids": [
+            "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+          ],
+          "pattern_type": "aggregation",
+          "recommendation": "FOUND_ROWS() is MySQL session state; replace with application-side counting or cursor-based pagination (LastEvaluatedKey)."
+        }
+      ],
+      "migration_notes": []
+    },
+    "elasticache": {
+      "status": "completed",
+      "validation_passed": true,
+      "tables": [
+        {
+          "table_name": "wp_posts:{ID}",
+          "aggregate_pattern": "hash",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 3600
+        },
+        {
+          "table_name": "wp_posts:slug:{post_type}:{post_name}",
+          "aggregate_pattern": "string",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 3600
+        },
+        {
+          "table_name": "wp_posts:type:{post_type}:{post_status}:by_date",
+          "aggregate_pattern": "sorted_set",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 300
+        },
+        {
+          "table_name": "wp_posts:parent:{post_parent}:{post_type}:{post_status}",
+          "aggregate_pattern": "sorted_set",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 300
+        },
+        {
+          "table_name": "wp_posts:title:{post_type}:{post_title_hash}",
+          "aggregate_pattern": "sorted_set",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 600
+        },
+        {
+          "table_name": "wp_posts:status_counts:{post_type}",
+          "aggregate_pattern": "hash",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 300
+        },
+        {
+          "table_name": "wp_woocommerce_order_items:daily:{date}",
+          "aggregate_pattern": "hash",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_woocommerce_order_items",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 3600
+        },
+        {
+          "table_name": "wp_woocommerce_order_itemmeta:{order_item_id}",
+          "aggregate_pattern": "hash",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_itemmeta",
+            "wordpress.wp_woocommerce_order_items"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 3600
+        },
+        {
+          "table_name": "wp_actionscheduler_actions:pending:{hook}:{status}",
+          "aggregate_pattern": "sorted_set",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_actions"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 60
+        },
+        {
+          "table_name": "wp_actionscheduler_groups:slug:{slug}",
+          "aggregate_pattern": "string",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_groups"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 86400
+        },
+        {
+          "table_name": "wp_terms:slug:{taxonomy}:{slug}",
+          "aggregate_pattern": "string",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 86400
+        },
+        {
+          "table_name": "wp_term_taxonomy:{taxonomy}:terms",
+          "aggregate_pattern": "set",
+          "source_tables": [
+            "wordpress.wp_terms",
+            "wordpress.wp_term_taxonomy"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "ttl_seconds": 86400
+        }
+      ],
+      "access_pattern_count": 15,
+      "hot_partitions_at_risk": 0,
+      "trade_offs": [
+        {
+          "description": "WordPress post listings, slug lookups and counts are served from pre-built sorted sets, strings and hashes instead of SQL filters and ORDER BY.",
+          "impact": "Reads drop from milliseconds of MySQL work to sub-millisecond lookups, but the application must keep several derived indexes in sync and can briefly show stale lists (up to 5 minutes).",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "target_tables": [
+            "wp_posts:{ID}",
+            "wp_posts:type:{post_type}:{post_status}:by_date",
+            "wp_posts:slug:{post_type}:{post_name}"
+          ],
+          "query_ids": [
+            "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+            "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+            "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06"
+          ],
+          "engine": "elasticache"
+        },
+        {
+          "description": "Order analytics are pre-aggregated per day rather than computed with three-table joins.",
+          "impact": "Dashboard reports stop scanning about 83K rows per call, but numbers can lag by the TTL and a daily bucket must be recomputed when orders change.",
+          "source_tables": [
+            "wordpress.wp_posts",
+            "wordpress.wp_woocommerce_order_items",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ],
+          "target_tables": [
+            "wp_woocommerce_order_items:daily:{date}"
+          ],
+          "query_ids": [
+            "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+            "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+            "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+            "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+          ],
+          "engine": "elasticache"
+        },
+        {
+          "description": "Action Scheduler queue reads are cached in a short-lived sorted set, but claiming and status transitions stay in MySQL.",
+          "impact": "The roughly 10K per hour polling reads are offloaded, while the queue remains correct because MySQL is the authority; the cost is up to 60 seconds of queue staleness.",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_groups"
+          ],
+          "target_tables": [
+            "wp_actionscheduler_actions:pending:{hook}:{status}",
+            "wp_actionscheduler_groups:slug:{slug}"
+          ],
+          "query_ids": [
+            "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+            "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d",
+            "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+          ],
+          "engine": "elasticache"
+        },
+        {
+          "description": "ElastiCache is used as a cache in front of MySQL, not a replacement; ad-hoc searches (LIKE, joins on meta) stay in the relational database.",
+          "impact": "Some queries will not get faster and the team runs both systems, but there is no risk of losing data or functionality because Redis holds only rebuildable copies.",
+          "source_tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_users",
+            "wordpress.wp_usermeta"
+          ],
+          "target_tables": [],
+          "query_ids": [
+            "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+            "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935"
+          ],
+          "engine": "elasticache"
+        },
+        {
+          "description": "WooCommerce order item meta rows are folded into one hash per order item.",
+          "impact": "One round trip returns all item attributes and updates become single-field writes, at the cost of about 10x fewer but larger keys and application code that understands the EAV-to-hash mapping.",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_itemmeta",
+            "wordpress.wp_woocommerce_order_items"
+          ],
+          "target_tables": [
+            "wp_woocommerce_order_itemmeta:{order_item_id}"
+          ],
+          "query_ids": [
+            "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+            "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+          ],
+          "engine": "elasticache"
+        }
+      ],
+      "unsupported_patterns": [
+        {
+          "source_query_ids": [
+            "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf"
+          ],
+          "reason": "LEFT JOIN with multiple LIKE predicates on hook, args and extended_args combined with claim_id and status filters cannot be expressed as key lookups; Redis has no substring search.",
+          "workaround": "Keep in MySQL (or use a per-hook sorted set and filter args in the application after fetching candidates)."
+        },
+        {
+          "source_query_ids": [
+            "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935"
+          ],
+          "reason": "JOIN of wp_users and wp_usermeta with LIKE on meta_value (capabilities) ordered by display_name is an ad-hoc pattern match not supported by Redis.",
+          "workaround": "Maintain a set per role, for example wp_usermeta:role:{role}, or move to OpenSearch."
+        },
+        {
+          "source_query_ids": [
+            "b065d0f32c1e6491039cf7a3ed2b48bed98783293749e636139aa1883fe6eb11",
+            "3a5af258b286c55a86defe9dc509fee3e199c02019eb8faa10ce2d072ee1427a"
+          ],
+          "reason": "SHOW FULL FIELDS and SET SESSION are relational metadata and session-configuration statements with no Redis equivalent.",
+          "workaround": "Not needed in Redis; the application stops issuing them for cached paths."
+        }
+      ],
+      "migration_notes": []
+    },
+    "aurora_mysql": {
+      "status": "completed",
+      "validation_passed": true,
+      "migration_strategy": "carry_over",
+      "tables": [
+        {
+          "table_name": "wp_postmeta",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_postmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 4,
+          "primary_key": [
+            "meta_id"
+          ],
+          "index_count": 2,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_posts",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_posts"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 23,
+          "primary_key": [
+            "ID"
+          ],
+          "index_count": 4,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_term_relationships",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_term_relationships"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 3,
+          "primary_key": [
+            "object_id",
+            "term_taxonomy_id"
+          ],
+          "index_count": 1,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_term_taxonomy",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_term_taxonomy"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 6,
+          "primary_key": [
+            "term_taxonomy_id"
+          ],
+          "index_count": 2,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_termmeta",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_termmeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 4,
+          "primary_key": [
+            "meta_id"
+          ],
+          "index_count": 2,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_terms",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_terms"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 4,
+          "primary_key": [
+            "term_id"
+          ],
+          "index_count": 2,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_usermeta",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_usermeta"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 4,
+          "primary_key": [
+            "umeta_id"
+          ],
+          "index_count": 2,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_users",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_users"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 10,
+          "primary_key": [
+            "ID"
+          ],
+          "index_count": 3,
+          "foreign_key_count": 0
+        },
+        {
+          "table_name": "wp_woocommerce_order_items",
+          "aggregate_pattern": "relational_table",
+          "source_tables": [
+            "wordpress.wp_woocommerce_order_items"
+          ],
+          "gsi_count": 0,
+          "item_count": 0,
+          "item_size_bytes": 0,
+          "column_count": 4,
+          "primary_key": [
+            "order_item_id"
+          ],
+          "index_count": 1,
+          "foreign_key_count": 0
+        }
+      ],
+      "index_count": 19,
+      "foreign_key_count": 0,
+      "access_pattern_count": 0,
+      "hot_partitions_at_risk": 0,
+      "optimizations": [
+        {
+          "category": "index",
+          "target": "wp_posts.type_status_date",
+          "recommendation": "Replace the carried-over index (ID, post_date, post_status, post_type) with (post_type, post_status, post_date, ID). The ID column is already the primary key, so leading with it makes the index useless for type/status/date filtering.",
+          "rationale": "WordPress listing queries filter by post_type and post_status and order by post_date. A leading-ID composite cannot serve these, forcing scans. Table is small today (about 12k rows) but the fix is free. Not applied to the DDL because index definitions are copied from the draft."
+        },
+        {
+          "category": "index",
+          "target": "wp_postmeta (post_id, meta_key)",
+          "recommendation": "Add a composite index on (post_id, meta_key) and consider dropping the single-column post_id index.",
+          "rationale": "wp_postmeta is the largest table (about 449k rows, 62 MB) and is hit by meta lookups filtered on both post_id and meta_key in joins; a composite index removes extra row filtering."
+        },
+        {
+          "category": "read_replica",
+          "target": "Aurora cluster reader endpoint",
+          "recommendation": "Route read-only queries (pagination, IN-list lookups, aggregation and join reports, about 30 percent IN-list and 20 percent pagination traffic) to the reader endpoint; keep writes and option upserts on the writer.",
+          "rationale": "Workload is read-heavy (about 222 calls per second total). Offloading reads keeps writer latency stable for ON DUPLICATE KEY upserts and transactional writes."
+        },
+        {
+          "category": "other",
+          "target": "Cluster sizing",
+          "recommendation": "Start on provisioned db.r6g.xlarge (recommended at about $319/month) rather than Serverless v2 (about $670/month estimated). Revisit if traffic becomes spiky.",
+          "rationale": "The data set is only 0.14 GB with steady throughput, so steady provisioned capacity is cheaper than Serverless v2 ACU hours. Standard Aurora storage is adequate; I/O-Optimized is not justified at this data size and write rate."
+        }
+      ],
+      "app_layer_notes": [
+        {
+          "feature": "zero_date_defaults",
+          "source_object": "wp_posts.post_date, post_date_gmt, post_modified, post_modified_gmt; wp_users.user_registered",
+          "recommendation": "These columns default to '0000-00-00 00:00:00', which is rejected when the Aurora parameter group uses strict sql_mode (NO_ZERO_DATE). Either set a cluster parameter group sql_mode matching WordPress's own session settings (WordPress clears NO_ZERO_DATE/STRICT modes per connection) or have the application always supply explicit timestamps. Validate during the data load, which may need a relaxed sql_mode."
+        },
+        {
+          "feature": "longtext_mapped_to_text",
+          "source_object": "wp_posts.post_content, post_content_filtered; wp_postmeta.meta_value; wp_termmeta.meta_value; wp_usermeta.meta_value; wp_term_taxonomy.description",
+          "recommendation": "The source columns are LONGTEXT (up to 4 GB) but the carried-over draft DDL uses TEXT (65,535 bytes). Before cutover, check the maximum length of these columns in the source. If any exceed 64 KB (likely for post_content and serialized meta_value), change them to LONGTEXT (or MEDIUMTEXT) in the DDL to avoid truncation or load failures. The draft was left unchanged to respect the script-derived types."
+        },
+        {
+          "feature": "unsigned_integer_types",
+          "source_object": "All BIGINT UNSIGNED id and foreign-reference columns",
+          "recommendation": "The draft maps unsigned source integers (bigint unsigned) and INT columns to signed BIGINT. Values fit for any realistic WordPress data, but confirm no application code relies on unsigned overflow semantics. Prefer BIGINT UNSIGNED if strict parity is required."
+        },
+        {
+          "feature": "implicit_foreign_keys",
+          "source_object": "wp_posts.post_author, wp_postmeta.post_id, wp_term_relationships.object_id/term_taxonomy_id, wp_term_taxonomy.term_id, wp_termmeta.term_id, wp_usermeta.user_id, wp_woocommerce_order_items.order_id",
+          "recommendation": "The source schema declares no foreign keys; WordPress enforces referential integrity in application code. No FK DDL is generated. Keep enforcement in the application and do not add FKs without cleaning orphaned rows first."
+        },
+        {
+          "feature": "partial_table_scope",
+          "source_object": "wp_options, wp_comments, wp_commentmeta, wp_actionscheduler_*, wp_wc_*, wp_woocommerce_* (other than order_items)",
+          "recommendation": "The draft covers only 9 tables; other tables referenced by queries (for example wp_options, wp_comments, wp_woocommerce_order_itemmeta) are not in this design. Confirm the assignment phase intentionally routed them to other engines (wp_options PK lookups and session/key-value tables were flagged as DynamoDB/ElastiCache candidates) or add them to the Aurora scope."
+        }
+      ],
+      "ddl_available": true,
+      "trade_offs": [
+        {
+          "description": "Carry over the MySQL schema 1:1 to Aurora MySQL with no residual type decisions; the draft was reproduced unchanged.",
+          "impact": "Lowest-risk migration with near-zero application change and compatibility with WordPress and WooCommerce. The cost is that known legacy quirks (signed types, zero-date defaults, a poorly ordered composite index) are carried over and are tracked as follow-ups.",
+          "source_tables": [
+            "wp_posts",
+            "wp_postmeta",
+            "wp_users",
+            "wp_terms",
+            "wp_term_taxonomy",
+            "wp_term_relationships",
+            "wp_termmeta",
+            "wp_usermeta",
+            "wp_woocommerce_order_items"
+          ],
+          "target_tables": [
+            "wp_posts",
+            "wp_postmeta",
+            "wp_users",
+            "wp_terms",
+            "wp_term_taxonomy",
+            "wp_term_relationships",
+            "wp_termmeta",
+            "wp_usermeta",
+            "wp_woocommerce_order_items"
+          ],
+          "query_ids": [],
+          "engine": "aurora_mysql"
+        },
+        {
+          "description": "LONGTEXT columns are represented as TEXT in the draft DDL, which caps values at 64 KB.",
+          "impact": "Risk of silent truncation or failed loads for long posts and serialized metadata unless the source maximum lengths are verified and the columns widened to LONGTEXT before cutover. A pre-migration length check is required.",
+          "source_tables": [
+            "wp_posts",
+            "wp_postmeta",
+            "wp_termmeta",
+            "wp_usermeta",
+            "wp_term_taxonomy"
+          ],
+          "target_tables": [
+            "wp_posts",
+            "wp_postmeta",
+            "wp_termmeta",
+            "wp_usermeta",
+            "wp_term_taxonomy"
+          ],
+          "query_ids": [],
+          "engine": "aurora_mysql"
+        },
+        {
+          "description": "No foreign keys are created; referential integrity remains in application code as in the source.",
+          "impact": "Avoids load-order failures and matches WordPress behavior, but orphaned rows remain possible; integrity depends on the application and periodic cleanup jobs.",
+          "source_tables": [
+            "wp_postmeta",
+            "wp_term_relationships",
+            "wp_termmeta",
+            "wp_usermeta"
+          ],
+          "target_tables": [
+            "wp_postmeta",
+            "wp_term_relationships",
+            "wp_termmeta",
+            "wp_usermeta"
+          ],
+          "query_ids": [],
+          "engine": "aurora_mysql"
+        },
+        {
+          "description": "Some key-value style tables such as wp_options and session-like tables were flagged by the analysis as better suited to DynamoDB or ElastiCache and are outside this schema.",
+          "impact": "Keeping them on Aurora is simplest and fully compatible, while moving them offloads hot PK lookups at the cost of application changes. This decision is deferred to the cross-engine assignment.",
+          "source_tables": [
+            "wp_options"
+          ],
+          "target_tables": [],
+          "query_ids": [
+            "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+          ],
+          "engine": "aurora_mysql"
+        }
+      ],
+      "unsupported_patterns": [],
+      "migration_notes": []
+    }
+  },
+  "trade_offs": [
+    {
+      "description": "wp_posts, wp_postmeta and wp_term_relationships are stored as one item collection keyed by post_id instead of three joined tables.",
+      "impact": "Reading a post with its meta and terms is a single-partition Query, but the three entity types now share one table's backup, scaling and stream settings, and meta row order (ORDER BY meta_id) becomes meta_key order unless the application re-sorts.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_term_relationships"
+      ],
+      "target_tables": [
+        "WpPostContent"
+      ],
+      "query_ids": [
+        "3dbc7d9a0824cce437bb7edcc8cad29bf671294799df354d121dce446e79d35d",
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+        "71b98418d633c56095dc58d00755195b719d6e5fd513a24c2216c1f92fded7d6",
+        "047e014629e23e0acd2ce23865fdf4b9eaf6a3e758de4731154eaedcfff471e2"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The 3-table join of terms, term_taxonomy and term_relationships is replaced by denormalizing term_id, taxonomy and term_name onto the relationship item.",
+      "impact": "Term lookups for a post need no join, but renaming a term or changing its taxonomy requires an application-driven fan-out update over that term's relationship items, and the taxonomy filter and name sort run in the application.",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "target_tables": [
+        "WpPostContent"
+      ],
+      "query_ids": [
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Reverse lookup of posts by term_taxonomy_id (index on wp_term_relationships.term_taxonomy_id) is not provided because no query in this group uses it.",
+      "impact": "If the site later needs 'all posts in category X', a GSI on term_taxonomy_id must be added; today that access path is not supported.",
+      "source_tables": [
+        "wordpress.wp_term_relationships"
+      ],
+      "target_tables": [
+        "WpPostContent"
+      ],
+      "query_ids": [
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "PostsByParent and PostsBySlug are sparse GSIs with multi-attribute keys; post_parent is omitted when 0 and GSI items exist only for POST entities.",
+      "impact": "GSI reads are eventually consistent, so a just-written post may briefly be missing from parent/slug lookups, and queries for post_parent=0 are not served; the post_status filter and full-item fetch (BatchGetItem) add a round trip.",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "WpPostContent.PostsByParent",
+        "WpPostContent.PostsBySlug"
+      ],
+      "query_ids": [
+        "f31a66f5fccd8126563191858969b6e77b580511e5ad989f745db08f5301dc86",
+        "fcfd82fa1ebbc5b4b8183186286a098a42227e04d4445edf00f0a8a0120bf675"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Order items and their meta are an item collection keyed by order_item_id, with an OrderItemsByOrder GSI for order_id lookups.",
+      "impact": "Meta reads are single-partition Queries; listing items for an order uses an eventually consistent GSI with INCLUDE projection (type and name) so no second fetch is needed.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "WpOrderItems",
+        "WpOrderItems.OrderItemsByOrder"
+      ],
+      "query_ids": [
+        "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d",
+        "96ca58298ceb7de7aed37904ff9f915e55ee59c61b1e7aeb1057a4c41f77f084",
+        "22cb9563dcf184336920b9e30c27109bd4c88f7ddb74e229ab5be6b1ba6185bc",
+        "0d3bb4065d21d46495028590d9d60b849ab2ece165589a88c5cd863de3893835"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "wp_terms, wp_term_taxonomy and wp_termmeta are an item collection keyed by term_id; the unique (term_id, taxonomy) index is enforced by the sort key TAXONOMY#<taxonomy>.",
+      "impact": "Uniqueness of term_id plus taxonomy is enforced by the database through the primary key, but lookup by slug or name is not supported and would need a new GSI.",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "WpTerms"
+      ],
+      "query_ids": [
+        "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd",
+        "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The MySQL query on wp_terms and wp_term_taxonomy that caused full table scans is replaced by Queries on the term_id partition key.",
+      "impact": "No DynamoDB Scan is needed, but the application must issue one Query per term_id instead of a single IN list.",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "target_tables": [
+        "WpTerms"
+      ],
+      "query_ids": [
+        "2389b8a0ec4470f207ccca39bd1d4fbea5a74b0664ee18b54f177ee6288b11cd"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "IN-list reads of meta rows (post_id IN, order_item_id IN) become parallel per-key Queries.",
+      "impact": "Latency is governed by the slowest parallel Query and the application owns fan-out and result ordering instead of the database.",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "WpPostContent",
+        "WpOrderItems"
+      ],
+      "query_ids": [
+        "4f02475439a75f33544c0e7e10e2bf4c53d82ed1edaba7da9437b4da2889dd64",
+        "8485f0647490030c77563b65c57028d87eaf1845ab2aa7dbc11051f64057673d"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Action scheduler group slug is denormalized onto each action item and the groups table is consolidated into WpActionSchedulerActions.",
+      "impact": "The action-plus-group read is a single GetItem, but renaming a group slug needs an application-driven update of all its actions, and status/hook/schedule-date lookups used by the scheduler runner are not covered by this group's queries.",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "target_tables": [
+        "WpActionSchedulerActions"
+      ],
+      "query_ids": [
+        "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "meta_value increments and decrements (meta_value = meta_value +/- ?) use UpdateItem with atomic ADD on numeric values after the application resolves meta_id.",
+      "impact": "Counters must be stored as numbers rather than longtext strings for those meta keys, and the update is a two-step lookup then write instead of one SQL statement.",
+      "source_tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "target_tables": [
+        "WpPostContent"
+      ],
+      "query_ids": [
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "wp_posts, wp_postmeta and wp_term_relationships are consolidated into one item collection keyed by post_id with typed sort keys (POST, META#key#id, TERM#id).",
+      "impact": "Reading a post with its metadata or terms becomes a single-partition Query instead of joins, but items of different shapes share one table, so the application must interpret the sort-key prefix and the table loses per-entity scaling and backup settings.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_term_relationships"
+      ],
+      "target_tables": [
+        "posts"
+      ],
+      "query_ids": [
+        "a16f38a075908667a1aab1d7f82f64e9ab794bdda479af5cbf9e362947b8df2d",
+        "6627d1bb151b93e93cfc9d5a31248fd13f36bf5b84c9ff0714c9822aa0d4b594",
+        "0d20f1d9c2796cd4bc627005aa7b1b161388670e319a2498a1fbb858bece9e9a"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Term name, taxonomy and term_id are denormalized onto TERM# relationship items and the term name onto TAXONOMY items, replacing the terms/term_taxonomy/term_relationships joins.",
+      "impact": "Renaming a term or changing a taxonomy now requires updating every related item (fan-out writes) and ordering by name happens in the application; in exchange the hot join queries become key lookups.",
+      "source_tables": [
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_term_relationships"
+      ],
+      "target_tables": [
+        "posts",
+        "terms"
+      ],
+      "query_ids": [
+        "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+        "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+        "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+        "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "GSIs PostsBySlug (sparse on post_name, multi-attribute sort key post_type/post_status/post_date) and TermsByTaxonomy (sparse on taxonomy, sort key name/term_id) replace index-driven lookups; both use KEYS_ONLY projection.",
+      "impact": "GSI reads are eventually consistent and a GetItem on the base table is needed for full post content; writes to post_name/post_status/post_date or taxonomy/name cause index delete+insert, which is negligible at current write volume.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_terms",
+        "wordpress.wp_term_taxonomy"
+      ],
+      "target_tables": [
+        "posts.PostsBySlug",
+        "terms.TermsByTaxonomy"
+      ],
+      "query_ids": [
+        "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+        "22726c847fe8cd5d7e1319b92c714efec37473a9dcff46db1d34a7d2489f6722",
+        "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The unique index term_id_taxonomy (term_id, taxonomy) on wp_term_taxonomy is enforced by the key design: the TAXONOMY item uses PK=term_id and SK=TAXONOMY#<taxonomy>.",
+      "impact": "Duplicate (term_id, taxonomy) pairs are impossible at the database level via a conditional PutItem (attribute_not_exists), without needing a lookup table; lookup by term_taxonomy_id alone is not indexed because no captured query uses it.",
+      "source_tables": [
+        "wordpress.wp_term_taxonomy"
+      ],
+      "target_tables": [
+        "terms"
+      ],
+      "query_ids": [
+        "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The full-scan termmeta query (WHERE term_id IN (...)) is replaced by one Query per term_id on the terms item collection.",
+      "impact": "An IN list now costs one request per term_id instead of one SQL statement; results are ordered by meta_key then meta_id rather than meta_id, so the application re-sorts if strict meta_id order matters.",
+      "source_tables": [
+        "wordpress.wp_termmeta"
+      ],
+      "target_tables": [
+        "terms"
+      ],
+      "query_ids": [
+        "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "COUNT and SUM queries over wp_postmeta are moved out of DynamoDB scope.",
+      "impact": "DynamoDB has no server-side aggregation; these totals must be computed in application code, kept as materialized counters updated on write, or produced in an analytics store.",
+      "source_tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "posts"
+      ],
+      "query_ids": [
+        "254f282ce4da5837c67df5f5d405e1ad3c405cee2c14420378bd8dfd0d86787c",
+        "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Only tables with collector metadata and captured queries are modeled; wp_actionscheduler_actions, wp_actionscheduler_groups and wp_woocommerce_order_items have no schema or in-scope query data in this input, and wp_woocommerce_order_itemmeta is kept as a standalone table keyed by order_item_id/meta_id. Design RPS assumes a peak-to-average ratio of 2.0 and growth multiplier of 1.5; wp_users and wp_terms item sizes are approximated because size_mb is dominated by page overhead for 1 and 15 rows.",
+      "impact": "Those omitted tables need a separate design pass once query telemetry exists; capacity figures are small estimates and should be revisited if traffic assumptions change.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_users"
+      ],
+      "target_tables": [
+        "woocommerce_order_itemmeta",
+        "users"
+      ],
+      "query_ids": [
+        "ed65b0b663c28fba275ae368d7b00dbd7f0ef1282a6a66d53f46f230aac30ceb",
+        "0e169d06137d542b00d30e043e3c372cdeffa73d5d2cd7821479e6f9816e651c"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "option_name (unique, non-PK in MySQL) becomes the DynamoDB partition key and the surrogate option_id is kept only as a plain attribute.",
+      "impact": "Every lookup, update and delete is a single-key operation with no index, and uniqueness of option names is enforced by the database itself; option_id is no longer a lookup key, which is acceptable because no observed query filters on it.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051",
+        "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The autoload=? listing is served by the OptionsByAutoload GSI (INCLUDE option_value) instead of an indexed MySQL range read.",
+      "impact": "GSI reads are eventually consistent, so a just-written option may briefly be missing from the autoload list; the low-cardinality autoload key is safe here only because the measured load (about 3 reads/s and 9 writes/s at design peak) is under 3% of a partition limit, and should be revisited (shard suffix) if write volume grows by more than an order of magnitude.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options.OptionsByAutoload"
+      ],
+      "query_ids": [
+        "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Mutable autoload and option_value are GSI-projected, so each option write also writes the GSI (amplification of 2x).",
+      "impact": "Write cost for option updates roughly doubles, but at about 9 writes/s the extra cost is small (under 1% of the per-partition write limit).",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options.OptionsByAutoload"
+      ],
+      "query_ids": [
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Introspection query SHOW FULL FIELDS FROM wp_options (query_type OTHER, performs full scans in MySQL) has no DynamoDB equivalent and is not migrated.",
+      "impact": "DynamoDB is schemaless, so there is no column-metadata call to replace; the application must stop issuing it, which removes a source of full scans.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options"
+      ],
+      "query_ids": [
+        "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Design RPS assumes peak_to_avg_ratio 2.0 and growth_multiplier 1.0 because no context overrides were supplied; the hot-key check assumes all traffic for a pattern could hit one option_name.",
+      "impact": "Capacity figures are conservative for a single hot option (for example siteurl) but should be re-run if actual peak or growth factors are higher.",
+      "source_tables": [
+        "wordpress.wp_options"
+      ],
+      "target_tables": [
+        "wp_options"
+      ],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "wp_woocommerce_api_keys is keyed by key_id with a GSI on consumer_key (INCLUDE projection) instead of making consumer_key the base key.",
+      "impact": "The hot update path (last_access, about 8 writes/s) hits the base table only and never touches the index because last_access is not projected. Authentication lookups via the index are eventually consistent, so a just-created or just-revoked key may take a moment to be visible. Uniqueness of consumer_key is enforced by the application, not the database.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "target_tables": [
+        "WooApiKeys",
+        "WooApiKeys.ApiKeysByConsumerKey"
+      ],
+      "query_ids": [
+        "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+        "1794daed36ce90ffb9eb06739fbec3cfb9bcf5edf81ee7ce3e74cce2ef520c26"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "The full-scan listing of wp_wc_tax_rate_classes is replaced by a Query on a constant partition key (class_scope='ALL') sorted by name.",
+      "impact": "Behaves like a small ordered list; fine for about 2 rows at 1.3 reads/s, but all reads target one partition so it must stay small. Uniqueness of slug is enforced at the application layer rather than the database layer; if strict database-level enforcement is required, a dedicated lookup table with TransactWriteItems can be added.",
+      "source_tables": [
+        "wordpress.wp_wc_tax_rate_classes"
+      ],
+      "target_tables": [
+        "WcTaxRateClasses"
+      ],
+      "query_ids": [
+        "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "Set-based writes by order_id (DELETE on wp_wc_reserved_stock, UPDATE on download permissions) become Query by partition key followed by per-item BatchWriteItem/UpdateItem.",
+      "impact": "A single SQL statement becomes two steps and is not atomic across items unless wrapped in TransactWriteItems; the application must handle partial failure and retries. Volumes are low (under 0.2 ops/s).",
+      "source_tables": [
+        "wordpress.wp_wc_reserved_stock",
+        "wordpress.wp_woocommerce_downloadable_product_permissions"
+      ],
+      "target_tables": [
+        "WcReservedStock",
+        "WooDownloadablePermissions"
+      ],
+      "query_ids": [
+        "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d",
+        "2264704d24f6a1bc3b1a3f8ca27ad5fb07c70dd98830b5e3f0fdb9b9852e8a17"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "wp_commentmeta is a separate table keyed by comment_id (partition) and meta_id (sort); the IN (...) lookup becomes one Query per comment_id.",
+      "impact": "Multi-comment metadata loads need several parallel queries instead of one SQL statement; metadata is not stored with the comment, so a comment plus its metadata needs two reads.",
+      "source_tables": [
+        "wordpress.wp_commentmeta",
+        "wordpress.wp_comments"
+      ],
+      "target_tables": [
+        "CommentMeta",
+        "Comments"
+      ],
+      "query_ids": [
+        "65f7884e6670d34fbefc85ff4977b07d421f3ff1ff9603e001ac2a7575b894ca"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "COUNT(*) queries and FOUND_ROWS() on comments, admin notes and session state are moved out of DynamoDB.",
+      "impact": "Counts must be computed in application code or kept as materialized counters updated on write; this adds application logic and small consistency windows that a SQL COUNT did not have.",
+      "source_tables": [
+        "wordpress.wp_comments",
+        "wordpress.wp_wc_admin_notes",
+        "unknown"
+      ],
+      "target_tables": [
+        "Comments",
+        "WcAdminNotes"
+      ],
+      "query_ids": [
+        "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6",
+        "f6438457738a613affbd19c1fd9f0978267a39f263d529f02293f6a669e3789d",
+        "aa03c2037717e28d98980196814b2660db8c01aea7e0bd1d22848257c316403e"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "No GSIs were created for secondary MySQL indexes (comment_post_ID, comment_author_email, sku, price, stock, log_date_gmt, etc.) because no observed query uses them.",
+      "impact": "Lookups by those columns (for example all comments of a post) are not supported by this design until an access pattern is confirmed; adding a GSI later is possible without downtime but requires a backfill.",
+      "source_tables": [
+        "wordpress.wp_comments",
+        "wordpress.wp_wc_product_meta_lookup",
+        "wordpress.wp_actionscheduler_logs"
+      ],
+      "target_tables": [
+        "Comments",
+        "WcProductMetaLookup",
+        "ActionSchedulerLogs"
+      ],
+      "query_ids": [
+        "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+        "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+        "b05af520688a1a5f54ba51896e5a079d05fde97ea81aa1f8618c9eed2e8e6212"
+      ],
+      "engine": "dynamodb"
+    },
+    {
+      "description": "WordPress post listings, slug lookups and counts are served from pre-built sorted sets, strings and hashes instead of SQL filters and ORDER BY.",
+      "impact": "Reads drop from milliseconds of MySQL work to sub-millisecond lookups, but the application must keep several derived indexes in sync and can briefly show stale lists (up to 5 minutes).",
+      "source_tables": [
+        "wordpress.wp_posts"
+      ],
+      "target_tables": [
+        "wp_posts:{ID}",
+        "wp_posts:type:{post_type}:{post_status}:by_date",
+        "wp_posts:slug:{post_type}:{post_name}"
+      ],
+      "query_ids": [
+        "305e3eaabea8a6687e2a2e43e4d6f889742a7511a0666267880fd70c89d41efc",
+        "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+        "7b62184001103ac9e6f0c4677064c9cbde2fd4c70e17246b09808d5d98b2dc06"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Order analytics are pre-aggregated per day rather than computed with three-table joins.",
+      "impact": "Dashboard reports stop scanning about 83K rows per call, but numbers can lag by the TTL and a daily bucket must be recomputed when orders change.",
+      "source_tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "target_tables": [
+        "wp_woocommerce_order_items:daily:{date}"
+      ],
+      "query_ids": [
+        "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+        "d99618ea3724cae0b2ef0dda96a021dda2c50c6b3ba3847b9ccf307ad044ec67",
+        "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+        "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Action Scheduler queue reads are cached in a short-lived sorted set, but claiming and status transitions stay in MySQL.",
+      "impact": "The roughly 10K per hour polling reads are offloaded, while the queue remains correct because MySQL is the authority; the cost is up to 60 seconds of queue staleness.",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "target_tables": [
+        "wp_actionscheduler_actions:pending:{hook}:{status}",
+        "wp_actionscheduler_groups:slug:{slug}"
+      ],
+      "query_ids": [
+        "06584926ec16d35bcd9ad7d2351721be47c4216c1c3b543f1d151ce1f1dbb616",
+        "68b75de2bd1bba434ddd42e76804623d41efa87a7a210df795c0459e548d083d",
+        "7ead756f0ea0ffe5cb6550cacd3b5efa6f65539d8a3cfb37dc66346a3ff2ad3f"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "ElastiCache is used as a cache in front of MySQL, not a replacement; ad-hoc searches (LIKE, joins on meta) stay in the relational database.",
+      "impact": "Some queries will not get faster and the team runs both systems, but there is no risk of losing data or functionality because Redis holds only rebuildable copies.",
+      "source_tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_users",
+        "wordpress.wp_usermeta"
+      ],
+      "target_tables": [],
+      "query_ids": [
+        "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+        "797c033f24c616611d9d000bcef94d12e698d48aac1ea09e84c71805d1d47935"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "WooCommerce order item meta rows are folded into one hash per order item.",
+      "impact": "One round trip returns all item attributes and updates become single-field writes, at the cost of about 10x fewer but larger keys and application code that understands the EAV-to-hash mapping.",
+      "source_tables": [
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "target_tables": [
+        "wp_woocommerce_order_itemmeta:{order_item_id}"
+      ],
+      "query_ids": [
+        "674ead2f50a4d39f0a18fb235ba1ae5acb37da3fb07edbbda1795a933b37de7d",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ],
+      "engine": "elasticache"
+    },
+    {
+      "description": "Carry over the MySQL schema 1:1 to Aurora MySQL with no residual type decisions; the draft was reproduced unchanged.",
+      "impact": "Lowest-risk migration with near-zero application change and compatibility with WordPress and WooCommerce. The cost is that known legacy quirks (signed types, zero-date defaults, a poorly ordered composite index) are carried over and are tracked as follow-ups.",
+      "source_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_users",
+        "wp_terms",
+        "wp_term_taxonomy",
+        "wp_term_relationships",
+        "wp_termmeta",
+        "wp_usermeta",
+        "wp_woocommerce_order_items"
+      ],
+      "target_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_users",
+        "wp_terms",
+        "wp_term_taxonomy",
+        "wp_term_relationships",
+        "wp_termmeta",
+        "wp_usermeta",
+        "wp_woocommerce_order_items"
+      ],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "LONGTEXT columns are represented as TEXT in the draft DDL, which caps values at 64 KB.",
+      "impact": "Risk of silent truncation or failed loads for long posts and serialized metadata unless the source maximum lengths are verified and the columns widened to LONGTEXT before cutover. A pre-migration length check is required.",
+      "source_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_termmeta",
+        "wp_usermeta",
+        "wp_term_taxonomy"
+      ],
+      "target_tables": [
+        "wp_posts",
+        "wp_postmeta",
+        "wp_termmeta",
+        "wp_usermeta",
+        "wp_term_taxonomy"
+      ],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "No foreign keys are created; referential integrity remains in application code as in the source.",
+      "impact": "Avoids load-order failures and matches WordPress behavior, but orphaned rows remain possible; integrity depends on the application and periodic cleanup jobs.",
+      "source_tables": [
+        "wp_postmeta",
+        "wp_term_relationships",
+        "wp_termmeta",
+        "wp_usermeta"
+      ],
+      "target_tables": [
+        "wp_postmeta",
+        "wp_term_relationships",
+        "wp_termmeta",
+        "wp_usermeta"
+      ],
+      "query_ids": [],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "Some key-value style tables such as wp_options and session-like tables were flagged by the analysis as better suited to DynamoDB or ElastiCache and are outside this schema.",
+      "impact": "Keeping them on Aurora is simplest and fully compatible, while moving them offloads hot PK lookups at the cost of application changes. This decision is deferred to the cross-engine assignment.",
+      "source_tables": [
+        "wp_options"
+      ],
+      "target_tables": [],
+      "query_ids": [
+        "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799"
+      ],
+      "engine": "aurora_mysql"
+    },
+    {
+      "description": "Consolidated 11 queries from aurora_mysql \u2192 dynamodb: Partial consolidation: 11 of 25 aurora_mysql queries moved to dynamodb; 7 redirected to aurora_mysql. Saves ~$550/mo in operational overhead by avoiding a dedicated aurora_mysql cluster.",
+      "impact": "Consolidated 11 queries from aurora_mysql \u2192 dynamodb: Partial consolidation: 11 of 25 aurora_mysql queries moved to dynamodb; 7 redirected to aurora_mysql. Saves ~$550/mo in operational overhead by avoiding a dedicated aurora_mysql cluster.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    },
+    {
+      "description": "Consolidated 6 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Saves ~$500/mo in operational overhead by avoiding a dedicated documentdb cluster.",
+      "impact": "Consolidated 6 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Saves ~$500/mo in operational overhead by avoiding a dedicated documentdb cluster.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    },
+    {
+      "description": "Consolidated 3 queries from opensearch \u2192 aurora_mysql: Aurora absorption: opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified. Saves ~$450/mo in operational overhead by avoiding a dedicated opensearch cluster.",
+      "impact": "Consolidated 3 queries from opensearch \u2192 aurora_mysql: Aurora absorption: opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified. Saves ~$450/mo in operational overhead by avoiding a dedicated opensearch cluster.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    },
+    {
+      "description": "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use dynamodb for all write operations and elasticache, opensearch for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+      "impact": "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use dynamodb for all write operations and elasticache, opensearch for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    },
+    {
+      "description": "Recommended pattern: Materialized View Pattern. dynamodb is the source of truth; opensearch maintains a search-optimized projection. Maintain a pre-computed, denormalized copy of data in a secondary database optimized for specific query patterns. The secondary store is a read-only projection \u2014 all writes go through the primary.",
+      "impact": "Recommended pattern: Materialized View Pattern. dynamodb is the source of truth; opensearch maintains a search-optimized projection. Maintain a pre-computed, denormalized copy of data in a secondary database optimized for specific query patterns. The secondary store is a read-only projection \u2014 all writes go through the primary.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    },
+    {
+      "description": "Recommended pattern: Polyglot Persistence. Use different databases for different bounded contexts within the application. Each service/module owns its data in the database best suited for its access patterns.",
+      "impact": "Recommended pattern: Polyglot Persistence. Use different databases for different bounded contexts within the application. Each service/module owns its data in the database best suited for its access patterns.",
+      "source_tables": [],
+      "target_tables": [],
+      "query_ids": [],
+      "engine": "reality-check"
+    }
+  ],
+  "assignment_summary": {
+    "version": 2,
+    "status": "auto_generated",
+    "source": "reality_check",
+    "query_count": 107,
+    "in_scope_count": 107,
+    "co_dependency_groups": 1
+  },
+  "reality_check": {
+    "consolidations": [
+      {
+        "from_engine": "aurora_mysql",
+        "to_engine": "dynamodb",
+        "query_count": 11,
+        "reason": "Partial consolidation: 11 of 25 aurora_mysql queries moved to dynamodb; 7 redirected to aurora_mysql",
+        "saved_cost_estimate": 550.0,
+        "action": "partial",
+        "queries_retained": [
+          "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+          "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+          "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+          "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+          "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+          "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+          "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca"
+        ],
+        "retention_reason": "Redirected to aurora_mysql (relational patterns unserviceable on dynamodb)"
+      },
+      {
+        "from_engine": "documentdb",
+        "to_engine": "dynamodb",
+        "query_count": 6,
+        "reason": "documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines",
+        "saved_cost_estimate": 500.0,
+        "action": "full",
+        "queries_retained": [],
+        "retention_reason": null
+      },
+      {
+        "from_engine": "opensearch",
+        "to_engine": "aurora_mysql",
+        "query_count": 3,
+        "reason": "Aurora absorption: opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified",
+        "saved_cost_estimate": 450.0,
+        "action": "full",
+        "queries_retained": [],
+        "retention_reason": null
+      }
+    ],
+    "architectural_patterns": [
+      {
+        "name": "Command Query Responsibility Segregation (CQRS)",
+        "description": "Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+        "when": "One engine handles most writes and another handles reads/search/analytics",
+        "example": "DynamoDB handles all CRUD operations (writes + simple reads). OpenSearch serves as a read-optimized view for full-text search, faceted filtering, and analytics queries. Data flows from DynamoDB to OpenSearch via zero-ETL integration.",
+        "applies_to": {
+          "write_engine": "dynamodb",
+          "read_engines": [
+            "elasticache",
+            "opensearch"
+          ]
+        }
+      },
+      {
+        "name": "Materialized View Pattern",
+        "description": "Maintain a pre-computed, denormalized copy of data in a secondary database optimized for specific query patterns. The secondary store is a read-only projection \u2014 all writes go through the primary.",
+        "when": "A secondary engine serves read-only queries on data owned by the primary",
+        "example": "DynamoDB is the source of truth for forum data. OpenSearch maintains a materialized view of discussions + users for full-text search. The view is automatically kept in sync via DynamoDB zero-ETL.",
+        "applies_to": {
+          "source_engine": "dynamodb",
+          "view_engine": "opensearch"
+        }
+      },
+      {
+        "name": "Polyglot Persistence",
+        "description": "Use different databases for different bounded contexts within the application. Each service/module owns its data in the database best suited for its access patterns.",
+        "when": "Different parts of the application have fundamentally different data access needs",
+        "example": "User profiles and forum CRUD in DynamoDB (key-value + hierarchical). Search and discovery in OpenSearch (full-text + relevance). Real-time leaderboards in ElastiCache (sorted sets + pub/sub).",
+        "applies_to": {
+          "engines": [
+            "dynamodb",
+            "elasticache",
+            "opensearch"
+          ]
+        }
+      }
+    ],
+    "recommendations": [
+      "Consolidated 11 queries from aurora_mysql \u2192 dynamodb: Partial consolidation: 11 of 25 aurora_mysql queries moved to dynamodb; 7 redirected to aurora_mysql. Saves ~$550/mo in operational overhead by avoiding a dedicated aurora_mysql cluster.",
+      "Consolidated 6 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Saves ~$500/mo in operational overhead by avoiding a dedicated documentdb cluster.",
+      "Consolidated 3 queries from opensearch \u2192 aurora_mysql: Aurora absorption: opensearch carries only 3 queries and aurora_mysql serves them (fit 80-81, via text_search_basic), so a dedicated opensearch deployment is not justified. Saves ~$450/mo in operational overhead by avoiding a dedicated opensearch cluster.",
+      "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use dynamodb for all write operations and elasticache, opensearch for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+      "Recommended pattern: Materialized View Pattern. dynamodb is the source of truth; opensearch maintains a search-optimized projection. Maintain a pre-computed, denormalized copy of data in a secondary database optimized for specific query patterns. The secondary store is a read-only projection \u2014 all writes go through the primary.",
+      "Recommended pattern: Polyglot Persistence. Use different databases for different bounded contexts within the application. Each service/module owns its data in the database best suited for its access patterns."
+    ],
+    "before_distribution": {
+      "dynamodb": 45,
+      "aurora_mysql": 22,
+      "elasticache": 31,
+      "documentdb": 6,
+      "opensearch": 3
+    },
+    "after_distribution": {
+      "dynamodb": 63,
+      "aurora_mysql": 10,
+      "elasticache": 34
+    }
+  }
+}

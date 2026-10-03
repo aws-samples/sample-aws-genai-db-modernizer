@@ -88,6 +88,26 @@ def _risk_has_content(desc: Any) -> bool:
     return bool(body)
 
 
+def filtered_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """The one risk list every deliverable renders and counts from.
+
+    ``risk_assessment.risks`` can contain malformed empty entries (``[engine]
+    unknown:`` with nothing after — see ``_risk_has_content``). The decision
+    report and engineering report dropped those before counting; the PDF/PPTX
+    deck counted the raw list, so the same job reported disagreeing risk
+    totals across deliverables (issue #201: "9 migration risks identified" in
+    the decision report vs. 12 in ``report.json`` and the PDF). Every
+    deliverable must build its risk count and its risk list from this one
+    function instead of re-deriving the filter.
+    """
+    risk = report.get("risk_assessment") or {}
+    return [
+        r
+        for r in (risk.get("risks") or [])
+        if isinstance(r, dict) and _risk_has_content(r.get("description"))
+    ]
+
+
 _CACHE_ENGINES = {"elasticache", "memorydb"}
 
 _ROLE_STROKE = {
@@ -549,8 +569,7 @@ def render_decision_report_html(
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
-    risks_all = [r for r in (risk.get("risks") or []) if isinstance(r, dict)]
-    risks = [r for r in risks_all if _risk_has_content(r.get("description"))]
+    risks = filtered_risks(report)
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
     if risks or strategies:
         out += ["<h2 class=section-title>Risk posture</h2>", "<div class=card><div class=card-b>"]
@@ -743,11 +762,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             )
         out.append("")
 
-    risks = [
-        r
-        for r in (report.get("risk_assessment") or {}).get("risks", [])
-        if isinstance(r, dict) and _risk_has_content(r.get("description"))
-    ]
+    risks = filtered_risks(report)
     if risks:
         by_eng: dict[str, list] = {}
         for r in risks:
