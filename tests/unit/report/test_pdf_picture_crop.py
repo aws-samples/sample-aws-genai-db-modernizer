@@ -113,3 +113,42 @@ def _save(prs) -> bytes:
     out = io.BytesIO()
     prs.save(out)
     return out.getvalue()
+
+
+def _calls(pic) -> list[dict[str, Any]]:
+    c = _Canvas()
+    pdf_report.draw_picture(c, pic, page_h=540.0)  # type: ignore[arg-type]
+    return c.calls
+
+
+def test_full_horizontal_crop_draws_nothing() -> None:
+    # l + r >= 100% leaves no visible region: PowerPoint shows nothing, so the
+    # PDF must not fall back to drawing the whole, uncropped image.
+    assert _calls(_picture({"left": 0.4, "right": 0.6})) == []
+
+
+def test_full_vertical_over_crop_draws_nothing() -> None:
+    assert _calls(_picture({"top": 0.7, "bottom": 0.5})) == []
+
+
+def test_cropped_mixed_alpha_palette_png_keeps_colours_and_alpha() -> None:
+    # Palette PNG whose entries carry different alpha (tRNS): transparent red
+    # left half, opaque blue top-right, half-transparent green bottom-right.
+    img = Image.new("P", (200, 100), 0)
+    img.putpalette([255, 0, 0, 0, 0, 255, 0, 255, 0] + [0] * (256 * 3 - 9))
+    img.paste(1, (100, 0, 200, 50))
+    img.paste(2, (100, 50, 200, 100))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", transparency=bytes([0, 255, 128]))
+    prs = pptx_report.open_deck(keep=1)
+    pic = prs.slides[0].shapes.add_picture(io.BytesIO(buf.getvalue()), 0, 0, Inches(2))
+    pic.crop_left = 0.5
+    calls = _calls(pic)
+    assert len(calls) == 1
+    # ImageReader keeps the PIL image it was given; reportlab draws its alpha
+    # channel as the soft mask (mask="auto").
+    drawn = calls[0]["img"]._image
+    assert drawn.mode == "RGBA"
+    assert drawn.size == (100, 100)
+    assert drawn.getpixel((10, 10)) == (0, 0, 255, 255)
+    assert drawn.getpixel((10, 90)) == (0, 255, 0, 128)

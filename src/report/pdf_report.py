@@ -384,12 +384,18 @@ def draw_text_frame(
 # ---------------------------------------------------------------------------
 # shapes
 # ---------------------------------------------------------------------------
+# Returned by ``_crop_box`` when the crop leaves no visible region.
+_EMPTY_CROP = (0, 0, 0, 0)
+
+
 def _crop_box(shape, width: int, height: int) -> tuple[int, int, int, int] | None:
     """Pixel box of the picture's ``<a:srcRect>`` crop, or None when uncropped.
 
     ``l``/``t``/``r``/``b`` are the fractions trimmed from each edge, in
     1/100000ths. Negative values (PowerPoint pads the image) are clamped to the
-    bitmap: the frame is still filled, without the padding.
+    bitmap: the frame is still filled, without the padding. A crop that trims
+    100% or more across either axis (``l + r`` or ``t + b``) leaves nothing to
+    show and returns ``_EMPTY_CROP`` -- never the uncropped image.
     """
     rect = shape._element.find(f"{P}blipFill/{A}srcRect")
     if rect is None:
@@ -397,10 +403,12 @@ def _crop_box(shape, width: int, height: int) -> tuple[int, int, int, int] | Non
     frac = {k: max(int(rect.get(k) or 0), 0) / 100000 for k in ("l", "t", "r", "b")}
     if not any(frac.values()):
         return None
+    if frac["l"] + frac["r"] >= 1 or frac["t"] + frac["b"] >= 1:
+        return _EMPTY_CROP
     left, top = round(frac["l"] * width), round(frac["t"] * height)
     right, bottom = round(width - frac["r"] * width), round(height - frac["b"] * height)
-    if right <= left or bottom <= top:
-        return None
+    if right <= left or bottom <= top:  # under a pixel left after rounding
+        return _EMPTY_CROP
     return (left, top, right, bottom)
 
 
@@ -409,6 +417,9 @@ def draw_picture(c: Canvas, shape, page_h: float) -> None:
     try:
         pil = PILImage.open(io.BytesIO(shape.image.blob))
         box = _crop_box(shape, *pil.size)
+        if box == _EMPTY_CROP:
+            logger.debug("picture %s cropped to nothing; not drawn", shape.name)
+            return
         if box:
             # A cropped PIL image is handed to reportlab directly, which cannot
             # draw palette images carrying byte transparency: normalise to RGBA.
