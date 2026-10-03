@@ -25,7 +25,9 @@ from pypdf import PdfReader
 from src.report import pdf_report, pptx_report
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "wordpress_report.json"
-FORBIDDEN = re.compile(r"transform|confidential", re.IGNORECASE)
+# Branding, plus Microsoft sensitivity-label properties (docProps/custom.xml): a
+# public sample must not carry internal classification metadata.
+FORBIDDEN = re.compile(r"transform|confidential|pending_classification|msip_label", re.IGNORECASE)
 
 
 def _report(timestamp: str | None = "2031-04-05T06:07:08Z") -> dict[str, Any]:
@@ -68,12 +70,12 @@ def rendered() -> tuple[bytes, bytes]:
 
 
 class TestTemplate:
-    def test_template_parts_carry_no_transform_or_confidential_text(self) -> None:
+    def test_template_parts_carry_no_branding_or_classification_metadata(self) -> None:
         assert _forbidden_hits(pptx_report.TEMPLATE.read_bytes()) == []
 
 
 class TestRenderedDeck:
-    def test_no_transform_or_confidential_text_in_any_part(self, rendered) -> None:
+    def test_no_branding_or_classification_metadata_in_any_part(self, rendered) -> None:
         deck, _ = rendered
         assert _forbidden_hits(deck) == []
 
