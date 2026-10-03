@@ -444,7 +444,7 @@ class TestFallbackSummary:
         )
         assert "DynamoDB serves 63 queries (58.9% of the workload), led by" in text
         assert (
-            "The reality check consolidated DocumentDB into DynamoDB and OpenSearch Service "
+            "The reality check consolidated DocumentDB into DynamoDB and OpenSearch "
             "into Aurora MySQL" in text
         )
 

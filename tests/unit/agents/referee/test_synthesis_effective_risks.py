@@ -191,7 +191,7 @@ class TestEliminatedEngineNeverATarget:
         risk = self._risk(result, "text search")
         assert risk["description"] == (
             "[dynamodb] text search: Stream orders to OpenSearch via OpenSearch Ingestion for "
-            "keyword search. Keep exact order-id lookups on the base table. (OpenSearch Service "
+            "keyword search. Keep exact order-id lookups on the base table. (OpenSearch "
             "is not part of the target architecture; its queries run on Aurora MySQL.)"
         )
         assert risk["mitigation"] == "Keep exact order-id lookups on the base table."
@@ -203,7 +203,7 @@ class TestEliminatedEngineNeverATarget:
             "[dynamodb] aggregation: Index order totals in OpenSearch for dashboards."
         )
         assert risk["description"].endswith(
-            "(OpenSearch Service is not part of the target architecture; its queries run on "
+            "(OpenSearch is not part of the target architecture; its queries run on "
             "Aurora MySQL.)"
         )
 
@@ -325,7 +325,7 @@ class TestGroundRisks:
         assert len(out) == 3
         assert [r["severity"] for r in out] == ["HIGH", "HIGH", "HIGH"]
         assert out[0]["description"].endswith(
-            "(OpenSearch Service has no in-scope queries in the target architecture.)"
+            "(OpenSearch has no in-scope queries in the target architecture.)"
         )
         assert out[0]["mitigation"] == (
             "Re-plan this on DynamoDB; the original recommendation named an engine that was "
@@ -352,7 +352,7 @@ class TestGroundRisks:
     def test_description_never_loses_a_sentence(self) -> None:
         desc = "[dynamodb] Keep keys short. Stream the rest to OpenSearch."
         out = ground_risks([self._risk(desc)], self.ELIM)[0]
-        assert out["description"].startswith(desc + " (OpenSearch Service is not part")
+        assert out["description"].startswith(desc + " (OpenSearch is not part")
 
     @pytest.mark.parametrize(
         "sentence",

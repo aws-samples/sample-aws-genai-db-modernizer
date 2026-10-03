@@ -24,18 +24,22 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-ENGINE_DISPLAY_NAMES: dict[str, str] = {
-    "dynamodb": "DynamoDB",
-    "opensearch": "OpenSearch Service",
-    "elasticache": "ElastiCache",
-    "documentdb": "DocumentDB",
-    "aurora_mysql": "Aurora MySQL",
-    "aurora_postgresql": "Aurora PostgreSQL",
-}
+from src.shared.engine_names import display_engine
 
-# How each engine is written in prose. Ids (``aurora_mysql``) and product names
-# (``Aurora MySQL``, ``OpenSearch Service``) both count. Bare "MySQL"/"PostgreSQL"
-# name the *source* database and deliberately match nothing.
+# How each engine is written in prose, for *recognising* a mention -- deliberately
+# a separate list from the display names in src.shared.engine_names (used below by
+# ``display_name`` for the name customer-facing text actually prints), and not
+# keyed off that map's values. Both ids (``aurora_mysql``) and every product-name
+# alias prose uses for the same engine (``OpenSearch Service``, ``Amazon
+# OpenSearch``, ``Elasticsearch``, ``ElastiCache for Redis``/``for Memcached``,
+# bare ``Redis``/``Valkey``) count as a mention via substring match -- the pattern
+# only needs to find the engine's own name inside the alias, so an "Amazon "/"for
+# Redis" wrapper around it is already tolerated without listing it explicitly.
+# Keeping this independent of the display-name map means narrowing a display name
+# (``"OpenSearch Service"`` -> ``"OpenSearch"``, #221) can never narrow what #202's
+# grounding or #205's summary post-check recognise as a mention of the engine.
+# Bare "MySQL"/"PostgreSQL" name the *source* database and deliberately match
+# nothing.
 _ENGINE_PATTERNS: dict[str, re.Pattern[str]] = {
     "dynamodb": re.compile(r"\bdynamo[\s_-]?db\b", re.IGNORECASE),
     "opensearch": re.compile(
@@ -56,7 +60,9 @@ _ENGINE_TAG = re.compile(r"^(\[[^\]]+\]\s*(?:[\w-]+:\s+)?)")
 
 
 def display_name(engine: str) -> str:
-    return ENGINE_DISPLAY_NAMES.get(engine, engine)
+    """Customer-facing name for ``engine`` (#221): the one shared, AWS-branded source
+    of truth in ``src.shared.engine_names``, not a second hand-kept copy."""
+    return display_engine(engine)
 
 
 def engine_mentions(text: str) -> list[tuple[str, int, int]]:
