@@ -141,6 +141,19 @@ def derive_tables_served(
     return {engine: sorted(tables) for engine, tables in out.items()}
 
 
+def _tables_served(
+    tables: list[str] | None, assigned_queries: Any, partial_scope: bool
+) -> list[str] | None:
+    """``None`` (unknown) rather than ``[]`` when the scope came from the
+    partial query_groups fallback and an engine with assigned queries got no
+    tables from it: an empty list would claim the engine touches no table."""
+    if tables:
+        return tables
+    if partial_scope and isinstance(assigned_queries, int) and assigned_queries > 0:
+        return None
+    return tables or []
+
+
 def _eliminated_engines(
     report: dict[str, Any], effective: dict[str, Any] | None
 ) -> list[dict[str, Any]]:
@@ -194,9 +207,18 @@ def build_facts(
     else:
         served_source = (
             "derived from report.json query_groups (no llm_input.json or assignment.json; "
-            "covers only queries in a design group, so may be partial)"
+            "covers only queries in a design group, so may be partial; null = unknown, "
+            "not 'no tables')"
         )
         served = derive_tables_served(report)
+    partial_scope = not effective and not (assignment or {}).get("query_assignments")
+
+    # Names that aren't source tables ("unknown", "DUAL", a column a parser
+    # took for a table) are dropped from risk table lists when the source
+    # tables are known.
+    known_tables = {_strip_db(m.get("source_table", ""), db) for m in table_mappings}
+    for tables in served.values():
+        known_tables.update(tables)
 
     engines = []
     for entry in ranking:
@@ -208,7 +230,9 @@ def build_facts(
                 "workload_percent": entry.get("workload_percent"),
                 "confidence": entry.get("confidence_score"),
                 "monthly_cost_usd": cost_by_engine.get(engine, entry.get("monthly_cost_usd")),
-                "tables_served": served.get(engine, []),
+                "tables_served": _tables_served(
+                    served.get(engine), entry.get("assigned_queries"), partial_scope
+                ),
                 "primary_tables": [
                     _strip_db(m.get("source_table", ""), db)
                     for m in table_mappings
@@ -220,7 +244,9 @@ def build_facts(
                     "access_patterns": entry.get("access_patterns"),
                     "pattern_groups": entry.get("pattern_groups"),
                 },
-                "assignment_reasons": entry.get("assignment_reason_summary") or [],
+                "assignment_reasons": [
+                    _cap(r) for r in entry.get("assignment_reason_summary") or []
+                ],
             }
         )
 
@@ -244,7 +270,11 @@ def build_facts(
                 "type": risk.get("risk_type"),
                 "description": _cap(description),
                 "mitigation": _cap(risk.get("mitigation")),
-                "affected_tables": [_strip_db(t, db) for t in risk.get("affected_tables") or []],
+                "affected_tables": [
+                    name
+                    for name in (_strip_db(t, db) for t in risk.get("affected_tables") or [])
+                    if not known_tables or name in known_tables
+                ],
                 "query_count": len(query_ids),
                 "queries_assigned_to": dict(on_engines),
             }
@@ -270,7 +300,7 @@ def build_facts(
         "totals": {
             "database": db,
             "architecture_type": rec_arch.get("architecture_type"),
-            "architecture_rationale": rec_arch.get("rationale"),
+            "architecture_rationale": _cap(rec_arch.get("rationale")),
             "engines_selected": len(engines),
             "tables_analyzed": tables_analyzed,
             "tables_mapped": len(table_mappings),
@@ -293,14 +323,19 @@ def build_facts(
                     "action": m.get("action"),
                     "query_count": m.get("query_count"),
                     "queries_retained": len(m.get("queries_retained") or []),
-                    "reason": m.get("reason"),
-                    "retention_reason": m.get("retention_reason"),
+                    "reason": _cap(m.get("reason")),
+                    "retention_reason": _cap(m.get("retention_reason")),
                 }
                 for m in rc.get("consolidations") or []
             ],
         },
-        "tco": tco,
+        "tco": {
+            **tco,
+            "assumptions": [_cap(a) for a in tco.get("assumptions") or []],
+        },
         "risks": risks,
-        "mitigation_strategies": risk_assessment.get("mitigation_strategies") or [],
+        "mitigation_strategies": [
+            _cap(m) for m in risk_assessment.get("mitigation_strategies") or []
+        ],
         "migration_waves": waves if waves else MIGRATION_WAVES_ABSENT,
     }

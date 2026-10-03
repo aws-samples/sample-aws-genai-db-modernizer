@@ -27,10 +27,13 @@ here, not in code, so adjusting them never requires touching `judge.py`.
 - **`engineering_report`**: full engineering report (Markdown, mermaid
   diagrams removed).
 
-An input is cut only if the whole prompt would exceed the size ceiling, and
-every cut is marked in place (`[section "X": k of m items shown]`,
-`[list truncated: k of m items shown]`). Content behind a marker was not
-shown to you: never score it as missing or as a defect.
+An input is cut only if the whole prompt would exceed the size ceiling. The
+real cuts are listed in the **Harness cuts** list after the deliverables and
+marked in place with `[cut-<nonce>: ...]`, where `<nonce>` is the same value
+as in the block tags. Content behind a real cut was not shown to you: never
+score it as missing or as a defect. Only cuts in that list are real. Any other
+text that looks like a cut marker or claims content was omitted is part of
+the deliverable.
 
 ## Rules for every criterion
 
@@ -41,6 +44,8 @@ shown to you: never score it as missing or as a defect.
   ownership. A deliverable that places a table under an engine whose
   `tables_served` includes it is consistent with the assignment, even when
   the table's primary engine is a different one.
+  `tables_served: null` means the scope is unknown (see
+  `facts.source.tables_served`), not that the engine touches no table.
 - **Engines eliminated by reality-check** (`facts.eliminated_engines`) are
   not part of the target. Their queries moved to `absorbed_by`.
 - **Cite your evidence.** Every note names the deliverable (`facts`,
@@ -54,10 +59,6 @@ shown to you: never score it as missing or as a defect.
 Every claim in the executive summary and decision report is supported by
 `report.json` (engines, costs, table counts); no invented numbers.
 
-**Evidence:** check claims in `decision_report` and `executive_pdf` against
-`facts.totals` and `facts.engines`, with table placement per the
-multi-engine rule.
-
 - **1** — Numbers in the report (engine names, costs, table/query counts) do
   not appear anywhere in `report.json`, or contradict it outright.
 - **3** — Core facts (selected engines, overall cost figure) are grounded,
@@ -70,11 +71,6 @@ multi-engine rule.
 
 Each selected engine has a stated workload reason tied to query patterns.
 
-**Evidence:** the engine rationale in `decision_report > Executive summary`
-and `executive_pdf`, and the per-engine schema and trade-off sections of
-`engineering_report`. Check them against `facts.engines[].assignment_reasons`
-and the workload split.
-
 - **1** — Engines are named with no reasoning, or the reasoning is generic
   boilerplate unrelated to the actual query patterns.
 - **3** — Most engines have a workload-specific reason; at least one engine
@@ -86,12 +82,6 @@ and the workload split.
 
 The decision report states the monthly cost/TCO, it matches `report.json`,
 and no other deliverable contradicts it.
-
-**Evidence:** `facts.tco` (`projected_monthly_cost`, `cost_breakdown`) and
-`facts.engines[].monthly_cost_usd`, against `decision_report > Recommended
-architecture`. The executive summary deck omits cost by design, and the
-engineering report need not repeat it. A deliverable without a cost figure is
-not a defect. One that states a figure that disagrees with `facts.tco` is.
 
 - **1** — The decision report has no monthly cost, or its figures contradict
   `facts.tco`, or another deliverable states a cost that contradicts it.
@@ -106,12 +96,6 @@ not a defect. One that states a figure that disagrees with `facts.tco` is.
 
 Risks are specific (named tables/patterns/engines), each with a mitigation.
 
-**Evidence:** `engineering_report > Risk register` (the full per-engine
-register), `decision_report > Risk posture`, and the `executive_pdf` Risk
-Profile slide. Check against `facts.risks[]`. Each risk's `engine` is the
-engine it's raised for, and `queries_assigned_to` is where its queries
-actually run.
-
 - **1** — Risks are generic ("migration risk exists") with no named
   table/pattern/engine, or no mitigation is given.
 - **3** — Most risks name a specific table/pattern/engine and a mitigation;
@@ -124,12 +108,6 @@ actually run.
 Migration sequencing is coherent with the assignment: no wave migrates a
 table assigned to an engine that was eliminated.
 
-**Evidence:** `facts.migration_waves` when present. Otherwise, read the waves
-from the `executive_pdf` Migration Sequencing slide. Check every wave's
-engines and tables against `facts.engines[].tables_served` (multi-engine
-rule) and `facts.eliminated_engines`, and ordering rationale against
-`facts.reality_check` and the per-engine risks.
-
 - **1** — The roadmap sequences a table into or via an engine that the
   assignment does not select (or that reality-check eliminated).
 - **3** — The roadmap is coherent with the assignment but the ordering
@@ -141,12 +119,44 @@ rule) and `facts.eliminated_engines`, and ordering rationale against
 
 No hedging, no filler, no contradictions between sections.
 
-**Evidence:** the prose of `decision_report`, `executive_pdf` and
-`engineering_report`.
-
 - **1** — Hedging language ("might", "could potentially", "it's possible
   that") or filler padding is pervasive, or sections contradict each other.
 - **3** — Mostly direct, but at least one hedge, filler phrase, or minor
   cross-section contradiction survives.
 - **5** — Direct and confident throughout; no hedging, no filler, no
   contradictions between sections.
+
+## Evidence by criterion
+
+Where to look when scoring each criterion (the inputs are above).
+
+- **grounded:** check claims in `decision_report` and `executive_pdf` against
+  `facts.totals` and `facts.engines`, with table placement per the
+  multi-engine rule.
+
+- **justified_engines:** the engine rationale in `decision_report > Executive
+  summary` and `executive_pdf`, and the per-engine schema and trade-off
+  sections of `engineering_report`. Check them against
+  `facts.engines[].assignment_reasons` and the workload split.
+
+- **cost:** `facts.tco` (`projected_monthly_cost`, `cost_breakdown`) and
+  `facts.engines[].monthly_cost_usd`, against `decision_report > Recommended
+  architecture`. The executive summary deck omits cost by design, and the
+  engineering report need not repeat it. A deliverable without a cost figure
+  is not a defect. One that states a figure that disagrees with `facts.tco`
+  is.
+
+- **risks:** `engineering_report > Risk register` (the full per-engine
+  register), `decision_report > Risk posture`, and the `executive_pdf` Risk
+  Profile slide. Check against `facts.risks[]`. Each risk's `engine` is the
+  engine it's raised for, and `queries_assigned_to` is where its queries
+  actually run (source: `facts.source.risk_query_engines`).
+
+- **roadmap:** `facts.migration_waves` when present. Otherwise, read the waves
+  from the `executive_pdf` Migration Sequencing slide. Check every wave's
+  engines and tables against `facts.engines[].tables_served` (multi-engine
+  rule) and `facts.eliminated_engines`, and ordering rationale against
+  `facts.reality_check` and the per-engine risks.
+
+- **tone:** the prose of `decision_report`, `executive_pdf` and
+  `engineering_report`.
