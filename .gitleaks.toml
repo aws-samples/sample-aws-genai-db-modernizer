@@ -27,4 +27,6 @@ regexes = [
   '''<TOKEN>''',
   '''<DB_PASSWORD>''',
   '''in_scope=True''',
+  # DynamoDB key-condition expressions in design fixtures, e.g. PK=consumer_key (#216)
+  '''^(?:PK|SK|GSI\d+PK|GSI\d+SK)=[A-Za-z_#{}:]+$''',
 ]
