@@ -16,6 +16,7 @@ Three defects the rubric judge found on the wordpress validation run:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -425,3 +426,41 @@ class TestReattributedRiskRow:
     def test_plain_description_is_unchanged(self) -> None:
         text, _ = pptx_report.clean_risk_text("[dynamodb] Hot partition on wp_options")
         assert text == "Hot partition on wp_options"
+
+
+class TestSummaryTableTerms:
+    """#219 follow-up: the Assessment Summary said "Aurora MySQL: 9 tables" (the
+    schema design's target tables) next to a Scope cell of "1 table" (source
+    tables mapped to the engine). Each count now names which tables it counts."""
+
+    SUMMARY = (
+        "Schema design produced 29 target objects and 65 in-scope access patterns across "
+        "29 query groups (dynamodb: 19 tables, 52 access patterns; aurora_mysql: 9 tables, "
+        "13 access patterns; aurora_postgresql: 1 table; elasticache: 10 key designs)."
+    )
+
+    def _slide(self):
+        rep = _report()
+        rep["summary_deterministic"] = self.SUMMARY
+        f = pptx_report.derive(rep, _export([]))
+        return pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
+
+    def test_summary_names_design_tables_as_target_tables(self) -> None:
+        texts = [s.text_frame.text for s in self._slide().shapes if s.has_text_frame]
+        summary = next(t for t in texts if "Schema design produced" in t)
+        assert "Aurora MySQL: 9 target tables" in summary
+        assert "DynamoDB: 19 target tables" in summary
+        assert "Aurora PostgreSQL: 1 target table;" in summary
+        assert "ElastiCache: 10 key designs" in summary
+        assert not re.search(r": \d+ tables?\b", summary)
+
+    def test_scope_column_names_source_tables(self) -> None:
+        cells = [
+            c.text
+            for s in self._slide().shapes
+            if s.has_table
+            for row in s.table.rows
+            for c in row.cells
+        ]
+        assert "1 source table" in cells
+        assert "19 source tables" in cells

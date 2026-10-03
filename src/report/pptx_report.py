@@ -472,6 +472,18 @@ def strip_cost(text: str) -> str:
     return " ".join(kept)
 
 
+def name_target_tables(text: str) -> str:
+    """``aurora_mysql: 9 tables`` -> ``aurora_mysql: 9 target tables``.
+
+    The deterministic summary breaks the schema design down per engine as
+    "<engine>: N tables" -- the design's target tables -- while the Scope column
+    on the same slide counts the source tables mapped to the engine. Naming both
+    keeps "9 tables" and "1 table" from reading as one disagreeing count (#219).
+    """
+    engines = "|".join(re.escape(k) for k in sorted(ENGINE_LABEL, key=len, reverse=True))
+    return re.sub(rf"\b({engines}): (\d+) (tables?)\b", r"\1: \2 target \3", text)
+
+
 def prettify_engines(text: str) -> str:
     """``aurora_postgresql`` -> ``Aurora PostgreSQL`` in generated prose.
 
@@ -910,7 +922,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "ranking": by_workload,
         "conf": conf,
         "workload": workload,
-        "summary": prettify_engines(strip_cost(str(rep.get("summary_deterministic") or ""))),
+        "summary": prettify_engines(
+            name_target_tables(strip_cost(str(rep.get("summary_deterministic") or "")))
+        ),
         "n_tables": len(rep.get("table_mappings") or []),
         "n_tradeoffs": len(rep.get("trade_offs") or []),
         "assignment": assignment,

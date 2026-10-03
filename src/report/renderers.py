@@ -280,7 +280,9 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         if role == "Migration target":
             n = src_tables.get(eng)
             scope = (
-                f"{n} {plural_noun(n, 'table')}"
+                # Source tables mapped to the engine -- named as such, because the
+                # summary also counts the schema design's *target* tables (#219).
+                f"{n} source {plural_noun(n, 'table')}"
                 if n is not None
                 else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
             )
