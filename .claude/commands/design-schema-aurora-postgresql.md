@@ -7,6 +7,10 @@ app-layer notes, and Aurora-specific optimizations.
 Single-pass (ADR-028) — no `run_schema_split` / `run_schema_merge`, unlike
 DynamoDB. Aurora runs once, like OpenSearch.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - Assignment phase complete

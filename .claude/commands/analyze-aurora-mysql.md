@@ -8,6 +8,10 @@ Runs the Aurora MySQL analysis phase. This phase is fully deterministic (no LLM 
 > relational need score (15-65) instead of a flat baseline, ensuring tables with no
 > relational need score honestly low.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - `.modernizer-state.json` exists with `selected_engines` containing "aurora_mysql"

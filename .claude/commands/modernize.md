@@ -3,6 +3,10 @@
 
 Full end-to-end database modernization pipeline. The orchestrator is LIGHTWEIGHT — it only tracks state and dispatches subagents. It NEVER reads large artifacts or produces LLM responses itself.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains. State updates to `.modernizer-state.json` use the Edit/Write tools, never `sed` or another Bash edit.
+
 ## Arguments
 
 - `<collector_file>` — path to collector output JSON (required)
@@ -39,7 +43,7 @@ The script does the build (if needed), starts both servers in the background, po
   - With `--auto`, do not ask anything: stop the pipeline and end the run with `MODERNIZE_RESULT: failed phase=setup reason=<reason>`.
   - Without `--auto`, ask the user whether to continue in chat mode instead, or abort.
 
-Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`.
+Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`, using the Edit/Write tools.
 
 Stop the servers later with `uv run python scripts/start_local_ui.py --stop`. `/modernize` itself never stops them at the end of a `ui`/`both` run — the user keeps browsing the results after the pipeline finishes; only CI's own cleanup stops them.
 
@@ -52,7 +56,7 @@ The orchestrator's job is ONLY:
 - Read `.modernizer-state.json` for current state
 - Dispatch subagents for each phase
 - Read the script's stdout (1-line JSON status)
-- Update `.modernizer-state.json`
+- Update `.modernizer-state.json` (via the Edit/Write tools, never `sed` or another Bash edit)
 - Present brief summaries to the user
 - Handle errors and decision gates
 
@@ -152,6 +156,7 @@ End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db
 4. **Subagent task descriptions are minimal.** Just the skill name and any required args. The subagent loads the skill and follows it.
 5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents.
 6. **The reality check subagent is NON-OPTIONAL.** The orchestrator must NEVER attempt to read llm_input.json or write llm_responses/ itself.
+7. **Every dispatch's task text includes the tool-use rule:** "Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains." The subagent loads its own skill, which repeats the same rule, but the dispatch text carries it too so the rule holds even before the skill loads.
 
 ## Error Handling
 

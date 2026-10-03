@@ -8,6 +8,10 @@ Runs the DocumentDB analysis phase. This phase is fully deterministic (no LLM ne
 > pipeline relies on deterministic pattern detection, embedding candidate scoring, and
 > co-access analysis. Embed-vs-reference decisions are deferred to the schema design phase.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - `.modernizer-state.json` exists with `selected_engines` containing "documentdb"

@@ -3,6 +3,10 @@
 
 Produces the final synthesis report with rankings, TCO analysis, risk assessment, and architecture recommendation.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - Schema design phase complete for all engines

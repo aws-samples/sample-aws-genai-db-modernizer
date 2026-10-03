@@ -5,6 +5,10 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 
 **ALWAYS uses the split→per-group→merge pattern** regardless of query count. This matches cloud production behavior where queries are split into groups of ~20 for parallel processing.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - Assignment phase complete

@@ -31,6 +31,35 @@ WAIT_PATTERN = re.compile(r"Wait for the user")
 CONFIRM_PATTERN = re.compile(r"\bconfirm", re.IGNORECASE)
 AUTO_EXEMPTION_PATTERN = re.compile(r"--auto|headless|[Uu]nless `--auto`")
 
+# Issue #196: in a headless run, subagents repeatedly used Bash (`python3 -c`,
+# `jq`, `cat`, `ls`, `sed`) to inspect request files and state instead of the
+# Read/Grep tools. In restricted environments those commands are denied,
+# which costs turns and can stall a phase. Every command a subagent or the
+# orchestrator follows must carry this instruction, worded identically.
+TOOL_USE_RULE = (
+    "Inspect files with the Read and Grep tools. Use Bash only for the "
+    "documented `uv run python scripts/…` commands; do not use `cat`, `jq`, "
+    "`python3 -c`, `sed`, `ls` or `cd` chains."
+)
+
+COMMANDS_WITH_TOOL_USE_RULE = [
+    "modernize.md",
+    "reality-check.md",
+    "synthesize.md",
+    "design-schema-dynamodb.md",
+    "design-schema-elasticache.md",
+    "design-schema-opensearch.md",
+    "design-schema-documentdb.md",
+    "design-schema-aurora-mysql.md",
+    "design-schema-aurora-postgresql.md",
+    "analyze-aurora-mysql.md",
+    "analyze-aurora-postgresql.md",
+    "analyze-documentdb.md",
+    "analyze-dynamodb.md",
+    "analyze-elasticache.md",
+    "analyze-opensearch.md",
+]
+
 
 def _modernize_text() -> str:
     return (COMMANDS_DIR / "modernize.md").read_text()
@@ -99,6 +128,29 @@ def test_dispatched_subcommands_have_no_unexempted_user_prompts() -> None:
                     f"{filename}: line asks/waits on a user without an "
                     f"--auto/headless exemption: {line!r}"
                 )
+
+
+def test_commands_followed_by_subagents_or_orchestrator_state_the_tool_use_rule() -> None:
+    for filename in COMMANDS_WITH_TOOL_USE_RULE:
+        path = COMMANDS_DIR / filename
+        assert path.exists(), f"missing command file: {filename}"
+        text = path.read_text()
+        assert TOOL_USE_RULE in text, f"{filename}: missing the tool-use rule verbatim"
+
+
+def test_modernize_dispatch_text_includes_tool_use_rule() -> None:
+    # The subagent dispatch rules must carry the rule too, not just rely on
+    # the dispatched command's own skill text having it.
+    assert TOOL_USE_RULE in _modernize_text()
+
+
+def test_modernize_state_updates_use_edit_write_tools() -> None:
+    # The orchestrator previously tried `sed -i` on .modernizer-state.json in
+    # a headless run (also issue #196); state updates must go through the
+    # Edit/Write tools instead.
+    text = _modernize_text()
+    assert "Edit/Write" in text
+    assert "sed" in text  # named explicitly as what NOT to use
 
 
 def test_reality_check_finalize_is_owned_by_modernize_only() -> None:

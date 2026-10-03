@@ -3,6 +3,10 @@
 
 Designs Redis key patterns, data structures, and TTL policies.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - Assignment phase complete

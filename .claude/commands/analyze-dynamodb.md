@@ -8,6 +8,10 @@ Runs the DynamoDB analysis phase. This phase is fully deterministic (no LLM need
 > pipeline relies on deterministic pattern detection, scoring, and aggregate identification.
 > Key design decisions are deferred to the schema design phase where full context is available.
 
+## Tool Use
+
+Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+
 ## Prerequisites
 
 - `.modernizer-state.json` exists with `selected_engines` containing "dynamodb"
