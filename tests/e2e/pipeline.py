@@ -47,7 +47,6 @@ class PipelineResult:
 
 def _env() -> dict[str, str]:
     env = dict(os.environ)
-    env["PYTHONHASHSEED"] = "0"  # reality_check uses list(set(...))
     env.setdefault("AWS_DEFAULT_REGION", "us-east-1")
     for k in ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
         env.pop(k, None)  # prove no AWS access is needed

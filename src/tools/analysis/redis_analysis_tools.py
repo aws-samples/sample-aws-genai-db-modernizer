@@ -107,7 +107,9 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
     anti_patterns = []
 
     if caching_queries:
-        caching_table_ids = list({t for q in caching_queries for t in q.get("tables_accessed", [])})
+        caching_table_ids = sorted(
+            {t for q in caching_queries for t in q.get("tables_accessed", [])}
+        )
         patterns.append(
             Pattern(
                 pattern_id="redis-caching-001",
@@ -121,7 +123,9 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         )
 
     if session_queries:
-        session_table_ids = list({t for q in session_queries for t in q.get("tables_accessed", [])})
+        session_table_ids = sorted(
+            {t for q in session_queries for t in q.get("tables_accessed", [])}
+        )
         patterns.append(
             Pattern(
                 pattern_id="redis-session-001",

@@ -762,7 +762,7 @@ def build_summary(
                 engine_parts.append(f"{r['target']} handles {aq} queries ({wp}%)")
         if engine_parts:
             parts.append(f"Workload split: {', '.join(engine_parts)}.")
-        mapped_engines = list({m["recommended_database"] for m in table_mappings})
+        mapped_engines = sorted({m["recommended_database"] for m in table_mappings})
         if table_mappings:
             parts.append(
                 f"{len(table_mappings)} source tables mapped across "
@@ -784,7 +784,7 @@ def build_summary(
 
     # Table mapping summary
     if table_mappings:
-        engines_used = list({m["recommended_database"] for m in table_mappings})
+        engines_used = sorted({m["recommended_database"] for m in table_mappings})
         parts.append(
             f"{len(table_mappings)} source tables mapped to " f"{', '.join(engines_used)}."
         )

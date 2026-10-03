@@ -454,7 +454,7 @@ def _generate_executive_summary(
         "engines_remaining": surviving_engines,
         "before": before_distribution,
         "after": after_distribution,
-        "engines_eliminated": list(set(eliminated_engines)),
+        "engines_eliminated": sorted(set(eliminated_engines)),
         "consolidations": [
             {
                 "from": c["from_engine"],
