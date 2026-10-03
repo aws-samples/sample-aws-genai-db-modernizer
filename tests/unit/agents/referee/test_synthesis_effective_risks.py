@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from src.agents.referee.synthesis_grounding import eliminated_engines
+from src.agents.referee.synthesis_grounding import eliminated_engines, ground_risks
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
 
@@ -77,7 +77,13 @@ def _seed(store: LocalArtifactStore, *, eliminated: bool) -> None:
                 },
                 {
                     "pattern_type": "aggregation",
+                    "query_ids": ["q-orders"],
                     "recommendation": "Index order totals in OpenSearch for dashboards.",
+                },
+                {
+                    "pattern_type": "full_text",
+                    "query_ids": ["q-search"],
+                    "recommendation": "Use OpenSearch for the product keyword search.",
                 },
             ],
             "migration_notes": [],
@@ -157,6 +163,7 @@ def store(tmp_path):
 
 
 def _mentions_opensearch(obj: object) -> bool:
+    """Any mention at all (only used where no mention is allowed: strategies, patterns)."""
     return "opensearch" in json.dumps(obj).lower()
 
 
@@ -166,9 +173,13 @@ class TestEliminatedEngineNeverATarget:
         _seed(store, eliminated=True)
         return run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
 
-    def test_risk_register_never_names_the_eliminated_engine(self, result) -> None:
-        assert result["risk_assessment"]["risks"], "risks must still be reported"
-        assert not _mentions_opensearch(result["risk_assessment"])
+    def _risk(self, result, needle: str) -> dict:
+        return next(r for r in result["risk_assessment"]["risks"] if needle in r["description"])
+
+    def test_no_risk_is_dropped_and_no_severity_changes(self, result, store) -> None:
+        risks = result["risk_assessment"]["risks"]
+        assert len(risks) == 4  # 3 unsupported patterns + 1 anti-pattern
+        assert [r["severity"] for r in risks].count("HIGH") == 1
 
     def test_mitigation_strategies_name_the_absorbing_engine(self, result) -> None:
         strategies = result["risk_assessment"]["mitigation_strategies"]
@@ -176,14 +187,42 @@ class TestEliminatedEngineNeverATarget:
         complementary = [s for s in strategies if "unsupported patterns" in s]
         assert complementary and "Aurora MySQL" in complementary[0]
 
-    def test_risk_rewritten_to_the_absorbing_engine(self, result) -> None:
-        risks = result["risk_assessment"]["risks"]
-        # The DynamoDB text-search sentence is dropped; the surviving sentence stays.
-        text_search = next(r for r in risks if "text_search" in r["description"])
-        assert "exact order-id lookups" in text_search["mitigation"]
-        # A mitigation that only pointed at the eliminated engine is rewritten.
-        like = next(r for r in risks if "LIKE search" in r["description"])
-        assert "Aurora MySQL" in like["mitigation"]
+    def test_recommending_sentence_dropped_other_sentence_kept(self, result) -> None:
+        risk = self._risk(result, "text_search")
+        assert risk["description"] == (
+            "[dynamodb] text_search: Keep exact order-id lookups on the base table."
+        )
+        assert risk["mitigation"] == "Keep exact order-id lookups on the base table."
+        assert "grounding_note" in risk
+
+    def test_description_with_only_a_recommendation_is_kept_with_a_note(self, result) -> None:
+        risk = self._risk(result, "aggregation")
+        assert risk["description"].startswith(
+            "[dynamodb] aggregation: Index order totals in OpenSearch for dashboards."
+        )
+        assert risk["description"].endswith(
+            "(OpenSearch Service is not part of the target architecture; its queries run on "
+            "Aurora MySQL.)"
+        )
+
+    def test_absorber_not_claimed_for_queries_assigned_elsewhere(self, result) -> None:
+        # q-orders stays on DynamoDB, so "handle this on Aurora MySQL" would be false.
+        risk = self._risk(result, "aggregation")
+        assert risk["mitigation"] == (
+            "Re-plan this on DynamoDB or Aurora MySQL; the original recommendation named an "
+            "engine that was removed."
+        )
+
+    def test_absorber_named_when_the_queries_moved_there(self, result) -> None:
+        risk = self._risk(result, "full_text")
+        assert risk["mitigation"] == (
+            "Handle this on Aurora MySQL, where the assignment now routes these queries."
+        )
+
+    def test_no_op_instruction_for_a_risk_already_on_the_absorber(self, result) -> None:
+        risk = self._risk(result, "LIKE search")
+        assert "Handle this on" not in risk["mitigation"]
+        assert risk["mitigation"].startswith("Re-plan this on Aurora MySQL;")
 
     def test_patterns_and_trade_offs_reference_only_effective_engines(self, result) -> None:
         rc = result["reality_check_summary"]
@@ -245,3 +284,68 @@ class TestEliminatedEngines:
             ],
         }
         assert eliminated_engines({"dynamodb", "aurora_mysql"}, rc) == {}
+
+
+class TestGroundRisks:
+    """Sentence-level rules of ``ground_risks`` (#202 review)."""
+
+    ELIM = {"opensearch": "aurora_mysql"}
+
+    def _risk(self, description: str, mitigation: str | None = None, **extra) -> dict:
+        return {
+            "risk_id": "RISK-001",
+            "risk_type": "MIGRATION_COMPLEXITY",
+            "severity": "HIGH",
+            "description": description,
+            "mitigation": mitigation,
+            **extra,
+        }
+
+    def test_trade_off_sentence_survives(self) -> None:
+        risk = self._risk(
+            "[aurora_mysql] Text search was consolidated from OpenSearch into Aurora MySQL, "
+            "so relevance ranking is simpler.",
+            "Accept simpler ranking instead of OpenSearch scoring.",
+        )
+        assert ground_risks([risk], self.ELIM) == [risk]
+
+    def test_history_from_engine_survives(self) -> None:
+        risk = self._risk("[dynamodb] Queries moved from OpenSearch need a GSI.")
+        assert ground_risks([risk], self.ELIM) == [risk]
+
+    def test_high_count_unchanged_when_nothing_absorbed(self) -> None:
+        risks = [
+            self._risk("[dynamodb] Stream items to OpenSearch for search.", "Use OpenSearch."),
+            self._risk("[dynamodb] Route analytics to OpenSearch.", None),
+            self._risk("[dynamodb] Hot partition on status."),
+        ]
+        out = ground_risks(risks, {"opensearch": None})
+        assert len(out) == 3
+        assert [r["severity"] for r in out] == ["HIGH", "HIGH", "HIGH"]
+        assert out[0]["description"].endswith(
+            "(OpenSearch Service has no in-scope queries in the target architecture.)"
+        )
+        assert out[0]["mitigation"] == (
+            "Re-plan this on DynamoDB; the original recommendation named an engine that was "
+            "removed."
+        )
+
+    def test_abbreviations_do_not_split_sentences(self) -> None:
+        risk = self._risk(
+            "[dynamodb] Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads. "
+            "Stream the rest to OpenSearch."
+        )
+        out = ground_risks([risk], self.ELIM)[0]
+        assert out["description"] == (
+            "[dynamodb] Add a sparse GSI, e.g. by status vs. date, for 2.5x fewer reads."
+        )
+
+    def test_engine_as_proposed_doer_is_a_recommendation(self) -> None:
+        risk = self._risk("[dynamodb] Keep keys short. OpenSearch can handle the facets.")
+        out = ground_risks([risk], self.ELIM)[0]
+        assert out["description"] == "[dynamodb] Keep keys short."
+
+    def test_risk_without_eliminated_engine_is_untouched(self) -> None:
+        risk = self._risk("[dynamodb] Use DynamoDB Streams to keep counters.")
+        assert ground_risks([risk], self.ELIM) == [risk]
+        assert "grounding_note" not in ground_risks([risk], self.ELIM)[0]

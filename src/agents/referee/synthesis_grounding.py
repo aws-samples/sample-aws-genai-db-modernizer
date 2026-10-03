@@ -7,11 +7,15 @@ reality-check pattern suggestions) were written while that engine was still a
 candidate, so their free text can still recommend it. This module makes sure the
 customer-facing report only recommends engines that are part of the target.
 
-Rule for target recommendations (risks, mitigations, mitigation strategies,
-architectural patterns): a sentence that names an eliminated engine is dropped. If
-nothing is left, the text is rewritten to point at the absorbing engine, or the item
-is dropped when no engine absorbed the workload. Consolidation history ("moved from
-OpenSearch to Aurora MySQL") is not a recommendation and is left alone.
+Rule for risks (never dropped, severity never changed): in a risk description or
+mitigation, a sentence is dropped only when it *recommends* an eliminated engine
+("stream to OpenSearch", "index in OpenSearch", "OpenSearch can handle ..."). Sentences
+that describe a trade-off or history ("consolidated from OpenSearch", "without
+OpenSearch", "instead of OpenSearch") always survive. A description left empty keeps
+its original text plus a note that the engine is not part of the target; an empty
+mitigation is replaced by a re-plan hint that names the absorbing engine only when the
+risk's queries are actually assigned to it. Every rewritten risk carries a
+``grounding_note``.
 """
 
 from __future__ import annotations
@@ -42,7 +46,10 @@ _ENGINE_PATTERNS: dict[str, re.Pattern[str]] = {
     "aurora_postgresql": re.compile(r"\baurora[\s_-]?postgre(?:sql|s)\b", re.IGNORECASE),
 }
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+# Sentence boundary candidates: terminal punctuation followed by whitespace.
+_BOUNDARY = re.compile(r"[.!?]+\s+")
+# Tokens whose trailing period never ends a sentence ("e.g. by status").
+_ABBREVIATIONS = frozenset("e.g i.e vs etc approx incl cf fig no mr ms dr st al eg ie resp".split())
 # "[engine] " tag and an optional "pattern_type: " label that prefix risk descriptions.
 _ENGINE_TAG = re.compile(r"^(\[[^\]]+\]\s*(?:[\w-]+:\s+)?)")
 
@@ -61,7 +68,30 @@ def engine_mentions(text: str) -> list[tuple[str, int, int]]:
 
 
 def split_sentences(text: str) -> list[str]:
-    return [s for s in _SENTENCE_SPLIT.split(text.strip()) if s]
+    """Split prose into sentences without breaking on abbreviations or decimals.
+
+    A boundary is terminal punctuation plus whitespace, followed by something that
+    can start a sentence (not a lowercase letter), and not preceded by an
+    abbreviation such as "e.g.", "i.e.", "vs." or "etc." ("etc." still ends a
+    sentence when a capitalised word follows).
+    """
+    text = text.strip()
+    out: list[str] = []
+    start = 0
+    for m in _BOUNDARY.finditer(text):
+        nxt = text[m.end() : m.end() + 1]
+        if not nxt or nxt.islower():
+            continue
+        words = text[start : m.start()].split()
+        last = words[-1].lower().lstrip("([").rstrip(".") if words else ""
+        if last in _ABBREVIATIONS and not (last == "etc" and nxt.isupper()):
+            continue
+        out.append(text[start : m.end()].strip())
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -102,57 +132,173 @@ def eliminated_engines(
     return out
 
 
-def _absorber_note(absorber: str) -> str:
-    return (
-        f"Handle this on {display_name(absorber)}, which the reality check made "
-        "responsible for this workload."
-    )
+# A sentence that describes a trade-off or the consolidation history. It explains
+# why the engine is gone rather than recommending it, so it always survives.
+_TRADE_OFF = re.compile(
+    r"\b(?:consolidat\w*|absorb\w*|eliminat\w*|remov\w*|replac\w*|without|instead\s+of|"
+    r"rather\s+than|los[et]\w*|no\s+longer|previously|formerly)\b",
+    re.IGNORECASE,
+)
+# Verbs/prepositions that, right before an engine, make the sentence recommend it.
+_RECOMMEND_BEFORE = re.compile(
+    r"\b(?:use|using|move|moving|route|routing|stream|streaming|index|indexing|sync|"
+    r"syncing|replicate|export|push|send|offload|offloading|adopt|leverage|consider|"
+    r"requires?|requiring|via|to|in|into|on|through|with|add|deploy|introduce)\b"
+    r"(?:\W+\w+){0,3}\W*$",
+    re.IGNORECASE,
+)
+# "OpenSearch would/should/can handle ..." -- the engine as the proposed doer.
+_RECOMMEND_AFTER = re.compile(
+    r"^\W*(?:\w+\W+){0,1}?(?:would|should|can|could|will|must)\b"
+    r"|^\W*(?:handles?|serves?|provides?|supports?|indexes|offers?)\b"
+    r"|^\s+(?:ingestion|index(?:es)?|cluster|domain|pipeline)\b",
+    re.IGNORECASE,
+)
 
 
-def scrub_eliminated(text: str | None, eliminated: dict[str, str | None]) -> str | None:
-    """Drop sentences of ``text`` that name an eliminated engine.
+def _recommends(sentence: str, engines: Iterable[str]) -> bool:
+    """True when ``sentence`` recommends one of ``engines`` (not a trade-off/history)."""
+    targets = set(engines)
+    mentions = [(e, s, t) for e, s, t in engine_mentions(sentence) if e in targets]
+    if not mentions or _TRADE_OFF.search(sentence):
+        return False
+    for _, start, end in mentions:
+        before = sentence[:start]
+        if re.search(r"\bfrom\W*$", before, re.IGNORECASE):
+            continue
+        if _RECOMMEND_BEFORE.search(before) or _RECOMMEND_AFTER.match(sentence[end:]):
+            return True
+    return False
 
-    Returns the cleaned text, the absorbing-engine rewrite when every sentence was
-    dropped, or None when nothing is left and no engine absorbed the workload. A leading
-    ``[engine]`` tag (and ``label:``) is preserved. Text naming no eliminated engine is returned unchanged.
+
+def _drop_recommendations(text: str, eliminated: dict[str, str | None]) -> tuple[str, str, bool]:
+    """Return ``(tag, kept_body, changed)`` with recommending sentences removed.
+
+    A leading ``[engine] `` tag and optional ``label: `` are kept apart from the body.
     """
-    if not text or not eliminated:
-        return text
     tag_match = _ENGINE_TAG.match(text)
     tag = tag_match.group(1) if tag_match else ""
     body = text[len(tag) :]
-    hits = [e for e, _, _ in engine_mentions(body) if e in eliminated]
-    if not hits:
-        return text
-    kept = [
-        s
-        for s in split_sentences(body)
-        if not any(e in eliminated for e, _, _ in engine_mentions(s))
-    ]
-    if kept:
-        return tag + " ".join(kept)
-    absorber = next((eliminated[e] for e in hits if eliminated[e]), None)
+    sentences = split_sentences(body)
+    kept = [s for s in sentences if not _recommends(s, eliminated)]
+    return tag, " ".join(kept), len(kept) != len(sentences)
+
+
+def _risk_engine(risk: dict) -> str | None:
+    m = re.match(r"^\[([^\]]+)\]", risk.get("description") or "")
+    return m.group(1) if m else None
+
+
+def _named_eliminated(text: str, eliminated: dict[str, str | None]) -> list[str]:
+    seen: list[str] = []
+    for e, _, _ in engine_mentions(text):
+        if e in eliminated and e not in seen:
+            seen.append(e)
+    return seen
+
+
+def _not_in_target(engine: str, absorber: str | None) -> str:
     if absorber:
-        return tag + _absorber_note(absorber)
-    return None
+        return (
+            f"({display_name(engine)} is not part of the target architecture; its queries "
+            f"run on {display_name(absorber)}.)"
+        )
+    return f"({display_name(engine)} has no in-scope queries in the target architecture.)"
 
 
-def ground_risks(risks: list[dict], eliminated: dict[str, str | None]) -> list[dict]:
-    """Rewrite or drop risks whose text recommends an eliminated engine."""
+def _replan(
+    risk_engine: str | None,
+    absorber: str | None,
+    query_ids: list[str],
+    query_engine: dict[str, str],
+) -> str:
+    """Mitigation for a risk whose only recommendation named a removed engine.
+
+    Points at the absorber only when the risk's queries are actually assigned to it
+    (and it is not the risk's own engine, which would be a no-op instruction).
+    """
+    if (
+        absorber
+        and absorber != risk_engine
+        and query_ids
+        and all(query_engine.get(q) == absorber for q in query_ids)
+    ):
+        return (
+            f"Handle this on {display_name(absorber)}, where the assignment now routes "
+            "these queries."
+        )
+    targets = [e for e in (risk_engine, absorber) if e]
+    targets = list(dict.fromkeys(targets))
+    where = " or ".join(display_name(e) for e in targets) or "an engine in the target architecture"
+    return f"Re-plan this on {where}; the original recommendation named an engine that was removed."
+
+
+def ground_risks(
+    risks: list[dict],
+    eliminated: dict[str, str | None],
+    query_engine: dict[str, str] | None = None,
+) -> list[dict]:
+    """Remove recommendations of eliminated engines from risk text (#202).
+
+    Never drops a risk and never changes its severity: ``len(result) == len(risks)``.
+    ``query_engine`` maps query ids to their effective engine; it decides whether a
+    replacement mitigation may name the absorbing engine.
+    """
     if not eliminated:
         return risks
+    query_engine = query_engine or {}
     grounded = []
     for risk in risks:
-        description = scrub_eliminated(risk.get("description"), eliminated)
-        if not description:
+        description = risk.get("description") or ""
+        mitigation = risk.get("mitigation")
+        named = _named_eliminated(f"{description} {mitigation or ''}", eliminated)
+        if not named:
+            grounded.append(risk)
             continue
-        grounded.append(
-            {
-                **risk,
-                "description": description,
-                "mitigation": scrub_eliminated(risk.get("mitigation"), eliminated),
-            }
-        )
+        engine = named[0]
+        absorber = eliminated[engine]
+        own = _risk_engine(risk)
+        notes = []
+
+        tag, body, changed = _drop_recommendations(description, eliminated)
+        if changed:
+            if body:
+                description = tag + body
+                notes.append(f"Dropped a description sentence recommending {display_name(engine)}.")
+            else:
+                description = f"{description.rstrip()} {_not_in_target(engine, absorber)}"
+                notes.append(
+                    f"Description kept; it named {display_name(engine)}, which is not in the "
+                    "target architecture."
+                )
+
+        if mitigation:
+            tag, body, changed = _drop_recommendations(mitigation, eliminated)
+            if changed:
+                if body:
+                    mitigation = tag + body
+                    notes.append(
+                        f"Dropped a mitigation sentence recommending {display_name(engine)}."
+                    )
+                else:
+                    mitigation = _replan(
+                        own, absorber, list(risk.get("query_ids") or []), query_engine
+                    )
+                    notes.append(
+                        f"Mitigation replaced; it only recommended {display_name(engine)}."
+                    )
+
+        if notes:
+            grounded.append(
+                {
+                    **risk,
+                    "description": description,
+                    "mitigation": mitigation,
+                    "grounding_note": " ".join(notes),
+                }
+            )
+        else:
+            grounded.append(risk)
     return grounded
 
 

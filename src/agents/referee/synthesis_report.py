@@ -497,6 +497,28 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     }
 
 
+def _attach_unsupported_query_ids(risks: list[dict], data: SynthesisData) -> None:
+    """Carry each unsupported pattern's query ids onto the risk built from it.
+
+    The schema-design loop emits exactly one MIGRATION_COMPLEXITY risk per unsupported
+    pattern, in order, tagged ``[engine]``; pairing them here keeps that loop untouched.
+    Engines use ``query_ids`` (DynamoDB) or ``source_query_ids`` (the others).
+    """
+    for engine, artifacts in data.engines.items():
+        patterns = (artifacts.schema_design or {}).get("unsupported_patterns", [])
+        engine_risks = [
+            r
+            for r in risks
+            if r.get("risk_type") == "MIGRATION_COMPLEXITY"
+            and str(r.get("description", "")).startswith(f"[{engine}]")
+        ]
+        if len(engine_risks) != len(patterns):
+            continue
+        for risk, up in zip(engine_risks, patterns, strict=True):
+            ids = up.get("query_ids") or up.get("source_query_ids") or []
+            risk.setdefault("query_ids", sorted(ids))
+
+
 def build_risk_assessment(
     data: SynthesisData,
     eliminated: dict[str, str | None] | None = None,
@@ -574,6 +596,7 @@ def build_risk_assessment(
                     "description": f"[{engine}] {description}",
                     "affected_tables": ap.get("table_ids", []),
                     "mitigation": ap.get("recommendation"),
+                    "query_ids": sorted(ap_query_ids),
                 }
             )
 
@@ -605,7 +628,13 @@ def build_risk_assessment(
                 }
             )
 
-    risks = ground_risks(risks, eliminated or {})
+    _attach_unsupported_query_ids(risks, data)
+    query_engine = {
+        qa["query_id"]: qa["assigned_engine"]
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("in_scope", True) and qa.get("assigned_engine") and qa.get("query_id")
+    }
+    risks = ground_risks(risks, eliminated or {}, query_engine)
 
     # Determine overall risk level
     severities = [r["severity"] for r in risks]
