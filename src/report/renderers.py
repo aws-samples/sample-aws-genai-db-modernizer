@@ -485,6 +485,12 @@ def render_decision_report_html(
                 "<p class=note>The generated narrative was withheld because it referenced "  # nosemgrep: string-concat-in-list -- intentional multi-line string
                 "schema work this run did not perform; the figures here are unaffected.</p>"
             ]
+        elif report.get("summary_source") == "deterministic_fallback":
+            out += [
+                "<p class=note>The generated narrative was withheld because it named a table "  # nosemgrep: string-concat-in-list -- intentional multi-line string
+                "under an engine that does not serve it; this summary is built from the "
+                "effective assignment.</p>"
+            ]
 
     out += [
         "<h2 class=section-title>Recommended architecture</h2>",

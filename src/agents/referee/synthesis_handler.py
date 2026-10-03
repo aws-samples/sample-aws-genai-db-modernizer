@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
+    build_fallback_summary,
     check_summary_grounding,
     eliminated_engines,
     engine_table_scope,
@@ -254,7 +255,13 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
     for f in findings:
         print(f"[synthesis] WARNING: {f['message']}")
     if any(f["high_confidence"] for f in findings):
-        deterministic_result["executive_summary"] = deterministic_result["summary"]
+        # The customer sees a short narrative built from the effective architecture
+        # (display names, no cost or confidence figures), not the raw deterministic
+        # summary, which stays in summary_deterministic.
+        deterministic_result["executive_summary"] = (
+            build_fallback_summary(deterministic_result.get("effective_architecture"))
+            or deterministic_result["summary"]
+        )
         deterministic_result["summary_source"] = "deterministic_fallback"
     else:
         deterministic_result["executive_summary"] = llm_summary

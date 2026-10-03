@@ -652,3 +652,62 @@ def check_summary_grounding(
             else:
                 pending.extend(mentions)
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Customer-facing fallback summary
+# ---------------------------------------------------------------------------
+
+_MAX_GROUPS_IN_SUMMARY = 3
+
+
+def _join(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def build_fallback_summary(effective_architecture: dict | None) -> str | None:
+    """Short templated narrative used when the LLM summary is rejected.
+
+    Built only from ``effective_architecture``: display engine names, each engine's
+    workload share and busiest query groups, and the engines the reality check
+    consolidated away. No cost figures, no confidence scores, no table-mapping counts.
+    Returns None when there is nothing to describe.
+    """
+    engines = [e for e in (effective_architecture or {}).get("engines", []) if e.get("engine")]
+    if not engines:
+        return None
+    engines = sorted(engines, key=lambda e: e.get("assigned_queries", 0), reverse=True)
+    names = [e.get("display_name") or display_name(e["engine"]) for e in engines]
+    if len(names) == 1:
+        parts = [f"The target architecture runs on {names[0]}."]
+    else:
+        parts = [
+            f"The target architecture combines {_join(names)}, each serving the queries it fits best."
+        ]
+    for entry, name in zip(engines, names, strict=True):
+        queries = entry.get("assigned_queries")
+        if queries:
+            share = entry.get("workload_percent")
+            load = f"{queries} queries" + (f" ({share}% of the workload)" if share else "")
+        else:
+            tables = len(entry.get("tables") or [])
+            if not tables:
+                continue
+            load = f"{tables} source table{'s' if tables != 1 else ''}"
+        groups = [g for g in entry.get("top_query_groups") or [] if g and g != "ungrouped"]
+        led = f", led by {_join(groups[:_MAX_GROUPS_IN_SUMMARY])}" if groups else ""
+        parts.append(f"{name} serves {load}{led}.")
+    moved = [
+        f"{display_name(e['engine'])} into {display_name(e['absorbed_by'])}"
+        for e in (effective_architecture or {}).get("eliminated_engines", [])
+        if e.get("absorbed_by")
+    ]
+    if moved:
+        parts.append(
+            f"The reality check consolidated {_join(moved)}, so "
+            + ("it does" if len(moved) == 1 else "they do")
+            + " not need a separate deployment."
+        )
+    return " ".join(parts)

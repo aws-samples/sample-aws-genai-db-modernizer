@@ -18,6 +18,7 @@ import pytest
 
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
+    build_fallback_summary,
     check_summary_grounding,
 )
 from src.agents.referee.synthesis_handler import (
@@ -278,7 +279,7 @@ class TestFinalize:
     def test_wrong_attribution_falls_back_to_deterministic(self, det) -> None:
         llm = "Aurora MySQL serves the shop.orders table and the product lookups."
         out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == det["summary"]
+        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
         assert out["summary_llm"] == llm
         assert out["summary_source"] == "deterministic_fallback"
         assert out["summary_validation_warnings"]
@@ -320,7 +321,8 @@ class TestFinalize:
         store = det["_store"]
         _write_synthesis_report(store, det, 2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        assert report["summary"] == report["summary_deterministic"]
+        assert report["summary"] == build_fallback_summary(det["effective_architecture"])
+        assert report["summary_deterministic"] == det["summary"]
         assert report["summary_llm"] == llm
         assert report["summary_source"] == "deterministic_fallback"
         assert report["summary_validation_warnings"]
@@ -412,3 +414,65 @@ def test_finalize_script_reports_the_post_check(
     assert bool(status["summary_validation_warnings"]) == (source != "llm")
     report = det["_store"].read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
     assert report["summary_llm"] == summary
+
+
+# ---------------------------------------------------------------------------
+# Fallback summary quality and the decision-report note
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackSummary:
+    def _eff(self, wordpress) -> dict:
+        mappings = [
+            {"source_table": t, "recommended_database": e}
+            for t, e in wordpress["recommended_engine"]
+        ]
+        return build_effective_architecture(
+            wordpress["engine_tables"],
+            mappings,
+            wordpress["ranking"],
+            wordpress["query_groups"],
+            wordpress["database_name"],
+            wordpress["eliminated"],
+        )
+
+    def test_wordpress_fallback_reads_as_a_narrative(self, wordpress) -> None:
+        text = build_fallback_summary(self._eff(wordpress))
+        assert text is not None
+        assert text.startswith(
+            "The target architecture combines DynamoDB, ElastiCache and Aurora MySQL"
+        )
+        assert "DynamoDB serves 63 queries (58.9% of the workload), led by" in text
+        assert (
+            "The reality check consolidated DocumentDB into DynamoDB and OpenSearch Service "
+            "into Aurora MySQL" in text
+        )
+
+    def test_fallback_has_no_cost_confidence_or_mapping_counts(self, wordpress) -> None:
+        text = build_fallback_summary(self._eff(wordpress)) or ""
+        for banned in ("$", "confidence", "source tables mapped", "dynamodb (", "aurora_mysql"):
+            assert banned not in text, banned
+        assert "ungrouped" not in text
+        assert text.count("tables mapped") == 0
+
+    def test_single_engine_and_empty(self) -> None:
+        eff = {"engines": [{"engine": "dynamodb", "tables": ["a", "b"]}]}
+        assert build_fallback_summary(eff) == (
+            "The target architecture runs on DynamoDB. DynamoDB serves 2 source tables."
+        )
+        assert build_fallback_summary({"engines": []}) is None
+
+
+def test_decision_report_notes_the_withheld_narrative(det) -> None:
+    from src.report.renderers import render_decision_report_html
+
+    apply_synthesis_llm_output(det, {"executive_summary": "Aurora MySQL serves shop.orders."})
+    store = det["_store"]
+    _write_synthesis_report(store, det, 2)
+    report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+    html = render_decision_report_html(report)
+    assert "named a table under an engine that does not serve it" in html
+    assert "The target architecture combines" in html
+
+    report["summary_source"] = "llm"
+    assert "named a table under an engine" not in render_decision_report_html(report)
