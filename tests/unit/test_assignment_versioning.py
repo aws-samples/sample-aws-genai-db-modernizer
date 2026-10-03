@@ -13,8 +13,12 @@ from datetime import UTC, datetime
 from src.contracts.assignment_models import Assignment, AssignmentSource, AssignmentStatus
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
+    is_reality_check_produced,
     next_assignment_version,
+    reality_check_is_current,
+    resolve_downstream_assignment_version,
     resolve_effective_assignment_version,
+    resolve_reality_check_input_version,
     stale_schema_versions,
 )
 
@@ -155,3 +159,111 @@ class TestAssignmentSourceProvenance:
         d = self._assignment(source=AssignmentSource.REALITY_CHECK).model_dump(mode="json")
         d.pop("source")
         assert Assignment.model_validate(d).source is None
+
+
+# =============================================================================
+# Reality Check input/output resolution (issue #189)
+
+
+class _DictStore:
+    """Store backed by ``{key: json}``: list_prefix + read_json + exists."""
+
+    def __init__(self, artifacts: dict[str, dict]) -> None:
+        self.artifacts = dict(artifacts)
+
+    def list_prefix(self, prefix: str) -> list[str]:
+        return [k for k in self.artifacts if k.startswith(prefix)]
+
+    def read_json(self, path: str) -> dict:
+        return self.artifacts[path]
+
+    def exists(self, path: str) -> bool:
+        return path in self.artifacts
+
+
+def _versioned(*docs: dict) -> _DictStore:
+    """Build a store whose v1..vN assignment artifacts are ``docs`` in order."""
+    return _DictStore(
+        {assignment_artifact_path("db", "job", i): d for i, d in enumerate(docs, start=1)}
+    )
+
+
+_RESOLUTION = {"source": "assignment_resolution"}
+_GATE = {"source": "customer_gate", "previous_version": 2, "reality_check_applied": True}
+
+
+def _rc(previous: int) -> dict:
+    return {"source": "reality_check", "previous_version": previous, "reality_check_applied": True}
+
+
+class TestIsRealityCheckProduced:
+    def test_source_stamp_marks_reality_check(self) -> None:
+        assert is_reality_check_produced(_rc(1)) is True
+
+    def test_other_sources_are_not_reality_check(self) -> None:
+        assert is_reality_check_produced(_RESOLUTION) is False
+        # A customer-gate copy of a consolidated version carries the copied
+        # reality_check_applied marker; the explicit source wins.
+        assert is_reality_check_produced(_GATE) is False
+
+    def test_legacy_reality_check_write_without_source(self) -> None:
+        # Pre-ADR-028 Reality Check wrote reality_check_applied but neither
+        # `source` nor `previous_version`.
+        assert is_reality_check_produced({"reality_check_applied": True}) is True
+
+    def test_legacy_override_of_consolidated_version_is_not_reality_check(self) -> None:
+        # Legacy REST overrides always set previous_version and copied the marker.
+        legacy_override = {"reality_check_applied": True, "previous_version": 2}
+        assert is_reality_check_produced(legacy_override) is False
+
+    def test_legacy_resolution_without_marker(self) -> None:
+        assert is_reality_check_produced({}) is False
+
+
+class TestResolveRealityCheckInputVersion:
+    def test_fresh_job_reads_v1(self) -> None:
+        assert resolve_reality_check_input_version(_versioned(_RESOLUTION), "db", "job") == 1
+
+    def test_skips_its_own_consolidation(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1))
+        assert resolve_reality_check_input_version(store, "db", "job") == 1
+
+    def test_reentry_version_above_consolidation_is_the_input(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _GATE)
+        assert resolve_reality_check_input_version(store, "db", "job") == 3
+
+    def test_after_second_consolidation_input_is_still_the_reentry_version(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _GATE, _rc(3))
+        assert resolve_reality_check_input_version(store, "db", "job") == 3
+
+    def test_no_versions_coerces_to_one(self) -> None:
+        # ADR-026 coercion: the caller's missing-artifact check on v1 then fires.
+        assert resolve_reality_check_input_version(_DictStore({}), "db", "job") == 1
+
+    def test_version_dir_without_assignment_is_skipped(self) -> None:
+        store = _versioned(_RESOLUTION)
+        store.artifacts["db/job/assignment/v2/validation.json"] = {}
+        assert resolve_reality_check_input_version(store, "db", "job") == 1
+
+
+class TestRealityCheckIsCurrent:
+    def test_false_on_fresh_job(self) -> None:
+        assert reality_check_is_current(_versioned(_RESOLUTION), "db", "job") is False
+
+    def test_true_when_latest_is_consolidation_of_input(self) -> None:
+        assert reality_check_is_current(_versioned(_RESOLUTION, _rc(1)), "db", "job") is True
+
+    def test_false_after_reentry(self) -> None:
+        store = _versioned(_RESOLUTION, _rc(1), _GATE)
+        assert reality_check_is_current(store, "db", "job") is False
+
+    def test_false_when_no_versions(self) -> None:
+        assert reality_check_is_current(_DictStore({}), "db", "job") is False
+
+
+class TestDownstreamReadsLatestConsolidation:
+    def test_downstream_reads_second_consolidation(self) -> None:
+        # Re-entry wrote v3, Reality Check consolidated it to v4: schema design,
+        # synthesis and the report must read v4.
+        store = _versioned(_RESOLUTION, _rc(1), _GATE, _rc(3))
+        assert resolve_downstream_assignment_version(store, "db", "job") == 4

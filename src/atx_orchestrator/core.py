@@ -18,6 +18,11 @@ import tempfile
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
+from src.storage.assignment_versioning import (
+    resolve_downstream_assignment_version,
+    resolve_reality_check_input_version,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -896,8 +901,10 @@ def run_assignment_core(
     )
     run_assignment_resolver(job_id, database_name, store)
 
-    # Summarize the produced assignment
-    assignment_key = f"{database_name}/{job_id}/assignment/v1/assignment.json"
+    # Summarize the produced assignment. The resolver writes next_assignment_version
+    # (v1 on a fresh job, v3+ on a re-run), so read the version it just wrote.
+    assignment_version = _resolve_assignment_version(store, job_id, database_name) or 1
+    assignment_key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
     engine_counts: dict[str, int] = {}
     total_queries = 0
     if store.exists(assignment_key):
@@ -910,7 +917,7 @@ def run_assignment_core(
     return {
         "job_id": job_id,
         "database_name": database_name,
-        "assignment_version": 1,
+        "assignment_version": assignment_version,
         "total_queries": total_queries,
         "queries_per_engine": engine_counts,
         "assignment_artifact": assignment_key,
@@ -934,7 +941,7 @@ def _resolve_assignment_version(store, job_id: str, database_name: str) -> int:
 def run_reality_check_core(
     job_id: str,
     database_name: str,
-    assignment_version: int = 1,
+    assignment_version: int | None = None,
     store=None,
 ) -> dict:
     """Run Reality Check (CTO-level engine consolidation) for a completed assignment.
@@ -954,10 +961,19 @@ def run_reality_check_core(
     Prerequisites: collector/output.json, referee-triage/triage.json,
     assignment/v{assignment_version}/assignment.json, and at least one analysis
     output. Returns a summary with before/after distribution, the consolidation
-    count, and ``effective_assignment_version`` (the latest version after the run,
-    which is 2 when consolidation occurred, else the source version).
+    count, and ``effective_assignment_version`` (the latest version after the run:
+    the consolidation Reality Check wrote, else the source version).
+
+    ``assignment_version`` defaults to ``resolve_reality_check_input_version``
+    (the newest version Reality Check did not produce itself), and the revision
+    goes to ``next_assignment_version()`` so no version is overwritten (issue
+    #189). With the default, a run whose input is already consolidated is a no-op.
     """
     store = store or make_store()
+
+    requested_version = assignment_version
+    if assignment_version is None:
+        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
 
     prefix = f"{database_name}/{job_id}"
     collector_key = f"{prefix}/collector/output.json"
@@ -984,7 +1000,7 @@ def run_reality_check_core(
         job_id,
         database_name,
         store,
-        assignment_version=assignment_version,
+        assignment_version=requested_version,
         llm_mode=llm_mode,
     )
 
@@ -1104,7 +1120,8 @@ def run_assessment_core(
     Failures propagate: a phase that raises stops the chain (downstream phases
     depend on its artifacts), after reporting the error through ``on_phase_error``.
     Returns a merged summary with each phase's result, the
-    ``effective_assignment_version`` (2 when Reality Check consolidated, else 1),
+    ``effective_assignment_version`` (the newest version: Reality Check's
+    consolidation when it made one, else the assignment it read),
     plus a compact ``summary_for_chat`` block the orchestrator can narrate.
     """
     store = store or make_store()
@@ -1180,13 +1197,16 @@ def run_assessment_core(
         on_phase_done("assignment", assign_summary, detail)
 
     # 5. Reality Check — CTO-level engine consolidation (ADR-018, ADR-026). Runs
-    # on assignment v1 and, when it consolidates, writes assignment v2. Uses the
+    # on the newest assignment it did not produce itself (v1 on a fresh job) and,
+    # when it consolidates, writes the next free version (issue #189). Uses the
     # Bedrock LLM pass (consolidation validation + executive summary).
     reality_check_summary = _run_phase(
         "reality_check",
-        lambda: run_reality_check_core(job_id, database_name, assignment_version=1, store=store),
+        lambda: run_reality_check_core(job_id, database_name, store=store),
     )
-    effective_version = reality_check_summary.get("effective_assignment_version", 1)
+    effective_version = reality_check_summary.get(
+        "effective_assignment_version"
+    ) or resolve_downstream_assignment_version(store, database_name, job_id)
     if on_phase_done is not None:
         consolidations = reality_check_summary.get("consolidations", 0)
         before = reality_check_summary.get("before_distribution", {})
@@ -1205,8 +1225,8 @@ def run_assessment_core(
         "analysis": analysis_summary,
         "assignment": assign_summary,
         "reality_check": reality_check_summary,
-        # The version downstream schema-design and synthesis should read: 2 when
-        # Reality Check consolidated, else 1. Downstream tools resolve this from
+        # The version downstream schema-design and synthesis should read: the
+        # newest version (Reality Check's consolidation when it made one). Downstream tools resolve this from
         # the store themselves (see _resolve_assignment_version); it is echoed here
         # for narration and tests.
         "effective_assignment_version": effective_version,
@@ -1262,7 +1282,7 @@ def _build_graph(store, job_id: str, database_name: str) -> None:
 def run_synthesis_core(
     job_id: str,
     database_name: str,
-    assignment_version: int = 0,
+    assignment_version: int | None = None,
     store=None,
 ) -> dict:
     """Run referee-synthesis for a completed analysis + assignment pipeline.
@@ -1288,8 +1308,14 @@ def run_synthesis_core(
     Prerequisites: collector/output.json, referee-triage/triage.json, and at
     least one analysis-<engine>/analysis.json. When assignment_version > 0 the
     matching assignment/v<N>/assignment.json must also exist.
+
+    ``assignment_version=None`` (the default) resolves the effective version with
+    ``resolve_downstream_assignment_version`` (the newest version, coerced to 1),
+    so a caller that omits it reads the latest consolidation, not a pinned v1.
     """
     store = store or make_store()
+    if assignment_version is None:
+        assignment_version = resolve_downstream_assignment_version(store, database_name, job_id)
 
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
@@ -1544,7 +1570,7 @@ def run_schema_design_core(
     job_id: str,
     database_name: str,
     target_type: str,
-    assignment_version: int = 1,
+    assignment_version: int | None = None,
     store=None,
 ) -> dict:
     """Design the target schema for one engine. Returns a summary dict.
@@ -1559,8 +1585,9 @@ def run_schema_design_core(
     ``recommended_architecture.databases`` from that file, so this phase is what
     populates three fields that are otherwise empty in every report.
 
-    ``assignment_version`` defaults to 1 and must match the version the
-    assignment agent produced. At 0 the handler passes every query to every
+    ``assignment_version`` defaults to ``resolve_downstream_assignment_version``
+    (the newest version, coerced to 1 per ADR-026) and must match the version the
+    assignment/Reality Check phases produced. At 0 the handler passes every query to every
     engine instead of the ones assigned to it, and writes to a different key than
     synthesis reads.
 
@@ -1574,6 +1601,8 @@ def run_schema_design_core(
     Prerequisites: collector/output.json and assignment/v<N>/assignment.json.
     """
     store = store or make_store()
+    if assignment_version is None:
+        assignment_version = resolve_downstream_assignment_version(store, database_name, job_id)
     prefix = f"{database_name}/{job_id}"
 
     collector_key = f"{prefix}/collector/output.json"

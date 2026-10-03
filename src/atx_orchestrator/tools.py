@@ -1393,6 +1393,7 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
         from src.atx_orchestrator.runtime import artifacts as _artifacts
         from src.atx_orchestrator.runtime import graph_transport
         from src.report.deliverables import render_deliverables
+        from src.storage.assignment_versioning import resolve_downstream_assignment_version
 
         store = _make_store()
         base = report_key.rsplit("/", 1)[0]
@@ -1401,7 +1402,12 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             job_id,
             database_name,
             report_key,
-            assignment_version=int(inner.get("assignment_version") or 1),
+            # The version synthesis reported; when absent, the effective version
+            # (newest, coerced to 1) rather than a pinned v1 (issue #189).
+            assignment_version=int(
+                inner.get("assignment_version")
+                or resolve_downstream_assignment_version(store, database_name, job_id)
+            ),
             # The ATX store is JSON-only; the graph travels as a published artifact.
             graph_fetcher=graph_transport.download_graph,
         )

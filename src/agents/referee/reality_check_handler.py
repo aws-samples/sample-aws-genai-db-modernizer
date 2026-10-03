@@ -30,6 +30,11 @@ from src.agents.referee.reality_check import (
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import (
+    next_assignment_version,
+    reality_check_is_current,
+    resolve_reality_check_input_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +48,16 @@ def run_reality_check_deterministic(
     job_id: str,
     database_name: str,
     store: ArtifactStore,
-    assignment_version: int = 1,
+    assignment_version: int | None = None,
 ) -> dict:
     """Run all deterministic reality-check logic without invoking any LLM.
 
     Reads assignment, triage, collector, and analysis artifacts from the store,
     runs the core consolidation logic, and builds recommendations.
+
+    ``assignment_version`` defaults to
+    :func:`~src.storage.assignment_versioning.resolve_reality_check_input_version`
+    (the newest version Reality Check did not produce itself, issue #189).
 
     Returns a dict with keys:
         consolidations, recommendations, architectural_patterns,
@@ -56,6 +65,9 @@ def run_reality_check_deterministic(
         executive_summary (always None), assignment, collector_output,
         analysis_outputs
     """
+    if assignment_version is None:
+        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
+
     # Read required artifacts
     assignment_key = f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
     assignment = store.read_json(assignment_key)
@@ -214,24 +226,51 @@ def run_reality_check_handler(
     job_id: str,
     database_name: str,
     store: ArtifactStore,
-    assignment_version: int = 1,
+    assignment_version: int | None = None,
     llm_mode: str = "bedrock",
-) -> None:
+) -> dict:
     """Run the reality check agent.
 
     Reads assignment, triage, analysis, and collector artifacts.
     Writes:
       - reality-check/output.json (contract-validated)
-      - assignment/v{N+1}/assignment.json (revised, if consolidation occurred)
+      - assignment/v{next}/assignment.json (revised, if consolidation occurred),
+        where ``next`` is ``next_assignment_version()`` so an existing version is
+        never overwritten (issue #189)
 
     Args:
+        assignment_version: the version to consolidate. ``None`` (the default)
+                  resolves it with ``resolve_reality_check_input_version`` and
+                  skips the run when ``reality_check_is_current`` (that input was
+                  already consolidated and nothing newer arrived). An explicit
+                  version always runs and still writes to the next version.
         llm_mode: "bedrock" (default) — validate consolidations + generate executive summary
-                  "external" — write LLM input to store and mark as awaiting
+                  "external" — write LLM input to store and mark as awaiting; the
+                               revised assignment is written by the finalize step
                   "none" — skip all LLM calls, use deterministic result only
+
+    Returns ``{"status", "input_version", "output_version"}``: status is
+    ``"complete"``, ``"awaiting_llm"`` (external) or ``"skipped"`` (already
+    current); ``output_version`` is the revised version written (or, when
+    skipped, the existing consolidation), else None.
     """
     import time
 
     start_time = time.time()
+
+    if assignment_version is None:
+        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
+        if reality_check_is_current(store, database_name, job_id):
+            current = next_assignment_version(store, database_name, job_id) - 1
+            print(
+                f"[reality-check] Assignment v{assignment_version} already consolidated "
+                f"into v{current}; nothing new to check — skipping"
+            )
+            return {
+                "status": "skipped",
+                "input_version": assignment_version,
+                "output_version": current,
+            }
 
     print(f"[reality-check] Starting for {database_name} (assignment v{assignment_version})")
 
@@ -284,61 +323,143 @@ def run_reality_check_handler(
         sweep_distribution[qa["assigned_engine"]] += 1
     det["after_distribution"] = dict(sweep_distribution)
 
-    # Step 4: validate and write output
-    assignment = det["assignment"]
+    # Step 4: validate and write output. In external mode the output is a
+    # deterministic preview; the revised assignment is left to the finalize step
+    # so a provisional consolidation never occupies a version number.
+    awaiting = llm_mode == "external"
+    new_version = write_reality_check_result(
+        store, job_id, database_name, det, assignment_version, write_revision=not awaiting
+    )
+
+    elapsed = time.time() - start_time
+    print(f"[reality-check] Complete in {elapsed:.1f}s")
+    return {
+        "status": "awaiting_llm" if awaiting else "complete",
+        "input_version": assignment_version,
+        "output_version": new_version,
+    }
+
+
+def write_reality_check_result(
+    store: ArtifactStore,
+    job_id: str,
+    database_name: str,
+    result: dict,
+    assignment_version: int,
+    *,
+    write_revision: bool = True,
+) -> int | None:
+    """Write ``reality-check/output.json`` and, on consolidation, the revised assignment.
+
+    ``result`` is a deterministic result (optionally merged with LLM output) for
+    input ``assignment_version``. The revision goes to ``next_assignment_version()``
+    — never ``assignment_version + 1`` — so an existing version (an earlier
+    consolidation, a re-entry, a customer edit) is never overwritten. It is
+    stamped ``source = reality_check`` and ``previous_version = assignment_version``,
+    which is what ``is_reality_check_produced`` keys on.
+
+    Returns the version written, or None when nothing was consolidated (or
+    ``write_revision`` is False).
+    """
+    consolidated = bool(result["consolidations"]) and write_revision
+    # max() guards a store whose listing lags its reads: the revision must land
+    # above its own input even then.
+    new_version = (
+        max(next_assignment_version(store, database_name, job_id), assignment_version + 1)
+        if consolidated
+        else None
+    )
 
     output = RealityCheckOutputContract.model_validate(
         {
             "source_assignment_version": assignment_version,
-            "unique_value_assessment": det["unique_value_assessment"],
-            "consolidations": det["consolidations"],
-            "architectural_patterns": det["architectural_patterns"],
-            "executive_summary": det["executive_summary"],
-            "recommendations": det["recommendations"],
-            "before_distribution": det["before_distribution"],
-            "after_distribution": det["after_distribution"],
-            "lightweight_recommendations": det.get("lightweight_recommendations", []),
+            "output_assignment_version": new_version,
+            "unique_value_assessment": result["unique_value_assessment"],
+            "consolidations": result["consolidations"],
+            "architectural_patterns": result["architectural_patterns"],
+            "executive_summary": result["executive_summary"],
+            "recommendations": result["recommendations"],
+            "before_distribution": result["before_distribution"],
+            "after_distribution": result["after_distribution"],
+            "lightweight_recommendations": result.get("lightweight_recommendations", []),
         }
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"
     store.write_json(output_key, output.model_dump(mode="json"))
 
-    # If consolidation occurred, write a new assignment version
-    if det["consolidations"]:
-        new_version = assignment_version + 1
-        revised_assignment = {
-            **assignment,
-            "version": new_version,
-            "previous_version": assignment_version,
-            "source": AssignmentSource.REALITY_CHECK.value,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "query_assignments": det["revised_assignments"],
-            "reality_check_applied": True,
-        }
-        # ADR-029 Layers B+E: recompute derived views against the consolidated
-        # routing, refresh validation warnings, and drop per-query warnings that
-        # name an engine consolidation eliminated, instead of spreading the
-        # previous version's stale derived views and dead-engine warnings forward.
-        eliminated_engines = set(det["before_distribution"]) - {
-            engine for engine, count in det["after_distribution"].items() if count > 0
-        }
-        revised_assignment = refresh_consolidated_assignment(
-            revised_assignment,
-            det["collector_output"],
-            det["analysis_outputs"],
-            dead_engines=eliminated_engines,
-        )
-        revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
-        store.write_json(revised_key, revised_assignment)
-        print(
-            f"[reality-check] Revised assignment written to v{new_version} "
-            f"({len(det['consolidations'])} consolidations)"
-        )
-    else:
-        print("[reality-check] No consolidations — assignment unchanged")
+    if new_version is None:
+        if not result["consolidations"]:
+            print("[reality-check] No consolidations — assignment unchanged")
+        return None
 
-    elapsed = time.time() - start_time
-    print(f"[reality-check] Complete in {elapsed:.1f}s")
+    revised_assignment = {
+        **result["assignment"],
+        "version": new_version,
+        "previous_version": assignment_version,
+        "source": AssignmentSource.REALITY_CHECK.value,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "query_assignments": result["revised_assignments"],
+        "reality_check_applied": True,
+    }
+    # ADR-029 Layers B+E: recompute derived views against the consolidated
+    # routing, refresh validation warnings, and drop per-query warnings that
+    # name an engine consolidation eliminated, instead of spreading the
+    # previous version's stale derived views and dead-engine warnings forward.
+    eliminated_engines = set(result["before_distribution"]) - {
+        engine for engine, count in result["after_distribution"].items() if count > 0
+    }
+    revised_assignment = refresh_consolidated_assignment(
+        revised_assignment,
+        result["collector_output"],
+        result["analysis_outputs"],
+        dead_engines=eliminated_engines,
+    )
+    revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
+    store.write_json(revised_key, revised_assignment)
+    print(
+        f"[reality-check] Revised assignment v{assignment_version} written to v{new_version} "
+        f"({len(result['consolidations'])} consolidations)"
+    )
+    return new_version
+
+
+def finalize_reality_check(
+    store: ArtifactStore,
+    job_id: str,
+    database_name: str,
+    llm_response: dict,
+    assignment_version: int | None = None,
+) -> dict:
+    """Merge an external LLM response and write the Reality Check result.
+
+    The finalize half of ``llm_mode="external"``, shared by
+    ``scripts/run_assessment.py --resume-reality-check`` and
+    ``scripts/run_reality_check.py --finalize``. Resolves the input version the
+    same way as :func:`run_reality_check_handler` (so it consolidates the version
+    the external run prepared) and is a no-op when that input was already
+    consolidated, so finalizing twice never writes a duplicate version.
+
+    Returns the same summary shape as :func:`run_reality_check_handler`.
+    """
+    if assignment_version is None:
+        assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
+        if reality_check_is_current(store, database_name, job_id):
+            return {
+                "status": "skipped",
+                "input_version": assignment_version,
+                "output_version": next_assignment_version(store, database_name, job_id) - 1,
+            }
+
+    det = run_reality_check_deterministic(job_id, database_name, store, assignment_version)
+    result = apply_reality_check_llm_output(det, llm_response)
+    new_version = write_reality_check_result(
+        store, job_id, database_name, result, assignment_version
+    )
+    return {
+        "status": "complete",
+        "input_version": assignment_version,
+        "output_version": new_version,
+    }
 
 
 # ---------------------------------------------------------------------------

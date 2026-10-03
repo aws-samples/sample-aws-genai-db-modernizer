@@ -73,6 +73,12 @@ reason as given rather than characterising it.
 """
 
 
+def _optional_version(params: dict) -> int | None:
+    """Return the caller's ``assignment_version``, or None to resolve it from the store."""
+    value = params.get("assignment_version")
+    return None if value is None else int(value)
+
+
 def _work(params: dict) -> dict:
     from src.atx_orchestrator.core import run_schema_design_core
 
@@ -86,15 +92,16 @@ def _work(params: dict) -> dict:
             f"Got {target_type!r}; valid: {sorted(VALID_TARGET_TYPES)}"
         )
 
-    # Default assignment_version to 1, matching the assignment agent's output
-    # path and the version synthesis reads. Never default to 0: at 0 upstream
-    # passes every query to every engine rather than the ones assigned to it, and
-    # writes to a key synthesis does not read.
+    # An absent assignment_version resolves to the effective (newest) version in
+    # the core — Reality Check's consolidation or a re-entry version, never a
+    # pinned v1 (issue #189). Never default to 0: at 0 upstream passes every query
+    # to every engine rather than the ones assigned to it, and writes to a key
+    # synthesis does not read.
     return run_schema_design_core(
         job_id=params["job_id"],
         database_name=params["database_name"],
         target_type=target_type,
-        assignment_version=int(params.get("assignment_version", 1)),
+        assignment_version=_optional_version(params),
     )
 
 

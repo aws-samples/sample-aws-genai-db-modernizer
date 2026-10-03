@@ -92,9 +92,17 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.1", description="Contract version")
+    contract_version: str = Field(default="1.2", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
+    )
+    output_assignment_version: int | None = Field(
+        None,
+        ge=2,
+        description=(
+            "Assignment version this check wrote its consolidation to "
+            "(next_assignment_version at write time); None when nothing was consolidated"
+        ),
     )
     unique_value_assessment: dict[str, UniqueValueAssessment] = Field(
         default_factory=dict, description="Per-engine unique value analysis"

@@ -20,11 +20,11 @@ core-modernizer means keeping that call — its ``entrypoint.py`` invokes
 core-modernizer passes ``llm_mode="none"``. Matching upstream means respecting
 the difference rather than applying one setting everywhere.
 
-``assignment_version`` is required in the incoming params and must be the
-version the assignment agent actually produced. It is not optional and it should
-not be guessed: the handler defaults across phases disagree with one another
-(synthesis defaults to 0, reality-check to 1), and at version 0 synthesis never
-reads the assignment at all. ``run_synthesis_core`` raises if the resulting
+``assignment_version`` should be sent and must be the version the assignment /
+Reality Check phases actually produced. When it is absent the core resolves the
+effective version from the store (``resolve_downstream_assignment_version``: the
+newest version, coerced to 1) rather than guessing a fixed number; at version 0
+synthesis never reads the assignment at all. ``run_synthesis_core`` raises if the resulting
 report ranks engines but recommends no architecture, which is the signature of a
 wrong version.
 """
@@ -55,15 +55,17 @@ report does not contain.
 def _work(params: dict) -> dict:
     from src.atx_orchestrator.core import run_synthesis_core
 
-    # Default to 1, matching run_synthesis_via_a2a, because run_assignment_core
-    # writes assignment/v1/. Never default to 0: at version 0 synthesis skips the
+    # An absent assignment_version resolves to the effective (newest) version in
+    # the core — Reality Check's consolidation or a re-entry version, never a
+    # pinned v1 (issue #189). Never default to 0: at version 0 synthesis skips the
     # assignment entirely and emits a report with an empty architecture.
     # Defaulting rather than requiring the key means a caller that omits it gets
     # the correct behaviour instead of a KeyError mid-pipeline.
+    value = params.get("assignment_version")
     return run_synthesis_core(
         job_id=params["job_id"],
         database_name=params["database_name"],
-        assignment_version=int(params.get("assignment_version", 1)),
+        assignment_version=None if value is None else int(value),
     )
 
 

@@ -25,75 +25,43 @@ def _error(message: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode: str) -> None:
+def run_standard(
+    store, job_id: str, db: str, assignment_version: int | None, llm_mode: str
+) -> None:
     """Run reality check (none, bedrock, or external LLM mode)."""
     from src.agents.referee.reality_check_handler import run_reality_check_handler
 
-    run_reality_check_handler(job_id, db, store, assignment_version, llm_mode=llm_mode)
+    summary = run_reality_check_handler(job_id, db, store, assignment_version, llm_mode=llm_mode)
 
-    if llm_mode == "external":
+    if summary["status"] == "awaiting_llm":
         llm_request_path = f"{db}/{job_id}/llm_requests/reality_check.json"
         if store.exists(llm_request_path):
             _output({"status": "awaiting_llm", "llm_request": llm_request_path})
         else:
             _output({"status": "awaiting_llm"})
     else:
-        _output({"status": "complete"})
+        # "skipped" (input already consolidated) is still a completed phase.
+        _output(
+            {
+                "status": "complete",
+                "skipped": summary["status"] == "skipped",
+                "input_version": summary["input_version"],
+                "output_version": summary["output_version"],
+            }
+        )
 
 
-def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
+def run_finalize(store, job_id: str, db: str, assignment_version: int | None) -> None:
     """Merge external LLM response into deterministic result and write output."""
-    from src.agents.referee.reality_check_handler import (
-        apply_reality_check_llm_output,
-        run_reality_check_deterministic,
-    )
-    from src.contracts.reality_check_output import RealityCheckOutputContract
-
-    det = run_reality_check_deterministic(job_id, db, store, assignment_version)
+    from src.agents.referee.reality_check_handler import finalize_reality_check
 
     llm_response_path = f"{db}/{job_id}/llm_responses/reality_check.json"
     if not store.exists(llm_response_path):
         _error(f"LLM response not found at {llm_response_path}")
 
-    llm_response = store.read_json(llm_response_path)
-    result = apply_reality_check_llm_output(det, llm_response)
-
-    output = RealityCheckOutputContract.model_validate(
-        {
-            "source_assignment_version": assignment_version,
-            "unique_value_assessment": result["unique_value_assessment"],
-            "consolidations": result["consolidations"],
-            "architectural_patterns": result["architectural_patterns"],
-            "executive_summary": result["executive_summary"],
-            "recommendations": result["recommendations"],
-            "before_distribution": result["before_distribution"],
-            "after_distribution": result["after_distribution"],
-            "lightweight_recommendations": result.get("lightweight_recommendations", []),
-        }
+    finalize_reality_check(
+        store, job_id, db, store.read_json(llm_response_path), assignment_version
     )
-    output_key = f"{db}/{job_id}/reality-check/output.json"
-    store.write_json(output_key, output.model_dump(mode="json"))
-
-    # If consolidation occurred, write a new assignment version
-    assignment = result["assignment"]
-    if result["consolidations"]:
-        from datetime import UTC, datetime
-
-        from src.contracts.assignment_models import AssignmentSource
-
-        new_version = assignment_version + 1
-        revised_assignment = {
-            **assignment,
-            "version": new_version,
-            "previous_version": assignment_version,
-            "source": AssignmentSource.REALITY_CHECK.value,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "query_assignments": result["revised_assignments"],
-            "reality_check_applied": True,
-        }
-        revised_key = f"{db}/{job_id}/assignment/v{new_version}/assignment.json"
-        store.write_json(revised_key, revised_assignment)
-
     _output({"status": "complete"})
 
 
@@ -117,8 +85,13 @@ def main() -> None:
     parser.add_argument(
         "--assignment-version",
         type=int,
-        default=1,
-        help="Assignment version to load (default: 1)",
+        default=None,
+        help=(
+            "Assignment version to consolidate (default: the newest version Reality "
+            "Check did not produce; the run is skipped if it is already consolidated). "
+            "An explicit version always runs. The revision is written to the next "
+            "free version either way."
+        ),
     )
     parser.add_argument(
         "--artifact-root",

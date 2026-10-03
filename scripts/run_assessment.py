@@ -317,10 +317,16 @@ def phase_analysis(
 def phase_assignment(store, job_id: str, db: str) -> dict:
     _banner("ASSIGNMENT")
     from src.agents.referee.assignment_handler import run_assignment_resolver
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_downstream_assignment_version,
+    )
 
     run_assignment_resolver(job_id, db, store)
 
-    assignment_path = f"{db}/{job_id}/assignment/v1/assignment.json"
+    # The resolver writes next_assignment_version (v1 on a fresh job); read that.
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    assignment_path = assignment_artifact_path(db, job_id, version)
     if not store.exists(assignment_path):
         _error("assignment", "Assignment output not produced.")
 
@@ -331,7 +337,7 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
         distribution[engine] = distribution.get(engine, 0) + 1
 
     total = sum(distribution.values())
-    artifact = f"{db}/{job_id}/assignment/v1/assignment.json"
+    artifact = assignment_path
     _log_artifact("assignment", artifact)
     _output(
         "assignment",
@@ -352,9 +358,11 @@ def phase_reality_check(store, job_id: str, db: str, llm_mode: str) -> str:
     _banner("REALITY CHECK")
     from src.agents.referee.reality_check_handler import run_reality_check_handler
 
-    run_reality_check_handler(job_id, db, store, assignment_version=1, llm_mode=llm_mode)
+    # Input/output versions are resolved by the handler (issue #189): it reads the
+    # newest version Reality Check did not produce and writes the next version.
+    summary = run_reality_check_handler(job_id, db, store, llm_mode=llm_mode)
 
-    if llm_mode == "external":
+    if summary["status"] == "awaiting_llm":
         llm_input_path = f"{db}/{job_id}/reality-check/llm_input.json"
         if store.exists(llm_input_path):
             _output("reality_check", {"status": "awaiting_llm", "llm_request": llm_input_path})
@@ -366,58 +374,24 @@ def phase_reality_check(store, job_id: str, db: str, llm_mode: str) -> str:
     return "complete"
 
 
-def phase_reality_check_finalize(store, job_id: str, db: str, assignment_version: int = 1) -> None:
-    """Finalize reality check after LLM response has been written."""
-    from src.agents.referee.reality_check_handler import (
-        apply_reality_check_llm_output,
-        run_reality_check_deterministic,
-    )
-    from src.contracts.reality_check_output import RealityCheckOutputContract
+def phase_reality_check_finalize(
+    store, job_id: str, db: str, assignment_version: int | None = None
+) -> None:
+    """Finalize reality check after LLM response has been written.
 
-    det = run_reality_check_deterministic(job_id, db, store, assignment_version)
+    ``assignment_version`` defaults to the same resolution the handler uses
+    (``resolve_reality_check_input_version``), and the revision is written to
+    ``next_assignment_version()`` (issue #189).
+    """
+    from src.agents.referee.reality_check_handler import finalize_reality_check
 
     llm_response_path = f"{db}/{job_id}/llm_responses/reality_check.json"
     if not store.exists(llm_response_path):
         _error("reality_check", f"LLM response not found at {llm_response_path}")
 
-    llm_response = store.read_json(llm_response_path)
-    result = apply_reality_check_llm_output(det, llm_response)
-
-    output = RealityCheckOutputContract.model_validate(
-        {
-            "source_assignment_version": assignment_version,
-            "unique_value_assessment": result["unique_value_assessment"],
-            "consolidations": result["consolidations"],
-            "architectural_patterns": result["architectural_patterns"],
-            "executive_summary": result["executive_summary"],
-            "recommendations": result["recommendations"],
-            "before_distribution": result["before_distribution"],
-            "after_distribution": result["after_distribution"],
-            "lightweight_recommendations": result.get("lightweight_recommendations", []),
-        }
+    finalize_reality_check(
+        store, job_id, db, store.read_json(llm_response_path), assignment_version
     )
-    output_key = f"{db}/{job_id}/reality-check/output.json"
-    store.write_json(output_key, output.model_dump(mode="json"))
-
-    # If consolidation occurred, write a new assignment version
-    assignment = result["assignment"]
-    if result["consolidations"]:
-        from datetime import UTC
-
-        from src.contracts.assignment_models import AssignmentSource
-
-        new_version = assignment_version + 1
-        revised_assignment = {
-            **assignment,
-            "version": new_version,
-            "previous_version": assignment_version,
-            "source": AssignmentSource.REALITY_CHECK.value,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "query_assignments": result["revised_assignments"],
-            "reality_check_applied": True,
-        }
-        revised_key = f"{db}/{job_id}/assignment/v{new_version}/assignment.json"
-        store.write_json(revised_key, revised_assignment)
 
     artifact = f"{db}/{job_id}/reality-check/output.json"
     _log_artifact("reality-check", artifact)

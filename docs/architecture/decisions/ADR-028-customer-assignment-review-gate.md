@@ -339,3 +339,43 @@ The markdown render/parse/diff functions (Decision B) are retained for this path
 superseded by `finalize_assignment_review`. Structured additions live in
 `assignment_review.py` (`render_assignment_summary`, `build_review_table`,
 `diff_review_items`) alongside the retained markdown helpers.
+
+---
+
+## Amendment (2026-10-02): Reality Check input/output versions (issue #189)
+
+**Status:** Accepted. **Trigger:** every Reality Check caller pinned
+`assignment_version=1` and wrote `v{N+1}`, so after an ADR-029 re-entry (v3) a
+re-run consolidated the stale v1 and overwrote the earlier consolidation at v2.
+
+The "highest committed version" rule (Decision C) is unchanged for every
+consumer. Reality Check, the one stage that both reads and writes the lineage,
+gets its own rule in `src/storage/assignment_versioning.py`:
+
+- **Input** — `resolve_reality_check_input_version()`: the highest version that
+  Reality Check did not produce itself. Coerced to 1 when none exists (ADR-026),
+  so the existing missing-`assignment/v1` error fires.
+- **Marker** — `is_reality_check_produced()`: the `source = reality_check`
+  stamp. `reality_check_applied` is not a marker on its own, because override
+  writers copy it forward. Legacy artifacts without `source` count as Reality
+  Check output when they carry `reality_check_applied` and no
+  `previous_version` (the pre-ADR-028 writer never set it; every override writer
+  always did).
+- **Output** — always `next_assignment_version()`, stamped
+  `previous_version = <input>`; `reality-check/output.json` records it as
+  `output_assignment_version` (contract 1.2) next to `source_assignment_version`.
+- **Re-run** — `reality_check_is_current()`: when the newest version is a Reality
+  Check output, its input has already been consolidated and nothing newer has
+  arrived, so a run that leaves the input to be resolved does nothing. Writing a
+  second consolidation of the same input would only advance the effective version
+  and make every schema output stale. An explicit input version always runs (and
+  still writes the next free version). This is also what makes the external-mode
+  finalize step safe to repeat.
+- In `llm_mode="external"` the revised assignment is written by the finalize
+  step only, so a provisional consolidation never takes a version number.
+
+Downstream is unchanged: schema design, synthesis and the report read
+`resolve_downstream_assignment_version()` (the highest version), so after
+re-entry v3 and Reality Check v4 they read v4. The ATX schema/synthesis
+subagents and the deliverables renderer now resolve an absent
+`assignment_version` the same way instead of defaulting to 1.

@@ -162,7 +162,17 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.1"
+        assert output.contract_version == "1.2"
+
+    def test_output_assignment_version_defaults_to_none(self, valid_reality_check_data):
+        # Additive in 1.2: outputs written before the field existed still validate.
+        output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
+        assert output.output_assignment_version is None
+
+    def test_output_assignment_version_roundtrips(self, valid_reality_check_data):
+        valid_reality_check_data["output_assignment_version"] = 4
+        output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
+        assert output.model_dump(mode="json")["output_assignment_version"] == 4
 
     def test_missing_assignment_version_fails(self, valid_reality_check_data):
         del valid_reality_check_data["source_assignment_version"]

@@ -18,7 +18,7 @@ policy themselves; this module reports the raw truth (0 when nothing exists).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Protocol
 
 
@@ -101,6 +101,80 @@ def next_assignment_version(store: _Lister, database_name: str, job_id: str) -> 
     return resolve_effective_assignment_version(store, database_name, job_id) + 1
 
 
+_REALITY_CHECK_SOURCE = "reality_check"
+
+
+def is_reality_check_produced(assignment: dict) -> bool:
+    """Return True when an assignment artifact was written by Reality Check.
+
+    The marker is the ADR-028 ``source`` provenance stamp: ``"reality_check"``
+    means Reality Check wrote it; any other recorded source (assignment
+    resolution, customer gate) means it did not. ``reality_check_applied`` alone
+    is NOT a marker, because every override writer copies it forward from the
+    consolidated version it edits.
+
+    Legacy artifacts (written before ``source`` existed) fall back to the shape
+    each writer produced then: the old Reality Check writer set
+    ``reality_check_applied`` but never ``previous_version``, while every override
+    writer always set ``previous_version``.
+    """
+    source = assignment.get("source")
+    if source is not None:
+        return bool(source == _REALITY_CHECK_SOURCE)
+    return bool(assignment.get("reality_check_applied")) and "previous_version" not in assignment
+
+
+def _versions_newest_first(
+    store: _ListReader, database_name: str, job_id: str
+) -> Iterator[tuple[int, dict]]:
+    """Yield ``(version, assignment)`` for each readable version, newest first."""
+    for version in sorted(set(_existing_versions(store, database_name, job_id)), reverse=True):
+        path = assignment_artifact_path(database_name, job_id, version)
+        if store.exists(path):
+            yield version, store.read_json(path)
+
+
+def resolve_reality_check_input_version(store: _ListReader, database_name: str, job_id: str) -> int:
+    """Return the assignment version Reality Check should consolidate (issue #189).
+
+    Rule: the highest assignment version that Reality Check did not produce
+    itself (see :func:`is_reality_check_produced`). On a fresh job that is the v1
+    the assignment resolver wrote; after a re-entry (ADR-029) or a customer-gate
+    edit it is that newer version, so Reality Check consolidates what the
+    customer approved instead of the stale v1. Reality Check's own consolidations
+    are never fed back into it.
+
+    Its output always goes to :func:`next_assignment_version`, so an existing
+    version is never overwritten.
+
+    Returns 1 when no non-Reality-Check version exists (ADR-026 "coerce to 1"),
+    so the caller's existing missing-``assignment/v1`` check produces the error.
+    """
+    for version, assignment in _versions_newest_first(store, database_name, job_id):
+        if not is_reality_check_produced(assignment):
+            return version
+    return 1
+
+
+def reality_check_is_current(store: _ListReader, database_name: str, job_id: str) -> bool:
+    """Return True when the newest assignment version is a Reality Check output.
+
+    Because Reality Check reads the newest non-Reality-Check version and writes
+    the next version, a newest version produced by Reality Check means its input
+    (:func:`resolve_reality_check_input_version`) has already been consolidated
+    and nothing newer arrived since. Re-running Reality Check without an explicit
+    input version is then a no-op: writing another consolidation of the same
+    input would only advance the effective version, mark every schema output
+    stale (:func:`stale_schema_versions`) and force a needless re-dispatch.
+
+    False on a fresh job, after a re-entry/customer-gate version, when the last
+    run found nothing to consolidate (it wrote no version), or when nothing exists.
+    """
+    for _version, assignment in _versions_newest_first(store, database_name, job_id):
+        return is_reality_check_produced(assignment)
+    return False
+
+
 def stale_schema_versions(store: _Lister, database_name: str, job_id: str) -> dict[str, int]:
     """Return ``{engine: schema_version}`` for schema outputs behind the effective
     assignment (ADR-028 staleness).
@@ -146,6 +220,10 @@ def stale_schema_versions(store: _Lister, database_name: str, job_id: str) -> di
 class _Reader(Protocol):
     def read_json(self, path: str) -> dict: ...
     def exists(self, path: str) -> bool: ...
+
+
+class _ListReader(_Lister, _Reader, Protocol):
+    """A store that can both list keys and read artifacts."""
 
 
 def _in_scope_engine_query_sets(
