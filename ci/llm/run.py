@@ -31,6 +31,11 @@ check-transcript's fixed failure conditions (anything else is tolerated as
 * no line with ``type == "result"`` at all -- fail (no final result message).
 * that line's ``is_error`` is truthy -- fail.
 * that line's ``permission_denials`` is a non-empty list -- fail.
+* any ``tool_result`` block with ``is_error`` true mentions "permission"
+  (a denial as the model saw it) -- fail.
+* the ``MODERNIZE_RESULT`` line's ``job_id``/``db`` aren't a single
+  ``[A-Za-z0-9_.-]+`` path component -- fail (they become paths and argv
+  downstream).
 * its ``result`` text contains no ``MODERNIZE_RESULT: complete ...`` line
   (whether because it has none at all, or because it has a
   ``MODERNIZE_RESULT: failed ...`` line instead) -- fail.
@@ -38,6 +43,11 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   ``scripts/start_local_ui.py`` (to start, not ``--stop``) anywhere in the
   transcript -- fail. For ``--mode ui`` or ``--mode both``, no such tool_use
   ran, or no later tool_result reported ``"status": "ready"`` -- fail.
+
+On failure, check-transcript still prints the result line's cost/turn/usage
+fields next to ``error``, and ``results`` copies them (plus
+``transcript_error``) into results.json, so a failed run still reports what
+it spent. An unparseable junit file marks the buckets it covers False.
 """
 
 from __future__ import annotations
@@ -57,6 +67,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPLETE_RE = re.compile(r"MODERNIZE_RESULT:\s*complete\s+job_id=(\S+)\s+db=(\S+)\s+mode=(\S+)")
 _FAILED_RE = re.compile(r"MODERNIZE_RESULT:\s*failed\s+phase=(\S+)\s+reason=(.+)")
 _STATUS_READY_RE = re.compile(r'"status"\s*:\s*"ready"')
+# job_id/db from MODERNIZE_RESULT become path components and shell arguments
+# downstream (pytest env, judge argv, artifact paths) -- same rule as
+# scripts/_sandbox.py.
+_SAFE_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 # Bucketed by substring match against a junit testcase's "classname.name";
 # first match wins. Anything left over (notably tests/e2e/test_pipeline.py's
@@ -70,7 +84,14 @@ _JUNIT_CATEGORIES: tuple[tuple[str, str], ...] = (
 
 
 class TranscriptError(Exception):
-    """check-transcript's single failure type; always surfaces as exit 1."""
+    """check-transcript's single failure type; always surfaces as exit 1.
+
+    ``partial`` carries whatever usage/cost fields were readable off the
+    result line, so a failed run still reports what it spent."""
+
+    def __init__(self, message: str, partial: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.partial: dict[str, Any] = partial or {}
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +206,45 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
     return True, None
 
 
+def tool_result_permission_errors(records: list[dict[str, Any]]) -> list[str]:
+    """Texts of ``tool_result`` blocks flagged ``is_error`` that mention
+    "permission" -- a denied tool call as the model saw it, which may not
+    (depending on CLI version) also land in the result line's
+    ``permission_denials``."""
+    found: list[str] = []
+    for rec in records:
+        if rec.get("type") != "user" or not isinstance(rec.get("message"), dict):
+            continue
+        content = rec["message"].get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("is_error")
+            ):
+                text = _text_from_content(block.get("content"))
+                if "permission" in text.lower():
+                    found.append(text[:300])
+    return found
+
+
+def _is_safe_name(value: str) -> bool:
+    return bool(_SAFE_NAME_RE.fullmatch(value)) and set(value) != {"."}
+
+
+def _usage_fields(result_rec: dict[str, Any]) -> dict[str, Any]:
+    usage = result_rec.get("usage")
+    return {
+        "cost_usd": result_rec.get("total_cost_usd"),
+        "num_turns": result_rec.get("num_turns"),
+        "usage": usage if isinstance(usage, dict) else {},
+        "duration_ms": result_rec.get("duration_ms"),
+        "model": result_rec.get("model"),
+    }
+
+
 def _git_sha() -> str | None:
     try:
         proc = subprocess.run(  # nosec B603 B607 -- fixed argv, no untrusted input
@@ -216,37 +276,52 @@ def check_transcript(path: Path, mode: str, state_file: Path | None = None) -> d
     if result_rec is None:
         raise TranscriptError('no line with type == "result" found in the transcript')
 
+    fields = _usage_fields(result_rec)
+
+    def fail(message: str) -> TranscriptError:
+        return TranscriptError(message, partial=fields)
+
     if result_rec.get("is_error"):
-        raise TranscriptError(
-            f"result reported is_error=true (result={result_rec.get('result')!r})"
-        )
+        raise fail(f"result reported is_error=true (result={result_rec.get('result')!r})")
 
     denials = result_rec.get("permission_denials") or []
     if isinstance(denials, list) and denials:
-        raise TranscriptError(f"result reported {len(denials)} permission denial(s): {denials!r}")
+        raise fail(f"result reported {len(denials)} permission denial(s): {denials!r}")
+
+    tool_denials = tool_result_permission_errors(records)
+    if tool_denials:
+        raise fail(
+            f"{len(tool_denials)} tool_result(s) reported a permission error: {tool_denials!r}"
+        )
 
     result_text = result_rec.get("result")
     if not isinstance(result_text, str):
-        raise TranscriptError("result message has no string 'result' field")
+        raise fail("result message has no string 'result' field")
 
     failed_match = _FAILED_RE.search(result_text)
     if failed_match:
         phase, reason = failed_match.groups()
-        raise TranscriptError(f"MODERNIZE_RESULT: failed phase={phase} reason={reason.strip()}")
+        raise fail(f"MODERNIZE_RESULT: failed phase={phase} reason={reason.strip()}")
 
     complete_match = _COMPLETE_RE.search(result_text)
     if not complete_match:
-        raise TranscriptError("no 'MODERNIZE_RESULT: complete ...' line found in the result text")
+        raise fail("no 'MODERNIZE_RESULT: complete ...' line found in the result text")
 
     job_id, db, result_mode = complete_match.groups()
+    for label, value in (("job_id", job_id), ("db", db)):
+        if not _is_safe_name(value):
+            raise fail(
+                f"MODERNIZE_RESULT reported an unsafe {label}={value!r} "
+                "(must match [A-Za-z0-9_.-]+ and not be '.' or '..')"
+            )
     if result_mode != mode:
-        raise TranscriptError(
+        raise fail(
             f"MODERNIZE_RESULT reported mode={result_mode!r}, which does not match --mode {mode!r}"
         )
 
     mode_ok, mode_reason = check_mode(records, mode)
     if not mode_ok:
-        raise TranscriptError(mode_reason or "mode assertion failed")
+        raise fail(mode_reason or "mode assertion failed")
 
     if state_file is not None and state_file.is_file():
         try:
@@ -266,20 +341,7 @@ def check_transcript(path: Path, mode: str, state_file: Path | None = None) -> d
                 file=sys.stderr,
             )
 
-    usage = result_rec.get("usage")
-    if not isinstance(usage, dict):
-        usage = {}
-
-    return {
-        "job_id": job_id,
-        "db": db,
-        "mode": mode,
-        "cost_usd": result_rec.get("total_cost_usd"),
-        "num_turns": result_rec.get("num_turns"),
-        "usage": usage,
-        "duration_ms": result_rec.get("duration_ms"),
-        "model": result_rec.get("model"),
-    }
+    return {"job_id": job_id, "db": db, "mode": mode, **fields}
 
 
 # ---------------------------------------------------------------------------
@@ -343,16 +405,21 @@ def build_results_row(
     missing_required = False
 
     job_id = db = model = cost_usd = num_turns = tokens_in = tokens_out = duration_s = None
+    transcript_error: str | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
         missing_required = True
-    elif "error" in summary:
-        checks["transcript"] = False
     else:
-        checks["transcript"] = True
-        job_id = summary.get("job_id")
-        db = summary.get("db")
+        if "error" in summary:
+            checks["transcript"] = False
+            transcript_error = str(summary["error"])
+        else:
+            checks["transcript"] = True
+            job_id = summary.get("job_id")
+            db = summary.get("db")
+        # Spend is reported whether or not the transcript passed: a failed
+        # run still cost money and turns.
         model = summary.get("model")
         cost_usd = summary.get("cost_usd")
         num_turns = summary.get("num_turns")
@@ -367,30 +434,32 @@ def build_results_row(
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
 
-    if report_junit is None or not report_junit.is_file():
-        missing_required = True
-    else:
-        buckets = parse_junit_counts(report_junit)
-        for category in ("contracts", "html", "pdf"):
-            total = buckets[category]["total"]
-            if total == 0:
+    def apply_junit(path: Path | None, categories: tuple[str, ...]) -> None:
+        """Set ``checks`` for ``categories`` from one junit file: missing file
+        or an empty bucket is null (and fails the run), an unparseable file
+        (e.g. pytest killed mid-write) is False for every bucket it covers."""
+        nonlocal missing_required
+        if path is None or not path.is_file():
+            missing_required = True
+            return
+        try:
+            buckets = parse_junit_counts(path)
+        except ET.ParseError:
+            for category in categories:
+                checks[category] = False
+            return
+        for category in categories:
+            if buckets[category]["total"] == 0:
                 checks[category] = None
                 missing_required = True
             else:
                 checks[category] = buckets[category]["failed"] == 0
 
+    apply_junit(report_junit, ("contracts", "html", "pdf"))
     if mode == "chat":
         checks["ui"] = None  # expected: chat mode never runs the UI suite
-    elif ui_junit is None or not ui_junit.is_file():
-        missing_required = True
     else:
-        buckets = parse_junit_counts(ui_junit)
-        total = buckets["ui"]["total"]
-        if total == 0:
-            checks["ui"] = None
-            missing_required = True
-        else:
-            checks["ui"] = buckets["ui"]["failed"] == 0
+        apply_junit(ui_junit, ("ui",))
 
     judge_section: dict[str, Any] | None = None
     judge_payload = _load_json(judge_path)
@@ -422,6 +491,7 @@ def build_results_row(
         "tokens_out": tokens_out,
         "duration_s": duration_s,
         "checks": checks,
+        "transcript_error": transcript_error,
         "judge": judge_section,
         "pass": overall_pass,
     }
@@ -437,7 +507,7 @@ def cmd_check_transcript(args: argparse.Namespace) -> None:
     try:
         summary = check_transcript(Path(args.transcript), args.mode, state_file=state_file)
     except TranscriptError as exc:
-        print(json.dumps({"error": str(exc)}))
+        print(json.dumps({"error": str(exc), **exc.partial}))
         sys.exit(1)
     print(json.dumps(summary))
     sys.exit(0)

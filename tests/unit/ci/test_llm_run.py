@@ -573,3 +573,171 @@ def test_e2e_llm_script_has_valid_bash_syntax() -> None:
         ["bash", "-n", str(script)], capture_output=True, text=True, timeout=10  # nosec B603 B607
     )
     assert proc.returncode == 0, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# hardening: usage on failure, transcript_error, unsafe ids, tool_result
+# denials, corrupt junit
+# ---------------------------------------------------------------------------
+
+
+def _transcript(tmp_path: Path, records: list[dict]) -> Path:
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    return path
+
+
+def _result_line(text: str, **extra: object) -> dict:
+    rec: dict = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "num_turns": 7,
+        "total_cost_usd": 1.25,
+        "usage": {"input_tokens": 11, "output_tokens": 22},
+        "duration_ms": 9000,
+        "model": "m",
+        "permission_denials": [],
+        "result": text,
+    }
+    rec.update(extra)
+    return rec
+
+
+def test_failed_transcript_still_reports_cost_turns_and_usage(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        run.main(["check-transcript", str(FIXTURES / "synthetic-denial.jsonl"), "--mode", "chat"])
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert "permission denial" in payload["error"]
+    assert payload["cost_usd"] == 0.20
+    assert payload["num_turns"] == 8
+    assert payload["usage"] == {"input_tokens": 5000, "output_tokens": 1200}
+
+
+def test_results_carry_transcript_error_and_usage_on_failure(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    summary.write_text(
+        json.dumps(
+            {
+                "error": "result reported 1 permission denial(s)",
+                "cost_usd": 0.2,
+                "num_turns": 8,
+                "usage": {"input_tokens": 5, "output_tokens": 6},
+                "duration_ms": 3000,
+                "model": "m",
+            }
+        )
+    )
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["checks"]["transcript"] is False
+    assert row["transcript_error"] == "result reported 1 permission denial(s)"
+    assert row["cost_usd"] == 0.2
+    assert row["num_turns"] == 8
+    assert row["tokens_in"] == 5 and row["tokens_out"] == 6
+    assert row["duration_s"] == 3.0
+    assert row["pass"] is False
+
+
+def test_results_transcript_error_is_null_on_success(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary)
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["transcript_error"] is None
+
+
+@pytest.mark.parametrize(
+    "job,db",
+    [("../etc", "wordpress"), ("job1", "a/b"), ("..", "wordpress"), ("job1", "x`y`")],
+)
+def test_unsafe_job_or_db_in_modernize_result_fails(tmp_path: Path, job: str, db: str) -> None:
+    path = _transcript(
+        tmp_path,
+        [_result_line(f"MODERNIZE_RESULT: complete job_id={job} db={db} mode=chat")],
+    )
+    with pytest.raises(run.TranscriptError, match="unsafe"):
+        run.check_transcript(path, "chat")
+
+
+def test_tool_result_permission_error_counts_as_a_denial(tmp_path: Path) -> None:
+    path = _transcript(
+        tmp_path,
+        [
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "is_error": True,
+                            "content": "Permission to use Read has been denied.",
+                        }
+                    ]
+                },
+            },
+            _result_line("MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat"),
+        ],
+    )
+    with pytest.raises(run.TranscriptError, match="permission"):
+        run.check_transcript(path, "chat")
+
+
+def test_tool_result_error_without_permission_text_is_tolerated(tmp_path: Path) -> None:
+    path = _transcript(
+        tmp_path,
+        [
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "is_error": True, "content": "exit code 1"},
+                        {"type": "tool_result", "content": "no permission issue here"},
+                    ]
+                },
+            },
+            _result_line("MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat"),
+        ],
+    )
+    assert run.check_transcript(path, "chat")["job_id"] == "j1"
+
+
+def test_corrupt_junit_marks_its_buckets_false(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, mode="ui")
+    reports = tmp_path / "reports.xml"
+    reports.write_text("<testsuite><testcase name='x'")  # truncated
+    ui = tmp_path / "ui.xml"
+    ui.write_text("not xml at all <<<")
+    judge = tmp_path / "judge.json"
+    _write_passing_judge(judge)
+
+    row = run.build_results_row(
+        mode="ui",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[reports, ui],
+        judge_path=judge,
+        git_sha="abc",
+    )
+    assert row["checks"]["contracts"] is False
+    assert row["checks"]["html"] is False
+    assert row["checks"]["pdf"] is False
+    assert row["checks"]["ui"] is False
+    assert row["pass"] is False
