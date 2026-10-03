@@ -176,7 +176,7 @@ create-test-user: ## Create a test user in Cognito
 # Local Development
 # =====================================================================
 
-.PHONY: local local-api local-ui test lint setup
+.PHONY: local local-api local-ui test lint e2e setup
 
 setup: ## Install dependencies and pre-commit hooks
 	./scripts/setup_dev.sh
@@ -193,11 +193,14 @@ local-api: ## Start only the local API server
 	STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts \
 		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 
-test: ## Run all tests
-	uv run pytest tests/unit/ tests/contract/ -v --cov=src --cov-report=term
+test: ## Run all tests (unit, contract, property, graph; no integration or e2e)
+	./ci/test.sh --cov=src --cov-report=term
 
 lint: ## Run all linters
 	uv run pre-commit run --all-files
+
+e2e: ## Deterministic end-to-end run (pipeline, HTML/PDF checks, UI smoke)
+	./ci/e2e.sh
 
 assess: ## Run sample assessment (WordPress)
 	uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress-collection.json

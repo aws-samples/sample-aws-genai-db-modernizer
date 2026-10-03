@@ -21,19 +21,14 @@ jobs:
         run: pip install uv
       - name: Install dependencies
         run: uv sync --locked --extra dev
-      - name: Ruff check
-        run: uv run ruff check src/ tests/
-      - name: Black check
-        run: uv run black --check src/ tests/
-      - name: isort check
-        # Same args as the isort pre-commit hook, so the hook and CI agree.
-        run: uv run isort --profile=black --line-length=100 --check-only src/ tests/
       - name: Pre-commit / CI version alignment
         # Fail if the pre-commit linter revs drift from the locked versions CI
-        # runs, so a green hook always means a green CI lint.
+        # runs, so a green hook always means a green CI lint. Not covered by
+        # ci/lint.sh (it compares .pre-commit-config.yaml against uv.lock, not
+        # a lint tool itself), so it stays a separate step.
         run: uv run python scripts/check_precommit_ci_alignment.py
-      - name: Mypy
-        run: uv run mypy src/
+      - name: Lint
+        run: ./ci/lint.sh
 
   test:
     runs-on: ubuntu-latest
@@ -59,12 +54,39 @@ jobs:
         # and tests/property previously never ran at PR time, which is how the ladybug
         # 0.20.4 binder break (tests/graph) reached the deploy pipeline unnoticed.
         #
-        # -m "not integration": integration tests need a live stack or manually
-        #   generated artifacts, so they are deselected here and run post-deploy.
+        # -m "not integration and not e2e": integration tests need a live stack or
+        #   manually generated artifacts, and e2e tests have their own dedicated job
+        #   (see the `e2e` job below) with its own browser/Node prerequisites, so both
+        #   are deselected here.
         # --fail-on-skip: a skipped test fails the build. Combined with the marker,
         #   this means nothing in the gated run may silently skip — the failure mode
         #   behind issues #150 and the dead load-test tests.
-        run: uv run pytest tests/ -m "not integration" --fail-on-skip -v --cov=src --cov-report=term --cov-fail-under=65
+        run: ./ci/test.sh --cov=src --cov-report=term --cov-fail-under=65
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '22'
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --extra e2e
+      - name: End-to-end
+        run: ./ci/e2e.sh
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results
+          path: test-results/
+          retention-days: 14
 
   security:
     runs-on: ubuntu-latest

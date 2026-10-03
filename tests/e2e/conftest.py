@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -19,6 +20,17 @@ SAMPLES = ["wordpress", "discourse"]
 REPO = Path(__file__).resolve().parents[2]
 UI_BUILD = REPO / "src" / "ui" / "build"
 
+# Every PipelineResult produced this session, so the end-of-session finalizer
+# below can copy each run's deliverables out, regardless of which fixture
+# (`run` or `all_runs`) created it.
+_RESULTS: list[PipelineResult] = []
+
+
+def _run_pipeline_tracked(sample: str, artifact_root: Path, job_id: str) -> PipelineResult:
+    result = run_pipeline(sample, artifact_root, job_id=job_id)
+    _RESULTS.append(result)
+    return result
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
@@ -31,10 +43,35 @@ def e2e_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return Path(tmp_path_factory.mktemp("e2e"))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _copy_deliverables_to_e2e_output() -> Iterator[None]:
+    """If E2E_OUTPUT is set, copy each run's synthesis/v*/ deliverables into
+    $E2E_OUTPUT/deliverables/<db>/ at session end, so CI can publish the
+    rendered HTML/PDF as a downloadable artifact without re-running anything.
+    """
+    yield
+    output = os.environ.get("E2E_OUTPUT")
+    if not output:
+        return
+    dest_root = Path(output) / "deliverables"
+    for result in _RESULTS:
+        synthesis_dir = result.job_dir() / "synthesis"
+        if not synthesis_dir.is_dir():
+            continue
+        dest = dest_root / result.db
+        dest.mkdir(parents=True, exist_ok=True)
+        for version_dir in sorted(synthesis_dir.glob("v*")):
+            if not version_dir.is_dir():
+                continue
+            for f in version_dir.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, dest / f.name)
+
+
 @pytest.fixture(scope="session", params=SAMPLES)
 def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
     sample = request.param
-    return run_pipeline(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
+    return _run_pipeline_tracked(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
 
 
 def _wait_for(port: int, timeout: float = 60) -> None:
@@ -51,7 +88,7 @@ def _wait_for(port: int, timeout: float = 60) -> None:
 def all_runs(e2e_root: Path) -> list[PipelineResult]:
     """Both samples in ONE artifact root, so the UI lists both jobs."""
     root = e2e_root / "ui-artifacts"
-    return [run_pipeline(s, root, job_id=f"ui-{s[:4]}") for s in SAMPLES]
+    return [_run_pipeline_tracked(s, root, job_id=f"ui-{s[:4]}") for s in SAMPLES]
 
 
 @pytest.fixture(scope="session")

@@ -53,6 +53,9 @@ docker-compose.override.yml
 build/
 coverage/
 
+# E2E test output (Playwright artifacts, junit, copied-out deliverables)
+test-results/
+
 # Data & Logs
 logs/
 *.log
