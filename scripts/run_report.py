@@ -78,6 +78,13 @@ def main() -> None:
     parser.add_argument("--artifact-root", default="./artifacts")
     args = parser.parse_args()
 
+    from scripts._sandbox import sandbox_violation
+
+    violation = sandbox_violation(args)
+    if violation:
+        print(json.dumps({"status": "error", "message": violation}))
+        sys.exit(1)
+
     result = run(args.job_id, args.db, args.artifact_root, args.assignment_version)
     print(json.dumps(result))
     sys.exit(0 if result["status"] != "error" else 1)

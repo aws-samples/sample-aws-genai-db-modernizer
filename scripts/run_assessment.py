@@ -504,6 +504,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from scripts._sandbox import sandbox_violation
+
+    violation = sandbox_violation(args)
+    if violation:
+        _error("init", violation)
+
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)

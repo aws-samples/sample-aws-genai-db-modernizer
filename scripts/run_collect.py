@@ -44,6 +44,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from scripts._sandbox import sandbox_violation
+
+    violation = sandbox_violation(args)
+    if violation:
+        _error(violation)
+
     if not os.path.exists(args.file):
         _error(f"File not found: {args.file}")
 

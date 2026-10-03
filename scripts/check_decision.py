@@ -2,6 +2,8 @@
 
 Exits 0 and prints JSON content if the decision file exists.
 Exits 1 silently if it does not exist yet.
+Exits 2 with ``{"status": "error", "message": ...}`` if an argument is refused
+under MODERNIZER_CI_SANDBOX=1 (see scripts/_sandbox.py).
 """
 
 from __future__ import annotations
@@ -9,8 +11,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from src.storage.local_store import LocalArtifactStore
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts._sandbox import NAME_ARGS, sandbox_violation  # noqa: E402
+from src.storage.local_store import LocalArtifactStore  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    violation = sandbox_violation(args, name_args=(*NAME_ARGS, "decision"))
+    if violation:
+        print(json.dumps({"status": "error", "message": violation}))
+        sys.exit(2)
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
     path = f"{args.db}/{args.job_id}/decisions/{args.decision}.json"

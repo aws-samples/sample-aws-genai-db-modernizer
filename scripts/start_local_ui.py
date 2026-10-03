@@ -283,6 +283,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    from scripts._sandbox import sandbox_violation
+
+    violation = sandbox_violation(args)
+    if violation:
+        return {"status": "error", "reason": violation}, 1
     artifact_root = Path(args.artifact_root).resolve()
     if args.stop:
         return run_stop(artifact_root)

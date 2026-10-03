@@ -257,3 +257,16 @@ def test_run_dispatches_to_stop_when_flag_set(
 
     assert code == 0
     assert result == {"status": "stopped", "pids": {}}
+
+
+def test_run_refuses_artifact_root_outside_repo_under_ci_sandbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+    args = start_local_ui.parse_args(["--artifact-root", str(tmp_path), "--stop"])
+
+    result, code = start_local_ui.run(args)
+
+    assert code == 1
+    assert result["status"] == "error"
+    assert "--artifact-root" in result["reason"]
