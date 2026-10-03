@@ -102,10 +102,9 @@ def test_contract_artifacts_validate(run: PipelineResult) -> None:
     RealityCheckOutputContract.model_validate(_read(reality_check_path))
 
     # Schema design only runs with an LLM (the deterministic pipeline stops
-    # before it), so it is required only for a job that went through external
-    # LLM mode -- recognisable by the responses it wrote under llm_responses/.
-    llm_responses = job_dir / "llm_responses"
-    if llm_responses.is_dir() and any(llm_responses.iterdir()):
+    # before it), so it is required only for a job produced outside the
+    # deterministic runner (external mode: E2E_ARTIFACT_ROOT/E2E_DB/E2E_JOB).
+    if run.external:
         from src.storage.assignment_versioning import (
             engines_with_in_scope_queries,
             resolve_downstream_assignment_version,

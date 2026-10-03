@@ -107,7 +107,16 @@ def test_reality_check_finalize_is_owned_by_modernize_only() -> None:
     # the state update). The subagent only writes the response; finalizing in
     # both places is redundant work (finalize is a no-op the second time) and
     # an extra Bash call the subagent's context doesn't need.
+    # Run on its own (not from /modernize), /reality-check must still finalize,
+    # so it may mention --resume-reality-check, but only inside the paragraph
+    # that scopes it to standalone use.
     assert "--resume-reality-check" in _modernize_text()
     reality_check = (COMMANDS_DIR / "reality-check.md").read_text()
-    assert "--resume-reality-check" not in reality_check
     assert "llm_responses/reality_check.json" in reality_check
+    blocks = reality_check.split("\n\n")
+    for i, block in enumerate(blocks):
+        if "--resume-reality-check" in block:
+            context = "\n\n".join(blocks[max(0, i - 1) : i + 1])
+            assert "on its own" in context and "not from `/modernize`" in context, (
+                "reality-check.md may only finalize when invoked on its own: " + block
+            )

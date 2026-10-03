@@ -127,6 +127,13 @@ Do NOT flag:
    Return a one-paragraph summary to the caller: how many consolidations you
    reviewed, how many you reversed (with query IDs), and the response path.
 
-   Do NOT finalize the reality check and do NOT update `.modernizer-state.json`.
-   The `/modernize` orchestration step that dispatched you merges your response
-   and advances the state after you return.
+   When dispatched by `/modernize`, do NOT finalize the reality check and do NOT
+   update `.modernizer-state.json`: the orchestration step that dispatched you
+   merges your response and advances the state after you return.
+
+   When invoked on its own (not from `/modernize`), finalize after writing the
+   response:
+
+   ```bash
+   uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
+   ```

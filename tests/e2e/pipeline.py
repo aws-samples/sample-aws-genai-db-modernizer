@@ -20,6 +20,7 @@ class PipelineResult:
     job_id: str
     artifact_root: Path
     steps: dict[str, dict] = field(default_factory=dict)  # step name -> last-line JSON
+    external: bool = False  # produced outside the deterministic runner (e.g. a headless run)
 
     @property
     def report(self) -> dict:
@@ -100,7 +101,7 @@ def run_pipeline(sample: str, artifact_root: Path, job_id: str) -> PipelineResul
 
 def from_existing_job(db: str, job_id: str, artifact_root: Path) -> PipelineResult:
     """Wrap a job produced elsewhere (e.g. a headless Claude run) and re-render its deliverables."""
-    result = PipelineResult(db=db, job_id=job_id, artifact_root=artifact_root)
+    result = PipelineResult(db=db, job_id=job_id, artifact_root=artifact_root, external=True)
     common = ["--job-id", job_id, "--db", db, "--artifact-root", str(artifact_root)]
     _run("report", ["scripts/run_report.py", *common], result)
     return result
