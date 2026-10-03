@@ -66,6 +66,31 @@ def plural_noun(n: Any, singular: str, plural: str | None = None) -> str:
     return singular if is_one else (plural or f"{singular}s")
 
 
+def plural_verb(n: Any, singular: str, plural: str) -> str:
+    """The correctly agreed verb form for a count, e.g.
+    ``f"{n} risk {plural_verb(n, 'sits', 'sit')} on dynamodb alone."``.
+
+    English verb agreement is the *opposite* polarity of noun pluralisation: a
+    singular subject (``n == 1``) takes the "-s" form ("sits", "is",
+    "migrates"), a plural subject takes the bare form ("sit", "are",
+    "migrate") -- and irregularly enough (``is``/``are``, ``touches``/
+    ``touch``) that there is no safe default to derive one form from the
+    other, unlike ``plural_noun``'s "append s". Both forms are always given
+    explicitly.
+
+    A dedicated helper rather than reusing ``plural_noun`` for verbs: a couple
+    of #206 call sites did exactly that (``plural_noun(n, "sits", "sit")``),
+    which happened to produce the right string but reads backwards --
+    ``plural_noun``'s positional args mean "singular noun, optional plural
+    noun", not "verb form for one, verb form for many".
+    """
+    try:
+        is_one = float(n) == 1
+    except (TypeError, ValueError):
+        is_one = False
+    return singular if is_one else plural
+
+
 def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
@@ -582,7 +607,8 @@ def render_decision_report_html(
         out.append(
             f"<tr><td colspan=2>Total</td>"
             f"<td>{total_wl:.0f}%</td>"
-            f"<td>{migrated} {plural_noun(migrated, 'table')} migrate</td>"
+            f"<td>{migrated} {plural_noun(migrated, 'table')} "
+            f"{plural_verb(migrated, 'migrates', 'migrate')}</td>"
             f"<td>{_fmt_usd(total_cost)}</td></tr>"
         )
         out.append("</tbody></table></div></div>")

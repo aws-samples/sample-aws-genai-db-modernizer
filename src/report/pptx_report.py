@@ -50,7 +50,7 @@ from pptx.util import Inches, Pt
 # ``plural_noun`` is the one place every count+noun string in this deck and in
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
-from .renderers import _architecture_engines, filtered_risks, plural_noun
+from .renderers import _architecture_engines, filtered_risks, plural_noun, plural_verb
 
 logger = logging.getLogger(__name__)
 
@@ -667,7 +667,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         n_t = sum(int("".join(ch for ch in str(e["scope"]) if ch.isdigit()) or 0) for e in group)
         tables_word = plural_noun(n_t, "table")
         note = (
-            f"{n_t} source {tables_word} migrate · confidence from {lo:.0f}%"
+            f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "
+            f"· confidence from {lo:.0f}%"
             if group is confident
             else f"{n_t} source {tables_word} · confidence {lo:.0f}% — re-scope after the gate"
         )
@@ -754,10 +755,16 @@ def slide_summary(prs, f):
     # like "5 target engines" invites the "why would I move to 5 databases?"
     # objection, whereas the wave framing reads as a phased, lower-risk plan
     # (ADR-029 waves alignment). The wave breakdown is on the sequencing slide.
+    n_waves = len(f.get("waves") or [])
     tiles = [
-        (f"{f['n_patterns']:,}", "query patterns analyzed", BLUE),
-        (f"{len(f.get('waves') or [])}", "migration waves", PURPLE),
-        (f"{f['migrated']}", "source tables migrate", GREEN),
+        (f"{f['n_patterns']:,}", f"query {plural_noun(f['n_patterns'], 'pattern')} analyzed", BLUE),
+        (f"{n_waves}", f"migration {plural_noun(n_waves, 'wave')}", PURPLE),
+        (
+            f"{f['migrated']}",
+            f"source {plural_noun(f['migrated'], 'table')} "
+            f"{plural_verb(f['migrated'], 'migrates', 'migrate')}",
+            GREEN,
+        ),
         (
             f["risk_level"],
             f"overall risk, {len(f['risks'])} {plural_noun(len(f['risks']), 'item')}",
@@ -810,8 +817,8 @@ def slide_summary(prs, f):
     kept_pct = sum(e.get("workload") or 0 for e in kept)
     footer_note(
         s,
-        f"{f['migrated']} source {plural_noun(f['migrated'], 'table')} move to a purpose-built "
-        "engine; "
+        f"{f['migrated']} source {plural_noun(f['migrated'], 'table')} "
+        f"{plural_verb(f['migrated'], 'moves', 'move')} to a purpose-built engine; "
         + (
             f"{' and '.join(ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept)} "
             f"keep {kept_pct:.1f}% of the workload with no data migration. "
@@ -968,7 +975,8 @@ def slide_workload(prs, f):
     para(tf, "Table fan-out", size=10.5, bold=True, color=GREEN, first=True)
     para(
         tf,
-        f"{f['fan1']:,} {plural_noun(f['fan1'], 'query', 'queries')} touch a single table "
+        f"{f['fan1']:,} {plural_noun(f['fan1'], 'query', 'queries')} "
+        f"{plural_verb(f['fan1'], 'touches', 'touch')} a single table "
         f"({f['fan1'] / f['n_patterns'] * 100:.1f}%). Only {f['fan3']:,} touch three or more "
         f"({f['fan3'] / f['n_patterns'] * 100:.1f}%), and just {f['n_max_fan']} reach "
         f"{f['max_fan']}.",
@@ -989,6 +997,34 @@ def slide_workload(prs, f):
         color=PAPER,
     )
     return s
+
+
+def _worst_engine_sentence(worst: tuple[str, int], n_high: int) -> str:
+    """ "{worst[1]} of the {n_high} HIGH risk(s) sit(s)/sits on {engine} alone."
+
+    Extracted so the verb-agreement regression has a direct unit test: the
+    verb must agree with ``worst[1]`` (the count sitting on *this* engine --
+    the sentence's subject), not with ``n_high`` (the sentence's other
+    number, the total HIGH risk count across every engine).
+    """
+    eng, count = worst
+    return (
+        f"{count} of the {n_high} HIGH {plural_noun(n_high, 'risk')} "
+        f"{plural_verb(count, 'sits', 'sit')} on {ENGINE_LABEL.get(eng, eng)} alone."
+    )
+
+
+def _root_cause_sentence(n_high: int, high_type: str) -> str:
+    """ "{the|all} {n_high} HIGH risk(s) is/are {high_type}".
+
+    "all 1 HIGH risk is ..." reads oddly -- "all" implies more than one;
+    "the 1 HIGH risk is ..." is the natural singular phrasing.
+    """
+    determiner = "the" if n_high == 1 else "all"
+    return (
+        f"{determiner} {n_high} HIGH {plural_noun(n_high, 'risk')} "
+        f"{plural_verb(n_high, 'is', 'are')} {high_type}"
+    )
 
 
 def slide_decisions(prs, f):
@@ -1074,8 +1110,7 @@ def slide_decisions(prs, f):
         n_high = len(f["high"])
         para(
             tf,
-            f"{worst[1]} of the {n_high} HIGH {plural_noun(n_high, 'risk')} "
-            f"{plural_noun(n_high, 'sits', 'sit')} on {ENGINE_LABEL.get(worst[0], worst[0])} alone.",
+            _worst_engine_sentence(worst, n_high),
             size=11.0,
             bold=True,
             color=PINK,
@@ -1093,10 +1128,7 @@ def slide_risk(prs, f):
     n_risks = len(f["risks"])
     sub = f"{n_risks} {plural_noun(n_risks, 'risk')}: {mix}"
     if f["one_root_cause"]:
-        sub += (
-            f"  ·  all {n_high} HIGH {plural_noun(n_high, 'risk')} "
-            f"{plural_noun(n_high, 'is', 'are')} {f['high_type']}"
-        )
+        sub += f"  ·  {_root_cause_sentence(n_high, f['high_type'])}"
     set_subtitle(s, sub)
 
     present = [
@@ -1206,9 +1238,9 @@ def slide_sequencing(prs, f):
     para(
         tf,
         f"{co_dep} co-dependency {plural_noun(co_dep, 'group')} "
-        f"{plural_noun(co_dep, 'constrains', 'constrain')} wave boundaries; "
+        f"{plural_verb(co_dep, 'constrains', 'constrain')} wave boundaries; "
         f"{n_tradeoffs} {plural_noun(n_tradeoffs, 'trade-off')} "
-        f"{plural_noun(n_tradeoffs, 'is', 'are')} documented in the Engineering "
+        f"{plural_verb(n_tradeoffs, 'is', 'are')} documented in the Engineering "
         f"Report. Later waves are re-scoped from wave 1's measurements.",
         size=11.5,
         color=WHITE,
