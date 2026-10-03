@@ -306,62 +306,30 @@ def ground_risks(
 # Reality-check architectural patterns
 # ---------------------------------------------------------------------------
 
-# applies_to keys holding a single engine: the pattern is meaningless without it.
-_SCALAR_ENGINE_KEYS = ("write_engine", "source_engine", "view_engine")
-# applies_to keys listing every engine in the architecture: an eliminated engine is
-# replaced by its absorber, since the absorber now carries that workload.
-_ABSORBING_LIST_KEYS = ("engines", "target_engines")
-_MIN_ENGINES = {"Polyglot Persistence": 3}
 
+def recompute_reality_check_patterns(summary: dict, query_assignments: list[dict]) -> dict:
+    """Recompute patterns and their recommendation lines from the effective assignment.
 
-def ground_pattern(pattern: dict, eliminated: dict[str, str | None]) -> dict | None:
-    """Return ``pattern`` with eliminated engines removed, or None if it no longer applies."""
-    applies = dict(pattern.get("applies_to") or {})
-    for key in _SCALAR_ENGINE_KEYS:
-        if applies.get(key) in eliminated:
-            return None
-    for key, value in list(applies.items()):
-        if not isinstance(value, list):
-            continue
-        engines: list[str] = []
-        for engine in value:
-            replacement = eliminated.get(engine) if key in _ABSORBING_LIST_KEYS else None
-            engine = replacement or engine
-            if engine not in eliminated and engine not in engines:
-                engines.append(engine)
-        if not engines:
-            return None
-        applies[key] = engines
-    minimum = _MIN_ENGINES.get(pattern.get("name", ""), 0)
-    if minimum and len(applies.get("engines", [])) < minimum:
-        return None
-    return {**pattern, "applies_to": applies}
-
-
-def ground_reality_check_summary(summary: dict, eliminated: dict[str, str | None]) -> dict:
-    """Re-derive pattern recommendations against the effective engines.
-
-    Consolidation lines are history and are kept verbatim; ``Recommended pattern``
-    lines are regenerated from the grounded patterns.
+    The stored reality-check output can predate the final assignment (patterns were
+    detected before corrections, the sweep or a customer edit), so synthesis detects
+    them again from the effective in-scope ``query_assignments``. This also fixes jobs
+    written before the reality check refreshed its own patterns. Consolidation lines are
+    history and are kept verbatim. Without an assignment the summary is returned as is.
     """
-    if not eliminated:
+    if not query_assignments:
         return summary
-    from src.agents.referee.reality_check import format_pattern_recommendation
+    from src.agents.referee.reality_check import (
+        format_pattern_recommendation,
+        patterns_for_assignment,
+    )
 
-    patterns = [
-        p
-        for p in (
-            ground_pattern(p, eliminated) if isinstance(p, dict) else p
-            for p in summary.get("architectural_patterns", [])
-        )
-        if p is not None
-    ]
+    patterns = patterns_for_assignment(query_assignments)
     recommendations = [
         r
         for r in summary.get("recommendations", [])
-        if not (isinstance(r, str) and r.startswith("Recommended pattern"))
+        if not (isinstance(r, str) and r.startswith(("Recommended pattern", "No consolidation")))
     ]
-    recommendations += [format_pattern_recommendation(p) for p in patterns if isinstance(p, dict)]
+    recommendations += [format_pattern_recommendation(p) for p in patterns]
     return {**summary, "architectural_patterns": patterns, "recommendations": recommendations}
 
 

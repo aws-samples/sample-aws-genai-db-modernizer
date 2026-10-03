@@ -1220,11 +1220,34 @@ def _detect_architectural_patterns(
     return patterns
 
 
+def patterns_for_assignment(query_assignments: list[dict]) -> list[dict]:
+    """Architectural patterns for the engines that carry in-scope queries."""
+    in_scope = [
+        qa for qa in query_assignments if qa.get("in_scope", True) and qa.get("assigned_engine")
+    ]
+    return _detect_architectural_patterns(in_scope, set(), {})
+
+
+def refresh_patterns_and_recommendations(result: dict) -> None:
+    """Recompute ``architectural_patterns`` and ``recommendations`` from the final assignment.
+
+    Patterns are first detected before the LLM corrections, the re-run Aurora absorption,
+    the sanity sweep and the customer-override restore, any of which can still move
+    queries; the output must describe the assignment it ships with, so no pattern names
+    an engine that ends up with no in-scope query (#202). Only in-scope queries count.
+    Mutates ``result``.
+    """
+    patterns = patterns_for_assignment(result["revised_assignments"])
+    result["architectural_patterns"] = patterns
+    result["recommendations"] = _build_recommendations(
+        result["revised_assignments"], result["consolidations"], patterns, {}
+    )
+
+
 def format_pattern_recommendation(p: dict) -> str:
     """Render one architectural pattern as a ``Recommended pattern: ...`` line.
 
-    Shared with synthesis, which regenerates these lines after grounding the patterns
-    in the effective architecture.
+    Shared with synthesis, which regenerates these lines from the effective assignment.
     """
     applies = p.get("applies_to", {})
     if "write_engine" in applies:

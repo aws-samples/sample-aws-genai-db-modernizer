@@ -23,7 +23,7 @@ from src.agents.referee.synthesis_grounding import (
     check_summary_grounding,
     eliminated_engines,
     engine_table_scope,
-    ground_reality_check_summary,
+    recompute_reality_check_patterns,
 )
 from src.agents.referee.synthesis_report import (
     AURORA_ENGINES,
@@ -143,7 +143,9 @@ def run_synthesis_deterministic(
             "before_distribution": reality_check_output.get("before_distribution", {}),
             "after_distribution": reality_check_output.get("after_distribution", {}),
         }
-        reality_check_summary = ground_reality_check_summary(reality_check_summary, eliminated)
+        reality_check_summary = recompute_reality_check_patterns(
+            reality_check_summary, (data.assignment or {}).get("query_assignments", [])
+        )
         for rec in reality_check_summary["recommendations"]:
             rec_desc = rec if isinstance(rec, str) else str(rec)
             if not any(t.get("description") == rec_desc for t in trade_offs):

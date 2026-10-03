@@ -23,7 +23,7 @@ from src.agents.referee.consolidation_validator import (
 )
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
-    _build_recommendations,
+    refresh_patterns_and_recommendations,
     rerun_aurora_absorption,
     run_reality_check,
 )
@@ -210,13 +210,8 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                     result.get("collector_output", {}),
                 )
                 result["consolidations"] = result["consolidations"] + absorbed
-            # Rebuild recommendations to reflect corrected consolidations
-            result["recommendations"] = _build_recommendations(
-                result["revised_assignments"],
-                result["consolidations"],
-                result["architectural_patterns"],
-                {},  # engine_queries not needed for recommendation text
-            )
+            # Patterns and recommendations must follow the corrected assignment
+            refresh_patterns_and_recommendations(result)
             # Recompute after_distribution
             after_distribution: dict[str, int] = defaultdict(int)
             for qa in result["revised_assignments"]:
@@ -374,6 +369,9 @@ def write_reality_check_result(
     ``write_revision`` is False).
     """
     _restore_customer_overrides(result)
+    # The sanity sweep and the override restore run after pattern detection and can
+    # still move queries: recompute so the output matches the assignment it ships with.
+    refresh_patterns_and_recommendations(result)
     consolidated = bool(result["consolidations"]) and write_revision
     # max() guards a store whose listing lags its reads: the revision must land
     # above its own input even then.
