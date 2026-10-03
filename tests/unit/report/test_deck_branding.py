@@ -20,7 +20,6 @@ from typing import Any
 
 import pytest
 from pptx import Presentation
-from pypdf import PdfReader
 
 from src.report import pdf_report, pptx_report
 
@@ -72,6 +71,22 @@ def rendered() -> tuple[bytes, bytes]:
 class TestTemplate:
     def test_template_parts_carry_no_branding_or_classification_metadata(self) -> None:
         assert _forbidden_hits(pptx_report.TEMPLATE.read_bytes()) == []
+
+    def test_template_author_fields_are_neutral(self) -> None:
+        with zipfile.ZipFile(pptx_report.TEMPLATE) as z:
+            core = z.read("docProps/core.xml").decode("utf-8")
+        allowed = {"", "Database Modernizer Assessment"}
+        for tag in ("dc:creator", "cp:lastModifiedBy"):
+            m = re.search(rf"<{tag}>([^<]*)</{tag}>|<{tag}/>", core)
+            value = (m.group(1) or "") if m else ""
+            assert value in allowed, f"{tag}={value!r}"
+
+    def test_template_custom_properties_carry_no_stale_counts(self) -> None:
+        # "Slides"/"Notes" described the 43-slide source deck, not this one.
+        with zipfile.ZipFile(pptx_report.TEMPLATE) as z:
+            custom = z.read("docProps/custom.xml").decode("utf-8")
+        assert 'name="Slides"' not in custom
+        assert 'name="Notes"' not in custom
 
 
 class TestRenderedDeck:
@@ -127,19 +142,19 @@ class TestRenderedDeck:
         assert cp.author == "Database Modernizer Assessment"
         assert cp.last_modified_by == "Database Modernizer Assessment"
 
-    def test_pdf_metadata_names_the_assessment(self, rendered) -> None:
-        meta = PdfReader(io.BytesIO(rendered[1])).metadata
-        assert meta is not None
-        assert meta.author == "Database Modernizer Assessment"
-        assert meta.creator == "Database Modernizer Assessment"
-        assert not FORBIDDEN.search(" ".join(str(v) for v in meta.values()))
-
-    def test_pdf_pages_carry_the_disclaimer(self, rendered) -> None:
-        pages = PdfReader(io.BytesIO(rendered[1])).pages
-        for page in pages:
-            text = " ".join((page.extract_text() or "").split())
-            assert "For informational purposes only." in text
-            assert not FORBIDDEN.search(text)
+    def test_each_slide_draws_the_footer_and_footer_logo_once(self, rendered) -> None:
+        # The template carried a second footer line + logo hidden behind the
+        # full-bleed background on two layouts; the PDF text layer then read the
+        # footer twice on those slides.
+        prs = Presentation(io.BytesIO(rendered[0]))
+        for n, slide in enumerate(prs.slides, start=1):
+            art = [s for s in slide.slide_layout.shapes if not s.is_placeholder]
+            footers = [s for s in art if s.has_text_frame and s.text_frame.text.startswith("©")]
+            assert len(footers) == 1, f"slide {n}"
+            small_logos = [
+                s for s in art if s.shape_type == 13 and s.top > int(prs.slide_height or 0) * 3 // 4
+            ]
+            assert len(small_logos) <= 1, f"slide {n}"
 
 
 def test_footer_year_falls_back_to_the_current_year_without_a_timestamp() -> None:
@@ -163,3 +178,15 @@ def test_long_database_name_subtitle_shrinks_to_fit_one_line() -> None:
     assert size < 32
     width_in = sub.width / 914400
     assert pptx_report._text_em(run.text) * size / 72 <= width_in
+
+
+@pytest.mark.parametrize("stamp", ["2026-13-45T00:00:00Z", "2026-02-30", "not-a-date"])
+def test_invalid_generation_date_is_not_printed(stamp: str) -> None:
+    f = pptx_report.derive(_report(timestamp=stamp), {})
+    assert f["generated"] == ""
+    assert f["year"] == dt.datetime.now(dt.UTC).year
+
+
+def test_valid_generation_date_is_printed() -> None:
+    f = pptx_report.derive(_report(timestamp="2031-04-05T06:07:08Z"), {})
+    assert (f["generated"], f["year"]) == ("2031-04-05", 2031)

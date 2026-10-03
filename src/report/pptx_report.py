@@ -713,12 +713,17 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     assignment = rep.get("assignment_summary") or {}
 
     # ---- generation date: the report's own timestamp, not the wall clock -----
-    # Only a report without a timestamp falls back to the current year, so the
-    # footer's copyright year is never blank.
+    # Only a report without a valid timestamp falls back to the current year, so
+    # the footer's copyright year is never blank; an invalid date ("2026-02-30")
+    # is not printed on the title slide.
     stamp = str(rep.get("timestamp") or "")
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", stamp)
-    generated = m.group(0) if m else ""
-    year = int(m.group(1)) if m else dt.datetime.now(dt.UTC).year
+    m = re.match(r"\d{4}-\d{2}-\d{2}", stamp)
+    try:
+        gen_date: dt.date | None = dt.date.fromisoformat(m.group(0)) if m else None
+    except ValueError:
+        gen_date = None
+    generated = gen_date.isoformat() if gen_date else ""
+    year = gen_date.year if gen_date else dt.datetime.now(dt.UTC).year
 
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)

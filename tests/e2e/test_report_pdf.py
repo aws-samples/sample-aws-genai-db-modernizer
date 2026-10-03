@@ -122,3 +122,29 @@ def test_fonts_are_embedded(run: PipelineResult) -> None:
     # vacuously pass without having checked anything.
     assert checked_pages > 0, "no page had any drawn text -- nothing was actually checked"
     assert missing == []
+
+
+# Branding and internal classification metadata a public sample must not carry
+# (issue #181). Moved here from tests/unit/report/test_deck_branding.py: reading
+# the PDF needs pypdf, which only the e2e extra installs.
+BRANDING = re.compile(r"transform|confidential|pending_classification|msip_label", re.IGNORECASE)
+DECK_NAME = "Database Modernizer Assessment"
+DISCLAIMER = "Amazon Web Services, Inc. or its affiliates. For informational purposes only."
+
+
+def test_pdf_metadata_names_the_assessment(run: PipelineResult) -> None:
+    meta = _reader(run).metadata
+    assert meta is not None
+    assert meta.author == DECK_NAME
+    assert meta.creator == DECK_NAME
+    assert not BRANDING.search(" ".join(str(v) for v in meta.values()))
+
+
+def test_every_page_carries_the_disclaimer_once(run: PipelineResult) -> None:
+    for n, page in enumerate(_reader(run).pages, start=1):
+        text = _normalize(page.extract_text() or "")
+        # Exactly once: the template used to hide a second footer line behind
+        # the full-bleed background, which the text layer still carried.
+        assert text.count(DISCLAIMER) == 1, f"page {n}: {text.count(DISCLAIMER)} footers"
+        assert re.search(r"© \d{4} " + re.escape(DISCLAIMER), text), f"page {n}"
+        assert not BRANDING.search(text), f"page {n}"
