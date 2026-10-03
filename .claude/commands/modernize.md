@@ -6,11 +6,12 @@ Full end-to-end database modernization pipeline. The orchestrator is LIGHTWEIGHT
 ## Arguments
 
 - `<collector_file>` — path to collector output JSON (required)
-- `--auto` — skip decision gates, auto-approve all (equivalent to `-y`)
+- `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve) and the UI confirmation wait; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
+- `--mode chat|ui|both` — experience mode. With `--mode`, Step 0 is skipped. `--auto` without `--mode` means `chat`.
 
 ## Step 0: Experience Mode (ASK FIRST)
 
-Before anything else, ask the user:
+**If `--mode` was given (or `--auto`), use it and skip this question.** Otherwise, before anything else, ask the user:
 
 > How would you like to follow the modernization?
 >
@@ -42,7 +43,7 @@ Tell the user:
 
 - API running at <http://localhost:8000>
 - Frontend running at <http://localhost:3000>
-- Wait for the user to confirm the UI is loaded before proceeding
+- Unless `--auto`, wait for the user to confirm the UI is loaded before proceeding. With `--auto`, continue as soon as the three checks pass; if they do not pass within 3 minutes, abort (UI mode is the point of the run).
 
 Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`.
 
@@ -146,6 +147,8 @@ Wait for all to complete.
   (HTML), interactive analysis report (HTML), engineering report (Markdown), and
   `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
 
+End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`).
+
 ## Subagent Dispatch Rules
 
 1. **Every phase = fresh subagent.** No exceptions. Each gets a clean context window.
@@ -164,3 +167,7 @@ If any phase fails:
 - If retry: dispatch a new subagent for that phase
 - If skip: mark phase as "skipped" in state, continue
 - If abort: stop pipeline, preserve all artifacts produced so far
+
+**With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
+
+**Note on subagents under `--auto`:** every subagent dispatched by this pipeline (`/reality-check`, `/design-schema-*`, `/synthesize`) must also not ask the user anything. These sub-commands have no prompts today — keep it that way.
