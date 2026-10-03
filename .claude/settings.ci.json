@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit(artifacts/**)",
+      "Write(artifacts/**)",
+      "Edit(.modernizer-state.json)",
+      "Write(.modernizer-state.json)",
+      "Bash(uv run python scripts/run_assessment.py *)",
+      "Bash(uv run python scripts/run_collect.py *)",
+      "Bash(uv run python scripts/run_triage.py *)",
+      "Bash(uv run python scripts/run_analysis.py *)",
+      "Bash(uv run python scripts/run_assignment.py *)",
+      "Bash(uv run python scripts/run_reality_check.py *)",
+      "Bash(uv run python scripts/run_schema_design.py *)",
+      "Bash(uv run python scripts/run_synthesis.py *)",
+      "Bash(uv run python scripts/run_report.py *)",
+      "Bash(uv run python scripts/check_decision.py *)",
+      "Bash(ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app *)",
+      "Bash(cd src/ui *)",
+      "Bash(npm ci *)",
+      "Bash(npm run build *)",
+      "Bash(npm run serve *)",
+      "Bash(curl -s *http://localhost:8000*)",
+      "Bash(curl -s *http://localhost:3000*)",
+      "Agent"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Read(.env)",
+      "Read(**/.env)",
+      "Read(~/.aws/**)"
+    ]
+  },
+  "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_TELEMETRY": "1"
+  }
+}
