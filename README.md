@@ -240,18 +240,20 @@ All agent I/O flows through Pydantic contracts (`src/contracts/`). This enables:
 # Install with dev dependencies
 uv sync --extra dev
 
-# Run all tests
-uv run pytest tests/ -v --cov=src
+# Run all tests (unit, contract, property, graph; no integration or e2e)
+make test        # or: ./ci/test.sh --cov=src --cov-report=term
 
 # Run specific suites
 uv run pytest tests/unit/ -v
 uv run pytest tests/contract/ -v
 uv run pytest tests/integration/ -v
 
+# Deterministic end-to-end (needs the `e2e` extra, Node 22, Playwright browsers,
+# and a built UI -- see ci/e2e.sh, which installs/builds all of that for you)
+make e2e          # or: ./ci/e2e.sh
+
 # Code quality
-uv run black src/ tests/
-uv run ruff check src/ tests/
-uv run mypy src/
+make lint         # or: uv run pre-commit run --all-files
 
 # Full dev setup (pre-commit hooks, cfn-nag, etc.)
 ./scripts/setup_dev.sh

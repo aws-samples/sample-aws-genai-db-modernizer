@@ -7,6 +7,11 @@
 #   - Docker Desktop running (required for "make build")
 #   - Python 3.12+ and uv (for local development)
 #   - A domain you own (see "make deploy-dns" output for NS records)
+#   - For "make test" to pass completely: the AWS Transform SDK, which ships
+#     in the ATX container image but is not a project dependency --
+#     `uv pip install "agent-builder-sdk-aws-transform>=1.0.0"` (see
+#     tests/unit/atx_orchestrator/conftest.py). Without it, the two test
+#     modules that import it fail loudly rather than silently skipping.
 #
 # Quick start:
 #   1. cp .env.example .env       # Edit with your values
@@ -193,7 +198,7 @@ local-api: ## Start only the local API server
 	STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts \
 		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 
-test: ## Run all tests (unit, contract, property, graph; no integration or e2e)
+test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Needs agent-builder-sdk-aws-transform (see header above) for full green.
 	./ci/test.sh --cov=src --cov-report=term
 
 lint: ## Run all linters

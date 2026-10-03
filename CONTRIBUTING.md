@@ -233,13 +233,20 @@ Common scopes in this project:
 2. **Run all tests**
 
    ```bash
-   uv run pytest tests/ -v
+   make test        # or: ./ci/test.sh
+   make e2e         # deterministic end-to-end (needs the `e2e` extra, Node 22,
+                     # Playwright browsers, and a UI build -- ci/e2e.sh handles
+                     # all of that); or: ./ci/e2e.sh
    ```
+
+   `make test` also runs the `atx_orchestrator` tests, which need the AWS
+   Transform SDK (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`;
+   see `tests/unit/atx_orchestrator/conftest.py`).
 
 3. **Verify linters pass** (pre-commit runs these automatically on commit, but you can run manually):
 
    ```bash
-   uv run pre-commit run --all-files
+   make lint        # or: uv run pre-commit run --all-files
    ```
 
 4. **Update documentation** if needed
@@ -319,15 +326,21 @@ src/
 ### Running Tests
 
 ```bash
-# Run all tests
-uv run pytest tests/ -v
+# Run all tests (unit, contract, property, graph; no integration or e2e)
+make test                              # or: ./ci/test.sh --cov=src --cov-report=term
 
-# Run with coverage
-uv run pytest tests/ --cov=src --cov-report=html
+# Deterministic end-to-end (pipeline + rendered HTML/PDF + UI smoke)
+make e2e                               # or: ./ci/e2e.sh
 
 # Run only contract tests
 uv run pytest tests/contract/ -v
 ```
+
+`make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
+(`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`; see
+`tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
+extra (`uv sync --extra e2e`), Node 22, and Playwright's browsers (`ci/e2e.sh`
+installs the browsers and builds the UI itself).
 
 ### Local Pipeline Testing
 
