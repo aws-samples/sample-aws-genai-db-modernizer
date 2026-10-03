@@ -217,3 +217,283 @@ def ground_reality_check_summary(summary: dict, eliminated: dict[str, str | None
     ]
     recommendations += [format_pattern_recommendation(p) for p in patterns if isinstance(p, dict)]
     return {**summary, "architectural_patterns": patterns, "recommendations": recommendations}
+
+
+# ---------------------------------------------------------------------------
+# Executive summary grounding (#205)
+# ---------------------------------------------------------------------------
+
+SUMMARY_GROUNDING_RULE = (
+    "Every engine and table claim in the summary must match effective_architecture: "
+    "name a table under an engine only if that table is in the engine's tables list "
+    "(the tables its assigned in-scope queries touch), never present an eliminated "
+    "engine as part of the target, and do not generalise a table to an engine that "
+    "merely shares a query group with it. A summary that attributes a table to an "
+    "engine none of whose queries touch it is rejected and the deterministic summary "
+    "is shown instead."
+)
+
+_TOP_GROUPS_PER_ENGINE = 5
+
+
+def _strip_db(table: str, database_name: str) -> str:
+    prefix = f"{database_name}."
+    return table[len(prefix) :] if database_name and table.startswith(prefix) else table
+
+
+def engine_table_scope(
+    assignment: dict | None,
+    source_queries: list[dict],
+    table_mappings: list[dict],
+    known_tables: set[str],
+) -> dict[str, list[str]]:
+    """Tables each engine serves in the effective assignment.
+
+    Same scope rule as schema-design input filtering (``filter_collector_for_assignment``):
+    an engine's tables are the tables accessed by the in-scope queries assigned to it
+    (``query_assignments[].source_tables``, falling back to the collector query's
+    ``tables_accessed``). A table can belong to several engines. Names that are not
+    known source tables (``unknown``, ``DUAL``) are ignored.
+
+    Without an assignment (unversioned run) the schema designs stand in: every engine
+    whose design covers a table (``table_mappings`` primary and alternatives).
+    """
+    scope: dict[str, set[str]] = {}
+    qas = (assignment or {}).get("query_assignments") or []
+    if qas:
+        accessed = {q.get("query_id"): q.get("tables_accessed") or [] for q in source_queries}
+        for qa in qas:
+            engine = qa.get("assigned_engine")
+            if not engine or not qa.get("in_scope", True):
+                continue
+            tables = qa.get("source_tables") or accessed.get(qa.get("query_id"), [])
+            scope.setdefault(engine, set()).update(
+                t for t in tables if not known_tables or t in known_tables
+            )
+    else:
+        for m in table_mappings:
+            scope.setdefault(m["recommended_database"], set()).add(m["source_table"])
+            for alt in m.get("alternatives") or []:
+                scope.setdefault(alt["database"], set()).add(m["source_table"])
+    return {engine: sorted(tables) for engine, tables in scope.items()}
+
+
+def build_effective_architecture(
+    engine_tables: dict[str, list[str]],
+    table_mappings: list[dict],
+    ranking: list[dict],
+    query_groups: list[dict],
+    database_name: str,
+    eliminated: dict[str, str | None],
+) -> dict:
+    """Compact per-engine view of the effective assignment for the summary LLM.
+
+    ``tables`` per engine is ``engine_tables`` (see ``engine_table_scope``) without the
+    ``<db>.`` prefix. ``recommended_engine_by_table`` is secondary information: the single
+    engine the table mapping shows for each table. Query groups are the engine's busiest
+    by design RPS; capabilities are the assignment's top reasons for routing to it.
+    """
+    group_rps: dict[str, dict[str, float]] = {}
+    for g in query_groups:
+        for ap in g.get("access_patterns", []):
+            per_engine = group_rps.setdefault(ap.get("engine", ""), {})
+            per_engine[g["group_name"]] = per_engine.get(g["group_name"], 0) + (
+                ap.get("design_rps") or 0
+            )
+
+    order = [r["target"] for r in ranking]
+    order += sorted(e for e in engine_tables if e not in order)
+    engines = []
+    for engine in order:
+        if engine in eliminated:
+            continue
+        r = next((r for r in ranking if r["target"] == engine), {})
+        groups = group_rps.get(engine, {})
+        entry: dict = {
+            "engine": engine,
+            "display_name": display_name(engine),
+            "tables": [_strip_db(t, database_name) for t in engine_tables.get(engine, [])],
+            "top_query_groups": sorted(groups, key=lambda n: groups[n], reverse=True)[
+                :_TOP_GROUPS_PER_ENGINE
+            ],
+        }
+        if "assigned_queries" in r:
+            entry["assigned_queries"] = r["assigned_queries"]
+            entry["workload_percent"] = r.get("workload_percent", 0)
+        if r.get("assignment_reason_summary"):
+            entry["capabilities"] = r["assignment_reason_summary"]
+        engines.append(entry)
+
+    return {
+        "rule": SUMMARY_GROUNDING_RULE,
+        "source_database": database_name,
+        "engines": engines,
+        "recommended_engine_by_table": {
+            _strip_db(m["source_table"], database_name): m["recommended_database"]
+            for m in table_mappings
+        },
+        "eliminated_engines": [
+            {"engine": e, "absorbed_by": a} for e, a in sorted(eliminated.items())
+        ],
+    }
+
+
+_WORD = re.compile(r"[A-Za-z0-9]+")
+_JOINER = re.compile(r"^[\s_.\-]*$")
+_MAX_RUN = 8
+# A bare one-word humanised stem ("post", "users") is ordinary English, so it only
+# counts as a table reference when an access noun follows within a few words.
+_ACCESS_NOUNS = frozenset(
+    "lookup lookups read reads write writes query queries data record records row rows "
+    "table tables item items entry entries traffic access".split()
+)
+_ACCESS_WINDOW = 4
+_NEG_BEFORE = re.compile(
+    r"\b(?:without|instead\s+of|rather\s+than|need\s+for|replac\w*|eliminat\w*|remov\w*|"
+    r"than|no|not)\b(?:\W+\w+){0,3}\W*$",
+    re.IGNORECASE,
+)
+_NEG_AFTER = re.compile(
+    r"^(?:\W+\w+){0,3}?\W+(?:cannot|can't|can\s+not|could\s+not|couldn't|does\s+not|"
+    r"doesn't|do\s+not|don't|won't|will\s+not|is\s+not|isn't|no\s+longer)\b",
+    re.IGNORECASE,
+)
+
+
+def _canon(key: str) -> str:
+    return key[:-1] if len(key) > 3 and key.endswith("s") else key
+
+
+def _common_prefix(names: list[str]) -> str:
+    """Shared ``xx_`` naming prefix (``wp_``) when every table carries it."""
+    if len(names) < 2:
+        return ""
+    first = names[0].split("_", 1)[0] + "_"
+    return first if all(n.startswith(first) and len(n) > len(first) for n in names) else ""
+
+
+def _table_keys(tables: set[str], database_name: str) -> dict[str, set[str]]:
+    """Map canonical compact keys to the source tables they name.
+
+    Each table is matched as ``<db>.<name>``, ``<name>`` and the humanised stem with the
+    shared naming prefix removed (``wp_postmeta`` -> ``post meta`` / ``postmeta``).
+    """
+    names = {t: _strip_db(t, database_name) for t in sorted(tables)}
+    prefix = _common_prefix(list(names.values()))
+    keys: dict[str, set[str]] = {}
+    for table, name in names.items():
+        variants = {name, f"{database_name}.{name}" if database_name else name}
+        if prefix:
+            variants.add(name[len(prefix) :])
+        for v in variants:
+            compact = "".join(_WORD.findall(v.lower()))
+            if compact:
+                keys.setdefault(_canon(compact), set()).add(table)
+    return keys
+
+
+def _table_mentions(
+    sentence: str, keys: dict[str, set[str]], skip: list[tuple[int, int]]
+) -> list[tuple[set[str], int, str]]:
+    """Return ``(tables, position, matched_text)`` for table references in ``sentence``."""
+    words = [m for m in _WORD.finditer(sentence) if not any(s <= m.start() < e for s, e in skip)]
+    found = []
+    i = 0
+    while i < len(words):
+        match = None
+        for n in range(min(_MAX_RUN, len(words) - i), 0, -1):
+            run = words[i : i + n]
+            if any(
+                not _JOINER.match(sentence[a.end() : b.start()])
+                for a, b in zip(run, run[1:], strict=False)
+            ):
+                continue
+            tables = keys.get(_canon("".join(w.group().lower() for w in run)))
+            if not tables:
+                continue
+            span = sentence[run[0].start() : run[-1].end()]
+            identifier = "_" in span or "." in span
+            if n == 1 and not identifier:
+                following = {w.group().lower() for w in words[i + 1 : i + 1 + _ACCESS_WINDOW]}
+                if not following & _ACCESS_NOUNS:
+                    continue
+            match = (tables, run[0].start(), span, n)
+            break
+        if match:
+            found.append(match[:3])
+            i += match[3]
+        else:
+            i += 1
+    return found
+
+
+def _engine_refs(sentence: str, engines_in_play: set[str]) -> list[tuple[str, int, int, bool]]:
+    """Engine mentions as ``(engine, start, end, negated)``.
+
+    Bare "Aurora" resolves to the single Aurora engine in play, if there is exactly one.
+    """
+    refs = [(e, s, t) for e, s, t in engine_mentions(sentence)]
+    aurora = sorted(engines_in_play & {"aurora_mysql", "aurora_postgresql"})
+    if len(aurora) == 1:
+        for m in re.finditer(r"\baurora\b(?![\s_-]?(?:mysql|postgre))", sentence, re.IGNORECASE):
+            refs.append((aurora[0], m.start(), m.end()))
+    refs.sort(key=lambda r: r[1])
+    return [
+        (e, s, t, bool(_NEG_BEFORE.search(sentence[:s]) or _NEG_AFTER.match(sentence[t:])))
+        for e, s, t in refs
+    ]
+
+
+def check_summary_grounding(
+    summary: str,
+    engine_tables: dict[str, list[str]],
+    database_name: str,
+    known_tables: set[str] | None = None,
+) -> list[str]:
+    """Flag summary sentences that attribute a table to an engine that does not serve it.
+
+    Rule (deterministic, documented in /synthesize):
+
+    - An engine serves a table when at least one in-scope query assigned to it touches
+      the table (``engine_tables``, from ``engine_table_scope``). A table can be served
+      by several engines; naming it under any of them is correct. The table mapping's
+      single ``recommended_database`` is not the test.
+    - Tables are recognised as ``<db>.<table>``, ``<table>`` or the humanised stem
+      without the shared naming prefix (``post meta`` for ``wp_postmeta``). A one-word
+      stem without an underscore only counts when an access noun ("lookups",
+      "queries", "table", ...) follows within four words.
+    - Within a sentence, each table is attributed to the nearest engine named before
+      it, or else the first engine named after it. Engines in a negated context
+      ("cannot serve", "instead of", "removes the need for") are not attributions.
+    - Sentences naming no engine, and names that are not known source tables, are not
+      checked. Naming an engine outside the effective architecture with a table (an
+      eliminated engine) is always a mis-attribution.
+
+    Returns one human-readable warning per mis-attribution (empty list = grounded).
+    """
+    tables = set(known_tables or ()) | {t for ts in engine_tables.values() for t in ts}
+    if not summary or not tables:
+        return []
+    served = {engine: set(ts) for engine, ts in engine_tables.items()}
+    keys = _table_keys(tables, database_name)
+    warnings: list[str] = []
+    for sentence in split_sentences(summary):
+        refs = _engine_refs(sentence, set(served))
+        live = [r for r in refs if not r[3]]
+        if not live:
+            continue
+        spans = [(s, t) for _, s, t, _ in refs]
+        for named, pos, text in _table_mentions(sentence, keys, spans):
+            before = [r for r in live if r[2] <= pos]
+            engine = before[-1][0] if before else next(r[0] for r in live if r[1] > pos)
+            if named & served.get(engine, set()):
+                continue
+            table = sorted(named)[0]
+            owners = sorted(e for e, ts in served.items() if table in ts)
+            where = ", ".join(display_name(e) for e in owners) or "no engine"
+            warnings.append(
+                f'Summary attributes {table} ("{text}") to {display_name(engine)}, but no '
+                f"in-scope {display_name(engine)} query touches it (served by {where}): "
+                f"{sentence}"
+            )
+    return warnings

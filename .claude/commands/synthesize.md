@@ -27,6 +27,17 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 3. **If status is `awaiting_llm`:**
    a. Read the LLM request at the `llm_request` path the script printed (under `./artifacts/`)
    b. Write a 3-4 sentence executive summary for a CTO audience. Rules:
+      - Ground every engine and table claim in `effective_architecture`: name a table
+        under an engine only if it is in that engine's `tables` list (the tables its
+        in-scope queries touch). A table may be listed under several engines.
+        `recommended_engine_by_table` is secondary information, not the test. Never
+        present an engine from `eliminated_engines` as part of the target; its work
+        now runs on `absorbed_by`. Do not generalise a table to an engine because it
+        shares a query group.
+      - Finalize checks this deterministically: a sentence that names a table under an
+        engine none of whose in-scope queries touch it rejects the whole summary, and
+        the report shows the deterministic summary instead (your text is kept in
+        `summary_llm`, the findings in `summary_validation_warnings`)
       - Reference the deterministic summary provided for factual grounding
       - No confidence scores, no cost figures (those are in the report)
       - Mention specific AWS service names (DynamoDB, OpenSearch Service, etc.)
@@ -44,6 +55,10 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
       ```bash
       uv run python scripts/run_synthesis.py --job-id {job_id} --db {database_name} --finalize
       ```
+
+      The output carries `summary_source` (`llm`, or `deterministic_fallback` when the
+      post-check rejected your summary) and `summary_validation_warnings`. On a
+      fallback, tell the user the generated summary was withheld and quote the warnings.
 
 4. **Render deliverables**
 

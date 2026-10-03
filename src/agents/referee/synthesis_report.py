@@ -18,7 +18,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
-from src.agents.referee.synthesis_grounding import display_name, ground_risks
+from src.agents.referee.synthesis_grounding import (
+    SUMMARY_GROUNDING_RULE,
+    display_name,
+    ground_risks,
+)
 
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
@@ -853,8 +857,13 @@ def generate_executive_summary(
     risks: dict,
     table_mappings: list[dict],
     trade_offs: list[dict | str],
+    effective_architecture: dict | None = None,
 ) -> str:
     """Generate a natural-language executive summary using an LLM.
+
+    ``effective_architecture`` (per-engine tables, top query groups, eliminated engines)
+    is passed to the model as the authority for every engine and table claim; the
+    caller still post-checks the result (``check_summary_grounding``).
 
     Falls back to the deterministic summary if the LLM call fails.
     """
@@ -893,6 +902,7 @@ def generate_executive_summary(
     ][:5]
 
     context = {
+        "effective_architecture": effective_architecture or {},
         "engines": engine_workload,
         "table_mappings": len(table_mappings),
         "top_query_groups": top_groups_ctx,
@@ -936,6 +946,8 @@ def generate_executive_summary(
         "solution, not the gap.\n"
         "- Your tone is: 'We analyzed this, here is what we built, here is how "
         "it works.' Not: 'There are concerns, risks, and unknowns.'\n\n"
+        "GROUNDING (a summary that breaks this is rejected):\n"
+        f"- {SUMMARY_GROUNDING_RULE}\n\n"
         "SENTENCE 1-2: The architecture.\n"
         "- Which engines, how many target tables/indexes were designed, and what "
         "role each engine plays in the workload.\n"

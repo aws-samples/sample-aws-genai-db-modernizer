@@ -142,6 +142,20 @@ class SynthesisOutputContract(BaseModel):
     ranking: list[EngineRanking] = Field(..., description="Engine rankings by confidence")
     summary: str = Field(..., description="Executive summary text")
     summary_deterministic: str = Field(..., description="Deterministic summary (no LLM)")
+    summary_source: str = Field(
+        default="deterministic",
+        description=(
+            "Which text ``summary`` holds: llm, deterministic, or deterministic_fallback "
+            "(the LLM summary failed the table-assignment post-check)"
+        ),
+    )
+    summary_llm: str | None = Field(
+        None, description="LLM-written summary as received, kept for audit even when rejected"
+    )
+    summary_validation_warnings: list[str] = Field(
+        default_factory=list,
+        description="Post-check findings: summary sentences naming a table under the wrong engine",
+    )
     recommended_architecture: dict[str, Any] = Field(
         ..., description="Architecture recommendation with type, databases, integrations"
     )

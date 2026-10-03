@@ -92,6 +92,8 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
         _error(f"LLM response not found at {llm_response_path}")
 
     llm_response = store.read_json(llm_response_path)
+    # Post-checks the summary against the effective assignment; on a mis-attributed
+    # table the report keeps the deterministic summary (#205).
     result = apply_synthesis_llm_output(result, llm_response)
 
     _write_synthesis_report(store, result, assignment_version)
@@ -101,6 +103,8 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
             "status": "complete",
             "assignment_version": assignment_version,
             "report": _report_key(db, job_id, assignment_version),
+            "summary_source": result.get("summary_source", "deterministic"),
+            "summary_validation_warnings": result.get("summary_validation_warnings", []),
         }
     )
 

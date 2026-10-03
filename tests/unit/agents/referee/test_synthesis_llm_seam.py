@@ -356,9 +356,12 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
     def test_has_trade_offs(self):
         assert "trade_offs" in prepare_synthesis_llm_input(self._det())
 
-    def test_exactly_seven_keys(self):
+    def test_has_effective_architecture(self):
+        assert "effective_architecture" in prepare_synthesis_llm_input(self._det())
+
+    def test_exactly_eight_keys(self):
         payload = prepare_synthesis_llm_input(self._det())
-        assert len(payload) == 7
+        assert len(payload) == 8
 
     def test_deterministic_summary_matches_result(self):
         det = self._det()

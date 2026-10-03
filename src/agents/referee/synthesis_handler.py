@@ -19,7 +19,10 @@ from datetime import UTC, datetime
 
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
+    build_effective_architecture,
+    check_summary_grounding,
     eliminated_engines,
+    engine_table_scope,
     ground_reality_check_summary,
 )
 from src.agents.referee.synthesis_report import (
@@ -96,6 +99,14 @@ def run_synthesis_deterministic(
         if qa.get("in_scope", True) and qa.get("assigned_engine")
     } or set(data.engines)
     eliminated = eliminated_engines(effective, reality_check_output)
+    # Per-engine table scope of the effective assignment, for the summary LLM input and
+    # the summary post-check (#205).
+    known_tables: set[str] = {
+        str(t["table_id"]) for t in data.source_tables if t.get("table_id")
+    } | {m["source_table"] for m in table_mappings}
+    engine_tables = engine_table_scope(
+        data.assignment, data.source_queries, table_mappings, known_tables
+    )
     print("[synthesis] Building risk assessment...")
     risk_assessment = build_risk_assessment(data, eliminated)
     print("[synthesis] Building architecture recommendation...")
@@ -162,6 +173,11 @@ def run_synthesis_deterministic(
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
         "eliminated_engines": eliminated,
+        "known_tables": known_tables,
+        "engine_tables": engine_tables,
+        "effective_architecture": build_effective_architecture(
+            engine_tables, table_mappings, ranking, query_groups, database_name, eliminated
+        ),
         "summary": deterministic_summary,
         "executive_summary": deterministic_summary,  # fallback; overwritten by LLM
         # Internal — holds the SynthesisData object for schema summaries in the writer
@@ -178,10 +194,15 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     """Return the payload that should be sent to the executive-summary LLM.
 
     Keys returned:
-        deterministic_summary, ranking, query_groups, tco_analysis,
-        risk_assessment, table_mappings, trade_offs
+        effective_architecture, deterministic_summary, ranking, query_groups,
+        tco_analysis, risk_assessment, table_mappings, trade_offs
+
+    ``effective_architecture`` comes first: the compact per-engine table list, top
+    query groups and capabilities, plus the eliminated engines, together with the
+    rule that every engine/table claim must match it (#205).
     """
     return {
+        "effective_architecture": deterministic_result["effective_architecture"],
         "deterministic_summary": deterministic_result["summary"],
         "ranking": deterministic_result["ranking"],
         "query_groups": deterministic_result["query_groups"],
@@ -200,13 +221,40 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
 def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> dict:
     """Merge the LLM-generated executive summary into the deterministic result.
 
-    If ``llm_output`` contains an ``executive_summary`` key its value replaces
-    the deterministic fallback.  All other keys in the result are unchanged.
+    If ``llm_output`` contains an ``executive_summary`` it is post-checked against the
+    effective assignment (``check_summary_grounding``). A grounded summary replaces
+    the deterministic fallback. A summary that attributes a table to an engine none of
+    whose in-scope queries touch it is rejected: ``executive_summary`` stays
+    deterministic, and the LLM text plus the warnings are kept for audit in
+    ``summary_llm`` / ``summary_validation_warnings`` (#205). ``summary_source``
+    records which one the customer sees: ``llm`` or ``deterministic_fallback``.
 
     Returns the updated result dict (mutates and returns the same dict).
     """
-    if "executive_summary" in llm_output:
-        deterministic_result["executive_summary"] = llm_output["executive_summary"]
+    if "executive_summary" not in llm_output:
+        return deterministic_result
+    llm_summary = llm_output["executive_summary"]
+    engine_tables = deterministic_result.get("engine_tables")
+    if engine_tables is None:
+        engine_tables = engine_table_scope(
+            None, [], deterministic_result.get("table_mappings") or [], set()
+        )
+    warnings = check_summary_grounding(
+        str(llm_summary or ""),
+        engine_tables,
+        deterministic_result.get("database_name", ""),
+        deterministic_result.get("known_tables"),
+    )
+    deterministic_result["summary_llm"] = llm_summary
+    deterministic_result["summary_validation_warnings"] = warnings
+    if warnings:
+        for w in warnings:
+            print(f"[synthesis] WARNING: LLM summary rejected: {w}")
+        deterministic_result["executive_summary"] = deterministic_result["summary"]
+        deterministic_result["summary_source"] = "deterministic_fallback"
+    else:
+        deterministic_result["executive_summary"] = llm_summary
+        deterministic_result["summary_source"] = "llm"
     return deterministic_result
 
 
@@ -230,6 +278,9 @@ def _write_synthesis_report(
         "ranking": result["ranking"],
         "summary": result["executive_summary"],
         "summary_deterministic": result["summary"],
+        "summary_source": result.get("summary_source", "deterministic"),
+        "summary_llm": result.get("summary_llm"),
+        "summary_validation_warnings": result.get("summary_validation_warnings", []),
         "recommended_architecture": result["architecture"],
         "table_mappings": result["table_mappings"],
         "query_groups": result["query_groups"],
@@ -313,8 +364,12 @@ def run_synthesis(
             result["risk_assessment"],
             result["table_mappings"],
             trade_offs,
+            effective_architecture=result["effective_architecture"],
         )
-        result = apply_synthesis_llm_output(result, {"executive_summary": executive_summary})
+        # generate_executive_summary returns the deterministic text when the LLM fails;
+        # only a real LLM narrative goes through the grounding post-check.
+        if executive_summary != result["summary"]:
+            result = apply_synthesis_llm_output(result, {"executive_summary": executive_summary})
 
     elif llm_mode == "external":
         llm_input = prepare_synthesis_llm_input(result)
