@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,28 @@ UI_BUILD = REPO / "src" / "ui" / "build"
 # (`run` or `all_runs`) created it.
 _RESULTS: list[PipelineResult] = []
 
+# `run` is BOTH session-scoped AND parametrized (params=SAMPLES below). pytest's
+# fixture caching keys a parametrized higher-scope fixture by the full chain of
+# parameter ids active for the test requesting it -- not just the fixture's own
+# param. pytest-playwright's `--browser chromium --browser webkit` makes
+# `browser_name` effectively parametrized too, and as test collection
+# interleaves `run`'s two sample ids with `browser_name`'s two browser ids
+# across tests.py/test_report_html.py/test_report_pdf.py, pytest tears down and
+# re-creates `run` far more than twice a session (13 times, measured with
+# `--setup-plan` on this suite) even though it only has 2 possible values. Each
+# teardown+setup re-executes the full deterministic pipeline (~13s), so that
+# alone roughly matched the old "~13s once per invocation" estimate below for
+# the wrong reason -- it was 13 reruns of one sample's pipeline, not one run of
+# the whole suite.
+#
+# A plain module-level cache sidesteps pytest's cache-key logic entirely: no
+# matter how many times pytest invalidates and re-requests the `run` fixture,
+# the pipeline subprocess chain for a given sample is only ever executed once
+# per test session. (`all_runs`, below, is NOT parametrized itself, so it does
+# not hit this bug -- verified with --setup-plan: it is set up exactly once
+# regardless of how many browsers are passed -- and is left uncached.)
+_PIPELINE_CACHE: dict[str, PipelineResult] = {}
+
 
 def _run_pipeline_tracked(sample: str, artifact_root: Path, job_id: str) -> PipelineResult:
     result = run_pipeline(sample, artifact_root, job_id=job_id)
@@ -32,10 +55,28 @@ def _run_pipeline_tracked(sample: str, artifact_root: Path, job_id: str) -> Pipe
     return result
 
 
+def _run_pipeline_cached(sample: str, artifact_root: Path, job_id: str) -> PipelineResult:
+    cached = _PIPELINE_CACHE.get(sample)
+    if cached is not None:
+        return cached
+    result = _run_pipeline_tracked(sample, artifact_root, job_id=job_id)
+    _PIPELINE_CACHE[sample] = result
+    return result
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if "tests/e2e/" in str(item.fspath):
             item.add_marker(pytest.mark.e2e)
+
+
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: Any) -> None:
+    """Count ACTUAL pipeline executions this session (appends to _RESULTS happen
+    only on a cache miss -- see _run_pipeline_tracked), as opposed to how many
+    times a fixture that *returns* a run was merely set up. Grep this line to
+    verify the fixture-caching fix above: `./ci/e2e.sh` greps for it.
+    """
+    terminalreporter.write_line(f"[e2e] pipeline executed {len(_RESULTS)} time(s) this session")
 
 
 @pytest.fixture(scope="session")
@@ -71,7 +112,7 @@ def _copy_deliverables_to_e2e_output() -> Iterator[None]:
 @pytest.fixture(scope="session", params=SAMPLES)
 def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
     sample = request.param
-    return _run_pipeline_tracked(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
+    return _run_pipeline_cached(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
 
 
 def _wait_for(port: int, timeout: float = 60) -> None:

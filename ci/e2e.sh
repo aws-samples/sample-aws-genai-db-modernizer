@@ -3,20 +3,37 @@
 # Usage: ci/e2e.sh [extra pytest args]     (needs: uv, node 22, playwright browsers)
 #
 # Env vars read:
-#   E2E_OUTPUT  - where Playwright artifacts (screenshots, traces, junit) and the
-#                 copied-out deliverables land. Defaults to test-results/.
+#   E2E_OUTPUT       - where Playwright artifacts (screenshots, traces, junit) and
+#                       the copied-out deliverables land. Defaults to test-results/.
+#   E2E_REPORT_ARGS  - extra pytest args for the first invocation ONLY (below).
+#   E2E_UI_ARGS      - extra pytest args for the second invocation ONLY (below).
 #
 # Runs pytest TWICE (see tests/e2e/test_ui.py's module docstring): pytest-playwright's
 # only_browser marker is a runtime skip, not a deselection, so under
 # `--browser chromium --browser webkit` combined with --fail-on-skip the webkit
 # parametrizations of the (Chromium-only) UI suite would be skipped-then-failed.
 # Splitting into two invocations keeps --fail-on-skip meaningful for both: the
-# report checks run cross-browser, the UI smoke runs Chromium-only. Each invocation
-# runs its own pytest session, so the deterministic pipeline itself runs once per
-# invocation (~13s each) rather than once overall -- an acceptable, explicit cost.
+# report checks run cross-browser, the UI smoke runs Chromium-only.
+#
+# Any "$@" args passed to this script go to BOTH invocations below -- so a `-k`
+# that only matches one suite's tests makes the OTHER invocation collect zero
+# items and exit 5 ("no tests collected"), failing the whole script. Use
+# E2E_REPORT_ARGS / E2E_UI_ARGS instead when an arg should apply to only one of
+# the two pytest runs (e.g. `-k` for a single test name).
+#
+# Each invocation is its own pytest session, so the deterministic pipeline
+# fixture (tests/e2e/conftest.py's `run`/`all_runs`, cached per sample at module
+# level to survive pytest's own fixture-teardown churn under multi-browser
+# parametrization) runs the two sample pipelines once each per invocation --
+# ~15s total (measured: wordpress ~6s, discourse ~9s) -- rather than once
+# overall across both invocations. An acceptable, explicit, now-correctly-sized
+# cost: this used to be mis-stated as "~13s each" and, before the fixture-cache
+# fix, was actually up to 13 reruns of one sample's pipeline per invocation.
 source "$(dirname "$0")/lib.sh"
 
 export E2E_OUTPUT="${E2E_OUTPUT:-test-results}"
+export E2E_REPORT_ARGS="${E2E_REPORT_ARGS:-}"
+export E2E_UI_ARGS="${E2E_UI_ARGS:-}"
 mkdir -p "$E2E_OUTPUT"
 
 log "install browsers"
@@ -44,10 +61,10 @@ log "pipeline + report checks (chromium, webkit)"
 uv run pytest tests/e2e --ignore=tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip \
   --browser chromium --browser webkit \
   --output="$E2E_OUTPUT/pw-reports" --screenshot=only-on-failure --tracing=retain-on-failure \
-  --junitxml="$E2E_OUTPUT/e2e-reports-junit.xml" "$@"
+  --junitxml="$E2E_OUTPUT/e2e-reports-junit.xml" "$@" $E2E_REPORT_ARGS
 
 log "pipeline + UI smoke (chromium only)"
 uv run pytest tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip \
   --browser chromium \
   --output="$E2E_OUTPUT/pw-ui" --screenshot=only-on-failure --tracing=retain-on-failure \
-  --junitxml="$E2E_OUTPUT/e2e-ui-junit.xml" "$@"
+  --junitxml="$E2E_OUTPUT/e2e-ui-junit.xml" "$@" $E2E_UI_ARGS

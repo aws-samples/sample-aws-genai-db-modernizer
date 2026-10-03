@@ -57,10 +57,26 @@ pytest-playwright implements that marker as a runtime skip rather than a
 deselection. Under a single `--browser chromium --browser webkit` invocation
 combined with `--fail-on-skip`, the webkit parametrizations of the UI suite
 would be skipped-then-failed. Splitting into two invocations keeps
-`--fail-on-skip` meaningful for both suites. The cost: the deterministic
-pipeline fixture is session-scoped, so it reruns once per pytest session —
-once per invocation here (~13s each), rather than once overall. Accepted as
+`--fail-on-skip` meaningful for both suites. The cost: each invocation is its
+own pytest session, so the deterministic pipeline runs the two sample
+pipelines once each per invocation — ~15s total (wordpress ~6s, discourse
+~9s, measured), rather than once overall across both invocations. Accepted as
 cheap relative to the correctness it buys.
+
+`tests/e2e/conftest.py`'s `run`/`all_runs` fixtures cache each sample's
+pipeline result in a module-level dict rather than relying on pytest's own
+fixture caching: `run` is both session-scoped *and* parametrized (one value
+per sample), and pytest-playwright's `--browser chromium --browser webkit`
+effectively parametrizes `browser_name` too, which made pytest tear down and
+re-create `run` up to 13 times a session instead of twice (measured via
+`--setup-plan`) — rerunning the full pipeline every time. The module-level
+cache makes each sample's pipeline run exactly once per invocation regardless
+of how pytest schedules fixture teardown.
+
+`$@` passed to this script goes to BOTH pytest invocations below; `-k` or any
+other filter that only matches one suite's tests makes the other invocation
+collect zero items and exit 5. Use `E2E_REPORT_ARGS` / `E2E_UI_ARGS` to target
+extra args at only the first or second invocation respectively.
 
 Env vars read:
 
@@ -81,6 +97,8 @@ Env vars read:
     already-copied deliverables. Giving each invocation its own subdirectory
     keeps all of it under one `$E2E_OUTPUT` root for CI to upload as a single
     artifact, without the second run clobbering the first.
+- `E2E_REPORT_ARGS`, `E2E_UI_ARGS` — extra pytest args appended to only the
+  first (report checks) or second (UI smoke) invocation, respectively.
 
 Installing browsers: `uv run playwright install --with-deps chromium webkit`
 in CI (`CI=true`, set automatically by GitHub Actions) — `--with-deps` pulls
