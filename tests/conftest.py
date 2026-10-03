@@ -28,6 +28,47 @@ settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 import pytest  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
+# Keep plain `uv run pytest tests/` from trying to COLLECT tests/e2e/*.
+#
+# Those modules import playwright/pypdf (the `e2e` extra), which a bare `uv
+# sync` (no `--extra e2e`) does not install -- `-m "not integration and not
+# e2e"` alone can't help, because pytest has to IMPORT a module before it can
+# even see its markers (see ci/test.sh, which also passes --ignore=tests/e2e
+# for this exact reason).
+#
+# A blanket `--ignore=tests/e2e` in addopts would be simplest, but it would
+# also apply when tests/e2e IS named explicitly -- breaking ci/e2e.sh, which
+# runs `pytest tests/e2e ...` and `pytest tests/e2e/test_ui.py ...` directly.
+# So: ignore tests/e2e by default, but not when it was asked for, either by
+# naming it on the command line or by selecting it via `-m e2e`.
+#
+# IMPORTANT: pytest_ignore_collect is a firstresult hook -- pytest's own core
+# hookimpl (which implements `--ignore=`/`--ignore-glob=`) is just another
+# registered impl of the same hook, and the chain stops at the first non-None
+# return. So when tests/e2e WAS asked for, this must return None (not False)
+# to defer to that remaining chain -- including core's own --ignore= handling,
+# which is how ci/e2e.sh's first invocation excludes test_ui.py (via
+# `--ignore=tests/e2e/test_ui.py`) while still naming `tests/e2e` on the
+# command line. Returning False here would short-circuit the chain and defeat
+# that --ignore=.
+# ---------------------------------------------------------------------------
+def pytest_ignore_collect(collection_path, config):
+    try:
+        rel = collection_path.relative_to(config.rootpath)
+    except ValueError:
+        return None
+    if rel.parts[:2] != ("tests", "e2e"):
+        return None  # not under tests/e2e -- no opinion, let pytest decide
+    args = [str(a) for a in config.invocation_params.args]
+    positional = [a for a in args if not a.startswith("-")]
+    if any("tests/e2e" in a for a in positional):
+        return None  # explicitly named -- defer to pytest's normal handling
+    if "e2e" in (config.getoption("markexpr", default="") or ""):
+        return None  # explicitly selected via -m e2e -- same deferral
+    return True  # bare `pytest tests/` (or similar): skip tests/e2e by default
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--fail-on-skip",

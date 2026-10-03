@@ -56,8 +56,11 @@ jobs:
         #
         # -m "not integration and not e2e": integration tests need a live stack or
         #   manually generated artifacts, and e2e tests have their own dedicated job
-        #   (see the `e2e` job below) with its own browser/Node prerequisites, so both
-        #   are deselected here.
+        #   (see the `e2e` job below) with its own browser/Node prerequisites (this
+        #   job installs only `--extra dev`, not `--extra e2e`), so both are
+        #   deselected here. ci/test.sh itself also passes --ignore=tests/e2e: the
+        #   marker alone can't stop pytest from importing tests/e2e/* (playwright,
+        #   pypdf) during collection, which would fail without the e2e extra.
         # --fail-on-skip: a skipped test fails the build. Combined with the marker,
         #   this means nothing in the gated run may silently skip — the failure mode
         #   behind issues #150 and the dead load-test tests.

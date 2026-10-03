@@ -23,7 +23,11 @@ and a clean `ci/lint.sh` agree. No env vars. No prerequisites beyond `uv sync`.
 ## `test.sh`
 
 Unit, contract, property and graph tests (`tests/` minus `tests/integration`
-and `tests/e2e`, selected via `-m "not integration and not e2e"`) plus
+and `tests/e2e`), selected two ways: `--ignore=tests/e2e` so pytest never
+*imports* `tests/e2e/*` (it needs the `e2e` extra -- playwright, pypdf --
+which this script's prerequisites do not install), and
+`-m "not integration and not e2e"` as a second, belt-and-suspenders guard for
+anyone running this script with the `e2e` extra already installed. Plus
 `--fail-on-skip`, so nothing in this run may silently skip. No network, no
 credentials. Accepts extra pytest args, e.g. `./ci/test.sh --cov=src
 --cov-report=term --cov-fail-under=65` for the coverage gate CI runs with.
