@@ -131,9 +131,12 @@ MONTHS = (
     "November",
     "December",
 )
-# An engine the assessment is at least this confident in is sequenced before the
-# ones it is not. Stated as a constant so the wave split is reproducible.
+# A migration target the assessment is at least this confident in is sequenced before
+# the ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
+# Roles that need no data migration. They always form Wave 1 (reversible), at
+# any confidence; CONFIDENCE_FLOOR orders only the migration targets.
+NO_MIGRATION_ROLES = ("Retained", "Cache layer")
 
 LAYOUT_HERO = "Default 32"  # aurora full-bleed background + 48pt title
 LAYOUT_CONTENT = "Default 5"  # title + subtitle, plain dark background
@@ -474,17 +477,89 @@ def clean_risk_text(description: str) -> tuple[str, str]:
     return " ".join(desc.split()), n_q
 
 
-def _evidence_text(thinnest: dict[str, Any] | None) -> str:
-    """The "N <signal> query/queries in the whole workload" sentence used when
-    the assessment's weakest-confidence engine is backed by just one signal.
+def _evidence_text(signal: dict[str, Any] | None) -> str:
+    """The "N <signal> query/queries in the whole workload" sentence for the
+    signal ``_evidence_signal`` picked for the weakest-confidence engine.
 
     Extracted so the exact #206 regression ("1 session store queries") has a
     direct unit test independent of building a full ``derive()`` input.
     """
-    if not thinnest:
+    if not signal:
         return "limited supporting evidence"
-    n = thinnest["count"]
-    return f"{n} {short_label(thinnest['name'])} {plural_noun(n, 'query', 'queries')} in the whole workload"
+    n = signal["count"]
+    return f"{n} {short_label(signal['name'])} {plural_noun(n, 'query', 'queries')} in the whole workload"
+
+
+# "signal override: leaderboard_pattern → elasticache" in a ranking entry's
+# assignment_reason_summary: the triage signal that routed queries to the engine.
+_SIGNAL_OVERRIDE = re.compile(r"signal override:\s*([A-Za-z0-9_]+)\s*(?:→|->)\s*([A-Za-z0-9_]+)")
+
+
+def _evidence_signal(
+    engine: str,
+    ranking_row: dict[str, Any],
+    q_signals: list[dict[str, Any]],
+    signals: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The triage signal that best explains why ``engine`` was chosen.
+
+    Preference order: a signal the ranking itself names as a "signal override"
+    for this engine (traceable to ``report.json``); otherwise the largest signal
+    that targets the engine. Several signals usually target one engine
+    (key-value lookups, session store, ... all list ElastiCache), so the
+    *smallest* of them -- what this used to pick (#220) -- is the one least
+    likely to be the reason, and made the evidence look thinner than it is.
+    """
+    targets = {str(x.get("signal")): x.get("targets") or [] for x in signals}
+    candidates = [s for s in q_signals if engine in targets.get(s["name"], [])]
+    if not candidates:
+        return None
+    reasons = ranking_row.get("assignment_reason_summary") or []
+    if isinstance(reasons, str):
+        reasons = [reasons]
+    cited = {
+        m.group(1)
+        for r in reasons
+        for m in _SIGNAL_OVERRIDE.finditer(str(r))
+        if m.group(2) == engine
+    }
+    pool = [s for s in candidates if s["name"] in cited] or candidates
+    # q_signals is already sorted by (-count, name): the first is the largest.
+    return pool[0]
+
+
+def _sequencing_rule_text(engines: list[dict[str, Any]], conf: dict[str, float]) -> str:
+    """The Engine Confidence slide's statement of the wave rule ``derive()`` applies.
+
+    No-migration steps (cache layer, retained engine) always form Wave 1 because
+    they are reversible; ``CONFIDENCE_FLOOR`` only orders the migration targets.
+    The slide used to state the floor as a universal rule ("anything under 50% is
+    sequenced last") while Wave 1 held a 48% cache layer (#220). A no-migration
+    engine under the floor is named, so the exception is explicit.
+    """
+    no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
+    text = "Confidence is the assessment's own measure of evidence strength, not a forecast. "
+    if no_move:
+        low = [e for e in no_move if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
+        named = (
+            " ("
+            + ", ".join(
+                f"{ENGINE_LABEL.get(e['engine'], e['engine'])}, {conf.get(e['engine'], 0):.0f}%"
+                for e in low
+            )
+            + ")"
+            if low
+            else ""
+        )
+        text += (
+            f"Steps that need no data migration{named} go first at any confidence: "
+            f"the source database stays authoritative, so they are reversible. "
+        )
+    text += (
+        f"Migration targets under {CONFIDENCE_FLOOR}% are sequenced last so they can be "
+        f"re-scoped once the earlier waves have produced real measurements."
+    )
+    return text
 
 
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
@@ -586,14 +661,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     weakest = ranked_conf[0] if ranked_conf else None
     if weakest and float(weakest.get("confidence_score") or 0) < CONFIDENCE_FLOOR:
         eng = str(weakest.get("target") or "")
-        thin = [
-            s
-            for s in q_signals
-            if eng
-            in (next((x.get("targets") or [] for x in signals if x.get("signal") == s["name"]), []))
-        ]
-        thinnest = min(thin, key=lambda s: (s["count"], s["name"])) if thin else None
-        evidence = _evidence_text(thinnest)
+        evidence = _evidence_text(_evidence_signal(eng, weakest, q_signals, signals))
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
@@ -620,7 +688,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "action": "Scope defined as the matching table subset.",
             }
         )
-    no_move = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
+    no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
     if no_move:
         names = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in no_move)
         pct = sum(workload.get(e["engine"], 0) for e in no_move)
@@ -813,7 +881,7 @@ def slide_summary(prs, f):
     # two roles that do, not negatively against "Migration target": an "Evaluated"
     # engine (assignment routed it nothing) also fails that negative test, and naming
     # it here claimed it keeps a share of the workload it does not carry.
-    kept = [e for e in f["engines"] if e["role"] in ("Retained", "Cache layer")]
+    kept = [e for e in f["engines"] if e["role"] in NO_MIGRATION_ROLES]
     kept_pct = sum(e.get("workload") or 0 for e in kept)
     footer_note(
         s,
@@ -821,7 +889,8 @@ def slide_summary(prs, f):
         f"{plural_verb(f['migrated'], 'moves', 'move')} to a purpose-built engine; "
         + (
             f"{' and '.join(ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept)} "
-            f"keep {kept_pct:.1f}% of the workload with no data migration. "
+            f"{plural_verb(len(kept), 'keeps', 'keep')} {kept_pct:.1f}% of the workload "
+            f"with no data migration. "
             if kept
             else ""
         )
@@ -1097,9 +1166,7 @@ def slide_decisions(prs, f):
     tf = textbox(s, 0.67, 4.05, 5.55, 2.00)
     para(
         tf,
-        f"Confidence is the assessment's own measure of evidence strength, not a forecast. "
-        f"Anything under {CONFIDENCE_FLOOR}% is sequenced last so it can be re-scoped once "
-        f"the earlier waves have produced real measurements.",
+        _sequencing_rule_text(f["engines"], f["conf"]),
         size=11.0,
         color=WHITE,
         first=True,
