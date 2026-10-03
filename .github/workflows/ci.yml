@@ -147,6 +147,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
         working-directory: src/ui
+      - name: Unit tests
+        # Jest via react-scripts; CI=true makes it run once (no watch mode) and
+        # fail on any failing test. Covers the HTML export escaping (#242).
+        run: npm run test:ci
+        working-directory: src/ui
+        env:
+          CI: true
       - name: Build
         run: npx react-scripts build
         working-directory: src/ui

@@ -10,9 +10,16 @@
  * - Are viewed in any browser without the application context
  * - All text is in English by design for maximum portability
  *
- * SECURITY: This file properly implements XSS prevention using escapeHtml()
- * for all user-provided data before HTML insertion.
+ * SECURITY: every report.json value is untrusted (LLM- or customer-derived). The
+ * shell escapes with escapeHtml() from ./escapeHtml.js; the embedded client script
+ * escapes text and attribute values with its own escapeHtml() and passes values to
+ * inline on* handlers only through jsArg(). DATA is embedded with jsonForScript()
+ * so a "</script>" inside a string cannot end the script element (#242).
  */
+
+// HTML escaping for the shell below; the embedded client script carries its own copy
+// (the exported file is standalone). Both escape & < > " ' -- see ./escapeHtml.js.
+import { escapeHtml, jsonForScript } from './escapeHtml';
 
 // Engine, operation and chart colours are NOT declared here. The palette lives in
 // exactly one place -- the :root block of REPORT_CSS below -- and both the badges
@@ -29,13 +36,6 @@ const ENGINE_LABELS = {
   aurora: 'Aurora',
 };
 
-// Helper function to escape HTML to prevent XSS
-const escapeHtml = (text) => {
-  if (text == null) return '';
-  const div = document.createElement('div');
-  div.textContent = String(text);
-  return div.innerHTML;
-};
 
 // CSS styles as a regular string (not a template literal) to avoid Semgrep false positives
 // Using single quotes to avoid any template literal syntax
@@ -160,8 +160,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // Build the script using string concatenation (not template literals)
   let script = '';
   script += '  <script>\n';
-  script += '    const DATA = ' + JSON.stringify({ results, schemaDesigns, collector, jobId, queryJourneys }, null, 2) + ';\n';
-  script += '    const ENGINE_LABELS = ' + JSON.stringify(ENGINE_LABELS) + ';\n';
+  script += '    const DATA = ' + jsonForScript({ results, schemaDesigns, collector, jobId, queryJourneys }, 2) + ';\n';
+  script += '    const ENGINE_LABELS = ' + jsonForScript(ENGINE_LABELS) + ';\n';
   script += '\n';
   script += '    // The palette lives only in the CSS :root block. Charts and SVG need real\n';
   script += '    // colour values, so read the custom properties back at runtime -- the\n';
@@ -179,13 +179,22 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      return \'<span class="badge" data-engine="\' + escapeHtml(engine) + \'">\' + escapeHtml(label) + \'</span>\';\n';
   script += '    }\n';
   script += '\n';
-  script += '    // Helper function to escape HTML to prevent XSS\n';
+  // Same contract as escapeHtml in ./escapeHtml.js: & < > " ' are all escaped, so a
+  // value is safe both in text and inside a quoted attribute. (The previous
+  // textContent/innerHTML version left quotes alone, so a value could close an
+  // attribute such as data-engine="..." and add its own.)
+  script += '    // Escape a value for HTML text or a quoted attribute value.\n';
+  script += '    const HTML_ESCAPES = { \'&\': \'&amp;\', \'<\': \'&lt;\', \'>\': \'&gt;\', \'"\': \'&quot;\', "\'": \'&#39;\' };\n';
   script += '    function escapeHtml(text) {\n';
   script += '      if (text == null) return \'\';\n';
-  script += '      const div = document.createElement(\'div\');\n';
-  script += '      div.textContent = String(text);\n';
-  script += '      return div.innerHTML;\n';
+  script += '      return String(text).replace(/[&<>"\']/g, function(ch) { return HTML_ESCAPES[ch]; });\n';
   script += '    }\n';
+  script += '\n';
+  // Inline handlers: the browser decodes entities in the attribute before running
+  // it, so escapeHtml alone turns &#39; back into a quote that ends a '...' argument.
+  // JSON-quote first (a valid JS string literal), then escape for the attribute.
+  script += '    // Encode a value as one JS string argument inside an inline on* handler.\n';
+  script += '    function jsArg(value) { return escapeHtml(JSON.stringify(String(value))); }\n';
   script += '\n';
   script += '    // Create query journey lookup by query_id\n';
   script += '    const QUERY_JOURNEY_LOOKUP = {};\n';
@@ -291,12 +300,12 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      const container = document.getElementById(\'active-filters\');\n';
   script += '      const chips = [];\n';
   script += '      activeFilters.engines.forEach(e => {\n';
-  script += '        chips.push(\'<span class="filter-chip">Engine = \' + e + \' <button onclick="removeFilter(\\\'engine\\\', \\\'\' + e + \'\\\')">×</button></span>\');\n';
+  script += '        chips.push(\'<span class="filter-chip">Engine = \' + escapeHtml(e) + \' <button onclick="removeFilter(&quot;engine&quot;, \' + jsArg(e) + \')">×</button></span>\');\n';
   script += '      });\n';
   script += '      activeFilters.operations.forEach(o => {\n';
-  script += '        chips.push(\'<span class="filter-chip">Operation = \' + o + \' <button onclick="removeFilter(\\\'operation\\\', \\\'\' + o + \'\\\')">×</button></span>\');\n';
+  script += '        chips.push(\'<span class="filter-chip">Operation = \' + escapeHtml(o) + \' <button onclick="removeFilter(&quot;operation&quot;, \' + jsArg(o) + \')">×</button></span>\');\n';
   script += '      });\n';
-  script += '      container.innerHTML = chips.join(\'\');  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '      container.innerHTML = chips.join(\'\');  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml(), handler args via jsArg()\n';
   script += '    }\n';
   script += '\n';
   script += '    function removeFilter(type, value) {\n';
@@ -328,7 +337,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);\n';
   script += '      let html = \'<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>\';\n';
   script += '      paginated.forEach(p => {\n';
-  script += '        html += \'<tr onclick="showPatternDetails(\\\'\' + escapeHtml(p.id) + \'\\\')">\';\n';
+  script += '        html += \'<tr onclick="showPatternDetails(\' + jsArg(p.id) + \')">\';\n';
   script += '        html += \'<td class="nowrap"><span class="link">\' + escapeHtml(p.id.slice(0, 8)) + \'</span></td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(p.operation) + \'</td>\';\n';
   script += '        html += \'<td>\' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + \'</td>\';\n';
@@ -361,7 +370,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });\n';
   script += '        const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + \'(\' + entry[1] + \')\'; }).join(\', \');\n';
   script += '        const convergence = g.convergesFrom.size > 0 ? \'<span class="badge badge-blue">Merged (\' + g.convergesFrom.size + \')</span>\' : \'—\';\n';
-  script += '        html += \'<tr onclick="showSourceTableDetails(\\\'\' + escapeHtml(g.table) + \'\\\')">\';\n';
+  script += '        html += \'<tr onclick="showSourceTableDetails(\' + jsArg(g.table) + \')">\';\n';
   script += '        html += \'<td><span class="link">\' + escapeHtml(g.table) + \'</span></td>\';\n';
   script += '        html += \'<td>\' + engines + \'</td>\';\n';
   script += '        html += \'<td>\' + escapeHtml(destTables) + \'</td>\';\n';
@@ -485,9 +494,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      sortedEngines.forEach(function(entry) {\n';
   script += '        const engine = entry[0];\n';
   script += '        const color = engineColor(engine);\n';
-  script += '        html += \'<linearGradient id="gradient-\' + engine + \'" x1="0%" y1="0%" x2="100%" y2="0%">\';\n';
-  script += '        html += \'<stop offset="0%" style="stop-color:\' + color + \';stop-opacity:0.4" />\';\n';
-  script += '        html += \'<stop offset="100%" style="stop-color:\' + color + \';stop-opacity:0.2" />\';\n';
+  script += '        html += \'<linearGradient id="gradient-\' + escapeHtml(engine) + \'" x1="0%" y1="0%" x2="100%" y2="0%">\';\n';
+  script += '        html += \'<stop offset="0%" style="stop-color:\' + escapeHtml(color) + \';stop-opacity:0.4" />\';\n';
+  script += '        html += \'<stop offset="100%" style="stop-color:\' + escapeHtml(color) + \';stop-opacity:0.2" />\';\n';
   script += '        html += \'</linearGradient>\';\n';
   script += '      });\n';
   script += '      html += \'</defs>\';\n';
@@ -501,7 +510,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const targetBottom = targetY + linkHeight / 2;\n';
   script += '        const midX = (sourceX + nodeWidth + targetX) / 2;\n';
   script += '        const pathData = \'M \' + (sourceX + nodeWidth) + \' \' + sourceTop + \' C \' + midX + \' \' + sourceTop + \', \' + midX + \' \' + targetTop + \', \' + targetX + \' \' + targetTop + \' L \' + targetX + \' \' + targetBottom + \' C \' + midX + \' \' + targetBottom + \', \' + midX + \' \' + sourceBottom + \', \' + (sourceX + nodeWidth) + \' \' + sourceBottom + \' Z\';\n';
-  script += '        html += \'<path d="\' + pathData + \'" fill="url(#gradient-\' + engine + \')" stroke="none" opacity="0.6" />\';\n';
+  script += '        html += \'<path d="\' + pathData + \'" fill="url(#gradient-\' + escapeHtml(engine) + \')" stroke="none" opacity="0.6" />\';\n';
   script += '      });\n';
   script += '      const sourceHeight = Math.min(150, svgHeight - 100);\n';
   script += '      html += \'<rect x="\' + sourceX + \'" y="\' + (sourceY - sourceHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + sourceHeight + \'" style="fill:var(--chart-neutral);stroke:var(--chart-neutral)" rx="2" opacity="0.8" />\';\n';
@@ -511,8 +520,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const nodeHeight = Math.max(20, (count / totalQueries) * 120);\n';
   script += '        const color = engineColor(engine);\n';
   script += '        const label = ENGINE_LABELS[engine] || engine;\n';
-  script += '        html += \'<rect x="\' + targetX + \'" y="\' + (targetY - nodeHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + nodeHeight + \'" fill="\' + color + \'" stroke="\' + color + \'" rx="2" opacity="0.8" />\';\n';
-  script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + label + \' (\' + Number(count).toFixed(1) + \'%)</text>\';\n';
+  script += '        html += \'<rect x="\' + targetX + \'" y="\' + (targetY - nodeHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + nodeHeight + \'" fill="\' + escapeHtml(color) + \'" stroke="\' + escapeHtml(color) + \'" rx="2" opacity="0.8" />\';\n';
+  script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + escapeHtml(label) + \' (\' + Number(count).toFixed(1) + \'%)</text>\';\n';
   script += '      });\n';
   script += '      html += \'</svg></div>\';\n';
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
@@ -537,7 +546,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (!queryIds || queryIds.length === 0) return \'\';\n';
   script += '      let out = \'<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>\';\n';
   script += '      queryIds.forEach(function(qid) {\n';
-  script += '        out += \'<span class="link" onclick="showQueryJourney(\\\'\' + escapeHtml(qid) + \'\\\')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + escapeHtml(qid.substring(0, 12)) + \'...</span>\';\n';
+  script += '        out += \'<span class="link" onclick="showQueryJourney(\' + jsArg(qid) + \')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">\' + escapeHtml(qid.substring(0, 12)) + \'...</span>\';\n';
   script += '      });\n';
   script += '      return out + \'</div></div>\';\n';
   script += '    }\n';
@@ -546,7 +555,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      let out = \'<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 20px;">\';\n';
   script += '      engines.forEach(function(engine, idx) {\n';
   script += '        const activeStyle = idx === 0 ? \'color: var(--color-blue); border-bottom-color: var(--color-blue);\' : \'color: var(--color-text-secondary); border-bottom-color: transparent;\';\n';
-  script += '        out += \'<button class="\' + btnClass + (idx === 0 ? \' active\' : \'\') + \'" onclick="\' + switchFn + \'(&quot;\' + engine + \'&quot;)" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + (ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')</button>\';\n';
+  script += '        out += \'<button class="\' + btnClass + (idx === 0 ? \' active\' : \'\') + \'" onclick="\' + switchFn + \'(\' + jsArg(engine) + \')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + escapeHtml(ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')</button>\';\n';
   script += '      });\n';
   script += '      return out + \'</div>\';\n';
   script += '    }\n';
@@ -558,7 +567,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (engines.length === 0) { container.innerHTML = \'<p>No trade-offs available.</p>\'; return; }\n';
   script += '      let html = engineTabBar(engines, byEngine, \'tradeoff-tab-btn\', \'switchTradeoffTab\');\n';
   script += '      engines.forEach(function(engine, idx) {\n';
-  script += '        html += \'<div id="tradeoff-tab-\' + engine + \'" class="tradeoff-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
+  script += '        html += \'<div id="tradeoff-tab-\' + escapeHtml(engine) + \'" class="tradeoff-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
   script += '        byEngine[engine].forEach(function(to) {\n';
   script += '          html += \'<div class="item-card">\';\n';
   script += '          html += \'<div style="font-size: 13px; font-weight: 700; color: var(--color-text);">\' + escapeHtml(to.description) + \'</div>\';\n';
@@ -579,7 +588,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (engines.length === 0) { container.innerHTML = \'<p>No engineering notes were raised.</p>\'; return; }\n';
   script += '      let html = engineTabBar(engines, byEngine, \'pe-tab-btn\', \'switchPeNoteTab\');\n';
   script += '      engines.forEach(function(engine, idx) {\n';
-  script += '        html += \'<div id="pe-tab-\' + engine + \'" class="pe-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
+  script += '        html += \'<div id="pe-tab-\' + escapeHtml(engine) + \'" class="pe-tab-content" style="display: \' + (idx === 0 ? \'block\' : \'none\') + \';">\';\n';
   script += '        byEngine[engine].forEach(function(note, noteIdx) {\n';
   script += '          html += \'<div class="item-card">\';\n';
   script += '          html += \'<div style="display: flex; align-items: flex-start; gap: 12px;">\';\n';
@@ -658,7 +667,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        fullPattern.query_ids.forEach(function(qid) {\n';
   script += '          const hasJourney = QUERY_JOURNEY_LOOKUP[qid];\n';
   script += '          const cursorStyle = hasJourney ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
-  script += '          const onclickAttr = hasJourney ? \' onclick="showQueryJourney(\\\'\' + escapeHtml(qid) + \'\\\')"\' : \'\';\n';
+  script += '          const onclickAttr = hasJourney ? \' onclick="showQueryJourney(\' + jsArg(qid) + \')"\' : \'\';\n';
   script += '          const titleAttr = hasJourney ? \'Click to view query journey\' : \'Query journey not available\';\n';
   script += '          tabsHtml += \'<span class="badge badge-blue" style="\' + cursorStyle + \'" title="\' + titleAttr + \'"\' + onclickAttr + \'>\' + escapeHtml(qid.slice(0, 8)) + \'...</span>\';\n';
   script += '        });\n';
@@ -725,8 +734,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      let tabsHtml = \'<div class="tab-bar">\';\n';
   script += '      Object.keys(byEngine).forEach(function(engine, idx) {\n';
   script += '        const activeClass = idx === 0 ? \' active\' : \'\';\n';
-  script += '        tabsHtml += \'<button class="tab-button\' + activeClass + \'" onclick="switchSourceTableTab(\\\'\' + engine + \'\\\')">\';\n';
-  script += '        tabsHtml += (ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')\';\n';
+  script += '        tabsHtml += \'<button class="tab-button\' + activeClass + \'" onclick="switchSourceTableTab(\' + jsArg(engine) + \')">\';\n';
+  script += '        tabsHtml += escapeHtml(ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')\';\n';
   script += '        tabsHtml += \'</button>\';\n';
   script += '      });\n';
   script += '      tabsHtml += \'</div>\';\n';
@@ -741,7 +750,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const badgeClass = ENGINE_BADGE_CLASSES[engine] || \'badge-grey\';\n';
   script += '        const displayStyle = idx === 0 ? \'block\' : \'none\';\n';
   script += '        const activeClass = idx === 0 ? \' active\' : \'\';\n';
-  script += '        tabsHtml += \'<div id="source-table-tab-\' + engine + \'" class="tab-content\' + activeClass + \'" style="display: \' + displayStyle + \';">\';\n';
+  script += '        tabsHtml += \'<div id="source-table-tab-\' + escapeHtml(engine) + \'" class="tab-content\' + activeClass + \'" style="display: \' + displayStyle + \';">\';\n';
   script += '        tabsHtml += \'<div style="margin-bottom: 16px;"><div class="key-value-grid">\';\n';
   script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Source Table</div><div class="key-value-value">\' + escapeHtml(tableName) + \'</div></div>\';\n';
   script += '        tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Target Engine</div><div class="key-value-value">\' + engineBadge(engine, ENGINE_LABELS[engine] || engine) + \'</div></div>\';\n';
@@ -758,7 +767,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '          tabsHtml += \'<th style="text-align: left; padding: 4px 8px;">Description</th>\';\n';
   script += '          tabsHtml += \'</tr></thead><tbody>\';\n';
   script += '          destPatterns.forEach(function(p) {\n';
-  script += '            tabsHtml += \'<tr onclick="closeSourceTableModal(); showPatternDetails(\\\'\' + escapeHtml(p.id) + \'\\\');" style="cursor: pointer;">\';\n';
+  script += '            tabsHtml += \'<tr onclick="closeSourceTableModal(); showPatternDetails(\' + jsArg(p.id) + \');" style="cursor: pointer;">\';\n';
   script += '            tabsHtml += \'<td style="padding: 4px 8px;"><span class="link">\' + escapeHtml(p.id.slice(0, 12)) + \'</span></td>\';\n';
   script += '            tabsHtml += \'<td style="padding: 4px 8px;">\' + escapeHtml(p.operation) + \'</td>\';\n';
   script += '            tabsHtml += \'<td style="padding: 4px 8px;">\' + escapeHtml(p.description) + \'</td>\';\n';
@@ -913,13 +922,17 @@ export const generateHTMLReport = (data) => {
 
   // Generate engine badges using DOM methods to avoid Semgrep warnings
   // This approach eliminates template string interpolation in HTML context
-  const engineBadges = Object.keys(afterDist).map(engine => {
-    const span = document.createElement('span');
-    span.className = 'badge';
-    span.setAttribute('data-engine', engine);
-    span.textContent = engine; // Browser automatically escapes content
-    return span.outerHTML;
-  }).join('');
+  const engineBadges = Object.keys(afterDist)
+    .map(engine => '<span class="badge" data-engine="' + escapeHtml(engine) + '">' + escapeHtml(engine) + '</span>')
+    .join('');
+
+  // Untrusted report.json text in the shell, escaped once here. The ATX renderer
+  // (src/report/analysis_report.py) fills the same slots with escaping.html_text.
+  const safeJobId = escapeHtml(jobId);
+  const safeDatabaseName = escapeHtml(results?.synthesis?.database_name || 'N/A');
+  const safeDatabaseNameStat = escapeHtml(results?.synthesis?.database_name || '—');
+  const safeSummary = escapeHtml(results?.synthesis?.summary || 'No summary available.');
+  const safeExportDate = escapeHtml(new Date(exportDate).toLocaleString());
 
   const costBreakdown = results?.synthesis?.tco_analysis?.cost_breakdown || [];
   const projectedCost = costBreakdown.reduce((sum, cb) => sum + (cb.monthly_cost_usd || 0), 0).toFixed(2);
@@ -950,15 +963,15 @@ export const generateHTMLReport = (data) => {
       <div class="meta-pairs">
         <div class="meta-pair">
           <div class="meta-pair-label">Job ID</div>
-          <div class="meta-pair-value">${jobId}</div>
+          <div class="meta-pair-value">${safeJobId}</div>
         </div>
         <div class="meta-pair">
           <div class="meta-pair-label">Created</div>
-          <div class="meta-pair-value">${new Date(exportDate).toLocaleString()}</div>
+          <div class="meta-pair-value">${safeExportDate}</div>
         </div>
         <div class="meta-pair">
           <div class="meta-pair-label">Database</div>
-          <div class="meta-pair-value">${results?.synthesis?.database_name || 'N/A'}</div>
+          <div class="meta-pair-value">${safeDatabaseName}</div>
         </div>
       </div>
     </div>
@@ -966,9 +979,9 @@ export const generateHTMLReport = (data) => {
     <div class="section">
       <div class="section-header">Executive Summary</div>
       <p class="section-desc">The target architecture recommended for this database, its projected monthly cost, and the workload it covers.</p>
-      <p class="section-body">${results?.synthesis?.summary || 'No summary available.'}</p>
+      <p class="section-body">${safeSummary}</p>
       <div class="grid grid-4">
-        <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${results?.synthesis?.database_name || '—'}</div></div>
+        <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${safeDatabaseNameStat}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
         <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$${projectedCost}/mo</div></div>
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div></div>

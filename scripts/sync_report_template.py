@@ -44,9 +44,9 @@ GENERATED_BANNER = (
 )
 
 # The ``${...}`` expressions in generateHTMLReport's returned template literal,
-# mapped to the placeholder the Python renderer fills. Order matters: the two
-# database_name entries differ only in their fallback, so the more specific one
-# must be replaced first.
+# mapped to the placeholder the Python renderer fills. The React side escapes each
+# untrusted value into a ``safe*`` local before interpolating it (#242); the Python
+# renderer fills the same slots with ``escaping.html_text``.
 #
 # Kept as an explicit table rather than a generic ``${...}`` regex on purpose --
 # a new interpolation in the React shell should fail loudly here (see
@@ -54,14 +54,14 @@ GENERATED_BANNER = (
 # "${...}" in the customer's report.
 SHELL_SUBSTITUTIONS: list[tuple[str, str]] = [
     ("${escapeHtml(jobId)}", "__TITLE__"),
-    ("${new Date(exportDate).toLocaleString()}", "__EXPORT_DATE__"),
-    ("${results?.synthesis?.database_name || 'N/A'}", "__DATABASE_NAME__"),
-    ("${results?.synthesis?.database_name || '—'}", "__DATABASE_NAME__"),
-    ("${results?.synthesis?.summary || 'No summary available.'}", "__SUMMARY__"),
+    ("${safeExportDate}", "__EXPORT_DATE__"),
+    ("${safeDatabaseName}", "__DATABASE_NAME__"),
+    ("${safeDatabaseNameStat}", "__DATABASE_NAME__"),
+    ("${safeSummary}", "__SUMMARY__"),
     ("${engineBadges}", "__ENGINE_BADGES__"),
     ("${projectedCost}", "__PROJECTED_COST__"),
     ("${totalPatterns}", "__TOTAL_PATTERNS__"),
-    ("${jobId}", "__JOB_ID__"),
+    ("${safeJobId}", "__JOB_ID__"),
 ]
 
 # Injection points the ATX renderer adds on top of the React shell. Each is a

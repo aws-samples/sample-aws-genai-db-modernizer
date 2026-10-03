@@ -16,13 +16,15 @@
       return '<span class="badge" data-engine="' + escapeHtml(engine) + '">' + escapeHtml(label) + '</span>';
     }
 
-    // Helper function to escape HTML to prevent XSS
+    // Escape a value for HTML text or a quoted attribute value.
+    const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
     function escapeHtml(text) {
       if (text == null) return '';
-      const div = document.createElement('div');
-      div.textContent = String(text);
-      return div.innerHTML;
+      return String(text).replace(/[&<>"']/g, function(ch) { return HTML_ESCAPES[ch]; });
     }
+
+    // Encode a value as one JS string argument inside an inline on* handler.
+    function jsArg(value) { return escapeHtml(JSON.stringify(String(value))); }
 
     // Create query journey lookup by query_id
     const QUERY_JOURNEY_LOOKUP = {};
@@ -128,12 +130,12 @@
       const container = document.getElementById('active-filters');
       const chips = [];
       activeFilters.engines.forEach(e => {
-        chips.push('<span class="filter-chip">Engine = ' + e + ' <button onclick="removeFilter(\'engine\', \'' + e + '\')">×</button></span>');
+        chips.push('<span class="filter-chip">Engine = ' + escapeHtml(e) + ' <button onclick="removeFilter(&quot;engine&quot;, ' + jsArg(e) + ')">×</button></span>');
       });
       activeFilters.operations.forEach(o => {
-        chips.push('<span class="filter-chip">Operation = ' + o + ' <button onclick="removeFilter(\'operation\', \'' + o + '\')">×</button></span>');
+        chips.push('<span class="filter-chip">Operation = ' + escapeHtml(o) + ' <button onclick="removeFilter(&quot;operation&quot;, ' + jsArg(o) + ')">×</button></span>');
       });
-      container.innerHTML = chips.join('');  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+      container.innerHTML = chips.join('');  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml(), handler args via jsArg()
     }
 
     function removeFilter(type, value) {
@@ -165,7 +167,7 @@
       const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
       let html = '<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>';
       paginated.forEach(p => {
-        html += '<tr onclick="showPatternDetails(\'' + escapeHtml(p.id) + '\')">';
+        html += '<tr onclick="showPatternDetails(' + jsArg(p.id) + ')">';
         html += '<td class="nowrap"><span class="link">' + escapeHtml(p.id.slice(0, 8)) + '</span></td>';
         html += '<td>' + escapeHtml(p.operation) + '</td>';
         html += '<td>' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + '</td>';
@@ -198,7 +200,7 @@
         g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });
         const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + '(' + entry[1] + ')'; }).join(', ');
         const convergence = g.convergesFrom.size > 0 ? '<span class="badge badge-blue">Merged (' + g.convergesFrom.size + ')</span>' : '—';
-        html += '<tr onclick="showSourceTableDetails(\'' + escapeHtml(g.table) + '\')">';
+        html += '<tr onclick="showSourceTableDetails(' + jsArg(g.table) + ')">';
         html += '<td><span class="link">' + escapeHtml(g.table) + '</span></td>';
         html += '<td>' + engines + '</td>';
         html += '<td>' + escapeHtml(destTables) + '</td>';
@@ -319,9 +321,9 @@
       sortedEngines.forEach(function(entry) {
         const engine = entry[0];
         const color = engineColor(engine);
-        html += '<linearGradient id="gradient-' + engine + '" x1="0%" y1="0%" x2="100%" y2="0%">';
-        html += '<stop offset="0%" style="stop-color:' + color + ';stop-opacity:0.4" />';
-        html += '<stop offset="100%" style="stop-color:' + color + ';stop-opacity:0.2" />';
+        html += '<linearGradient id="gradient-' + escapeHtml(engine) + '" x1="0%" y1="0%" x2="100%" y2="0%">';
+        html += '<stop offset="0%" style="stop-color:' + escapeHtml(color) + ';stop-opacity:0.4" />';
+        html += '<stop offset="100%" style="stop-color:' + escapeHtml(color) + ';stop-opacity:0.2" />';
         html += '</linearGradient>';
       });
       html += '</defs>';
@@ -335,7 +337,7 @@
         const targetBottom = targetY + linkHeight / 2;
         const midX = (sourceX + nodeWidth + targetX) / 2;
         const pathData = 'M ' + (sourceX + nodeWidth) + ' ' + sourceTop + ' C ' + midX + ' ' + sourceTop + ', ' + midX + ' ' + targetTop + ', ' + targetX + ' ' + targetTop + ' L ' + targetX + ' ' + targetBottom + ' C ' + midX + ' ' + targetBottom + ', ' + midX + ' ' + sourceBottom + ', ' + (sourceX + nodeWidth) + ' ' + sourceBottom + ' Z';
-        html += '<path d="' + pathData + '" fill="url(#gradient-' + engine + ')" stroke="none" opacity="0.6" />';
+        html += '<path d="' + pathData + '" fill="url(#gradient-' + escapeHtml(engine) + ')" stroke="none" opacity="0.6" />';
       });
       const sourceHeight = Math.min(150, svgHeight - 100);
       html += '<rect x="' + sourceX + '" y="' + (sourceY - sourceHeight/2) + '" width="' + nodeWidth + '" height="' + sourceHeight + '" style="fill:var(--chart-neutral);stroke:var(--chart-neutral)" rx="2" opacity="0.8" />';
@@ -345,8 +347,8 @@
         const nodeHeight = Math.max(20, (count / totalQueries) * 120);
         const color = engineColor(engine);
         const label = ENGINE_LABELS[engine] || engine;
-        html += '<rect x="' + targetX + '" y="' + (targetY - nodeHeight/2) + '" width="' + nodeWidth + '" height="' + nodeHeight + '" fill="' + color + '" stroke="' + color + '" rx="2" opacity="0.8" />';
-        html += '<text x="' + (targetX - 10) + '" y="' + targetY + '" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">' + label + ' (' + Number(count).toFixed(1) + '%)</text>';
+        html += '<rect x="' + targetX + '" y="' + (targetY - nodeHeight/2) + '" width="' + nodeWidth + '" height="' + nodeHeight + '" fill="' + escapeHtml(color) + '" stroke="' + escapeHtml(color) + '" rx="2" opacity="0.8" />';
+        html += '<text x="' + (targetX - 10) + '" y="' + targetY + '" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">' + escapeHtml(label) + ' (' + Number(count).toFixed(1) + '%)</text>';
       });
       html += '</svg></div>';
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
@@ -367,7 +369,7 @@
       if (!queryIds || queryIds.length === 0) return '';
       let out = '<div style="margin-top: 8px;"><div style="font-size: 11px; color: var(--color-text-secondary); font-weight: 600; margin-bottom: 4px;">SQL IDs:</div><div>';
       queryIds.forEach(function(qid) {
-        out += '<span class="link" onclick="showQueryJourney(\'' + escapeHtml(qid) + '\')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">' + escapeHtml(qid.substring(0, 12)) + '...</span>';
+        out += '<span class="link" onclick="showQueryJourney(' + jsArg(qid) + ')" style="font-family: monospace; font-size: 11px; margin-right: 8px; display: inline-block; padding: 2px 6px; background: var(--color-bg-layout); border-radius: 4px;">' + escapeHtml(qid.substring(0, 12)) + '...</span>';
       });
       return out + '</div></div>';
     }
@@ -376,7 +378,7 @@
       let out = '<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 20px;">';
       engines.forEach(function(engine, idx) {
         const activeStyle = idx === 0 ? 'color: var(--color-blue); border-bottom-color: var(--color-blue);' : 'color: var(--color-text-secondary); border-bottom-color: transparent;';
-        out += '<button class="' + btnClass + (idx === 0 ? ' active' : '') + '" onclick="' + switchFn + '(&quot;' + engine + '&quot;)" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; ' + activeStyle + ' margin-bottom: -2px;">' + (ENGINE_LABELS[engine] || engine) + ' (' + byEngine[engine].length + ')</button>';
+        out += '<button class="' + btnClass + (idx === 0 ? ' active' : '') + '" onclick="' + switchFn + '(' + jsArg(engine) + ')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; ' + activeStyle + ' margin-bottom: -2px;">' + escapeHtml(ENGINE_LABELS[engine] || engine) + ' (' + byEngine[engine].length + ')</button>';
       });
       return out + '</div>';
     }
@@ -388,7 +390,7 @@
       if (engines.length === 0) { container.innerHTML = '<p>No trade-offs available.</p>'; return; }
       let html = engineTabBar(engines, byEngine, 'tradeoff-tab-btn', 'switchTradeoffTab');
       engines.forEach(function(engine, idx) {
-        html += '<div id="tradeoff-tab-' + engine + '" class="tradeoff-tab-content" style="display: ' + (idx === 0 ? 'block' : 'none') + ';">';
+        html += '<div id="tradeoff-tab-' + escapeHtml(engine) + '" class="tradeoff-tab-content" style="display: ' + (idx === 0 ? 'block' : 'none') + ';">';
         byEngine[engine].forEach(function(to) {
           html += '<div class="item-card">';
           html += '<div style="font-size: 13px; font-weight: 700; color: var(--color-text);">' + escapeHtml(to.description) + '</div>';
@@ -409,7 +411,7 @@
       if (engines.length === 0) { container.innerHTML = '<p>No engineering notes were raised.</p>'; return; }
       let html = engineTabBar(engines, byEngine, 'pe-tab-btn', 'switchPeNoteTab');
       engines.forEach(function(engine, idx) {
-        html += '<div id="pe-tab-' + engine + '" class="pe-tab-content" style="display: ' + (idx === 0 ? 'block' : 'none') + ';">';
+        html += '<div id="pe-tab-' + escapeHtml(engine) + '" class="pe-tab-content" style="display: ' + (idx === 0 ? 'block' : 'none') + ';">';
         byEngine[engine].forEach(function(note, noteIdx) {
           html += '<div class="item-card">';
           html += '<div style="display: flex; align-items: flex-start; gap: 12px;">';
@@ -483,7 +485,7 @@
         fullPattern.query_ids.forEach(function(qid) {
           const hasJourney = QUERY_JOURNEY_LOOKUP[qid];
           const cursorStyle = hasJourney ? 'cursor: pointer;' : 'opacity: 0.6;';
-          const onclickAttr = hasJourney ? ' onclick="showQueryJourney(\'' + escapeHtml(qid) + '\')"' : '';
+          const onclickAttr = hasJourney ? ' onclick="showQueryJourney(' + jsArg(qid) + ')"' : '';
           const titleAttr = hasJourney ? 'Click to view query journey' : 'Query journey not available';
           tabsHtml += '<span class="badge badge-blue" style="' + cursorStyle + '" title="' + titleAttr + '"' + onclickAttr + '>' + escapeHtml(qid.slice(0, 8)) + '...</span>';
         });
@@ -550,8 +552,8 @@
       let tabsHtml = '<div class="tab-bar">';
       Object.keys(byEngine).forEach(function(engine, idx) {
         const activeClass = idx === 0 ? ' active' : '';
-        tabsHtml += '<button class="tab-button' + activeClass + '" onclick="switchSourceTableTab(\'' + engine + '\')">';
-        tabsHtml += (ENGINE_LABELS[engine] || engine) + ' (' + byEngine[engine].length + ')';
+        tabsHtml += '<button class="tab-button' + activeClass + '" onclick="switchSourceTableTab(' + jsArg(engine) + ')">';
+        tabsHtml += escapeHtml(ENGINE_LABELS[engine] || engine) + ' (' + byEngine[engine].length + ')';
         tabsHtml += '</button>';
       });
       tabsHtml += '</div>';
@@ -566,7 +568,7 @@
         const badgeClass = ENGINE_BADGE_CLASSES[engine] || 'badge-grey';
         const displayStyle = idx === 0 ? 'block' : 'none';
         const activeClass = idx === 0 ? ' active' : '';
-        tabsHtml += '<div id="source-table-tab-' + engine + '" class="tab-content' + activeClass + '" style="display: ' + displayStyle + ';">';
+        tabsHtml += '<div id="source-table-tab-' + escapeHtml(engine) + '" class="tab-content' + activeClass + '" style="display: ' + displayStyle + ';">';
         tabsHtml += '<div style="margin-bottom: 16px;"><div class="key-value-grid">';
         tabsHtml += '<div class="key-value-item"><div class="key-value-label">Source Table</div><div class="key-value-value">' + escapeHtml(tableName) + '</div></div>';
         tabsHtml += '<div class="key-value-item"><div class="key-value-label">Target Engine</div><div class="key-value-value">' + engineBadge(engine, ENGINE_LABELS[engine] || engine) + '</div></div>';
@@ -583,7 +585,7 @@
           tabsHtml += '<th style="text-align: left; padding: 4px 8px;">Description</th>';
           tabsHtml += '</tr></thead><tbody>';
           destPatterns.forEach(function(p) {
-            tabsHtml += '<tr onclick="closeSourceTableModal(); showPatternDetails(\'' + escapeHtml(p.id) + '\');" style="cursor: pointer;">';
+            tabsHtml += '<tr onclick="closeSourceTableModal(); showPatternDetails(' + jsArg(p.id) + ');" style="cursor: pointer;">';
             tabsHtml += '<td style="padding: 4px 8px;"><span class="link">' + escapeHtml(p.id.slice(0, 12)) + '</span></td>';
             tabsHtml += '<td style="padding: 4px 8px;">' + escapeHtml(p.operation) + '</td>';
             tabsHtml += '<td style="padding: 4px 8px;">' + escapeHtml(p.description) + '</td>';
