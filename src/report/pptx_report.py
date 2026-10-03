@@ -1,9 +1,10 @@
-"""Executive Summary Report — the AWS Transform PPTX deliverable.
+"""Executive Summary Report — the Database Modernizer Assessment PPTX deliverable.
 
 Renders ``summary-executive-report.pptx`` from the synthesis report plus the
-report export data, using ``assets/template.pptx`` (the AWS Transform deck: its
-own theme, aurora layout backgrounds, AWS logo and Transform hexagon). Published
-alongside the Decision Report HTML by
+report export data, using ``assets/template.pptx`` (a neutral dark deck: its own
+theme, aurora layout backgrounds, the AWS logo, and on every slide the footer
+"© <year> Amazon Web Services, Inc. or its affiliates. For informational
+purposes only."). Published alongside the Decision Report HTML by
 ``src.report.deliverables.render_deliverables``, from the same inputs, so the two
 never disagree.
 
@@ -17,8 +18,10 @@ Three rules this module exists to honour:
 3. **Deterministic content.** Every string is either a fixed constant or derived
    from the artifacts by rule in ``derive()``. No LLM narrative, no ``now()``, and
    every iteration order is explicitly sorted, so the same job renders the same
-   deck on every agent execution. The one clock-derived value a deliverable
-   normally carries — the date — is read from the report's own ``timestamp``.
+   deck on every agent execution. The clock-derived values a deliverable
+   normally carries — the generation date on the title slide and the footer's
+   copyright year — are read from the report's own ``timestamp``. Only a report
+   without one falls back to the current year for the footer.
 
 The public entry point is ``render_executive_summary_pptx(report, export_data)``,
 which returns bytes; nothing here touches S3 or the platform.
@@ -26,6 +29,7 @@ which returns bytes; nothing here touches S3 or the platform.
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import logging
 import re
@@ -117,20 +121,6 @@ SIGNAL_LABEL = {
     "text_search": "Full-text search (LIKE, MATCH, tsvector)",
     "time_series": "Time-series / event log",
 }
-MONTHS = (
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-)
 # A migration target the assessment is at least this confident in is sequenced before
 # the ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
@@ -153,10 +143,11 @@ _DROP_PLACEHOLDER_TYPES = (16, 15, 13)  # DATE, FOOTER, SLIDE_NUMBER
 def open_deck(keep: int = 1) -> PresentationPart:
     """Template with all sample slides after the first ``keep`` removed.
 
-    Slide 1 of the template *is* the intro title slide (AWS Transform wordmark,
-    "Migration Assessment Business Case", date, and the hexagon logo that comes
-    from the layout), so it is retained verbatim rather than rebuilt — only its
-    date is re-derived. New slides append after it, which is the order we want.
+    Slide 1 of the template *is* the intro title slide (the deck name, a
+    subtitle, a small-print line, and the AWS logo that comes from the layout),
+    so it is retained rather than rebuilt — only its subtitle and small print
+    are filled in by ``retitle_intro``. New slides append after it, which is the
+    order we want.
     """
     prs = Presentation(str(TEMPLATE))
     lst = prs.slides._sldIdLst
@@ -169,25 +160,67 @@ def open_deck(keep: int = 1) -> PresentationPart:
     return prs
 
 
-INTRO_SUBTITLE = "Database Modernization Assessment"
+# The deliverable's name: the title slide's title (authored in the template),
+# the deck/PDF title and the author/creator metadata.
+DECK_NAME = "Database Modernizer Assessment"
+
+# Every slide's footer, drawn by the slide layouts. The template carries it with
+# a sample year; ``set_footer_year`` stamps the generation year at render time.
+FOOTER = "© {year} Amazon Web Services, Inc. or its affiliates. For informational purposes only."
+_FOOTER_RE = re.compile(r"^©\s*\d{4}\b.*Amazon Web Services")
+
+# Template sample text the intro slide's runs are found by.
+_INTRO_SUBTITLE_SAMPLE = "Source database"
+_INTRO_SMALL_PRINT_SAMPLE = "Job · Generated"
+_INTRO_SUBTITLE_PT = 32.0
 
 
-def retitle_intro(slide, date_text: str) -> None:
-    """Retitle the retained intro slide in place.
+def retitle_intro(slide, f: dict[str, Any]) -> None:
+    """Fill in the retained intro slide in place.
 
-    Two runs are rewritten: the template's sample subtitle and its hardcoded
-    month. Everything else on the slide — the AWS logo, the AWS Transform
-    wordmark and hexagon, the copyright line — is left exactly as authored.
+    Two runs are rewritten: the subtitle (the source database) and the small
+    print (job ID and generation date, so a printed PDF can be traced back to
+    its run). Everything else on the slide — the title, the AWS logo, the
+    footer — is left as authored.
     """
+    small = f"Job {f['job_id'] or 'unknown'}"
+    if f["generated"]:
+        small += f"  ·  Generated {f['generated']}"
     for shape in slide.shapes:
         if not shape.has_text_frame:
             continue
         for p in shape.text_frame.paragraphs:
             for r in p.runs:
-                if re.fullmatch(r"[A-Z][a-z]+ \d{4}", r.text.strip()):
-                    r.text = date_text
-                elif r.text.strip() == "Migration Assessment Business Case":
-                    r.text = INTRO_SUBTITLE
+                if r.text == _INTRO_SUBTITLE_SAMPLE:
+                    r.text = f"Source database {f['database']}" if f["database"] else ""
+                    # One line at the template's 32pt, shrunk for long names
+                    # (the frame does not autofit).
+                    fit = (shape.width / 914400) * 72 / max(_text_em(r.text), 1.0)
+                    if fit < _INTRO_SUBTITLE_PT:
+                        r.font.size = Pt(int(fit * 2) / 2)
+                elif r.text == _INTRO_SMALL_PRINT_SAMPLE:
+                    r.text = small
+
+
+def set_footer_year(prs: PresentationPart, year: int) -> None:
+    """Stamp ``year`` into the copyright footer on the master and every layout.
+
+    The footer is static template text, so without this every deck would carry
+    the year the template was last edited. A footer paragraph is collapsed into
+    its first run (keeping that run's formatting).
+    """
+    master = prs.slide_masters[0]
+    for part in (master, *master.slide_layouts):
+        for shape in part.shapes:
+            if not shape.has_text_frame:
+                continue
+            for p in shape.text_frame.paragraphs:
+                if not p.runs or not _FOOTER_RE.match(p.text):
+                    continue
+                first, *rest = p.runs
+                first.text = FOOTER.format(year=year)
+                for r in rest:
+                    r._r.getparent().remove(r._r)
 
 
 def add_slide(prs: PresentationPart, layout_name: str):
@@ -648,10 +681,13 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     risk = rep.get("risk_assessment") or {}
     assignment = rep.get("assignment_summary") or {}
 
-    # ---- intro date: the report's own timestamp, never the wall clock --------
+    # ---- generation date: the report's own timestamp, not the wall clock -----
+    # Only a report without a timestamp falls back to the current year, so the
+    # footer's copyright year is never blank.
     stamp = str(rep.get("timestamp") or "")
-    m = re.match(r"(\d{4})-(\d{2})", stamp)
-    date_text = f"{MONTHS[int(m.group(2)) - 1]} {m.group(1)}" if m else ""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", stamp)
+    generated = m.group(0) if m else ""
+    year = int(m.group(1)) if m else dt.datetime.now(dt.UTC).year
 
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)
@@ -837,7 +873,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     top = q_signals[0] if q_signals else None
     second = q_signals[1] if len(q_signals) > 1 else None
     return {
-        "date_text": date_text,
+        "generated": generated,
+        "year": year,
         "database": rep.get("database_name"),
         "job_id": rep.get("job_id"),
         "timestamp": stamp,
@@ -1439,13 +1476,17 @@ def render_executive_summary_pptx(
     """
     f = derive(report, export_data or {})
     prs = open_deck(keep=1)
-    retitle_intro(prs.slides[0], f["date_text"])
+    retitle_intro(prs.slides[0], f)
+    set_footer_year(prs, f["year"])
     for build in SLIDES:
         build(prs, f)
-    prs.core_properties.title = f"Database Modernization Assessment — {f['database']}"
+    cp = prs.core_properties
+    cp.title = f"{DECK_NAME} — {f['database']}"
+    cp.author = DECK_NAME
+    cp.last_modified_by = DECK_NAME
     # The report's timestamp, not the wall clock: re-rendering the same job must
     # not change the file's metadata either.
-    prs.core_properties.comments = f"AWS Transform — job {f['job_id']} — {f['timestamp']}"
+    cp.comments = f"{DECK_NAME} — job {f['job_id']} — {f['timestamp']}"
     buf = io.BytesIO()
     prs.save(buf)
     data = buf.getvalue()

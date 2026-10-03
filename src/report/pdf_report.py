@@ -14,9 +14,8 @@ path, and stamp non-reproducible PDF dates. reportlab is ~2 MB and, with
 ``invariant``, byte-deterministic.
 
 What is supported is exactly what the deck contains (verified against it, not
-guessed): solid-filled rectangles and rounded rectangles, one gradient-filled
-custom-geometry shape (the AWS Transform mark), pictures, tables, and text
-frames with per-run size/weight/colour/font, paragraph alignment, space-after
+guessed): solid-filled rectangles and rounded rectangles, pictures, tables,
+and text frames with per-run size/weight/colour/font, paragraph alignment, space-after
 and vertical anchoring. Slide backgrounds resolve ``schemeClr`` with
 ``lumMod``/``lumOff``. Anything outside that set is skipped rather than
 approximated, and logged once at debug level.
@@ -396,84 +395,6 @@ def draw_picture(c: Canvas, shape, page_h: float) -> None:
     c.drawImage(img, x, y, w, h, mask="auto")
 
 
-def draw_custgeom(c: Canvas, shape, page_h: float, theme) -> None:
-    """Draw a custom-geometry shape: its path, filled with its gradient.
-
-    One shape in the deck needs this — the AWS Transform mark on the intro
-    slide. Dropping it would leave a visible hole where the brand mark sits.
-    """
-    path_el = shape._element.find(f".//{A}custGeom/{A}pathLst/{A}path")
-    if path_el is None:
-        return
-    pw = float(path_el.get("w") or 0) or 1.0
-    ph = float(path_el.get("h") or 0) or 1.0
-    x0, w = shape.left / EMU_PT, shape.width / EMU_PT
-    h = shape.height / EMU_PT
-    y0 = page_h - shape.top / EMU_PT - h
-
-    def pt(node) -> tuple[float, float]:
-        px = float(node.get("x") or 0) / pw
-        py = float(node.get("y") or 0) / ph
-        return (x0 + px * w, y0 + h - py * h)
-
-    p = c.beginPath()
-    started = False
-    for cmd in path_el:
-        tag = cmd.tag.split("}")[1]
-        pts = cmd.findall(f"{A}pt")
-        if tag == "moveTo" and pts:
-            p.moveTo(*pt(pts[0]))
-            started = True
-        elif tag == "lnTo" and pts and started:
-            p.lineTo(*pt(pts[0]))
-        elif tag == "cubicBezTo" and len(pts) == 3 and started:
-            (c1x, c1y), (c2x, c2y), (ex, ey) = (pt(q) for q in pts)
-            p.curveTo(c1x, c1y, c2x, c2y, ex, ey)
-        elif tag == "close" and started:
-            p.close()
-    if not started:
-        return
-
-    grad = shape._element.find(f".//{A}gradFill")
-    stops: list[tuple[float, tuple[int, int, int]]] = []
-    if grad is not None:
-        for gs in grad.findall(f"{A}gsLst/{A}gs"):
-            rgb = color_from_element(gs, theme)
-            if rgb is not None:
-                stops.append((int(gs.get("pos") or 0) / 100000, rgb))
-    c.saveState()
-    c.clipPath(p, stroke=0, fill=0)
-    if len(stops) >= 2:
-        stops.sort(key=lambda s: s[0])
-        ang = 45.0
-        lin = grad.find(f"{A}lin") if grad is not None else None
-        if lin is not None:
-            ang = (int(lin.get("ang") or 0) / 60000.0) % 360.0
-        # OOXML measures the gradient vector clockwise from +x with y down;
-        # in PDF space y is up, so the vertical component flips.
-        import math
-
-        rad = math.radians(ang)
-        dx, dy = math.cos(rad), -math.sin(rad)
-        cx, cy = x0 + w / 2, y0 + h / 2
-        half = max(abs(dx) * w, abs(dy) * h) / 2 or max(w, h) / 2
-        c.linearGradient(
-            cx - dx * half,
-            cy - dy * half,
-            cx + dx * half,
-            cy + dy * half,
-            [rl(s[1]) for s in stops],
-            [s[0] for s in stops],
-            extend=True,
-        )
-    else:
-        solid = shape_fill(shape, theme)
-        if solid:
-            c.setFillColor(rl(solid))
-            c.rect(x0, y0, w, h, stroke=0, fill=1)
-    c.restoreState()
-
-
 def draw_autoshape(c: Canvas, shape, page_h: float, theme) -> None:
     rgb = shape_fill(shape, theme)
     if rgb is None:
@@ -544,9 +465,6 @@ def draw_shape(c: Canvas, shape, page_h: float, theme, page_no: int) -> None:
         for child in shape.shapes:
             draw_shape(c, child, page_h, theme, page_no)
         return
-    if "FREEFORM" in kind:
-        draw_custgeom(c, shape, page_h, theme)
-        return
     if "AUTO_SHAPE" in kind or "PLACEHOLDER" in kind or "TEXT_BOX" in kind:
         if "TEXT_BOX" not in kind:
             draw_autoshape(c, shape, page_h, theme)
@@ -608,8 +526,8 @@ def pptx_to_pdf(deck: bytes) -> bytes:
     c = Canvas(buf, pagesize=(page_w, page_h), invariant=1, pageCompression=1)
     c.setTitle(prs.core_properties.title or "Executive Summary Report")
     c.setSubject(prs.core_properties.comments or "")
-    c.setAuthor("AWS Transform")
-    c.setCreator("AWS Transform — Database Modernization Assessment")
+    c.setAuthor(pptx_report.DECK_NAME)
+    c.setCreator(pptx_report.DECK_NAME)
 
     for i, slide in enumerate(prs.slides, start=1):
         draw_background(c, slide, page_w, page_h, theme)

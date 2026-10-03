@@ -50,7 +50,7 @@ def test_no_placeholder_text(run: PipelineResult) -> None:
     assert [s for s in FORBIDDEN if s in text] == []
     # The deck prints "Source database {database_name}" on the Assessment
     # Summary slide (src/report/pptx_report.py's slide_summary); the deck's
-    # title/creator metadata ("Database Modernization Assessment") is NOT
+    # title/creator metadata ("Database Modernizer Assessment") is NOT
     # part of any page's drawn content, so pypdf's extract_text() never sees
     # it -- verified against both samples' rendered PDFs, where run.db
     # (exactly, not just case-insensitively) is present in the extracted text.
