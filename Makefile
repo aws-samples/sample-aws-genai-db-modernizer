@@ -190,12 +190,12 @@ local: ## Start local API + UI for development
 	@echo "Starting local services..."
 	@echo "  API:  http://localhost:8000"
 	@echo "  UI:   http://localhost:3000"
-	@STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts \
+	@ARTIFACT_DIR=./artifacts \
 		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
 	@cd src/ui && npm start
 
 local-api: ## Start only the local API server
-	STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts \
+	ARTIFACT_DIR=./artifacts \
 		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 
 test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Needs agent-builder-sdk-aws-transform (see header above) for full green.

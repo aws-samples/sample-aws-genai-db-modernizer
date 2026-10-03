@@ -24,7 +24,7 @@ Before anything else, ask the user:
 
 ```bash
 # Start API server
-STORAGE_TYPE=local ARTIFACT_ROOT=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
+ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
 
 # Build and serve frontend. Installs deps only when serve is missing.
 (cd src/ui && { [ -x node_modules/.bin/serve ] || npm ci; } && REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build && npm run serve) &

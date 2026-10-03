@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import Page
 
 from tests.e2e.pipeline import PipelineResult
 
-FORBIDDEN = ("undefined", "NaN", "null", "[object Object]", "{{")
+# "undefined"/"NaN"/"null" are checked as whole WORDS (\b-bounded): matched as
+# plain substrings they false-positive on prose like "the null hypothesis" or
+# identifiers containing them. "[object Object]" and "{{" can't appear as
+# legitimate words in rendered report text at all, so they stay plain
+# substring checks.
+FORBIDDEN_WORDS = ("undefined", "NaN", "null")
+FORBIDDEN_SUBSTRINGS = ("[object Object]", "{{")
+
+
+def _leaked_forbidden_text(text: str) -> list[str]:
+    leaked = [w for w in FORBIDDEN_WORDS if re.search(rf"\b{re.escape(w)}\b", text)]
+    leaked += [s for s in FORBIDDEN_SUBSTRINGS if s in text]
+    return leaked
+
+
 REPORTS = {
     "analysis": (
         "analysis-report",
@@ -65,7 +81,7 @@ def test_report_renders_cleanly_offline(page: Page, run: PipelineResult, kind: s
     text = page.inner_text("body")
     for h in headings:
         assert h in text, f"missing {h!r} in {kind} report"
-    leaked = [s for s in FORBIDDEN if s in text]
+    leaked = _leaked_forbidden_text(text)
     assert leaked == [], f"{kind} report shows {leaked}"
 
 

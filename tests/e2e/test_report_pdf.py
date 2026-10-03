@@ -48,7 +48,13 @@ def test_every_slide_title_present_in_order(run: PipelineResult) -> None:
 def test_no_placeholder_text(run: PipelineResult) -> None:
     text = "\n".join(p.extract_text() or "" for p in _reader(run).pages)
     assert [s for s in FORBIDDEN if s in text] == []
-    assert run.db.lower() in text.lower() or "Database Modernization Assessment" in text
+    # The deck prints "Source database {database_name}" on the Assessment
+    # Summary slide (src/report/pptx_report.py's slide_summary); the deck's
+    # title/creator metadata ("Database Modernization Assessment") is NOT
+    # part of any page's drawn content, so pypdf's extract_text() never sees
+    # it -- verified against both samples' rendered PDFs, where run.db
+    # (exactly, not just case-insensitively) is present in the extracted text.
+    assert run.db in text, f"source database name {run.db!r} missing from report text"
 
 
 def _resolve(obj):
@@ -88,10 +94,12 @@ def _page_content_bytes(page) -> bytes:
 
 def test_fonts_are_embedded(run: PipelineResult) -> None:
     missing = []
+    checked_pages = 0
     for n, page in enumerate(_reader(run).pages, start=1):
         shown = _fonts_shown(_page_content_bytes(page))
         if not shown:
             continue  # e.g. an image-only page draws no text, so nothing to check
+        checked_pages += 1
 
         fonts = _resolve(_resolve(page.get("/Resources") or {}).get("/Font") or {})
         for key, ref in fonts.items():
@@ -109,4 +117,8 @@ def test_fonts_are_embedded(run: PipelineResult) -> None:
             desc = _resolve(desc) if desc else None
             if not desc or not any(k in desc for k in ("/FontFile", "/FontFile2", "/FontFile3")):
                 missing.append(f"p{n}:{base}")
+    # Without this, a page-shown-fonts regression (e.g. every page becoming
+    # "image-only") would make `missing` trivially empty and this test
+    # vacuously pass without having checked anything.
+    assert checked_pages > 0, "no page had any drawn text -- nothing was actually checked"
     assert missing == []
