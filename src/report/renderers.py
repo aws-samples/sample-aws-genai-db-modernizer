@@ -711,6 +711,35 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
+def _migration_note_md(mn: dict[str, Any]) -> str:
+    """One readable Markdown bullet for a schema-design ``migration_notes`` entry.
+
+    ``migration_notes`` is a list of dicts (``object_name``, ``object_type``,
+    ``source_table`` optional, ``application_logic_required``) -- the same
+    four field names on every engine contract, so there is no shape to
+    reconcile here the way ``unsupported_patterns`` needs. The report used to
+    interpolate the whole list with ``escaping.md_text(notes)``, which prints
+    the Python list/dict repr verbatim (e.g.
+    ``[{'object_name': 'x', 'object_type': 'trigger', ...}]``); this renders
+    one bullet per note instead, tolerant of any of the fields being absent.
+    """
+    object_type = str(mn.get("object_type") or "").strip()
+    object_name = str(mn.get("object_name") or "").strip()
+    logic = str(mn.get("application_logic_required") or "").strip()
+
+    head_bits = []
+    if object_type:
+        head_bits.append(f"**{escaping.md_text(object_type)}**")
+    if object_name:
+        head_bits.append(escaping.md_text(object_name))
+    head = " ".join(head_bits)
+    body = escaping.md_text(logic)
+
+    if head and body:
+        return f"{head} \u2014 {body}"
+    return head or body or "(no detail provided)"
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -803,14 +832,14 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     for u in unsupported
                 ]
                 out.append("")
-            notes = dz.get("migration_notes")
+            notes = dz.get("migration_notes") or []
             if notes:
+                out += ["**Migration notes:**", ""]
                 out += [
-                    "**Migration notes:**",
-                    "",
-                    escaping.md_text(notes),
-                    "",
+                    f"- {_migration_note_md(mn) if isinstance(mn, dict) else escaping.md_text(mn)}"
+                    for mn in notes
                 ]
+                out.append("")
             er = _mermaid_er(eng, dz)
             if er:
                 out += [er, ""]

@@ -207,6 +207,39 @@ class TestEngineeringReport:
         assert line.count("*") == 4
         assert "**aggregation**" in line
 
+    def test_migration_notes_render_as_readable_markdown(self, report: dict) -> None:
+        """``migration_notes`` is a list of dicts; it used to be interpolated with
+        ``escaping.md_text(notes)``, printing the Python list/dict repr directly
+        (e.g. ``[{'object_name': 'category_permission_trigger', ...}]``)."""
+        m = renderers.render_engineering_report_md(report)
+        assert "Migration notes" in m
+        start = m.index("Migration notes")
+        rest = m[start:]
+        end = min((i for i in (rest.find("\n\n**"), rest.find("\n\n##")) if i != -1), default=-1)
+        section = rest if end == -1 else rest[: end + 1]
+        for marker in ("{'", '{"', "object_name", "application_logic_required"):
+            assert marker not in section, f"found raw repr marker {marker!r} in:\n{section}"
+
+    def test_migration_note_md_renders_one_bullet(self) -> None:
+        note = {
+            "object_name": "category_permission_trigger",
+            "object_type": "trigger",
+            "source_table": "discourse.categories",
+            "application_logic_required": "Implement a Change Stream listener.",
+        }
+        line = renderers._migration_note_md(note)
+        assert "{" not in line and "'" not in line
+        assert "trigger" in line
+        assert "category_permission_trigger" in line
+        assert "Implement a Change Stream listener" in line
+
+    def test_migration_note_md_tolerant_of_missing_keys(self) -> None:
+        line = renderers._migration_note_md({})
+        assert "{" not in line and "'" not in line
+        line = renderers._migration_note_md({"object_name": "x"})
+        assert "{" not in line and "'" not in line
+        assert "x" in line
+
 
 # =============================================================================
 # Empty-risk filter helpers
