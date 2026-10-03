@@ -71,6 +71,20 @@ const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
   };
 };
 
+// Helper: a risk whose description has no real text after its "[engine] " prefix
+// (or the legacy "[engine] unknown:" pattern -- see #210) must not be counted or
+// rendered. Mirrors src/report/renderers.py's filtered_risks/_risk_has_content so
+// the UI's risk count can't diverge from the decision report, engineering report
+// and executive summary deck (#201 found exactly this kind of divergence: 9 vs 12).
+const riskHasContent = (description) => {
+  if (!description) return false;
+  const afterEngine = String(description).replace(/^\[[^\]]*\]\s*/, '');
+  const body = afterEngine.toLowerCase().startsWith('unknown:')
+    ? afterEngine.slice('unknown:'.length).trim()
+    : afterEngine.trim();
+  return body.length > 0;
+};
+
 // Inline trade-offs shown inside access pattern groups
 const InlineTradeoffs = memo(({ tradeoffs }) => {
   if (!tradeoffs || tradeoffs.length === 0) return null;
@@ -373,7 +387,7 @@ const ReportResultsPage = memo(() => {
       const ranking = synthesis?.ranking || [];
       const tableMappings = synthesis?.table_mappings || [];
       const riskAssessment = synthesis?.risk_assessment || {};
-      const risks = riskAssessment.risks || [];
+      const risks = (riskAssessment.risks || []).filter(risk => riskHasContent(risk.description));
       const tradeoffs = synthesis?.trade_offs || [];
       const tcoAnalysis = synthesis?.tco_analysis || {};
       const schemaDesigns = synthesis?.schema_designs || {};
@@ -829,7 +843,7 @@ const ReportResultsPage = memo(() => {
   const processRisks = (apiRisks) => {
     if (!apiRisks || apiRisks.length === 0) return [];
 
-    return apiRisks.map(risk => {
+    return apiRisks.filter(risk => riskHasContent(risk.description)).map(risk => {
       // Extract engine from description (format: [engine] type: description)
       const engineMatch = risk.description?.match(/^\[(\w+)\]/);
       const engine = engineMatch ? engineMatch[1] : null;
