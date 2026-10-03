@@ -1,8 +1,6 @@
 {
  "job_id": "cf163e54",
  "version": 2,
- "status": "auto_generated",
- "_fixture_provenance": "Deterministic-pipeline assignment v2 for the same wordpress collection (tests/e2e pipeline, job det1). Its v1 matches run 3's before_distribution exactly; its reality-check moves differ from the headless run's, which did not keep assignment.json. Query ids aliased with the same qNNN map as report.json.",
  "query_assignments": [
   {
    "query_id": "q018",
@@ -22,7 +20,7 @@
   },
   {
    "query_id": "q080",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_postmeta"
@@ -181,7 +179,7 @@
   },
   {
    "query_id": "q083",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_terms",
     "wordpress.wp_termmeta",
@@ -419,7 +417,7 @@
   },
   {
    "query_id": "q082",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_postmeta"
@@ -444,7 +442,7 @@
   },
   {
    "query_id": "q093",
-   "assigned_engine": "opensearch",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_usermeta"
    ],
@@ -460,7 +458,7 @@
   },
   {
    "query_id": "q084",
-   "assigned_engine": "opensearch",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_term_relationships",
@@ -503,7 +501,7 @@
   },
   {
    "query_id": "q078",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_term_relationships",
@@ -596,7 +594,7 @@
   },
   {
    "query_id": "q079",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_term_relationships",
@@ -666,7 +664,7 @@
   },
   {
    "query_id": "q081",
-   "assigned_engine": "dynamodb",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_posts",
     "wordpress.wp_postmeta",
@@ -758,7 +756,7 @@
   },
   {
    "query_id": "q100",
-   "assigned_engine": "opensearch",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_users",
     "wordpress.wp_usermeta"
@@ -835,7 +833,7 @@
   },
   {
    "query_id": "q104",
-   "assigned_engine": "opensearch",
+   "assigned_engine": "aurora_mysql",
    "source_tables": [
     "wordpress.wp_users",
     "wordpress.wp_usermeta"

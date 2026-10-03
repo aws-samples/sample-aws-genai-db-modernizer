@@ -451,12 +451,18 @@ def _section_names(sections: list[tuple[str | None, list[str]]]) -> list[str]:
 
 
 def _render_section(
-    heading: str | None, items: list[str], allowance: int | None, name: str, tag: str
+    heading: str | None,
+    items: list[str],
+    allowance: int | None,
+    name: str,
+    tag: str,
+    index: int,
 ) -> tuple[list[str], dict[str, Any] | None]:
-    """One section with at most ``allowance`` characters of item lines
-    (``None`` = all). A line that doesn't fit whole is cut at a character
-    boundary with a marker, a code fence left open by the cut is closed, and
-    a cut section ends in a ``[cut-<nonce>: section "X": ...]`` marker."""
+    """Section number ``index`` (1-based, document order) with at most
+    ``allowance`` characters of item lines (``None`` = all). A line that
+    doesn't fit whole is cut at a character boundary with a marker, a code
+    fence left open by the cut is closed, and a cut section ends in a
+    ``[cut-<nonce>: section #N ...]`` marker."""
     lines = [heading] if heading is not None else []
     if allowance is None or sum(len(i) + 1 for i in items) <= allowance:
         return lines + items, None
@@ -478,8 +484,8 @@ def _render_section(
     detail = f"{kept} of {len(items)} lines shown in full"
     if partial:
         detail += f", line {kept + 1} cut at {partial[0]} of {partial[1]} chars"
-    lines.append(f'[{tag}: section "{name}": {detail}]')
-    cut = {"section": name, "shown": kept, "total": len(items)}
+    lines.append(f"[{tag}: section #{index}: {detail}]")
+    cut = {"section": name, "index": index, "shown": kept, "total": len(items)}
     if partial:
         cut["partial_line_chars"] = list(partial)
     return lines, cut
@@ -512,9 +518,11 @@ def truncate_sections(
     ) -> tuple[str, list[dict[str, Any]]]:
         lines: list[str] = []
         cuts: list[dict[str, Any]] = []
-        for (heading, items), name, prot in zip(sections, names, is_protected, strict=True):
+        for index, ((heading, items), name, prot) in enumerate(
+            zip(sections, names, is_protected, strict=True), start=1
+        ):
             allowance = protected_allowance if prot else free_allowance
-            section_lines, cut = _render_section(heading, items, allowance, name, tag)
+            section_lines, cut = _render_section(heading, items, allowance, name, tag, index)
             lines.extend(section_lines)
             if cut:
                 cuts.append(cut)
@@ -790,20 +798,46 @@ def _display_path(path: Path | None, relative_to: Path | None) -> str | None:
     return Path(path).name
 
 
+# Longest section heading quoted in the trusted cut list.
+CUT_LIST_NAME_CHARS = 60
+
+
+def _quoted_name(name: str) -> str:
+    """A section heading for the trusted cut list: it comes from the
+    deliverable, so it's capped, JSON-quoted (no unescaped quote or newline
+    can end it) and labelled untrusted."""
+    if len(name) > CUT_LIST_NAME_CHARS:
+        name = name[:CUT_LIST_NAME_CHARS] + "..."
+    return f"heading quoted from the deliverable (untrusted): {json.dumps(name)}"
+
+
 def _cut_list(inputs: dict[str, dict[str, Any]]) -> str:
-    """The trusted record of every cut, written outside the blocks."""
+    """The trusted record of every cut, written outside the blocks. Cuts are
+    identified by input and section number (``#N`` in the in-block marker)
+    with harness-computed counts; deliverable headings appear only quoted
+    and labelled untrusted. Facts paths are the harness's own field names."""
     lines = []
     for key, heading in PROMPT_INPUTS:
         label = heading.split(" -- ", 1)[0].removeprefix("## ")
         entry = inputs[key]
         for cut in entry.get("sections_truncated") or []:
-            detail = f'{label}: "{cut["section"]}": {cut["shown"]} of {cut["total"]} shown'
-            if cut.get("partial_line_chars"):
-                shown, total = cut["partial_line_chars"]
-                detail += f", next line cut at {shown} of {total} chars"
+            if "index" in cut:
+                detail = (
+                    f"{label} section #{cut['index']}: {cut['shown']} of {cut['total']} "
+                    "lines shown in full"
+                )
+                if cut.get("partial_line_chars"):
+                    shown, total = cut["partial_line_chars"]
+                    detail += f", next line cut at {shown} of {total} chars"
+                detail += f" ({_quoted_name(cut['section'])})"
+            else:
+                detail = (
+                    f"{label} field {json.dumps(cut['section'])}: {cut['shown']} of "
+                    f"{cut['total']} items shown"
+                )
             lines.append("- " + detail)
         for key_dropped in entry.get("keys_dropped") or []:
-            lines.append(f"- {label}: {key_dropped} dropped")
+            lines.append(f"- {label} field {json.dumps(key_dropped)}: dropped")
         if entry.get("hard_cut"):
             lines.append(f"- {label}: {entry['hard_cut']['lines_dropped']} trailing lines dropped")
     return "\n".join(lines) if lines else "None: every input above is complete."
