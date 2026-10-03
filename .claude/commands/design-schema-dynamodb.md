@@ -57,5 +57,7 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 
    This produces the final merged output at the `output_path` the script prints, `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_output.json`.
 
+   Do not run `--finalize` for DynamoDB; `--merge` is the final step. (DynamoDB never writes an `llm_responses/` file, so `--finalize --engine dynamodb` only reports whether the merged output exists.)
+
 6. **Update state**
    Set `phase_status.schema_design_dynamodb` = "complete"

@@ -4,10 +4,14 @@
 Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode external
-    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --finalize
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine documentdb --finalize
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode bedrock
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --split
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
+
+DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
+its final step. ``--finalize --engine dynamodb`` only reports whether the merged
+output exists (it never reads an LLM response).
 
 The assignment version defaults to the effective one (ADR-028): v2 when Reality
 Check consolidated, else v1. Every status line reports it as
@@ -190,8 +194,33 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
     )
 
 
+_DYNAMODB_FINALIZE_MESSAGE = (
+    "DynamoDB schema design finalizes with --merge; run --merge after the group drafts"
+)
+
+
 def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
-    """Finalize schema design after external LLM has provided a response."""
+    """Finalize schema design after external LLM has provided a response.
+
+    DynamoDB never writes ``llm_responses/schema_design_dynamodb.json``: it is
+    designed split -> per-group drafts -> ``--merge``, and ``--merge`` writes the
+    final output. So for DynamoDB this only reports whether that merged output
+    exists for the effective version, instead of failing on the missing LLM
+    response (issue #197).
+    """
+    if engine == "dynamodb":
+        output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+        if not store.exists(output_key):
+            _error(_DYNAMODB_FINALIZE_MESSAGE)
+        _output(
+            {
+                "status": "complete",
+                "assignment_version": assignment_version,
+                "output_path": output_key,
+            }
+        )
+        return
+
     from src.agents.schema_design.handler import finalize_schema_design
 
     result = finalize_schema_design(
