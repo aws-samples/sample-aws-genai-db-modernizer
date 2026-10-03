@@ -37,14 +37,14 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
 2. **Read the groups**
 
-   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables`, `input_file` and `draft`. Use it instead of reading the manifest.
+   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables`, `input_file` and `draft` (paths under the artifact root, e.g. `artifacts/{database_name}/…`). Use it instead of reading the manifest.
 
 3. **Write one draft per group**
 
-   Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
+   Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{INPUT_FILE}` and `{DRAFT}` = that group's `input_file` and `draft`, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
    ```text
-   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Other groups' primary_tables: {OTHER_GROUPS}. Write only schema_draft_group_{G}.json. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
    ```
 
    If you are yourself a subagent, do the Group draft task for each group yourself, one after another.
@@ -57,7 +57,11 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
    ```
 
-   `"status": "drafts_pending"` lists the groups without a draft in `drafts_missing`: redo the Group draft task for each of them (one fresh subagent each, or yourself if you are a subagent). Merge only when it prints `merge_pending`.
+   - `"status": "drafts_pending"`: `drafts_missing` lists the groups without a draft and `drafts_invalid` those whose draft is not a readable JSON object. Redo the Group draft task for each of them (one fresh subagent each, or yourself if you are a subagent), **at most once** per run. If `--status` still prints `drafts_pending` after that redo, stop: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with the missing and invalid groups as your result.
+   - `"status": "merge_pending"`: go to Step 5.
+   - `"status": "merged"`: the last `--merge` ran on exactly these drafts and passed; go to Step 6.
+   - `"status": "merge_failed"`: the last `--merge` ran on these drafts and failed (`errors`). Treat it as a `--merge` attempt that printed `validation_failed` (Step 5).
+   - Any other output or a non-zero exit: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with that output.
 
 5. **Merge group drafts**
 
@@ -69,7 +73,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
    The merge gives each source table one DynamoDB home. Tables from different groups that design the same source table with compatible keys (same partition/sort key names and types, the same shape, at least one identical entity, no conflicting entity, SK prefix or GSI) are merged into the first one: the absorbing group's access patterns, `hot_partition_analysis` and trade-offs are re-pointed to it, its hot-partition load is re-aggregated per table, GSI and operation, and a trade-off records the merge. When a source table still has its own entity in tables from two or more groups and no trade-off names all of them, the merge adds a review trade-off (`DynamoDB merge review: … modelled independently by design groups …`) and reports it in `warnings`. Overlaps inside one group, and denormalized copies, are not flagged.
 
-   If it prints `"status": "drafts_pending"`, it refused and wrote nothing: the groups in `missing_groups` have no draft. Redo the Group draft task for each of them as in Step 4, then re-run `--merge`. This does not count as a `--merge` attempt.
+   If it prints `"status": "drafts_pending"`, it refused and wrote nothing: the groups in `missing_groups` have no draft and those in `invalid_groups` an unreadable one. Handle it as in Step 4 (the same single redo), then re-run `--merge`. This does not count as a `--merge` attempt. Any other output than `complete`, `validation_failed` or `drafts_pending`, or a non-zero exit, fails the phase as in Step 4.
 
    If it prints `"status": "validation_failed"`, do the Merge fix task below with its `errors` and `warnings`, then re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are the Group draft task). The merged output keeps `validation_passed: false` until a re-run passes; merge failures clear only by re-running `--merge`, not by `--finalize`.
 

@@ -321,3 +321,36 @@ def test_merge_drafts_pending_is_handled_as_missing_groups_not_validation() -> N
     ):
         assert "`missing_groups`" in text
         assert "does not count as a `--merge` attempt" in text
+
+
+def test_merge_failed_and_invalid_drafts_are_handled_in_both_commands() -> None:
+    # PR #247 review: --status reports `merge_failed` for a current but failed
+    # merge, and unreadable drafts as `drafts_invalid` / `invalid_groups`.
+    for text in (
+        _phase_6(_modernize_text()),
+        (COMMANDS_DIR / "design-schema-dynamodb.md").read_text(),
+    ):
+        assert '`"status": "merge_failed"`' in text
+        assert "Treat it as a `--merge` attempt that printed `validation_failed`" in text
+        assert "`drafts_invalid`" in text and "`invalid_groups`" in text
+        assert "Any other output" in text and "non-zero exit" in text
+
+
+def test_modernize_dynamodb_phase_gets_one_retry_in_total() -> None:
+    error_handling = _modernize_text().split("## Error Handling", 1)[1]
+    assert "The phase gets one retry in total." in error_handling
+
+
+def test_standalone_dynamodb_redoes_bad_drafts_at_most_once() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    step_4 = text.split("4. **Wait for every group**", 1)[1].split("5. **Merge", 1)[0]
+    assert "**at most once**" in step_4
+    assert 'set `phase_status.schema_design_dynamodb` = "failed" and return `failed`' in step_4
+
+
+def test_design_schema_never_dispatches_design_schema_dynamodb() -> None:
+    text = (COMMANDS_DIR / "design-schema.md").read_text()
+    assert "one subagent per selected engine other than DynamoDB" in text
+    for match in re.finditer(r"/design-schema-dynamodb", text):
+        before = text[max(0, match.start() - 40) : match.start()]
+        assert "Never dispatch `" in before, before

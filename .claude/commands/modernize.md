@@ -139,10 +139,10 @@ It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: on
   Run /design-schema-<engine> for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
   ```
 
-- Each DynamoDB group `{G}` (`{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables` from the `--split` line):
+- Each DynamoDB group `{G}` (`{INPUT_FILE}` and `{DRAFT}` = that group's `input_file` and `draft` from the `--split` line, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
   ```text
-  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Other groups' primary_tables: {OTHER_GROUPS}. Write only schema_draft_group_{G}.json. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
   ```
 
 Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
@@ -153,7 +153,9 @@ Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that 
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
 ```
 
-- `"status": "drafts_pending"`: the groups in `drafts_missing` did not write a draft. That is a phase failure for `schema_design_dynamodb` with reason `group drafts missing: <groups>` (see Error Handling: the retry is one fresh group subagent, same task text, per missing group). Never run `--merge` while drafts are missing.
+- `"status": "drafts_pending"`: the groups in `drafts_missing` wrote no draft, and those in `drafts_invalid` wrote one that is not a readable JSON object. That is a phase failure for `schema_design_dynamodb` with reason `group drafts missing or invalid: <groups>` (see Error Handling: the retry is one fresh group subagent, same task text, per listed group). Never run `--merge` while drafts are missing or invalid.
+- `"status": "merged"`: the last `--merge` ran on exactly these drafts and passed. Set `phase_status.schema_design_dynamodb` = "complete".
+- `"status": "merge_failed"`: the last `--merge` ran on exactly these drafts and failed, or the merged output has `validation_passed: false`. Treat it as a `--merge` attempt that printed `validation_failed` with these `errors` (below).
 - `"status": "merge_pending"`: run the merge:
 
   ```bash
@@ -162,7 +164,7 @@ uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name
 
 Make **at most 3 `--merge` attempts in total** (this is the DynamoDB retry budget of `/design-schema-dynamodb` step 5):
 
-- `"status": "drafts_pending"` from `--merge`: it refused and wrote nothing, because the groups in `missing_groups` have no draft. This does not count as a `--merge` attempt; handle it like `drafts_pending` from `--status` above.
+- `"status": "drafts_pending"` from `--merge`: it refused and wrote nothing, because the groups in `missing_groups` have no draft and those in `invalid_groups` have an unreadable one. This does not count as a `--merge` attempt; handle it like `drafts_pending` from `--status` above.
 - `"status": "complete"` with no `DynamoDB merge review: …` entry in `warnings`: set `phase_status.schema_design_dynamodb` = "complete". Other `warnings` (scope warnings) never fail the phase.
 - `"status": "validation_failed"`, or `complete` with `DynamoDB merge review: …` warnings while attempts remain: dispatch one fix subagent, wait for it, then re-run `--merge`. Pass it the `errors` and `warnings` from the `--merge` line exactly as printed:
 
@@ -172,6 +174,8 @@ Make **at most 3 `--merge` attempts in total** (this is the DynamoDB retry budge
 
 - A `complete` merge whose review warnings are still there after the last attempt is still `complete`: those notes stay in the design's trade-offs for review before migration.
 - If the third attempt still prints `"status": "validation_failed"`, set `phase_status.schema_design_dynamodb` = "failed". That is a phase failure for `schema_design_dynamodb` (see Error Handling). Do not mark the phase complete.
+
+Any other output or a non-zero exit is a phase failure for `schema_design_dynamodb` (from `--status` that includes `not_split`).
 
 Do not run `--finalize` for DynamoDB; `--merge` is its final step.
 
@@ -229,7 +233,7 @@ If any phase fails:
 - If skip: mark phase as "skipped" in state, continue
 - If abort: stop pipeline, preserve all artifacts produced so far
 - **With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
-- **DynamoDB under `--auto`:** the retry for `schema_design_dynamodb` is one fresh group subagent per missing group (missing drafts), or one more 6c round with a fresh fix subagent and a new budget of 3 `--merge` attempts (merge still `validation_failed`). Set `phase_status.schema_design_dynamodb` = "failed" before retrying. If it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_dynamodb reason=<first error>`.
+- **DynamoDB under `--auto`:** the retry for `schema_design_dynamodb` is one fresh group subagent per missing or invalid group (`drafts_pending`), or one more 6c round with a fresh fix subagent and a new budget of 3 `--merge` attempts (merge still `validation_failed` / `merge_failed`). The phase gets one retry in total. It does not get a second one if a different failure follows the first. Set `phase_status.schema_design_dynamodb` = "failed" before retrying. If it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_dynamodb reason=<first error>`.
 - **Schema design under `--auto`:** a `/design-schema-<engine>` subagent returning `failed` (validation, contract or scope, still failing after its 3 `--finalize`/`--merge` attempts) is a phase failure like any other. Retry it once with a fresh subagent; if it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_<engine> reason=<first validation error>`. Never mark that engine's schema design complete.
 
 **Note on subagents under `--auto`:** every subagent dispatched by this pipeline (`/reality-check`, `/design-schema-*`, `/synthesize`) must also not ask the user anything. These sub-commands have no prompts today — keep it that way.
