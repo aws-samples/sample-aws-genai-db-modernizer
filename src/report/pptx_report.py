@@ -978,8 +978,8 @@ def slide_workload(prs, f):
         f"{f['fan1']:,} {plural_noun(f['fan1'], 'query', 'queries')} "
         f"{plural_verb(f['fan1'], 'touches', 'touch')} a single table "
         f"({f['fan1'] / f['n_patterns'] * 100:.1f}%). Only {f['fan3']:,} touch three or more "
-        f"({f['fan3'] / f['n_patterns'] * 100:.1f}%), and just {f['n_max_fan']} reach "
-        f"{f['max_fan']}.",
+        f"({f['fan3'] / f['n_patterns'] * 100:.1f}%), and just {f['n_max_fan']} "
+        f"{plural_verb(f['n_max_fan'], 'reaches', 'reach')} {f['max_fan']}.",
         size=11.0,
         color=PAPER,
     )

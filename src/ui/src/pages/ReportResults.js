@@ -848,8 +848,12 @@ const ReportResultsPage = memo(() => {
       const engineMatch = risk.description?.match(/^\[(\w+)\]/);
       const engine = engineMatch ? engineMatch[1] : null;
 
-      // Remove engine prefix from description if present
-      const cleanDescription = risk.description?.replace(/^\[\w+\]\s+\w+:\s+/, '') || '';
+      // Remove engine prefix from description if present. The label between
+      // "]" and ":" is \w+ for most risk types, but unsupported-pattern risks
+      // now carry a humanised, possibly multi-word label (e.g. "unsupported
+      // pattern", "text search" -- see src/shared/unsupported_pattern.py),
+      // which \w+ would fail to match and leave the prefix un-stripped.
+      const cleanDescription = risk.description?.replace(/^\[\w+\]\s+[^:]+:\s+/, '') || '';
 
       return {
         id: risk.risk_id,
