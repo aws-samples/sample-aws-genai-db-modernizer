@@ -689,10 +689,13 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
             "to render_analysis_report_html."
         )
 
-    out = template
-    for placeholder, value in replacements.items():
-        out = out.replace(placeholder, value)
-    return out
+    # One pass over the template only. Replacing each placeholder across the whole
+    # document in turn would also rewrite tokens that arrived inside an earlier
+    # value -- a captured SQL string containing "__TITLE__" sits inside the DATA
+    # JSON in __SCRIPT__ -- and html_text output there (quotes left alone) can
+    # close the JSON string and run script (PR #244 review). Inserted values are
+    # never re-scanned, so DATA stays exactly what _json() produced.
+    return re.sub(r"__[A-Z_]+__", lambda m: replacements.get(m.group(0), m.group(0)), template)
 
 
 def _json(obj: Any, compact: bool = False) -> str:

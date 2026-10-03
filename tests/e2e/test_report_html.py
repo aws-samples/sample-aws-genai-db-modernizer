@@ -188,3 +188,36 @@ def test_analysis_report_detail_modals_open_from_every_view(page: Page, tmp_path
     assert page.locator("#query-journey-modal").is_visible()
 
     assert events == {"console": [], "pageerror": [], "blocked": []}
+
+
+def test_analysis_report_placeholder_smuggling_runs_no_script(page: Page, tmp_path) -> None:
+    """Placeholder tokens inside DATA stay literal, so no value escapes the JSON (PR #244 review)."""
+    from src.report.analysis_report import render_analysis_report_html
+
+    data = _export_data_with_patterns()
+    data["results"]["synthesis"]["database_name"] = 'wp", "pwn": alert("DBNAME-SMUGGLE"), "z": "'
+    data["results"]["synthesis"]["summary"] = 'sum", "pwn2": alert("SUMMARY-SMUGGLE"), "y": "'
+    data["queryJourneys"]["items"][0]["source"][
+        "query_text"
+    ] = "SELECT '__SUMMARY__' FROM t -- __TITLE__ __DATABASE_NAME__ __JOB_ID__"
+    data["schemaDesigns"][0]["content"]["access_patterns"][0]["description"] = "__DATABASE_NAME__"
+    path = tmp_path / "analysis-report.html"
+    path.write_text(render_analysis_report_html(data), encoding="utf-8")
+
+    dialogs: list[str] = []
+
+    def on_dialog(dialog) -> None:
+        dialogs.append(dialog.message)
+        dialog.dismiss()
+
+    page.on("dialog", on_dialog)
+    events = _open_offline(page, path)
+    assert dialogs == []
+    page.locator("#access-patterns-container tbody tr").first.click()
+    page.locator("#pattern-modal .modal-close").click()
+    page.locator("#tradeoffs-container .link").first.click()
+
+    assert dialogs == []
+    assert events == {"console": [], "pageerror": [], "blocked": []}
+    assert page.evaluate("DATA.results.synthesis.database_name").startswith('wp", "pwn"')
+    assert "__TITLE__" in page.inner_text("#query-modal-body")

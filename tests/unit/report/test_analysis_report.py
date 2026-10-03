@@ -389,6 +389,38 @@ def test_upper_snake_tokens_in_customer_data_are_not_mistaken_for_placeholders()
     assert "__NULL__" in html and "__SENTINEL_VALUE__" in html
 
 
+def test_placeholder_tokens_inside_inserted_values_are_not_substituted():
+    """Substitution is single-pass: a token inside DATA must stay literal (PR #244 review).
+
+    The renderer used to apply each replacement to the whole document in turn, so a
+    captured SQL string containing ``__TITLE__`` (already inside the DATA JSON) was
+    replaced with the HTML-escaped title. html_text leaves ``"`` alone, so a
+    database name like the one below closed the JSON string and ran script.
+    """
+    smuggle = 'wp", "pwn": alert("DBNAME-SMUGGLE"), "z": "'
+    objects = _objects()
+    tokens = "SELECT '__SUMMARY__', '__TITLE__' FROM t -- __DATABASE_NAME__ __JOB_ID__"
+    objects[f"{DB}/{JOB}/query-journeys/q1.json"]["source"]["query_text"] = tokens
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    data["results"]["synthesis"]["database_name"] = smuggle
+    html = ar.render_analysis_report_html(data)
+
+    payload = json.loads(_embedded_data(html))  # still one valid JSON object
+    assert "pwn" not in payload
+    journeys = payload["queryJourneys"]["items"]
+    assert any(j["source"].get("query_text") == tokens for j in journeys)
+    assert payload["results"]["synthesis"]["database_name"] == smuggle
+
+
+def test_every_text_placeholder_sits_outside_script_context():
+    """Values filled with html_text must never land inside a <script> element."""
+    import re
+
+    template = ar._read_template("analysis_report.html.tpl")
+    for block in re.findall(r"<script\b.*?</script>", template, re.S):
+        assert not re.findall(r"__[A-Z_]+__", block), block[:200]
+
+
 def test_render_keeps_every_report_section(rendered):
     for header in (
         "Database Modernization Analysis Report",
