@@ -54,6 +54,8 @@ from pptx.util import Inches, Pt
 # ``plural_noun`` is the one place every count+noun string in this deck and in
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+
 from .renderers import _architecture_engines, filtered_risks, plural_noun, plural_verb
 
 logger = logging.getLogger(__name__)
@@ -92,14 +94,14 @@ ENGINE_COLOR = {
     "opensearch": ORANGE,
     "aurora_mysql": PINK,
 }
-ENGINE_LABEL = {
-    "aurora_postgresql": "Aurora PostgreSQL",
-    "aurora_mysql": "Aurora MySQL",
-    "elasticache": "ElastiCache",
-    "documentdb": "DocumentDB",
-    "dynamodb": "DynamoDB",
-    "opensearch": "OpenSearch",
-}
+# Alias, not a copy: display names are the shared source of truth in
+# src.shared.engine_names (#221 follow-up). Restricted to the six engines this deck
+# colours (ENGINE_COLOR, above) rather than re-exporting ENGINE_DISPLAY_NAMES whole,
+# so prettify_engines/name_target_tables below -- which build their match set from
+# this dict's keys -- keep matching exactly the engine ids they always have, not
+# the three engines (neptune, keyspaces, aurora) the deck has no colour for. Kept
+# under this name because other modules and tests still import ENGINE_LABEL.
+ENGINE_LABEL = {engine: ENGINE_DISPLAY_NAMES[engine] for engine in ENGINE_COLOR}
 
 # Triage signal -> customer-facing label. Static, so the same signal always
 # renders the same words; unknown signals fall back to a prettified name.
