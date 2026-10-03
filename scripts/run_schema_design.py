@@ -143,7 +143,7 @@ def run_bedrock(store, job_id: str, db: str, engine: str, assignment_version: in
     """Run the full Strands/Bedrock schema design flow."""
     from src.agents.schema_design.handler import run_schema_design_auto
 
-    run_schema_design_auto(
+    report = run_schema_design_auto(
         job_id=job_id,
         database_name=db,
         target_type=engine,
@@ -151,7 +151,20 @@ def run_bedrock(store, job_id: str, db: str, engine: str, assignment_version: in
         assignment_version=assignment_version,
     )
 
-    _output({"status": "complete", "assignment_version": assignment_version})
+    _output({**_scope_fields(report), "assignment_version": assignment_version})
+
+
+def _scope_fields(report, output_path: str | None = None) -> dict:
+    """Status fields for a scope report: ``validation_failed`` + ``errors`` on
+    violations, ``complete`` otherwise; ``warnings`` whenever there are any."""
+    fields: dict = {"status": "validation_failed" if report.violations else "complete"}
+    if output_path is not None:
+        fields["output_path"] = output_path
+    if report.violations:
+        fields["errors"] = report.violations
+    if report.warnings:
+        fields["warnings"] = report.warnings
+    return fields
 
 
 def run_split(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
@@ -183,7 +196,7 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
     """
     from src.agents.schema_design.handler import run_schema_merge
 
-    violations = run_schema_merge(
+    report = run_schema_merge(
         job_id=job_id,
         database_name=db,
         target_type=engine,
@@ -192,23 +205,7 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
     )
 
     output_path = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
-    if violations:
-        _output(
-            {
-                "status": "validation_failed",
-                "assignment_version": assignment_version,
-                "output_path": output_path,
-                "errors": violations,
-            }
-        )
-        return
-    _output(
-        {
-            "status": "complete",
-            "assignment_version": assignment_version,
-            "output_path": output_path,
-        }
-    )
+    _output({**_scope_fields(report, output_path), "assignment_version": assignment_version})
 
 
 _DYNAMODB_FINALIZE_MESSAGE = (
@@ -228,32 +225,16 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     here too (issue #203).
     """
     if engine == "dynamodb":
-        from src.agents.schema_design.handler import check_schema_scope
-        from src.agents.schema_design.scope import apply_scope_violations
+        from src.agents.schema_design.handler import apply_schema_scope
 
         output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
         if not store.exists(output_key):
             _error(_DYNAMODB_FINALIZE_MESSAGE)
         merged = store.read_json(output_key)
-        violations = check_schema_scope(store, db, job_id, engine, merged, assignment_version)
-        if violations:
-            store.write_json(output_key, apply_scope_violations(merged, violations))
-            _output(
-                {
-                    "status": "validation_failed",
-                    "assignment_version": assignment_version,
-                    "output_path": output_key,
-                    "errors": violations,
-                }
-            )
-            return
-        _output(
-            {
-                "status": "complete",
-                "assignment_version": assignment_version,
-                "output_path": output_key,
-            }
-        )
+        checked, report = apply_schema_scope(store, db, job_id, engine, merged, assignment_version)
+        if checked != merged:  # new violations, or stale ones cleared after a hand fix
+            store.write_json(output_key, checked)
+        _output({**_scope_fields(report, output_key), "assignment_version": assignment_version})
         return
 
     from src.agents.schema_design.handler import finalize_schema_design

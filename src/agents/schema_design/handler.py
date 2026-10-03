@@ -23,7 +23,12 @@ import tempfile
 from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
-from src.agents.schema_design.scope import apply_scope_violations, validate_schema_scope
+from src.agents.schema_design.scope import (
+    EMPTY_REPORT,
+    ScopeReport,
+    apply_scope_violations,
+    assess_schema_scope,
+)
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 
@@ -199,7 +204,8 @@ def finalize_schema_design(
       ``{"status": "validation_failed", "errors": [...]}`` on contract validation
       failure (nothing written), or
       ``{"status": "validation_failed", "errors": [...], "output_path": <key>}``
-      when the design is out of scope.
+      when the design is out of scope. Scope ``warnings`` (out-of-scope IDs
+      only in ``unsupported_patterns``) are added when present.
     """
     prefix = f"{database_name}/{job_id}"
     version = assignment_version if assignment_version > 0 else 1
@@ -211,17 +217,28 @@ def finalize_schema_design(
     if not validation["valid"]:
         return {"status": "validation_failed", "errors": validation["errors"]}
 
-    violations = check_schema_scope(
+    output, report = apply_schema_scope(
         store, database_name, job_id, target_type, output, assignment_version
     )
-    output = apply_scope_violations(output, violations)
 
     output_key = f"{prefix}/schema-{target_type}/v{version}/schema_output.json"
     store.write_json(output_key, output)
 
-    if violations:
-        return {"status": "validation_failed", "errors": violations, "output_path": output_key}
-    return {"status": "complete", "output_path": output_key}
+    return scope_status(report, output_key)
+
+
+def scope_status(report: ScopeReport, output_key: str) -> dict:
+    """Status dict for a written output: ``validation_failed`` on scope violations."""
+    result: dict = {"status": "complete", "output_path": output_key}
+    if report.violations:
+        result = {
+            "status": "validation_failed",
+            "errors": report.violations,
+            "output_path": output_key,
+        }
+    if report.warnings:
+        result["warnings"] = report.warnings
+    return result
 
 
 def check_schema_scope(
@@ -231,20 +248,49 @@ def check_schema_scope(
     target_type: str,
     schema_output: dict,
     assignment_version: int,
-) -> list[str]:
-    """Return scope violations of ``schema_output`` against assignment ``v{N}``.
+) -> ScopeReport:
+    """Check ``schema_output`` against the scope assignment ``v{N}`` gives the engine.
 
-    Empty when there is no assignment to check against (legacy version 0, or
-    the artifact is absent or unreadable): scope cannot be judged without one.
+    Empty report when there is no assignment to check against (legacy version
+    0, or the artifact is absent) or the check itself fails unexpectedly (an
+    unreadable artifact, a shape nobody anticipated): that is logged and the
+    design is not failed on it. Never raises.
     """
     try:
         assignment = read_assignment(store, database_name, job_id, assignment_version)
-    except Exception as exc:  # unreadable artifact: do not fail the design on it
-        logger.warning("Cannot read assignment v%s for scope check: %s", assignment_version, exc)
-        return []
-    if assignment is None:
-        return []
-    return validate_schema_scope(target_type, schema_output, assignment)
+        if assignment is None:
+            return EMPTY_REPORT
+        report = assess_schema_scope(target_type, schema_output, assignment)
+    except Exception as exc:  # never fail a design because the check broke
+        logger.warning(
+            "Scope check skipped for %s (assignment v%s): %s", target_type, assignment_version, exc
+        )
+        return EMPTY_REPORT
+    for warning in report.warnings:
+        logger.warning(warning)
+    return report
+
+
+def apply_schema_scope(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    schema_output: dict,
+    assignment_version: int,
+) -> tuple[dict, ScopeReport]:
+    """Run :func:`check_schema_scope` and return the output with its verdict applied.
+
+    Violations set ``validation_passed=false`` and are appended to
+    ``validation_failures``; stale scope messages from an earlier check are
+    dropped first (see :func:`apply_scope_violations`).
+    """
+    report = check_schema_scope(
+        store, database_name, job_id, target_type, schema_output, assignment_version
+    )
+    if not isinstance(schema_output, dict):
+        return schema_output, report
+    return apply_scope_violations(schema_output, report.violations), report
 
 
 def run_schema_design(
@@ -254,7 +300,7 @@ def run_schema_design(
     store: ArtifactStore,
     assignment_version: int = 0,
     llm_mode: str = "bedrock",
-) -> None:
+) -> ScopeReport:
     """Run a schema design agent for the given target type.
 
     When assignment_version > 0, reads the assignment artifact and filters
@@ -264,6 +310,10 @@ def run_schema_design(
     When llm_mode == "external": prepares the LLM input payload, writes it to
     the store, and returns early (no Bedrock call). Default is "bedrock" which
     preserves the original behaviour unchanged.
+
+    The output is checked against the assignment's scope before it is written
+    (issue #203); the returned :class:`ScopeReport` carries any violations,
+    which are also recorded in the output's ``validation_failures``.
 
     Requirements: 6.1, 6.2, 6.3, 10.1
     """
@@ -277,7 +327,7 @@ def run_schema_design(
         input_key = f"{prefix}/schema-{target_type}/v{version}/llm_input.json"
         store.write_json(input_key, llm_input)
         print(f"[schema-design/{target_type}] external mode — input written to {input_key}")
-        return
+        return EMPTY_REPORT
 
     import time
 
@@ -336,7 +386,7 @@ def run_schema_design(
             out_key = f"{database_name}/{job_id}/schema-{target_type}/schema_output.json"
         store.write_json(out_key, placeholder)
         print(f"[schema-design/{target_type}] Placeholder written to {out_key}")
-        return
+        return EMPTY_REPORT
 
     # --- Read analysis output via ArtifactStore ---
     analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
@@ -393,6 +443,9 @@ def run_schema_design(
         )
     else:
         output_key = f"{database_name}/{job_id}/schema-{target_type}/schema_output.json"
+    output_data, report = apply_schema_scope(
+        store, database_name, job_id, target_type, output_data, assignment_version
+    )
     store.write_json(output_key, output_data)
 
     # Write design trace via ArtifactStore
@@ -408,10 +461,19 @@ def run_schema_design(
         store.write_json(trace_out_key, trace_data_out)
 
     elapsed = time.time() - start_time
-    print(
-        f"[schema-design/{target_type}] ✅ Complete in {elapsed:.1f}s — "
-        f"output written to {output_key}"
-    )
+    if report.violations:
+        print(
+            f"[schema-design/{target_type}] ❌ {len(report.violations)} scope violation(s) "
+            f"in {elapsed:.1f}s — output written to {output_key}:"
+        )
+        for message in report.violations:
+            print(f"  - {message}")
+    else:
+        print(
+            f"[schema-design/{target_type}] ✅ Complete in {elapsed:.1f}s — "
+            f"output written to {output_key}"
+        )
+    return report
 
 
 def run_schema_split(
@@ -501,7 +563,7 @@ def run_schema_merge(
     target_type: str,
     store: ArtifactStore,
     assignment_version: int = 0,
-) -> list[str]:
+) -> ScopeReport:
     """Merge per-group schema drafts into a single schema output.
 
     This is the ECS entrypoint for the group-merging step. Step Functions
@@ -509,8 +571,8 @@ def run_schema_merge(
 
     The merged output is checked against the assignment's scope for the engine
     (issue #203). Violations set ``validation_passed=false``, are appended to
-    ``validation_failures`` in the written output, and are returned (empty list
-    when the merged design stays in scope).
+    ``validation_failures`` in the written output, and are returned in the
+    :class:`ScopeReport` (empty when the merged design stays in scope).
 
     Requirements: 6.3
     """
@@ -546,12 +608,13 @@ def run_schema_merge(
         }
         store.write_json(f"{base_key}/design_trace.json", combined_trace)
 
-    violations = check_schema_scope(
+    checked, report = apply_schema_scope(
         store, database_name, job_id, target_type, merged, assignment_version
     )
-    if violations:
-        merged = apply_scope_violations(merged, violations)
+    if checked != merged:
+        merged = checked
         store.write_json(f"{base_key}/schema_output.json", merged)
+    violations = report.violations
 
     elapsed = time.time() - start_time
 
@@ -570,7 +633,7 @@ def run_schema_merge(
             print(f"  - {message}")
     else:
         print(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
-    return violations
+    return report
 
 
 # Engines that always design single-pass and never split into groups. Aurora's
@@ -586,7 +649,7 @@ def run_schema_design_auto(
     target_type: str,
     store: ArtifactStore,
     assignment_version: int = 0,
-) -> None:
+) -> ScopeReport:
     """Run schema design with automatic group splitting for large workloads.
 
     If the number of in-scope queries exceeds MAX_GROUP_SIZE, splits into groups,
@@ -595,6 +658,9 @@ def run_schema_design_auto(
     ``_NON_GROUPED_ENGINES``).
 
     This is the recommended entry point for local and orchestrator usage.
+
+    Returns the scope report of the written output (issue #203): violations
+    mean the design was written with ``validation_passed=false``.
     """
     from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
 
@@ -602,14 +668,13 @@ def run_schema_design_auto(
     # not merge across groups and a relational engine gains nothing from grouping.
     if target_type in _NON_GROUPED_ENGINES:
         print(f"[schema-design/{target_type}] Aurora engine — running single-pass (no grouping)")
-        run_schema_design(
+        return run_schema_design(
             job_id,
             database_name,
             target_type,
             store,
             assignment_version=assignment_version,
         )
-        return
 
     # Derive artifact version from assignment_version (synthesis reads v{N}/)
     artifact_version = assignment_version if assignment_version > 0 else 1
@@ -633,14 +698,13 @@ def run_schema_design_auto(
             f"[schema-design/{target_type}] {len(queries)} queries <= {MAX_GROUP_SIZE} "
             f"— running single-pass"
         )
-        run_schema_design(
+        return run_schema_design(
             job_id,
             database_name,
             target_type,
             store,
             assignment_version=assignment_version,
         )
-        return
 
     # Split into groups
     print(
@@ -665,14 +729,13 @@ def run_schema_design_auto(
 
     if not groups:
         print(f"[schema-design/{target_type}] No groups produced — falling back to single-pass")
-        run_schema_design(
+        return run_schema_design(
             job_id,
             database_name,
             target_type,
             store,
             assignment_version=assignment_version,
         )
-        return
 
     # Run schema design per group (parallel)
     import time
@@ -769,7 +832,7 @@ def run_schema_design_auto(
     print(f"[schema-design/{target_type}] All {len(groups)} groups done in {elapsed:.1f}s")
 
     # Merge group drafts
-    run_schema_merge(
+    return run_schema_merge(
         job_id, database_name, target_type, store, assignment_version=assignment_version
     )
 

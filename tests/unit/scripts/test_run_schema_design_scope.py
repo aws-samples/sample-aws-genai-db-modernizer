@@ -263,3 +263,178 @@ def test_handler_finalize_with_real_dynamodb_contract(tmp_path):
         "Out of scope for dynamodb: query 'DDB-AP-1' (referenced by access_patterns[DDB-AP-1]) "
         "is not in the assignment (v1). Remove it from the design."
     ]
+
+
+# ---------------------------------------------------------------------------
+# unsupported_patterns warnings, stale failures, robustness
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_reports_unsupported_pattern_ids_as_warnings(
+    monkeypatch, capsys, tmp_path, contract_ok
+):
+    store = _store(tmp_path, "documentdb")
+    design = _design("documentdb", "mydb.users", "q-users")
+    design["unsupported_patterns"] = [{"source_query_ids": ["q-orders"]}]
+    store.write_json(f"{DB}/{JOB}/llm_responses/schema_design_documentdb.json", design)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "documentdb", "--finalize")
+
+    assert code == 0
+    assert status["status"] == "complete"
+    assert len(status["warnings"]) == 1 and "q-orders" in status["warnings"][0]
+    written = store.read_json(status["output_path"])
+    assert written["validation_passed"] is True
+    assert not written.get("validation_failures")
+
+
+def test_hand_fixed_design_refinalizes_clean(monkeypatch, capsys, tmp_path, contract_ok):
+    """Out-of-scope finalize, then the response is fixed by editing the written
+    output (stale scope messages and validation_passed=false copied along) and
+    finalized again: the stale messages go and validation_passed comes back."""
+    store = _store(tmp_path, "elasticache")
+    response_key = f"{DB}/{JOB}/llm_responses/schema_design_elasticache.json"
+    store.write_json(response_key, _design("elasticache", "mydb.orders", "q-users"))
+    _, failed = _run(monkeypatch, capsys, tmp_path, "elasticache", "--finalize")
+    assert failed["status"] == "validation_failed"
+
+    fixed = store.read_json(failed["output_path"])
+    assert fixed["validation_passed"] is False and fixed["validation_failures"]
+    fixed["key_designs"][0]["source_tables"] = ["mydb.users"]
+    store.write_json(response_key, fixed)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "elasticache", "--finalize")
+
+    assert code == 0
+    assert status["status"] == "complete"
+    written = store.read_json(status["output_path"])
+    assert written["validation_passed"] is True
+    assert written["validation_failures"] == []
+
+
+def test_dynamodb_hand_fixed_merged_output_finalizes_clean(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path, "dynamodb")
+    _write_groups(store, [_design("dynamodb", "mydb.orders", "q-users")])
+    _, failed = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+    assert failed["status"] == "validation_failed"
+
+    merged = store.read_json(failed["output_path"])
+    for key in ("table_definitions", "access_patterns"):
+        merged[key][0]["source_tables"] = ["mydb.users"]
+    store.write_json(failed["output_path"], merged)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--finalize")
+
+    assert status["status"] == "complete"
+    written = store.read_json(status["output_path"])
+    assert written["validation_passed"] is True
+    assert written["validation_failures"] == []
+
+
+def test_check_schema_scope_never_raises(tmp_path, monkeypatch):
+    store = _store(tmp_path, "dynamodb")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("unexpected shape")
+
+    monkeypatch.setattr(handler, "assess_schema_scope", boom)
+    report = handler.check_schema_scope(
+        store, DB, JOB, "dynamodb", _design("dynamodb", "mydb.orders", "q-orders"), 1
+    )
+    assert report.violations == [] and report.warnings == []
+
+    monkeypatch.setattr(handler, "read_assignment", boom)
+    report = handler.check_schema_scope(store, DB, JOB, "dynamodb", {}, 1)
+    assert report.violations == []
+
+
+# ---------------------------------------------------------------------------
+# Bedrock path (no real model calls: the agent dispatch is patched)
+# ---------------------------------------------------------------------------
+
+
+def _bedrock_store(tmp_path: Path, engine: str) -> LocalArtifactStore:
+    store = _store(tmp_path, engine)
+    store.write_json(
+        f"{DB}/{JOB}/collector/output.json",
+        {
+            "database_schema": {
+                "tables": [{"table_id": "mydb.users"}, {"table_id": "mydb.orders"}]
+            },
+            "queries": {
+                "query_patterns": [
+                    {"query_id": "q-users", "tables_accessed": ["mydb.users"]},
+                    {"query_id": "q-orders", "tables_accessed": ["mydb.orders"]},
+                ]
+            },
+        },
+    )
+    store.write_json(f"{DB}/{JOB}/analysis-{engine}/analysis.json", {})
+    return store
+
+
+@pytest.mark.parametrize("engine", ["documentdb", "aurora_mysql"])
+def test_bedrock_out_of_scope_design_fails_validation(engine, monkeypatch, capsys, tmp_path):
+    store = _bedrock_store(tmp_path, engine)
+    design = _design(engine, "mydb.orders", "q-orders")
+    monkeypatch.setattr(
+        handler, "_dispatch_schema_agent", lambda *_a, **_k: (json.dumps(design), None)
+    )
+
+    code, status = _run(monkeypatch, capsys, tmp_path, engine, "--llm-mode", "bedrock")
+
+    assert code == 0
+    assert status["status"] == "validation_failed"
+    assert status["errors"] and all(e.startswith("Out of scope for ") for e in status["errors"])
+    written = store.read_json(f"{DB}/{JOB}/schema-{engine}/v1/schema_output.json")
+    assert written["validation_passed"] is False
+    assert all(e in written["validation_failures"] for e in status["errors"])
+
+
+def test_bedrock_in_scope_design_is_complete(monkeypatch, capsys, tmp_path):
+    store = _bedrock_store(tmp_path, "documentdb")
+    design = _design("documentdb", "mydb.users", "q-users")
+    monkeypatch.setattr(
+        handler, "_dispatch_schema_agent", lambda *_a, **_k: (json.dumps(design), None)
+    )
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "documentdb", "--llm-mode", "bedrock")
+
+    assert status["status"] == "complete"
+    assert "errors" not in status
+    written = store.read_json(f"{DB}/{JOB}/schema-documentdb/v1/schema_output.json")
+    assert written["validation_passed"] is True
+
+
+def test_bedrock_grouped_path_returns_merge_violations(monkeypatch, tmp_path):
+    """run_schema_design_auto's split -> groups -> merge path no longer discards
+    run_schema_merge's scope report."""
+    store = _bedrock_store(tmp_path, "dynamodb")
+    # Two in-scope DynamoDB queries and a group size of 1 force the split path.
+    assignment = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+    assignment["query_assignments"].append(
+        {
+            "query_id": "q-users-2",
+            "assigned_engine": "dynamodb",
+            "source_tables": ["mydb.users"],
+            "in_scope": True,
+        }
+    )
+    store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", assignment)
+    collector = store.read_json(f"{DB}/{JOB}/collector/output.json")
+    collector["queries"]["query_patterns"].append(
+        {"query_id": "q-users-2", "tables_accessed": ["mydb.users"]}
+    )
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+    monkeypatch.setattr("src.agents.schema_design.group_splitter.MAX_GROUP_SIZE", 1)
+    design = _design("dynamodb", "mydb.orders", "q-orders")
+    monkeypatch.setattr(
+        handler, "_dispatch_schema_agent", lambda *_a, **_k: (json.dumps(design), None)
+    )
+
+    report = handler.run_schema_design_auto(JOB, DB, "dynamodb", store, assignment_version=1)
+
+    assert store.exists(f"{DB}/{JOB}/schema-dynamodb/v1/groups_manifest.json")
+    assert report.violations
+    merged = store.read_json(f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json")
+    assert merged["validation_passed"] is False

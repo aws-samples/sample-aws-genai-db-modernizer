@@ -403,10 +403,12 @@ class TestRunSchemaDesignLlmModeExternal:
         assert "DDB-AP-1" in query_ids
         assert "DDB-AP-2" not in query_ids
 
-    def test_external_mode_returns_none(self):
+    def test_external_mode_returns_empty_scope_report(self):
+        # External mode only writes the input; nothing is designed, so there is
+        # nothing to scope-check (finalize does that later).
         store = _base_store()
         result = run_schema_design("job-001", "mydb", "dynamodb", store, llm_mode="external")
-        assert result is None
+        assert result.violations == [] and result.warnings == []
 
     def test_bedrock_mode_calls_dispatch(self):
         store = _base_store()
