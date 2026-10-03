@@ -43,7 +43,7 @@ The script does the build (if needed), starts both servers in the background, po
   - With `--auto`, do not ask anything: stop the pipeline and end the run with `MODERNIZE_RESULT: failed phase=setup reason=<reason>`.
   - Without `--auto`, ask the user whether to continue in chat mode instead, or abort.
 
-Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`, using the Edit/Write tools.
+Store the choice in `.modernizer-state.json` as `"experience_mode": "chat"|"ui"|"both"`, using the Edit/Write tools. The state file does not exist yet at this point: `scripts/run_assessment.py` (Phases 1-5) creates it, with `"experience_mode": "both"`. So remember the mode, and right after that command finishes, Edit `experience_mode` in `.modernizer-state.json` to the chosen value. Do not create any other file for it (no notes, placeholders or sidecar files next to `.modernizer-state.json`).
 
 Stop the servers later with `uv run python scripts/start_local_ui.py --stop`. `/modernize` itself never stops them at the end of a `ui`/`both` run — the user keeps browsing the results after the pipeline finishes; only CI's own cleanup stops them.
 
@@ -83,7 +83,12 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 **If reality check returns `awaiting_llm` (this is the expected path):**
 
 1. Tell user: "Deterministic phases complete. Dispatching consolidation validator..."
-2. **Dispatch a subagent:** "Run /reality-check for job_id={job_id} db={database_name}"
+2. **Dispatch a subagent** with this task text:
+
+   ```text
+   Run /reality-check for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   ```
+
 3. After subagent completes, resume:
 
    ```bash
@@ -114,22 +119,70 @@ Only proceed to schema design after user approval (unless `--auto`).
 
 ### Phase 6: Schema Design (Parallel Subagents)
 
-Launch ONE subagent per engine in a SINGLE message:
+Only engines in `selected_engines` after reality check get a schema design. Build each skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.
 
-- Subagent 1: "Run /design-schema-dynamodb"
-- Subagent 2: "Run /design-schema-elasticache"
-- Subagent 3: "Run /design-schema-aurora-mysql"
-- etc.
+DynamoDB is always designed as split → one subagent per group → merge. **The orchestrator runs that flow itself** (6a-6c): it never dispatches `/design-schema-dynamodb` as one subagent, because that subagent would have to dispatch the group subagents one level deeper, and their results would never reach it.
 
-(Only for engines in `selected_engines` after reality check. Build the skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.)
+**6a. Split DynamoDB** (only if `dynamodb` is selected):
 
-Wait for all to complete. A subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
+```bash
+uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split
+```
+
+It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: one entry per group with `group_index` (`{G}`), `primary_tables`, `input_file` and `draft`. Use that line; do not read the manifest yourself.
+
+**6b. Launch every schema subagent in a SINGLE message:** one per non-DynamoDB engine, plus one per DynamoDB group.
+
+- Each other engine:
+
+  ```text
+  Run /design-schema-<engine> for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  ```
+
+- Each DynamoDB group `{G}` (`{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables` from the `--split` line):
+
+  ```text
+  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Other groups' primary_tables: {OTHER_GROUPS}. Write only schema_draft_group_{G}.json. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  ```
+
+Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
+
+**6c. Merge DynamoDB** once every group subagent has reported. First check which drafts exist:
+
+```bash
+uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
+```
+
+- `"status": "drafts_pending"`: the groups in `drafts_missing` did not write a draft. That is a phase failure for `schema_design_dynamodb` with reason `group drafts missing: <groups>` (see Error Handling: the retry is one fresh group subagent, same task text, per missing group). Never run `--merge` while drafts are missing.
+- `"status": "merge_pending"`: run the merge:
+
+  ```bash
+  uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --merge
+  ```
+
+Make **at most 3 `--merge` attempts in total** (this is the DynamoDB retry budget of `/design-schema-dynamodb` step 5):
+
+- `"status": "complete"` with no `DynamoDB merge review: …` entry in `warnings`: set `phase_status.schema_design_dynamodb` = "complete". Other `warnings` (scope warnings) never fail the phase.
+- `"status": "validation_failed"`, or `complete` with `DynamoDB merge review: …` warnings while attempts remain: dispatch one fix subagent, wait for it, then re-run `--merge`. Pass it the `errors` and `warnings` from the `--merge` line exactly as printed:
+
+  ```text
+  Follow /design-schema-dynamodb **Merge fix task** for job_id={job_id} db={database_name} assignment_version={N}. --merge printed: {MERGE_LINE}. Edit only the schema_draft_group_*.json files. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  ```
+
+- A `complete` merge whose review warnings are still there after the last attempt is still `complete`: those notes stay in the design's trade-offs for review before migration.
+- If the third attempt still prints `"status": "validation_failed"`, set `phase_status.schema_design_dynamodb` = "failed". That is a phase failure for `schema_design_dynamodb` (see Error Handling). Do not mark the phase complete.
+
+Do not run `--finalize` for DynamoDB; `--merge` is its final step.
 
 **If UI mode:** Tell user "Schema designs ready — browse table definitions, access patterns, and GSIs in the UI."
 
 ### Phase 7: Synthesis
 
-**Dispatch subagent** with task: "Run /synthesize"
+**Dispatch subagent** with this task text:
+
+```text
+Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+```
 
 ### Completion
 
@@ -146,17 +199,24 @@ Wait for all to complete. A subagent that returns `failed` (it set `phase_status
   (HTML), interactive analysis report (HTML), engineering report (Markdown), and
   `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
 
-End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`).
+End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`). Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line: `complete` as above, or `failed phase=<phase> reason=<one line>`.
+
+## Waiting Rule
+
+This applies headless and interactive. Never end a turn waiting unless a dispatched subagent is still running. A headless run ends as soon as a turn ends with nothing running, so a turn that ends "waiting" on a subagent that has already reported ends the run with no result.
+
+When every subagent you dispatched has reported, do not wait for anything else. Read `phase_status` in `.modernizer-state.json` (and, for DynamoDB, the `--status` line from 6c), then either finish the phase yourself (for example, run `--merge` when `--status` prints `merge_pending`, or set the phase complete and dispatch the next phase) or end with `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`. A subagent's completion notification is its final report: it will not come back with more, and nobody else will run the next step for you.
 
 ## Subagent Dispatch Rules
 
-1. **Every phase = fresh subagent.** No exceptions. Each gets a clean context window.
+1. **Every phase = fresh subagent.** No exceptions. Each gets a clean context window. DynamoDB schema design is one fresh subagent per group plus fix subagents, all dispatched by the orchestrator (Phase 6).
 2. **Parallel phases launch in a SINGLE message** to enable true concurrency.
 3. **Only dispatch for selected engines.** If triage selects 2 engines, launch 2 subagents — not 4.
-4. **Subagent task descriptions are minimal.** Just the skill name and any required args. The subagent loads the skill and follows it.
+4. **Subagent task descriptions are minimal.** Use the task-text templates above: the skill name, the required args, and the fixed rules below. The subagent loads the skill and follows it.
 5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents.
 6. **The reality check subagent is NON-OPTIONAL.** The orchestrator must NEVER attempt to read llm_input.json or write llm_responses/ itself.
 7. **Every dispatch's task text includes the tool-use rule:** "Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains." The subagent loads its own skill, which repeats the same rule, but the dispatch text carries it too so the rule holds even before the skill loads.
+8. **Nesting is one level deep.** Only the orchestrator dispatches subagents. Every dispatch's task text includes "Do not dispatch subagents yourself." (and "Unattended: do not ask the user anything."): a subagent's own subagents report to the orchestrator, not to it, so a subagent that dispatches and then ends its turn leaves its work unfinished.
 
 ## Error Handling
 
@@ -168,6 +228,7 @@ If any phase fails:
 - If skip: mark phase as "skipped" in state, continue
 - If abort: stop pipeline, preserve all artifacts produced so far
 - **With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
+- **DynamoDB under `--auto`:** the retry for `schema_design_dynamodb` is one fresh group subagent per missing group (missing drafts), or one more 6c round with a fresh fix subagent and a new budget of 3 `--merge` attempts (merge still `validation_failed`). Set `phase_status.schema_design_dynamodb` = "failed" before retrying. If it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_dynamodb reason=<first error>`.
 - **Schema design under `--auto`:** a `/design-schema-<engine>` subagent returning `failed` (validation, contract or scope, still failing after its 3 `--finalize`/`--merge` attempts) is a phase failure like any other. Retry it once with a fresh subagent; if it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_<engine> reason=<first validation error>`. Never mark that engine's schema design complete.
 
 **Note on subagents under `--auto`:** every subagent dispatched by this pipeline (`/reality-check`, `/design-schema-*`, `/synthesize`) must also not ask the user anything. These sub-commands have no prompts today — keep it that way.

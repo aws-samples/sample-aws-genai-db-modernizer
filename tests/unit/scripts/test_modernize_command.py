@@ -193,3 +193,113 @@ def test_design_schema_commands_cap_attempts_and_fail_the_phase() -> None:
         assert f'`phase_status.schema_design_{engine}` = "failed"' in text, path.name
         assert "Do not mark the phase complete" in text, path.name
         assert "Design only the tables and queries assigned to this engine" in text, path.name
+
+
+# Issue #246: /modernize dispatched /design-schema-dynamodb, which dispatched
+# its own group subagents in the background and ended its turn. The groups'
+# completion went to the orchestrator, nothing ran --merge, and the
+# orchestrator ended its turn "waiting" with nothing running, so the headless
+# run exited with no MODERNIZE_RESULT line. Nesting is now one level deep.
+NO_NESTING_RULE = "Do not dispatch subagents yourself."
+
+
+def _fenced_blocks(text: str) -> list[str]:
+    return re.findall(r"```[a-z]*\n(.*?)```", text, flags=re.DOTALL)
+
+
+def _dispatch_templates(text: str) -> list[str]:
+    """The task-text templates /modernize hands to its subagents."""
+    return [b for b in _fenced_blocks(text) if b.lstrip().startswith(("Run /", "Follow /"))]
+
+
+def _phase_6(text: str) -> str:
+    return text.split("### Phase 6", 1)[1].split("### Phase 7", 1)[0]
+
+
+def test_every_modernize_dispatch_template_forbids_nesting_and_carries_tool_rule() -> None:
+    templates = _dispatch_templates(_modernize_text())
+    # reality check, other engines, DynamoDB group, DynamoDB merge fix, synthesis
+    assert len(templates) >= 5, templates
+    for template in templates:
+        flat = " ".join(template.split())
+        assert NO_NESTING_RULE in flat, template
+        assert TOOL_USE_RULE in flat, template
+        assert "do not ask the user anything" in flat, template
+
+
+def test_modernize_dispatch_rules_limit_nesting_to_one_level() -> None:
+    rules = (
+        _modernize_text().split("## Subagent Dispatch Rules", 1)[1].split("## Error Handling")[0]
+    )
+    assert NO_NESTING_RULE in rules
+    assert "one level" in rules
+
+
+def test_modernize_runs_dynamodb_groups_itself() -> None:
+    phase_6 = _phase_6(_modernize_text())
+    for step in (
+        "--engine dynamodb --split",
+        "--engine dynamodb --status",
+        "--engine dynamodb --merge",
+    ):
+        assert step in phase_6, step
+    # The orchestrator never hands the whole grouped design to one subagent.
+    assert 'Run /design-schema-dynamodb"' not in phase_6
+    assert "Run /design-schema-dynamodb for" not in phase_6
+    assert "Follow /design-schema-dynamodb **Group draft task**" in phase_6
+    assert "Follow /design-schema-dynamodb **Merge fix task**" in phase_6
+    assert "at most 3 `--merge` attempts in total" in phase_6
+    assert 'phase_status.schema_design_dynamodb` = "failed"' in phase_6
+    assert "MODERNIZE_RESULT: failed phase=schema_design_dynamodb" in _modernize_text()
+
+
+def test_modernize_never_ends_a_turn_waiting_on_nothing() -> None:
+    text = _modernize_text()
+    section = text.split("## Waiting Rule", 1)[1].split("\n## ", 1)[0]
+    assert "Never end a turn waiting unless a dispatched subagent is still running" in section
+    assert "phase_status" in section and "--status" in section
+    assert "MODERNIZE_RESULT: failed phase=<phase> reason=" in section
+    assert "headless and interactive" in section
+    assert (
+        "Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line" in text
+    )
+
+
+def test_design_schema_dynamodb_group_task_writes_only_its_draft() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    group_task = text.split("## Group draft task", 1)[1].split("\n## ", 1)[0]
+    assert "schema_draft_group_{G}.json" in group_task
+    assert "Do not run `--merge`" in group_task
+    assert NO_NESTING_RULE in group_task
+    fix_task = text.split("## Merge fix task", 1)[1].split("\n## ", 1)[0]
+    assert "Do not run `--merge`" in fix_task
+    assert NO_NESTING_RULE in fix_task
+
+
+def test_design_schema_dynamodb_standalone_waits_before_merging() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    assert "Do not end your turn while any group subagent is still running" in text
+    assert "--engine dynamodb --status" in text
+    # Run as somebody's subagent, it designs the groups itself: no nesting.
+    assert "If you are yourself a subagent" in text
+    assert NO_NESTING_RULE in text
+
+
+def test_design_schema_dispatcher_does_not_nest_dynamodb_groups() -> None:
+    text = (COMMANDS_DIR / "design-schema.md").read_text()
+    assert (
+        "its own\n   nested subagents" not in text
+        and "nested subagents. This is mandatory" not in text
+    )
+    assert "/modernize" in text and "Phase 6" in text
+    assert NO_NESTING_RULE in text
+
+
+def test_experience_mode_is_recorded_after_the_state_file_exists() -> None:
+    # Run 4 of #246: with --mode the orchestrator tried to Write a sidecar
+    # `.modernizer-state.json.mode-note` before run_assessment.py had created
+    # the state file. The mode goes into .modernizer-state.json itself, once it
+    # exists, and no other file is created next to it.
+    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "run_assessment.py" in step_0 and "creates" in step_0
+    assert "Do not create any other file" in step_0

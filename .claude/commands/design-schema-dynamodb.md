@@ -9,6 +9,14 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 
 Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
 
+## Who runs which part
+
+Nesting is one level deep: only the top-level session dispatches subagents, because a subagent's own subagents report to the top-level session, not to it.
+
+- **Dispatched by `/modernize` or `/design-schema`** with a task that names the **Group draft task** or the **Merge fix task**: do only that section below. The dispatcher runs `--split`, `--status` and `--merge` itself and updates `.modernizer-state.json`. Do not dispatch subagents yourself.
+- **Run on its own** (you are the top-level session, not a subagent): follow Steps 1-6. Step 3 may dispatch one subagent per group.
+- **If you are yourself a subagent** and your task names neither section (for example "Run /design-schema-dynamodb"): follow Steps 1-6, but do not dispatch subagents yourself. Do the Group draft task for every group in turn, then merge.
+
 ## Prerequisites
 
 - Assignment phase complete
@@ -27,41 +35,29 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    - `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/groups_manifest.json` — group metadata
    - `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json` — per-group input (`{G}` is the group number)
 
-2. **Read the manifest**
+2. **Read the groups**
 
-   Read `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/groups_manifest.json` to get the list of groups.
+   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables`, `input_file` and `draft`. Use it instead of reading the manifest.
 
-3. **Launch parallel subagents — one per group**
+3. **Write one draft per group**
 
-   For each group in the manifest, launch a subagent (ALL in a single message for true parallelism). Each subagent:
+   Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
-   a. Reads its group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
-      - Contains: `collector_output` (filtered queries + tables) and `analysis_output`
-   b. Reads the domain expertise: `src/skills/dynamodb-data-modeling.md`
-   c. Reads the output contract: `src/contracts/dynamodb_model_output.py`
-   d. Designs the schema following Phase 3 from the skill
-   e. Writes output to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`
-   f. Runs the cost / hot-partition check on that draft (the external-mode equivalent of the Bedrock agent's `compute_performances_and_costs` tool — same computation):
+   ```text
+   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Other groups' primary_tables: {OTHER_GROUPS}. Write only schema_draft_group_{G}.json. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   ```
 
-      ```bash
-      uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --check-costs artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json
-      ```
+   If you are yourself a subagent, do the Group draft task for each group yourself, one after another.
 
-      It prints one JSON line `{"status": "complete", "passed": ..., "results": [...], "per_table": [...], "hot_partition_findings": [...], "errors": [...]}` and does **not** modify the draft. `"status": "error"` (exit 1) means the check could not run (e.g. the path is not under the job's `schema-dynamodb/` directory).
-   g. Sets `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
+4. **Wait for every group**
 
-   Key rules for each group output:
-   - Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
-   - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; when group IDs collide, `--merge` renumbers them `DDB-AP-1..N` across groups and rewrites the `DDB-AP-<n>` mentions in each group's draft text and design trace to match)
-   - `table_definitions[].gsis[].partition_key` and `sort_key` must be LISTS of KeyDefinition
-   - Base table `partition_key` and `sort_key` are single KeyDefinition objects
-   - `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine
-   - `unsupported_patterns` for text search (LIKE '%...%') and aggregation (COUNT, GROUP BY) queries
-   - Include `hot_partition_analysis` for each table
-   - Set `validation_passed` to true only if all the skill's checks pass, including `--check-costs` returning `"passed": true` (step f)
-   - Give each source table one home. Groups run in parallel, so other groups may design the same source table (pass each subagent the other groups' `primary_tables` from the manifest). Name key attributes after the column that identifies the owning entity (e.g. `post_id` for a post and its meta, `term_id` for a term and its taxonomy rows), so the same rows designed in two groups get the same keys, entity types and SK templates and merge automatically. If another table needs a source table's own rows under a different key schema, add a trade-off whose `source_tables` include it and whose `target_tables` name every table that holds it, saying which access patterns need each table and how writes keep the copies in sync. Denormalized copies (attributes copied from another table, with no entity of their own) need no such trade-off
+   Do not end your turn while any group subagent is still running: their results come back to you, and nobody else will merge them. When all have reported, check the drafts:
 
-4. **Wait for all subagents to complete**
+   ```bash
+   uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
+   ```
+
+   `"status": "drafts_pending"` lists the groups without a draft in `drafts_missing`: redo the Group draft task for each of them (one fresh subagent each, or yourself if you are a subagent). Merge only when it prints `merge_pending`.
 
 5. **Merge group drafts**
 
@@ -73,13 +69,9 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 
    The merge gives each source table one DynamoDB home. Tables from different groups that design the same source table with compatible keys (same partition/sort key names and types, the same shape, at least one identical entity, no conflicting entity, SK prefix or GSI) are merged into the first one: the absorbing group's access patterns, `hot_partition_analysis` and trade-offs are re-pointed to it, its hot-partition load is re-aggregated per table, GSI and operation, and a trade-off records the merge. When a source table still has its own entity in tables from two or more groups and no trade-off names all of them, the merge adds a review trade-off (`DynamoDB merge review: … modelled independently by design groups …`) and reports it in `warnings`. Overlaps inside one group, and denormalized copies, are not flagged.
 
-   If it prints `"status": "validation_failed"`, handle each entry in `errors`:
-   - `Out of scope for dynamodb: …` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them.
-   - `DynamoDB merge: …` is a true conflict: one table name used for two different designs, or the same entity type for the same source table with contradictory PK/SK templates in different groups. Fix the group drafts: rename one of the tables, or use one PK/SK template for those rows (or rename one entity type).
+   If it prints `"status": "validation_failed"`, do the Merge fix task below with its `errors` and `warnings`, then re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are the Group draft task). The merged output keeps `validation_passed: false` until a re-run passes; merge failures clear only by re-running `--merge`, not by `--finalize`.
 
-   Then re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are step 3). The merged output keeps `validation_passed: false` until a re-run passes; merge failures clear only by re-running `--merge`, not by `--finalize`.
-
-   `warnings` never fail the phase. They are scope warnings (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) and `DynamoDB merge review: …` overlap notes. Reconcile overlap notes if you can, then re-run `--merge` (within the same 3 attempts): consolidate the tables into the first one listed (move the entities, attributes and GSIs, point `access_patterns[].table_name` and `hot_partition_analysis[].table_name` there, delete the duplicate), or keep both and add a trade-off to one draft that names the source table and every listed table and explains why. If you can't, leave the note: it stays in the design's trade-offs for review before migration.
+   `warnings` never fail the phase. If they include `DynamoDB merge review: …` overlap notes and attempts remain, do the Merge fix task for them and re-run `--merge`.
 
    If the third attempt still prints `"status": "validation_failed"`, stop: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with the `errors` as your result. Do not mark the phase complete.
 
@@ -87,3 +79,45 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
 
 6. **Update state**
    Only after `--merge` printed `"status": "complete"`: set `phase_status.schema_design_dynamodb` = "complete"
+
+## Group draft task
+
+For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json` (and run `--check-costs` on it). Do not run `--merge` or `--finalize`, do not update `.modernizer-state.json`, and do not touch other groups' drafts. Do not dispatch subagents yourself. Return a short summary: tables, access patterns, `validation_passed`.
+
+1. Read your group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
+   - Contains: `collector_output` (filtered queries + tables) and `analysis_output`
+2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
+3. Read the output contract: `src/contracts/dynamodb_model_output.py`
+4. Design the schema following Phase 3 from the skill
+5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`
+6. Run the cost / hot-partition check on that draft (the external-mode equivalent of the Bedrock agent's `compute_performances_and_costs` tool — same computation):
+
+   ```bash
+   uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --check-costs artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json
+   ```
+
+   It prints one JSON line `{"status": "complete", "passed": ..., "results": [...], "per_table": [...], "hot_partition_findings": [...], "errors": [...]}` and does **not** modify the draft. `"status": "error"` (exit 1) means the check could not run (e.g. the path is not under the job's `schema-dynamodb/` directory).
+7. Set `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
+
+Key rules for each group draft:
+
+- Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
+- `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; when group IDs collide, `--merge` renumbers them `DDB-AP-1..N` across groups and rewrites the `DDB-AP-<n>` mentions in each group's draft text and design trace to match)
+- `table_definitions[].gsis[].partition_key` and `sort_key` must be LISTS of KeyDefinition
+- Base table `partition_key` and `sort_key` are single KeyDefinition objects
+- `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine
+- `unsupported_patterns` for text search (LIKE '%...%') and aggregation (COUNT, GROUP BY) queries
+- Include `hot_partition_analysis` for each table
+- Set `validation_passed` to true only if all the skill's checks pass, including `--check-costs` returning `"passed": true` (step 6)
+- Give each source table one home. Groups run in parallel, so other groups may design the same source table (your task lists the other groups' `primary_tables`). Name key attributes after the column that identifies the owning entity (e.g. `post_id` for a post and its meta, `term_id` for a term and its taxonomy rows), so the same rows designed in two groups get the same keys, entity types and SK templates and merge automatically. If another table needs a source table's own rows under a different key schema, add a trade-off whose `source_tables` include it and whose `target_tables` name every table that holds it, saying which access patterns need each table and how writes keep the copies in sync. Denormalized copies (attributes copied from another table, with no entity of their own) need no such trade-off
+
+## Merge fix task
+
+For the `errors` and `warnings` a `--merge` attempt printed. Edit only the `schema_draft_group_*.json` files (re-run `--check-costs` on a draft whose tables or `hot_partition_analysis` you changed). Do not run `--merge` or `--finalize` and do not update `.modernizer-state.json`: whoever dispatched you (or Step 5) re-runs `--merge`. Do not dispatch subagents yourself. Return a short summary of what you changed per error or warning.
+
+For each entry in `errors`:
+
+- `Out of scope for dynamodb: …` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them.
+- `DynamoDB merge: …` is a true conflict: one table name used for two different designs, or the same entity type for the same source table with contradictory PK/SK templates in different groups. Fix the group drafts: rename one of the tables, or use one PK/SK template for those rows (or rename one entity type).
+
+`warnings` never fail the phase. They are scope warnings (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) and `DynamoDB merge review: …` overlap notes. Reconcile overlap notes if you can (the next `--merge`, within the same 3 attempts, picks the change up): consolidate the tables into the first one listed (move the entities, attributes and GSIs, point `access_patterns[].table_name` and `hot_partition_analysis[].table_name` there, delete the duplicate), or keep both and add a trade-off to one draft that names the source table and every listed table and explains why. If you can't, leave the note: it stays in the design's trade-offs for review before migration.

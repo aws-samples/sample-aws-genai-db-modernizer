@@ -8,12 +8,16 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --llm-mode bedrock
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --split
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --merge
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
         --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
 
 DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
 its final step. ``--finalize --engine dynamodb`` only reports whether the merged
-output exists (it never reads an LLM response).
+output exists (it never reads an LLM response). ``--status`` (DynamoDB only,
+read-only) lists the groups, which group drafts exist and whether ``--merge`` is
+still pending, so an orchestrator can decide its next step without listing or
+reading artifacts.
 
 The assignment version defaults to the effective one (ADR-028): v2 when Reality
 Check consolidated, else v1. Every status line reports it as
@@ -179,12 +183,68 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
         assignment_version=assignment_version,
     )
 
+    base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    manifest = store.read_json(f"{base_key}/groups_manifest.json")
     _output(
         {
             "status": "split",
             "assignment_version": assignment_version,
-            "manifest": f"{db}/{job_id}/schema-{engine}/v{assignment_version}/groups_manifest.json",
+            "manifest": f"{base_key}/groups_manifest.json",
+            "groups": _group_entries(store, base_key, manifest),
         }
+    )
+
+
+def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
+    """One compact entry per group: what a group subagent's dispatch needs."""
+    return [
+        {
+            "group_index": group["group_index"],
+            "primary_tables": group.get("primary_tables", []),
+            "query_count": group.get("query_count"),
+            "input_file": f"{base_key}/input_group_{group['group_index']}.json",
+            "draft": f"{base_key}/schema_draft_group_{group['group_index']}.json",
+            "draft_exists": store.exists(
+                f"{base_key}/schema_draft_group_{group['group_index']}.json"
+            ),
+        }
+        for group in manifest.get("groups", [])
+    ]
+
+
+def run_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+    """Report DynamoDB group-design progress as one JSON line (read-only, #246).
+
+    ``not_split``: no manifest yet, run ``--split``. ``drafts_pending``: some
+    group drafts are missing (``drafts_missing``). ``merge_pending``: every draft
+    exists and there is no merged output, or a draft changed after the last
+    merge. ``merged``: the merged output is newer than every draft.
+    """
+    if engine != "dynamodb":
+        _error("--status reports DynamoDB group drafts; other engines use --finalize")
+    base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    output_key = f"{base_key}/schema_output.json"
+    fields: dict = {"assignment_version": assignment_version, "output_path": output_key}
+    if not store.exists(f"{base_key}/groups_manifest.json"):
+        _output({"status": "not_split", **fields, "next": "run --split"})
+        return
+
+    groups = _group_entries(store, base_key, store.read_json(f"{base_key}/groups_manifest.json"))
+    missing = [g["group_index"] for g in groups if not g["draft_exists"]]
+    root = Path(store.base_dir)
+    if missing:
+        status, next_step = "drafts_pending", f"group drafts missing for groups {missing}"
+    elif store.exists(output_key) and all(
+        (root / output_key).stat().st_mtime >= (root / g["draft"]).stat().st_mtime for g in groups
+    ):
+        status, next_step = (
+            "merged",
+            "merged output is current; re-run --merge only after editing a draft",
+        )
+    else:
+        status, next_step = "merge_pending", "every group draft exists; run --merge"
+    _output(
+        {"status": status, **fields, "groups": groups, "drafts_missing": missing, "next": next_step}
     )
 
 
@@ -336,6 +396,11 @@ def main() -> None:
         help="Merge per-group schema drafts into the final schema output (DynamoDB)",
     )
     parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Report which DynamoDB group drafts exist and whether --merge is pending (read-only)",
+    )
+    parser.add_argument(
         "--check-costs",
         metavar="DRAFT",
         default=None,
@@ -378,6 +443,8 @@ def main() -> None:
         run_split(store, args.job_id, args.db, args.engine, version)
     elif args.merge:
         run_merge(store, args.job_id, args.db, args.engine, version)
+    elif args.status:
+        run_status(store, args.job_id, args.db, args.engine, version)
     elif args.llm_mode == "external":
         run_external(store, args.job_id, args.db, args.engine, version)
     else:
