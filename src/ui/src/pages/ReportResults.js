@@ -388,6 +388,17 @@ const ReportResultsPage = memo(() => {
       const tableMappings = synthesis?.table_mappings || [];
       const riskAssessment = synthesis?.risk_assessment || {};
       const risks = (riskAssessment.risks || []).filter(risk => riskHasContent(risk.description));
+      // Analysis risks the effective assignment resolved (risk_assessment.resolved_risks).
+      // Mirrors the "Resolved" tab on the page (see resolvedRisks below in this file).
+      const resolvedRisks = (riskAssessment.resolved_risks || [])
+        .filter(risk => riskHasContent(risk.description))
+        .map(risk => ({
+          engine: risk.engine || null,
+          resolved_on: risk.resolved_on || null,
+          severity: risk.severity,
+          description: risk.description?.replace(/^\[\w+\]\s*/, '') || '',
+          reason: risk.reason || '',
+        }));
       const tradeoffs = synthesis?.trade_offs || [];
       const tcoAnalysis = synthesis?.tco_analysis || {};
       const schemaDesigns = synthesis?.schema_designs || {};
@@ -563,6 +574,36 @@ const ReportResultsPage = memo(() => {
         `).join('')}
       </tbody>
     </table>
+  </div>
+
+  <div class="section-separator">
+    <h2>${t('report-results.risk-assessment.resolved-tab', { count: resolvedRisks.length })}</h2>
+    <div class="desc">${t('report-results.risk-assessment.resolved-export-description')}</div>
+  </div>
+
+  <div class="container">
+    ${resolvedRisks.length > 0 ? `<table>
+      <thead>
+        <tr>
+          <th>${t('report-results.risk-assessment.col-engine')}</th>
+          <th>${t('report-results.risk-assessment.col-resolved-on')}</th>
+          <th>${t('report-results.risk-assessment.col-severity')}</th>
+          <th>${t('report-results.risk-assessment.col-description')}</th>
+          <th>${t('report-results.risk-assessment.col-reason')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${resolvedRisks.map(risk => /* nosemgrep: html-in-template-string */ `
+          <tr>
+            <td>${risk.engine ? `<span class="badge badge-blue">${risk.engine}</span>` /* nosemgrep: html-in-template-string */ : '-'}</td>
+            <td>${risk.resolved_on ? `<span class="badge badge-blue">${risk.resolved_on}</span>` /* nosemgrep: html-in-template-string */ : '-'}</td>
+            <td>${risk.severity || ''}</td>
+            <td>${risk.description}</td>
+            <td>${risk.reason}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>` /* nosemgrep: html-in-template-string */ : `<p>${t('report-results.risk-assessment.no-resolved-risks')}</p>` /* nosemgrep: html-in-template-string */}
   </div>
 
   <div class="section-separator">

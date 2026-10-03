@@ -859,6 +859,7 @@
   "report-results.risk-assessment.col-resolved-on": "Resolved on",
   "report-results.risk-assessment.col-reason": "Reason",
   "report-results.risk-assessment.no-resolved-risks": "No risks were resolved by the assignment",
+  "report-results.risk-assessment.resolved-export-description": "Analysis risks whose queries the effective assignment moved to an engine that serves them, so they no longer apply.",
   "report-results.tradeoffs.title": "Trade-offs and design decisions ({{count}})",
   "report-results.tradeoffs.description": "Key architectural decisions, denormalization choices, and operational trade-offs grouped by target engine",
   "report-results.tradeoffs.count": "{{count}} trade-off",

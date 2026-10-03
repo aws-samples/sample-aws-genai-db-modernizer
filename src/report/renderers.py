@@ -16,6 +16,7 @@ from src.shared.unsupported_pattern import (
 )
 
 from . import escaping
+from .analysis_report import ENGINE_LABELS
 
 
 def artifact_stem(
@@ -972,10 +973,12 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out += [f"## Resolved by the assignment ({len(resolved)})", ""]
         for r in resolved:
             _, body = _risk_engine_and_body(r.get("description"))
+            engine = r.get("engine", "-")
+            engine_name = ENGINE_LABELS.get(engine, str(engine))
             where = (
-                f"{r.get('engine', '-')} \u2192 {r['resolved_on']}"
+                f"{engine_name} \u2192 {ENGINE_LABELS.get(r['resolved_on'], r['resolved_on'])}"
                 if r.get("resolved_on")
-                else str(r.get("engine", "-"))
+                else engine_name
             )
             out.append(
                 f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
