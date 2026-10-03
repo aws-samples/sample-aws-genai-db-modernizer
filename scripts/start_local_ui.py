@@ -34,6 +34,7 @@ a stale pid file can never take down an unrelated process that reused the pid.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import signal
@@ -41,10 +42,9 @@ import socket
 import subprocess  # nosec B404 — intentional subprocess use to run uvicorn/npm/serve
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -195,14 +195,23 @@ def start_serve(serve_bin: Path, log_dir: Path) -> subprocess.Popen:
 
 
 def _check_http_ok(url: str) -> bool:
-    try:
-        with urllib.request.urlopen(
-            url, timeout=2
-        ) as resp:  # nosec B310 — fixed localhost URLs only
-            status: int = resp.status
-            return 200 <= status < 300
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+    """True when a GET on a loopback ``url`` answers 2xx within 2 s.
+
+    Uses ``http.client`` against an explicit loopback host so the probe can only
+    ever reach the servers this script started (no arbitrary URL opening).
+    """
+    parts = urlsplit(url)
+    if parts.scheme != "http" or parts.hostname not in ("127.0.0.1", "localhost", "::1"):
         return False
+    conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=2)
+    try:
+        conn.request("GET", parts.path or "/")
+        status = conn.getresponse().status
+        return 200 <= status < 300
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        conn.close()
 
 
 def wait_for_ready(timeout: float) -> bool:

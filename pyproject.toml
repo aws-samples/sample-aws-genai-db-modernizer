@@ -73,6 +73,7 @@ dev = [
     "detect-secrets>=1.4.0",
     "cfn-lint>=0.83.0",
     "moto[s3,stepfunctions,logs]>=5.2.2",
+    "defusedxml>=0.7",
 ]
 e2e = [
     "playwright>=1.47",

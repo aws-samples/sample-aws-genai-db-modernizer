@@ -57,10 +57,11 @@ import json
 import re
 import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrusted input
 import sys
-import xml.etree.ElementTree as ET  # nosec B405 -- CI-produced junit XML, not user input
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from defusedxml import ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -358,7 +359,7 @@ def parse_junit_counts(path: Path) -> dict[str, dict[str, int]]:
         "pdf": {"total": 0, "failed": 0},
         "ui": {"total": 0, "failed": 0},
     }
-    tree = ET.parse(path)  # nosec B314 -- CI-produced junit XML, not user input
+    tree = ET.parse(path)
     for testcase in tree.getroot().iter("testcase"):
         classname = f"{testcase.get('classname', '')}.{testcase.get('name', '')}"
         category = "contracts"
