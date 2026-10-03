@@ -2,8 +2,9 @@
 
 A schema design may only reference the source tables and query IDs assigned
 (in scope) to its engine in the effective assignment. ``validate_schema_scope``
-reports every reference outside that scope; finalize and ``--merge`` turn those
-reports into ``validation_passed=false`` plus a ``validation_failed`` status.
+reports every designed reference outside that scope; finalize, ``--merge`` and
+the Bedrock path turn those into ``validation_passed=false`` plus a
+``validation_failed`` status. ``unsupported_patterns`` IDs are warnings only.
 """
 
 from __future__ import annotations
@@ -13,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from src.agents.schema_design.scope import validate_schema_scope
+from src.agents.schema_design.scope import (
+    SCOPE_PREFIX,
+    SCOPE_WARNING_PREFIX,
+    apply_scope_violations,
+    assess_schema_scope,
+    validate_schema_scope,
+)
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
 
@@ -226,11 +233,17 @@ def test_unknown_engine_or_malformed_output_does_not_crash():
     )
 
 
-def test_issue_203_wordpress_dynamodb_design_is_flagged():
-    """The rubric judge's finding on the real wordpress run: WpOrderItems maps
-    wp_woocommerce_order_items (ElastiCache) and WpPostContent includes
-    wp_postmeta (Aurora MySQL)."""
-    evidence = json.loads((FIXTURES / "issue_203_wordpress_scope.json").read_text())
+def test_synthetic_table_owner_assignment_flags_cross_engine_tables():
+    """The DynamoDB design from the issue #203 run against a SYNTHETIC assignment.
+
+    The assignment is invented (one query per table, owned by that table's
+    ``recommended_database`` in the run's ``table_mappings``), i.e. the per-table
+    ownership the rubric judge assumed. It is not the run's real assignment: in
+    that one, in-scope DynamoDB queries access both tables, so they are in scope
+    (see ``test_real_wordpress_dynamodb_design_is_in_scope``). Under the assumed
+    ownership, the two cross-engine tables are what gets flagged.
+    """
+    evidence = json.loads((FIXTURES / "issue_203_synthetic_table_owner_scope.json").read_text())
     messages = validate_schema_scope(
         "dynamodb", evidence["dynamodb_design"], evidence["assignment"]
     )
@@ -240,3 +253,134 @@ def test_issue_203_wordpress_dynamodb_design_is_flagged():
     )
     assert _mentions(messages, "wordpress.wp_postmeta", "WpPostContent", "aurora_mysql")
     assert len(messages) == 2
+
+
+def test_real_wordpress_dynamodb_design_is_in_scope():
+    """Regression: a real merged DynamoDB design and the real Reality Check v2
+    assignment it was designed from (wordpress sample, trimmed) are in scope."""
+    real = json.loads((FIXTURES / "wordpress_real_dynamodb_scope.json").read_text())
+    report = assess_schema_scope("dynamodb", real["dynamodb_design"], real["assignment"])
+    assert report.violations == []
+    assert report.warnings == []
+
+
+# ---------------------------------------------------------------------------
+# unsupported_patterns are warnings, not violations
+# ---------------------------------------------------------------------------
+
+_UNSUPPORTED_FIELD = {
+    "dynamodb": "query_ids",
+    "documentdb": "source_query_ids",
+    "opensearch": "query_ids",
+    "elasticache": "source_query_ids",
+}
+
+
+@pytest.mark.parametrize("engine", sorted(_UNSUPPORTED_FIELD))
+@pytest.mark.parametrize("qid,reason", [("q-orders", "assigned to"), ("q-ghost", "not in")])
+def test_unsupported_pattern_ids_are_warnings_only(engine, qid, reason):
+    build, other = _ENGINES[engine]
+    design = build("mydb.users", "q-users")
+    design["unsupported_patterns"] = [{_UNSUPPORTED_FIELD[engine]: [qid]}]
+
+    report = assess_schema_scope(engine, design, _assignment(engine, other))
+
+    assert report.violations == []
+    assert len(report.warnings) == 1
+    assert report.warnings[0].startswith(SCOPE_WARNING_PREFIX)
+    assert qid in report.warnings[0] and reason in report.warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# Exempt fields: legitimately name other engines' tables and queries
+# ---------------------------------------------------------------------------
+
+
+def test_dynamodb_attribute_source_table_is_not_checked():
+    """A denormalized attribute copies a column from a table another engine owns."""
+    design = _dynamodb("mydb.users", "q-users")
+    design["table_definitions"][0]["attributes"] = [
+        {"name": "order_total", "source_table": "mydb.orders", "denormalized": True}
+    ]
+    design["table_definitions"][0]["entities"][0]["attributes"] = [
+        {"name": "last_order", "source_table": "mydb.orders"}
+    ]
+    assert validate_schema_scope("dynamodb", design, _assignment("dynamodb", "elasticache")) == []
+
+
+@pytest.mark.parametrize("engine", ["documentdb", "opensearch"])
+def test_migration_notes_and_trade_offs_are_not_checked(engine):
+    build, other = _ENGINES[engine]
+    design = build("mydb.users", "q-users")
+    design["migration_notes"] = [{"source_table": "mydb.orders", "note": "orders stay put"}]
+    design["trade_offs"] = [
+        {"description": "d", "source_tables": ["mydb.orders"], "query_ids": ["q-orders"]}
+    ]
+    assert validate_schema_scope(engine, design, _assignment(engine, other)) == []
+
+
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+def test_aurora_foreign_key_to_table_owned_elsewhere_is_not_checked(engine):
+    design = {
+        "table_definitions": [
+            {
+                "table_name": "users",
+                "foreign_keys": [
+                    "ALTER TABLE users ADD FOREIGN KEY (order_id) REFERENCES orders(id)"
+                ],
+                "indexes": ["CREATE INDEX idx_orders ON orders (id)"],
+            }
+        ]
+    }
+    assert validate_schema_scope(engine, design, _assignment(engine, "dynamodb")) == []
+
+
+# ---------------------------------------------------------------------------
+# Robustness and re-checks
+# ---------------------------------------------------------------------------
+
+
+def test_non_string_query_ids_and_tables_in_assignment_do_not_crash():
+    assignment = {
+        "query_assignments": [
+            {"query_id": 42, "assigned_engine": "dynamodb", "source_tables": ["mydb.users", 7]},
+            {"query_id": None, "assigned_engine": "dynamodb", "source_tables": "mydb.x"},
+            "garbage",
+        ]
+    }
+    design = _dynamodb("mydb.users", "42")
+    assert validate_schema_scope("dynamodb", design, assignment) == []
+
+
+def test_scope_messages_carry_a_stable_prefix():
+    messages = validate_schema_scope(
+        "dynamodb", _dynamodb("mydb.orders", "q-orders"), _assignment("dynamodb", "elasticache")
+    )
+    assert messages and all(m.startswith(SCOPE_PREFIX) for m in messages)
+
+
+def test_apply_replaces_stale_scope_messages_and_restores_passed():
+    stale = f"{SCOPE_PREFIX}dynamodb: source table 'mydb.orders' ... Remove it from the design."
+    output = {"validation_passed": False, "validation_failures": [stale]}
+
+    cleared = apply_scope_violations(output, [])
+    assert cleared["validation_passed"] is True
+    assert cleared["validation_failures"] == []
+
+    fresh = f"{SCOPE_PREFIX}dynamodb: query 'q-orders' ..."
+    replaced = apply_scope_violations(output, [fresh])
+    assert replaced["validation_passed"] is False
+    assert replaced["validation_failures"] == [fresh]
+
+
+def test_apply_keeps_other_failures_and_their_verdict():
+    stale = f"{SCOPE_PREFIX}dynamodb: query 'q-orders' ..."
+    output = {"validation_passed": False, "validation_failures": ["hot partition", stale]}
+    result = apply_scope_violations(output, [])
+    assert result["validation_passed"] is False
+    assert result["validation_failures"] == ["hot partition"]
+
+
+def test_apply_without_stale_messages_leaves_the_verdict_alone():
+    output = {"validation_passed": False, "validation_failures": []}
+    assert apply_scope_violations(output, []) == output

@@ -363,9 +363,11 @@ def engine_scope(assignment: dict, engine: str) -> EngineScope:
             continue
         if qa.get("assigned_engine") != engine or not qa.get("in_scope", True):
             continue
-        if qa.get("query_id"):
-            query_ids.add(qa["query_id"])
-        tables.update(t for t in qa.get("source_tables") or [] if isinstance(t, str))
+        if qa.get("query_id") is not None:
+            query_ids.add(str(qa["query_id"]))
+        source_tables = qa.get("source_tables")
+        if isinstance(source_tables, list):
+            tables.update(t for t in source_tables if isinstance(t, str))
     return EngineScope(query_ids, tables)
 
 

@@ -1,0 +1,1560 @@
+{
+  "_comment": "Real wordpress run (local job 2ced516f, assignment v2 written by Reality Check): the merged DynamoDB schema_output.json trimmed to the fields the scope check reads, and the v2 assignment trimmed to query_id/assigned_engine/source_tables/in_scope. The DynamoDB design stays in scope, so it must not be flagged. Query IDs (64-hex SHA-256 digests in the run) are replaced one-to-one with short aliases (wp-q001...) so secret scanners do not flag them; the mapping is consistent across design and assignment.",
+  "dynamodb_design": {
+    "table_definitions": [
+      {
+        "table_name": "ActionSchedulerActions",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups"
+        ]
+      },
+      {
+        "table_name": "OrderItems",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "entities": [
+          {
+            "entity_type": "ITEM",
+            "source_table": "wordpress.wp_woocommerce_order_items"
+          },
+          {
+            "entity_type": "ITEMMETA",
+            "source_table": "wordpress.wp_woocommerce_order_itemmeta"
+          }
+        ]
+      },
+      {
+        "table_name": "Posts",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta"
+        ],
+        "entities": [
+          {
+            "entity_type": "POST",
+            "source_table": "wordpress.wp_posts"
+          },
+          {
+            "entity_type": "POSTMETA",
+            "source_table": "wordpress.wp_postmeta"
+          }
+        ]
+      },
+      {
+        "table_name": "Terms",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta"
+        ],
+        "entities": [
+          {
+            "entity_type": "TERM",
+            "source_table": "wordpress.wp_terms"
+          },
+          {
+            "entity_type": "TERMMETA",
+            "source_table": "wordpress.wp_termmeta"
+          }
+        ]
+      },
+      {
+        "table_name": "TermRelationships",
+        "source_tables": [
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms"
+        ]
+      },
+      {
+        "table_name": "PostMeta",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "table_name": "TermMeta",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "table_name": "Users",
+        "source_tables": [
+          "wordpress.wp_users"
+        ]
+      },
+      {
+        "table_name": "wp_options",
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "table_name": "ActionSchedulerLogs",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ]
+      },
+      {
+        "table_name": "AdminNotes",
+        "source_tables": [
+          "wordpress.wp_wc_admin_notes"
+        ]
+      },
+      {
+        "table_name": "ApiKeys",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ]
+      },
+      {
+        "table_name": "CommentMeta",
+        "source_tables": [
+          "wordpress.wp_commentmeta"
+        ]
+      },
+      {
+        "table_name": "Comments",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ]
+      },
+      {
+        "table_name": "DownloadableProductPermissions",
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ]
+      },
+      {
+        "table_name": "ProductMetaLookup",
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ]
+      },
+      {
+        "table_name": "ReservedStock",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ]
+      },
+      {
+        "table_name": "TaxRateClasses",
+        "source_tables": [
+          "wordpress.wp_wc_tax_rate_classes"
+        ]
+      }
+    ],
+    "access_patterns": [
+      {
+        "pattern_id": "DDB-AP-001",
+        "query_ids": [
+          "wp-q015"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-002",
+        "query_ids": [
+          "wp-q013"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-003",
+        "query_ids": [
+          "wp-q011"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-004",
+        "query_ids": [
+          "wp-q017"
+        ],
+        "source_tables": [
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-005",
+        "query_ids": [
+          "wp-q019"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-006",
+        "query_ids": [
+          "wp-q025"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-007",
+        "query_ids": [
+          "wp-q026"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-008",
+        "query_ids": [
+          "wp-q039"
+        ],
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-009",
+        "query_ids": [
+          "wp-q002"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-010",
+        "query_ids": [
+          "wp-q040"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-011",
+        "query_ids": [
+          "wp-q023"
+        ],
+        "source_tables": [
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-012",
+        "query_ids": [
+          "wp-q038"
+        ],
+        "source_tables": [
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-013",
+        "query_ids": [
+          "wp-q048"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-014",
+        "query_ids": [
+          "wp-q047"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-015",
+        "query_ids": [
+          "wp-q006"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-016",
+        "query_ids": [
+          "wp-q014"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-017",
+        "query_ids": [
+          "wp-q034"
+        ],
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-018",
+        "query_ids": [
+          "wp-q033"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-019",
+        "query_ids": [
+          "wp-q031"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-001",
+        "query_ids": [
+          "wp-q066"
+        ],
+        "source_tables": [
+          "wordpress.wp_users"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-002",
+        "query_ids": [
+          "wp-q059"
+        ],
+        "source_tables": [
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-003",
+        "query_ids": [
+          "wp-q074"
+        ],
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-004",
+        "query_ids": [
+          "wp-q065"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-005",
+        "query_ids": [
+          "wp-q071"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-006",
+        "query_ids": [
+          "wp-q070"
+        ],
+        "source_tables": [
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-007",
+        "query_ids": [
+          "wp-q084"
+        ],
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-008",
+        "query_ids": [
+          "wp-q077"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-009",
+        "query_ids": [
+          "wp-q063"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-010",
+        "query_ids": [
+          "wp-q076"
+        ],
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-011",
+        "query_ids": [
+          "wp-q090"
+        ],
+        "source_tables": [
+          "wordpress.wp_term_relationships"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-012",
+        "query_ids": [
+          "wp-q083"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-013",
+        "query_ids": [
+          "wp-q079"
+        ],
+        "source_tables": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-014",
+        "query_ids": [
+          "wp-q093"
+        ],
+        "source_tables": [
+          "wordpress.wp_users"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-001",
+        "query_ids": [
+          "wp-q007"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-002",
+        "query_ids": [
+          "wp-q028"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-003",
+        "query_ids": [
+          "wp-q005"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-004",
+        "query_ids": [
+          "wp-q024"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-005",
+        "query_ids": [
+          "wp-q008"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-006",
+        "query_ids": [
+          "wp-q009"
+        ],
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-001",
+        "query_ids": [
+          "wp-q001"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-002",
+        "query_ids": [
+          "wp-q053"
+        ],
+        "source_tables": [
+          "wordpress.wp_wc_tax_rate_classes"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-003",
+        "query_ids": [
+          "wp-q057"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-004",
+        "query_ids": [
+          "wp-q078"
+        ],
+        "source_tables": [
+          "unknown"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-005",
+        "query_ids": [
+          "wp-q016"
+        ],
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-006",
+        "query_ids": [
+          "wp-q082"
+        ],
+        "source_tables": [
+          "wordpress.wp_comments"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-007",
+        "query_ids": [
+          "wp-q020"
+        ],
+        "source_tables": [
+          "wordpress.wp_comments"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-008",
+        "query_ids": [
+          "wp-q075"
+        ],
+        "source_tables": [
+          "wordpress.wp_comments"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-009",
+        "query_ids": [
+          "wp-q036"
+        ],
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-010",
+        "query_ids": [
+          "wp-q044"
+        ],
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-011",
+        "query_ids": [
+          "wp-q046"
+        ],
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-012",
+        "query_ids": [
+          "wp-q104"
+        ],
+        "source_tables": [
+          "wordpress.wp_commentmeta"
+        ]
+      },
+      {
+        "pattern_id": "DDB-AP-013",
+        "query_ids": [
+          "wp-q103"
+        ],
+        "source_tables": [
+          "wordpress.wp_wc_admin_notes"
+        ]
+      }
+    ],
+    "unsupported_patterns": [
+      {
+        "query_ids": [
+          "wp-q071"
+        ]
+      },
+      {
+        "query_ids": [
+          "wp-q079"
+        ]
+      },
+      {
+        "query_ids": [
+          "wp-q075"
+        ]
+      },
+      {
+        "query_ids": [
+          "wp-q103"
+        ]
+      },
+      {
+        "query_ids": [
+          "wp-q078"
+        ]
+      }
+    ]
+  },
+  "assignment": {
+    "version": 2,
+    "query_assignments": [
+      {
+        "query_id": "wp-q001",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q002",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q003",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q004",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q005",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q006",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q007",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q008",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options",
+          "option_name"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q009",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q010",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_items",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q011",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q012",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q013",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q014",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q015",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q016",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q017",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q018",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q019",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q020",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q021",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q022",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_termmeta",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q023",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q024",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q025",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q026",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q027",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q028",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q029",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q030",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q031",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q032",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q033",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q034",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q035",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q036",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q037",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q038",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q039",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q040",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q041",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q042",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "DUAL"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q043",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q044",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q045",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q046",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q047",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q048",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q049",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q050",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q051",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q052",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q053",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_tax_rate_classes"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q054",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_usermeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q055",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q056",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q057",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q058",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q059",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q060",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q061",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q062",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q063",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q064",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q065",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q066",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_users"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q067",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q068",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q069",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q070",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q071",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q072",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q073",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q074",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q075",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q076",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q077",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q078",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "unknown"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q079",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta",
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q080",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q081",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q082",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q083",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q084",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q085",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q086",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q087",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q088",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q089",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_users",
+          "wordpress.wp_usermeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q090",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q091",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_users",
+          "wordpress.wp_usermeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q092",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_items",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q093",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_users"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q094",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_groups"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q095",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q096",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q097",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_items",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q098",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q099",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q100",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_users",
+          "wordpress.wp_usermeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q101",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q102",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q103",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_admin_notes"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q104",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_commentmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q105",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q106",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "wp-q107",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "unknown"
+        ],
+        "in_scope": true
+      }
+    ]
+  }
+}

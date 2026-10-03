@@ -1,5 +1,5 @@
 {
-  "_comment": "Issue #203 evidence, trimmed from a headless /modernize run on the wordpress sample (deliverables/wordpress/report.json, job 7c6e6af2). 'dynamodb_design' keeps the DynamoDB design's table names and source_tables. 'assignment' encodes the per-table ownership the rubric judge read from report.json table_mappings: one in-scope query per source table, assigned to its recommended_database.",
+  "_comment": "SYNTHETIC assignment, not a real one. 'dynamodb_design' is the DynamoDB design's table names and source_tables from the issue #203 wordpress run (deliverables report.json, job 7c6e6af2). 'assignment' is invented: one in-scope query per source table, assigned to that table's recommended_database in report.json table_mappings (which synthesis derives from the designs and confidence scores, not from the assignment). It encodes the per-table ownership the rubric judge assumed. Against the run's real assignment, wp_woocommerce_order_items and wp_postmeta ARE in DynamoDB's scope (in-scope DynamoDB queries access them), so the real design is not flagged; see wordpress_real_dynamodb_scope.json.",
   "dynamodb_design": {
     "table_definitions": [
       {
