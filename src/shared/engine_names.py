@@ -1,0 +1,50 @@
+"""Canonical, AWS-branded display names for the engines synthesis can target.
+
+Single source of truth for turning an engine id (``aurora_mysql``) into the name a
+customer-facing artifact shows (``Aurora MySQL``). Before this module existed, every
+consumer kept its own copy, and two of them drifted into non-brand casing:
+``src.report.analysis_report.ENGINE_LABELS`` (feeds the decision report's engine
+badges and, via JSON injection, the client script in
+``src/report/templates/analysis_report.js``) and its hand-kept mirror in
+``src/ui/src/utils/ExportReport.js`` both said ``Elasticache``, ``AuroraPostgresql``
+and ``AuroraMySQL`` -- no space, wrong internal casing -- which then leaked into the
+"Resolved by the assignment" section of the engineering report (#221) once that
+section started naming engines (``src.report.renderers``).
+
+``src.report.pptx_report.ENGINE_LABEL`` already has the correct names
+(``"Aurora MySQL"``, ``"ElastiCache"``, ...) and this module matches it exactly for
+the six engines it covers, plus three it doesn't (``neptune``, ``keyspaces``,
+``aurora``). It is *not* imported here: ``pptx_report.py`` imports from
+``src.report.renderers``, so importing ``pptx_report`` back from a module
+``renderers.py`` depends on would be a cycle. Once the PR touching
+``pptx_report.py`` (#239) lands, ``pptx_report.ENGINE_LABEL``/``prettify_engines``
+should be replaced with ``ENGINE_DISPLAY_NAMES``/``display_engine`` from here instead
+of keeping a fourth copy.
+"""
+
+from __future__ import annotations
+
+ENGINE_DISPLAY_NAMES: dict[str, str] = {
+    "dynamodb": "DynamoDB",
+    "documentdb": "DocumentDB",
+    "opensearch": "OpenSearch",
+    "elasticache": "ElastiCache",
+    "aurora_postgresql": "Aurora PostgreSQL",
+    "aurora_mysql": "Aurora MySQL",
+    "neptune": "Neptune",
+    "keyspaces": "Keyspaces",
+    "aurora": "Aurora",
+}
+
+
+def display_engine(engine: str) -> str:
+    """Display name for ``engine``, or a title-cased fallback if it is not known.
+
+    The fallback only prettifies the id (``unmapped_engine`` -> ``Unmapped Engine``)
+    rather than raising, so an engine added to a contract but not yet to
+    ``ENGINE_DISPLAY_NAMES`` still renders as readable prose instead of breaking the
+    report.
+    """
+    if engine in ENGINE_DISPLAY_NAMES:
+        return ENGINE_DISPLAY_NAMES[engine]
+    return engine.replace("_", " ").title() if engine else engine

@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.storage.parallel import map_parallel
 
 from . import escaping
@@ -47,17 +48,11 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 # ":root" block of REPORT_CSS in src/ui/src/utils/ExportReport.js, synced into
 # templates/analysis_report.css. Engine badges rendered on this side carry a
 # data-engine attribute and let CSS pick the colour, so the two sides cannot drift.
-ENGINE_LABELS: dict[str, str] = {
-    "dynamodb": "DynamoDB",
-    "documentdb": "DocumentDB",
-    "opensearch": "OpenSearch",
-    "elasticache": "Elasticache",
-    "aurora_postgresql": "AuroraPostgresql",
-    "aurora_mysql": "AuroraMySQL",
-    "neptune": "Neptune",
-    "keyspaces": "Keyspaces",
-    "aurora": "Aurora",
-}
+# Display names live in src.shared.engine_names (#221 follow-up; also backs
+# src.report.renderers), but are re-exported under this name because
+# tests/unit/report/test_report_template_sync.py pins ``ENGINE_LABELS`` here
+# against the hand-kept mirror in src/ui/src/utils/ExportReport.js.
+ENGINE_LABELS: dict[str, str] = ENGINE_DISPLAY_NAMES
 
 # Default cap on how many query journeys are embedded verbatim. Journeys are the
 # largest part of the payload (~1.3 KB each after projection) and the browser has to

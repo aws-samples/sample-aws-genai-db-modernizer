@@ -452,7 +452,7 @@ def test_render_fills_the_header_and_stat_cards(rendered):
     assert "436.90" in rendered  # 271.8 + 165.1
     # Engine badges carry the engine as data, not a colour class: the palette lives
     # only in the CSS, so this side never names a colour.
-    assert 'class="badge" data-engine="elasticache">Elasticache</span>' in rendered
+    assert 'class="badge" data-engine="elasticache">ElastiCache</span>' in rendered
     assert 'class="badge" data-engine="dynamodb">DynamoDB</span>' in rendered
 
 

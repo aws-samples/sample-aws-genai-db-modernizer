@@ -55,7 +55,7 @@ def test_engineering_report_lists_resolved_risks(report: dict) -> None:
     section = md.split("## Resolved by the assignment (2)", 1)[1].split("\n## ", 1)[0]
     # #221 follow-up: display names, not the raw engine ids ("aurora_mysql",
     # "dynamodb") the description and resolved_on fields carry.
-    assert "HIGH · AuroraMySQL → DynamoDB — Single-row SELECT" in section
+    assert "HIGH · Aurora MySQL → DynamoDB — Single-row SELECT" in section
     assert "aurora_mysql" not in section
     assert "aurora\\_mysql" not in section
     assert (
@@ -67,12 +67,17 @@ def test_engineering_report_lists_resolved_risks(report: dict) -> None:
 def test_engineering_report_resolved_risks_use_display_names_for_unknown_engine(
     report: dict,
 ) -> None:
-    """An engine id with no ``ENGINE_LABELS`` entry falls back to the raw id."""
+    """An engine id with no display-name entry falls back to a title-cased id.
+
+    ``src.shared.engine_names.display_engine`` prettifies rather than passing the raw
+    id through, so even an engine the mapping has not caught up with still reads as
+    prose instead of ``unmapped_engine``.
+    """
     report["risk_assessment"]["resolved_risks"][0]["engine"] = "neptune"
     report["risk_assessment"]["resolved_risks"][0]["resolved_on"] = "unmapped_engine"
     md = renderers.render_engineering_report_md(report)
     section = md.split("## Resolved by the assignment (2)", 1)[1].split("\n## ", 1)[0]
-    assert "Neptune → unmapped\\_engine" in section
+    assert "Neptune → Unmapped Engine" in section
 
 
 def test_decision_report_counts_resolved_risks(report: dict) -> None:

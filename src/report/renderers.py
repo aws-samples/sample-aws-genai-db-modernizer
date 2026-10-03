@@ -9,6 +9,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared.engine_names import display_engine
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -16,7 +17,6 @@ from src.shared.unsupported_pattern import (
 )
 
 from . import escaping
-from .analysis_report import ENGINE_LABELS
 
 
 def artifact_stem(
@@ -973,10 +973,9 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out += [f"## Resolved by the assignment ({len(resolved)})", ""]
         for r in resolved:
             _, body = _risk_engine_and_body(r.get("description"))
-            engine = r.get("engine", "-")
-            engine_name = ENGINE_LABELS.get(engine, str(engine))
+            engine_name = display_engine(r.get("engine", "-"))
             where = (
-                f"{engine_name} \u2192 {ENGINE_LABELS.get(r['resolved_on'], r['resolved_on'])}"
+                f"{engine_name} \u2192 {display_engine(r['resolved_on'])}"
                 if r.get("resolved_on")
                 else engine_name
             )
