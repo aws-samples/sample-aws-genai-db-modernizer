@@ -85,20 +85,44 @@ def test_contract_artifacts_validate(run: PipelineResult) -> None:
     triage = _read(job_dir / "referee-triage" / "triage.json")
     TriageOutputContract.model_validate(triage)
 
+    # Every phase below is required, not "validate if present": a headless run
+    # that silently skipped a phase must fail here, not pass vacuously.
     for agent in triage["selected_agents"]:
         engine = agent["agent_type"]
         analysis_path = job_dir / f"analysis-{engine}" / "analysis.json"
-        if analysis_path.exists():
-            AnalysisOutputContract.model_validate(_read(analysis_path))
+        assert analysis_path.is_file(), f"triage selected {engine} but {analysis_path} is missing"
+        AnalysisOutputContract.model_validate(_read(analysis_path))
 
-    for version in ("v1", "v2"):
-        assignment_path = job_dir / "assignment" / version / "assignment.json"
-        if assignment_path.exists():
-            Assignment.model_validate(_read(assignment_path))
+    assert (job_dir / "assignment" / "v1" / "assignment.json").is_file(), "assignment/v1 missing"
+    for assignment_path in sorted(job_dir.glob("assignment/v*/assignment.json")):
+        Assignment.model_validate(_read(assignment_path))
 
     reality_check_path = job_dir / "reality-check" / "output.json"
-    if reality_check_path.exists():
-        RealityCheckOutputContract.model_validate(_read(reality_check_path))
+    assert reality_check_path.is_file(), f"{reality_check_path} missing"
+    RealityCheckOutputContract.model_validate(_read(reality_check_path))
+
+    # Schema design only runs with an LLM (the deterministic pipeline stops
+    # before it), so it is required only for a job that went through external
+    # LLM mode -- recognisable by the responses it wrote under llm_responses/.
+    llm_responses = job_dir / "llm_responses"
+    if llm_responses.is_dir() and any(llm_responses.iterdir()):
+        from src.storage.assignment_versioning import (
+            engines_with_in_scope_queries,
+            resolve_downstream_assignment_version,
+        )
+        from src.storage.local_store import LocalArtifactStore
+
+        store = LocalArtifactStore(base_dir=str(run.artifact_root))
+        version = resolve_downstream_assignment_version(store, run.db, run.job_id)
+        in_scope = engines_with_in_scope_queries(store, run.db, run.job_id, version)
+        surviving = [a["agent_type"] for a in triage["selected_agents"]]
+        surviving = [e for e in surviving if e in in_scope] if in_scope else surviving
+        for engine in surviving:
+            outputs = list(job_dir.glob(f"schema-{engine}/v*/schema_output.json"))
+            assert outputs, (
+                f"{engine} survived reality check (assignment v{version}) but has no "
+                f"schema-{engine}/v*/schema_output.json"
+            )
 
     for schema_output in sorted(job_dir.glob("schema-*/v*/schema_output.json")):
         engine = schema_output.parent.parent.name.removeprefix("schema-")
