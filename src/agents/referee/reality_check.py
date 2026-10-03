@@ -1244,6 +1244,91 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
     )
 
 
+def reconcile_consolidations(
+    before_assignments: list[dict],
+    after_assignments: list[dict],
+    consolidations: list[dict],
+) -> list[dict]:
+    """Make the consolidation records describe the net per-query moves (#218).
+
+    Pass 2, the LLM corrections, the re-run Aurora absorption, the sanity sweep and
+    the customer-override restore each move queries and edit records on their own,
+    so the records drifted from the assignment (unrecorded moves, overstated counts,
+    savings for an engine that stays). This derives the moves from the before/after
+    assignment and fits the records to them:
+
+    - one record per (from, to) pair with a net move; its ``query_count`` is that move,
+      so applying the records to the before distribution gives the after distribution;
+    - a move with no record gets one; a record with no net move is dropped;
+    - ``action`` is ``full`` only when the source engine ends with no in-scope query,
+      and only then are savings claimed, once per eliminated engine;
+    - a record whose count or action changed gets a reason that states the final move.
+
+    Record order is kept; new records follow. Inputs are not mutated.
+    """
+    before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
+    after_engine = {qa["query_id"]: qa["assigned_engine"] for qa in after_assignments}
+    remaining: dict[str, int] = defaultdict(int)
+    for qa in after_assignments:
+        if qa.get("in_scope", True):
+            remaining[qa["assigned_engine"]] += 1
+
+    moves: dict[tuple[str, str], int] = {}
+    for qa in after_assignments:
+        src = before.get(qa["query_id"])
+        dst = qa["assigned_engine"]
+        if src and src != dst:
+            moves[(src, dst)] = moves.get((src, dst), 0) + 1
+
+    recorded_saving: dict[str, float] = {}
+    first_record: dict[tuple[str, str], dict] = {}
+    for c in consolidations:
+        src = c["from_engine"]
+        recorded_saving[src] = max(recorded_saving.get(src, 0), c.get("saved_cost_estimate") or 0)
+        first_record.setdefault((src, c["to_engine"]), c)
+    ordered = [p for p in first_record if p in moves] + [p for p in moves if p not in first_record]
+
+    reconciled: list[dict] = []
+    savings_claimed: set[str] = set()
+    for src, dst in ordered:
+        count = moves[(src, dst)]
+        full = remaining.get(src, 0) == 0
+        action = "full" if full else "partial"
+        record = dict(
+            first_record.get((src, dst))
+            or {"from_engine": src, "to_engine": dst, "queries_retained": []}
+        )
+        if record.get("query_count") != count or record.get("action", "full") != action:
+            record["reason"] = (
+                f"{count} {src} queries moved to {dst}; no in-scope {src} query remains"
+                if full
+                else (
+                    f"Partial consolidation: {count} {src} queries moved to {dst}; "
+                    f"{src} stays for {remaining[src]} queries"
+                )
+            )
+        saved = 0.0
+        if full and src not in savings_claimed:
+            savings_claimed.add(src)
+            saved = recorded_saving.get(src) or (
+                ENGINE_BASE_COST.get(src, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
+            )
+        retained = [q for q in record.get("queries_retained") or [] if after_engine.get(q) == src]
+        record.update(
+            {
+                "query_count": count,
+                "action": action,
+                "saved_cost_estimate": saved,
+                "queries_retained": [] if full else retained,
+                "retention_reason": (
+                    record.get("retention_reason") if retained and not full else None
+                ),
+            }
+        )
+        reconciled.append(record)
+    return reconciled
+
+
 def format_pattern_recommendation(p: dict) -> str:
     """Render one architectural pattern as a ``Recommended pattern: ...`` line.
 
@@ -1279,11 +1364,22 @@ def _build_recommendations(
     # Consolidation recommendations
     for c in consolidations:
         saved = c.get("saved_cost_estimate", 0)
+        source = c["from_engine"]
+        if c.get("action") == "partial":
+            # The source engine stays, so no cluster is avoided (#218).
+            outcome = (
+                f"No operational savings are claimed because {source} stays in the architecture."
+            )
+        elif saved:
+            outcome = (
+                f"Saves ~${saved}/mo in operational overhead by avoiding a dedicated "
+                f"{source} cluster."
+            )
+        else:
+            outcome = f"{source} leaves the architecture."
         recs.append(
-            f"Consolidated {c['query_count']} queries from {c['from_engine']} → "
-            f"{c['to_engine']}: {c['reason']}. "
-            f"Saves ~${saved}/mo in operational overhead by avoiding a dedicated "
-            f"{c['from_engine']} cluster."
+            f"Consolidated {c['query_count']} queries from {source} → "
+            f"{c['to_engine']}: {c['reason']}. {outcome}"
         )
 
     # Pattern recommendations

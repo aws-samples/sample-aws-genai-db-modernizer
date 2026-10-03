@@ -952,7 +952,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 desc = str(t.get("description", "")).strip()
                 impact = str(t.get("impact", "")).strip()
                 line = f"- **{escaping.md_text(desc)}**"
-                if impact:
+                if impact and impact != desc:  # reality-check items repeat their title
                     line += f" \u2014 {escaping.md_text(impact)}"
                 out.append(line)
                 aff = list(t.get("source_tables") or [])

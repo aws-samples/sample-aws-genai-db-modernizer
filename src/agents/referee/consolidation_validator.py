@@ -179,16 +179,27 @@ def apply_corrections(
         else:
             redirect_engine = committed_aurora.pop()
 
-    # Build correction lookup: query_id → original_engine
+    # Build correction lookup: query_id → original_engine. A correction without
+    # ``failed_target`` (the external validator's shape) failed on the engine its
+    # query sits on now; without this it matched every consolidation out of its
+    # original engine and deleted the smaller ones (#218).
+    current_engine = {qa["query_id"]: qa["assigned_engine"] for qa in revised_assignments}
+    corrections = [
+        {**c, "failed_target": c.get("failed_target") or current_engine.get(c["query_id"])}
+        for c in corrections
+    ]
     correction_map = {c["query_id"]: c for c in corrections}
+
+    def _target(corr: dict) -> str:
+        return redirect_engine if redirect_engine else corr["original_engine"]
 
     # Move queries to Aurora (or back to original if no Aurora available)
     for qa in revised_assignments:
         if qa["query_id"] in correction_map:
             corr = correction_map[qa["query_id"]]
-            target = redirect_engine if redirect_engine else corr["original_engine"]
+            target = _target(corr)
             qa["assigned_engine"] = target
-            if redirect_engine:
+            if target != corr["original_engine"]:
                 qa["assignment_reason"] = (
                     f"reality check: redirected to {redirect_engine} "
                     f"(unserviceable on consolidation target: {corr['reason']})"
@@ -205,12 +216,12 @@ def apply_corrections(
         to_engine = c["to_engine"]
         # Count how many queries from this consolidation were reversed
         # Match on both original_engine AND failed_target to avoid double-counting
-        reversed_ids = [
-            corr["query_id"]
+        reversed_corrections = [
+            corr
             for corr in corrections
-            if corr["original_engine"] == from_engine
-            and corr.get("failed_target", to_engine) == to_engine
+            if corr["original_engine"] == from_engine and corr["failed_target"] == to_engine
         ]
+        reversed_ids = [corr["query_id"] for corr in reversed_corrections]
 
         if not reversed_ids:
             updated_consolidations.append(c)
@@ -221,22 +232,31 @@ def apply_corrections(
             # Full reversal — remove this consolidation entirely
             continue
 
-        # Partial — update the consolidation record
-        original_total = c["query_count"] + len(reversed_ids)
-        if redirect_engine:
+        # Partial — update the consolidation record. ``query_count`` is the number
+        # this consolidation proposed to move, reversed queries included (#218).
+        original_total = c["query_count"]
+        redirected = sum(1 for corr in reversed_corrections if _target(corr) != from_engine)
+        stayed = len(reversed_ids) - redirected
+        parts = []
+        if stayed:
+            parts.append(f"{stayed} stay on {from_engine}")
+        if redirected:
+            parts.append(f"{redirected} redirected to {redirect_engine}")
+        reason_suffix = " and ".join(parts) + f" (unserviceable on {to_engine})"
+        if redirected:
             retention_reason = (
                 f"Redirected to {redirect_engine} "
                 f"(relational patterns unserviceable on {to_engine})"
             )
-            reason_suffix = f"{len(reversed_ids)} redirected to {redirect_engine}"
         else:
-            retention_reason = "LLM validation flagged these as unserviceable on target engine"
-            reason_suffix = f"{len(reversed_ids)} retained (unserviceable on target)"
+            retention_reason = f"LLM validation flagged these as unserviceable on {to_engine}"
 
         updated_consolidations.append(
             {
                 **c,
                 "query_count": remaining_moved,
+                # The source engine stays, so no cluster is avoided.
+                "saved_cost_estimate": 0,
                 "reason": (  # nosemgrep: string-concat-in-list
                     f"Partial consolidation: {remaining_moved} of {original_total} "
                     f"{from_engine} queries moved to {c['to_engine']}; "

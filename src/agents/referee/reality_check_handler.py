@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from collections import defaultdict
+from copy import deepcopy
 from datetime import UTC, datetime
 
 from src.agents.prompt_framing import (
@@ -23,6 +24,7 @@ from src.agents.referee.consolidation_validator import (
 )
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
+    reconcile_consolidations,
     refresh_patterns_and_recommendations,
     rerun_aurora_absorption,
     run_reality_check,
@@ -109,7 +111,11 @@ def run_reality_check_deterministic(
     )
     if pinned:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
-        result["revised_assignments"] = [revised_by_id.get(qa["query_id"], qa) for qa in all_qas]
+        # Copies: later steps edit revised assignments in place, and the input
+        # assignment is the before-state the records are reconciled against.
+        result["revised_assignments"] = [
+            revised_by_id.get(qa["query_id"]) or deepcopy(qa) for qa in all_qas
+        ]
 
     # Count queries per engine after reality check
     after_distribution: dict[str, int] = defaultdict(int)
@@ -369,6 +375,13 @@ def write_reality_check_result(
     ``write_revision`` is False).
     """
     _restore_customer_overrides(result)
+    # Every step above can move queries and edit records on its own: fit the records
+    # to the net moves so they reconcile before_ with after_distribution (#218).
+    result["consolidations"] = reconcile_consolidations(
+        result["assignment"].get("query_assignments", []),
+        result["revised_assignments"],
+        result["consolidations"],
+    )
     # The sanity sweep and the override restore run after pattern detection and can
     # still move queries: recompute so the output matches the assignment it ships with.
     refresh_patterns_and_recommendations(result)

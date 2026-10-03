@@ -263,7 +263,30 @@ class TestHandlerVersions:
         ):
             summary = _run(store, assignment_version=3)
 
-        assert _engine_of(store, summary["output_version"], "DOC-AP-1") == "documentdb"
+        # Nothing moved once the override is restored, so the sweep's record is
+        # reconciled away and no revision is written (#218).
+        version = summary["output_version"] or summary["input_version"]
+        assert _engine_of(store, version, "DOC-AP-1") == "documentdb"
+        assert _rc_output(store)["after_distribution"] == {"dynamodb": 1, "documentdb": 1}
+        assert _rc_output(store)["consolidations"] == []
+
+    def test_sweep_editing_in_place_cannot_move_customer_override(self, store) -> None:
+        """The real sweep edits dicts in place; the override query must not alias the input."""
+        _run(store)
+        _customer_edit(store, 3)
+
+        def _sweep_in_place(revised, consolidations, caps):
+            for qa in revised:
+                qa["assigned_engine"] = "dynamodb"
+            return revised, consolidations
+
+        with patch(
+            "src.agents.referee.reality_check_handler.sanity_sweep", side_effect=_sweep_in_place
+        ):
+            summary = _run(store, assignment_version=3)
+
+        version = summary["output_version"] or summary["input_version"]
+        assert _engine_of(store, version, "DOC-AP-1") == "documentdb"
         assert _rc_output(store)["after_distribution"] == {"dynamodb": 1, "documentdb": 1}
 
     def test_no_consolidation_writes_no_version(self, store) -> None:
