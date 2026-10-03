@@ -69,3 +69,28 @@ def test_no_resolved_risks_no_section(report: dict) -> None:
     report["risk_assessment"].pop("resolved_risks")
     assert "Resolved by the assignment" not in renderers.render_engineering_report_md(report)
     assert "resolved by the assignment" not in renderers.render_decision_report_html(report)
+
+
+def test_mitigation_repeating_the_description_is_not_rendered_twice(report: dict) -> None:
+    """#222 item 3: a mitigation contained in the description is omitted."""
+    report["risk_assessment"]["risks"] = [
+        {
+            "risk_id": "RISK-002",
+            "risk_type": "MIGRATION_COMPLEXITY",
+            "severity": "MEDIUM",
+            "description": "[dynamodb] aggregation: COUNT and SUM have no server-side "
+            "equivalent.  Compute them application-side.",
+            "mitigation": "compute them   APPLICATION-side.",
+        },
+        {
+            "risk_id": "RISK-003",
+            "risk_type": "MIGRATION_COMPLEXITY",
+            "severity": "MEDIUM",
+            "description": "[dynamodb] aggregation: COUNT(*) is not served.",
+            "mitigation": "Maintain a counter with UpdateItem.",
+        },
+    ]
+    md = renderers.render_engineering_report_md(report)
+    register = md.split("## Risk register", 1)[1].split("\n## ", 1)[0]
+    assert register.count("Mitigation:") == 1
+    assert "Mitigation: Maintain a counter with UpdateItem." in register

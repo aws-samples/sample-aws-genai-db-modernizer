@@ -171,6 +171,18 @@ def filtered_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _repeats(mitigation: Any, description: Any) -> bool:
+    """True when ``mitigation`` is already contained in ``description`` (#222).
+
+    Some risks (e.g. DynamoDB unsupported patterns carrying only ``recommendation``)
+    use the same text for both; the engineering report then states it once.
+    Compared case-insensitively with whitespace collapsed.
+    """
+    m = " ".join(str(mitigation or "").split()).casefold()
+    d = " ".join(str(description or "").split()).casefold()
+    return bool(m) and m in d
+
+
 def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     """Analysis risks the effective assignment resolved (``risk_assessment.resolved_risks``)."""
     risk = report.get("risk_assessment") or {}
@@ -944,7 +956,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     f"- **{escaping.md_text(rid)}** \u00b7 {escaping.md_text(sev)} \u00b7 "
                     f"{escaping.md_text(rtype)} \u2014 {escaping.md_text(body)}"
                 )
-                if r.get("mitigation"):
+                if r.get("mitigation") and not _repeats(r.get("mitigation"), body):
                     out.append(f"  - Mitigation: {escaping.md_text(r.get('mitigation'))}")
                 aff = list(r.get("affected_tables") or [])
                 if aff:
