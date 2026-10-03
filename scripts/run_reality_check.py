@@ -34,9 +34,16 @@ def run_standard(
     summary = run_reality_check_handler(job_id, db, store, assignment_version, llm_mode=llm_mode)
 
     if summary["status"] == "awaiting_llm":
-        llm_request_path = f"{db}/{job_id}/llm_requests/reality_check.json"
+        llm_request_path = f"{db}/{job_id}/reality-check/llm_input.json"
+        llm_response_path = f"{db}/{job_id}/llm_responses/reality_check.json"
         if store.exists(llm_request_path):
-            _output({"status": "awaiting_llm", "llm_request": llm_request_path})
+            _output(
+                {
+                    "status": "awaiting_llm",
+                    "llm_request": llm_request_path,
+                    "llm_response": llm_response_path,
+                }
+            )
         else:
             _output({"status": "awaiting_llm"})
     else:
