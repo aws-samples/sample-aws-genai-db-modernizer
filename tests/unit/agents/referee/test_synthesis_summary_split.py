@@ -15,7 +15,7 @@ The numbers mirror the wordpress validation run that surfaced #219.
 
 from __future__ import annotations
 
-from src.agents.referee.synthesis_data import SynthesisData
+from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import build_summary
 
 
@@ -69,11 +69,30 @@ def _summary(ranking=RANKING, eliminated=None) -> str:
 def test_schema_totals_cover_every_engine_with_workload() -> None:
     text = _summary()
     assert (
-        "Schema design produced 39 target tables and 65 access patterns across 3 query "
-        "groups (dynamodb: 20 tables, 52 access patterns; elasticache: 10 tables, 13 "
-        "access patterns; aurora_mysql: 9 tables)."
+        "Schema design produced 39 target objects and 65 in-scope access patterns across 3 "
+        "query groups (dynamodb: 20 tables, 52 access patterns; elasticache: 10 key designs, "
+        "13 access patterns; aurora_mysql: 9 tables)."
     ) in text
     assert "10 target tables with 13 access patterns" not in text
+
+
+def test_only_in_scope_access_patterns_are_counted() -> None:
+    data = _data()
+    patterns = [{"pattern_id": f"p{i}", "in_scope": i >= 5} for i in range(52)]
+    data.engines = {
+        "dynamodb": EngineArtifacts("dynamodb", schema_design={"access_patterns": patterns}),
+        "elasticache": EngineArtifacts("elasticache", schema_design={"access_patterns": [{}] * 13}),
+        "aurora_mysql": EngineArtifacts("aurora_mysql", schema_design={"access_patterns": []}),
+    }
+    text = build_summary(data, RANKING, MAPPINGS, TCO, RISKS, GROUPS)
+    assert "60 in-scope access patterns" in text
+    assert "(dynamodb: 20 tables, 47 access patterns; elasticache: 10 key designs" in text
+
+
+def test_resolved_risks_are_counted_in_the_risk_sentence() -> None:
+    risks = {**RISKS, "resolved_risks": [{}, {}, {}]}
+    text = build_summary(_data(), RANKING, MAPPINGS, TCO, risks, GROUPS)
+    assert "1 risk(s) identified (overall: MEDIUM; 3 resolved by the assignment)." in text
 
 
 def test_workload_split_is_ordered_by_assigned_queries() -> None:

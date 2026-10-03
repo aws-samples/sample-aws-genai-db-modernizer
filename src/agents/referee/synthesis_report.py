@@ -1206,6 +1206,32 @@ def _architecture_rationale(
         return f"Multi-database architecture using {', '.join(services)} based on workload pattern analysis."
 
 
+# What one schema-design object is called per engine (for the summary, #219).
+_OBJECT_NOUNS = {
+    "elasticache": ("key design", "key designs"),
+    "documentdb": ("collection", "collections"),
+    "opensearch": ("index", "indexes"),
+}
+
+
+def _object_noun(engine: str) -> tuple[str, str]:
+    return _OBJECT_NOUNS.get(engine, ("table", "tables"))
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _in_scope_access_patterns(data: SynthesisData, rank: dict) -> int:
+    """In-scope access patterns of an engine's schema design (ranking counts all)."""
+    artifacts = data.engines.get(rank["target"])
+    if artifacts is None or artifacts.schema_design is None:
+        return int(rank.get("access_patterns", 0))
+    return sum(
+        1 for ap in artifacts.schema_design.get("access_patterns", []) if ap.get("in_scope", True)
+    )
+
+
 def build_summary(
     data: SynthesisData,
     ranking: list[dict],
@@ -1257,15 +1283,20 @@ def build_summary(
         if designed:
             engines = {r["target"] for r in designed}
             groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
+            in_scope = {r["target"]: _in_scope_access_patterns(data, r) for r in designed}
             per_engine = "; ".join(
-                f"{r['target']}: {r.get('target_tables', 0)} tables"
-                + (f", {r['access_patterns']} access patterns" if r.get("access_patterns") else "")
+                f"{r['target']}: {_count(r.get('target_tables', 0), *_object_noun(r['target']))}"
+                + (
+                    f", {_count(in_scope[r['target']], 'access pattern', 'access patterns')}"
+                    if in_scope[r["target"]]
+                    else ""
+                )
                 for r in designed
             )
             parts.append(
                 f"Schema design produced "
-                f"{sum(r.get('target_tables', 0) for r in designed)} target tables and "
-                f"{sum(r.get('access_patterns', 0) for r in designed)} access patterns "
+                f"{sum(r.get('target_tables', 0) for r in designed)} target objects and "
+                f"{sum(in_scope.values())} in-scope access patterns "
                 f"across {groups} query groups ({per_engine})."
             )
     else:
@@ -1300,7 +1331,12 @@ def build_summary(
     # Risks
     risk_count = len(risks.get("risks", []))
     if risk_count > 0:
-        parts.append(f"{risk_count} risk(s) identified (overall: {risks['overall_risk_level']}).")
+        n_resolved = len(risks.get("resolved_risks") or [])
+        parts.append(
+            f"{risk_count} risk(s) identified (overall: {risks['overall_risk_level']}"
+            + (f"; {n_resolved} resolved by the assignment" if n_resolved else "")
+            + ")."
+        )
 
     # Query groups
     if query_groups:
