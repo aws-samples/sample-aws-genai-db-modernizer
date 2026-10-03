@@ -446,7 +446,7 @@ def test_bedrock_grouped_path_returns_merge_violations(monkeypatch, tmp_path):
 
 
 def _overlapping_drafts() -> list[dict]:
-    """Two groups design mydb.users in tables with different key schemas."""
+    """Two groups each give mydb.users its own table, with different key schemas."""
     first = _design("dynamodb", "mydb.users", "q-users")
     first["table_definitions"][0]["partition_key"] = {"attribute_name": "id"}
     second = _design("dynamodb", "mydb.users", "q-users")
@@ -456,8 +456,17 @@ def _overlapping_drafts() -> list[dict]:
     return [first, second]
 
 
-def test_merge_unjustified_overlap_fails_validation(monkeypatch, capsys, tmp_path):
-    from src.agents.schema_design.group_merger import MERGE_FAILURE_PREFIX
+def _conflicting_drafts() -> list[dict]:
+    """Two groups use the table name Main for different designs (a true conflict)."""
+    first = _design("dynamodb", "mydb.users", "q-users")
+    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id"}
+    second = _design("dynamodb", "mydb.users", "q-users")
+    second["table_definitions"][0]["partition_key"] = {"attribute_name": "email"}
+    return [first, second]
+
+
+def test_merge_independent_homes_warn_and_complete(monkeypatch, capsys, tmp_path):
+    from src.agents.schema_design.group_merger import OVERLAP_PREFIX
 
     store = _store(tmp_path, "dynamodb")
     _write_groups(store, _overlapping_drafts())
@@ -465,16 +474,16 @@ def test_merge_unjustified_overlap_fails_validation(monkeypatch, capsys, tmp_pat
     code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
 
     assert code == 0
-    assert status["status"] == "validation_failed"
-    [error] = status["errors"]
-    assert error.startswith(MERGE_FAILURE_PREFIX)
-    assert "Main (group 0; PK id)" in error and "UsersByEmail (group 1; PK email)" in error
+    assert status["status"] == "complete"
+    [warning] = status["warnings"]
+    assert warning.startswith(OVERLAP_PREFIX)
+    assert "Main (group 0; PK id)" in warning and "UsersByEmail (group 1; PK email)" in warning
     merged = store.read_json(status["output_path"])
-    assert merged["validation_passed"] is False
-    assert merged["validation_failures"] == [error]
+    assert merged["validation_passed"] is True
+    assert any(t["description"] == warning for t in merged["trade_offs"])
 
 
-def test_merge_overlap_justified_by_trade_off_is_complete(monkeypatch, capsys, tmp_path):
+def test_merge_overlap_justified_by_trade_off_has_no_warning(monkeypatch, capsys, tmp_path):
     store = _store(tmp_path, "dynamodb")
     drafts = _overlapping_drafts()
     drafts[1]["trade_offs"].append(
@@ -490,12 +499,29 @@ def test_merge_overlap_justified_by_trade_off_is_complete(monkeypatch, capsys, t
     code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
 
     assert status["status"] == "complete"
-    assert store.read_json(status["output_path"])["validation_passed"] is True
+    assert "warnings" not in status
 
 
-def test_dynamodb_finalize_reports_merge_failures(monkeypatch, capsys, tmp_path):
+def test_merge_true_conflict_fails_validation(monkeypatch, capsys, tmp_path):
+    from src.agents.schema_design.group_merger import MERGE_FAILURE_PREFIX
+
     store = _store(tmp_path, "dynamodb")
-    _write_groups(store, _overlapping_drafts())
+    _write_groups(store, _conflicting_drafts())
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+
+    assert code == 0
+    assert status["status"] == "validation_failed"
+    [error] = status["errors"]
+    assert error.startswith(MERGE_FAILURE_PREFIX) and "'Main'" in error
+    merged = store.read_json(status["output_path"])
+    assert merged["validation_passed"] is False
+    assert merged["validation_failures"] == [error]
+
+
+def test_dynamodb_finalize_reports_merge_failures_and_warnings(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path, "dynamodb")
+    _write_groups(store, _conflicting_drafts())
     _, merged = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
 
     code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--finalize")
@@ -503,3 +529,30 @@ def test_dynamodb_finalize_reports_merge_failures(monkeypatch, capsys, tmp_path)
     assert code == 0
     assert status["status"] == "validation_failed"
     assert status["errors"] == merged["errors"]
+
+    _write_groups(store, _overlapping_drafts())
+    _, merged = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
+    _, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--finalize")
+
+    assert status["status"] == "complete"
+    assert status["warnings"] == merged["warnings"]
+
+
+def test_merge_renumbers_pattern_ids_in_the_combined_design_trace(tmp_path):
+    store = _store(tmp_path, "dynamodb")
+    first = _design("dynamodb", "mydb.users", "q-users")
+    second = _design("dynamodb", "mydb.users", "q-users")
+    second["table_definitions"][0]["table_name"] = "Other"
+    _write_groups(store, [first, second])
+    base = f"{DB}/{JOB}/schema-dynamodb/v1"
+    for i in range(2):
+        store.write_json(f"{base}/design_trace_group_{i}.json", {"decision": "DDB-AP-1 by id"})
+
+    handler.run_schema_merge(JOB, DB, "dynamodb", store, assignment_version=1)
+
+    merged = store.read_json(f"{base}/schema_output.json")
+    assert [ap["pattern_id"] for ap in merged["access_patterns"]] == ["DDB-AP-1", "DDB-AP-2"]
+    trace = store.read_json(f"{base}/design_trace.json")
+    assert trace["groups"] == [{"decision": "DDB-AP-1 by id"}, {"decision": "DDB-AP-2 by id"}]
+    # Group traces are left as written, so a re-merge renumbers from the originals.
+    assert store.read_json(f"{base}/design_trace_group_1.json") == {"decision": "DDB-AP-1 by id"}

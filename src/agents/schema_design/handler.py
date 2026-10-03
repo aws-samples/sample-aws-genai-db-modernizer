@@ -574,10 +574,12 @@ def run_schema_merge(
     ``validation_failures`` in the written output, and are returned in the
     :class:`ScopeReport` (empty when the merged design stays in scope).
 
-    DynamoDB merge failures (a source table designed in several tables without
-    a trade-off saying why, issue #223; see ``group_merger``) are returned in
-    the report's ``violations`` too, after the scope violations, so callers
-    report ``validation_failed`` for either.
+    DynamoDB merge failures (true conflicts: one table name for two designs,
+    contradictory key templates for the same entity; issue #223, see
+    ``dynamodb_merge``) are returned in the report's ``violations`` after the
+    scope violations, so callers report ``validation_failed`` for either. The
+    merge's review notes (a source table several groups modelled independently)
+    are returned as ``warnings`` and never fail the merge.
 
     Requirements: 6.3
     """
@@ -587,6 +589,7 @@ def run_schema_merge(
         ENGINE_LIST_FIELDS,
         merge_failures,
         merge_schema_groups,
+        merge_warnings,
     )
 
     start_time = time.time()
@@ -602,20 +605,9 @@ def run_schema_merge(
         schema_version=artifact_version,
     )
 
-    # Consolidate per-group design traces into a single design_trace.json
+    # merge_schema_groups also consolidates the per-group design traces into
+    # design_trace.json (with DynamoDB pattern IDs renumbered like the drafts).
     base_key = f"{database_name}/{job_id}/schema-{target_type}/v{artifact_version}"
-    group_traces = []
-    for key in store.list_prefix(f"{base_key}/design_trace_group_"):
-        try:
-            group_traces.append(store.read_json(key))
-        except Exception:
-            logger.debug("Skipping unreadable trace artifact: %s", key)
-    if group_traces:
-        combined_trace = {
-            "total_groups": len(group_traces),
-            "groups": group_traces,
-        }
-        store.write_json(f"{base_key}/design_trace.json", combined_trace)
 
     checked, report = apply_schema_scope(
         store, database_name, job_id, target_type, merged, assignment_version
@@ -624,7 +616,7 @@ def run_schema_merge(
         merged = checked
         store.write_json(f"{base_key}/schema_output.json", merged)
     violations = report.violations + merge_failures(merged)
-    report = ScopeReport(violations, report.warnings)
+    report = ScopeReport(violations, report.warnings + merge_warnings(merged))
 
     elapsed = time.time() - start_time
 

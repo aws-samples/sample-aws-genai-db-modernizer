@@ -4,8 +4,10 @@ import pytest
 
 from src.agents.schema_design.group_merger import (
     MERGE_FAILURE_PREFIX,
+    OVERLAP_PREFIX,
     merge_failures,
     merge_group_drafts,
+    merge_warnings,
 )
 
 
@@ -363,123 +365,165 @@ class TestDynamoDBOverlappingDesigns:
         assert merged[0]["engine"] == "dynamodb"
         assert "group 0" in merged[0]["description"] and "group 1" in merged[0]["description"]
 
-    def test_item_count_and_size_take_the_larger_estimate(self):
+    def test_item_count_adds_only_new_entity_types(self):
         g0, g1 = self._run3_terms()
+        # The absorbed table holds TERM + TAXONOMY, both already in WpTerms: no new items.
         g1["table_definitions"][0]["item_count"] = 45
         g1["table_definitions"][0]["item_size_bytes"] = 50
 
         [table] = merge_group_drafts([g0, g1], "dynamodb")["table_definitions"]
 
-        assert table["item_count"] == 45
+        assert table["item_count"] == 30
         assert table["item_size_bytes"] == 100
 
-    def test_different_key_schemas_without_trade_off_fail_validation(self):
+    def test_item_count_sums_the_share_of_new_entity_types(self):
+        g0 = _ddb([_collection("WpTerms", "term_id", "record_key", TERM, items=30)], [])
+        g1 = _ddb(
+            [_collection("Terms", "term_id", "record_key", TERM, TERM_META, items=60)],
+            [],
+        )
+        g1["table_definitions"][0]["item_size_bytes"] = 400
+
+        [table] = merge_group_drafts([g0, g1], "dynamodb")["table_definitions"]
+
+        assert table["item_count"] == 60  # 30 + 60 x (1 new type / 2 types)
+        assert table["item_size_bytes"] == 250  # (100 x 30 + 400 x 30) / 60
+
+    def test_hot_partition_load_is_re_aggregated_for_the_merged_table(self):
+        g0, g1 = self._run3_terms()
+
+        def hot(table, load, qid):
+            return {
+                "table_name": table,
+                "gsi_name": None,
+                "operation": "read",
+                "rcu_or_wcu_per_second": load,
+                "partition_limit": 3000,
+                "utilization_pct": round(load / 30, 1),
+                "at_risk": False,
+                "contributing_patterns": [qid],
+                "mitigation": None,
+            }
+
+        g0["hot_partition_analysis"] = [hot("WpTerms", 1500, "q1")]
+        g1["hot_partition_analysis"] = [hot("wp_terms_taxonomy", 1200, "q2")]
+
+        [entry] = merge_group_drafts([g0, g1], "dynamodb")["hot_partition_analysis"]
+
+        assert entry["table_name"] == "WpTerms"
+        assert entry["rcu_or_wcu_per_second"] == 2700
+        assert entry["utilization_pct"] == 90.0
+        assert entry["at_risk"] is True and entry["mitigation"]
+        assert entry["contributing_patterns"] == ["q1", "q2"]
+
+    def _posts_drafts(self) -> list[dict]:
+        posts = _entity("POST", "wp_posts", "{ID}", "POST")
         g0 = _ddb(
-            [
-                _collection(
-                    "WpPosts", "post_id", "record_key", _entity("POST", "wp_posts", "{ID}", "POST")
-                )
-            ],
+            [_collection("WpPosts", "post_id", "record_key", posts)],
             [_ap("DDB-AP-4", "WpPosts", "wp_posts")],
         )
         g1 = _ddb(
             [_single("wp_posts", "wp_posts", "id")], [_ap("DDB-AP-2", "wp_posts", "wp_posts")]
         )
+        return [g0, g1]
 
-        result = merge_group_drafts([g0, g1], "dynamodb")
+    def test_independent_homes_from_different_groups_are_a_warning(self):
+        result = merge_group_drafts(self._posts_drafts(), "dynamodb")
 
         assert [t["table_name"] for t in result["table_definitions"]] == ["WpPosts", "wp_posts"]
-        assert result["validation_passed"] is False
-        [failure] = result["validation_failures"]
-        assert failure.startswith(MERGE_FAILURE_PREFIX)
-        assert "'wp_posts'" in failure
-        assert "WpPosts (group 0; PK post_id, SK record_key)" in failure
-        assert "wp_posts (group 1; PK id)" in failure
-        assert merge_failures(result) == [failure]
+        assert result["validation_passed"] is True
+        assert merge_failures(result) == []
+        [warning] = merge_warnings(result)
+        assert warning.startswith(OVERLAP_PREFIX)
+        assert "modelled independently by design groups" in warning
+        assert "WpPosts (group 0; PK post_id, SK record_key)" in warning
+        assert "wp_posts (group 1; PK id)" in warning
+        assert "choose one write path or keep copies in sync — review before migration" in warning
+        [note] = [t for t in result["trade_offs"] if t["description"] == warning]
+        assert note["target_tables"] == ["WpPosts", "wp_posts"]
+        assert note["source_tables"] == ["wp_posts"]
+        assert note["engine"] == "dynamodb"
 
     def test_trade_off_naming_every_target_justifies_separate_tables(self):
-        g0 = _ddb(
-            [
-                _collection(
-                    "WpPosts", "post_id", "record_key", _entity("POST", "wp_posts", "{ID}", "POST")
-                )
-            ],
-            [_ap("DDB-AP-4", "WpPosts", "wp_posts")],
-        )
-        g1 = _ddb(
-            [_single("wp_posts", "wordpress.wp_posts", "id")],
-            [_ap("DDB-AP-2", "wp_posts", "wordpress.wp_posts")],
-            [
-                {
-                    "description": "BatchGetItem by id needs its own table; writes update both",
-                    "impact": "i",
-                    "source_tables": ["wp_posts"],
-                    "target_tables": ["WpPosts", "wp_posts"],
-                    "query_ids": [],
-                    "engine": "dynamodb",
-                }
-            ],
-        )
+        g0, g1 = self._posts_drafts()
+        g1["trade_offs"] = [
+            {
+                "description": "BatchGetItem by id needs its own table; writes update both",
+                "impact": "i",
+                "source_tables": ["wordpress.wp_posts"],
+                "target_tables": ["WpPosts", "wp_posts"],
+                "query_ids": [],
+                "engine": "dynamodb",
+            }
+        ]
 
         result = merge_group_drafts([g0, g1], "dynamodb")
 
         assert len(result["table_definitions"]) == 2
         assert result["validation_passed"] is True
-        assert merge_failures(result) == []
+        assert merge_warnings(result) == []
 
     def test_trade_off_naming_only_some_targets_does_not_justify(self):
-        g0 = _ddb(
-            [
-                _collection(
-                    "WpPosts", "post_id", "record_key", _entity("POST", "wp_posts", "{ID}", "POST")
-                )
-            ],
-            [],
-            [
-                {
-                    "description": "posts in one collection",
-                    "impact": "i",
-                    "source_tables": ["wp_posts"],
-                    "target_tables": ["WpPosts"],
-                }
-            ],
-        )
-        g1 = _ddb([_single("wp_posts", "wp_posts", "id")], [])
+        g0, g1 = self._posts_drafts()
+        g0["trade_offs"] = [
+            {
+                "description": "posts in one collection",
+                "impact": "i",
+                "source_tables": ["wp_posts"],
+                "target_tables": ["WpPosts"],
+            }
+        ]
 
         result = merge_group_drafts([g0, g1], "dynamodb")
 
-        assert result["validation_passed"] is False
-        assert len(merge_failures(result)) == 1
+        assert result["validation_passed"] is True
+        assert len(merge_warnings(result)) == 1
 
-    def test_overlap_failures_are_grouped_by_target_set(self):
+    def test_review_note_copied_into_a_draft_is_regenerated_not_trusted(self):
+        first = merge_group_drafts(self._posts_drafts(), "dynamodb")
+        g0, g1 = self._posts_drafts()
+        g1["trade_offs"] = [
+            t for t in first["trade_offs"] if t["description"].startswith(OVERLAP_PREFIX)
+        ]
+
+        result = merge_group_drafts([g0, g1], "dynamodb")
+
+        assert merge_warnings(result) == merge_warnings(first)
+
+    def test_denormalized_copies_are_neither_failure_nor_warning(self):
         rel = _entity("POST_TERM", "wordpress.wp_term_relationships", "{object_id}", "TERM#{id}")
         posts = _collection("WpPosts", "post_id", "record_key", rel)
         posts["source_tables"] += ["wordpress.wp_terms", "wordpress.wp_term_taxonomy"]
         g0 = _ddb([posts], [])
-        g1 = _ddb(
-            [_collection("Terms", "term_id", "record_key", TERM, TAXONOMY)],
-            [],
-        )
+        g1 = _ddb([_collection("Terms", "term_id", "record_key", TERM, TAXONOMY)], [])
 
         result = merge_group_drafts([g0, g1], "dynamodb")
 
-        [failure] = merge_failures(result)
-        assert "'wordpress.wp_terms', 'wordpress.wp_term_taxonomy'" in failure
-        assert "WpPosts" in failure and "Terms" in failure
+        assert result["validation_passed"] is True
+        assert merge_failures(result) == [] and merge_warnings(result) == []
 
-    def test_overlap_inside_one_group_is_checked_too(self):
+    def test_overlap_inside_one_group_is_neither_failure_nor_warning(self):
+        """Run-3 group 0 alone: WpPosts (with denormalized terms) and WpTerms."""
+        post = _entity("POST", "wordpress.wp_posts", "{ID}", "POST")
+        post_meta = _entity("POST_META", "wordpress.wp_postmeta", "{post_id}", "META#{meta_key}")
+        post_term = _entity(
+            "POST_TERM", "wordpress.wp_term_relationships", "{object_id}", "TERM#{id}"
+        )
+        posts = _collection("WpPosts", "post_id", "record_key", post, post_meta, post_term)
+        posts["source_tables"] += ["wordpress.wp_term_taxonomy", "wordpress.wp_terms"]
         draft = _ddb(
             [
-                _collection("A", "term_id", "record_key", TERM),
-                _single("B", "wordpress.wp_terms", "name"),
+                posts,
+                _collection("WpTerms", "term_id", "record_key", TERM, TAXONOMY, TERM_META),
+                _single("TermNames", "wordpress.wp_terms", "name"),  # same group, own entity
             ],
             [],
         )
 
         result = merge_group_drafts([draft], "dynamodb")
 
-        assert result["validation_passed"] is False
-        assert len(merge_failures(result)) == 1
+        assert result["validation_passed"] is True
+        assert merge_failures(result) == [] and merge_warnings(result) == []
 
     def test_single_entity_tables_for_different_entities_are_not_merged(self):
         """Same key names but a different base table: merging would mix entities."""
@@ -490,7 +534,7 @@ class TestDynamoDBOverlappingDesigns:
         result = merge_group_drafts([_ddb([users], []), _ddb([posts], [])], "dynamodb")
 
         assert [t["table_name"] for t in result["table_definitions"]] == ["Users", "Posts"]
-        assert len(merge_failures(result)) == 1  # wp_users in two tables, no reason given
+        assert merge_failures(result) == [] and merge_warnings(result) == []
 
     def test_single_entity_tables_for_the_same_entity_merge(self):
         a = _single("Users", "wp_users", "id")
@@ -514,6 +558,21 @@ class TestDynamoDBOverlappingDesigns:
 
         assert len(result["table_definitions"]) == 2
         assert result["validation_passed"] is False
+        [failure] = merge_failures(result)
+        assert "entity TAXONOMY" in failure and "contradictory key templates" in failure
+        assert "TAXONOMY#{taxonomy}" in failure and "TAX#{id}" in failure
+
+    def test_contradictory_entity_inside_one_group_is_not_a_failure(self):
+        other_taxonomy = _entity("TAXONOMY", "wordpress.wp_term_taxonomy", "{term_id}", "TAX#{id}")
+        draft = _ddb(
+            [
+                _collection("A", "term_id", "record_key", TERM, TAXONOMY),
+                _collection("B", "term_id", "record_key", TERM, other_taxonomy),
+            ],
+            [],
+        )
+
+        assert merge_group_drafts([draft], "dynamodb")["validation_passed"] is True
 
     def test_colliding_sort_key_prefixes_are_not_merged(self):
         post_meta = _entity("POST_META", "wp_postmeta", "{post_id}", "META#{meta_key}")
@@ -602,3 +661,68 @@ class TestDynamoDBPatternIds:
         result = merge_group_drafts([draft], "dynamodb")
 
         assert [ap["pattern_id"] for ap in result["access_patterns"]] == ["DDB-AP-1", "DDB-AP-1"]
+
+    def test_renumbering_rewrites_references_in_the_drafts_text(self):
+        g0 = _ddb([_single("A", "users", "id")], [_ap("DDB-AP-1", "A"), _ap("DDB-AP-2", "A")])
+        g1 = _ddb([_single("B", "orders", "id")], [_ap("DDB-AP-1", "B"), _ap("DDB-AP-2", "B")])
+        attr = {
+            **_attr("total", "orders"),
+            "denormalized": True,
+            "justification": "Copied for DDB-AP-2 (and DDB-AP-1); DDB-AP-10 is unrelated",
+        }
+        g1["table_definitions"][0]["attributes"].append(attr)
+        g1["trade_offs"] = [
+            {"description": "DDB-AP-1 reads by id", "impact": "DDB-AP-2 too", "engine": "dynamodb"}
+        ]
+        g1["migration_notes"] = [{"object_name": "t", "application_logic_required": "DDB-AP-2"}]
+        g1["hot_partition_analysis"] = [{"table_name": "B", "mitigation": "see DDB-AP-1"}]
+
+        result = merge_group_drafts([g0, g1], "dynamodb")
+
+        assert [ap["pattern_id"] for ap in result["access_patterns"]] == [
+            "DDB-AP-1",
+            "DDB-AP-2",
+            "DDB-AP-3",
+            "DDB-AP-4",
+        ]
+        orders = result["table_definitions"][1]
+        assert orders["attributes"][1]["justification"] == (
+            "Copied for DDB-AP-4 (and DDB-AP-3); DDB-AP-10 is unrelated"
+        )
+        trade_off = next(t for t in result["trade_offs"] if "reads by id" in t["description"])
+        assert trade_off["description"] == "DDB-AP-3 reads by id"
+        assert trade_off["impact"] == "DDB-AP-4 too"
+        assert result["migration_notes"][0]["application_logic_required"] == "DDB-AP-4"
+        assert result["hot_partition_analysis"][1]["mitigation"] == "see DDB-AP-3"
+        # Group 0 keeps its own references.
+        assert result["hot_partition_analysis"][0] == {"table_name": "A"}
+
+
+class TestDynamoDBPerDraftRenames:
+    def test_absorbed_name_is_re_pointed_only_in_its_own_draft(self):
+        """Users (g0) absorbs Accounts (g1); g2's unrelated Accounts keeps its references."""
+        users = _single("Users", "wp_users", "id")
+        accounts_same_entity = _single("Accounts", "wp_users", "id")
+        accounts_other = _single("Accounts", "billing_accounts", "account_id")
+        g0 = _ddb([users], [_ap("DDB-AP-1", "Users")])
+        g1 = _ddb([accounts_same_entity], [_ap("DDB-AP-2", "Accounts")])
+        g2 = _ddb(
+            [accounts_other],
+            [_ap("DDB-AP-3", "Accounts")],
+            [{"description": "billing", "impact": "i", "target_tables": ["Accounts"]}],
+        )
+
+        result = merge_group_drafts([g0, g1, g2], "dynamodb")
+
+        assert [t["table_name"] for t in result["table_definitions"]] == ["Users", "Accounts"]
+        assert result["table_definitions"][1]["source_tables"] == ["billing_accounts"]
+        assert [(ap["pattern_id"], ap["table_name"]) for ap in result["access_patterns"]] == [
+            ("DDB-AP-1", "Users"),
+            ("DDB-AP-2", "Users"),
+            ("DDB-AP-3", "Accounts"),
+        ]
+        # g1's entry is re-pointed to Users and aggregated with g0's; g2's stays on Accounts.
+        assert [h["table_name"] for h in result["hot_partition_analysis"]] == ["Users", "Accounts"]
+        billing = next(t for t in result["trade_offs"] if t["description"] == "billing")
+        assert billing["target_tables"] == ["Accounts"]
+        assert result["validation_passed"] is True

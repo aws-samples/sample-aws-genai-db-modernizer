@@ -226,7 +226,7 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     here too (issue #203), as does one with DynamoDB merge failures (#223).
     """
     if engine == "dynamodb":
-        from src.agents.schema_design.group_merger import merge_failures
+        from src.agents.schema_design.group_merger import merge_failures, merge_warnings
         from src.agents.schema_design.handler import ScopeReport, apply_schema_scope
 
         output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
@@ -236,8 +236,12 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
         checked, report = apply_schema_scope(store, db, job_id, engine, merged, assignment_version)
         if checked != merged:  # new violations, or stale ones cleared after a hand fix
             store.write_json(output_key, checked)
-        # Merge failures (#223) recorded by --merge fail finalize as well.
-        report = ScopeReport(report.violations + merge_failures(checked), report.warnings)
+        # Merge failures (#223) recorded by --merge fail finalize too; they clear
+        # only by fixing the group drafts and re-running --merge.
+        report = ScopeReport(
+            report.violations + merge_failures(checked),
+            report.warnings + merge_warnings(checked),
+        )
         _output({**_scope_fields(report, output_key), "assignment_version": assignment_version})
         return
 
