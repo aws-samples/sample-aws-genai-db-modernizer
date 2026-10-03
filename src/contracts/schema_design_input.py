@@ -293,7 +293,7 @@ class SchemaDesignGroupEntry(BaseModel):
 class SchemaDesignGroupsManifest(BaseModel):
     """Manifest produced by prepare_schema_input.py --split.
 
-    Lives at: .artifacts/{db}/{job}/schema-{engine}/v1/groups_manifest.json
+    Lives at: artifacts/{db}/{job}/schema-{engine}/v1/groups_manifest.json
     """
 
     job_id: str

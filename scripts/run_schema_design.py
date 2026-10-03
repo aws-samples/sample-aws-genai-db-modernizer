@@ -247,7 +247,7 @@ def main() -> None:
     parser.add_argument(
         "--artifact-root",
         default="./artifacts",
-        help="Root directory for local artifacts (default: .artifacts)",
+        help="Root directory for local artifacts (default: ./artifacts)",
     )
     args = parser.parse_args()
 

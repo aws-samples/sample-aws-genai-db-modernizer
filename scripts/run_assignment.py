@@ -2,7 +2,7 @@
 """Run assignment resolution — map queries to their best-fit target engine.
 
 Usage:
-    uv run python scripts/run_assignment.py --job-id <id> --db <name> [--artifact-root .artifacts]
+    uv run python scripts/run_assignment.py --job-id <id> --db <name> [--artifact-root ./artifacts]
 
 Outputs JSON to stdout:
     {"status": "complete", "distribution": {...}, "total_queries": N}

@@ -2,7 +2,7 @@
 """Parse collector output and initialize a modernization job.
 
 Usage:
-    uv run python scripts/run_collect.py --file <collector-json> [--db <name>] [--artifact-root .artifacts]
+    uv run python scripts/run_collect.py --file <collector-json> [--db <name>] [--artifact-root ./artifacts]
 
 Outputs JSON to stdout:
     {"status": "complete", "job_id": "...", "database_name": "...", "tables": N, "queries": N}

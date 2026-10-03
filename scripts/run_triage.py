@@ -2,7 +2,7 @@
 """Run triage to select target NoSQL engines based on workload signals.
 
 Usage:
-    uv run python scripts/run_triage.py --job-id <id> --db <name> [--artifact-root .artifacts]
+    uv run python scripts/run_triage.py --job-id <id> --db <name> [--artifact-root ./artifacts]
 
 Outputs JSON to stdout:
     {"status": "complete", "selected": [...], "skipped": [...], "deferred": [...]}

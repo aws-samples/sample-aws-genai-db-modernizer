@@ -111,7 +111,7 @@ class LocalS3Service:
     Implements the same interface as S3ArtifactsService.
     """
 
-    def __init__(self, artifact_store, artifact_root: str = ".artifacts") -> None:
+    def __init__(self, artifact_store) -> None:
         self._store = artifact_store
         self._root: Path = artifact_store.base_dir
         self.bucket = "local"
