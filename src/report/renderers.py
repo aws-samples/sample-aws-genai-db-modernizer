@@ -171,6 +171,16 @@ def filtered_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Analysis risks the effective assignment resolved (``risk_assessment.resolved_risks``)."""
+    risk = report.get("risk_assessment") or {}
+    return [
+        r
+        for r in (risk.get("resolved_risks") or [])
+        if isinstance(r, dict) and _risk_has_content(r.get("description"))
+    ]
+
+
 _CACHE_ENGINES = {"elasticache", "memorydb"}
 
 _ROLE_STROKE = {
@@ -650,10 +660,13 @@ def render_decision_report_html(
                 }
             )
             types_txt = ", ".join(types) if types else "several areas"
+            n_resolved = len(resolved_risks(report))
+            resolved_txt = f"; {n_resolved} resolved by the assignment" if n_resolved else ""
             out.append(
                 f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} migration "
                 f"{plural_noun(len(risks), 'risk')} identified "
-                f"({hi} high, {med} medium) across {esc(types_txt)}. The full risk register, with "
+                f"({hi} high, {med} medium{resolved_txt}) across {esc(types_txt)}. The full "
+                "risk register, with "
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"
             )
@@ -939,6 +952,26 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
                     out.append(f"  - Affects: {shown}{more}")
             out.append("")
+
+    resolved = resolved_risks(report)
+    if resolved:
+        # Analysis risks the effective assignment resolved (#221): listed so none
+        # disappears without a record.
+        out += [f"## Resolved by the assignment ({len(resolved)})", ""]
+        for r in resolved:
+            _, body = _risk_engine_and_body(r.get("description"))
+            where = (
+                f"{r.get('engine', '-')} \u2192 {r['resolved_on']}"
+                if r.get("resolved_on")
+                else str(r.get("engine", "-"))
+            )
+            out.append(
+                f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
+                f"{escaping.md_text(where)} \u2014 {escaping.md_text(body)}"
+            )
+            if r.get("reason"):
+                out.append(f"  - Resolved because {escaping.md_text(r['reason'])}.")
+        out.append("")
 
     tradeoffs = [t for t in (report.get("trade_offs") or []) if isinstance(t, dict)]
     if tradeoffs:

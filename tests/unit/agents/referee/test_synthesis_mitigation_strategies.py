@@ -169,3 +169,23 @@ def test_risk_assessment_carries_the_migration_note_object() -> None:
     assert note["object_type"] == "trigger"
     assert note["object_name"] == "audit_insert"
     assert any("trigger 'audit_insert'" in s for s in ra["mitigation_strategies"])
+
+
+def test_coverage_gap_gets_its_own_line_not_the_unsupported_one() -> None:
+    risks = WORDPRESS_LIKE + [
+        _risk(
+            "RISK-006",
+            "MIGRATION_COMPLEXITY",
+            "MEDIUM",
+            "dynamodb",
+            query_ids=["g1", "g2"],
+            coverage_gap=True,
+        )
+    ]
+    strategies = _build_mitigation_strategies(risks, EFFECTIVE)
+    assert (
+        "Add in-scope access patterns for the 2 queries the DynamoDB schema design does not "
+        "serve (RISK-006), or route them to an engine that serves them."
+    ) in strategies
+    unsupported = next(s for s in strategies if "unsupported" in s)
+    assert "RISK-006" not in unsupported

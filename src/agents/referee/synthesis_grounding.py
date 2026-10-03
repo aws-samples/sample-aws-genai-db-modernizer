@@ -200,6 +200,15 @@ def _recommends(sentence: str, engines: Iterable[str]) -> bool:
     return False
 
 
+def recommends_engine(text: str, engine: str) -> bool:
+    """True when any sentence of ``text`` recommends ``engine`` (#221).
+
+    Used to tell an anti-pattern whose own advice was "move these queries to X" (and the
+    assignment did) from one that merely describes a limitation.
+    """
+    return any(_recommends(s, [engine]) for s in split_sentences(text or ""))
+
+
 def _drop_recommendations(text: str, eliminated: dict[str, str | None]) -> tuple[str, str, bool]:
     """Return ``(tag, kept_body, changed)`` with recommending sentences removed.
 

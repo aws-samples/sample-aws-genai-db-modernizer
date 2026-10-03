@@ -6,11 +6,16 @@ another engine. The risk register must describe the effective assignment:
 
 - the ``[E]`` risk covers only the queries still assigned to E, and its
   "N remaining" count is computed over those queries only;
-- queries moved to another engine T whose schema design addresses them (an access
-  pattern, or an unsupported pattern that is already its own risk on T) are resolved
-  by the move. They are recorded in ``resolved_risks``, never silently lost;
-- queries moved to T that T's design does not address stay a risk, re-attributed to
-  ``[T]`` with the original severity;
+- queries moved to another engine T are resolved by the move only when T's design
+  serves them with an in-scope access pattern (an unsupported pattern on T, itself a
+  MEDIUM risk, stands in only for risks no more severe than MEDIUM; out-of-scope
+  patterns never count). Resolved risks are recorded in ``resolved_risks``;
+- queries moved to T that T's design does not serve stay a risk, re-attributed to
+  ``[T]`` with the original severity, attribution first and the standard
+  "(N% ..., M remaining)" parenthetical last (the deck parses it);
+- when the anti-pattern's own advice was to move the queries to T and they moved, the
+  anti-pattern is resolved, and the queries T does not serve become one coverage-gap
+  risk on T, listed by their own text;
 - placeholder table ids such as ``unknown`` are not affected tables.
 
 The fixture mirrors the wordpress run that surfaced #221: Aurora MySQL's
@@ -181,7 +186,10 @@ class TestRiskFollowsItsQueries:
         assert "1 remaining" in risk["description"]
         assert "DynamoDB analysis" in risk["description"]
         assert risk["reattributed_from"] == "dynamodb"
-        assert "complex-aggregation fix" in risk["mitigation"]
+        assert risk["mitigation"] == (
+            "Cover the 1 remaining query in the ElastiCache schema design or route it to an "
+            "engine that serves it. Background (DynamoDB analysis): complex-aggregation fix"
+        )
 
     def test_risk_on_own_engine_is_narrowed_to_its_own_queries(self, result) -> None:
         # no-relational-need: q-rel stays on Aurora; q-kv1 (DDB-AP-2) is covered on
@@ -198,12 +206,35 @@ class TestRiskFollowsItsQueries:
         assert "1 remaining" in moved["description"]
         assert moved["affected_tables"] == ["wp.wp_api_keys", "wp.wp_comments"]
 
-    def test_unsupported_and_out_of_scope_patterns_count_as_addressed(self, result) -> None:
-        # single-access-pattern-table: q-kv1 in scope, q-kv2 out of scope by design,
-        # q-found already its own DynamoDB unsupported-pattern risk.
-        assert not _risks_by_type(result, "single-access-pattern-table")
-        assert any(
-            "single-access-pattern-table" in r["description"] for r in result["resolved_risks"]
+    def test_out_of_scope_patterns_never_resolve_a_moved_query(self, result) -> None:
+        # single-access-pattern-table (MEDIUM): q-kv1 has an in-scope pattern, q-found is a
+        # (MEDIUM) unsupported-pattern risk of its own, but q-kv2's pattern is out of scope.
+        risks = _risks_by_type(result, "single-access-pattern-table")
+        assert len(risks) == 1
+        assert _engine(risks[0]) == "dynamodb"
+        assert risks[0]["severity"] == "MEDIUM"
+        assert risks[0]["query_ids"] == ["q-found", "q-kv1", "q-kv2"]
+        assert risks[0]["description"].endswith(
+            "(67% of queries resolved by schema design, 1 remaining)"
+        )
+
+    def test_reattributed_description_puts_attribution_first(self, result) -> None:
+        risk = _risks_by_type(result, "complex-aggregation")[0]
+        assert risk["description"] == (
+            "[elasticache] Flagged by the DynamoDB analysis for 3 queries now on "
+            "ElastiCache: complex-aggregation description (67% of queries resolved by "
+            "schema design, 1 remaining)"
+        )
+
+    def test_reattributed_risk_count_survives_the_deck_parser(self, result) -> None:
+        from src.report.pptx_report import clean_risk_text
+
+        risk = _risks_by_type(result, "complex-aggregation")[0]
+        prose, count = clean_risk_text(risk["description"])
+        assert count == "1"
+        assert prose == (
+            "Flagged by the DynamoDB analysis for 3 queries now on ElastiCache: "
+            "complex-aggregation description"
         )
 
     def test_unknown_is_never_an_affected_table(self, result) -> None:
@@ -258,3 +289,97 @@ def test_without_an_assignment_every_risk_is_kept_on_its_engine() -> None:
     assert agg[0]["query_ids"] == ["q-agg1", "q-agg2", "q-agg3"]
     assert _risks_by_type(result, "high-frequency-pk-lookup")
     assert result["resolved_risks"] == []
+
+
+def _set_recommendation(data: SynthesisData, engine: str, ap_type: str, text: str) -> None:
+    for ap in data.engines[engine].analysis["workload_analysis"]["anti_patterns_detected"]:
+        if ap["anti_pattern_type"] == ap_type:
+            ap["recommendation"] = text
+
+
+def _set_in_scope(data: SynthesisData, pattern_id: str, in_scope: bool) -> None:
+    for ap in data.engines["dynamodb"].schema_design["access_patterns"]:
+        if ap["pattern_id"] == pattern_id:
+            ap["in_scope"] = in_scope
+
+
+def test_high_risk_whose_only_pattern_is_out_of_scope_stays_high() -> None:
+    data = _data()
+    _set_in_scope(data, "DDB-AP-1", False)
+    result = build_risk_assessment(data)
+    risks = _risks_by_type(result, "high-frequency-pk-lookup")
+    assert len(risks) == 1
+    assert risks[0]["severity"] == "HIGH"
+    assert _engine(risks[0]) == "dynamodb"
+    assert not any("high-frequency-pk-lookup" in r["description"] for r in result["resolved_risks"])
+
+
+def test_unsupported_pattern_does_not_stand_in_for_a_high_risk() -> None:
+    data = _data()
+    # q-opt becomes a DynamoDB unsupported pattern (a MEDIUM risk) instead of DDB-AP-1.
+    data.engines["dynamodb"].schema_design["access_patterns"].pop(0)
+    data.engines["dynamodb"].schema_design["unsupported_patterns"].append(
+        {"query_ids": ["q-opt"], "pattern_type": "lookup", "recommendation": "Cache it."}
+    )
+    result = build_risk_assessment(data)
+    risks = _risks_by_type(result, "high-frequency-pk-lookup")
+    assert [r["severity"] for r in risks] == ["HIGH"]
+
+
+def test_advice_to_move_resolves_the_anti_pattern_and_reports_the_gap() -> None:
+    data = _data()
+    _set_recommendation(
+        data, "aurora_mysql", "no-relational-need", "Consider DynamoDB for key-value access."
+    )
+    data.collector["queries"]["query_patterns"][6]["query_text"] = "SHOW FULL FIELDS FROM t"
+    result = build_risk_assessment(data)
+    assert [_engine(r) for r in _risks_by_type(result, "no-relational-need")] == ["aurora_mysql"]
+    assert any(
+        "no-relational-need" in r["description"] and r["resolved_on"] == "dynamodb"
+        for r in result["resolved_risks"]
+    )
+    gaps = _risks_by_type(result, "Schema design gap")
+    assert len(gaps) == 1
+    assert gaps[0]["description"] == (
+        "[dynamodb] Schema design gap: 1 query assigned to DynamoDB has no in-scope access "
+        "pattern: SHOW FULL FIELDS FROM t (0% of queries resolved by schema design, "
+        "1 remaining)"
+    )
+    assert gaps[0]["query_ids"] == ["q-kv3"]
+    assert gaps[0]["severity"] == "MEDIUM"
+
+
+def test_advice_to_move_with_an_out_of_scope_pattern_keeps_a_high_gap() -> None:
+    data = _data()
+    _set_recommendation(
+        data, "aurora_mysql", "high-frequency-pk-lookup", "Migrate PK lookups to DynamoDB."
+    )
+    _set_in_scope(data, "DDB-AP-1", False)
+    result = build_risk_assessment(data)
+    gaps = _risks_by_type(result, "Schema design gap")
+    assert [(g["severity"], g["query_ids"]) for g in gaps] == [("HIGH", ["q-opt"])]
+
+
+def test_old_engine_advice_naming_its_own_features_is_dropped() -> None:
+    data = _data()
+    _set_recommendation(
+        data, "dynamodb", "complex-aggregation", "Pre-compute aggregates with DynamoDB Streams."
+    )
+    risk = _risks_by_type(build_risk_assessment(data), "complex-aggregation")[0]
+    assert risk["mitigation"] == (
+        "Cover the 1 remaining query in the ElastiCache schema design or route it to an "
+        "engine that serves it."
+    )
+
+
+def test_resolved_risk_text_is_grounded() -> None:
+    data = _data()
+    _set_recommendation(
+        data, "aurora_mysql", "high-frequency-pk-lookup", "Migrate PK lookups to DynamoDB."
+    )
+    for ap in data.engines["aurora_mysql"].analysis["workload_analysis"]["anti_patterns_detected"]:
+        if ap["anti_pattern_type"] == "high-frequency-pk-lookup":
+            ap["description"] = "Hot PK lookups. Use OpenSearch to serve them."
+    result = build_risk_assessment(data, {"opensearch": "aurora_mysql"})
+    res = next(r for r in result["resolved_risks"] if "Hot PK" in r["description"])
+    assert "not part of the target architecture" in res["description"]

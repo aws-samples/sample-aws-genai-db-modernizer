@@ -21,7 +21,9 @@ from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrus
 from src.agents.referee.synthesis_grounding import (
     SUMMARY_GROUNDING_RULE,
     display_name,
+    engine_mentions,
     ground_risks,
+    recommends_engine,
 )
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
@@ -515,10 +517,14 @@ def build_risk_assessment(
 
     Anti-pattern risks follow their queries (#221): the ``[engine]`` risk covers only the
     queries the effective assignment keeps on that engine. Queries moved to another
-    engine whose schema design addresses them (or to Aurora, which runs the source SQL)
-    are resolved by the move; queries moved to an engine that does not address them stay
-    a risk, re-attributed to that engine with the original severity. Every resolved risk
-    is recorded in ``resolved_risks``.
+    engine are resolved by the move only when that engine's design serves them with an
+    in-scope access pattern (an unsupported pattern there, itself a MEDIUM risk, counts
+    only for risks no more severe than MEDIUM), or when they moved to Aurora, which runs
+    the source SQL. Otherwise the risk is re-attributed to the new engine with its
+    original severity. When the anti-pattern's own advice was to move the queries to the
+    engine they landed on, the anti-pattern is resolved and the queries that engine's
+    design does not serve become one coverage-gap risk per engine. Every resolved risk is
+    recorded in ``resolved_risks`` (grounded like the risks).
 
     Only engines the assignment routed queries to contribute risks. An engine triage
     selected but the assignment then dropped is not part of the target architecture, so its
@@ -553,10 +559,18 @@ def build_risk_assessment(
         engine: _covered_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
     }
-    addressed_by = {
-        engine: _addressed_query_ids(artifacts.schema_design or {})
+    unsupported_by = {
+        engine: _unsupported_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
     }
+    query_text = {
+        q["query_id"]: str(q.get("query_text") or "")
+        for q in data.source_queries
+        if q.get("query_id")
+    }
+    # target engine -> {query id: severity} for queries an anti-pattern's advice moved to
+    # that engine but its design does not serve (reported as one gap risk per engine).
+    coverage_gaps: dict[str, dict[str, str]] = {}
 
     for engine, artifacts in data.engines.items():
         # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
@@ -668,7 +682,41 @@ def build_risk_assessment(
                         )
                     )
                     continue
-                remaining = ids - addressed_by.get(target, set())
+                # Only an in-scope access pattern on the new engine resolves a query. An
+                # unsupported pattern there is its own (MEDIUM) risk, so it stands in only
+                # for risks no more severe than that.
+                addressed = set(covered_by.get(target, set()))
+                if _SEVERITY_ORDER.get(severity, 9) >= _SEVERITY_ORDER["MEDIUM"]:
+                    addressed |= unsupported_by.get(target, set())
+                remaining = ids - addressed
+                recommendation = ap.get("recommendation") or ""
+                if recommends_engine(f"{description} {recommendation}", target):
+                    # The analysis advised moving these queries to ``target`` and the
+                    # assignment did: the anti-pattern itself is resolved. Queries the new
+                    # design does not serve are a coverage gap on ``target``, reported once
+                    # per engine in their own words below.
+                    resolved.append(
+                        _resolved_risk(
+                            engine,
+                            severity,
+                            description,
+                            tables,
+                            ids,
+                            target,
+                            f"the {display_name(engine)} analysis recommended "
+                            f"{display_name(target)} for these queries and the assignment "
+                            "moved them there",
+                        )
+                    )
+                    gap = coverage_gaps.setdefault(target, {})
+                    for q in remaining:
+                        if _SEVERITY_ORDER.get(severity, 9) < _SEVERITY_ORDER.get(
+                            gap.get(q, "LOW"), 9
+                        ):
+                            gap[q] = severity
+                        else:
+                            gap.setdefault(q, severity)
+                    continue
                 if not remaining:
                     resolved.append(
                         _resolved_risk(
@@ -679,35 +727,39 @@ def build_risk_assessment(
                             ids,
                             target,
                             f"the queries moved to {display_name(target)}, whose schema "
-                            "design addresses all of them",
+                            "design serves all of them",
                         )
                     )
                     continue
                 risk_id += 1
                 pct_covered = round((1 - len(remaining) / len(ids)) * 100)
-                recommendation = ap.get("recommendation")
+                n_rem = len(remaining)
                 mitigation = (
-                    f"Cover the {len(remaining)} remaining "
-                    f"{'query' if len(remaining) == 1 else 'queries'} in the "
-                    f"{display_name(target)} schema design or route "
-                    f"{'it' if len(remaining) == 1 else 'them'} to an engine that serves "
-                    f"{'it' if len(remaining) == 1 else 'them'}."
+                    f"Cover the {n_rem} remaining {'query' if n_rem == 1 else 'queries'} in "
+                    f"the {display_name(target)} schema design or route "
+                    f"{'it' if n_rem == 1 else 'them'} to an engine that serves "
+                    f"{'it' if n_rem == 1 else 'them'}."
                 )
-                if recommendation:
-                    mitigation += (
-                        f" The {display_name(engine)} analysis suggested: {recommendation}"
-                    )
+                # The old engine's advice is kept only as background, and dropped when it
+                # leans on that engine's own features (e.g. DynamoDB Streams for queries
+                # now on ElastiCache).
+                if recommendation and engine not in {
+                    e for e, _, _ in engine_mentions(recommendation)
+                }:
+                    mitigation += f" Background ({display_name(engine)} analysis): {recommendation}"
+                n_ids = len(ids)
                 risks.append(
                     {
                         "risk_id": f"RISK-{risk_id:03d}",
                         "risk_type": "PERFORMANCE_DEGRADATION",
                         "severity": severity,
+                        # Attribution first; the standard "(N% ..., M remaining)"
+                        # parenthetical last, which the deck parses for the count.
                         "description": (
-                            f"[{target}] {description} (Flagged by the "
-                            f"{display_name(engine)} analysis; the assignment moved "
-                            f"{len(ids)} of these queries to {display_name(target)}, whose "
-                            f"schema design resolves {pct_covered}%, {len(remaining)} "
-                            "remaining.)"
+                            f"[{target}] Flagged by the {display_name(engine)} analysis for "
+                            f"{n_ids} {'query' if n_ids == 1 else 'queries'} now on "
+                            f"{display_name(target)}: {description} ({pct_covered}% of "
+                            f"queries resolved by schema design, {n_rem} remaining)"
                         ),
                         "affected_tables": tables,
                         "mitigation": mitigation,
@@ -754,7 +806,17 @@ def build_risk_assessment(
                 }
             )
 
+    for target in sorted(coverage_gaps):
+        gap = coverage_gaps[target]
+        if not gap:
+            continue
+        risk_id += 1
+        risks.append(
+            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, query_tables)
+        )
+
     risks = ground_risks(risks, eliminated or {}, query_engine)
+    resolved = ground_risks(resolved, eliminated or {}, query_engine)
     for r in resolved:
         logger.info(
             "Risk assessment: %s risk from %s resolved on %s (%s)",
@@ -808,18 +870,51 @@ def _covered_query_ids(schema: dict) -> set[str]:
     return covered
 
 
-def _addressed_query_ids(schema: dict) -> set[str]:
-    """Query ids the schema design accounts for in any way.
-
-    An in-scope access pattern serves the query; an out-of-scope one is a deliberate
-    design decision; an unsupported pattern is already its own risk on that engine.
-    """
+def _unsupported_query_ids(schema: dict) -> set[str]:
+    """Query ids the schema design lists as unsupported (each is its own MEDIUM risk)."""
     ids: set[str] = set()
-    for ap in schema.get("access_patterns", []):
-        ids.update(_access_pattern_query_ids(ap))
     for up in schema.get("unsupported_patterns", []):
         ids.update(unsupported_pattern_ids(up))
     return ids
+
+
+def _coverage_gap_risk(
+    risk_id: str,
+    engine: str,
+    gap: dict[str, str],
+    query_text: dict[str, str],
+    query_tables: dict[str, set[str]],
+) -> dict:
+    """One risk for the queries assigned to ``engine`` that its design does not serve."""
+    ids = sorted(gap)
+    n = len(ids)
+    severity = min(gap.values(), key=lambda s: _SEVERITY_ORDER.get(s, 9))
+    texts = []
+    for q in ids[:3]:
+        t = " ".join(query_text.get(q, "").split()) or q[:12]
+        texts.append(t if len(t) <= 80 else t[:77] + "...")
+    listed = "; ".join(texts) + (f"; and {n - 3} more" if n > 3 else "")
+    return {
+        "risk_id": risk_id,
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "severity": severity,
+        "description": (
+            f"[{engine}] Schema design gap: {n} {'query' if n == 1 else 'queries'} assigned "
+            f"to {display_name(engine)} {'has' if n == 1 else 'have'} no in-scope access "
+            f"pattern: {listed} (0% of queries resolved by schema design, {n} remaining)"
+        ),
+        "affected_tables": sorted(
+            {t for q in ids for t in query_tables.get(q, set())} - _PLACEHOLDER_TABLES
+        ),
+        "mitigation": (
+            f"Add in-scope access patterns for {'this query' if n == 1 else 'these queries'} "
+            f"to the {display_name(engine)} schema design, or route "
+            f"{'it' if n == 1 else 'them'} to an engine that serves "
+            f"{'it' if n == 1 else 'them'}."
+        ),
+        "query_ids": ids,
+        "coverage_gap": True,
+    }
 
 
 def _tables_for(
@@ -950,7 +1045,19 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
             "production-scale data before cutover."
         )
 
-    unsupported = by_type.get("MIGRATION_COMPLEXITY", [])
+    complexity = by_type.get("MIGRATION_COMPLEXITY", [])
+    unsupported = [r for r in complexity if not r.get("coverage_gap")]
+    gaps = [r for r in complexity if r.get("coverage_gap")]
+    if gaps:
+        n = sum(len(r.get("query_ids") or []) for r in gaps)
+        strategies.append(
+            f"Add in-scope access patterns for the {n} "
+            f"{'query' if n == 1 else 'queries'} the {_join_and(_engines_of(gaps))} schema "
+            f"{'design does' if len(gaps) == 1 else 'designs do'} not serve "
+            f"({', '.join(r['risk_id'] for r in gaps)}), or route "
+            f"{'it' if n == 1 else 'them'} to an engine that serves "
+            f"{'it' if n == 1 else 'them'}."
+        )
     if unsupported:
         n = len(unsupported)
         engines = _join_and(_engines_of(unsupported))

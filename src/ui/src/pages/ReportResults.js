@@ -853,7 +853,11 @@ const ReportResultsPage = memo(() => {
       // now carry a humanised, possibly multi-word label (e.g. "unsupported
       // pattern", "text search" -- see src/shared/unsupported_pattern.py),
       // which \w+ would fail to match and leave the prefix un-stripped.
-      const cleanDescription = risk.description?.replace(/^\[\w+\]\s+[^:]+:\s+/, '') || '';
+      // Only a short label (up to three words) is stripped, so a re-attributed risk
+      // keeps its "Flagged by the X analysis for N queries now on Y: ..." attribution.
+      const cleanDescription = risk.description
+        ?.replace(/^\[\w+\]\s*/, '')
+        .replace(/^[\w-]+(?:\s[\w-]+){0,2}:\s+/, '') || '';
 
       return {
         id: risk.risk_id,
@@ -868,6 +872,17 @@ const ReportResultsPage = memo(() => {
   };
 
   const risks = processRisks(riskAssessment.risks);
+  // Analysis risks the effective assignment resolved (risk_assessment.resolved_risks).
+  const resolvedRisks = (riskAssessment.resolved_risks || [])
+    .filter(risk => riskHasContent(risk.description))
+    .map((risk, i) => ({
+      key: `resolved-${i}`,
+      engine: risk.engine || null,
+      resolved_on: risk.resolved_on || null,
+      severity: risk.severity,
+      description: risk.description?.replace(/^\[\w+\]\s*/, '') || '',
+      reason: risk.reason || '',
+    }));
   const totalRisks = risks.length;
   const highSeverityRisks = risks.filter(r => r.severity === 'HIGH');
   const mediumSeverityRisks = risks.filter(r => r.severity === 'MEDIUM');
@@ -1504,6 +1519,9 @@ const ReportResultsPage = memo(() => {
                       header={t('report-results.risk-assessment.overall-risk-header', { level: riskAssessment.overall_risk_level || 'MEDIUM' })}
                     >
                       {t('report-results.risk-assessment.overall-risk-body', { level: riskAssessment.overall_risk_level || 'MEDIUM', count: totalRisks })}
+                      {resolvedRisks.length > 0 && (
+                        <> {t('report-results.risk-assessment.resolved-summary', { count: resolvedRisks.length })}</>
+                      )}
                     </Alert>
 
                     {/* Detailed Risks - Tabs by Severity */}
@@ -1735,6 +1753,49 @@ const ReportResultsPage = memo(() => {
                                 />
                               }
                               pagination={<Pagination {...lowRiskPaginationProps} />} // nosemgrep: react-props-spreading
+                            />
+                          )
+                        },
+                        {
+                          id: 'resolved',
+                          label: t('report-results.risk-assessment.resolved-tab', { count: resolvedRisks.length }),
+                          content: (
+                            <Table
+                              trackBy="key"
+                              columnDefinitions={[
+                                {
+                                  id: 'engine',
+                                  header: t('report-results.risk-assessment.col-engine'),
+                                  cell: item => item.engine ? <Badge color={ENGINE_COLORS[item.engine] || 'blue'}>{item.engine}</Badge> : <Box>-</Box>,
+                                  width: 120
+                                },
+                                {
+                                  id: 'resolved-on',
+                                  header: t('report-results.risk-assessment.col-resolved-on'),
+                                  cell: item => item.resolved_on ? <Badge color={ENGINE_COLORS[item.resolved_on] || 'blue'}>{item.resolved_on}</Badge> : <Box>-</Box>,
+                                  width: 120
+                                },
+                                {
+                                  id: 'severity',
+                                  header: t('report-results.risk-assessment.col-severity'),
+                                  cell: item => <Badge color="grey">{item.severity}</Badge>,
+                                  width: 100
+                                },
+                                {
+                                  id: 'description',
+                                  header: t('report-results.risk-assessment.col-description'),
+                                  cell: item => <Box fontSize="body-s">{item.description}</Box>
+                                },
+                                {
+                                  id: 'reason',
+                                  header: t('report-results.risk-assessment.col-reason'),
+                                  cell: item => <Box fontSize="body-s">{item.reason}</Box>
+                                }
+                              ]}
+                              items={resolvedRisks}
+                              variant="embedded"
+                              wrapLines
+                              empty={<Box textAlign="center" color="inherit"><Box padding={{ bottom: 's' }} variant="p" color="inherit">{t('report-results.risk-assessment.no-resolved-risks')}</Box></Box>}
                             />
                           )
                         }
