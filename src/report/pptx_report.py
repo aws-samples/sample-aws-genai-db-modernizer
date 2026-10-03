@@ -479,6 +479,10 @@ def name_target_tables(text: str) -> str:
     "<engine>: N tables" -- the design's target tables -- while the Scope column
     on the same slide counts the source tables mapped to the engine. Naming both
     keeps "9 tables" and "1 table" from reading as one disagreeing count (#219).
+
+    Synthesis now writes "N target tables" itself; this only rewords a
+    ``report.json`` produced before that, and is idempotent ("9 target tables"
+    has no digit directly before "tables", so it is never matched again).
     """
     engines = "|".join(re.escape(k) for k in sorted(ENGINE_LABEL, key=len, reverse=True))
     return re.sub(rf"\b({engines}): (\d+) (tables?)\b", r"\1: \2 target \3", text)

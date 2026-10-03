@@ -1207,6 +1207,8 @@ def _architecture_rationale(
 
 
 # What one schema-design object is called per engine (for the summary, #219).
+# Relational designs say "target table": the deck and Decision Report count the
+# *source* tables mapped to each engine on the same page.
 _OBJECT_NOUNS = {
     "elasticache": ("key design", "key designs"),
     "documentdb": ("collection", "collections"),
@@ -1215,7 +1217,7 @@ _OBJECT_NOUNS = {
 
 
 def _object_noun(engine: str) -> tuple[str, str]:
-    return _OBJECT_NOUNS.get(engine, ("table", "tables"))
+    return _OBJECT_NOUNS.get(engine, ("target table", "target tables"))
 
 
 def _count(n: int, singular: str, plural: str) -> str:

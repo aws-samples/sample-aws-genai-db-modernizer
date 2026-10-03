@@ -439,9 +439,16 @@ class TestSummaryTableTerms:
         "13 access patterns; aurora_postgresql: 1 table; elasticache: 10 key designs)."
     )
 
-    def _slide(self):
+    # The same breakdown as synthesis now writes it (#219): already "target tables".
+    NEW_SUMMARY = (
+        SUMMARY.replace(": 19 tables", ": 19 target tables")
+        .replace(": 9 tables", ": 9 target tables")
+        .replace(": 1 table;", ": 1 target table;")
+    )
+
+    def _slide(self, summary: str = SUMMARY):
         rep = _report()
-        rep["summary_deterministic"] = self.SUMMARY
+        rep["summary_deterministic"] = summary
         f = pptx_report.derive(rep, _export([]))
         return pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
 
@@ -453,6 +460,20 @@ class TestSummaryTableTerms:
         assert "Aurora PostgreSQL: 1 target table;" in summary
         assert "ElastiCache: 10 key designs" in summary
         assert not re.search(r": \d+ tables?\b", summary)
+
+    def test_new_summary_text_is_left_as_written(self) -> None:
+        texts = [
+            s.text_frame.text for s in self._slide(self.NEW_SUMMARY).shapes if s.has_text_frame
+        ]
+        summary = next(t for t in texts if "Schema design produced" in t)
+        assert "Aurora MySQL: 9 target tables" in summary
+        assert "Aurora PostgreSQL: 1 target table;" in summary
+        assert "target target" not in summary
+
+    def test_rewording_is_idempotent(self) -> None:
+        once = pptx_report.name_target_tables(self.SUMMARY)
+        assert once == self.NEW_SUMMARY
+        assert pptx_report.name_target_tables(once) == once
 
     def test_scope_column_names_source_tables(self) -> None:
         cells = [

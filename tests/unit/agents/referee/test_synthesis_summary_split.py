@@ -70,8 +70,8 @@ def test_schema_totals_cover_every_engine_with_workload() -> None:
     text = _summary()
     assert (
         "Schema design produced 39 target objects and 65 in-scope access patterns across 3 "
-        "query groups (dynamodb: 20 tables, 52 access patterns; elasticache: 10 key designs, "
-        "13 access patterns; aurora_mysql: 9 tables)."
+        "query groups (dynamodb: 20 target tables, 52 access patterns; elasticache: 10 key designs, "
+        "13 access patterns; aurora_mysql: 9 target tables)."
     ) in text
     assert "10 target tables with 13 access patterns" not in text
 
@@ -86,7 +86,7 @@ def test_only_in_scope_access_patterns_are_counted() -> None:
     }
     text = build_summary(data, RANKING, MAPPINGS, TCO, RISKS, GROUPS)
     assert "60 in-scope access patterns" in text
-    assert "(dynamodb: 20 tables, 47 access patterns; elasticache: 10 key designs" in text
+    assert "(dynamodb: 20 target tables, 47 access patterns; elasticache: 10 key designs" in text
 
 
 def test_resolved_risks_are_counted_in_the_risk_sentence() -> None:
