@@ -497,14 +497,25 @@ def risk_engine(description: str) -> str:
     return m.group(1) if m else ""
 
 
+_REATTRIBUTED_LEAD = re.compile(
+    r"^Flagged by the [^:]+? analysis for \d+ quer(?:y|ies) now on [^:]+?:\s*"
+)
+
+
 def clean_risk_text(description: str) -> tuple[str, str]:
     """Return (prose, query_count) for a risk description.
 
     Risks carry ``affected_tables`` but no query count; the count only exists
     inside the description as "(0% of queries resolved by schema design, N
     remaining)", so it is lifted out and the parenthetical removed.
+
+    A risk re-attributed to the engine now serving its queries opens with
+    "Flagged by the <Engine> analysis for N queries now on <Engine>: ". The
+    deck's Engine column already names the engine, so that lead-in is dropped
+    and the clipped row text shows the risk itself (#222).
     """
     desc = re.sub(r"^\[[^\]]+\]\s*", "", str(description or "")).strip()
+    desc = _REATTRIBUTED_LEAD.sub("", desc, count=1)
     if desc.lower().startswith("unknown:"):
         desc = desc[len("unknown:") :].strip()
     m = re.search(r"\((?:[^()]*?)(\d+)\s+remaining\)", desc)

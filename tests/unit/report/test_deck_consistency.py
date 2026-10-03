@@ -374,3 +374,54 @@ class TestRiskMitigationClip:
         text = " ".join(_deck_text(rep, _export([])).split())
         assert "Specified mitigation: Run load tests first" in text
         assert "Run load tests first…" not in text
+
+
+class TestReattributedRiskRow:
+    """#222: a risk moved to the engine now serving its queries is described as
+    "Flagged by the <Engine> analysis for N queries now on <Engine>: <risk>". The
+    Risk Profile row already names the engine, so the attribution is dropped and
+    the 78-char clip shows the risk itself."""
+
+    DESC = (
+        "[elasticache] Flagged by the DynamoDB analysis for 9 queries now on ElastiCache: "
+        "Complex GROUP BY / HAVING aggregations need pre-computed counters "
+        "(0% of queries resolved by schema design, 9 remaining)"
+    )
+
+    def test_clean_risk_text_drops_the_attribution(self) -> None:
+        text, n_q = pptx_report.clean_risk_text(self.DESC)
+        assert text == "Complex GROUP BY / HAVING aggregations need pre-computed counters"
+        assert n_q == "9"
+
+    def test_risk_row_shows_the_risk_and_its_engine(self) -> None:
+        rep = _report()
+        rep["risk_assessment"] = {
+            "risks": [
+                {
+                    "risk_id": "RISK-001",
+                    "severity": "HIGH",
+                    "risk_type": "PERFORMANCE_DEGRADATION",
+                    "description": self.DESC,
+                    "reattributed_from": "dynamodb",
+                }
+            ]
+        }
+        f = pptx_report.derive(rep, _export([]))
+        prs = pptx_report.open_deck(keep=1)
+        slide = pptx_report.slide_risk(prs, f)
+        rows = [
+            [c.text for c in row.cells]
+            for shape in slide.shapes
+            if shape.has_table
+            for row in shape.table.rows
+        ]
+        assert rows[1] == [
+            "RISK-001",
+            "ElastiCache",
+            "Complex GROUP BY / HAVING aggregations need pre-computed counters",
+            "9",
+        ]
+
+    def test_plain_description_is_unchanged(self) -> None:
+        text, _ = pptx_report.clean_risk_text("[dynamodb] Hot partition on wp_options")
+        assert text == "Hot partition on wp_options"
