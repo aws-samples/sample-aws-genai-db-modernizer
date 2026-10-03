@@ -1,0 +1,308 @@
+{
+  "_comment": "Issue #203 evidence, trimmed from a headless /modernize run on the wordpress sample (deliverables/wordpress/report.json, job 7c6e6af2). 'dynamodb_design' keeps the DynamoDB design's table names and source_tables. 'assignment' encodes the per-table ownership the rubric judge read from report.json table_mappings: one in-scope query per source table, assigned to its recommended_database.",
+  "dynamodb_design": {
+    "table_definitions": [
+      {
+        "table_name": "WpActionSchedulerActions",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions",
+          "wordpress.wp_actionscheduler_groups"
+        ]
+      },
+      {
+        "table_name": "WpOrderItems",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items",
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "table_name": "WpPostContent",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_term_relationships",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_terms"
+        ]
+      },
+      {
+        "table_name": "WpTerms",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "table_name": "posts",
+        "source_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_postmeta",
+          "wordpress.wp_term_relationships"
+        ]
+      },
+      {
+        "table_name": "terms",
+        "source_tables": [
+          "wordpress.wp_terms",
+          "wordpress.wp_term_taxonomy",
+          "wordpress.wp_termmeta"
+        ]
+      },
+      {
+        "table_name": "users",
+        "source_tables": [
+          "wordpress.wp_users"
+        ]
+      },
+      {
+        "table_name": "woocommerce_order_itemmeta",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ]
+      },
+      {
+        "table_name": "wp_options",
+        "source_tables": [
+          "wordpress.wp_options"
+        ]
+      },
+      {
+        "table_name": "ActionSchedulerLogs",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ]
+      },
+      {
+        "table_name": "CommentMeta",
+        "source_tables": [
+          "wordpress.wp_commentmeta"
+        ]
+      },
+      {
+        "table_name": "Comments",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ]
+      },
+      {
+        "table_name": "WcAdminNotes",
+        "source_tables": [
+          "wordpress.wp_wc_admin_notes"
+        ]
+      },
+      {
+        "table_name": "WcProductMetaLookup",
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ]
+      },
+      {
+        "table_name": "WcReservedStock",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ]
+      },
+      {
+        "table_name": "WcTaxRateClasses",
+        "source_tables": [
+          "wordpress.wp_wc_tax_rate_classes"
+        ]
+      },
+      {
+        "table_name": "WooApiKeys",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ]
+      },
+      {
+        "table_name": "WooDownloadablePermissions",
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ]
+      }
+    ]
+  },
+  "assignment": {
+    "version": 2,
+    "query_assignments": [
+      {
+        "query_id": "table-owner:wordpress.wp_actionscheduler_actions",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_actions"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_actionscheduler_groups",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_groups"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_actionscheduler_logs",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_actionscheduler_logs"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_commentmeta",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_commentmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_comments",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_options",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_postmeta",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_postmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_posts",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_posts"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_term_relationships",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_term_relationships"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_term_taxonomy",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_term_taxonomy"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_termmeta",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_termmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_terms",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_terms"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_usermeta",
+        "assigned_engine": "aurora_mysql",
+        "source_tables": [
+          "wordpress.wp_usermeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_users",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_users"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_wc_admin_notes",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_admin_notes"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_wc_product_meta_lookup",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_product_meta_lookup"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_wc_reserved_stock",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_wc_tax_rate_classes",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_wc_tax_rate_classes"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_woocommerce_api_keys",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_api_keys"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_woocommerce_downloadable_product_permissions",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_woocommerce_order_itemmeta",
+        "assigned_engine": "dynamodb",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_itemmeta"
+        ],
+        "in_scope": true
+      },
+      {
+        "query_id": "table-owner:wordpress.wp_woocommerce_order_items",
+        "assigned_engine": "elasticache",
+        "source_tables": [
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "in_scope": true
+      }
+    ]
+  }
+}

@@ -51,6 +51,7 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    g. Sets `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
 
    Key rules for each group output:
+   - Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
    - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group)
    - `table_definitions[].gsis[].partition_key` and `sort_key` must be LISTS of KeyDefinition
    - Base table `partition_key` and `sort_key` are single KeyDefinition objects
@@ -68,6 +69,8 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    ```
 
    This produces the final merged output at the `output_path` the script prints, `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_output.json`.
+
+   If it prints `"status": "validation_failed"`, each entry in `errors` names a source table or query ID the assignment gives another engine (or puts out of scope), and where the design references it. Remove those from the group drafts that reference them and re-run `--merge` (up to 3 times); the merged output keeps `validation_passed: false` until it passes.
 
    Do not run `--finalize` for DynamoDB; `--merge` is the final step. (DynamoDB never writes an `llm_responses/` file, so `--finalize --engine dynamodb` only reports whether the merged output exists.)
 

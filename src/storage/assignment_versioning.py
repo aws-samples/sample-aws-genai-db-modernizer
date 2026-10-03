@@ -326,6 +326,49 @@ class _ListReader(_Lister, _Reader, Protocol):
     """A store that can both list keys and read artifacts."""
 
 
+def read_assignment(store: _Reader, database_name: str, job_id: str, version: int) -> dict | None:
+    """Return the assignment artifact for ``version``, or None when it is absent.
+
+    ``version`` 0 (legacy, unversioned callers) has no artifact and returns None.
+    """
+    if version <= 0:
+        return None
+    path = assignment_artifact_path(database_name, job_id, version)
+    if not store.exists(path):
+        return None
+    assignment = store.read_json(path)
+    return assignment if isinstance(assignment, dict) else None
+
+
+class EngineScope(NamedTuple):
+    """What one assignment puts in scope for one engine."""
+
+    query_ids: set[str]
+    """In-scope query IDs assigned to the engine."""
+    source_tables: set[str]
+    """Source tables those queries access, exactly as the assignment spells them."""
+
+
+def engine_scope(assignment: dict, engine: str) -> EngineScope:
+    """Return the in-scope query IDs and source tables ``assignment`` gives ``engine``.
+
+    This is the same scope the schema design input is filtered to: a table is in
+    an engine's scope when at least one in-scope query assigned to that engine
+    accesses it.
+    """
+    query_ids: set[str] = set()
+    tables: set[str] = set()
+    for qa in assignment.get("query_assignments") or []:
+        if not isinstance(qa, dict):
+            continue
+        if qa.get("assigned_engine") != engine or not qa.get("in_scope", True):
+            continue
+        if qa.get("query_id"):
+            query_ids.add(qa["query_id"])
+        tables.update(t for t in qa.get("source_tables") or [] if isinstance(t, str))
+    return EngineScope(query_ids, tables)
+
+
 def _in_scope_engine_query_sets(
     store: _Reader, database_name: str, job_id: str, version: int
 ) -> dict[str, set[str]]:

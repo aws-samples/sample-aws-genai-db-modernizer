@@ -46,6 +46,8 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
      judgment.
 
 4. **Design the schema**
+   Design only the tables and queries assigned to this engine; finalize rejects others. The request's `collector_output` holds exactly that scope.
+
    Produce JSON conforming to `output_schema` from the request file. Treat
    `draft` as authoritative and reconcile it — do not re-derive
    types from scratch:
@@ -77,6 +79,8 @@ Inspect files with the Read and Grep tools. Use Bash only for the documented `uv
    ```
 
    If validation fails, the errors tell you exactly which fields are wrong. Fix and retry up to 3 times.
+
+   A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope). Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until it passes.
 
 6. **Update state**
    Set `phase_status.schema_design_aurora_postgresql` = "complete"

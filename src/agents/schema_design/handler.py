@@ -23,7 +23,9 @@ import tempfile
 from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
+from src.agents.schema_design.scope import apply_scope_violations, validate_schema_scope
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import engine_scope, read_assignment
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +69,9 @@ def filter_collector_for_assignment(
     This is a pure function suitable for property testing.
     """
     # Build set of in-scope query IDs assigned to this engine
-    in_scope_query_ids: set[str] = set()
-    in_scope_tables: set[str] = set()
-
-    for qa in assignment.get("query_assignments", []):
-        if qa.get("assigned_engine") == target_engine and qa.get("in_scope", True):
-            in_scope_query_ids.add(qa["query_id"])
-            for table in qa.get("source_tables", []):
-                in_scope_tables.add(table)
+    scope = engine_scope(assignment, target_engine)
+    in_scope_query_ids: set[str] = set(scope.query_ids)
+    in_scope_tables: set[str] = set(scope.source_tables)
 
     # Include injected queries (from post-schema router cascade)
     if injected_query_ids:
@@ -192,9 +189,17 @@ def finalize_schema_design(
     validates it, writes the validated output to the versioned schema path,
     materialises query journey files, and returns a status dict.
 
+    A contract-valid design that references source tables or query IDs outside
+    the engine's scope in the assignment (issue #203) is still written, with
+    ``validation_passed=false`` and the scope messages appended to
+    ``validation_failures``, and reported as ``validation_failed``.
+
     Returns:
-      ``{"status": "complete", "output_path": <key>}`` on success, or
-      ``{"status": "validation_failed", "errors": [...]}`` on validation failure.
+      ``{"status": "complete", "output_path": <key>}`` on success,
+      ``{"status": "validation_failed", "errors": [...]}`` on contract validation
+      failure (nothing written), or
+      ``{"status": "validation_failed", "errors": [...], "output_path": <key>}``
+      when the design is out of scope.
     """
     prefix = f"{database_name}/{job_id}"
     version = assignment_version if assignment_version > 0 else 1
@@ -206,10 +211,40 @@ def finalize_schema_design(
     if not validation["valid"]:
         return {"status": "validation_failed", "errors": validation["errors"]}
 
+    violations = check_schema_scope(
+        store, database_name, job_id, target_type, output, assignment_version
+    )
+    output = apply_scope_violations(output, violations)
+
     output_key = f"{prefix}/schema-{target_type}/v{version}/schema_output.json"
     store.write_json(output_key, output)
 
+    if violations:
+        return {"status": "validation_failed", "errors": violations, "output_path": output_key}
     return {"status": "complete", "output_path": output_key}
+
+
+def check_schema_scope(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    schema_output: dict,
+    assignment_version: int,
+) -> list[str]:
+    """Return scope violations of ``schema_output`` against assignment ``v{N}``.
+
+    Empty when there is no assignment to check against (legacy version 0, or
+    the artifact is absent or unreadable): scope cannot be judged without one.
+    """
+    try:
+        assignment = read_assignment(store, database_name, job_id, assignment_version)
+    except Exception as exc:  # unreadable artifact: do not fail the design on it
+        logger.warning("Cannot read assignment v%s for scope check: %s", assignment_version, exc)
+        return []
+    if assignment is None:
+        return []
+    return validate_schema_scope(target_type, schema_output, assignment)
 
 
 def run_schema_design(
@@ -466,11 +501,16 @@ def run_schema_merge(
     target_type: str,
     store: ArtifactStore,
     assignment_version: int = 0,
-) -> None:
+) -> list[str]:
     """Merge per-group schema drafts into a single schema output.
 
     This is the ECS entrypoint for the group-merging step. Step Functions
     calls this after all per-group schema design tasks have completed.
+
+    The merged output is checked against the assignment's scope for the engine
+    (issue #203). Violations set ``validation_passed=false``, are appended to
+    ``validation_failures`` in the written output, and are returned (empty list
+    when the merged design stays in scope).
 
     Requirements: 6.3
     """
@@ -506,6 +546,13 @@ def run_schema_merge(
         }
         store.write_json(f"{base_key}/design_trace.json", combined_trace)
 
+    violations = check_schema_scope(
+        store, database_name, job_id, target_type, merged, assignment_version
+    )
+    if violations:
+        merged = apply_scope_violations(merged, violations)
+        store.write_json(f"{base_key}/schema_output.json", merged)
+
     elapsed = time.time() - start_time
 
     # Print summary counts
@@ -514,7 +561,16 @@ def run_schema_merge(
         if items:
             print(f"[schema-merge/{target_type}]   {field}: {len(items)}")
 
-    print(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
+    if violations:
+        print(
+            f"[schema-merge/{target_type}] ❌ {len(violations)} scope violation(s) "
+            f"in {elapsed:.1f}s:"
+        )
+        for message in violations:
+            print(f"  - {message}")
+    else:
+        print(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
+    return violations
 
 
 # Engines that always design single-pass and never split into groups. Aurora's

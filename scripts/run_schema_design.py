@@ -176,10 +176,14 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
 
 
 def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
-    """Merge per-group schema drafts into the final schema output."""
+    """Merge per-group schema drafts into the final schema output.
+
+    Prints ``validation_failed`` with the scope ``errors`` when the merged design
+    references tables or queries the assignment gives another engine (#203).
+    """
     from src.agents.schema_design.handler import run_schema_merge
 
-    run_schema_merge(
+    violations = run_schema_merge(
         job_id=job_id,
         database_name=db,
         target_type=engine,
@@ -187,13 +191,22 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
         assignment_version=assignment_version,
     )
 
+    output_path = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+    if violations:
+        _output(
+            {
+                "status": "validation_failed",
+                "assignment_version": assignment_version,
+                "output_path": output_path,
+                "errors": violations,
+            }
+        )
+        return
     _output(
         {
             "status": "complete",
             "assignment_version": assignment_version,
-            "output_path": (
-                f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
-            ),
+            "output_path": output_path,
         }
     )
 
@@ -210,12 +223,30 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     designed split -> per-group drafts -> ``--merge``, and ``--merge`` writes the
     final output. So for DynamoDB this only reports whether that merged output
     exists for the effective version, instead of failing on the missing LLM
-    response (issue #197).
+    response (issue #197). The merged output is re-checked against the
+    assignment's scope, so an out-of-scope design reports ``validation_failed``
+    here too (issue #203).
     """
     if engine == "dynamodb":
+        from src.agents.schema_design.handler import check_schema_scope
+        from src.agents.schema_design.scope import apply_scope_violations
+
         output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
         if not store.exists(output_key):
             _error(_DYNAMODB_FINALIZE_MESSAGE)
+        merged = store.read_json(output_key)
+        violations = check_schema_scope(store, db, job_id, engine, merged, assignment_version)
+        if violations:
+            store.write_json(output_key, apply_scope_violations(merged, violations))
+            _output(
+                {
+                    "status": "validation_failed",
+                    "assignment_version": assignment_version,
+                    "output_path": output_key,
+                    "errors": violations,
+                }
+            )
+            return
         _output(
             {
                 "status": "complete",
