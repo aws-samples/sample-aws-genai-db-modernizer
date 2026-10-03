@@ -189,36 +189,90 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
         {
             "status": "split",
             "assignment_version": assignment_version,
-            "manifest": f"{base_key}/groups_manifest.json",
+            "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
             "groups": _group_entries(store, base_key, manifest),
         }
     )
 
 
+_MERGE_RECORD = "merge_record.json"
+
+
+def _local_path(store, key: str) -> str:
+    """Filesystem path of an artifact key, under the artifact root.
+
+    With the default ``./artifacts`` root this is cwd-relative
+    (``artifacts/<db>/...``), the form subagents Read and Write (``Write(artifacts/**)``).
+    """
+    return str(Path(store.base_dir) / key)
+
+
+def _draft_state(store, key: str) -> tuple[str, str | None]:
+    """``("missing" | "invalid" | "ok", sha256 of the file or None)``.
+
+    ``invalid``: the draft exists but is not a readable JSON object.
+    merge_schema_groups skips drafts it cannot read, so an invalid draft would
+    silently drop its group from the merge.
+    """
+    if not store.exists(key):
+        return "missing", None
+    import hashlib
+
+    try:
+        raw = store.read_bytes(key)
+        if not isinstance(json.loads(raw), dict):
+            return "invalid", None
+    except (OSError, ValueError):
+        return "invalid", None
+    return "ok", hashlib.sha256(raw).hexdigest()
+
+
 def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
     """One compact entry per group: what a group subagent's dispatch needs."""
-    return [
-        {
-            "group_index": group["group_index"],
-            "primary_tables": group.get("primary_tables", []),
-            "query_count": group.get("query_count"),
-            "input_file": f"{base_key}/input_group_{group['group_index']}.json",
-            "draft": f"{base_key}/schema_draft_group_{group['group_index']}.json",
-            "draft_exists": store.exists(
-                f"{base_key}/schema_draft_group_{group['group_index']}.json"
-            ),
-        }
-        for group in manifest.get("groups", [])
-    ]
+    entries = []
+    for group in manifest.get("groups", []):
+        idx = group["group_index"]
+        draft_key = f"{base_key}/schema_draft_group_{idx}.json"
+        state, digest = _draft_state(store, draft_key)
+        entries.append(
+            {
+                "group_index": idx,
+                "primary_tables": group.get("primary_tables", []),
+                "query_count": group.get("query_count"),
+                "input_file": _local_path(store, f"{base_key}/input_group_{idx}.json"),
+                "draft": _local_path(store, draft_key),
+                "draft_exists": state != "missing",
+                "draft_state": state,
+                "_hash": digest,
+            }
+        )
+    return entries
+
+
+def _public(groups: list[dict]) -> list[dict]:
+    return [{k: v for k, v in g.items() if not k.startswith("_")} for g in groups]
+
+
+def _draft_problems(groups: list[dict]) -> tuple[list[int], list[int]]:
+    missing = [g["group_index"] for g in groups if g["draft_state"] == "missing"]
+    invalid = [g["group_index"] for g in groups if g["draft_state"] == "invalid"]
+    return missing, invalid
+
+
+def _hashes(groups: list[dict]) -> dict[str, str | None]:
+    return {str(g["group_index"]): g["_hash"] for g in groups}
 
 
 def run_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Report DynamoDB group-design progress as one JSON line (read-only, #246).
 
     ``not_split``: no manifest yet, run ``--split``. ``drafts_pending``: some
-    group drafts are missing (``drafts_missing``). ``merge_pending``: every draft
-    exists and there is no merged output, or a draft changed after the last
-    merge. ``merged``: the merged output is newer than every draft.
+    group drafts are missing (``drafts_missing``) or not a readable JSON object
+    (``drafts_invalid``). ``merge_pending``: every draft is readable and none of
+    them was merged as it is now (no merge yet, or a draft changed since).
+    ``merged``: the last ``--merge`` ran on exactly these drafts and passed.
+    ``merge_failed``: it ran on these drafts and printed ``validation_failed``,
+    or the merged output has ``validation_passed: false`` (``errors``).
     """
     if engine != "dynamodb":
         _error("--status reports DynamoDB group drafts; other engines use --finalize")
@@ -230,48 +284,84 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
         return
 
     groups = _group_entries(store, base_key, store.read_json(f"{base_key}/groups_manifest.json"))
-    missing = [g["group_index"] for g in groups if not g["draft_exists"]]
-    root = Path(store.base_dir)
-    if missing:
-        status, next_step = "drafts_pending", f"group drafts missing for groups {missing}"
-    elif store.exists(output_key) and all(
-        (root / output_key).stat().st_mtime >= (root / g["draft"]).stat().st_mtime for g in groups
+    missing, invalid = _draft_problems(groups)
+    extra: dict = {}
+    record = _read_record(store, f"{base_key}/{_MERGE_RECORD}")
+    if missing or invalid:
+        status = "drafts_pending"
+        next_step = f"redo the group drafts for groups {sorted(missing + invalid)}"
+    elif (
+        record is None
+        or record.get("draft_hashes") != _hashes(groups)
+        or not store.exists(output_key)
     ):
-        status, next_step = (
-            "merged",
-            "merged output is current; re-run --merge only after editing a draft",
-        )
+        status, next_step = "merge_pending", "every group draft is readable; run --merge"
     else:
-        status, next_step = "merge_pending", "every group draft exists; run --merge"
+        output = _read_record(store, output_key) or {}
+        errors = list(record.get("errors", []))
+        if not errors and output.get("validation_passed") is False:
+            errors = list(output.get("validation_failures") or ["validation_passed is false"])
+        if errors:
+            status, next_step = (
+                "merge_failed",
+                "fix the group drafts for these errors, then --merge",
+            )
+            extra["errors"] = errors
+        else:
+            status = "merged"
+            next_step = "merged output is current; re-run --merge only after editing a draft"
+        if record.get("warnings"):
+            extra["warnings"] = record["warnings"]
     _output(
-        {"status": status, **fields, "groups": groups, "drafts_missing": missing, "next": next_step}
+        {
+            "status": status,
+            **fields,
+            "groups": _public(groups),
+            "drafts_missing": missing,
+            "drafts_invalid": invalid,
+            **extra,
+            "next": next_step,
+        }
     )
+
+
+def _read_record(store, key: str) -> dict | None:
+    try:
+        data = store.read_json(key)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Merge per-group schema drafts into the final schema output.
 
-    Refuses, printing ``drafts_pending`` with ``missing_groups`` and writing
-    nothing, while any group in the manifest has no draft (#246). Prints
+    Refuses, printing ``drafts_pending`` with ``missing_groups`` and
+    ``invalid_groups`` and writing nothing, while any group in the manifest has
+    no draft or one that is not a readable JSON object (#246). Prints
     ``validation_failed`` with the ``errors`` when the merged design
     references tables or queries the assignment gives another engine (#203), or
     designs a source table in several tables without a trade-off saying why (#223).
+    Records the outcome and the drafts' hashes in ``merge_record.json`` so
+    ``--status`` can tell a current merge from a stale or failed one.
     """
     from src.agents.schema_design.handler import run_schema_merge
 
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    groups: list[dict] = []
     if store.exists(f"{base_key}/groups_manifest.json"):
         groups = _group_entries(
             store, base_key, store.read_json(f"{base_key}/groups_manifest.json")
         )
-        missing = [g["group_index"] for g in groups if not g["draft_exists"]]
-        if missing:
-            # Merging a partial set would drop the missing groups' queries (#246).
+        missing, invalid = _draft_problems(groups)
+        if missing or invalid:
+            # Merging a partial set would drop those groups' queries (#246).
             # Not a validation failure: the caller re-dispatches those groups.
             _output(
                 {
                     "status": "drafts_pending",
                     "missing_groups": missing,
+                    "invalid_groups": invalid,
                     "assignment_version": assignment_version,
                 }
             )
@@ -285,8 +375,18 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
         assignment_version=assignment_version,
     )
 
-    output_path = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
-    _output({**_scope_fields(report, output_path), "assignment_version": assignment_version})
+    output_path = f"{base_key}/schema_output.json"
+    fields = _scope_fields(report, output_path)
+    store.write_json(
+        f"{base_key}/{_MERGE_RECORD}",
+        {
+            "status": fields["status"],
+            "errors": fields.get("errors", []),
+            "warnings": fields.get("warnings", []),
+            "draft_hashes": _hashes(groups),
+        },
+    )
+    _output({**fields, "assignment_version": assignment_version})
 
 
 _DYNAMODB_FINALIZE_MESSAGE = (

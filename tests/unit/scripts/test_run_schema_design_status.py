@@ -11,7 +11,6 @@ without reading artifacts or listing directories.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -74,8 +73,32 @@ def _manifest(store: LocalArtifactStore, groups: int = 2) -> None:
     )
 
 
-def _touch(root: Path, key: str, mtime: float) -> None:
-    os.utime(root / key, (mtime, mtime))
+def _drafts(store: LocalArtifactStore, groups: int = 2) -> None:
+    for g in range(groups):
+        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {"group": g})
+
+
+def _path(root: Path, key: str) -> str:
+    """Paths in status lines carry the artifact root (cwd-relative by default)."""
+    return f"{root}/{key}"
+
+
+def _fake_merge(monkeypatch, violations=(), warnings=()):
+    """Stand-in for run_schema_merge: writes the merged output, returns the report."""
+    from src.agents.schema_design.handler import ScopeReport
+
+    calls: list[dict] = []
+
+    def fake(**kwargs):
+        calls.append(kwargs)
+        kwargs["store"].write_json(
+            f"{BASE}/schema_output.json",
+            {"validation_passed": not violations, "validation_failures": list(violations)},
+        )
+        return ScopeReport(list(violations), list(warnings))
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_merge", fake)
+    return calls
 
 
 def test_status_before_split(monkeypatch, capsys, tmp_path):
@@ -96,50 +119,114 @@ def test_status_lists_missing_group_drafts(monkeypatch, capsys, tmp_path):
     assert code == 0
     assert status["status"] == "drafts_pending"
     assert status["drafts_missing"] == [0, 2]
+    assert status["drafts_invalid"] == []
     assert [g["draft_exists"] for g in status["groups"]] == [False, True, False]
     assert status["groups"][0]["primary_tables"] == ["wordpress.t0"]
-    assert status["groups"][0]["draft"] == f"{BASE}/schema_draft_group_0.json"
+    assert status["groups"][0]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_0.json")
+
+
+def test_status_reports_unreadable_drafts_as_invalid(monkeypatch, capsys, tmp_path):
+    # merge_schema_groups skips drafts it cannot read, so a malformed draft
+    # would silently drop its group from the merge: report it like a missing one.
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store, groups=3)
+    _drafts(store, groups=3)
+    (tmp_path / f"{BASE}/schema_draft_group_1.json").write_text('{"table_definitions": [')
+    (tmp_path / f"{BASE}/schema_draft_group_2.json").write_text("[]")  # not an object
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--status")
+
+    assert code == 0
+    assert status["status"] == "drafts_pending"
+    assert status["drafts_missing"] == []
+    assert status["drafts_invalid"] == [1, 2]
+    assert [g["draft_state"] for g in status["groups"]] == ["ok", "invalid", "invalid"]
 
 
 def test_status_merge_pending_when_all_drafts_exist(monkeypatch, capsys, tmp_path):
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store)
-    for g in range(2):
-        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {})
+    _drafts(store)
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--status")
 
     assert code == 0
     assert status["status"] == "merge_pending"
-    assert status["drafts_missing"] == []
+    assert status["drafts_missing"] == [] and status["drafts_invalid"] == []
     assert "--merge" in status["next"]
 
 
-def test_status_merged_when_output_is_newer_than_every_draft(monkeypatch, capsys, tmp_path):
+def test_status_merged_after_a_passing_merge(monkeypatch, capsys, tmp_path):
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store)
-    for g in range(2):
-        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {})
-        _touch(tmp_path, f"{BASE}/schema_draft_group_{g}.json", 1_000)
-    store.write_json(f"{BASE}/schema_output.json", {})
-    _touch(tmp_path, f"{BASE}/schema_output.json", 2_000)
+    _drafts(store)
+    _fake_merge(monkeypatch, warnings=["scope warning"])
+    _run(monkeypatch, capsys, tmp_path, "--merge")
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--status")
 
     assert code == 0
     assert status["status"] == "merged"
     assert status["output_path"] == f"{BASE}/schema_output.json"
+    assert status["warnings"] == ["scope warning"]
 
 
-def test_status_merge_pending_again_after_a_draft_is_edited(monkeypatch, capsys, tmp_path):
+def test_status_merge_failed_after_a_failing_merge(monkeypatch, capsys, tmp_path):
+    # --merge writes schema_output.json even on validation_failed; --status must
+    # not report that output as merged.
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store)
-    for g in range(2):
-        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {})
-        _touch(tmp_path, f"{BASE}/schema_draft_group_{g}.json", 1_000)
-    store.write_json(f"{BASE}/schema_output.json", {})
-    _touch(tmp_path, f"{BASE}/schema_output.json", 2_000)
-    _touch(tmp_path, f"{BASE}/schema_draft_group_1.json", 3_000)
+    _drafts(store)
+    _fake_merge(monkeypatch, violations=["DynamoDB merge: table Posts designed twice"])
+    _, merge = _run(monkeypatch, capsys, tmp_path, "--merge")
+    assert merge["status"] == "validation_failed"
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--status")
+
+    assert code == 0
+    assert status["status"] == "merge_failed"
+    assert status["errors"] == ["DynamoDB merge: table Posts designed twice"]
+
+
+def test_status_merge_failed_when_merged_output_fails_validation(monkeypatch, capsys, tmp_path):
+    # Belt and braces: a current merged output with validation_passed false is
+    # never "merged", even if the recorded merge outcome says otherwise.
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store)
+    _drafts(store)
+    _fake_merge(monkeypatch)
+    _run(monkeypatch, capsys, tmp_path, "--merge")
+    store.write_json(
+        f"{BASE}/schema_output.json",
+        {"validation_passed": False, "validation_failures": ["Out of scope for dynamodb: q9"]},
+    )
+
+    _, status = _run(monkeypatch, capsys, tmp_path, "--status")
+
+    assert status["status"] == "merge_failed"
+    assert status["errors"] == ["Out of scope for dynamodb: q9"]
+
+
+def test_editing_a_later_group_draft_flips_merged_to_merge_pending(monkeypatch, capsys, tmp_path):
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store, groups=3)
+    _drafts(store, groups=3)
+    _fake_merge(monkeypatch)
+    _run(monkeypatch, capsys, tmp_path, "--merge")
+    assert _run(monkeypatch, capsys, tmp_path, "--status")[1]["status"] == "merged"
+
+    store.write_json(f"{BASE}/schema_draft_group_2.json", {"group": 2, "edited": True})
+
+    _, status = _run(monkeypatch, capsys, tmp_path, "--status")
+    assert status["status"] == "merge_pending"
+
+
+def test_status_merge_pending_when_merge_record_is_missing(monkeypatch, capsys, tmp_path):
+    # An output written by an older --merge (no record of its inputs) is re-merged.
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store)
+    _drafts(store)
+    store.write_json(f"{BASE}/schema_output.json", {"validation_passed": True})
 
     _, status = _run(monkeypatch, capsys, tmp_path, "--status")
 
@@ -182,8 +269,33 @@ def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_pat
     assert status["status"] == "split"
     assert [g["group_index"] for g in status["groups"]] == [0, 1]
     assert status["groups"][1]["primary_tables"] == ["wordpress.t1"]
-    assert status["groups"][1]["input_file"] == f"{BASE}/input_group_1.json"
-    assert status["groups"][1]["draft"] == f"{BASE}/schema_draft_group_1.json"
+    assert status["groups"][1]["input_file"] == _path(tmp_path, f"{BASE}/input_group_1.json")
+    assert status["groups"][1]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_1.json")
+
+
+def test_split_paths_are_cwd_relative_under_the_default_artifact_root(
+    monkeypatch, capsys, tmp_path
+):
+    # The default root is ./artifacts; the paths a subagent Reads/Writes must
+    # be cwd-relative (`artifacts/...`) so they match Write(artifacts/**).
+    def fake_split(*, job_id, database_name, target_type, store, assignment_version):
+        _manifest(store)
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_split", fake_split)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_schema_design.py", "--job-id", JOB, "--db", DB, "--engine", "dynamodb", "--split"],
+    )
+
+    run_schema_design.main()
+    status = json.loads(capsys.readouterr().out.splitlines()[-1])
+
+    assert status["groups"][0]["draft"] == f"artifacts/{BASE}/schema_draft_group_0.json"
+    assert status["groups"][0]["input_file"] == f"artifacts/{BASE}/input_group_0.json"
+    assert status["manifest"] == f"artifacts/{BASE}/groups_manifest.json"
+    assert (tmp_path / "artifacts" / BASE / "schema_draft_group_0.json").parent.is_dir()
 
 
 def test_merge_refuses_while_group_drafts_are_missing(monkeypatch, capsys, tmp_path):
@@ -192,37 +304,50 @@ def test_merge_refuses_while_group_drafts_are_missing(monkeypatch, capsys, tmp_p
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store, groups=3)
     store.write_json(f"{BASE}/schema_draft_group_1.json", {})
-    merged = []
-    monkeypatch.setattr(
-        "src.agents.schema_design.handler.run_schema_merge",
-        lambda **kwargs: merged.append(kwargs),
-    )
+    calls = _fake_merge(monkeypatch)
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--merge")
 
     assert code == 0
     assert status["status"] == "drafts_pending"
     assert status["missing_groups"] == [0, 2]
+    assert status["invalid_groups"] == []
     assert status["assignment_version"] == 1
     assert "errors" not in status  # not a validation failure
-    assert merged == []
+    assert calls == []
     assert not store.exists(f"{BASE}/schema_output.json")
     assert not store.exists(f"{BASE}/design_trace.json")
+    assert not store.exists(f"{BASE}/merge_record.json")
+
+
+def test_merge_refuses_on_a_malformed_draft(monkeypatch, capsys, tmp_path):
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store)
+    _drafts(store)
+    (tmp_path / f"{BASE}/schema_draft_group_0.json").write_text("{not json")
+    calls = _fake_merge(monkeypatch)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--merge")
+
+    assert code == 0
+    assert status["status"] == "drafts_pending"
+    assert status["missing_groups"] == []
+    assert status["invalid_groups"] == [0]
+    assert calls == []
+    assert not store.exists(f"{BASE}/schema_output.json")
 
 
 def test_merge_runs_when_every_group_draft_exists(monkeypatch, capsys, tmp_path):
-    from src.agents.schema_design.handler import ScopeReport
-
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store)
-    for g in range(2):
-        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {})
-    monkeypatch.setattr(
-        "src.agents.schema_design.handler.run_schema_merge",
-        lambda **kwargs: ScopeReport([], []),
-    )
+    _drafts(store)
+    calls = _fake_merge(monkeypatch)
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--merge")
 
     assert code == 0
     assert status["status"] == "complete"
+    assert len(calls) == 1
+    record = store.read_json(f"{BASE}/merge_record.json")
+    assert record["status"] == "complete"
+    assert set(record["draft_hashes"]) == {"0", "1"}
