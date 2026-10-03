@@ -3,11 +3,12 @@
 Route selection: the live app only ever links to these pages for a completed job
 (see src/ui/src/index.js and the pages that `href`/`navigate` to them). The legacy
 `/analysis/results/:jobId` page (superseded by `/analysis/results-v2/:jobId`, which
-every in-app link now points to) is excluded — it is unreachable from normal
-navigation and currently crashes (React error #31) because
-`src/ui/src/pages/AnalysisResults.js` renders `synthesis.trade_offs` entries
-(objects, per the current contract) directly as JSX children instead of reading
-`tradeOff.description`. `/analysis/monitor/*` is excluded for the same reason
+every in-app link now points to) was removed (see #185 — it crashed with React error
+#31 because it rendered `synthesis.trade_offs` entries, which are objects per the
+current contract, directly as JSX children). `/analysis/results/:jobId` is now a
+redirect to `/analysis/results-v2/:jobId`, covered by
+`test_legacy_results_route_redirects_to_results_v2` below, so old bookmarks still
+work. `/analysis/monitor/*` is excluded for the same reason as before
 (it is for in-flight jobs, not completed ones). `/analysis/patterns/:jobId` is
 exercised only with its required `?target=` query param, since every real link to
 that route supplies one (src/ui/src/pages/PatternAnalysis.js reads `target` from
@@ -104,6 +105,31 @@ def test_results_page_shows_the_ranked_engines(
             _top_engine_label(r),
         )
         assert "/mo" in text, (r.db, "no projected cost rendered")
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_legacy_results_route_redirects_to_results_v2(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """Old bookmarks/links to the retired `/analysis/results/:jobId` page (#185)
+    must land on the `/analysis/results-v2/:jobId` content instead of the blank,
+    crashed page it used to render."""
+    for r in all_runs:
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        assert page.url.rstrip("/").endswith(f"/analysis/results-v2/{r.job_id}"), (
+            r.db,
+            page.url,
+        )
+        text = page.inner_text("body")
+        assert "undefined" not in text and "NaN" not in text, r.db
+        assert r.db in text, (r.db, "source database name missing")
+        assert _top_engine_label(r) in text, (
+            r.db,
+            "top-ranked engine missing",
+            _top_engine_label(r),
+        )
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

@@ -1,5 +1,5 @@
 import { render } from "react-dom";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 
 // Cloudscape Styles
 import '@cloudscape-design/global-styles/index.css';
@@ -12,7 +12,6 @@ import './i18n';
 // Pages
 import LandingPage from "./pages/LandingPage";
 import Dashboard from "./pages/Dashboard";
-import AnalysisResults from "./pages/AnalysisResults";
 import CreateAnalysis from "./pages/CreateAnalysis";
 import JobMonitoring from "./pages/JobMonitoring";
 import JobMonitoringSummary from "./pages/JobMonitoringSummary";
@@ -44,13 +43,20 @@ window.addEventListener('error', resizeObserverErrorHandler);
 const savedTheme = localStorage.getItem('dbm-theme') || 'dark';
 applyMode(savedTheme === 'light' ? Mode.Light : Mode.Dark);
 
+// The legacy /analysis/results/:jobId page was retired (see #185); redirect
+// old bookmarks/links to the current results-v2 experience.
+function LegacyResultsRedirect() {
+  const { jobId } = useParams();
+  return <Navigate to={`/analysis/results-v2/${jobId}`} replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/analysis/results/:jobId" element={<AnalysisResults />} />
+        <Route path="/analysis/results/:jobId" element={<LegacyResultsRedirect />} />
         <Route path="/analysis/results-v2/:jobId" element={<AnalysisResultsV2 />} />
         <Route path="/analysis/create" element={<CreateAnalysis />} />
         <Route path="/analysis/monitor/:jobId" element={<JobMonitoring />} />
