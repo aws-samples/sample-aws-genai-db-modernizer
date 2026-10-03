@@ -459,7 +459,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      active.forEach(cb => {\n';
   script += '        html += \'<div class="stat-card" style="text-align: center;">\';\n';
   script += '        html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);\n';
-  script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$\' + (cb.monthly_cost_usd?.toFixed(2) || \'0.00\') + \'</div>\';\n';
+  script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$\' + (typeof cb.monthly_cost_usd === \'number\' && isFinite(cb.monthly_cost_usd) ? cb.monthly_cost_usd.toFixed(2) : \'0.00\') + \'</div>\';\n';
   script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">month · \' + escapeHtml(cb.pricing_mode) + \'</div>\';\n';
   script += '        html += \'</div>\';\n';
   script += '      });\n';
@@ -934,8 +934,15 @@ export const generateHTMLReport = (data) => {
   const safeExportDate = escapeHtml(new Date(exportDate).toLocaleString());
 
   const costBreakdown = results?.synthesis?.tco_analysis?.cost_breakdown || [];
-  const projectedCost = costBreakdown.reduce((sum, cb) => sum + (cb.monthly_cost_usd || 0), 0).toFixed(2);
-  const totalPatterns = schemaDesigns?.reduce((sum, d) => sum + (d.content?.access_patterns?.length || 0), 0) || 0;
+  // Only finite numbers are summed/counted: a string monthly_cost_usd would turn the
+  // sum into string concatenation (and .toFixed into a TypeError that aborts the
+  // export), and a non-array access_patterns with a hostile "length" would land in
+  // the markup. Matches the Python renderer's numeric filtering.
+  const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const projectedCost = escapeHtml(
+    (Array.isArray(costBreakdown) ? costBreakdown : []).reduce((sum, cb) => sum + finite(cb?.monthly_cost_usd), 0).toFixed(2));
+  const totalPatterns = escapeHtml((Array.isArray(schemaDesigns) ? schemaDesigns : []).reduce(
+    (sum, d) => sum + (Array.isArray(d?.content?.access_patterns) ? d.content.access_patterns.length : 0), 0));
 
   return `<!DOCTYPE html>
 <html lang="en">

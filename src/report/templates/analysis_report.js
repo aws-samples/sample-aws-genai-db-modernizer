@@ -288,7 +288,7 @@
       let html = '<div class="grid grid-auto">';      active.forEach(cb => {
         html += '<div class="stat-card" style="text-align: center;">';
         html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);
-        html += '<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$' + (cb.monthly_cost_usd?.toFixed(2) || '0.00') + '</div>';
+        html += '<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$' + (typeof cb.monthly_cost_usd === 'number' && isFinite(cb.monthly_cost_usd) ? cb.monthly_cost_usd.toFixed(2) : '0.00') + '</div>';
         html += '<div style="font-size: 13px; color: var(--color-text-secondary);">month · ' + escapeHtml(cb.pricing_mode) + '</div>';
         html += '</div>';
       });

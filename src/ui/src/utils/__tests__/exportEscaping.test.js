@@ -176,7 +176,8 @@ const hostileExportData = () => {
         database_name: IMG,
         summary: END_SCRIPT,
         reality_check: { after_distribution: Object.fromEntries(engines.map((e, i) => [e, 10 + i])) },
-        tco_analysis: { cost_breakdown: engines.map(e => ({ database: e, monthly_cost_usd: 1, pricing_mode: ATTR })) },
+        // A string cost must not throw in the client's cost cards either.
+        tco_analysis: { cost_breakdown: engines.map((e, i) => ({ database: e, monthly_cost_usd: i === 1 ? '5' : 1, pricing_mode: ATTR })) },
       },
     },
     schemaDesigns: engines.map((engine, ei) => ({
@@ -260,6 +261,27 @@ describe('generateHTMLReport (interactive export)', () => {
     expect(doc.querySelectorAll('img')).toHaveLength(0);
     expect(doc.querySelector('.section-body').textContent).toBe(END_SCRIPT);
     expect(doc.querySelector('.meta-pair-value').textContent).toBe(BREAKOUT);
+  });
+
+  it('counts and sums only real numbers in the shell (PR #244 review)', () => {
+    const data = hostileExportData();
+    data.schemaDesigns[0].content.access_patterns = { length: IMG };
+    data.results.synthesis.tco_analysis.cost_breakdown = [
+      { database: 'dynamodb', monthly_cost_usd: 2.5 },
+      { database: 'x', monthly_cost_usd: '5' },
+      { database: 'y', monthly_cost_usd: IMG },
+      { database: 'z', monthly_cost_usd: Number.NaN },
+      { database: 'w', monthly_cost_usd: 1.25 },
+    ];
+    let markup;
+    expect(() => { markup = generateHTMLReport(data); }).not.toThrow();
+    const doc = new DOMParser().parseFromString(markup, 'text/html');
+    expect(doc.querySelectorAll('img')).toHaveLength(0);
+    const stats = [...doc.querySelectorAll('.stat-card')].map(c => c.querySelector('.stat-value').textContent);
+    expect(stats[2]).toBe('$3.75/mo');
+    // 3 real designs x 6 patterns; the fake {length} object counts as none.
+    expect(stats[3]).toBe('18');
+    expect(doc.getElementById('pattern-count').textContent).toBe('18');
   });
 
   describe('in a browser', () => {

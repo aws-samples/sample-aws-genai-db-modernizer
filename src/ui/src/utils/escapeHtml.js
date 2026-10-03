@@ -41,6 +41,9 @@ const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 /**
  * Neutralise a URL taken from report data before it is placed in an href/src.
  *
+ * For future href/src use: neither exporter builds a link or image URL from report
+ * data today. Kept (and tested) so the first one that does has a vetted helper.
+ *
  * Returns '#' for any URL whose scheme is not http(s)/mailto, including obfuscated
  * forms such as "  JaVaScRiPt:alert(1)" or "java\tscript:alert(1)" (browsers strip
  * ASCII whitespace and control characters before resolving the scheme). Relative
