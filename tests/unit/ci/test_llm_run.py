@@ -741,3 +741,57 @@ def test_corrupt_junit_marks_its_buckets_false(tmp_path: Path) -> None:
     assert row["checks"]["pdf"] is False
     assert row["checks"]["ui"] is False
     assert row["pass"] is False
+
+
+# ---------------------------------------------------------------------------
+# ci/e2e-llm.sh: results.json is written even when a preflight step fails
+# (both cases exit before the claude call or any repo-state change)
+# ---------------------------------------------------------------------------
+
+
+def _run_e2e_llm(tmp_path: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess:
+    import os
+
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k
+        not in {
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "AWS_REGION",
+            "E2E_LLM_ARTIFACT_ROOT",
+            "E2E_LLM_DRY_RUN",
+        }
+    }
+    env.update({"E2E_OUTPUT": str(tmp_path), **extra_env})
+    return subprocess.run(  # nosec B603 B607 -- fixed argv
+        ["bash", str(REPO_ROOT / "ci" / "e2e-llm.sh"), "chat", "wordpress"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def test_e2e_llm_rejects_artifact_root_override_outside_dry_run(tmp_path: Path) -> None:
+    proc = _run_e2e_llm(tmp_path, {"E2E_LLM_ARTIFACT_ROOT": str(tmp_path / "elsewhere")})
+
+    assert proc.returncode == 2, proc.stderr
+    assert "E2E_LLM_ARTIFACT_ROOT" in proc.stderr
+    results = json.loads((tmp_path / "llm-chat-wordpress" / "results.json").read_text())
+    assert results == {
+        "schema_version": 1,
+        "pass": False,
+        "error": "artifact-root-check failed before the run",
+    }
+
+
+def test_e2e_llm_missing_model_access_still_writes_results(tmp_path: Path) -> None:
+    proc = _run_e2e_llm(tmp_path, {})
+
+    assert proc.returncode != 0
+    results = json.loads((tmp_path / "llm-chat-wordpress" / "results.json").read_text())
+    assert results["pass"] is False
+    assert results["error"] == "require-env failed before the run"

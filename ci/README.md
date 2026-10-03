@@ -150,34 +150,63 @@ deterministic job.
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
 - `judge.json` -- `ci/llm/judge.py`'s rubric scores.
-- `steps.json` -- exit code of every step (`claude`, `check-transcript`,
-  `install-browsers`, `build-ui`, `report-tests`, `ui-tests`, `judge`,
-  `results`); a step failing never stops the script early, so `results.json`
-  always gets written.
+- `steps.json` -- exit code of every step (`build-ui` (ui/both, run *before*
+  the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
+  never builds inside a Bash tool call), `claude`, `check-transcript`,
+  `install-browsers`, `report-tests`, `ui-tests`, `judge`, `results`); a step
+  failing never stops the script early. Preflight failures before the run
+  (missing credentials, the CLI install, `claude --version`, unzipping the
+  fixture, a rejected `E2E_LLM_ARTIFACT_ROOT`) exit early, and the EXIT trap
+  then writes a minimal `{"schema_version": 1, "pass": false, "error": "<step>
+  failed before the run"}` -- so `results.json` always exists.
 - `results.json` -- the one merged row (`schema_version`, `timestamp`,
   `git_sha`, `mode`, `fixture`, `model`, `job_id`, `db`, `cost_usd`,
   `num_turns`, `tokens_in`/`tokens_out`, `duration_s`, `checks: {transcript,
-  contracts, html, pdf, ui, judge}` (`ui` is `null` for `chat`), `judge:
-  {mean, scores}`, `pass`). Plan 3b uploads this to the results store, so it's
+  contracts, html, pdf, ui, judge}` (`ui` is `null` for `chat`),
+  `transcript_error` (`null` unless check-transcript failed; cost, turns and
+  tokens are reported either way), `judge: {mean, scores}`, `pass`). Plan 3b uploads this to the results store, so it's
   kept flat and JSON-shaped on purpose.
 
 **Env vars**: `CLAUDE_BIN` (default `claude`), `CLAUDE_CODE_VERSION` (npm
-version to install when `$CLAUDE_BIN` is missing, default `latest`),
-`ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_USE_BEDROCK` +
-`AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default 3600),
-`E2E_LLM_MAX_TURNS` (default 200, only passed as `--max-turns` if the CLI's
-own `--help` mentions it), `E2E_LLM_ARTIFACT_ROOT` (default
-`$REPO_ROOT/artifacts` -- shared between the headless run and the deliverable
-checks), `E2E_OUTPUT` (as in `e2e.sh`).
+version to install when `$CLAUDE_BIN` is missing, default pinned to
+`2.1.288`, the published version when this was written -- bump it
+deliberately), `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or*
+`CLAUDE_CODE_USE_BEDROCK` + `AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default
+3600), `E2E_LLM_MAX_TURNS` (default 200) and `E2E_LLM_MAX_BUDGET_USD`
+(default 20), each only passed if the CLI's own `--help` mentions the flag,
+`E2E_LLM_ARTIFACT_ROOT` (dry-run only, default `$REPO_ROOT/artifacts`; see
+below), `E2E_OUTPUT` (as in `e2e.sh`).
+
+**`E2E_LLM_ARTIFACT_ROOT`** is honoured only with `E2E_LLM_DRY_RUN=1`. A
+real run always uses `$REPO_ROOT/artifacts` and exits 2 if the variable names
+anything else: the headless run's scripts write `./artifacts` by default, the
+allowlist only permits `Edit`/`Write` under `artifacts/**`, and the sandbox
+(below) refuses roots outside the repo -- so a different root could only make
+the deliverable checks look at a different (or no) job than the one the run
+produced.
+
+**Sandbox**: the claude process runs with `MODERNIZER_CI_SANDBOX=1` (only
+that process and its tool calls, not the rest of this script). Every
+allowlisted script then refuses `--file`/`--artifact-root` values that
+resolve outside the repo and `--db`/`--job-id` values that aren't a single
+`[A-Za-z0-9_.-]+` path component (`scripts/_sandbox.py`), exiting with its
+normal JSON error. This covers what permission rules can't: a `Read` deny
+rule doesn't stop an allowlisted Python script from opening a path itself.
+The claude call's stdin is `/dev/null`, so it never reads the runner's stdin.
 
 **CLI flag feature-detection**: the CLI build installed locally while writing
 this script (an internal v2.1.288 build) does not list `--max-turns` in its
 own `--help`; CI installs the public `@anthropic-ai/claude-code` npm package,
 which does, and additionally requires `--verbose` alongside
 `--output-format stream-json`. Rather than hardcode either CLI's behavior,
-the script captures `"$CLAUDE_BIN" --help` once and only adds `--max-turns`
-/ `--verbose` if the help text mentions them, logging the chosen flags (and
-`claude --version`) into the output directory either way.
+the script captures `"$CLAUDE_BIN" --help` once and only adds `--max-turns`,
+`--max-budget-usd`, `--setting-sources project` (load only the project's
+settings files, plus `--settings`), `--strict-mcp-config` (ignore MCP servers
+configured outside `--mcp-config`) and `--verbose` if the help text mentions
+them, logging the chosen flags (and `claude --version`) into the output
+directory either way, and warning on stderr when `--max-turns` is missing.
+`ci/llm/judge.py` feature-detects `--setting-sources`/`--strict-mcp-config`
+the same way.
 
 **Dry-run mode** (`E2E_LLM_DRY_RUN=1`, plus `E2E_LLM_TRANSCRIPT=<path>`):
 skips the claude call entirely and copies the given transcript `.jsonl` in

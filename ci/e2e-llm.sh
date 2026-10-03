@@ -7,14 +7,22 @@
 #
 # Env vars read:
 #   E2E_OUTPUT             - root for everything this script writes. Default: test-results/.
-#   E2E_LLM_ARTIFACT_ROOT  - artifact root the headless run and the deliverable
-#                            checks share. Default: $REPO_ROOT/artifacts.
+#   E2E_LLM_ARTIFACT_ROOT  - dry-run only: artifact root the deliverable checks
+#                            read. Default: $REPO_ROOT/artifacts. Outside dry-run
+#                            anything else is an error (exit 2): the headless
+#                            run's scripts default to ./artifacts, the permission
+#                            allowlist only lets it write artifacts/**, and
+#                            MODERNIZER_CI_SANDBOX refuses roots outside the repo,
+#                            so a different root would just check the wrong job.
 #   E2E_LLM_TIMEOUT        - wall-clock timeout (seconds) for the claude call. Default: 3600.
 #   E2E_LLM_MAX_TURNS      - only passed as --max-turns if the installed CLI's
 #                            --help mentions that flag (see "CLI flag
 #                            feature-detection" below). Default: 200.
+#   E2E_LLM_MAX_BUDGET_USD - only passed as --max-budget-usd if --help mentions
+#                            it. Default: 20.
 #   CLAUDE_BIN             - the claude CLI to invoke. Default: claude.
-#   CLAUDE_CODE_VERSION    - npm version to install when $CLAUDE_BIN is missing. Default: latest.
+#   CLAUDE_CODE_VERSION    - npm version to install when $CLAUDE_BIN is missing.
+#                            Default: 2.1.288 (pinned; bump deliberately).
 #   ANTHROPIC_MODEL        - model id for the headless run.
 #   E2E_LLM_DRY_RUN        - "1" skips the claude call entirely (see below).
 #   E2E_LLM_TRANSCRIPT     - required when E2E_LLM_DRY_RUN=1: path to a transcript
@@ -24,9 +32,22 @@
 # script was written (v2.1.288, an internal build) does not list --max-turns
 # in its --help output; CI installs the public @anthropic-ai/claude-code npm
 # package, which does. Rather than hardcode either behavior, this script
-# captures `"$CLAUDE_BIN" --help` once and only adds --max-turns / --verbose
-# if the help text mentions them, logging the flags it chose into
-# $OUT/claude-flags.txt alongside `claude --version` in $OUT/claude-version.txt.
+# captures `"$CLAUDE_BIN" --help` once and only adds --max-turns,
+# --max-budget-usd, --setting-sources project, --strict-mcp-config and
+# --verbose if the help text mentions them (warning when --max-turns is
+# missing: the budget and wall-clock timeout are then the only caps), logging
+# the flags it chose into $OUT/claude-flags.txt alongside `claude --version`
+# in $OUT/claude-version.txt.
+#
+# Sandbox: the claude process (and so every Bash tool call it makes) runs with
+# MODERNIZER_CI_SANDBOX=1, which makes the allowlisted scripts refuse paths
+# outside the repo and unsafe --db/--job-id values (scripts/_sandbox.py).
+#
+# results.json is always written: every step after the preflight goes through
+# step(), and if the script exits before the results step (a preflight
+# failure such as missing credentials, an npm install or unzip error), the
+# EXIT trap writes {"schema_version": 1, "pass": false, "error": "<step>
+# failed before the run"}.
 #
 # Dry-run mode (E2E_LLM_DRY_RUN=1): skips the claude invocation and copies
 # $E2E_LLM_TRANSCRIPT to $OUT/transcript.jsonl instead, so the rest of this
@@ -57,9 +78,50 @@ esac
 
 OUT="${E2E_OUTPUT:-test-results}/llm-${MODE}-${FIXTURE}"
 mkdir -p "$OUT"
-ARTIFACT_ROOT="${E2E_LLM_ARTIFACT_ROOT:-$REPO_ROOT/artifacts}"
-mkdir -p "$ARTIFACT_ROOT"
+rm -f "$OUT/results.json"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
+
+# PHASE names the preflight step in progress, for the EXIT trap's fallback
+# results.json. CLAUDE_STARTED gates the trap's UI cleanup: before the run
+# there is nothing of ours to stop (and a developer's own local UI must not be
+# touched by a run that never started).
+PHASE="setup"
+CLAUDE_STARTED=0
+on_exit() {
+  local rc=$?
+  if [ "$CLAUDE_STARTED" = "1" ]; then
+    # The run may have left its own local API/UI up (ui/both modes); stop them
+    # via the same allowlisted script /modernize uses, not pkill -- see
+    # scripts/start_local_ui.py's module docstring.
+    uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
+  fi
+  if [ ! -s "$OUT/results.json" ]; then
+    printf '{"schema_version": 1, "pass": false, "error": "%s failed before the run"}\n' \
+      "$PHASE" >"$OUT/results.json"
+    [ "$rc" -ne 0 ] || rc=1
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
+
+PHASE="artifact-root-check"
+DEFAULT_ARTIFACT_ROOT="$REPO_ROOT/artifacts"
+mkdir -p "$DEFAULT_ARTIFACT_ROOT"
+if [ "$DRY_RUN" = "1" ]; then
+  ARTIFACT_ROOT="${E2E_LLM_ARTIFACT_ROOT:-$DEFAULT_ARTIFACT_ROOT}"
+else
+  ARTIFACT_ROOT="$DEFAULT_ARTIFACT_ROOT"
+  if [ -n "${E2E_LLM_ARTIFACT_ROOT:-}" ]; then
+    want="$(cd "$DEFAULT_ARTIFACT_ROOT" && pwd -P)"
+    got="$( (cd "$E2E_LLM_ARTIFACT_ROOT" 2>/dev/null && pwd -P) || printf '%s' "$E2E_LLM_ARTIFACT_ROOT")"
+    if [ "$got" != "$want" ]; then
+      echo "error: E2E_LLM_ARTIFACT_ROOT=$E2E_LLM_ARTIFACT_ROOT is only honoured with E2E_LLM_DRY_RUN=1;" \
+        "a real run always writes to $DEFAULT_ARTIFACT_ROOT (see ci/README.md)" >&2
+      exit 2
+    fi
+  fi
+fi
+mkdir -p "$ARTIFACT_ROOT"
 
 # step() runs a command, records its exit code, and -- unlike a bare command
 # under this script's `set -e` (inherited from lib.sh) -- always continues to
@@ -111,43 +173,62 @@ write_steps_json() {
   } >"$OUT/steps.json"
 }
 
-cleanup() {
-  # The run may have left its own local API/UI up (ui/both modes); stop them
-  # via the same allowlisted script /modernize uses, not pkill -- see
-  # scripts/start_local_ui.py's module docstring for why a raw pkill-based
-  # cleanup doesn't compose with the permission allowlist.
-  uv run python scripts/start_local_ui.py --artifact-root "$ARTIFACT_ROOT" --stop >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
+# --- UI bundle (ui/both) -----------------------------------------------------
+
+# Built before the claude call, not inside it: scripts/start_local_ui.py only
+# builds when src/ui/build/ is missing, and an npm ci + react-scripts build
+# inside one Bash tool call would race the tool's timeout. The UI smoke tests
+# below reuse the same bundle.
+if [ "$MODE" != "chat" ]; then
+  step build-ui build_ui
+fi
 
 # --- the headless /modernize run (or its dry-run stand-in) -----------------
 
 if [ "$DRY_RUN" = "1" ]; then
+  PHASE="dry-run-transcript"
   : "${E2E_LLM_TRANSCRIPT:?E2E_LLM_DRY_RUN=1 requires E2E_LLM_TRANSCRIPT=<path to a transcript .jsonl>}"
   run_claude() {
     log "dry run: using fixture transcript $E2E_LLM_TRANSCRIPT (no claude call, no model access needed)"
     cp "$E2E_LLM_TRANSCRIPT" "$OUT/transcript.jsonl"
     echo "claude exit=0 duration=0s (dry run)" | tee "$OUT/claude-exit.txt" >/dev/null
   }
+  CLAUDE_STARTED=1
   step claude run_claude
 else
   export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-global.anthropic.claude-sonnet-5-5}"
   export DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1
+  PHASE="require-env"
   if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     require_env CLAUDE_CODE_USE_BEDROCK AWS_REGION
   fi
 
   CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+  CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-2.1.288}"
   if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
-    log "installing Claude Code (@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION:-latest})"
-    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION:-latest}"
+    PHASE="install-claude"
+    log "installing Claude Code (@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION})"
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
   fi
-  "$CLAUDE_BIN" --version | tee "$OUT/claude-version.txt"
+  PHASE="claude-version"
+  "$CLAUDE_BIN" --version </dev/null | tee "$OUT/claude-version.txt"
 
-  HELP_TEXT="$("$CLAUDE_BIN" --help 2>&1 || true)"
+  HELP_TEXT="$("$CLAUDE_BIN" --help </dev/null 2>&1 || true)"
   CLAUDE_FLAGS=(--output-format stream-json --settings "$REPO_ROOT/.claude/settings.ci.json" --permission-mode dontAsk)
   if grep -q -- '--max-turns' <<<"$HELP_TEXT"; then
     CLAUDE_FLAGS+=(--max-turns "${E2E_LLM_MAX_TURNS:-200}")
+  else
+    echo "warning: $CLAUDE_BIN --help does not list --max-turns; the run is capped only by" \
+      "--max-budget-usd (if supported) and the ${E2E_LLM_TIMEOUT:-3600}s wall-clock timeout" >&2
+  fi
+  if grep -q -- '--max-budget-usd' <<<"$HELP_TEXT"; then
+    CLAUDE_FLAGS+=(--max-budget-usd "${E2E_LLM_MAX_BUDGET_USD:-20}")
+  fi
+  if grep -q -- '--setting-sources' <<<"$HELP_TEXT"; then
+    CLAUDE_FLAGS+=(--setting-sources project)
+  fi
+  if grep -q -- '--strict-mcp-config' <<<"$HELP_TEXT"; then
+    CLAUDE_FLAGS+=(--strict-mcp-config)
   fi
   if grep -q -- '--verbose' <<<"$HELP_TEXT"; then
     CLAUDE_FLAGS+=(--verbose)
@@ -158,6 +239,7 @@ else
     printf '\n'
   } | tee "$OUT/claude-flags.txt"
 
+  PHASE="prepare-input"
   log "prepare input"
   WORK="$OUT/input"
   mkdir -p "$WORK"
@@ -176,14 +258,16 @@ else
     log "no timeout/gtimeout found on PATH; running claude with no wall-clock timeout"
   fi
 
-  CLAUDE_CMD=()
+  CLAUDE_CMD=(env MODERNIZER_CI_SANDBOX=1)
   [ -n "$TIMEOUT_BIN" ] && CLAUDE_CMD+=("$TIMEOUT_BIN" "${E2E_LLM_TIMEOUT:-3600}")
   CLAUDE_CMD+=("$CLAUDE_BIN" -p "/modernize $WORK/$FIXTURE-collection.json --auto --mode $MODE" "${CLAUDE_FLAGS[@]}")
 
   run_claude() {
     local start_ts rc
     start_ts=$(date +%s)
-    if "${CLAUDE_CMD[@]}" >"$OUT/transcript.jsonl"; then
+    # </dev/null: `claude -p` reads stdin as extra prompt input; never let it
+    # block on (or swallow) the CI runner's stdin.
+    if "${CLAUDE_CMD[@]}" >"$OUT/transcript.jsonl" </dev/null; then
       rc=0
     else
       rc=$?
@@ -192,8 +276,10 @@ else
     return "$rc"
   }
   log "headless /modernize ($MODE, $FIXTURE)"
+  CLAUDE_STARTED=1
   step claude run_claude
 fi
+PHASE="after-claude"
 
 # --- transcript health + mode assertion -------------------------------------
 
@@ -206,7 +292,7 @@ DB=""
 JOB=""
 if [ -s "$OUT/summary.json" ]; then
   DB_JOB="$(
-    uv run python - "$OUT/summary.json" <<'PYEOF'
+    uv run python - "$OUT/summary.json" <<'PYEOF' || true
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
@@ -225,7 +311,7 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
 
   # The headless run may have left its own local API/UI up (ui/both); the e2e
   # fixtures below start their own on the same ports, so stop any leftovers first.
-  uv run python scripts/start_local_ui.py --artifact-root "$ARTIFACT_ROOT" --stop >/dev/null 2>&1 || true
+  uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
 
   run_install_browsers() {
     if [ "${CI:-}" = "true" ]; then
@@ -235,10 +321,6 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
     fi
   }
   step install-browsers run_install_browsers
-
-  if [ "$MODE" != "chat" ]; then
-    step build-ui build_ui
-  fi
 
   run_report_tests() {
     E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
@@ -270,6 +352,7 @@ fi
 JUNIT_ARGS=("$OUT/reports-junit.xml")
 [ "$MODE" != "chat" ] && JUNIT_ARGS+=("$OUT/ui-junit.xml")
 
+PHASE="results"
 run_results() {
   uv run python ci/llm/run.py results --out "$OUT/results.json" \
     --transcript-summary "$OUT/summary.json" \
