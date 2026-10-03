@@ -354,3 +354,12 @@ def test_design_schema_never_dispatches_design_schema_dynamodb() -> None:
     for match in re.finditer(r"/design-schema-dynamodb", text):
         before = text[max(0, match.start() - 40) : match.start()]
         assert "Never dispatch `" in before, before
+
+
+def test_merge_failed_is_the_merge_verdict_not_validation_passed() -> None:
+    # --status takes merged/merge_failed from the verdict --merge printed; the
+    # command text must not tie merge_failed to the output's validation_passed.
+    phase_6 = _phase_6(_modernize_text())
+    line = next(ln for ln in phase_6.splitlines() if '`"status": "merge_failed"`' in ln)
+    assert "or the merged output has `validation_passed: false`" not in line
+    assert "printed `validation_failed`" in line

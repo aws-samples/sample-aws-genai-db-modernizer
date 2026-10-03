@@ -271,14 +271,18 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     (``drafts_invalid``). ``merge_pending``: every draft is readable and none of
     them was merged as it is now (no merge yet, or a draft changed since).
     ``merged``: the last ``--merge`` ran on exactly these drafts and passed.
-    ``merge_failed``: it ran on these drafts and printed ``validation_failed``,
-    or the merged output has ``validation_passed: false`` (``errors``).
+    ``merge_failed``: it ran on these drafts and printed ``validation_failed``
+    (``errors``). Both come from ``merge_record.json``, the verdict ``--merge``
+    printed, not from the output's ``validation_passed``.
     """
     if engine != "dynamodb":
         _error("--status reports DynamoDB group drafts; other engines use --finalize")
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
     output_key = f"{base_key}/schema_output.json"
-    fields: dict = {"assignment_version": assignment_version, "output_path": output_key}
+    fields: dict = {
+        "assignment_version": assignment_version,
+        "output_path": _local_path(store, output_key),
+    }
     if not store.exists(f"{base_key}/groups_manifest.json"):
         _output({"status": "not_split", **fields, "next": "run --split"})
         return
@@ -297,16 +301,17 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     ):
         status, next_step = "merge_pending", "every group draft is readable; run --merge"
     else:
-        output = _read_record(store, output_key) or {}
-        errors = list(record.get("errors", []))
-        if not errors and output.get("validation_passed") is False:
-            errors = list(output.get("validation_failures") or ["validation_passed is false"])
-        if errors:
+        # The same verdict --merge printed. The output's validation_passed is not
+        # used: a group draft with an unfixable cost check keeps it false while
+        # the merge itself completes.
+        if record.get("status") != "complete":
             status, next_step = (
                 "merge_failed",
                 "fix the group drafts for these errors, then --merge",
             )
-            extra["errors"] = errors
+            extra["errors"] = list(
+                record.get("errors") or [f"--merge printed {record.get('status')}"]
+            )
         else:
             status = "merged"
             next_step = "merged output is current; re-run --merge only after editing a draft"
@@ -375,8 +380,7 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
         assignment_version=assignment_version,
     )
 
-    output_path = f"{base_key}/schema_output.json"
-    fields = _scope_fields(report, output_path)
+    fields = _scope_fields(report, _local_path(store, f"{base_key}/schema_output.json"))
     store.write_json(
         f"{base_key}/{_MERGE_RECORD}",
         {

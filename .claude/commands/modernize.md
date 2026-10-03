@@ -155,7 +155,7 @@ uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name
 
 - `"status": "drafts_pending"`: the groups in `drafts_missing` wrote no draft, and those in `drafts_invalid` wrote one that is not a readable JSON object. That is a phase failure for `schema_design_dynamodb` with reason `group drafts missing or invalid: <groups>` (see Error Handling: the retry is one fresh group subagent, same task text, per listed group). Never run `--merge` while drafts are missing or invalid.
 - `"status": "merged"`: the last `--merge` ran on exactly these drafts and passed. Set `phase_status.schema_design_dynamodb` = "complete".
-- `"status": "merge_failed"`: the last `--merge` ran on exactly these drafts and failed, or the merged output has `validation_passed: false`. Treat it as a `--merge` attempt that printed `validation_failed` with these `errors` (below).
+- `"status": "merge_failed"`: the last `--merge` ran on exactly these drafts and printed `validation_failed` (the same verdict; a group draft's own `validation_passed: false` does not make a merge fail). Treat it as a `--merge` attempt that printed `validation_failed` with these `errors` (below).
 - `"status": "merge_pending"`: run the merge:
 
   ```bash

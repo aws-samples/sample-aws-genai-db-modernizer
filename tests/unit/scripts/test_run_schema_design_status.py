@@ -167,7 +167,7 @@ def test_status_merged_after_a_passing_merge(monkeypatch, capsys, tmp_path):
 
     assert code == 0
     assert status["status"] == "merged"
-    assert status["output_path"] == f"{BASE}/schema_output.json"
+    assert status["output_path"] == _path(tmp_path, f"{BASE}/schema_output.json")
     assert status["warnings"] == ["scope warning"]
 
 
@@ -188,23 +188,35 @@ def test_status_merge_failed_after_a_failing_merge(monkeypatch, capsys, tmp_path
     assert status["errors"] == ["DynamoDB merge: table Posts designed twice"]
 
 
-def test_status_merge_failed_when_merged_output_fails_validation(monkeypatch, capsys, tmp_path):
-    # Belt and braces: a current merged output with validation_passed false is
-    # never "merged", even if the recorded merge outcome says otherwise.
+def test_status_follows_the_merge_verdict_not_validation_passed(monkeypatch, capsys, tmp_path):
+    # A group draft keeps validation_passed: false when its cost check cannot
+    # be fixed; --merge still prints complete (that is not a merge failure),
+    # so --status must say merged too: same verdict, from merge_record.status.
+    from src.agents.schema_design.handler import ScopeReport
+
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _manifest(store)
     _drafts(store)
-    _fake_merge(monkeypatch)
-    _run(monkeypatch, capsys, tmp_path, "--merge")
     store.write_json(
-        f"{BASE}/schema_output.json",
-        {"validation_passed": False, "validation_failures": ["Out of scope for dynamodb: q9"]},
+        f"{BASE}/schema_draft_group_1.json",
+        {"validation_passed": False, "validation_failures": ["hot partition on Posts"]},
     )
+
+    def fake(**kwargs):
+        kwargs["store"].write_json(
+            f"{BASE}/schema_output.json",
+            {"validation_passed": False, "validation_failures": ["hot partition on Posts"]},
+        )
+        return ScopeReport([], [])
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_merge", fake)
+    _, merge = _run(monkeypatch, capsys, tmp_path, "--merge")
+    assert merge["status"] == "complete"
 
     _, status = _run(monkeypatch, capsys, tmp_path, "--status")
 
-    assert status["status"] == "merge_failed"
-    assert status["errors"] == ["Out of scope for dynamodb: q9"]
+    assert status["status"] == "merged"
+    assert "errors" not in status
 
 
 def test_editing_a_later_group_draft_flips_merged_to_merge_pending(monkeypatch, capsys, tmp_path):
@@ -347,6 +359,7 @@ def test_merge_runs_when_every_group_draft_exists(monkeypatch, capsys, tmp_path)
 
     assert code == 0
     assert status["status"] == "complete"
+    assert status["output_path"] == _path(tmp_path, f"{BASE}/schema_output.json")
     assert len(calls) == 1
     record = store.read_json(f"{BASE}/merge_record.json")
     assert record["status"] == "complete"
