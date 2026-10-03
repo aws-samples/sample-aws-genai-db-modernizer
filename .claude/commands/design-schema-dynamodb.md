@@ -69,6 +69,8 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
    The merge gives each source table one DynamoDB home. Tables from different groups that design the same source table with compatible keys (same partition/sort key names and types, the same shape, at least one identical entity, no conflicting entity, SK prefix or GSI) are merged into the first one: the absorbing group's access patterns, `hot_partition_analysis` and trade-offs are re-pointed to it, its hot-partition load is re-aggregated per table, GSI and operation, and a trade-off records the merge. When a source table still has its own entity in tables from two or more groups and no trade-off names all of them, the merge adds a review trade-off (`DynamoDB merge review: … modelled independently by design groups …`) and reports it in `warnings`. Overlaps inside one group, and denormalized copies, are not flagged.
 
+   If it prints `"status": "drafts_pending"`, it refused and wrote nothing: the groups in `missing_groups` have no draft. Redo the Group draft task for each of them as in Step 4, then re-run `--merge`. This does not count as a `--merge` attempt.
+
    If it prints `"status": "validation_failed"`, do the Merge fix task below with its `errors` and `warnings`, then re-run `--merge`. Make **at most 3 `--merge` attempts in total** (DynamoDB has no separate contract-validation retry at this step; the drafts' own checks are the Group draft task). The merged output keeps `validation_passed: false` until a re-run passes; merge failures clear only by re-running `--merge`, not by `--finalize`.
 
    `warnings` never fail the phase. If they include `DynamoDB merge review: …` overlap notes and attempts remain, do the Merge fix task for them and re-run `--merge`.

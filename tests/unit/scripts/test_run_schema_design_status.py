@@ -184,3 +184,45 @@ def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_pat
     assert status["groups"][1]["primary_tables"] == ["wordpress.t1"]
     assert status["groups"][1]["input_file"] == f"{BASE}/input_group_1.json"
     assert status["groups"][1]["draft"] == f"{BASE}/schema_draft_group_1.json"
+
+
+def test_merge_refuses_while_group_drafts_are_missing(monkeypatch, capsys, tmp_path):
+    # Merging a partial set silently drops the missing groups' queries; the
+    # orchestrator must re-dispatch those groups instead (#246).
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store, groups=3)
+    store.write_json(f"{BASE}/schema_draft_group_1.json", {})
+    merged = []
+    monkeypatch.setattr(
+        "src.agents.schema_design.handler.run_schema_merge",
+        lambda **kwargs: merged.append(kwargs),
+    )
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--merge")
+
+    assert code == 0
+    assert status["status"] == "drafts_pending"
+    assert status["missing_groups"] == [0, 2]
+    assert status["assignment_version"] == 1
+    assert "errors" not in status  # not a validation failure
+    assert merged == []
+    assert not store.exists(f"{BASE}/schema_output.json")
+    assert not store.exists(f"{BASE}/design_trace.json")
+
+
+def test_merge_runs_when_every_group_draft_exists(monkeypatch, capsys, tmp_path):
+    from src.agents.schema_design.handler import ScopeReport
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store)
+    for g in range(2):
+        store.write_json(f"{BASE}/schema_draft_group_{g}.json", {})
+    monkeypatch.setattr(
+        "src.agents.schema_design.handler.run_schema_merge",
+        lambda **kwargs: ScopeReport([], []),
+    )
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--merge")
+
+    assert code == 0
+    assert status["status"] == "complete"

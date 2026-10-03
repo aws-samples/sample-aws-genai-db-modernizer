@@ -251,11 +251,31 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
 def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Merge per-group schema drafts into the final schema output.
 
-    Prints ``validation_failed`` with the ``errors`` when the merged design
+    Refuses, printing ``drafts_pending`` with ``missing_groups`` and writing
+    nothing, while any group in the manifest has no draft (#246). Prints
+    ``validation_failed`` with the ``errors`` when the merged design
     references tables or queries the assignment gives another engine (#203), or
     designs a source table in several tables without a trade-off saying why (#223).
     """
     from src.agents.schema_design.handler import run_schema_merge
+
+    base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    if store.exists(f"{base_key}/groups_manifest.json"):
+        groups = _group_entries(
+            store, base_key, store.read_json(f"{base_key}/groups_manifest.json")
+        )
+        missing = [g["group_index"] for g in groups if not g["draft_exists"]]
+        if missing:
+            # Merging a partial set would drop the missing groups' queries (#246).
+            # Not a validation failure: the caller re-dispatches those groups.
+            _output(
+                {
+                    "status": "drafts_pending",
+                    "missing_groups": missing,
+                    "assignment_version": assignment_version,
+                }
+            )
+            return
 
     report = run_schema_merge(
         job_id=job_id,

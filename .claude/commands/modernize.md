@@ -162,6 +162,7 @@ uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name
 
 Make **at most 3 `--merge` attempts in total** (this is the DynamoDB retry budget of `/design-schema-dynamodb` step 5):
 
+- `"status": "drafts_pending"` from `--merge`: it refused and wrote nothing, because the groups in `missing_groups` have no draft. This does not count as a `--merge` attempt; handle it like `drafts_pending` from `--status` above.
 - `"status": "complete"` with no `DynamoDB merge review: …` entry in `warnings`: set `phase_status.schema_design_dynamodb` = "complete". Other `warnings` (scope warnings) never fail the phase.
 - `"status": "validation_failed"`, or `complete` with `DynamoDB merge review: …` warnings while attempts remain: dispatch one fix subagent, wait for it, then re-run `--merge`. Pass it the `errors` and `warnings` from the `--merge` line exactly as printed:
 

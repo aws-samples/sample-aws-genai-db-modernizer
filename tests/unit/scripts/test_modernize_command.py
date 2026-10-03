@@ -303,3 +303,14 @@ def test_experience_mode_is_recorded_after_the_state_file_exists() -> None:
     step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
     assert "run_assessment.py" in step_0 and "creates" in step_0
     assert "Do not create any other file" in step_0
+
+
+def test_merge_drafts_pending_is_handled_as_missing_groups_not_validation() -> None:
+    # `--merge` refuses while group drafts are missing (#246): the commands
+    # re-dispatch the `missing_groups` instead of counting a merge attempt.
+    for text in (
+        _phase_6(_modernize_text()),
+        (COMMANDS_DIR / "design-schema-dynamodb.md").read_text(),
+    ):
+        assert "`missing_groups`" in text
+        assert "does not count as a `--merge` attempt" in text
