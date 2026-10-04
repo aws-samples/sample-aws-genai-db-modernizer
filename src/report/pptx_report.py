@@ -1301,10 +1301,10 @@ def slide_workload(prs, f):
     para(tf, "Throughput distribution", size=10.5, bold=True, color=PURPLE, first=True)
     para(
         tf,
-        f"{f['total_cps']:.1f} queries/sec across the whole database, "
+        f"{f['total_cps']:,.1f} queries/sec across the whole database, "
         f"{f['read_share']:.1f}% reads. The top 10 patterns carry "
         f"{f['top10_share']:.1f}% of throughput; the busiest single query runs at "
-        f"{f['busiest']:.1f} rps.",
+        f"{f['busiest']:,.1f} rps.",
         size=11.0,
         color=PAPER,
     )

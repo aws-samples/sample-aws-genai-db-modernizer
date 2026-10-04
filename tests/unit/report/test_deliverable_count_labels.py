@@ -360,3 +360,42 @@ class TestUnlabelledCounts:
         assert "8 open risk(s) (overall: LOW); 4 more were resolved by the assignment." in (
             f["summary"]
         )
+
+
+class TestNumberFormatting:
+    """#259: the Engineering Report printed Design RPS as ``17.460499999999996``."""
+
+    def test_fmt_num_rounds_and_groups(self) -> None:
+        assert renderers.fmt_num(17.460499999999996) == "17.46"
+        assert renderers.fmt_num(17.020000000000003) == "17.02"
+        assert renderers.fmt_num(3.0) == "3"
+        assert renderers.fmt_num(12537) == "12,537"
+        assert renderers.fmt_num(1234567.891) == "1,234,567.89"
+        assert renderers.fmt_num(58.900000001, 1) == "58.9"
+        assert renderers.fmt_num(True) == "True"
+        assert renderers.fmt_num("-") == "-"
+        assert renderers.fmt_num(None) == "None"
+
+    def test_engineering_report_rounds_design_rps(self) -> None:
+        rep = _design_report()
+        rep["query_groups"][0]["total_design_rps"] = 17.460499999999996
+        rep["query_groups"][1]["total_design_rps"] = 1234.5
+        md = renderers.render_engineering_report_md(rep)
+        assert "| 17.46 |" in md
+        assert "| 1,234.5 |" in md
+        assert "17.4604" not in md
+
+    def test_decision_report_rounds_workload_share(self) -> None:
+        rep = _shared_tables_report()
+        rep["ranking"][0]["workload_percent"] = 58.900000000000006
+        html = renderers.render_decision_report_html(rep)
+        assert "<td>58.9%</td>" in html
+        assert "58.900000" not in html
+
+    def test_deck_throughput_uses_thousands_separators(self) -> None:
+        exp = _leaderboard_export()
+        for p in exp["collector"]["queries"]["query_patterns"]:
+            p["calls_per_second"] = 12.5
+        f = pptx_report.derive(_cache_report(), exp)
+        slide = pptx_report.slide_workload(pptx_report.open_deck(keep=1), f)
+        assert any("1,337.5 queries/sec" in t for t in _shape_texts(slide))

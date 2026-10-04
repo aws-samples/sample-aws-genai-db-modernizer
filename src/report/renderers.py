@@ -92,6 +92,21 @@ def plural_verb(n: Any, singular: str, plural: str) -> str:
     return singular if is_one else plural
 
 
+def fmt_num(value: Any, decimals: int = 2) -> str:
+    """A metric for display: thousands separators, at most ``decimals`` places.
+
+    Sums of float metrics carry binary noise (``17.460499999999996``); rounding
+    here keeps it out of every deliverable (#259). Trailing zeros are dropped
+    (``3.0`` -> ``3``). Anything that is not a number is returned as ``str()``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}"
+    text = f"{value:,.{decimals}f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
 def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
@@ -460,7 +475,7 @@ def architecture_svg(report: dict[str, Any]) -> str:
         dashed = role == "Cache layer"
         sub_bits = [role]
         if isinstance(e.get("workload"), (int, float)):
-            sub_bits.append(f"{e['workload']}%")
+            sub_bits.append(f"{fmt_num(e['workload'], 1)}%")
         if e.get("cost") is not None:
             sub_bits.append(f"{_fmt_usd(e['cost'])}/mo")
         sub = "  \u00b7  ".join(sub_bits)
@@ -708,7 +723,7 @@ def render_decision_report_html(
             out.append(
                 f"<tr><td>{_engine_badge(e['engine'])}</td>"
                 f"<td class=role>{esc(e['role'])}</td>"
-                f"<td>{esc(f'{wl}%') if isinstance(wl, (int, float)) else '-'}</td>"
+                f"<td>{esc(fmt_num(wl, 1) + '%') if isinstance(wl, (int, float)) else '-'}</td>"
                 f"<td>{esc(e['scope'])}</td>"
                 f"<td>{_fmt_usd(c)}</td></tr>"
             )
@@ -948,7 +963,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(m.get('recommended_database', '?'))} "
                 f"| `{escaping.md_code(m.get('target_table', '-'))}` "
                 f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
-                f"| {escaping.md_cell(m.get('confidence_score', '-'))} |"
+                f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
             )
         out.append("")
 
@@ -991,15 +1006,15 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                             f"`{escaping.md_code(s)}`" for s in (t.get("source_tables") or [])
                         )
                         or "-",
-                        escaping.md_cell(t.get("gsi_count", "-")),
+                        escaping.md_cell(fmt_num(t.get("gsi_count", "-"))),
                     ]
                     if has_ttl:
-                        row.append(escaping.md_cell(t.get("ttl_seconds", "-")))
+                        row.append(escaping.md_cell(fmt_num(t.get("ttl_seconds", "-"))))
                     if has_shards:
                         row += [
-                            escaping.md_cell(t.get("shards", "-")),
-                            escaping.md_cell(t.get("replicas", "-")),
-                            escaping.md_cell(t.get("field_count", "-")),
+                            escaping.md_cell(fmt_num(t.get("shards", "-"))),
+                            escaping.md_cell(fmt_num(t.get("replicas", "-"))),
+                            escaping.md_cell(fmt_num(t.get("field_count", "-"))),
                         ]
                     out.append("| " + " | ".join(row) + " |")
                 out.append("")
@@ -1072,7 +1087,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(g.get('group_name', '?'))} | {escaping.md_cell(engines)} "
                 f"| {len(aps) if isinstance(aps, list) else escaping.md_cell(aps or '-')} "
                 f"| {len(sqs) if isinstance(sqs, list) else escaping.md_cell(sqs or '-')} "
-                f"| {escaping.md_cell(g.get('total_design_rps', '-'))} |"
+                f"| {escaping.md_cell(fmt_num(g.get('total_design_rps', '-')))} |"
             )
         out.append("")
 
