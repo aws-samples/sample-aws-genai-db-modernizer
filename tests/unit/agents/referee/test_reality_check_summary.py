@@ -254,6 +254,11 @@ class TestCheckSummaryAgainstRecords:
             "Aurora MySQL is not required.",
             "ElastiCache drops out of the architecture.",
             "The workload runs on DynamoDB and OpenSearch.",
+            # PR #260 re-review: history only covers the preposition it governs, and a
+            # possessive followed by a keep word still keeps the engine.
+            "Search queries that were formerly on Aurora MySQL move to OpenSearch.",
+            "OpenSearch's search index stays in the architecture.",
+            "OpenSearch's domain remains for full-text search.",
         ],
     )
     def test_the_new_cues_still_catch_contradictions(self, summary):
@@ -517,7 +522,16 @@ class TestAbsorptionCandidates:
         # moved away, OpenSearch left with 4 queries.
         before = dict(BEFORE)
         preview_after = {"dynamodb": 69, "elasticache": 34, "opensearch": 4}
-        assert absorption_candidates(before, preview_after) == ["opensearch"]
+        # DocumentDB (6 in the input) is empty in the preview, but a correction could
+        # restore it and Aurora could then absorb it.
+        assert absorption_candidates(before, preview_after) == ["documentdb", "opensearch"]
+
+    def test_an_engine_emptied_by_the_preview_is_still_a_candidate(self):
+        from src.agents.referee.reality_check_handler import absorption_candidates
+
+        before = {"aurora_mysql": 20, "dynamodb": 30, "opensearch": 4}
+        assert absorption_candidates(before, {"dynamodb": 54}) == ["opensearch"]
+        assert absorption_candidates({"aurora_mysql": 3, "dynamodb": 30}, {"dynamodb": 33}) == []
 
     def test_no_aurora_no_candidates(self):
         from src.agents.referee.reality_check_handler import absorption_candidates

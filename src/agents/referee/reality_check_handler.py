@@ -191,16 +191,21 @@ def absorption_candidates(
 
     When the input has an Aurora engine, a correction that keeps Aurora re-runs the
     Aurora absorption at finalize, and it can absorb any non-Aurora engine left with
-    fewer than ``AURORA_ABSORPTION_QUERY_THRESHOLD`` queries. The external LLM writes
-    its summary before that, so it must not state these engines' final fate.
+    fewer than ``AURORA_ABSORPTION_QUERY_THRESHOLD`` queries. That includes an engine
+    the preview already emptied, which corrections can restore, so the input counts
+    are what matters (the preview count too, should a move have grown a small
+    engine). The external LLM writes its summary before that, so it must not state
+    these engines' final fate.
     """
     if not AURORA_ENGINES & set(before_distribution):
         return []
-    return sorted(
+    small = {
         engine
-        for engine, count in after_distribution.items()
-        if engine not in AURORA_ENGINES and 0 < count < AURORA_ABSORPTION_QUERY_THRESHOLD
-    )
+        for distribution in (before_distribution, after_distribution)
+        for engine, count in distribution.items()
+        if 0 < count < AURORA_ABSORPTION_QUERY_THRESHOLD
+    }
+    return sorted(small - AURORA_ENGINES)
 
 
 # ---------------------------------------------------------------------------

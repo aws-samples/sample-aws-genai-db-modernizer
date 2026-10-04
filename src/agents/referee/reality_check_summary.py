@@ -103,14 +103,23 @@ _PARTIAL_BEFORE = re.compile(
 )
 # "the 6 DocumentDB queries consolidate into DynamoDB", "OpenSearch's text search":
 # the sentence is about the engine's queries, not about the engine.
-_QUERY_LEVEL_AFTER = re.compile(
-    r"^(?:['’]s\b|\s+(?:[\w-]+\s+){0,2}?quer(?:y|ies)\b)", re.IGNORECASE
+_QUERY_LEVEL_AFTER = re.compile(r"^\s+(?:[\w-]+\s+){0,2}?quer(?:y|ies)\b", re.IGNORECASE)
+_POSSESSIVE_AFTER = re.compile(r"^['’]s\b", re.IGNORECASE)
+# A possessive followed by one of these still says the engine stays ("OpenSearch's
+# search index stays in the architecture").
+_POSSESSIVE_KEEP = re.compile(
+    r"\b(?:stay(?:s|ed)?|remain(?:s|ed)?|keeps?|kept|retain(?:s|ed)?|serves?|continues?"
+    r"|runs?|hosts?|handles?|carr(?:y|ies)|survives?)\b",
+    re.IGNORECASE,
 )
 _SOURCE_BEFORE = re.compile(r"\b(?:from|off)\s+(?:(?:the|amazon|a|an)\s+)*$", re.IGNORECASE)
-# "previously ran on OpenSearch", "formerly assigned to OpenSearch": history.
-_HISTORY_WORD = re.compile(r"\b(?:previously|formerly|originally|initially)\b", re.IGNORECASE)
-_PREPOSITION_BEFORE = re.compile(
-    r"\b(?:on|from|to|in|by|with)\s+(?:(?:the|a|an|amazon)\s+)*$", re.IGNORECASE
+# "previously ran on OpenSearch", "formerly assigned to OpenSearch": history, but only
+# when the history word governs this preposition ("queries that were formerly on
+# Aurora MySQL move to OpenSearch" still keeps OpenSearch).
+_HISTORY_BEFORE = re.compile(
+    r"\b(?:previously|formerly|originally|initially)\s+(?:[\w-]+\s+){0,2}?"
+    r"(?:on|from|to|in|by|with)\s+(?:(?:the|a|an|amazon)\s+)*$",
+    re.IGNORECASE,
 )
 # The destination of a move: kept, whatever cue the clause carries.
 _TARGET_BEFORE = re.compile(
@@ -167,7 +176,9 @@ def _claims(summary: str) -> tuple[set[str], set[str]]:
             before, after = clause[: m.start()], clause[m.end() :]
             if _QUERY_LEVEL_AFTER.match(after) or _SOURCE_BEFORE.search(before):
                 continue
-            if _HISTORY_WORD.search(before) and _PREPOSITION_BEFORE.search(before):
+            if _POSSESSIVE_AFTER.match(after) and not _POSSESSIVE_KEEP.search(after):
+                continue
+            if _HISTORY_BEFORE.search(before):
                 continue
             if _NEGATION_BEFORE.search(before):
                 eliminated.add(engine)
