@@ -210,7 +210,7 @@ def build_group_input(
     triggers = [
         _slim(t, _TRIGGER_FIELDS, "trigger")
         for t in collector_output.get("database_schema", {}).get("triggers") or []
-        if t.get("table_id") in table_ids
+        if t.get("table_id") in table_keys  # schema-qualified id or bare name
     ]
     group_schema: dict[str, Any] = {"tables": [_slim_table(t) for t in group_tables]}
     if triggers:

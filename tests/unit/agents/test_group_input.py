@@ -163,9 +163,21 @@ def test_group_input_keeps_the_triggers_on_its_tables() -> None:
             "is_enabled": None,
         }
     )
+    # Some collectors give a trigger's table as the bare name (discourse).
+    triggers.append(
+        {
+            **triggers[0],
+            "trigger_id": "trg_products_bare",
+            "trigger_name": "trg_products_bare",
+            "table_id": "products",
+        }
+    )
     data = _products_group(collector, _analysis(collector))
     kept = data["collector_output"]["database_schema"]["triggers"]
-    assert [t["trigger_id"] for t in kept] == ["ecommerce.trg_products_update"]
+    assert [t["trigger_id"] for t in kept] == [
+        "ecommerce.trg_products_update",
+        "trg_products_bare",
+    ]
     assert kept[0]["definition"] == triggers[0]["definition"]
     assert "is_enabled" not in kept[0]
 
