@@ -93,3 +93,73 @@ class TestAccessPatternScope:
         rep = {**_design_report(), "summary_deterministic": RUN5_SUMMARY}
         html = renderers.render_decision_report_html(rep)
         assert "dynamodb: 15 target tables, 47 in-scope access patterns" in html
+
+
+def _leaderboard_export() -> dict[str, Any]:
+    """15 leaderboard queries, 14 assigned to ElastiCache and 1 to Aurora MySQL (run 5)."""
+    ids = [f"lb-{i}" for i in range(15)]
+    items = [
+        {"query_id": q, "assignment": {"assigned_engine": "elasticache" if i < 14 else "x"}}
+        for i, q in enumerate(ids)
+    ]
+    patterns = [{"query_type": "SELECT", "tables_accessed": ["t"]} for _ in range(107)]
+    return {
+        "collector": {"queries": {"query_patterns": patterns}},
+        "results": {
+            "triage_summary": {
+                "signals": [
+                    {
+                        "signal": "leaderboard_pattern",
+                        "query_count": 15,
+                        "targets": ["elasticache"],
+                        "query_ids": ids,
+                    }
+                ]
+            }
+        },
+        "queryJourneys": {"total": 15, "items": items},
+    }
+
+
+def _cache_report() -> dict[str, Any]:
+    return {
+        "ranking": [
+            {"target": "elasticache", "confidence_score": 48, "workload_percent": 31.8},
+            {"target": "dynamodb", "confidence_score": 50, "workload_percent": 68.2},
+        ],
+        "recommended_architecture": {"databases": [{"service": "dynamodb", "table_count": 19}]},
+        "schema_designs": {"elasticache": {"tables": [{}]}},
+    }
+
+
+def _shape_texts(slide) -> list[str]:
+    out = []
+    for sh in slide.shapes:
+        if sh.has_text_frame:
+            out.append(sh.text_frame.text)
+        if sh.has_table:
+            out += [c.text for row in sh.table.rows for c in row.cells]
+    return out
+
+
+class TestLeaderboardCounts:
+    """#256: page 4 lists 15 leaderboard queries (whole workload), page 5 says
+    "14 leaderboard / top-n queries routed to ElastiCache"."""
+
+    def test_evidence_names_the_routed_share_of_the_signal(self) -> None:
+        f = pptx_report.derive(_cache_report(), _leaderboard_export())
+        against = next(d for d in f["decisions"] if d["question"].startswith("Confirm"))["against"]
+        assert "14 of 15 leaderboard / top-n queries routed to ElastiCache" in against
+
+    def test_evidence_keeps_the_plain_count_when_every_query_was_routed(self) -> None:
+        text = pptx_report._evidence_text(
+            {"name": "leaderboard_pattern", "count": 15, "served": 15}, "elasticache"
+        )
+        assert text == "15 leaderboard / top-n queries routed to ElastiCache"
+
+    def test_workload_table_says_it_counts_the_whole_workload(self) -> None:
+        f = pptx_report.derive(_cache_report(), _leaderboard_export())
+        slide = pptx_report.slide_workload(pptx_report.open_deck(keep=1), f)
+        texts = _shape_texts(slide)
+        assert any("WHOLE WORKLOAD" in t for t in texts)
+        assert "Leaderboard / top-N (ORDER BY + LIMIT)" in texts

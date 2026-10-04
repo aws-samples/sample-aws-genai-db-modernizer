@@ -590,7 +590,8 @@ def _evidence_text(signal: dict[str, Any] | None, engine: str | None = None) -> 
     """The evidence sentence for the signal ``_evidence_signal`` picked.
 
     With ``engine`` (and the signal's ``served`` count, from the effective
-    assignment): "14 leaderboard / top-n queries routed to ElastiCache". Without
+    assignment): "14 of 15 leaderboard / top-n queries routed to ElastiCache", or
+    "15 ... routed to ElastiCache" when every query of the signal went there. Without
     it (no query journeys to count from): "N <signal> queries in the whole
     workload".
 
@@ -601,8 +602,13 @@ def _evidence_text(signal: dict[str, Any] | None, engine: str | None = None) -> 
         return "limited supporting evidence"
     if engine is not None and "served" in signal:
         n = signal["served"]
+        # The workload slide lists the signal's whole-workload count; when only part
+        # of it landed here, name both so the two slides reconcile (#256).
+        total = signal.get("count")
+        of_total = f" of {total}" if isinstance(total, int) and total > n else ""
+        noun = plural_noun(total if of_total else n, "query", "queries")
         return (
-            f"{n} {signal_modifier(signal['name'])} {plural_noun(n, 'query', 'queries')} "
+            f"{n}{of_total} {signal_modifier(signal['name'])} {noun} "
             f"routed to {ENGINE_LABEL.get(engine, engine)}"
         )
     n = signal["count"]
@@ -1197,7 +1203,16 @@ def slide_workload(prs, f):
         para(tf, f"{cnt:,}  ·  {cnt / n * 100:.1f}%", size=10.0, color=MUTED, first=True)
 
     tf = textbox(s, 6.45, BODY_TOP, 5.6, 0.3)
-    para(tf, "WHAT THOSE QUERIES ARE DOING", size=9.5, bold=True, color=MUTED, first=True)
+    # Triage signals count the whole workload, before assignment; the Engine
+    # Confidence slide counts what was routed to one engine (#256).
+    para(
+        tf,
+        "WHAT THOSE QUERIES ARE DOING  ·  WHOLE WORKLOAD",
+        size=9.5,
+        bold=True,
+        color=MUTED,
+        first=True,
+    )
     shown = f["signals"][:9]
     rows = [("Pattern", "Queries", "Share")]
     rows += [(clip(sg["label"], 52), f"{sg['count']:,}", f"{sg['share']:.1f}%") for sg in shown]

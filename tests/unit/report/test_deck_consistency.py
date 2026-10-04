@@ -227,8 +227,9 @@ class TestEvidenceFromEffectiveAssignment:
     def test_override_signal_counts_only_queries_routed_to_the_engine(self) -> None:
         f = pptx_report.derive(_report(), _export_with_journeys(RUN3_JOURNEYS))
         against = _confirm(f)["against"]
-        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
-        assert "15 " not in against
+        # 14 of the signal's 15 queries landed on ElastiCache; the deck's workload
+        # slide shows the 15, so the evidence names both (#256).
+        assert "14 of 15 leaderboard / top-n queries routed to ElastiCache" in against
 
     def test_without_override_picks_the_signal_serving_the_most_queries(self) -> None:
         journeys = dict(RUN3_JOURNEYS)
@@ -271,7 +272,7 @@ class TestTruncatedJourneys:
     def test_untruncated_journeys_still_count_the_effective_assignment(self) -> None:
         exp = _export_with_journeys(RUN3_JOURNEYS)
         against = _confirm(pptx_report.derive(_report(), exp))["against"]
-        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
+        assert "14 of 15 leaderboard / top-n queries routed to ElastiCache" in against
 
 
 def _aurora_weakest() -> dict[str, Any]:
