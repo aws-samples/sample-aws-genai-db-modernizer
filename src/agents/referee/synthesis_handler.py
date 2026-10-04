@@ -313,6 +313,7 @@ def _write_synthesis_report(
     output = SynthesisOutputContract.model_validate(output_data)
     job_id = result["job_id"]
     database_name = result["database_name"]
+    _persist_cache_safety_net(store, data, assignment_version)
     if assignment_version > 0:
         key = f"{database_name}/{job_id}/synthesis/v{assignment_version}/report.json"
     else:
@@ -338,6 +339,40 @@ def _write_synthesis_report(
     risk_count = len(result["risk_assessment"]["risks"])
     risk_level = result["risk_assessment"]["overall_risk_level"]
     print(f"[synthesis] Risks: {risk_count} ({risk_level})")
+
+
+def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: int) -> None:
+    """Write the safety net's drops into the assignment synthesis read (#296).
+
+    The query journeys and the assignment gate read the assignment artifact, so a
+    dropped overlay must be there, not only in the synthesis report. Only the
+    drop is written (``cache_engine`` cleared, ``cache_dropped``, ``cache_reason``,
+    the note in ``cache_notes``, the summary refreshed), in place: the owners and
+    every other engine's scope are unchanged, and the cache's own scope shrinks to
+    what its existing design serves, so no schema design goes stale.
+    """
+    if not data.cache_overlay_dropped or assignment_version <= 0:
+        return
+    from src.agents.referee.cache_overlay import overlay_summary
+
+    key = f"{data.database_name}/{data.job_id}/assignment/v{assignment_version}/assignment.json"
+    if not store.exists(key):
+        return
+    raw = store.read_json(key)
+    by_id = {qa["query_id"]: qa for qa in data.assignment.get("query_assignments", [])}
+    dropped = set(data.cache_overlay_dropped)
+    for qa in raw.get("query_assignments", []):
+        if qa.get("query_id") in dropped:
+            src = by_id.get(qa["query_id"], {})
+            for k in ("cache_engine", "cache_pattern", "cache_reason", "cache_dropped"):
+                qa[k] = src.get(k)
+    notes = raw.setdefault("cache_notes", [])
+    for note in data.cache_overlay_notes:
+        if note not in notes:
+            notes.append(note)
+    raw["cache_overlay"] = overlay_summary(raw.get("query_assignments", []), data.source_queries)
+    store.write_json(key, raw)
+    print(f"[synthesis] Cache overlay dropped for {len(dropped)} queries, written to {key}")
 
 
 # ---------------------------------------------------------------------------

@@ -180,12 +180,26 @@ def build_cache_overlay(data: SynthesisData) -> dict | None:
     """
     if not data.assignment:
         return None
-    summary = overlay_summary(data.assignment.get("query_assignments", []), data.source_queries)
-    if summary is None and not data.cache_overlay_notes:
+    qas = data.assignment.get("query_assignments", [])
+    summary = overlay_summary(qas, data.source_queries)
+    # Drops and notes persist on the assignment (cache_dropped, cache_notes), so a
+    # re-run of synthesis reports them too, not only the run that dropped them.
+    dropped = list(
+        dict.fromkeys(
+            [
+                *data.cache_overlay_dropped,
+                *(qa["query_id"] for qa in qas if qa.get("cache_dropped")),
+            ]
+        )
+    )
+    notes = list(
+        dict.fromkeys([*(data.assignment.get("cache_notes") or []), *data.cache_overlay_notes])
+    )
+    if summary is None and not notes and not dropped:
         return None
     out = dict(summary or {})
-    out["dropped_query_ids"] = list(data.cache_overlay_dropped)
-    out["notes"] = list(data.cache_overlay_notes)
+    out["dropped_query_ids"] = dropped
+    out["notes"] = notes
     return out
 
 
