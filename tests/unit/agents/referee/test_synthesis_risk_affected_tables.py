@@ -118,3 +118,86 @@ def test_coverage_gap_tables_are_normalised() -> None:
     }
     gap = next(r for r in build_risk_assessment(data)["risks"] if r.get("coverage_gap"))
     assert gap["affected_tables"] == ["wordpress.wp_posts"]
+
+
+# Review of #252: table ids are "<schema>.<table>" on PostgreSQL, SQL Server and Oracle,
+# and tables_accessed may be bare or differently cased.
+def _pg_data(schema: dict, queries: list[dict], known: list[str]) -> SynthesisData:
+    data = _data(schema, queries)
+    data.database_name = "shop"
+    data.collector["database_schema"] = {"tables": [{"table_id": t} for t in known]}
+    return data
+
+
+def test_postgres_schema_qualified_ids_match_bare_names() -> None:
+    data = _pg_data(
+        _unsupported("q1"),
+        [{"query_id": "q1", "tables_accessed": ["orders", "Customers"]}],
+        ["public.orders", "public.customers"],
+    )
+    risk = build_risk_assessment(data)["risks"][0]
+    assert risk["affected_tables"] == ["public.customers", "public.orders"]
+
+
+def test_case_insensitive_match_on_a_qualified_name() -> None:
+    data = _pg_data(
+        _unsupported("q1"),
+        [{"query_id": "q1", "tables_accessed": ["DBO.Orders"]}],
+        ["dbo.orders"],
+    )
+    assert build_risk_assessment(data)["risks"][0]["affected_tables"] == ["dbo.orders"]
+
+
+def test_ambiguous_or_unknown_names_are_kept_as_given() -> None:
+    data = _pg_data(
+        _unsupported("q1"),
+        [{"query_id": "q1", "tables_accessed": ["orders", "audit_log", "unknown"]}],
+        ["sales.orders", "archive.orders"],
+    )
+    assert build_risk_assessment(data)["risks"][0]["affected_tables"] == [
+        "audit_log",
+        "orders",
+    ]
+
+
+def test_postgres_migration_note_and_coverage_gap_tables() -> None:
+    note = {
+        "object_type": "trigger",
+        "object_name": "audit",
+        "source_table": "Orders",
+        "application_logic_required": "Write the audit row in the service.",
+    }
+    data = _pg_data(
+        {"migration_notes": [note]},
+        [{"query_id": "q1", "tables_accessed": ["orders"]}],
+        ["public.orders"],
+    )
+    data.engines["aurora_postgresql"] = EngineArtifacts(
+        "aurora_postgresql",
+        analysis={
+            "workload_analysis": {
+                "anti_patterns_detected": [
+                    {
+                        "anti_pattern_type": "hot-key",
+                        "description": "Hot key reads.",
+                        "recommendation": "Move these lookups to DynamoDB.",
+                        "query_ids": ["q1"],
+                        "table_ids": ["orders"],
+                        "severity_weight": 0.5,
+                    }
+                ]
+            }
+        },
+        schema_design={},
+    )
+    data.assignment = {
+        "query_assignments": [
+            {"query_id": "q1", "assigned_engine": "dynamodb"},
+            {"query_id": "q2", "assigned_engine": "aurora_postgresql"},
+        ]
+    }
+    risks = build_risk_assessment(data)["risks"]
+    note_risk = next(r for r in risks if r["risk_type"] == "OPERATIONAL_RISK")
+    gap = next(r for r in risks if r.get("coverage_gap"))
+    assert note_risk["affected_tables"] == ["public.orders"]
+    assert gap["affected_tables"] == ["public.orders"]

@@ -876,8 +876,12 @@ _SQL_EXCERPT_CHARS = 120
 
 
 def _sql_excerpt(sql: str) -> str:
-    """``sql`` on one line, clipped to ``_SQL_EXCERPT_CHARS``."""
-    one_line = " ".join(sql.split())
+    """``sql`` on one line without backticks, clipped to ``_SQL_EXCERPT_CHARS``.
+
+    Backticks (MySQL identifier quotes) would open code spans in the Markdown engineering
+    report, whose text escaping leaves them alone.
+    """
+    one_line = " ".join(sql.replace("`", "").split())
     if len(one_line) <= _SQL_EXCERPT_CHARS:
         return one_line
     return one_line[: _SQL_EXCERPT_CHARS - 1].rstrip() + "…"
@@ -895,7 +899,10 @@ def _unsupported_pattern_problem(engine: str, up: dict, query_text: dict[str, st
     if reason:
         return reason
     ids = unsupported_pattern_ids(up)
-    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "")
+    # OpenSearch patterns carry the SQL themselves (``source_query``).
+    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "") or str(
+        up.get("source_query") or ""
+    )
     head = f"{display_name(engine)} has no native equivalent for"
     if len(ids) > 1:
         return f"{head} these {len(ids)} queries" + (f", e.g. {_sql_excerpt(sql)}" if sql else ".")
@@ -921,30 +928,40 @@ def _without_repeated_mitigation(risk: dict) -> dict:
 _PLACEHOLDER_TABLES = frozenset({"unknown", "UNKNOWN", "None", "null"})
 # Names that are never a source table in a risk's ``affected_tables``.
 _PSEUDO_TABLES = _PLACEHOLDER_TABLES | {"", "DUAL", "dual"}
+_PSEUDO_TABLES_LOWER = frozenset(t.lower() for t in _PSEUDO_TABLES)
 
 
 def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]]:
-    """Map table names to the collector's source-table ids (``<db>.table``).
+    """Map table names to the collector's source-table ids.
 
-    A bare name is qualified with ``<db>.`` when that is a known source table; names
-    that are not source tables (``unknown``, ``DUAL``) are dropped. Without a known
-    table list the names are kept as given, minus pseudo-tables (fail-open).
+    Source-table ids are qualified (``<db>.table`` for MySQL, ``<schema>.table`` for
+    PostgreSQL, SQL Server and Oracle) while query ``tables_accessed`` may be bare or
+    differently cased. A name that is a known id is kept; otherwise its last dotted
+    segment is matched case-insensitively against the known ids' last segments and a
+    unique match gives the known id. A name that matches nothing (or several) is kept as
+    given (fail-open). Only pseudo-tables (``unknown``, ``DUAL``) are dropped.
     """
     known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
-    prefix = f"{data.database_name}." if data.database_name else ""
+    by_lower = {k.lower(): k for k in known}
+    by_segment: dict[str, set[str]] = {}
+    for k in known:
+        by_segment.setdefault(k.rsplit(".", 1)[-1].lower(), set()).add(k)
+
+    def resolve(name: str) -> str:
+        if name in known:
+            return name
+        if name.lower() in by_lower:
+            return by_lower[name.lower()]
+        matches = by_segment.get(name.rsplit(".", 1)[-1].lower(), set())
+        return next(iter(matches)) if len(matches) == 1 else name
 
     def normalise(names: Iterable[str]) -> set[str]:
         out: set[str] = set()
         for raw in names:
             name = str(raw or "").strip()
-            if name in _PSEUDO_TABLES:
+            if name.lower() in _PSEUDO_TABLES_LOWER:
                 continue
-            if not known:
-                out.add(name)
-            elif name in known:
-                out.add(name)
-            elif prefix and f"{prefix}{name}" in known:
-                out.add(f"{prefix}{name}")
+            out.add(resolve(name))
         return out
 
     return normalise

@@ -234,3 +234,25 @@ def test_every_risk_in_the_evidence_shape_has_a_distinct_mitigation() -> None:
     assert len(out["risks"]) == 5
     for risk in out["risks"]:
         _assert_distinct(risk)
+
+
+def test_sql_excerpt_drops_backticks() -> None:
+    """Backticks would open code spans in the Markdown engineering report (#252 review)."""
+    out = build_risk_assessment(
+        _data(
+            {"dynamodb": {"unsupported_patterns": _DYNAMODB_UNSUPPORTED[:1]}},
+            [{"query_id": _COUNT_QID, "query_text": "SELECT COUNT ( * ) FROM `wp_postmeta`"}],
+        )
+    )
+    description = out["risks"][0]["description"]
+    assert "`" not in description
+    assert description.endswith("this query: SELECT COUNT ( * ) FROM wp_postmeta")
+
+
+def test_opensearch_source_query_is_the_sql_fallback() -> None:
+    pattern = {"query_ids": ["q-missing"], "source_query": "SELECT * FROM t WHERE x LIKE ?"}
+    out = build_risk_assessment(_data({"opensearch": {"unsupported_patterns": [pattern]}}))
+    assert out["risks"][0]["description"] == (
+        "[opensearch] unsupported pattern: OpenSearch has no native equivalent for this "
+        "query: SELECT * FROM t WHERE x LIKE ?"
+    )
