@@ -199,6 +199,41 @@ SIGNAL_TO_BASIC_CAPABILITY: dict[str, str] = {
 # If the best alternative is within this many points, the query is redundant.
 UNIQUE_DELTA_THRESHOLD = 15
 
+# Engines that may absorb only the queries their specialty serves (#296): an
+# engine of this kind is a search/analytics read model, not a general owner, so
+# consolidation never routes plain lookups or writes to it. Signals by query.
+SPECIALIST_ABSORB_SIGNALS: dict[str, frozenset[str]] = {
+    "opensearch": frozenset({"text_search", "aggregations"}),
+}
+SPECIALIST_ABSORB_CAPABILITIES: dict[str, frozenset[str]] = {
+    "opensearch": frozenset({"inverted_index"}),
+}
+
+
+def may_absorb(
+    engine: str,
+    qid: str,
+    query: dict,
+    query_signals: dict[str, list[str]],
+    query_capabilities: dict[str, list[str]] | None = None,
+) -> bool:
+    """Whether consolidation may move query ``qid`` onto ``engine`` (#296).
+
+    The write gate (a cache owns nothing, a non-system-of-record engine owns no
+    write), and specialist engines absorb only queries that need their specialty.
+    """
+    if not can_own(engine, query):
+        return False
+    signals = SPECIALIST_ABSORB_SIGNALS.get(engine)
+    if signals is None:
+        return True
+    caps = SPECIALIST_ABSORB_CAPABILITIES.get(engine, frozenset())
+    return bool(
+        signals & set(query_signals.get(qid, []))
+        or caps & set((query_capabilities or {}).get(qid, []))
+    )
+
+
 # Bonus for signal-capability match (engine has the exact capability the query needs)
 SIGNAL_MATCH_BONUS = 20
 
@@ -377,6 +412,15 @@ def run_reality_check(
             this_score = _engine_fit_score(engine, qa, query_signals, query_map, analysis_outputs)
             best_alt_score = 0
             for alt_engine in other_engines:
+                # Only an engine that could absorb the query is an alternative to it
+                if not may_absorb(
+                    alt_engine,
+                    qa["query_id"],
+                    query_map.get(qa["query_id"], qa),
+                    query_signals,
+                    query_capabilities,
+                ):
+                    continue
                 alt_score = _engine_fit_score(
                     alt_engine, qa, query_signals, query_map, analysis_outputs
                 )
@@ -1119,8 +1163,11 @@ def _find_best_absorber_for_query(
             continue
 
         # Write gate (#296): a cache never owns a query, and an engine that is not
-        # a system of record never owns a write
-        if not can_own(target_engine, query_map.get(qid, qa)):
+        # a system of record never owns a write; a specialist (OpenSearch) absorbs
+        # only the queries its specialty serves
+        if not may_absorb(
+            target_engine, qid, query_map.get(qid, qa), query_signals, query_capabilities
+        ):
             continue
 
         # Serviceability gate: skip engines that can't serve hard requirements
