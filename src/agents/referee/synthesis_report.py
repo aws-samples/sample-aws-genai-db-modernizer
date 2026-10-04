@@ -489,8 +489,8 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     assignment, so it still holds engines the assignment eliminated outright. Risks are
     generated per engine during analysis, while every triage-selected engine is still a
     candidate, so carrying a dropped engine's risks forward inflates the counts -- and
-    because ``overall_risk_level`` is a HIGH-count threshold (>= 3), two risks on an engine
-    that carries no workload can raise the headline rating from MEDIUM to HIGH.
+    because ``overall_risk_level`` is the highest open severity, one HIGH risk on an
+    engine that carries no workload would raise the headline rating to HIGH.
 
     Fail-open: an empty set means "cannot tell". The caller keeps every risk in that case
     rather than silently emptying the register, which would be far worse than the defect.
@@ -833,25 +833,28 @@ def build_risk_assessment(
             r["reason"],
         )
 
-    # Determine overall risk level
-    severities = [r["severity"] for r in risks]
-    if "CRITICAL" in severities:
-        overall = "CRITICAL"
-    elif severities.count("HIGH") >= 3:
-        overall = "HIGH"
-    elif "HIGH" in severities:
-        overall = "MEDIUM"
-    else:
-        overall = "LOW"
-
     return {
-        "overall_risk_level": overall,
+        "overall_risk_level": overall_risk_level(risks),
         "risks": risks,
         "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
         # Anti-pattern risks the effective assignment resolved (#221): kept for the
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
     }
+
+
+def overall_risk_level(risks: list[dict]) -> str:
+    """Overall risk level: the highest severity among the open ``risks`` (#248).
+
+    Any CRITICAL risk gives CRITICAL, any HIGH gives HIGH, any MEDIUM gives MEDIUM,
+    otherwise LOW (including no risks). ``risks`` are the open risks only;
+    ``resolved_risks`` never count.
+    """
+    severities = {str(r.get("severity") or "").upper() for r in risks}
+    for level in ("CRITICAL", "HIGH", "MEDIUM"):
+        if level in severities:
+            return level
+    return "LOW"
 
 
 _SQL_EXCERPT_CHARS = 120

@@ -685,6 +685,11 @@ def render_decision_report_html(
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"
             )
+            # How the level is derived (#248; synthesis_report.overall_risk_level).
+            out.append(
+                "<p class=note>Overall risk is the highest severity among the open risks; "
+                "risks the assignment resolved do not count.</p>"
+            )
         if strategies:
             out.append("<p><b>Mitigation strategies</b></p><ul>")
             out += [f"<li>{esc(s)}</li>" for s in strategies]

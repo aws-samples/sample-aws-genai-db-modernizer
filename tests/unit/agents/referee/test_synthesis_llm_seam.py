@@ -655,16 +655,27 @@ class TestRiskAssessmentExcludesDroppedEngines:
     def test_overall_risk_drops_from_high_to_medium(self) -> None:
         """The consequence that matters.
 
-        ``overall_risk_level`` is a HIGH-count threshold (>= 3). Four HIGH risks across two
-        engines reads HIGH; once the dropped engine's two are excluded only two remain, so
-        the headline rating falls to MEDIUM. An engine carrying no workload was raising it.
+        ``overall_risk_level`` is the highest open severity (#248). With the assigned
+        engine's risks MEDIUM and the dropped engine's HIGH, the unfiltered register reads
+        HIGH; once the dropped engine's risks are excluded the headline rating falls to
+        MEDIUM. An engine carrying no workload was raising it.
         """
-        unfiltered = build_risk_assessment(_risk_data(None))
-        assert [r["severity"] for r in unfiltered["risks"]].count("HIGH") == 4
+
+        def data(assignment: dict | None) -> SynthesisData:
+            d = _risk_data(assignment)
+            d.engines["dynamodb"].analysis = {
+                "workload_analysis": {
+                    "anti_patterns_detected": [_ap("dynamodb-q1", 0.5), _ap("dynamodb-q2", 0.4)]
+                }
+            }
+            return d
+
+        unfiltered = build_risk_assessment(data(None))
+        assert [r["severity"] for r in unfiltered["risks"]].count("HIGH") == 2
         assert unfiltered["overall_risk_level"] == "HIGH"
 
-        filtered = build_risk_assessment(_risk_data(_ASSIGNED_TO_DYNAMO_ONLY))
-        assert [r["severity"] for r in filtered["risks"]].count("HIGH") == 2
+        filtered = build_risk_assessment(data(_ASSIGNED_TO_DYNAMO_ONLY))
+        assert [r["severity"] for r in filtered["risks"]] == ["MEDIUM", "MEDIUM"]
         assert filtered["overall_risk_level"] == "MEDIUM"
 
     def test_fails_open_when_no_assignment(self) -> None:
