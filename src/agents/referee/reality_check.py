@@ -25,6 +25,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 
+from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
@@ -271,8 +272,12 @@ def run_reality_check(
     analysis_outputs: dict[str, dict],
     collector_output: dict,
     query_capabilities: dict[str, list[str]] | None = None,
+    source_engine: str | None = None,
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
+
+    ``source_engine`` is the source database engine (e.g. ``"mysql"``); it picks
+    the Aurora engine when both are committed. Defaults to the collector's.
 
     Thinks like a pragmatic CTO: "Every additional database is operational
     burden. Does this engine EARN its place, or can another engine already
@@ -435,6 +440,9 @@ def run_reality_check(
         query_map=query_map,
         analysis_outputs=analysis_outputs,
         query_capabilities=query_capabilities or {},
+        source_engine=(
+            source_database_engine(collector_output) if source_engine is None else source_engine
+        ),
     )
 
     # Apply absorption: mark eliminated engines for consolidation
@@ -640,8 +648,11 @@ def rerun_aurora_absorption(
     triage: dict,
     analysis_outputs: dict[str, dict],
     collector_output: dict,
+    source_engine: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run Pass 1 again on an already-revised assignment (#166).
+
+    ``source_engine`` defaults to the collector's source database engine.
 
     The LLM validator can restore an Aurora engine that Pass 0 removed, after
     Pass 1 found no Aurora to absorb into. Call this once after corrections so
@@ -666,6 +677,9 @@ def rerun_aurora_absorption(
         query_map={q["query_id"]: q for q in queries},
         analysis_outputs=analysis_outputs,
         query_capabilities=triage.get("query_capabilities", {}),
+        source_engine=(
+            source_database_engine(collector_output) if source_engine is None else source_engine
+        ),
     )
     consolidations = _apply_aurora_absorption(
         revised, absorption, engine_queries, mandatory_committed_engines
@@ -753,6 +767,7 @@ def _run_aurora_absorption_pass(
     query_map: dict[str, dict],
     analysis_outputs: dict[str, dict],
     query_capabilities: dict[str, list[str]],
+    source_engine: str = "",
 ) -> AuroraAbsorptionResult:
     """Pass 1: Absorb orphan queries from low-count engines into committed Aurora.
 
@@ -769,19 +784,15 @@ def _run_aurora_absorption_pass(
         absorbed_queries=[], engines_eliminated=[], engines_reduced=[], aurora_engine=""
     )
 
-    # Find committed Aurora engine
-    aurora_in_stack = AURORA_ENGINES & surviving_engines
-    if not aurora_in_stack:
+    # Committed Aurora engine: the source's dialect, else the one with more
+    # queries, else PostgreSQL (shared rule, #288)
+    aurora_engine = pick_aurora_engine(
+        surviving_engines,
+        source_engine,
+        {e: len(qas) for e, qas in engine_queries.items()},
+    )
+    if aurora_engine is None:
         return empty_result
-
-    # Pick the Aurora with more queries; prefer PG if tied
-    if len(aurora_in_stack) == 1:
-        aurora_engine = next(iter(aurora_in_stack))
-    else:
-        aurora_engine = max(
-            aurora_in_stack,
-            key=lambda e: (len(engine_queries.get(e, [])), e == "aurora_postgresql"),
-        )
 
     absorbed_queries: list[dict] = []
     engines_eliminated: list[str] = []

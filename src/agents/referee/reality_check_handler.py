@@ -118,6 +118,7 @@ def run_reality_check_deterministic(
         analysis_outputs,
         collector_output,
         query_capabilities,
+        source_engine=source_database_engine(collector_output),
     )
     if pinned:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
@@ -239,6 +240,7 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                     result.get("triage", {}),
                     result.get("analysis_outputs", {}),
                     result.get("collector_output", {}),
+                    source_engine=source_database_engine(result.get("collector_output", {})),
                 )
                 result["consolidations"] = result["consolidations"] + absorbed
             # Patterns and recommendations must follow the corrected assignment

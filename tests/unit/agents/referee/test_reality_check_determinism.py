@@ -316,3 +316,65 @@ class TestAuroraChoiceFollowsTheSource:
         updated, _ = sanity_sweep(revised, [], {}, source_engine=source)
         # Without a source the Aurora engines tie on queries, so PostgreSQL wins.
         assert next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"] == expected
+
+
+class TestAuroraAbsorptionFollowsTheSource:
+    """Reality Check's absorption pass and its rerun use the same Aurora rule as
+    the resolver and the validator passes (#288 review)."""
+
+    @staticmethod
+    def _setup():
+        # aurora_mysql serves 2 queries, aurora_postgresql 1, documentdb 1 (absorbable).
+        assignments = [
+            {"query_id": "m1", "assigned_engine": "aurora_mysql"},
+            {"query_id": "m2", "assigned_engine": "aurora_mysql"},
+            {"query_id": "p1", "assigned_engine": "aurora_postgresql"},
+            {"query_id": "d1", "assigned_engine": "documentdb"},
+        ]
+        recs = {"table_recommendations": [{"table_id": "t", "confidence_score": 80}]}
+        analysis = {e: recs for e in ("aurora_mysql", "aurora_postgresql", "documentdb")}
+        return assignments, analysis
+
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_mysql")],
+    )
+    def test_absorption_pass_picks_the_source_dialect(self, source, expected):
+        from src.agents.referee.reality_check import _run_aurora_absorption_pass
+
+        assignments, analysis = self._setup()
+        engine_queries: dict[str, list[dict]] = {}
+        for qa in assignments:
+            engine_queries.setdefault(qa["assigned_engine"], []).append(qa)
+        result = _run_aurora_absorption_pass(
+            engine_queries=engine_queries,
+            surviving_engines=set(engine_queries),
+            mandatory_committed_engines=set(),
+            query_signals={},
+            query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
+            analysis_outputs=analysis,
+            query_capabilities={},
+            source_engine=source,
+        )
+        # Without a source the engine with more queries (MySQL, 2 vs 1) wins.
+        assert result.aurora_engine == expected
+
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_mysql")],
+    )
+    def test_rerun_takes_the_source_from_the_collector(self, source, expected):
+        from src.agents.referee.reality_check import rerun_aurora_absorption
+
+        assignments, analysis = self._setup()
+        collector = {
+            "metadata": {"source_database": {"engine": source}},
+            "queries": {
+                "query_patterns": [
+                    {"query_id": qa["query_id"], "tables_accessed": ["t"]} for qa in assignments
+                ]
+            },
+        }
+        revised, consolidations = rerun_aurora_absorption(assignments, {}, analysis, collector)
+        assert [c["to_engine"] for c in consolidations] == [expected]
+        assert next(qa for qa in revised if qa["query_id"] == "d1")["assigned_engine"] == expected

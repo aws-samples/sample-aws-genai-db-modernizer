@@ -51,7 +51,7 @@ def _assignment(version: int, doc_engine: str = "documentdb", **extra: object) -
     }
 
 
-def _fake_reality_check(assignment, triage, analysis, collector, caps) -> dict:
+def _fake_reality_check(assignment, triage, analysis, collector, caps, source_engine=None) -> dict:
     """Consolidate documentdb into dynamodb; no-op when no documentdb query remains."""
     moved = [qa for qa in assignment["query_assignments"] if qa["assigned_engine"] == "documentdb"]
     revised = [
