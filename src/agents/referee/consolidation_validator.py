@@ -18,8 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections import Counter
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.aurora_choice import AURORA_ENGINES, pick_aurora_engine
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
 
 logger = logging.getLogger(__name__)
@@ -224,13 +226,16 @@ def apply_corrections(
     consolidations: list[dict],
     surviving_engines: set[str] | None = None,
     all_original_engines: set[str] | None = None,
+    source_engine: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Apply LLM corrections back to the assignments and consolidations.
 
     When a query can't be served by its consolidation target, redirects it to
     a committed Aurora engine if one exists (these are relational patterns that
     Aurora handles natively). Falls back to the original engine only if no
-    Aurora is available.
+    Aurora is available. With both Aurora engines available, the one matching
+    the source database's dialect wins, then the one with more queries, then
+    Aurora PostgreSQL (``pick_aurora_engine``, #288).
 
     Args:
         corrections: queries flagged as unserviceable on target
@@ -241,6 +246,7 @@ def apply_corrections(
         all_original_engines: all engines from the pre-consolidation
             distribution (used as a broader pool to find Aurora targets
             even if Aurora was temporarily consolidated)
+        source_engine: the source database engine (e.g. ``"mysql"``)
 
     Returns:
         (updated_assignments, updated_consolidations)
@@ -251,16 +257,12 @@ def apply_corrections(
     # Determine redirect target: prefer Aurora over original engine.
     # Check both surviving engines AND original engines — Aurora may have been
     # temporarily consolidated but is still a valid relational safety net.
-    aurora_engines = {"aurora_postgresql", "aurora_mysql"}
-    redirect_engine: str | None = None
     candidate_pool = (surviving_engines or set()) | (all_original_engines or set())
-    committed_aurora = aurora_engines & candidate_pool
-    if committed_aurora:
-        # Prefer PG (broader capability set), then MySQL
-        if "aurora_postgresql" in committed_aurora:
-            redirect_engine = "aurora_postgresql"
-        else:
-            redirect_engine = committed_aurora.pop()
+    redirect_engine = pick_aurora_engine(
+        candidate_pool,
+        source_engine,
+        Counter(qa["assigned_engine"] for qa in revised_assignments),
+    )
 
     # Build correction lookup: query_id → original_engine. A correction without
     # ``failed_target`` (the external validator's shape) failed on the engine its
@@ -367,6 +369,7 @@ def sanity_sweep(
     revised_assignments: list[dict],
     consolidations: list[dict],
     query_capabilities: dict[str, list[str]],
+    source_engine: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Final pass: redirect tiny orphan engines to Aurora if available.
 
@@ -381,29 +384,25 @@ def sanity_sweep(
         revised_assignments: current query assignments (post-corrections)
         consolidations: current consolidation records
         query_capabilities: {query_id: [capability_names]} from triage
+        source_engine: the source database engine (e.g. ``"mysql"``)
 
     Returns:
         (updated_assignments, updated_consolidations) — may be unchanged
     """
-    from collections import Counter
-
     # Count queries per engine
     engine_counts = Counter(qa["assigned_engine"] for qa in revised_assignments)
 
-    # Find committed Aurora engine (the one with the most queries)
-    aurora_engines = {"aurora_postgresql", "aurora_mysql"}
-    committed_aurora = [e for e in engine_counts if e in aurora_engines]
-    if not committed_aurora:
+    # Committed Aurora engine: the source's dialect, else the one with the most
+    # queries, else PostgreSQL (#288)
+    aurora_target = pick_aurora_engine(engine_counts, source_engine, engine_counts)
+    if aurora_target is None:
         return revised_assignments, consolidations
-
-    # Pick the Aurora engine with the most queries (it's the primary relational target)
-    aurora_target = max(committed_aurora, key=lambda e: engine_counts[e])
 
     # Find orphan engines (non-Aurora, few queries, not the primary engine)
     primary_engine = max(engine_counts, key=lambda e: engine_counts[e])
 
     for engine, count in list(engine_counts.items()):
-        if engine in aurora_engines:
+        if engine in AURORA_ENGINES:
             continue
         if engine == primary_engine:
             continue

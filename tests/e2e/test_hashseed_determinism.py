@@ -59,7 +59,7 @@ def _canonical(path: Path) -> str:
 
 @pytest.mark.parametrize("sample", list(SAMPLES))
 def test_reality_check_and_assignment_ignore_hash_seed(sample: str, tmp_path: Path) -> None:
-    workers = min(len(SEEDS), os.cpu_count() or 1)
+    workers = min(3, os.cpu_count() or 1)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         jobs = list(pool.map(lambda s: _run_through_reality_check(sample, s, tmp_path), SEEDS))
 

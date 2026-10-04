@@ -17,6 +17,7 @@ from src.agents.prompt_framing import (
     frame_untrusted,
 )
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
     corrections_for_moved_queries,
@@ -228,6 +229,7 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                 result["consolidations"],
                 surviving_engines=surviving_engines,
                 all_original_engines=all_original_engines,
+                source_engine=source_database_engine(result.get("collector_output", {})),
             )
             # The LLM can restore an Aurora that Pass 1 never saw; absorb again (#166)
             corrected_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
@@ -358,6 +360,7 @@ def run_reality_check_handler(
         det["revised_assignments"],
         det["consolidations"],
         query_capabilities,
+        source_engine=source_database_engine(det.get("collector_output", {})),
     )
     # Recompute after_distribution post-sweep
     sweep_distribution: dict[str, int] = defaultdict(int)

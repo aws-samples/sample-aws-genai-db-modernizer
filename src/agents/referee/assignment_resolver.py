@@ -19,9 +19,11 @@ general suitability.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
+from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.contracts.assignment_models import (
     Assignment,
@@ -30,8 +32,6 @@ from src.contracts.assignment_models import (
     QueryAssignment,
     TableAssignment,
 )
-
-AURORA_ENGINES = {"aurora_postgresql", "aurora_mysql"}
 
 # Triage signals that strongly indicate an engine is the RIGHT fit for a query.
 # When a signal maps query→engine and that engine was selected by triage,
@@ -131,13 +131,16 @@ class AssignmentResolver:
         assigned_reason: dict[str, str] = {}
         assigned_signal: dict[str, str] = {}
 
-        # Determine Aurora fallback engine from triage selection
-        aurora_fallback = _resolve_aurora_fallback(selected_engines)
+        # Queries left for the Aurora fallback. The engine is chosen once the
+        # rest are assigned, since it can depend on how many queries each
+        # Aurora engine already serves (#288).
+        fallback_qids: list[str] = []
 
         for group in co_dep_groups:
             if not analysis_outputs:
                 for qid in group:
-                    assigned[qid] = aurora_fallback
+                    fallback_qids.append(qid)
+                    assigned[qid] = ""
                     assigned_confidence[qid] = 0
                     assigned_reason[qid] = "no analysis available"
                 continue
@@ -175,9 +178,19 @@ class AssignmentResolver:
                 assigned_reason[qid] = f"highest confidence for {best}"
             else:
                 # Step 7: Fallback to aurora engine from triage
-                assigned[qid] = aurora_fallback
+                fallback_qids.append(qid)
+                assigned[qid] = ""
                 assigned_confidence[qid] = 0
                 assigned_reason[qid] = "no engine scored this query"
+
+        if fallback_qids:
+            aurora_fallback = _resolve_aurora_fallback(
+                selected_engines,
+                source_database_engine(collector_output),
+                Counter(e for e in assigned.values() if e),
+            )
+            for qid in fallback_qids:
+                assigned[qid] = aurora_fallback
 
         # Build query→tables lookup
         query_tables: dict[str, list[str]] = {}
@@ -348,20 +361,20 @@ class AssignmentResolver:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_aurora_fallback(selected_engines: set[str]) -> str:
+def _resolve_aurora_fallback(
+    selected_engines: set[str],
+    source_engine: str = "",
+    query_counts: Mapping[str, int] | None = None,
+) -> str:
     """Determine which Aurora engine to use as fallback.
 
-    Prefers the specific Aurora engine selected by triage. If none was selected,
-    falls back to the first Aurora engine found. If no Aurora engine at all,
-    uses a generic 'aurora' placeholder (legacy behavior).
+    Uses the Aurora engine selected by triage. When both are selected, the one
+    matching the source database's dialect wins, then the one with more
+    queries, then Aurora PostgreSQL (``pick_aurora_engine``, #288). If no
+    Aurora engine was selected, uses a generic 'aurora' placeholder (legacy
+    behavior).
     """
-    aurora_selected = AURORA_ENGINES & selected_engines
-    if aurora_selected:
-        # Both selected: prefer PostgreSQL, as Reality Check does. Never take
-        # the set's first element, its order depends on PYTHONHASHSEED (#288).
-        return min(aurora_selected, key=lambda e: (e != "aurora_postgresql", e))
-    # No Aurora engine selected — check if any engine in analysis is Aurora
-    return "aurora"
+    return pick_aurora_engine(selected_engines, source_engine, query_counts) or "aurora"
 
 
 # ---------------------------------------------------------------------------

@@ -1099,6 +1099,7 @@ def _find_best_absorber_for_query(
                 "fit_score": fit,
                 "is_mandatory_secondary": is_mandatory_secondary,
                 "table_overlap": len(overlap),
+                "existing_queries": len(engine_queries.get(target_engine, [])),
                 "reason": reason,
             }
         )
@@ -1107,13 +1108,15 @@ def _find_best_absorber_for_query(
         return None
 
     # Sort: highest fit score wins, with mandatory secondary and table overlap
-    # as tiebreakers, then engine name so the pick never depends on set order
-    # (and so PYTHONHASHSEED) (#288).
+    # as tiebreakers. A remaining tie goes to the engine already serving more
+    # queries, so ties reinforce consolidation, and finally to the engine name,
+    # so the pick never depends on set order (and so PYTHONHASHSEED) (#288).
     candidates.sort(
         key=lambda c: (
             -c["fit_score"],
             not c["is_mandatory_secondary"],
             -c["table_overlap"],
+            -c["existing_queries"],
             c["target_engine"],
         )
     )
