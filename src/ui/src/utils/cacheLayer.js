@@ -128,3 +128,24 @@ export function formatCachedByLine(engineLabelText, { t = defaultT } = {}) {
     defaultValue: 'cached by {{engine}}',
   });
 }
+
+/**
+ * The PUT /assignments override list from the gate's two pending-edit maps
+ * (#296): `engineOverrides` { query_id: owner engine } and `cacheOverrides`
+ * { query_id: true|false } ("Cache with ElastiCache" toggle). A cache engine is
+ * never sent as an owner: it would only be converted to a cache pin server-side.
+ */
+export function buildOverrideList(engineOverrides = {}, cacheOverrides = {}) {
+  const byId = {};
+  Object.entries(engineOverrides || {}).forEach(([queryId, engine]) => {
+    if (isCacheEngine(engine)) {
+      byId[queryId] = { ...(byId[queryId] || { query_id: queryId }), cached: true };
+    } else {
+      byId[queryId] = { ...(byId[queryId] || { query_id: queryId }), assigned_engine: engine };
+    }
+  });
+  Object.entries(cacheOverrides || {}).forEach(([queryId, cached]) => {
+    byId[queryId] = { ...(byId[queryId] || { query_id: queryId }), cached: !!cached };
+  });
+  return Object.values(byId);
+}

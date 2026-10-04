@@ -151,3 +151,22 @@ describe('formatCachedByLine', () => {
     expect(formatCachedByLine('ElastiCache')).toBe('cached by ElastiCache');
   });
 });
+
+describe('buildOverrideList (#296 cache toggle)', () => {
+  const { buildOverrideList } = require('../cacheLayer');
+
+  test('engine changes and cache toggles merge per query', () => {
+    expect(buildOverrideList({ q1: 'aurora_mysql' }, { q1: true, q2: false })).toEqual([
+      { query_id: 'q1', assigned_engine: 'aurora_mysql', cached: true },
+      { query_id: 'q2', cached: false },
+    ]);
+  });
+
+  test('a cache engine is never sent as an owner', () => {
+    expect(buildOverrideList({ q1: 'elasticache' }, {})).toEqual([{ query_id: 'q1', cached: true }]);
+  });
+
+  test('nothing pending, nothing sent', () => {
+    expect(buildOverrideList({}, {})).toEqual([]);
+  });
+});

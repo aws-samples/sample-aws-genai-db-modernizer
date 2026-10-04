@@ -33,7 +33,8 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { buildAssignmentSummary } from "../utils/assignmentSummary";
-import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList } from "../utils/cacheLayer";
+import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
 
@@ -54,10 +55,14 @@ const ENGINE_COLORS = {
   aurora_postgresql: { bg: '#9c5700', badge: 'green', label: 'Aurora PostgreSQL' },
 };
 
-const ENGINE_OPTIONS = Object.entries(ENGINE_COLORS).map(([key, val]) => ({
-  label: val.label,
-  value: key,
-}));
+// #296: ElastiCache is a cache layer, never an owner, so it is not an engine
+// option; each row has a "Cache with ElastiCache" toggle instead.
+const ENGINE_OPTIONS = Object.entries(ENGINE_COLORS)
+  .filter(([key]) => !isCacheEngine(key))
+  .map(([key, val]) => ({
+    label: val.label,
+    value: key,
+  }));
 
 const PAGE_SIZE = 25;
 
@@ -135,6 +140,7 @@ const AssignmentGatePage = memo(() => {
   const [filterQuery, setFilterQuery] = useState({ tokens: [], operation: 'and' });
   const [currentPage, setCurrentPage] = useState(1);
   const [overrides, setOverrides] = useState({}); // { query_id: new_engine }
+  const [cacheOverrides, setCacheOverrides] = useState({}); // { query_id: cached (bool) }
   const [expandedQueryIds, setExpandedQueryIds] = useState(new Set());
   const [showResumeModal, setShowResumeModal] = useState(false);
   const [sortColumn, setSortColumn] = useState(null); // column key
@@ -246,10 +252,7 @@ const AssignmentGatePage = memo(() => {
 
   // ---- Save overrides ----
   const handleSaveOverrides = useCallback(async () => {
-    const overrideList = Object.entries(overrides).map(([query_id, assigned_engine]) => ({
-      query_id,
-      assigned_engine,
-    }));
+    const overrideList = buildOverrideList(overrides, cacheOverrides);
 
     if (overrideList.length === 0) {
       addFlash('info', t('assignment-gate.flash.no-changes'), t('assignment-gate.flash.no-changes-detail'));
@@ -271,6 +274,7 @@ const AssignmentGatePage = memo(() => {
       if (results['save']?.success) {
         addFlash('success', t('assignment-gate.flash.overrides-saved'), t('assignment-gate.flash.overrides-saved-detail', { count: overrideList.length }));
         setOverrides({});
+        setCacheOverrides({});
         // Refresh data
         fetchData();
       } else {
@@ -282,7 +286,7 @@ const AssignmentGatePage = memo(() => {
     } finally {
       setSavingOverrides(false);
     }
-  }, [jobId, overrides, addFlash, fetchData, t]);
+  }, [jobId, overrides, cacheOverrides, addFlash, fetchData, t]);
 
   // ---- Handle Sankey node click ----
   const handleSankeyNodeClick = useCallback((nodeId) => {
@@ -648,7 +652,7 @@ const AssignmentGatePage = memo(() => {
   }, [sortedQueries, currentPage]);
 
   // Override count
-  const overrideCount = Object.keys(overrides).length;
+  const overrideCount = new Set([...Object.keys(overrides), ...Object.keys(cacheOverrides)]).size;
 
   // Has pending overrides
   const hasPendingOverrides = overrideCount > 0;
@@ -867,7 +871,7 @@ const AssignmentGatePage = memo(() => {
             <Button variant="primary" onClick={handleSaveOverrides} loading={savingOverrides}>
               {t('assignment-gate.actions.save-overrides')}
             </Button>
-            <Button variant="normal" onClick={() => setOverrides({})}>
+            <Button variant="normal" onClick={() => { setOverrides({}); setCacheOverrides({}); }}>
               {t('assignment-gate.actions.discard-changes')}
             </Button>
           </SpaceBetween>
@@ -965,7 +969,8 @@ const AssignmentGatePage = memo(() => {
             paginatedQueries.map(item => {
               const isExpanded = expandedQueryIds.has(item.query_id);
               const currentEngine = overrides[item.query_id] || item.assigned_engine;
-              const isOverridden = !!overrides[item.query_id];
+              const isOverridden = !!overrides[item.query_id] || item.query_id in cacheOverrides;
+              const isCached = item.query_id in cacheOverrides ? cacheOverrides[item.query_id] : !!item.cache_engine;
               const isMoved = item.assignment_reason?.includes('reality check');
               const details = queryDetailsMap[item.query_id];
               const signals = querySignalsMap[item.query_id] || [];
@@ -1003,6 +1008,18 @@ const AssignmentGatePage = memo(() => {
                         triggerVariant="option"
                         expandToViewport
                       />
+                      <Checkbox
+                        checked={isCached}
+                        onChange={({ detail: d }) => {
+                          if (d.checked === !!item.cache_engine) {
+                            setCacheOverrides(prev => { const next = { ...prev }; delete next[item.query_id]; return next; });
+                          } else {
+                            setCacheOverrides(prev => ({ ...prev, [item.query_id]: d.checked }));
+                          }
+                        }}
+                      >
+                        {t('assignment-gate.table.cache-toggle', { defaultValue: 'Cache with ElastiCache' })}
+                      </Checkbox>
                       {cacheInfo && (
                         <span
                           className="cache-overlay-indicator"

@@ -561,6 +561,7 @@
   "assignment-gate.table.col-signals": "Signals",
   "assignment-gate.table.col-reason": "Reason",
   "assignment-gate.table.cached-by": "cached by {{engine}}",
+  "assignment-gate.table.cache-toggle": "Cache with ElastiCache",
   "assignment-gate.table.no-matching-queries": "No matching queries",
   "assignment-gate.table.try-adjusting-filters": "Try adjusting your filters.",
   "assignment-gate.filter.placeholder": "Filter by engine, table, query type, signal, or free text...",
