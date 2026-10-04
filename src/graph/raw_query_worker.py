@@ -37,6 +37,7 @@ MAX_THREADS = 2
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 GRACE_SECONDS = 3.0
 _MEMORY_EXIT_CODE = 3
+_ORPHAN_EXIT_CODE = 4
 _WATCHDOG_INTERVAL_S = 0.01
 
 
@@ -110,10 +111,13 @@ def _peak_rss_bytes() -> int:
     return int(peak if sys.platform == "darwin" else peak * 1024)
 
 
-def _watch_memory(limit: int) -> None:
+def _watch_memory(limit: int, parent_pid: int) -> None:
     while True:
         if _peak_rss_bytes() > limit:
             os._exit(_MEMORY_EXIT_CODE)
+        # The server that started us is gone: nobody will read the result.
+        if os.getppid() != parent_pid:
+            os._exit(_ORPHAN_EXIT_CODE)
         time.sleep(_WATCHDOG_INTERVAL_S)
 
 
@@ -139,7 +143,9 @@ def _reply(payload: dict) -> None:
 def _child_main() -> None:
     request = json.loads(sys.stdin.read())
     threading.Thread(
-        target=_watch_memory, args=(request["memory_limit_bytes"],), daemon=True
+        target=_watch_memory,
+        args=(request["memory_limit_bytes"], os.getppid()),
+        daemon=True,
     ).start()
 
     import ladybug as lb

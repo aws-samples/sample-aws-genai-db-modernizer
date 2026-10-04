@@ -461,3 +461,24 @@ def test_curated_endpoint_maps_engine_limits(raw_client, monkeypatch, message, s
     resp = client.get("/api/v1/assessments/job-1/graph/risks")
     assert resp.status_code == status
     assert resp.json()["detail"] == detail
+
+
+def test_raw_query_child_exits_when_its_parent_is_gone(monkeypatch):
+    """The child's watchdog stops it once the server that started it is gone."""
+    from src.graph import raw_query_worker as worker
+
+    exits = []
+
+    class _Exited(Exception):
+        pass
+
+    def fake_exit(code):
+        exits.append(code)
+        raise _Exited
+
+    monkeypatch.setattr(worker, "_peak_rss_bytes", lambda: 0)
+    monkeypatch.setattr(worker.os, "getppid", lambda: 1)
+    monkeypatch.setattr(worker.os, "_exit", fake_exit)
+    with pytest.raises(_Exited):
+        worker._watch_memory(worker.MEMORY_LIMIT_BYTES, parent_pid=4242)
+    assert exits == [worker._ORPHAN_EXIT_CODE]
