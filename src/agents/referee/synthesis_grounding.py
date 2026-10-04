@@ -147,7 +147,20 @@ def eliminated_engines(
 # "to OpenSearch", "use OpenSearch").
 _CUE_WINDOW = 3
 _TRADE_OFF_CUE = re.compile(
-    r"^(?:consolidat\w*|absorb\w*|without|replacing|from|than)$", re.IGNORECASE
+    r"^(?:consolidat\w*|absorb\w*|without|replacing|from|than|between|versus|vs)$",
+    re.IGNORECASE,
+)
+# An engine listed as an alternative ("in the relational database or OpenSearch",
+# "with Aurora MySQL, ElastiCache, or OpenSearch") is governed by the cue before the
+# whole list (#253): after a conjunction the window extends, within the same clause,
+# until a cue or a clause verb ("Data in DynamoDB is denormalized and OpenSearch ...").
+_ALTERNATIVE = re.compile(r"^(?:or|and)$", re.IGNORECASE)
+_ALTERNATIVE_WINDOW = 8
+_CLAUSE_BREAK = re.compile(r"[;:!?]|\.\s")
+_CLAUSE_VERB = re.compile(
+    r"^(?:is|are|was|were|be|been|being|has|have|had|does|do|did|can|will|would|should|"
+    r"must|may|might|need|needs)$",
+    re.IGNORECASE,
 )
 _RECOMMEND_CUE = re.compile(
     r"^(?:with|to|use|using|uses|via|in|into|on|through|offload\w*|adopt\w*|leverag\w*|"
@@ -172,9 +185,18 @@ _RECOMMEND_AFTER = re.compile(
 
 
 def _mention_cue(before: str) -> str | None:
-    """``"trade_off"``/``"recommend"`` for the nearest cue in the words before a mention."""
-    words = re.findall(r"[A-Za-z]+", before)[-_CUE_WINDOW:]
-    for i in range(len(words) - 1, -1, -1):
+    """``"trade_off"``/``"recommend"`` for the nearest cue in the words before a mention.
+
+    The window is the three words before the mention, extended past a conjunction to
+    the cue that governs a list of alternatives (#253), within the same clause.
+    """
+    words = re.findall(r"[A-Za-z]+", before)
+    clause_words = len(re.findall(r"[A-Za-z]+", _CLAUSE_BREAK.split(before)[-1]))
+    limit = _CUE_WINDOW
+    in_list = False
+    for k, i in enumerate(range(len(words) - 1, -1, -1), start=1):
+        if k > limit:
+            break
         word = words[i]
         if word.lower() == "of" and i > 0 and words[i - 1].lower() == "instead":
             return "trade_off"  # "instead of OpenSearch"
@@ -182,6 +204,11 @@ def _mention_cue(before: str) -> str | None:
             return "trade_off"
         if _RECOMMEND_CUE.match(word):
             return "recommend"
+        if in_list and _CLAUSE_VERB.match(word):
+            return None
+        if _ALTERNATIVE.match(word) and k < clause_words:
+            in_list = True
+            limit = max(limit, min(k + _ALTERNATIVE_WINDOW, clause_words))
     return None
 
 
@@ -215,17 +242,60 @@ def recommends_engine(text: str, engine: str) -> bool:
     return any(_recommends(s, [engine]) for s in split_sentences(text or ""))
 
 
-def _drop_recommendations(text: str, eliminated: dict[str, str | None]) -> tuple[str, str, bool]:
+# A trailing alternative ("..., or OpenSearch", "... or in Amazon OpenSearch") that
+# ends its phrase: followed by punctuation, the end, or a "for"/"as" complement.
+_ALT_LEAD = r"(?:(?:in|on|to|into|with|via|using|use)\s+)?(?:the\s+)?(?:amazon\s+)?"
+_ALT_END = r"(?=\s*(?:[;,.:)]|$)|\s+(?:for|as)\b)"
+
+
+def _prune_alternative(sentence: str, engine: str) -> str | None:
+    """``sentence`` without ``engine`` where it is the last of several alternatives (#253).
+
+    "Keep in the relational database or OpenSearch; ..." -> "Keep in the relational
+    database; ...", "with A, B, or OpenSearch" -> "with A or B". None when the engine is
+    not such an alternative.
+    """
+    m = re.search(
+        rf"(,?)\s+(or|and)\s+{_ALT_LEAD}(?:{_ENGINE_PATTERNS[engine].pattern}){_ALT_END}",
+        sentence,
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    head = sentence[: m.start()]
+    clause_start = max(head.rfind(";"), head.rfind(":")) + 1
+    last_comma = head.rfind(",", clause_start)
+    if m.group(1) and last_comma != -1:
+        # "A, B, or C" minus C is "A or B".
+        head = f"{head[:last_comma]} {m.group(2)}{head[last_comma + 1 :]}"
+    return head + sentence[m.end() :]
+
+
+def _drop_recommendations(
+    text: str, eliminated: dict[str, str | None], prune: bool = False
+) -> tuple[str, str, bool]:
     """Return ``(tag, kept_body, changed)`` with recommending sentences removed.
 
     A leading ``[engine] `` tag and optional ``label: `` are kept apart from the body.
+    With ``prune``, a sentence that recommends an eliminated engine only as one of
+    several alternatives keeps the other alternatives instead of being dropped (#253).
     """
     tag_match = _ENGINE_TAG.match(text)
     tag = tag_match.group(1) if tag_match else ""
     body = text[len(tag) :]
     sentences = split_sentences(body)
-    kept = [s for s in sentences if not _recommends(s, eliminated)]
-    return tag, " ".join(kept), len(kept) != len(sentences)
+    kept = []
+    for sentence in sentences:
+        if prune:
+            for engine in eliminated:
+                if not _recommends(sentence, eliminated):
+                    break
+                pruned = _prune_alternative(sentence, engine)
+                if pruned is not None:
+                    sentence = pruned
+        if not _recommends(sentence, eliminated):
+            kept.append(sentence)
+    return tag, " ".join(kept), kept != sentences
 
 
 def _risk_engine(risk: dict) -> str | None:
@@ -315,12 +385,12 @@ def ground_risks(
             )
 
         if mitigation:
-            tag, body, changed = _drop_recommendations(mitigation, eliminated)
+            tag, body, changed = _drop_recommendations(mitigation, eliminated, prune=True)
             if changed:
                 if body:
                     mitigation = tag + body
                     notes.append(
-                        f"Dropped a mitigation sentence recommending {display_name(engine)}."
+                        f"Removed the mitigation text recommending {display_name(engine)}."
                     )
                 else:
                     mitigation = _replan(
