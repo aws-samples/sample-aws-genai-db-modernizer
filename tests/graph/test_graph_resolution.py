@@ -129,7 +129,7 @@ def test_rebuild_endpoint_disabled_by_default(wired, rebuild_client, monkeypatch
     _, persistence, rebuilds = wired
     monkeypatch.delenv(graph_routes.RAW_QUERY_ENV_FLAG, raising=False)
 
-    resp = rebuild_client.post("/api/v1/assessments/job-1/graph/rebuild")
+    resp = rebuild_client.post("/api/v1/assessments/job-1/graph/rebuild", json={})
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == graph_routes.DISABLED_DETAIL
@@ -145,7 +145,7 @@ def test_rebuild_endpoint_releases_writer(wired, rebuild_client, monkeypatch):
         pass
     assert cache.is_open("db", "job-1")
 
-    resp = rebuild_client.post("/api/v1/assessments/job-1/graph/rebuild")
+    resp = rebuild_client.post("/api/v1/assessments/job-1/graph/rebuild", json={})
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "rebuilt"
@@ -155,3 +155,35 @@ def test_rebuild_endpoint_releases_writer(wired, rebuild_client, monkeypatch):
         assert store.read_only is True
     assert rebuilds == [False, False]
     assert os.path.exists(cache.local_path("db", "job-1"))
+
+
+def test_rebuild_replaces_the_file_atomically(wired, monkeypatch):
+    """A rebuild builds next to the live file and leaves no temporary files behind."""
+    cache, persistence, rebuilds = wired
+    path = cache.local_path("db", "job-1")
+    _write_populated(path)
+    Path(f"{path}.wal").write_bytes(b"stale")
+
+    with cache.exclusive("db", "job-1") as locked:
+        graph_routes._build_graph_file("db", "job-1", locked)
+
+    assert sorted(p.name for p in Path(path).parent.iterdir()) == ["context.lbug"]
+    with graph_routes.graph_lease("job-1") as (store, _):
+        assert _ids(store) == ["built"]
+
+
+def test_failed_rebuild_keeps_the_previous_graph(wired, monkeypatch):
+    cache, persistence, rebuilds = wired
+    path = cache.local_path("db", "job-1")
+    _write_populated(path)
+
+    def _fail(*args):
+        raise RuntimeError("artifact read failed")
+
+    monkeypatch.setattr(graph_routes, "rebuild_graph", _fail)
+    with cache.exclusive("db", "job-1") as locked, pytest.raises(RuntimeError):
+        graph_routes._build_graph_file("db", "job-1", locked)
+
+    persistence.upload.assert_not_called()
+    with graph_routes.graph_lease("job-1") as (store, _):
+        assert _ids(store) == ["a"]

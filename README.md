@@ -288,6 +288,8 @@ npm run serve
 
 `npm run serve` uses the `serve` dev dependency pinned in `package.json`, so it works offline after the first install. It runs in single-page-app mode, so deep links such as `/analysis/monitor/summary/<job_id>` load on refresh.
 
+The local API only answers requests addressed to `localhost`, `127.0.0.1` or `::1`. To reach it under another host name, set `MODERNIZER_ALLOWED_HOSTS` to a comma-separated list of names.
+
 Then open `http://localhost:3000` to browse your modernization results.
 
 ### Cloud Deployment (AWS)

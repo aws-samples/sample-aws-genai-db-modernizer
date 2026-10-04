@@ -12,6 +12,11 @@ settings.register_profile("default", max_examples=100, deadline=None)
 
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
+# The local API only answers loopback host names; Starlette's TestClient sends
+# Host: testserver, so allow it for the test session (set before src.api.main
+# is imported).
+os.environ.setdefault("MODERNIZER_ALLOWED_HOSTS", "localhost,127.0.0.1,::1,testserver")
+
 
 # ---------------------------------------------------------------------------
 # --fail-on-skip: turn skipped tests into failures.

@@ -285,3 +285,31 @@ class TestGraphBackedJourneys:
         assert resp.json()["query_id"] == "q_001"
         # Artifact read was not used when the graph served the query.
         mock_services["store"].read_json.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/query-journeys", "/query-journeys/q_001"])
+def test_graph_timeout_returns_504_not_artifact_fallback(mock_services, path):
+    """A graph read that hits the engine timeout is reported, not hidden by the fallback."""
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    from src.api.routes import graph as graph_route
+    from src.graph import queries as graph_queries
+
+    @contextmanager
+    def _lease(job_id):
+        yield MagicMock(), "test_db"
+
+    def _timeout(*args):
+        raise RuntimeError("Interrupted.")
+
+    with (
+        patch.object(graph_route, "graph_lease", _lease),
+        patch.object(graph_queries, "query_journeys", _timeout),
+        patch.object(graph_queries, "query_journey", _timeout),
+    ):
+        resp = client.get(f"/api/v1/assessments/job-1{path}")
+
+    assert resp.status_code == 504
+    assert resp.json()["detail"] == graph_route.TIMEOUT_DETAIL
+    mock_services["store"].read_json.assert_not_called()

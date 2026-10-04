@@ -40,6 +40,11 @@ def _journeys_from_graph(job_id: str) -> list[dict] | None:
 
         with graph_route.graph_lease(job_id) as (store, _db):
             return graph_queries.query_journeys(store)
+    except RuntimeError as exc:
+        mapped = graph_route.graph_error_to_http(exc)
+        if mapped is not None:
+            raise mapped from exc
+        return None
     except Exception:  # noqa: BLE001 - graph not wired/available -> artifact fallback
         # Includes the 503 graph_lease raises when the graph layer isn't
         # configured: that just means "no graph here", so fall back to the
@@ -132,6 +137,10 @@ def get_query_journey(job_id: str, query_id: str):
             return journey
         # Graph is available but has no such query — fall through to the artifact
         # (a legacy job may still have it), then 404.
+    except RuntimeError as exc:
+        mapped = graph_route.graph_error_to_http(exc)
+        if mapped is not None:
+            raise mapped from exc
     except Exception:  # noqa: BLE001 - graph not wired/available -> artifact fallback  # nosec B110
         pass  # intentional: any graph failure means "try the artifact path"
 

@@ -31,17 +31,25 @@ otherwise they return `403`. The curated `GET` endpoints below are always on.
 
 Limits on the raw endpoint:
 
+- Requests must be sent with `Content-Type: application/json` (`415`
+  otherwise); request bodies are at most 64 KiB.
 - One read statement per request: `MATCH`, `OPTIONAL MATCH`, `WITH`, `UNWIND`,
   `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, `EXISTS { }` / `COUNT { }`
   subqueries, and `CALL` of `show_tables`, `table_info`, `show_connection` or
   `db_version`. `UNION` and other statements return `400`.
 - Queries are at most 10,000 characters of ASCII text outside quoted strings,
-  with bounded nesting; request bodies are at most 64 KiB.
+  with bounded nesting.
+- `range`, `repeat`, `lpad` and `rpad` take integer-literal sizes of at most
+  1,000 elements.
 - The engine returns at most 1,000 rows. `truncated: true` means more rows
   matched; add `ORDER BY` with `SKIP`/`LIMIT` to page. A final `LIMIT` must be
   an integer literal.
-- Every graph read, curated or raw, runs on a read-only database handle with a
-  10-second query timeout.
+- Each query runs in its own short-lived process with a 10-second timeout
+  (`504`), a memory cap and a 16 MiB result cap (`400`). At most two run at
+  once; more return `429`.
+
+The curated endpoints run fixed queries on a read-only handle with the same
+10-second timeout (`504`) and a 256 MiB buffer pool (`503` when it is full).
 
 The graph is built lazily on first access (or explicitly via
 `POST /api/v1/assessments/{job_id}/graph/rebuild`) from the assessment's S3

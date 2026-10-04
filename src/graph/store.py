@@ -45,6 +45,7 @@ class GraphStore:
         statement that runs longer than the given number of milliseconds.
         ``buffer_pool_size`` (bytes, 0 = engine default) caps the page cache.
         """
+        self.path = db_path
         self.read_only = read_only
         self._timeout_ms = query_timeout_ms
         self._db = lb.Database(db_path, read_only=read_only, buffer_pool_size=buffer_pool_size)

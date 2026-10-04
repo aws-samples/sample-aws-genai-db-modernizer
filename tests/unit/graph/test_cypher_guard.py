@@ -216,3 +216,56 @@ def test_bound_result_rows_sets_engine_limit(cypher, expected):
 def test_bound_result_rows_rejects(cypher):
     with pytest.raises(DisallowedStatementError):
         bound_result_rows(cypher, 1_000)
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        "UNWIND range(1, 1000) AS x RETURN x",
+        "UNWIND range(0, 999) AS x RETURN x",
+        "UNWIND range(1000, 1, -1) AS x RETURN x",
+        "UNWIND range(1, 1000000, 1000) AS x RETURN x",
+        "RETURN repeat('ab', 1000) AS r",
+        "RETURN lpad('x', 10, '0') AS a, rpad(q.id, 20, ' ') AS b",
+        "RETURN q.range, q.repeat",
+    ],
+)
+def test_accepts_small_generated_values(cypher):
+    validate_read_only_cypher(cypher)
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        "UNWIND range(1, 1001) AS x RETURN x",
+        "UNWIND RANGE(1, 200000000) AS x RETURN x",
+        "UNWIND range(1, $n) AS x RETURN x",
+        "UNWIND range(1, 10 * 1000) AS x RETURN x",
+        "UNWIND range(1, size([1])) AS x RETURN x",
+        "UNWIND range(1, 10, 0) AS x RETURN x",
+        "UNWIND range (1, 5000) AS x RETURN x",
+        "RETURN repeat('x', 1000000000) AS r",
+        "RETURN repeat('x', $n) AS r",
+        "RETURN lpad('x', 1000000000, 'y') AS r",
+        "RETURN rpad('x', 1001, 'y') AS r",
+        "RETURN `range`(1, 100000000) AS r",
+        "RETURN `repeat`('x', 100000000) AS r",
+    ],
+)
+def test_rejects_large_or_unbounded_generated_values(cypher):
+    with pytest.raises(DisallowedStatementError):
+        validate_read_only_cypher(cypher)
+
+
+@pytest.mark.parametrize(
+    ("cypher", "expected"),
+    [
+        ("RETURN 1 AS `a``b`", "RETURN 1 AS `a``b` LIMIT 1001"),
+        ("RETURN 1 AS `a``b` LIMIT 5", "RETURN 1 AS `a``b` LIMIT 5"),
+        ("RETURN 1 AS `a``LIMIT 5`", "RETURN 1 AS `a``LIMIT 5` LIMIT 1001"),
+        ("RETURN 'LIMIT 5'", "RETURN 'LIMIT 5' LIMIT 1001"),
+        ("RETURN 1 AS ````", "RETURN 1 AS ```` LIMIT 1001"),
+    ],
+)
+def test_bound_result_rows_keeps_trailing_quoted_text(cypher, expected):
+    assert bound_result_rows(cypher, 1_000) == expected

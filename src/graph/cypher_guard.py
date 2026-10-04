@@ -66,6 +66,23 @@ READ_START_KEYWORDS = frozenset({"MATCH", "OPTIONAL", "WITH", "UNWIND", "RETURN"
 # is rejected.
 ALLOWED_PROCEDURES = frozenset({"show_tables", "table_info", "show_connection", "db_version"})
 
+# Functions whose output size is set by an argument rather than by their input
+# (they materialise the whole value before the timeout or buffer pool apply).
+# They are allowed only with integer-literal size arguments up to
+# MAX_GENERATED_ELEMENTS; any other use is rejected.
+MAX_GENERATED_ELEMENTS = 1_000
+_INT = r"(-?\d+)"
+_ARG = r"[^(),]*"
+_BOUNDED_CALLS = {
+    "range": re.compile(rf"\(\s*{_INT}\s*,\s*{_INT}\s*(?:,\s*{_INT}\s*)?\)", re.IGNORECASE),
+    "repeat": re.compile(rf"\({_ARG},\s*{_INT}\s*\)", re.IGNORECASE),
+    "lpad": re.compile(rf"\({_ARG},\s*{_INT}\s*,{_ARG}\)", re.IGNORECASE),
+    "rpad": re.compile(rf"\({_ARG},\s*{_INT}\s*,{_ARG}\)", re.IGNORECASE),
+}
+_GENERATOR_CALL = re.compile(
+    r"(?<![.$\w])(" + "|".join(_BOUNDED_CALLS) + r")\s*(?=\()", re.IGNORECASE
+)
+
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CALL_TARGET = re.compile(r"\bCALL\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", re.IGNORECASE)
 _TRAILING_LIMIT = re.compile(r"\bLIMIT\s+(\d+)$", re.IGNORECASE)
@@ -73,6 +90,8 @@ _RETURN = re.compile(r"(?<![.$\w])RETURN\b", re.IGNORECASE)
 _LIMIT = re.compile(r"(?<![.$\w])LIMIT\b", re.IGNORECASE)
 _NESTING_TOKEN = re.compile(r"[()\[\]{}]|(?<![.$\w])(?:CASE|END)\b", re.IGNORECASE)
 _ALLOWED_CONTROL = frozenset("\t\n\r")
+_QUOTED = "#"
+_QUOTED_CALL = re.compile(r"#\s*\(")
 _OPENERS = frozenset("([{")
 _CLOSERS = frozenset(")]}")
 _CASE = "CASE"
@@ -83,7 +102,7 @@ class DisallowedStatementError(ValueError):
 
 
 def _blank_literals_and_comments(cypher: str) -> str:
-    """Replace string literals, backtick identifiers and comments with spaces.
+    """Blank out comments (spaces) and quoted text (``#`` placeholders).
 
     The result has the same length as the input, so offsets map back to the
     original text. An unterminated literal or block comment is rejected. Only
@@ -121,7 +140,9 @@ def _blank_literals_and_comments(cypher: str) -> str:
                 j += 1
             if j >= n:
                 raise DisallowedStatementError("Unterminated quoted text in query.")
-            out.append(" " * (j + 1 - i))
+            # Quoted spans become a non-space placeholder so a trailing
+            # identifier or string is not mistaken for trailing whitespace.
+            out.append(_QUOTED * (j + 1 - i))
             i = j + 1
             continue
         out.append(ch)
@@ -170,6 +191,32 @@ def _check_nesting(text: str) -> None:
             cases = max(cases - 1, 0)
 
 
+def _generated_size(name: str, numbers: list[int]) -> int:
+    if name == "range":
+        start, stop = numbers[0], numbers[1]
+        step = numbers[2] if len(numbers) > 2 else 1
+        if step == 0:
+            raise DisallowedStatementError("range() step must not be zero.")
+        return max(0, (stop - start) // step + 1)
+    return numbers[0]
+
+
+def _check_generators(text: str) -> None:
+    """Allow size-generating functions only with small integer-literal sizes."""
+    for match in _GENERATOR_CALL.finditer(text):
+        name = match.group(1).lower()
+        args = _BOUNDED_CALLS[name].match(text, match.end())
+        if args is None:
+            raise DisallowedStatementError(
+                f"{name}() is only allowed with integer-literal size arguments."
+            )
+        numbers = [int(g) for g in args.groups() if g is not None]
+        if _generated_size(name, numbers) > MAX_GENERATED_ELEMENTS:
+            raise DisallowedStatementError(
+                f"{name}() may generate at most {MAX_GENERATED_ELEMENTS:,} elements."
+            )
+
+
 def _statement_text(cypher: str) -> tuple[str, int]:
     """Validate and return (blanked statement text, end offset in the original).
 
@@ -194,6 +241,9 @@ def _statement_text(cypher: str) -> tuple[str, int]:
         raise DisallowedStatementError("Only a single statement is allowed.")
 
     _check_nesting(text)
+    if _QUOTED_CALL.search(text):
+        raise DisallowedStatementError("Quoted function names are not supported.")
+    _check_generators(text)
 
     words = _keywords(text)
     if not words or words[0] not in READ_START_KEYWORDS:

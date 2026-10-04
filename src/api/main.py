@@ -85,6 +85,16 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Local mode: only answer requests addressed to the loopback host names
+# (MODERNIZER_ALLOWED_HOSTS overrides; see src/api/host_guard.py). Added last
+# so it runs first.
+if not STATE_MACHINE_ARN:
+    from src.api.host_guard import HostAllowlistMiddleware, allowed_hosts_from_env
+
+    _allowed_hosts = allowed_hosts_from_env()
+    if _allowed_hosts is not None:
+        app.add_middleware(HostAllowlistMiddleware, allowed_hosts=_allowed_hosts)
+
 
 # ============================================================
 # Health check (no auth, used by ALB)
