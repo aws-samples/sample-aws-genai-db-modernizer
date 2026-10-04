@@ -176,8 +176,8 @@ def test_request_is_a_compact_view_with_the_delta_schema(monkeypatch, capsys, tm
     view = request["design_view"]
     assert view["migration_strategy"] == "carry_over"
     users = next(t for t in view["tables"] if t["table_name"] == "users")
-    assert "id TEXT (residual; source bigint)" in users["columns"]
-    assert any("idx_users_email" in s for s in users["indexes"])
+    assert "id TEXT NOT NULL (residual; source bigint)" in users["columns"]
+    assert users["indexes"] == ["idx_users_email UNIQUE (email)"]
     assert users["read_qps"] > 0
     residual_types = {r["source_data_type"]: r["count"] for r in view["residual_types"]}
     assert residual_types == {"bigint": 1, "character varying": 1}
@@ -323,3 +323,204 @@ def test_finalize_rejects_malformed_delta(bad, monkeypatch, capsys, tmp_path):
 
     assert status["status"] == "validation_failed"
     assert status["errors"][0].startswith("Invalid design delta")
+
+
+# ---------------------------------------------------------------------------
+# Request layout (paging) and view content
+# ---------------------------------------------------------------------------
+
+
+def _request_text(store: LocalArtifactStore) -> str:
+    key = f"{DB}/{JOB}/llm_requests/schema_design_aurora_postgresql.json"
+    return store.read_bytes(key).decode("utf-8")
+
+
+def test_request_puts_schema_and_evidence_before_one_table_per_line(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    text = _request_text(store)
+    json.loads(text)  # still one valid JSON document
+    head = [
+        text.index(f'"{key}":') for key in ("draft_fingerprint", "output_schema", "design_view")
+    ]
+    assert head == sorted(head)
+    view_text = text[head[-1] :]
+    order = [view_text.index(f'"{key}": [') for key in ("residual_types", "hot_queries", "tables")]
+    assert order == sorted(order)
+    table_lines = [ln for ln in text.splitlines() if ln.lstrip().startswith('{"table_name"')]
+    assert len(table_lines) == 2
+    assert all(ln.rstrip(",").endswith("}") for ln in table_lines)
+    assert _request(store)["draft_fingerprint"].startswith("sha256:")
+
+
+def test_view_carries_column_flags_foreign_keys_and_source_types(monkeypatch, capsys, tmp_path):
+    collector = _collector()
+    orders = collector["database_schema"]["tables"][1]
+    orders["columns"].append(
+        {
+            "column_name": "user_id",
+            "data_type": "bigint unsigned",
+            "normalized_data_type": "integer",
+            "nullable": True,
+            "default_value": "0",
+        }
+    )
+    orders["columns"][0]["is_auto_increment"] = True
+    orders["foreign_keys"] = [
+        {
+            "constraint_name": "fk_orders_user",
+            "columns": ["user_id"],
+            "referenced_table": "users",
+            "referenced_columns": ["id"],
+        }
+    ]
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    view = _request(store)["design_view"]
+    orders_view = next(t for t in view["tables"] if t["table_name"] == "orders")
+    assert orders_view["columns"] == [
+        "id BIGINT NOT NULL AI (source integer)",  # integer widened to BIGINT
+        "user_id BIGINT DEFAULT 0 (source bigint unsigned)",
+    ]
+    assert orders_view["foreign_keys"] == ["user_id -> users(id)"]
+
+
+def test_hot_queries_rank_by_load_and_by_call_rate(monkeypatch, capsys, tmp_path):
+    collector = _collector(n_queries=100)
+    patterns = collector["queries"]["query_patterns"]
+    # q0 is the slowest-called query but carries most of the database load.
+    patterns[0].update(
+        {
+            "db_load_contribution_percent": 60.0,
+            "total_time_ms": 9e6,
+            "rows_examined_avg": 50000.0,
+            "execution_time_ms_p95": 900.0,
+            "queries_with_bad_index": 7,
+        }
+    )
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    hot = _request(store)["design_view"]["hot_queries"]
+    assert len(hot) == 40
+    assert hot[0]["query_id"] == "q0"  # ordered by load
+    assert hot[0]["db_load_contribution_percent"] == 60.0
+    assert hot[0]["rows_examined_avg"] == 50000.0
+    assert hot[0]["execution_time_ms_p95"] == 900.0
+    assert hot[0]["queries_with_bad_index"] == 7
+    assert "q99" in {q["query_id"] for q in hot}  # the highest call rate is kept too
+
+
+def test_long_tables_wrap_but_stay_under_the_read_line_limit(monkeypatch, capsys, tmp_path):
+    from src.tools.schema.aurora_common.design_view import MAX_LINE
+
+    collector = _collector()
+    users = collector["database_schema"]["tables"][0]
+    users["columns"] += [
+        {
+            "column_name": f"attribute_number_{i:03d}",
+            "data_type": "character varying",
+            "normalized_data_type": "string",
+            "max_length": 255,
+            "nullable": True,
+        }
+        for i in range(200)
+    ]
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    text = _request_text(store)
+    assert max(len(ln) for ln in text.splitlines()) <= MAX_LINE
+    assert len(json.loads(text)["design_view"]["tables"][0]["columns"]) == 202
+
+
+# ---------------------------------------------------------------------------
+# Finalize: fingerprint, warnings, deprecation
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_refuses_a_delta_for_a_changed_draft(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+    collector = _collector()
+    collector["database_schema"]["tables"][1]["columns"][0]["data_type"] = "bigint"
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)  # inputs changed
+    store.write_json(_RESPONSE, {"delta_version": "1.0"})
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "validation_failed"
+    assert "draft_fingerprint mismatch" in status["errors"][0]
+
+
+def test_finalize_matching_fingerprint_completes_with_warnings(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+    store.write_json(
+        _RESPONSE,
+        {
+            "delta_version": "1.0",
+            "type_rules": [{"source_data_type": "money", "aurora_type": "NUMERIC(19,4)"}],
+        },
+    )
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "complete", status
+    assert any("'money' matched no residual" in w for w in status["warnings"])
+    assert any("2 residual column(s)" in w for w in status["warnings"])
+
+
+def test_finalize_full_contract_warns_it_is_deprecated(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    store.write_json(
+        _RESPONSE,
+        {
+            "job_id": JOB,
+            "source_database": DB,
+            "migration_strategy": "carry_over",
+            "table_definitions": [
+                {
+                    "table_name": "users",
+                    "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": False}],
+                }
+            ],
+            "generated_ddl": "",
+            "trade_offs": [{"description": "d", "impact": "i"}],
+            "validation_passed": True,
+        },
+    )
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "complete"
+    assert any(
+        w.startswith("Deprecated: the Aurora response is a full") for w in status["warnings"]
+    )
+
+
+def test_finalize_rejects_ddl_injection_in_types(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    store.write_json(
+        _RESPONSE,
+        {
+            "delta_version": "1.0",
+            "type_rules": [
+                {"source_data_type": "bigint", "aurora_type": "BIGINT); DROP TABLE users; --"}
+            ],
+        },
+    )
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "validation_failed"
+    assert not store.exists(f"{DB}/{JOB}/schema-aurora_postgresql/v1/schema_output.json")

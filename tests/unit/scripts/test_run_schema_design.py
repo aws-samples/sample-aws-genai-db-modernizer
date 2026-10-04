@@ -100,8 +100,12 @@ def _mock_store(artifacts: dict[str, dict]) -> MagicMock:
     def write_json(path: str, data: dict) -> None:
         written[path] = data
 
+    def write_bytes(path: str, data: bytes) -> None:
+        written[path] = json.loads(data)
+
     store.read_json.side_effect = read_json
     store.write_json.side_effect = write_json
+    store.write_bytes.side_effect = write_bytes
     store._written = written
     return store
 
@@ -126,7 +130,7 @@ def test_run_external_attaches_draft_view_for_aurora_postgresql(capsys):
     assert "draft" not in llm_request  # #273: compact view, not the draft
     view = llm_request["design_view"]
     assert view["tables"][0]["table_name"] == "users"
-    assert view["tables"][0]["columns"][0] == "id BIGINT"
+    assert view["tables"][0]["columns"][0].startswith("id BIGINT NOT NULL AI")
     assert llm_request["migration_strategy"] == "translate"
     assert llm_request["output_schema"]["title"] == "AuroraDesignDeltaContract"
 
@@ -224,7 +228,7 @@ def test_run_external_attaches_draft_view_for_aurora_mysql(capsys):
     assert "draft" not in llm_request  # #273: compact view, not the draft
     view = llm_request["design_view"]
     assert view["tables"][0]["table_name"] == "users"
-    assert view["tables"][0]["columns"][0] == "id BIGINT"
+    assert view["tables"][0]["columns"][0].startswith("id BIGINT NOT NULL AI")
     assert llm_request["migration_strategy"] == "carry_over"
     assert llm_request["output_schema"]["title"] == "AuroraDesignDeltaContract"
 

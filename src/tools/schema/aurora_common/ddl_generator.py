@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from src.contracts.aurora_design_delta import validate_aurora_type
 from src.contracts.schema_design_input import AgentColumn, AgentTable
 from src.tools.schema.aurora_common.constraint_translator import (
     default_clause,
@@ -60,10 +61,17 @@ MYSQL = Dialect(
 
 @dataclass(frozen=True)
 class TypeOverride:
-    """A column type decided outside the type map (the model's delta, #273)."""
+    """A column type decided outside the type map (the model's delta, #273).
+
+    Validated again here (the delta contract already did) so no caller can put
+    an unchecked string into a column definition.
+    """
 
     aurora_type: str
     reason: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "aurora_type", validate_aurora_type(self.aurora_type))
 
 
 TypeOverrides = dict[tuple[str, str], TypeOverride]
@@ -180,6 +188,37 @@ def _index_sql(table: AgentTable, dialect: Dialect) -> list[str]:
             f"ON {dialect.q(table.table_name)} ({cols});"
         )
     return statements
+
+
+def render_index(
+    dialect: Dialect,
+    table_name: str,
+    index_name: str,
+    columns: list[str],
+    *,
+    unique: bool = False,
+    method: str | None = None,
+    include: list[str] | None = None,
+    where_sql: str | None = None,
+) -> str:
+    """One CREATE INDEX statement with every identifier quoted by the dialect.
+
+    ``method``, ``include`` and ``where_sql`` are PostgreSQL-only; the caller
+    validates them (``where_sql`` comes from ``sql_safety.render_predicate``).
+    """
+    cols = ", ".join(dialect.q(c) for c in columns)
+    sql = (
+        f"CREATE {'UNIQUE ' if unique else ''}INDEX {dialect.q(index_name)} "
+        f"ON {dialect.q(table_name)}"
+    )
+    if method:
+        sql += f" USING {method}"
+    sql += f" ({cols})"
+    if include:
+        sql += " INCLUDE (" + ", ".join(dialect.q(c) for c in include) + ")"
+    if where_sql:
+        sql += f" WHERE {where_sql}"
+    return sql + ";"
 
 
 def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:

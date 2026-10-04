@@ -215,13 +215,22 @@ def finalize_schema_design(
     output = store.read_json(llm_response_key)
 
     delta_summary: dict | None = None
-    if target_type in _NON_GROUPED_ENGINES and is_design_delta(output):
-        merged = _merge_aurora_delta(
-            store, database_name, job_id, target_type, output, assignment_version
-        )
-        if merged.output is None:
-            return {"status": "validation_failed", "errors": merged.errors}
-        output, delta_summary = merged.output, merged.summary
+    merge_warnings: list[str] = []
+    if target_type in _NON_GROUPED_ENGINES:
+        if is_design_delta(output):
+            merged = _merge_aurora_delta(
+                store, database_name, job_id, target_type, output, assignment_version
+            )
+            if merged.output is None:
+                result: dict = {"status": "validation_failed", "errors": merged.errors}
+                if merged.warnings:
+                    result["warnings"] = merged.warnings
+                return result
+            output, delta_summary = merged.output, merged.summary
+            merge_warnings = merged.warnings
+        else:
+            merge_warnings = [FULL_CONTRACT_DEPRECATION]
+            logger.warning("%s (%s, job %s)", FULL_CONTRACT_DEPRECATION, target_type, job_id)
 
     validation = validate_schema_design_output(output, target_type)
     if not validation["valid"]:
@@ -237,7 +246,21 @@ def finalize_schema_design(
     status = scope_status(report, output_key)
     if delta_summary is not None:
         status["delta_summary"] = delta_summary
+    if merge_warnings:
+        status["warnings"] = [*status.get("warnings", []), *merge_warnings]
     return status
+
+
+FULL_CONTRACT_DEPRECATION = (
+    "Deprecated: the Aurora response is a full output contract. Write an "
+    'AuroraDesignDeltaContract (delta_version "1.0") instead; full-contract '
+    "responses will stop being accepted in a future release."
+)
+
+DRAFT_CHANGED = (
+    "The draft changed since the request was prepared (draft_fingerprint mismatch): "
+    "re-run step 1 (--llm-mode external), re-read the request and rewrite the delta."
+)
 
 
 def _merge_aurora_delta(
@@ -251,9 +274,15 @@ def _merge_aurora_delta(
     """Rebuild the deterministic Aurora draft and merge an LLM delta into it (#273).
 
     The draft is rebuilt from the same assignment-filtered input the external
-    request was prepared from, so it is the draft the model's view described.
+    request was prepared from. The request's ``draft_fingerprint`` must match
+    the rebuilt base, so a delta is never merged into a different draft than
+    the one its view described.
     """
-    from src.tools.schema.aurora_common.delta_merge import base_from_outputs, merge_design_delta
+    from src.tools.schema.aurora_common.delta_merge import (
+        MergeResult,
+        base_from_outputs,
+        merge_design_delta,
+    )
 
     inputs = prepare_schema_design_input(
         job_id=job_id,
@@ -265,6 +294,14 @@ def _merge_aurora_delta(
     base, _, _ = base_from_outputs(
         target_type, inputs["collector_output"], inputs["analysis_output"]
     )
+    request_key = f"{database_name}/{job_id}/llm_requests/schema_design_{target_type}.json"
+    if store.exists(request_key):
+        try:
+            expected = store.read_json(request_key).get("draft_fingerprint")
+        except (OSError, ValueError):
+            expected = None
+        if expected is not None and expected != base.fingerprint():
+            return MergeResult(None, [DRAFT_CHANGED], {})
     return merge_design_delta(base, delta)
 
 

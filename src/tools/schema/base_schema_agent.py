@@ -423,7 +423,8 @@ class SchemaDesignRunner:
     def _get_table_names(output: BaseModel) -> list[str]:
         """Extract table/collection names from any schema output model."""
         d = output.model_dump() if hasattr(output, "model_dump") else {}
-        for key in ("table_definitions", "collections", "cache_structures", "indexes"):
+        # "tables": the Aurora design delta lists only the tables it changes (#273).
+        for key in ("table_definitions", "collections", "cache_structures", "indexes", "tables"):
             if key in d and isinstance(d[key], list):
                 return [
                     item.get("table_name") or item.get("collection_name") or item.get("name", "?")

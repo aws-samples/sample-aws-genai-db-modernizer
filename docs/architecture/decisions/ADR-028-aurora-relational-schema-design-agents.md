@@ -119,3 +119,14 @@ DDL, which it could not do. Both paths now work on a delta:
   tables, columns or indexes are merge errors. `--finalize` still accepts a
   full contract; the Bedrock agent gets one correction round on merge errors
   and otherwise records them in `validation_failures`.
+- Delta content is LLM output built from untrusted collector text, so none of
+  it is pasted into DDL: `aurora_type` must match a strict type grammar
+  (`validate_aurora_type`), indexes are structured (`index_name`, `columns`,
+  `unique`, and for PostgreSQL `method`/`include`/a `where` predicate parsed by
+  `sql_safety.render_predicate`) and rendered with dialect-quoted identifiers.
+  A legacy `CREATE INDEX` string is accepted only if it fully matches a strict
+  one-line grammar, and is re-rendered the same way.
+- The external request carries a `draft_fingerprint`; `--finalize` refuses to
+  merge into a draft whose inputs changed since. Unmatched type rules and
+  unresolved residuals are warnings; a full-contract response is accepted
+  with a deprecation warning.

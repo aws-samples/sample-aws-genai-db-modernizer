@@ -31,27 +31,33 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 2. **Read input and domain expertise**
    a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_aurora_mysql.json`
-      - Contains `migration_strategy`, `output_schema` (the JSON Schema of the
-        delta you write, `AuroraDesignDeltaContract`) and `design_view`, a
-        compact view of the deterministic draft built by the script from the
-        shared draft builder (`src/tools/schema/aurora_common/draft_builder.py`),
-        the same draft the automated Bedrock path uses (ADR-028):
-        - `tables`: per table, `row_count`, `read_qps` / `write_qps`,
-          `primary_key`, `columns` (one `name TYPE` line each, marked
-          `(residual; source <data_type>)` when the script could not resolve
-          the type confidently) and the draft's `indexes` statements
+      - In reading order it contains `migration_strategy`, `draft_fingerprint`
+        (checked by `--finalize`; do not copy it), `output_schema` (the JSON
+        Schema of the delta you write, `AuroraDesignDeltaContract`) and
+        `design_view`, a compact view of the deterministic draft built by the
+        script from the shared draft builder
+        (`src/tools/schema/aurora_common/draft_builder.py`), the same draft the
+        automated Bedrock path uses (ADR-028):
         - `residual_types`: the residual columns grouped by source data type,
           with a count and examples
-        - `hot_queries`: the busiest in-scope queries, with the tables and the
-          filter/sort columns they use
+        - `hot_queries`: the busiest in-scope queries by database load and by
+          call rate, with the tables, the filter/sort columns, rows examined,
+          timings and index-miss counts
         - `analysis` and `source_features` (triggers, procedures, views)
+        - `tables` (last, one table per line): `row_count`, `read_qps` /
+          `write_qps`, `primary_key`, `columns` (one line each:
+          `name TYPE [NOT NULL] [AI] [DEFAULT x]`, then `(residual; source t)`
+          when the script could not resolve the type, or `(source t)` when the
+          source type differs from the draft type), `indexes`
+          (`name [UNIQUE] (columns)`) and `foreign_keys` (`col -> table(col)`)
       - The draft itself and the collector output are not in the file, and you
         do not need them.
-      - On a large schema the file still runs to thousands of lines. Read it in
-        chunks with the Read tool's `offset` and `limit`, and use Grep to jump
-        to a section (`"residual_types"`, `"hot_queries"`) or a table
-        (`"table_name": "orders"`). Never read it with `cat`, `sed`, `jq` or a
-        script.
+      - On a large schema the file still runs to thousands of lines. Read it
+        with the Read tool in pages of `offset` and `limit: 1000` (halve
+        `limit` if Read refuses a page as too large). To jump to a section or
+        a table, search it with
+        `uv run python scripts/search_artifacts.py '"table_name": "orders"' <request file>`.
+        Never read it with `cat`, `sed`, `jq`, `grep` or a script.
    b. Read: `src/skills/aurora_mysql-data-modeling.md` (domain expertise
       guide — the same skill the automated designer follows)
 
@@ -79,12 +85,16 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
      than its rule gives (e.g. a sized `VARCHAR(n)`), or a draft type you
      change on purpose. Columns set here or by a rule are recorded with
      `needs_judgment=true` and `script_derived=false`
-   - `tables[].add_indexes` (full `CREATE [UNIQUE] INDEX "name" ON "table" (...)`
-     statements on that table), `tables[].modify_indexes`
-     (`{"index_name", "statement"}`) and `tables[].remove_indexes` (index
-     names): only where `hot_queries` justify it, e.g. a frequent filter/sort
-     column without an index. `modify`/`remove` must name an index listed in
-     that table's `indexes`
+   - `tables[].add_indexes` and `tables[].modify_indexes`: structured index
+     entries `{"index_name": "idx_orders_status", "columns": ["status"], "unique": false}`
+     on that table's columns; the script renders and quotes the DDL. Use them
+     only where `hot_queries` justify it, e.g. a frequent filter/sort column
+     without an index. `modify_indexes` replaces the draft index with the same
+     `index_name`; `tables[].remove_indexes` lists names to drop. Both must
+     name an index listed in that table's `indexes`.
+   - Types (`aurora_type`) are plain SQL types only: `BIGINT`, `VARCHAR(255)`,
+     `NUMERIC(10,2)`, `TIMESTAMP WITH TIME ZONE`, `INT UNSIGNED`, `ENUM('a','b')`. No
+     constraints, defaults or anything else; `--finalize` rejects them
    - `optimizations`: partitioning for large hot tables, read-replica routing
      for read-heavy patterns, I/O-Optimized for write-heavy throughput,
      index recommendations you do not express as DDL
@@ -104,7 +114,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
      "tables": [
        {
          "table_name": "orders",
-         "add_indexes": ["CREATE INDEX `idx_orders_status` ON `orders` (`status`)"],
+         "add_indexes": [{"index_name": "idx_orders_status", "columns": ["status"]}],
          "column_types": [{"column": "status", "aurora_type": "VARCHAR(16)"}]
        }
      ],
@@ -121,9 +131,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine aurora_mysql --finalize
    ```
 
-   If validation fails, the errors tell you exactly which entries are wrong (an unknown table, column or index, an index statement on another table, a malformed delta). Fix the response file and re-run `--finalize`. Make **at most 3 `--finalize` attempts in total**, shared between contract-validation failures and scope failures.
+   If validation fails, the errors tell you exactly which entries are wrong (an unknown table, column or index, a type that is not a plain SQL type, a malformed delta). Fix the response file and re-run `--finalize`. Make **at most 3 `--finalize` attempts in total**, shared between contract-validation failures and scope failures.
 
-   On success `--finalize` also prints a `delta_summary`. `residuals_unresolved` above 0 means some residual columns kept the draft's fallback type; add a `type_rules` entry for their source type if you can decide it, then re-run `--finalize` (this counts as an attempt).
+   On success `--finalize` also prints a `delta_summary` and may print `warnings`; they do not fail the phase. A warning that residual columns keep the draft's fallback type (`residuals_unresolved` above 0) means a source type has no `type_rules` entry; add one if you can decide it and re-run `--finalize` (this counts as an attempt). A `draft_fingerprint` mismatch error means the inputs changed after step 1: re-run step 1 and rewrite the delta from the new request.
 
    A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope) and where the design references it. Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until a re-run passes.
 

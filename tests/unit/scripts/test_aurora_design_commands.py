@@ -3,7 +3,8 @@
 A headless run on a large schema failed because the command asked the model to
 transcribe the whole deterministic draft (every column and the full DDL) from a
 4 MB request. The commands must ask for a delta only, describe the compact
-design view, and steer large-file reading to Read offset/limit and Grep.
+design view, and steer large-file reading to Read offset/limit and the
+search script.
 """
 
 from __future__ import annotations
@@ -56,11 +57,22 @@ def test_command_describes_the_compact_view(engine):
 
 
 @pytest.mark.parametrize("engine", sorted(COMMANDS))
-def test_command_reads_large_requests_with_read_offset_limit_and_grep(engine):
-    text = COMMANDS[engine].read_text()
-    assert "`offset` and `limit`" in text
-    assert "use Grep" in text
-    assert "Never read it with `cat`, `sed`, `jq` or a\n        script." in text
+def test_command_pages_large_requests_with_read_and_the_search_script(engine):
+    """Headless sessions may have no Grep tool (#275): page with Read, search with
+    scripts/search_artifacts.py."""
+    text = " ".join(COMMANDS[engine].read_text().split())
+    assert "pages of `offset` and `limit: 1000`" in text
+    assert "halve `limit` if Read refuses" in text
+    assert "uv run python scripts/search_artifacts.py" in text
+    assert "Never read it with `cat`, `sed`, `jq`, `grep` or a script." in text
+
+
+@pytest.mark.parametrize("engine", sorted(COMMANDS))
+def test_command_asks_for_structured_indexes_and_plain_types(engine):
+    text = " ".join(COMMANDS[engine].read_text().split())
+    assert '{"index_name": "idx_orders_status", "columns": ["status"], "unique": false}' in text
+    assert "plain SQL types only" in text
+    assert 'CREATE INDEX \\"' not in text  # no raw DDL string in the example
 
 
 @pytest.mark.parametrize("engine", sorted(COMMANDS))

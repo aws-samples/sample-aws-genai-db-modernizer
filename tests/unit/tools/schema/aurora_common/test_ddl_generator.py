@@ -197,3 +197,14 @@ def test_multi_column_index_and_fk():
     ddl = generate_pg_ddl([parent, child]).full_ddl
     assert 'CREATE INDEX "ix_members_pair" ON "members" ("org_id", "user_id")' in ddl
     assert 'FOREIGN KEY ("org_id") REFERENCES "orgs" ("id")' in ddl
+
+
+def test_type_override_is_validated_at_the_generator_too():
+    """Defense in depth (#273): no caller can put an unchecked type into a column."""
+    import pytest
+
+    from src.tools.schema.aurora_common.ddl_generator import TypeOverride
+
+    with pytest.raises(ValueError):
+        TypeOverride("BIGINT); DROP TABLE users; --")
+    assert TypeOverride("  big   int ").aurora_type == "big int"

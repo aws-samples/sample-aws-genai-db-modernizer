@@ -18,7 +18,7 @@ from src.agents.prompt_framing import frame_untrusted
 from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
 from src.contracts.schema_design_input import AgentAnalysisInput, AgentCollectorInput
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase, merge_design_delta
-from src.tools.schema.aurora_common.design_view import build_design_view
+from src.tools.schema.aurora_common.design_view import build_design_view, render_request
 
 logger = logging.getLogger(__name__)
 
@@ -40,29 +40,53 @@ def designer_prompt(engine: str, view: dict) -> str:
     label = _ENGINE_LABELS[engine]
     return (
         f"Here is the compact design view of the deterministic {label} draft:\n\n"
-        + frame_untrusted(json.dumps(view, indent=2, default=str), label="design view (JSON)")
+        + frame_untrusted(
+            render_request({"design_view": view}), label="design view (JSON, one table per line)"
+        )
         + "\n\n"
         + f"The migration_strategy is '{view['migration_strategy']}'. The draft is "
         "authoritative and is merged with your answer deterministically. Return ONLY an "
         'AuroraDesignDeltaContract (delta_version "1.0"): type_rules for the residual '
         "source types listed in residual_types, per-table column_types only where one "
-        "column needs a different type, index add/modify/remove only where a hot query "
-        "needs it, plus optimizations, app_layer_notes and at least one trade-off. Never "
-        "repeat unchanged tables, columns or DDL."
+        "column needs a different type (plain SQL types only, e.g. BIGINT, VARCHAR(255)), "
+        "index changes only where a hot query needs it (structured entries "
+        "{index_name, columns, unique}; remove_indexes by name), plus optimizations, "
+        "app_layer_notes and at least one trade-off. Never repeat unchanged tables, "
+        "columns or DDL."
     )
 
 
+def _touched_tables(delta: BaseModel, view: dict) -> list[dict]:
+    """View entries for the tables the delta changes (what the reviewer must judge)."""
+    names = {
+        "".join(c for c in t.table_name if c not in '`"').lower().rsplit(".", 1)[-1]
+        for t in getattr(delta, "tables", [])
+    }
+    return [t for t in view.get("tables", []) if t.get("table_name", "").lower() in names]
+
+
 def pe_review_prompt(engine: str, delta: BaseModel, input_summary: dict) -> str:
+    """The PE reviewer sees the delta plus the evidence it is judged against:
+    the residual types, the hot queries and the view entries of the touched tables."""
     label = _ENGINE_LABELS[engine]
     view = input_summary.get("design_view") or {}
+    evidence = {
+        "migration_strategy": view.get("migration_strategy"),
+        "residual_types": view.get("residual_types", []),
+        "hot_queries": view.get("hot_queries", []),
+        "touched_tables": _touched_tables(delta, view),
+    }
     return (
         f"Review the following {label} schema design. It is a delta against the "
         "deterministic draft: tables, columns and DDL not listed carry over unchanged.\n\n"
         + "## Source Database Summary\n"
-        + f"Tables: {input_summary.get('table_count', 0)}, "
-        + f"Migration strategy: {view.get('migration_strategy', '?')}, "
-        + f"Residual types: {json.dumps(view.get('residual_types', []), default=str)}\n\n"
-        + "## Design Delta\n"
+        + f"Tables: {input_summary.get('table_count', 0)}\n\n"
+        + "## Evidence (residual types, hot queries, tables the delta touches)\n"
+        + frame_untrusted(
+            json.dumps(evidence, indent=2, default=str),
+            label="design view excerpt (JSON; echoes source names and query text)",
+        )
+        + "\n\n## Design Delta\n"
         + frame_untrusted(
             json.dumps(delta.model_dump(mode="json"), indent=2, default=str),
             label="schema design delta to review (JSON; echoes source names)",
@@ -98,5 +122,9 @@ def merge_or_correct[T: BaseModel](
         except Exception as exc:  # keep the first delta; lenient merge records the errors
             logger.warning("[schema-design/%s] delta correction failed: %s", engine, exc)
         merged = merge_design_delta(base, delta, strict=False)
-    trace["delta_merge"] = {"summary": merged.summary, "errors": merged.errors}
+    trace["delta_merge"] = {
+        "summary": merged.summary,
+        "errors": merged.errors,
+        "warnings": merged.warnings,
+    }
     return output_model.model_validate(merged.output)

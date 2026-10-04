@@ -10,49 +10,54 @@ Pure and deterministic: the same input and delta always give the same output.
 Every reference the delta makes (table, column, index) is checked against the
 draft; an unknown one is a merge error, never silently dropped (unless the
 caller asks for a lenient merge, which records the errors on the output).
+
+Nothing from the delta reaches DDL unparsed: types pass the contract's strict
+type grammar, and indexes are rendered from structured parts with quoted
+identifiers (``ddl_generator.render_index``). See ``sql_safety``.
 """
 
 from __future__ import annotations
 
-import re
+import hashlib
+import json
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
-from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
+from src.contracts.aurora_design_delta import (
+    AuroraDesignDeltaContract,
+    IndexSpec,
+    TypeRule,
+    is_enum_type,
+)
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
     AgentCollectorInput,
     AgentTable,
 )
 from src.tools.schema.aurora_common.ddl_generator import (
+    MYSQL,
+    POSTGRES,
     DdlResult,
+    Dialect,
     TableDDL,
     TypeOverride,
     TypeOverrides,
     assemble_full_ddl,
     generate_mysql_ddl,
     generate_pg_ddl,
+    render_index,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
-
-_GENERATORS = {"aurora_postgresql": generate_pg_ddl, "aurora_mysql": generate_mysql_ddl}
-
-_IDENT = r'(?:"(?:[^"]|"")+"|`(?:[^`]|``)+`|[\w$]+)'
-_QUALIFIED = rf"{_IDENT}(?:\s*\.\s*{_IDENT})*"
-_CREATE_INDEX = re.compile(
-    r"^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
-    rf"(?P<name>{_IDENT})\s+ON\s+(?:ONLY\s+)?(?P<table>{_QUALIFIED})",
-    re.IGNORECASE,
+from src.tools.schema.aurora_common.sql_safety import (
+    SqlFragmentError,
+    parse_index_statement,
+    render_predicate,
+    resolve_column,
 )
 
-
-def _unquote(identifier: str) -> str:
-    identifier = identifier.strip()
-    if identifier[:1] in ('"', "`") and identifier[-1:] == identifier[:1]:
-        q = identifier[0]
-        return identifier[1:-1].replace(q + q, q)
-    return identifier
+_GENERATORS = {"aurora_postgresql": generate_pg_ddl, "aurora_mysql": generate_mysql_ddl}
+_DIALECTS = {"aurora_postgresql": POSTGRES, "aurora_mysql": MYSQL}
 
 
 def _table_key(name: str) -> str:
@@ -61,15 +66,9 @@ def _table_key(name: str) -> str:
     return cleaned.rsplit(".", 1)[-1].strip()
 
 
-def index_name_of(statement: str) -> str | None:
-    """Index name of a ``CREATE [UNIQUE] INDEX`` statement, or ``None`` if it is not one."""
-    match = _CREATE_INDEX.match(statement)
-    return _unquote(match.group("name")) if match else None
-
-
-def _index_table_of(statement: str) -> str | None:
-    match = _CREATE_INDEX.match(statement)
-    return _table_key(match.group("table")) if match else None
+def _schema_of(name: str) -> str | None:
+    cleaned = "".join(c for c in name if c not in '`"[]').strip().lower()
+    return cleaned.rsplit(".", 1)[0].strip() if "." in cleaned else None
 
 
 @dataclass
@@ -86,6 +85,10 @@ class AuroraDesignBase:
     @property
     def migration_strategy(self) -> str:
         return migration_strategy(self.source_engine, self.engine)  # type: ignore[arg-type]
+
+    @property
+    def dialect(self) -> Dialect:
+        return _DIALECTS[self.engine]
 
     @classmethod
     def from_inputs(
@@ -107,6 +110,29 @@ class AuroraDesignBase:
     def generate(self, type_overrides: TypeOverrides | None = None) -> DdlResult:
         return _GENERATORS[self.engine](self.tables, type_overrides)
 
+    def fingerprint(self) -> str:
+        """Hash of everything the draft is built from.
+
+        The external request records it and ``--finalize`` compares it with the
+        rebuilt base, so a delta is never merged into a different draft than
+        the one its view described.
+        """
+        payload = {
+            "engine": self.engine,
+            "source_engine": self.source_engine,
+            "tables": [t.model_dump(mode="json") for t in self.tables],
+            "source_data_types": sorted(
+                f"{t}.{c}={v}" for (t, c), v in self.source_data_types.items()
+            ),
+        }
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        return f"sha256:{digest}"
+
+
+def draft_index_names(table: AgentTable) -> list[str]:
+    """Names of the draft's secondary indexes, in ``TableDDL.index_sql`` order."""
+    return [i.index_name for i in table.indexes or [] if not i.is_primary]
+
 
 def source_data_types(raw_collector: dict) -> dict[tuple[str, str], str]:
     """``(table_name, column_name) -> data_type`` from a raw collector output dict."""
@@ -125,14 +151,20 @@ class MergeResult:
     output: dict | None
     errors: list[str]
     summary: dict
+    warnings: list[str] = field(default_factory=list)
 
 
-def _resolve_column(table: AgentTable, name: str) -> str | None:
-    names = [c.column_name for c in table.columns]
-    if name in names:
-        return name
-    lowered = [n for n in names if n.lower() == name.lower()]
-    return lowered[0] if len(lowered) == 1 else None
+def _check_dialect_type(engine: str, aurora_type: str, where: str, errors: list[str]) -> bool:
+    if is_enum_type(aurora_type) and engine != "aurora_mysql":
+        errors.append(
+            f"{where}: ENUM/SET literal types are Aurora MySQL only; on Aurora PostgreSQL "
+            "use TEXT (or a lookup table) and record the allowed values in a trade-off"
+        )
+        return False
+    if aurora_type.endswith("[]") and engine != "aurora_postgresql":
+        errors.append(f"{where}: array types ({aurora_type}) are Aurora PostgreSQL only")
+        return False
+    return True
 
 
 def _type_overrides(
@@ -141,61 +173,151 @@ def _type_overrides(
     by_key: dict[str, AgentTable],
     residuals: list[dict],
     errors: list[str],
+    warnings: list[str],
 ) -> tuple[TypeOverrides, int]:
     overrides: TypeOverrides = {}
     for i, change in enumerate(delta.tables):
         table = by_key.get(_table_key(change.table_name))
         if table is None:
             continue  # reported by the caller
+        columns = [c.column_name for c in table.columns]
         for j, col_change in enumerate(change.column_types):
-            column = _resolve_column(table, col_change.column)
+            where = f"tables[{i}].column_types[{j}]"
+            column = resolve_column(columns, col_change.column)
             if column is None:
                 errors.append(
-                    f"tables[{i}].column_types[{j}]: table '{table.table_name}' has no "
-                    f"column '{col_change.column}'"
+                    f"{where}: table '{table.table_name}' has no column '{col_change.column}'"
                 )
+                continue
+            if not _check_dialect_type(base.engine, col_change.aurora_type, where, errors):
                 continue
             overrides[(table.table_name, column)] = TypeOverride(
                 col_change.aurora_type, col_change.reason or "Set by the schema designer."
             )
 
-    rules = {r.source_data_type.strip().lower(): r for r in delta.type_rules}
+    rules: dict[str, TypeRule] = {}
+    for k, type_rule in enumerate(delta.type_rules):
+        folded = type_rule.source_data_type.strip().lower()
+        if folded in rules:
+            errors.append(
+                f"type_rules[{k}]: source_data_type '{type_rule.source_data_type}' is listed "
+                "more than once (rules match case-insensitively)"
+            )
+            continue
+        if _check_dialect_type(base.engine, type_rule.aurora_type, f"type_rules[{k}]", errors):
+            rules[folded] = type_rule
     by_rule = 0
-    if rules:
-        for residual in residuals:
-            key = (residual["table"], residual["column"])
-            if key in overrides:
-                continue
-            raw = base.source_data_types.get(key, "")
-            rule = rules.get(raw.strip().lower())
-            if rule is not None:
-                overrides[key] = TypeOverride(
-                    rule.aurora_type,
-                    rule.reason or f"Residual {raw} columns resolved by the schema designer.",
-                )
-                by_rule += 1
+    used: set[str] = set()
+    for residual in residuals:
+        key = (residual["table"], residual["column"])
+        if key in overrides:
+            continue
+        raw = base.source_data_types.get(key, "").strip().lower()
+        rule = rules.get(raw)
+        if rule is not None:
+            overrides[key] = TypeOverride(
+                rule.aurora_type,
+                rule.reason or f"Residual {raw} columns resolved by the schema designer.",
+            )
+            used.add(raw)
+            by_rule += 1
+    for raw, rule in rules.items():
+        if raw not in used:
+            warnings.append(
+                f"type_rules: source_data_type '{rule.source_data_type}' matched no residual "
+                "column (see residual_types)"
+            )
     return overrides, by_rule
 
 
-def _check_statement(statement: str, table_name: str, where: str, errors: list[str]) -> bool:
-    name = index_name_of(statement)
-    if name is None:
-        errors.append(f"{where}: not a CREATE [UNIQUE] INDEX ... ON ... statement: {statement!r}")
-        return False
-    if ";" in statement.strip().rstrip(";"):
-        errors.append(f"{where}: one CREATE INDEX statement per entry: {statement!r}")
-        return False
-    if _index_table_of(statement) != _table_key(table_name):
-        errors.append(f"{where}: index '{name}' is not ON table '{table_name}'")
-        return False
-    return True
+@dataclass
+class _Index:
+    name: str
+    columns: list[str]
+    unique: bool
+    method: str | None
+    include: list[str]
+    where_sql: str | None
 
 
-def _normalize_statement(statement: str) -> str:
-    return statement.strip().rstrip(";").rstrip() + ";"
+def _structured_index(base: AuroraDesignBase, table: AgentTable, entry: IndexSpec | str) -> _Index:
+    """Validate one delta index entry against the table and dialect. Raises SqlFragmentError."""
+    engine = base.engine
+    columns = [c.column_name for c in table.columns]
+    if isinstance(entry, str):
+        parsed = parse_index_statement(entry)
+        if _table_key(parsed.table) != _table_key(table.table_name):
+            raise SqlFragmentError(
+                f"index '{parsed.index_name}' is not ON table '{table.table_name}'"
+            )
+        if parsed.schema is not None:
+            allowed = {s.lower() for s in (table.schema_name, base.source_database) if s}
+            if parsed.schema.lower() not in allowed:
+                raise SqlFragmentError(
+                    f"schema prefix '{parsed.schema}' does not match table '{table.table_name}'"
+                )
+        if engine == "aurora_mysql":
+            if parsed.pg_only:
+                raise SqlFragmentError(
+                    f"{', '.join(parsed.pg_only)} is not Aurora MySQL index syntax"
+                )
+            if '"' in parsed.quotes:
+                raise SqlFragmentError('Aurora MySQL identifiers are quoted with backticks, not "')
+        elif "`" in parsed.quotes:
+            raise SqlFragmentError('Aurora PostgreSQL identifiers are quoted with ", not backticks')
+        if parsed.method not in (None, "btree", "hash", "gin", "gist", "brin"):
+            raise SqlFragmentError(f"unknown index method '{parsed.method}'")
+        spec = IndexSpec(
+            index_name=parsed.index_name,
+            columns=parsed.columns,
+            unique=parsed.unique,
+            method=parsed.method,  # type: ignore[arg-type]
+        )
+    else:
+        spec = entry
+    if engine == "aurora_mysql" and (spec.method or spec.include or spec.where):
+        raise SqlFragmentError("method, include and where are Aurora PostgreSQL only")
+    resolved = []
+    for name in [*spec.columns, *spec.include]:
+        column = resolve_column(columns, name)
+        if column is None:
+            raise SqlFragmentError(f"table '{table.table_name}' has no column '{name}'")
+        resolved.append(column)
+    where_sql = (
+        render_predicate(spec.where, columns, base.dialect.q) if spec.where is not None else None
+    )
+    return _Index(
+        name=spec.index_name,
+        columns=resolved[: len(spec.columns)],
+        unique=spec.unique,
+        method=spec.method,
+        include=resolved[len(spec.columns) :],
+        where_sql=where_sql,
+    )
+
+
+def _render(base: AuroraDesignBase, table: AgentTable, index: _Index) -> str:
+    return render_index(
+        base.dialect,
+        table.table_name,
+        index.name,
+        index.columns,
+        unique=index.unique,
+        method=index.method,
+        include=index.include,
+        where_sql=index.where_sql,
+    )
+
+
+def _lookup(current: dict[str, str], name: str) -> str | None:
+    if name in current:
+        return name
+    hits = [n for n in current if n.lower() == name.lower()]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _apply_index_changes(
+    base: AuroraDesignBase,
     delta: AuroraDesignDeltaContract,
     by_key: dict[str, AgentTable],
     table_ddls: dict[str, TableDDL],
@@ -207,54 +329,53 @@ def _apply_index_changes(
         if table is None:
             continue
         ddl = table_ddls[table.table_name]
-        current = {index_name_of(s): s for s in ddl.index_sql}
-        statements = list(ddl.index_sql)
+        # name -> statement, in draft order (names come from the source, not the model)
+        current: dict[str, str] = dict(zip(draft_index_names(table), ddl.index_sql, strict=True))
 
         for j, name in enumerate(change.remove_indexes):
-            stmt = current.pop(_unquote(name), None)
-            if stmt is None:
+            existing = _lookup(current, name.strip().strip('"`'))
+            if existing is None:
                 errors.append(
                     f"tables[{i}].remove_indexes[{j}]: table '{table.table_name}' has no "
                     f"index '{name}'"
                 )
                 continue
-            statements.remove(stmt)
+            del current[existing]
             counts["removed"] += 1
 
-        for j, mod in enumerate(change.modify_indexes):
+        for j, entry in enumerate(change.modify_indexes):
             where = f"tables[{i}].modify_indexes[{j}]"
-            stmt = current.get(_unquote(mod.index_name))
-            if stmt is None:
+            try:
+                index = _structured_index(base, table, entry)
+            except (SqlFragmentError, ValidationError) as exc:
+                errors.append(f"{where}: {exc}")
+                continue
+            existing = _lookup(current, index.name)
+            if existing is None:
                 errors.append(
-                    f"{where}: table '{table.table_name}' has no index '{mod.index_name}'"
+                    f"{where}: table '{table.table_name}' has no index '{index.name}' to modify "
+                    "(modify_indexes is matched by index_name; use add_indexes for a new one)"
                 )
                 continue
-            if not _check_statement(mod.statement, table.table_name, where, errors):
-                continue
-            new_name = index_name_of(mod.statement)
-            if new_name != _unquote(mod.index_name) and new_name in current:
-                errors.append(f"{where}: index '{new_name}' already exists")
-                continue
-            new_stmt = _normalize_statement(mod.statement)
-            statements[statements.index(stmt)] = new_stmt
-            del current[_unquote(mod.index_name)]
-            current[new_name] = new_stmt
+            current[existing] = _render(base, table, index)
             counts["modified"] += 1
 
-        for j, statement in enumerate(change.add_indexes):
+        for j, entry in enumerate(change.add_indexes):
             where = f"tables[{i}].add_indexes[{j}]"
-            if not _check_statement(statement, table.table_name, where, errors):
+            try:
+                index = _structured_index(base, table, entry)
+            except (SqlFragmentError, ValidationError) as exc:
+                errors.append(f"{where}: {exc}")
                 continue
-            added = index_name_of(statement)
-            if added in current:
-                errors.append(f"{where}: index '{added}' already exists on '{table.table_name}'")
+            if _lookup(current, index.name) is not None:
+                errors.append(
+                    f"{where}: index '{index.name}' already exists on '{table.table_name}'"
+                )
                 continue
-            new_stmt = _normalize_statement(statement)
-            statements.append(new_stmt)
-            current[added] = new_stmt
+            current[index.name] = _render(base, table, index)
             counts["added"] += 1
 
-        ddl.index_sql = statements
+        ddl.index_sql = list(current.values())
     return counts
 
 
@@ -287,6 +408,8 @@ def merge_design_delta(
     errors, so the caller fixes the delta. Lenient (Bedrock, after its
     correction attempt): invalid entries are skipped and the errors are
     recorded as ``validation_failures`` with ``validation_passed=false``.
+    Warnings (a type rule that matched nothing, residuals left unresolved)
+    never fail the merge.
     """
     if isinstance(delta, AuroraDesignDeltaContract):
         contract = delta
@@ -297,24 +420,41 @@ def merge_design_delta(
             return MergeResult(None, [f"Invalid design delta: {exc}"], {})
 
     errors: list[str] = []
+    warnings: list[str] = []
     by_key = {_table_key(t.table_name): t for t in base.tables}
     seen: set[str] = set()
     for i, change in enumerate(contract.tables):
         key = _table_key(change.table_name)
-        if key not in by_key:
+        table = by_key.get(key)
+        schema = _schema_of(change.table_name)
+        if table is None:
             errors.append(
                 f"tables[{i}]: unknown table '{change.table_name}'; the draft has no such "
                 "table (use a table_name from the design view)"
+            )
+        elif schema is not None and schema not in {
+            s.lower() for s in (table.schema_name, base.source_database) if s
+        }:
+            errors.append(
+                f"tables[{i}]: schema prefix in '{change.table_name}' does not match table "
+                f"'{table.table_name}'"
             )
         elif key in seen:
             errors.append(f"tables[{i}]: table '{change.table_name}' is listed more than once")
         seen.add(key)
 
     draft = base.generate()
-    overrides, by_rule = _type_overrides(base, contract, by_key, draft.residuals, errors)
+    overrides, by_rule = _type_overrides(base, contract, by_key, draft.residuals, errors, warnings)
     ddl = base.generate(overrides)
     table_ddls = {t.table_name: t for t in ddl.tables}
-    index_counts = _apply_index_changes(contract, by_key, table_ddls, errors)
+    index_counts = _apply_index_changes(base, contract, by_key, table_ddls, errors)
+
+    if ddl.residuals:
+        sample = ", ".join(f"{r['table']}.{r['column']}" for r in ddl.residuals[:5])
+        warnings.append(
+            f"{len(ddl.residuals)} residual column(s) keep the draft's fallback type "
+            f"(e.g. {sample}); add type_rules for their source types to resolve them"
+        )
 
     summary = {
         "tables_changed": len(seen & set(by_key)),
@@ -326,7 +466,7 @@ def merge_design_delta(
         "indexes_removed": index_counts["removed"],
     }
     if errors and strict:
-        return MergeResult(None, errors, summary)
+        return MergeResult(None, errors, summary, warnings)
 
     trade_offs = [t.model_dump(mode="json") for t in contract.trade_offs] or [
         _default_trade_off(base, len(base.tables))
@@ -363,7 +503,7 @@ def merge_design_delta(
         "validation_passed": not errors,
         "validation_failures": [f"Design delta: {e}" for e in errors],
     }
-    return MergeResult(output, errors, summary)
+    return MergeResult(output, errors, summary, warnings)
 
 
 def base_from_outputs(

@@ -10,8 +10,9 @@ script's work.
 
 - **design_view**: a compact view of the deterministic **draft** (issue #273):
   `tables` (per table: `row_count`, `read_qps`/`write_qps`, `primary_key`,
-  `columns` as `name TYPE` lines, residual columns marked
-  `(residual; source <data_type>)`, and the draft's `indexes` statements),
+  `columns` as `name TYPE [NOT NULL] [AI] [DEFAULT x]` lines, residual columns
+  marked `(residual; source <data_type>)` and changed types `(source <data_type>)`,
+  `indexes` as `name [UNIQUE] (columns)` and `foreign_keys` as `col -> table(col)`),
   `residual_types` (residual columns grouped by source data type),
   `hot_queries` (busiest in-scope queries with tables and filter/sort columns),
   `analysis` (detected patterns, anti-patterns) and `source_features`
@@ -44,9 +45,11 @@ regenerates the DDL and validates the full contract.
    large hot tables, read-replica routing for read-heavy patterns, I/O-Optimized
    when write throughput is high. Put each in `optimizations`. Express index
    changes for frequent filter/sort columns without an index as
-   `tables[].add_indexes` / `modify_indexes` / `remove_indexes` (full
-   `CREATE [UNIQUE] INDEX ... ON <that table>` statements; modify/remove name an
-   index from that table's `indexes`).
+   `tables[].add_indexes` / `modify_indexes` (structured entries
+   `{index_name, columns, unique}` over that table's columns; the script renders
+   the DDL) and `remove_indexes` (names). modify/remove name an index from that
+   table's `indexes`. Every `aurora_type` is a plain SQL type such as `BIGINT`
+   or `VARCHAR(255)`, never a constraint or default.
 5. **carry_over strategy:** types map 1:1 — your value-add is optimizations, not
    translation. Map residual source types back to themselves and add
    optimizations/trade-offs.

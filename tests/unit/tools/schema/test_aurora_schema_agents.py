@@ -198,11 +198,34 @@ def test_pe_reviewer_reviews_the_delta(engine, monkeypatch):
         {"delta_version": "1.0", "tables": [{"table_name": "users", "remove_indexes": ["i1"]}]}
     )
 
-    review = mod._invoke_pe_reviewer(
-        object(), delta, {"table_count": 3, "design_view": {"migration_strategy": "carry_over"}}
-    )
+    view = {
+        "migration_strategy": "carry_over",
+        "residual_types": [{"source_data_type": "bigint", "count": 2}],
+        "hot_queries": [{"query_id": "hot-q-1", "tables_accessed": ["users"]}],
+        "tables": [
+            {"table_name": "users", "columns": ["id BIGINT"], "indexes": ["i1 (id)"]},
+            {"table_name": "untouched_table", "columns": ["x TEXT"]},
+        ],
+    }
 
+    review = mod._invoke_pe_reviewer(object(), delta, {"table_count": 3, "design_view": view})
+
+    prompt = captured["prompt"]
     assert review.verdict.value == "APPROVED"
-    assert "delta against the" in captured["prompt"]
-    assert '"remove_indexes"' in captured["prompt"]
-    assert "Tables: 3" in captured["prompt"]
+    assert "delta against the" in prompt
+    assert '"remove_indexes"' in prompt
+    assert "Tables: 3" in prompt
+    # I5: the evidence the delta is judged against
+    assert "hot-q-1" in prompt
+    assert '"i1 (id)"' in prompt  # view entry of the touched table
+    assert "untouched_table" not in prompt
+    assert '"source_data_type": "bigint"' in prompt
+
+
+def test_revision_prompt_lists_the_tables_the_delta_touches():
+    from src.tools.schema.base_schema_agent import SchemaDesignRunner
+
+    delta = AuroraDesignDeltaContract.model_validate(
+        {"delta_version": "1.0", "tables": [{"table_name": "users"}, {"table_name": "orders"}]}
+    )
+    assert SchemaDesignRunner._get_table_names(delta) == ["users", "orders"]

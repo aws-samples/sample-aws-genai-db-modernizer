@@ -118,10 +118,12 @@ def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
         "job_id": llm_request["job_id"],
         "response_kind": "aurora_design_delta",
         "migration_strategy": base.migration_strategy,
+        # --finalize refuses to merge into a draft other than this one.
+        "draft_fingerprint": base.fingerprint(),
+        "output_schema": AuroraDesignDeltaContract.model_json_schema(),
         "design_view": build_design_view(
             base, agent_collector, agent_analysis, raw_collector=collector_output
         ),
-        "output_schema": AuroraDesignDeltaContract.model_json_schema(),
     }
 
 
@@ -146,7 +148,13 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         llm_request["output_schema"] = _get_output_schema(engine)
 
     llm_request_path = f"{db}/{job_id}/llm_requests/schema_design_{engine}.json"
-    store.write_json(llm_request_path, llm_request)
+    if engine in _AURORA_ENGINES:
+        from src.tools.schema.aurora_common.design_view import render_request
+
+        # One table per line, so the model can page it with Read offset/limit.
+        store.write_bytes(llm_request_path, render_request(llm_request).encode("utf-8"))
+    else:
+        store.write_json(llm_request_path, llm_request)
 
     _output(
         {

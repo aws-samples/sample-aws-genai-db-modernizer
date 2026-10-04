@@ -10,7 +10,6 @@ from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOu
 from src.contracts.schema_design_input import AgentTable
 from src.tools.schema.aurora_common.delta_merge import (
     AuroraDesignBase,
-    index_name_of,
     merge_design_delta,
 )
 from src.tools.schema.aurora_common.draft_builder import build_mysql_draft, build_pg_draft
@@ -139,32 +138,85 @@ def test_delta_trade_offs_replace_the_default():
 
 
 # ---------------------------------------------------------------------------
-# Indexes
+# Indexes (structured, rendered by the generator)
 # ---------------------------------------------------------------------------
 
 
-def test_add_index():
-    stmt = 'CREATE INDEX "idx_orders_total" ON "orders" ("total_cents")'
-    output = _ok(_delta(tables=[{"table_name": "orders", "add_indexes": [stmt]}]))
-
-    assert _table(output, "orders")["indexes"][-1] == stmt + ";"
-    assert stmt + ";" in output["generated_ddl"]
-    assert 'CREATE INDEX "idx_orders_user"' in output["generated_ddl"]  # draft index kept
-
-
-def test_modify_index():
-    new = 'CREATE INDEX "idx_orders_user" ON "orders" ("user_id", "id");'
+def test_add_structured_index():
     output = _ok(
         _delta(
             tables=[
                 {
                     "table_name": "orders",
-                    "modify_indexes": [{"index_name": "idx_orders_user", "statement": new}],
+                    "add_indexes": [{"index_name": "idx_orders_total", "columns": ["total_cents"]}],
                 }
             ]
         )
     )
 
+    stmt = 'CREATE INDEX "idx_orders_total" ON "orders" ("total_cents");'
+    assert _table(output, "orders")["indexes"][-1] == stmt
+    assert stmt in output["generated_ddl"]
+    assert 'CREATE INDEX "idx_orders_user"' in output["generated_ddl"]  # draft index kept
+
+
+def test_add_postgres_index_with_method_include_and_where():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "orders",
+                    "add_indexes": [
+                        {
+                            "index_name": "idx_orders_big",
+                            "columns": ["USER_ID"],
+                            "unique": True,
+                            "method": "btree",
+                            "include": ["total_cents"],
+                            "where": "total_cents > 1000 AND user_id IS NOT NULL",
+                        }
+                    ],
+                }
+            ]
+        )
+    )
+    assert _table(output, "orders")["indexes"][-1] == (
+        'CREATE UNIQUE INDEX "idx_orders_big" ON "orders" USING btree ("user_id") '
+        'INCLUDE ("total_cents") WHERE "total_cents" > 1000 AND "user_id" IS NOT NULL;'
+    )
+
+
+def test_legacy_string_index_is_parsed_and_re_rendered():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "orders",
+                    "add_indexes": ["create index idx_orders_total on shop.orders (total_cents)"],
+                }
+            ]
+        )
+    )
+    assert _table(output, "orders")["indexes"][-1] == (
+        'CREATE INDEX "idx_orders_total" ON "orders" ("total_cents");'
+    )
+
+
+def test_modify_index_by_name():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "orders",
+                    "modify_indexes": [
+                        {"index_name": "idx_orders_user", "columns": ["user_id", "id"]}
+                    ],
+                }
+            ]
+        )
+    )
+
+    new = 'CREATE INDEX "idx_orders_user" ON "orders" ("user_id", "id");'
     assert _table(output, "orders")["indexes"] == [new]
     assert new in output["generated_ddl"]
     assert '("user_id");' not in output["generated_ddl"]
@@ -186,7 +238,7 @@ def test_index_changes_are_counted():
                 {
                     "table_name": "orders",
                     "remove_indexes": ["idx_orders_user"],
-                    "add_indexes": ['CREATE INDEX "i2" ON "orders" ("id")'],
+                    "add_indexes": [{"index_name": "i2", "columns": ["id"]}],
                 }
             ]
         ),
@@ -196,36 +248,93 @@ def test_index_changes_are_counted():
     assert result.summary["tables_changed"] == 1
 
 
-def test_mysql_backtick_index_is_accepted():
-    stmt = "CREATE INDEX `idx_orders_total` ON `orders` (`total_cents`);"
-    output = _ok(_delta(tables=[{"table_name": "orders", "add_indexes": [stmt]}]), "aurora_mysql")
-    assert stmt in _table(output, "orders")["indexes"]
+def test_mysql_index_is_rendered_with_backticks():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "orders",
+                    "add_indexes": [
+                        {"index_name": "idx_orders_total", "columns": ["total_cents"]},
+                        "CREATE UNIQUE INDEX `idx_orders_u` ON `orders` (`user_id`, `id`);",
+                    ],
+                }
+            ]
+        ),
+        "aurora_mysql",
+    )
+    assert _table(output, "orders")["indexes"][-2:] == [
+        "CREATE INDEX `idx_orders_total` ON `orders` (`total_cents`);",
+        "CREATE UNIQUE INDEX `idx_orders_u` ON `orders` (`user_id`, `id`);",
+    ]
 
 
-@pytest.mark.parametrize(
-    ("change", "fragment"),
-    [
-        ({"remove_indexes": ["idx_missing"]}, "has no index 'idx_missing'"),
-        (
-            {
-                "modify_indexes": [
-                    {"index_name": "idx_missing", "statement": "CREATE INDEX x ON orders (id)"}
-                ]
-            },
-            "has no index 'idx_missing'",
-        ),
-        ({"add_indexes": ['CREATE INDEX "idx_orders_user" ON "orders" ("id")']}, "already exists"),
-        ({"add_indexes": ['CREATE INDEX "i" ON "users" ("id")']}, "is not ON table 'orders'"),
-        ({"add_indexes": ["ALTER TABLE orders ADD COLUMN x INT"]}, "not a CREATE"),
-        (
-            {"add_indexes": ['CREATE INDEX "a" ON "orders" ("id"); DROP TABLE "users"']},
-            "one CREATE INDEX statement per entry",
-        ),
-    ],
-)
+_PG_INVALID = [
+    ({"remove_indexes": ["idx_missing"]}, "has no index 'idx_missing'"),
+    (
+        {"modify_indexes": [{"index_name": "idx_missing", "columns": ["id"]}]},
+        "has no index 'idx_missing'",
+    ),
+    ({"add_indexes": [{"index_name": "idx_orders_user", "columns": ["id"]}]}, "already exists"),
+    ({"add_indexes": [{"index_name": "i", "columns": ["nope"]}]}, "has no column 'nope'"),
+    ({"add_indexes": [{"index_name": "i", "columns": ["id"], "include": ["x"]}]}, "no column 'x'"),
+    ({"add_indexes": ['CREATE INDEX "i" ON "users" ("id")']}, "is not ON table 'orders'"),
+    ({"add_indexes": ["ALTER TABLE orders ADD COLUMN x INT"]}, "not a plain"),
+    ({"add_indexes": ["CREATE INDEX i ON other_schema.orders (id)"]}, "schema prefix"),
+    ({"add_indexes": ["CREATE INDEX `i` ON `orders` (`id`)"]}, "backticks"),
+    ({"add_indexes": ["CREATE INDEX i ON orders USING rtree (id)"]}, "unknown index method"),
+    ({"add_indexes": ["CREATE INDEX i ON orders (lower(id))"]}, "not a plain"),
+    # C2 attack strings: a second statement, a psql meta-command, a comment
+    (
+        {"add_indexes": ['CREATE INDEX "a" ON "orders" ("id");\nDROP TABLE "users";']},
+        "one line",
+    ),
+    ({"add_indexes": ['CREATE INDEX "a" ON "orders" ("id")\n\\! touch /tmp/x']}, "one line"),
+    ({"add_indexes": ['CREATE INDEX "a" ON "orders" ("id"); DROP TABLE "users"']}, "one line"),
+    ({"add_indexes": ['CREATE INDEX "a" ON "orders" ("id") -- x']}, "one line"),
+    ({"add_indexes": ['CREATE INDEX "a" ON "orders" ("id") WHERE 1=1']}, "not a plain"),
+    (
+        {"add_indexes": [{"index_name": "a", "columns": ["id"], "where": "id = 1; DROP TABLE x"}]},
+        "where must not contain",
+    ),
+    (
+        {"add_indexes": [{"index_name": "a", "columns": ["id"], "where": "pg_sleep(10) IS NULL"}]},
+        "'pg_sleep' is not a column",
+    ),
+    (
+        {"add_indexes": [{"index_name": "a", "columns": ["id"], "where": "id = 1)"}]},
+        "unbalanced",
+    ),
+    (
+        {"add_indexes": [{"index_name": 'a"; DROP TABLE x; --', "columns": ["id"]}]},
+        "plain identifier",
+    ),
+]
+
+
+@pytest.mark.parametrize(("change", "fragment"), _PG_INVALID)
 def test_invalid_index_changes_fail(change, fragment):
     result = merge_design_delta(_base(), _delta(tables=[{"table_name": "orders", **change}]))
 
+    assert result.output is None
+    assert any(fragment in e for e in result.errors), result.errors
+
+
+@pytest.mark.parametrize(
+    ("entry", "fragment"),
+    [
+        ("CREATE INDEX CONCURRENTLY i ON orders (id)", "CONCURRENTLY"),
+        ('CREATE INDEX "i" ON "orders" ("id")', "backticks, not"),
+        ("CREATE INDEX i ON orders USING btree (id)", "USING"),
+        ({"index_name": "i", "columns": ["id"], "method": "gin"}, "PostgreSQL only"),
+        ({"index_name": "i", "columns": ["id"], "where": "id > 1"}, "PostgreSQL only"),
+    ],
+)
+def test_mysql_rejects_postgres_index_syntax(entry, fragment):
+    result = merge_design_delta(
+        _base("aurora_mysql", "mysql"),
+        _delta(tables=[{"table_name": "orders", "add_indexes": [entry]}]),
+    )
     assert result.output is None
     assert any(fragment in e for e in result.errors), result.errors
 
@@ -395,14 +504,129 @@ def test_optimizations_and_app_layer_notes_carry_through():
     assert output["app_layer_notes"][0]["source_object"] == "trg_x"
 
 
+# ---------------------------------------------------------------------------
+# Types reaching DDL (C1), rule hygiene, warnings, fingerprint
+# ---------------------------------------------------------------------------
+
+_TYPE_ATTACKS = [
+    "BIGINT); DROP TABLE users; --",
+    "INT, `evil` TEXT",
+    'INT, "evil" TEXT',
+    "INT NOT NULL DEFAULT 1",
+    "INT REFERENCES users",
+    "TEXT\n); DROP TABLE x",
+    "",
+    "   ",
+]
+
+
+@pytest.mark.parametrize("attack", _TYPE_ATTACKS)
+def test_column_type_attacks_never_reach_ddl(attack):
+    for delta in (
+        _delta(
+            tables=[
+                {
+                    "table_name": "users",
+                    "column_types": [{"column": "email", "aurora_type": attack}],
+                }
+            ]
+        ),
+        _delta(type_rules=[{"source_data_type": "integer", "aurora_type": attack}]),
+    ):
+        result = merge_design_delta(_base(), delta)
+        assert result.output is None
+        assert result.errors[0].startswith("Invalid design delta")
+
+
 @pytest.mark.parametrize(
-    ("statement", "name"),
+    ("engine", "aurora_type", "fragment"),
     [
-        ('CREATE UNIQUE INDEX "a b" ON "t" ("c");', "a b"),
-        ("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON ONLY public.t (c)", "idx"),
-        ("create index `m` on `t` (`c`)", "m"),
-        ("DROP INDEX x", None),
+        ("aurora_postgresql", "ENUM('a','b')", "Aurora MySQL only"),
+        ("aurora_mysql", "TEXT[]", "Aurora PostgreSQL only"),
     ],
 )
-def test_index_name_of(statement, name):
-    assert index_name_of(statement) == name
+def test_dialect_specific_types_are_checked(engine, aurora_type, fragment):
+    result = merge_design_delta(
+        _base(engine),
+        _delta(
+            tables=[
+                {
+                    "table_name": "users",
+                    "column_types": [{"column": "email", "aurora_type": aurora_type}],
+                }
+            ]
+        ),
+    )
+    assert result.output is None
+    assert any(fragment in e for e in result.errors)
+
+
+def test_mysql_enum_type_is_rendered():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "users",
+                    "column_types": [{"column": "email", "aurora_type": "ENUM('a','b')"}],
+                }
+            ]
+        ),
+        "aurora_mysql",
+    )
+    assert "`email` ENUM('a','b') NOT NULL" in output["generated_ddl"]
+
+
+def test_types_are_normalized_before_rendering():
+    output = _ok(
+        _delta(
+            tables=[
+                {
+                    "table_name": "users",
+                    "column_types": [
+                        {"column": "email", "aurora_type": "  character   varying(320) "}
+                    ],
+                }
+            ]
+        )
+    )
+    assert '"email" character varying(320) NOT NULL' in output["generated_ddl"]
+
+
+def test_duplicate_type_rules_after_case_folding_fail():
+    result = merge_design_delta(
+        _base(),
+        _delta(
+            type_rules=[
+                {"source_data_type": "integer", "aurora_type": "INTEGER"},
+                {"source_data_type": " INTEGER ", "aurora_type": "BIGINT"},
+            ]
+        ),
+    )
+    assert result.output is None
+    assert any("listed more than once" in e for e in result.errors)
+
+
+def test_unmatched_type_rule_is_a_warning_not_an_error():
+    result = merge_design_delta(
+        _base(), _delta(type_rules=[{"source_data_type": "money", "aurora_type": "NUMERIC(19,4)"}])
+    )
+    assert result.errors == []
+    assert result.output is not None
+    assert any("'money' matched no residual" in w for w in result.warnings)
+
+
+def test_unresolved_residuals_are_a_warning():
+    result = merge_design_delta(_base(), _delta())
+    assert result.output is not None and result.errors == []
+    assert result.summary["residuals_unresolved"] == 3
+    assert any("3 residual column(s) keep the draft's fallback type" in w for w in result.warnings)
+
+
+def test_fingerprint_tracks_the_draft_inputs():
+    base = _base()
+    same = _base()
+    assert base.fingerprint() == same.fingerprint()
+    same.source_data_types[("users", "score")] = "bigint"
+    assert base.fingerprint() != same.fingerprint()
+    other_engine = _base("aurora_mysql")
+    assert base.fingerprint() != other_engine.fingerprint()

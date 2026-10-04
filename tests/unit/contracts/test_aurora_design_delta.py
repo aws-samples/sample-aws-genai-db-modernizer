@@ -8,7 +8,9 @@ from pydantic import ValidationError
 from src.contracts.aurora_design_delta import (
     DELTA_VERSION,
     AuroraDesignDeltaContract,
+    IndexSpec,
     is_design_delta,
+    validate_aurora_type,
 )
 
 
@@ -41,3 +43,72 @@ def test_is_design_delta_tells_a_delta_from_a_full_contract():
     assert is_design_delta({"delta_version": "1.0"})
     assert not is_design_delta({"table_definitions": [], "generated_ddl": ""})
     assert not is_design_delta(["delta_version"])
+
+
+@pytest.mark.parametrize(
+    ("raw", "normalized"),
+    [
+        ("BIGINT", "BIGINT"),
+        (" varchar(255) ", "varchar(255)"),
+        ("NUMERIC( 10 , 2 )", "NUMERIC( 10 , 2 )"),
+        ("DOUBLE   PRECISION", "DOUBLE PRECISION"),
+        ("TIMESTAMP(3) WITH TIME ZONE", "TIMESTAMP(3) WITH TIME ZONE"),
+        ("INT UNSIGNED", "INT UNSIGNED"),
+        ("TEXT[]", "TEXT[]"),
+        ("ENUM('a','it''s')", "ENUM('a','it''s')"),
+        ("set('x', 'y')", "set('x', 'y')"),
+    ],
+)
+def test_type_grammar_accepts_plain_types(raw, normalized):
+    assert validate_aurora_type(raw) == normalized
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "BIGINT); DROP TABLE users; --",
+        "INT, `evil` TEXT",
+        "INT /* x */",
+        "INT -- x",
+        "VARCHAR(10)\n; DROP TABLE x",
+        "INT NOT NULL",
+        "INT DEFAULT 0",
+        "INT PRIMARY KEY",
+        "INT GENERATED ALWAYS AS (1) STORED",
+        "ENUM('a\\'); DROP TABLE x; --')",
+        "ENUM('a','b'), evil TEXT",
+        "VARCHAR(-1)",
+        "1INT",
+        "",
+        "   ",
+        "A" * 65,
+    ],
+)
+def test_type_grammar_rejects_everything_else(attack):
+    with pytest.raises(ValueError):
+        validate_aurora_type(attack)
+
+
+@pytest.mark.parametrize("name", ['a"; DROP TABLE x; --', "has space", "1abc", "", "x" * 64])
+def test_index_names_are_plain_identifiers(name):
+    with pytest.raises(ValidationError):
+        IndexSpec(index_name=name, columns=["id"])
+
+
+def test_index_entries_accept_structured_and_legacy_string_forms():
+    delta = AuroraDesignDeltaContract.model_validate(
+        {
+            "delta_version": "1.0",
+            "tables": [
+                {
+                    "table_name": "t",
+                    "add_indexes": [
+                        {"index_name": "i1", "columns": ["a"]},
+                        "CREATE INDEX i2 ON t (a)",
+                    ],
+                }
+            ],
+        }
+    )
+    assert isinstance(delta.tables[0].add_indexes[0], IndexSpec)
+    assert isinstance(delta.tables[0].add_indexes[1], str)
