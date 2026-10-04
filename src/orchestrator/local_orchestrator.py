@@ -232,7 +232,7 @@ class LocalOrchestrator(Orchestrator):
 
         if len(engines) <= 1:
             for engine in engines:
-                run_analysis(job_id, database_name, engine, self.store, llm_mode="none")
+                run_analysis(job_id, database_name, engine, self.store, llm_mode=self.llm_mode)
             return
 
         # Fan-out: run engines in parallel (threads — avoids pickling issues with store)
@@ -269,6 +269,12 @@ class LocalOrchestrator(Orchestrator):
         """Run schema design for each assigned engine in parallel.
 
         Skips engines with zero in-scope queries (SKIPPED status).
+
+        With ``llm_mode="none"`` no engine is designed: every schema designer
+        needs a model, so the phase completes without schema outputs, as in
+        the deterministic pipeline, and synthesis reports the engines without
+        a schema design (issue #281). The mode is still passed to each engine
+        call so the handler enforces it too.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -290,6 +296,12 @@ class LocalOrchestrator(Orchestrator):
                 continue
             engines_to_run.append(engine)
 
+        if self.llm_mode == "none":
+            from src.agents.schema_design.handler import SCHEMA_DESIGN_SKIPPED_NONE_MODE
+
+            print(f"[schema-design] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
+            logger.info("Schema design skipped for %s: llm_mode=none", engines_to_run)
+
         if len(engines_to_run) <= 1:
             for engine in engines_to_run:
                 run_schema_design(
@@ -298,6 +310,7 @@ class LocalOrchestrator(Orchestrator):
                     engine,
                     self.store,
                     assignment_version=assignment_version,
+                    llm_mode=self.llm_mode,
                 )
             return
 
@@ -312,6 +325,7 @@ class LocalOrchestrator(Orchestrator):
                     engine,
                     self.store,
                     assignment_version=assignment_version,
+                    llm_mode=self.llm_mode,
                 ): engine
                 for engine in engines_to_run
             }
@@ -474,6 +488,7 @@ class LocalOrchestrator(Orchestrator):
                     store=self.store,
                     injected_query_ids=injected_ids,
                     assignment_version=assignment_version,
+                    llm_mode=self.llm_mode,
                 )
 
             print(f"[router] Cascade pass {depth} complete — checking for new unsupported...")
@@ -490,6 +505,7 @@ class LocalOrchestrator(Orchestrator):
             database_name,
             self.store,
             assignment_version=assignment_version,
+            llm_mode=self.llm_mode,
         )
 
     # ------------------------------------------------------------------

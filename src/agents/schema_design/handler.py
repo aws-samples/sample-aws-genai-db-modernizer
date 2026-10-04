@@ -55,6 +55,23 @@ def _group_concurrency() -> int:
     return _DEFAULT_GROUP_CONCURRENCY
 
 
+# Schema design has no deterministic designer: every engine's agent (including
+# the Aurora ones, whose deterministic draft is only an input to the designer)
+# needs a model. With llm_mode="none" the phase is therefore skipped, exactly as
+# the deterministic pipeline does (it stops before schema design and synthesis
+# runs without schema outputs). Nothing is written, so a skipped engine is never
+# mistaken for a designed one (issue #281).
+SCHEMA_DESIGN_SKIPPED_NONE_MODE = (
+    "schema design skipped (llm_mode=none): every schema designer needs a model; "
+    "rerun with --llm-mode bedrock or external to design target schemas"
+)
+
+
+def _skip_without_model(target_type: str) -> ScopeReport:
+    print(f"[schema-design/{target_type}] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
+    return EMPTY_REPORT
+
+
 def filter_collector_for_assignment(
     collector_output: dict,
     assignment: dict,
@@ -309,7 +326,8 @@ def run_schema_design(
 
     When llm_mode == "external": prepares the LLM input payload, writes it to
     the store, and returns early (no Bedrock call). Default is "bedrock" which
-    preserves the original behaviour unchanged.
+    preserves the original behaviour unchanged. When llm_mode == "none": no
+    model is available, so nothing is designed or written (issue #281).
 
     The output is checked against the assignment's scope before it is written
     (issue #203); the returned :class:`ScopeReport` carries any violations,
@@ -317,6 +335,9 @@ def run_schema_design(
 
     Requirements: 6.1, 6.2, 6.3, 10.1
     """
+    if llm_mode == "none":
+        return _skip_without_model(target_type)
+
     # --- External LLM mode: write prepared input and return early ---
     if llm_mode == "external":
         llm_input = prepare_schema_design_input(
@@ -651,6 +672,7 @@ def run_schema_design_auto(
     target_type: str,
     store: ArtifactStore,
     assignment_version: int = 0,
+    llm_mode: str = "bedrock",
 ) -> ScopeReport:
     """Run schema design with automatic group splitting for large workloads.
 
@@ -663,8 +685,26 @@ def run_schema_design_auto(
 
     Returns the scope report of the written output (issue #203): violations
     mean the design was written with ``validation_passed=false``.
+
+    ``llm_mode`` (issue #281): ``"bedrock"`` (default) designs as described
+    above; ``"none"`` skips the engine without a model call or any artifact;
+    ``"external"`` hands off to :func:`run_schema_design`, which writes the
+    prepared LLM input and returns (group splitting for external runs is the
+    explicit ``scripts/run_schema_design.py --split`` step).
     """
     from src.agents.schema_design.group_splitter import MAX_GROUP_SIZE
+
+    if llm_mode == "none":
+        return _skip_without_model(target_type)
+    if llm_mode == "external":
+        return run_schema_design(
+            job_id,
+            database_name,
+            target_type,
+            store,
+            assignment_version=assignment_version,
+            llm_mode=llm_mode,
+        )
 
     # Aurora stays single-pass (ADR-027 amendment): its generated_ddl script does
     # not merge across groups and a relational engine gains nothing from grouping.
@@ -676,6 +716,7 @@ def run_schema_design_auto(
             target_type,
             store,
             assignment_version=assignment_version,
+            llm_mode=llm_mode,
         )
 
     # Derive artifact version from assignment_version (synthesis reads v{N}/)
@@ -706,6 +747,7 @@ def run_schema_design_auto(
             target_type,
             store,
             assignment_version=assignment_version,
+            llm_mode=llm_mode,
         )
 
     # Split into groups
@@ -736,6 +778,7 @@ def run_schema_design_auto(
             target_type,
             store,
             assignment_version=assignment_version,
+            llm_mode=llm_mode,
         )
 
     # Run schema design per group (parallel)
@@ -844,13 +887,20 @@ def run_schema_design_with_injected(
     store: ArtifactStore,
     injected_query_ids: set[str],
     assignment_version: int = 0,
+    llm_mode: str = "bedrock",
 ) -> None:
     """Run schema design for an engine with additional injected query IDs.
 
     Used by the post-schema router cascade to design schemas for queries that
     were rerouted from another engine. The injected queries bypass the normal
     assignment filter and are included alongside any already-assigned queries.
+
+    With ``llm_mode="none"`` the cascade is skipped without a model call
+    (issue #281).
     """
+    if llm_mode == "none":
+        _skip_without_model(target_type)
+        return
     import time
 
     start_time = time.time()
