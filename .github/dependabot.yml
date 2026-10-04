@@ -12,6 +12,11 @@ updates:
       all-js:
         patterns: ["*"]
         update-types: ["major", "minor", "patch"]
+      # One grouped PR for every open npm security update instead of one PR
+      # per advisory. Security updates ignore open-pull-requests-limit: 0.
+      js-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -24,3 +29,7 @@ updates:
       all-python:
         patterns: ["*"]
         update-types: ["major", "minor", "patch"]
+      # One grouped PR for every open uv security update.
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
