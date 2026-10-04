@@ -29,7 +29,6 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
     unsupported_pattern_mitigation,
-    unsupported_pattern_text,
 )
 
 if TYPE_CHECKING:
@@ -783,7 +782,7 @@ def build_risk_assessment(
                     "risk_type": "MIGRATION_COMPLEXITY",
                     "severity": "MEDIUM",
                     "description": f"[{engine}] {unsupported_pattern_label(up)}: "
-                    f"{unsupported_pattern_text(up)}",
+                    f"{_unsupported_pattern_problem(engine, up, query_text)}",
                     "affected_tables": [],
                     "mitigation": unsupported_pattern_mitigation(up),
                     "query_ids": sorted(unsupported_pattern_ids(up)),
@@ -791,16 +790,23 @@ def build_risk_assessment(
             )
 
         # Migration notes from schema design
+        # The description names the object; the logic to build is the mitigation (#252).
         for mn in schema.get("migration_notes", []):
             risk_id += 1
+            object_label = str(mn.get("object_name") or "").strip()
+            logic = str(mn.get("application_logic_required") or "").strip()
             risks.append(
                 {
                     "risk_id": f"RISK-{risk_id:03d}",
                     "risk_type": "OPERATIONAL_RISK",
                     "severity": "MEDIUM",
-                    "description": f"[{engine}] {mn.get('object_type', '')}: {mn.get('object_name', '')} — {mn.get('application_logic_required', '')}",
+                    "description": (
+                        f"[{engine}] {mn.get('object_type') or 'migration note'}: "
+                        f"{object_label or 'this object'} needs application-side logic on "
+                        f"{display_name(engine)}."
+                    ),
                     "affected_tables": [mn["source_table"]] if mn.get("source_table") else [],
-                    "mitigation": f"Implement as application logic: {mn.get('application_logic_required', '')}",
+                    "mitigation": f"Implement as application logic: {logic}" if logic else None,
                     "object_type": str(mn.get("object_type") or ""),
                     "object_name": str(mn.get("object_name") or ""),
                 }
@@ -815,6 +821,7 @@ def build_risk_assessment(
             _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, query_tables)
         )
 
+    risks = [_without_repeated_mitigation(r) for r in risks]
     risks = ground_risks(risks, eliminated or {}, query_engine)
     resolved = ground_risks(resolved, eliminated or {}, query_engine)
     for r in resolved:
@@ -845,6 +852,50 @@ def build_risk_assessment(
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
     }
+
+
+_SQL_EXCERPT_CHARS = 120
+
+
+def _sql_excerpt(sql: str) -> str:
+    """``sql`` on one line, clipped to ``_SQL_EXCERPT_CHARS``."""
+    one_line = " ".join(sql.split())
+    if len(one_line) <= _SQL_EXCERPT_CHARS:
+        return one_line
+    return one_line[: _SQL_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _unsupported_pattern_problem(engine: str, up: dict, query_text: dict[str, str]) -> str:
+    """What an unsupported pattern's risk is about, without its fix (#252).
+
+    The ``reason`` when the contract has one (documentdb, elasticache, opensearch). The
+    dynamodb contract carries only ``pattern_type`` and ``recommendation`` -- the fix,
+    which is the risk's mitigation -- so the problem is stated from the queries instead,
+    quoting the first one's SQL.
+    """
+    reason = str(up.get("reason") or "").strip()
+    if reason:
+        return reason
+    ids = unsupported_pattern_ids(up)
+    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "")
+    head = f"{display_name(engine)} has no native equivalent for"
+    if len(ids) > 1:
+        return f"{head} these {len(ids)} queries" + (f", e.g. {_sql_excerpt(sql)}" if sql else ".")
+    subject = "this query" if ids else "this pattern"
+    return f"{head} {subject}" + (f": {_sql_excerpt(sql)}" if sql else ".")
+
+
+def _without_repeated_mitigation(risk: dict) -> dict:
+    """``risk`` with ``mitigation`` set to None when the description already contains it.
+
+    A mitigation is never a copy of the description (#252); renderers omit an empty one.
+    Compared case-insensitively with whitespace collapsed.
+    """
+    mitigation = " ".join(str(risk.get("mitigation") or "").split()).casefold()
+    description = " ".join(str(risk.get("description") or "").split()).casefold()
+    if mitigation and mitigation in description:
+        return {**risk, "mitigation": None}
+    return risk
 
 
 # Table ids analysis emits when it cannot attribute a query to a table
