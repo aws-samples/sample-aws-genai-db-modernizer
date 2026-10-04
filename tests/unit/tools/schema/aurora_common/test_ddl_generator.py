@@ -207,4 +207,6 @@ def test_type_override_is_validated_at_the_generator_too():
 
     with pytest.raises(ValueError):
         TypeOverride("BIGINT); DROP TABLE users; --")
-    assert TypeOverride("  big   int ").aurora_type == "big int"
+    assert TypeOverride("  double   precision ").aurora_type == "double precision"
+    with pytest.raises(ValueError):
+        TypeOverride("pg_sleep(10)")

@@ -200,6 +200,12 @@ def finalize_schema_design(
     ``validation_passed=false`` and the scope messages appended to
     ``validation_failures``, and reported as ``validation_failed``.
 
+    Aurora (#273): the response is a design delta, merged into the rebuilt
+    deterministic draft. A legacy full contract is converted into a delta
+    first, so its ``generated_ddl`` / ``foreign_keys`` text is never written:
+    the DDL always comes from the draft plus validated changes, and anything
+    that does not convert fails validation.
+
     Returns:
       ``{"status": "complete", "output_path": <key>}`` on success,
       ``{"status": "validation_failed", "errors": [...]}`` on contract validation
@@ -217,20 +223,28 @@ def finalize_schema_design(
     delta_summary: dict | None = None
     merge_warnings: list[str] = []
     if target_type in _NON_GROUPED_ENGINES:
-        if is_design_delta(output):
-            merged = _merge_aurora_delta(
-                store, database_name, job_id, target_type, output, assignment_version
-            )
-            if merged.output is None:
-                result: dict = {"status": "validation_failed", "errors": merged.errors}
-                if merged.warnings:
-                    result["warnings"] = merged.warnings
-                return result
-            output, delta_summary = merged.output, merged.summary
-            merge_warnings = merged.warnings
-        else:
-            merge_warnings = [FULL_CONTRACT_DEPRECATION]
+        # Aurora: whatever the response shape, the written DDL is regenerated
+        # from the draft; a full contract is first converted into a delta, so
+        # none of its DDL text is used (#273).
+        full_contract = not is_design_delta(output)
+        if full_contract:
             logger.warning("%s (%s, job %s)", FULL_CONTRACT_DEPRECATION, target_type, job_id)
+        merged = _merge_aurora_delta(
+            store,
+            database_name,
+            job_id,
+            target_type,
+            output,
+            assignment_version,
+            full_contract=full_contract,
+        )
+        merge_warnings = ([FULL_CONTRACT_DEPRECATION] if full_contract else []) + merged.warnings
+        if merged.output is None:
+            result: dict = {"status": "validation_failed", "errors": merged.errors}
+            if merge_warnings:
+                result["warnings"] = merge_warnings
+            return result
+        output, delta_summary = merged.output, merged.summary
 
     validation = validate_schema_design_output(output, target_type)
     if not validation["valid"]:
@@ -270,8 +284,14 @@ def _merge_aurora_delta(
     target_type: str,
     delta: dict,
     assignment_version: int,
+    *,
+    full_contract: bool = False,
 ):
     """Rebuild the deterministic Aurora draft and merge an LLM delta into it (#273).
+
+    ``full_contract``: ``delta`` is a legacy full output contract; it is
+    converted into a delta first (``full_contract_to_delta``) and anything that
+    does not convert fails validation.
 
     The draft is rebuilt from the same assignment-filtered input the external
     request was prepared from. The request's ``draft_fingerprint`` must match
@@ -281,6 +301,7 @@ def _merge_aurora_delta(
     from src.tools.schema.aurora_common.delta_merge import (
         MergeResult,
         base_from_outputs,
+        full_contract_to_delta,
         merge_design_delta,
     )
 
@@ -302,6 +323,14 @@ def _merge_aurora_delta(
             expected = None
         if expected is not None and expected != base.fingerprint():
             return MergeResult(None, [DRAFT_CHANGED], {})
+    if full_contract:
+        validation = validate_schema_design_output(delta, target_type)
+        if not validation["valid"]:
+            return MergeResult(None, validation["errors"], {})
+        converted, errors = full_contract_to_delta(base, delta)
+        if converted is None:
+            return MergeResult(None, errors, {})
+        delta = converted
     return merge_design_delta(base, delta)
 
 

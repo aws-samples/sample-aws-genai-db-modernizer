@@ -542,7 +542,9 @@ def test_column_type_attacks_never_reach_ddl(attack):
     ("engine", "aurora_type", "fragment"),
     [
         ("aurora_postgresql", "ENUM('a','b')", "Aurora MySQL only"),
-        ("aurora_mysql", "TEXT[]", "Aurora PostgreSQL only"),
+        ("aurora_mysql", "TEXT[]", "array types are not aurora_mysql types"),
+        ("aurora_postgresql", "INT UNSIGNED", "'unsigned' is not a valid aurora_postgresql"),
+        ("aurora_mysql", "TIMESTAMP WITH TIME ZONE", "not a valid aurora_mysql type modifier"),
     ],
 )
 def test_dialect_specific_types_are_checked(engine, aurora_type, fragment):
@@ -630,3 +632,46 @@ def test_fingerprint_tracks_the_draft_inputs():
     assert base.fingerprint() != same.fingerprint()
     other_engine = _base("aurora_mysql")
     assert base.fingerprint() != other_engine.fingerprint()
+
+
+def test_full_contract_converts_to_an_equivalent_delta():
+    from src.tools.schema.aurora_common.delta_merge import full_contract_to_delta
+
+    base = _base()
+    full = {
+        "table_definitions": [
+            {
+                "table_name": "orders",
+                "columns": [
+                    {"name": "id", "aurora_type": "BIGINT"},  # same as draft: no change
+                    {"name": "total_cents", "aurora_type": "bigint"},  # residual resolved
+                ],
+                "indexes": [
+                    'CREATE INDEX "idx_orders_user" ON "orders" ("user_id");',  # unchanged
+                    'CREATE INDEX "idx_orders_user_id" ON "orders" ("user_id", "id");',  # new
+                ],
+                "foreign_keys": ["ignored; DROP TABLE users"],
+            },
+            {
+                "table_name": "users",
+                "columns": [],
+                # draft index redefined under the same name
+                "indexes": ['CREATE INDEX "idx_users_email" ON "users" ("email", "id")'],
+            },
+        ],
+        "trade_offs": [{"description": "d", "impact": "i"}],
+    }
+
+    delta, errors = full_contract_to_delta(base, full)
+
+    assert errors == []
+    orders, users = delta["tables"]
+    assert orders["column_types"] == [{"column": "total_cents", "aurora_type": "bigint"}]
+    assert [i["index_name"] for i in orders["add_indexes"]] == ["idx_orders_user_id"]
+    assert orders["modify_indexes"] == []
+    assert users["modify_indexes"] == [
+        {"index_name": "idx_users_email", "columns": ["email", "id"], "unique": False}
+    ]
+    output = _ok(delta)
+    assert "ignored" not in output["generated_ddl"]
+    assert 'CONSTRAINT "fk_orders_user"' in output["generated_ddl"]  # from the draft

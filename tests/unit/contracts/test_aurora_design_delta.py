@@ -82,6 +82,12 @@ def test_type_grammar_accepts_plain_types(raw, normalized):
         "",
         "   ",
         "A" * 65,
+        "pg_sleep(10)",
+        "lower(1)",
+        "VARCHAR(10) CHARACTER SET utf8mb4",
+        "evil_type",
+        "ENUM(" + ",".join(["'v'"] * 101) + ")",
+        "ENUM('" + "x" * 65 + "')",
     ],
 )
 def test_type_grammar_rejects_everything_else(attack):
@@ -112,3 +118,20 @@ def test_index_entries_accept_structured_and_legacy_string_forms():
     )
     assert isinstance(delta.tables[0].add_indexes[0], IndexSpec)
     assert isinstance(delta.tables[0].add_indexes[1], str)
+
+
+@pytest.mark.parametrize(
+    ("value", "engine"),
+    [
+        ("INT UNSIGNED", "aurora_postgresql"),
+        ("TIMESTAMP WITH TIME ZONE", "aurora_mysql"),
+        ("TEXT[]", "aurora_mysql"),
+        ("ENUM('a')", "aurora_postgresql"),
+        ("TINYTEXT", "aurora_postgresql"),
+        ("JSONB", "aurora_mysql"),
+    ],
+)
+def test_type_grammar_is_per_engine(value, engine):
+    validate_aurora_type(value)  # valid for one of the engines
+    with pytest.raises(ValueError):
+        validate_aurora_type(value, engine)

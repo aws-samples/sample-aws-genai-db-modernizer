@@ -14,6 +14,7 @@ per column, and is independent of the query count beyond ``hot_query_limit``.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 
 from src.contracts.schema_design_input import (
@@ -79,6 +80,37 @@ def _load(q) -> float:
     return _qps(q) * float(q.execution_time_ms_avg or 0.0)
 
 
+_SYSTEM_SCHEMAS = ("pg_catalog.", "information_schema.", "mysql.", "performance_schema.", "sys.")
+_NON_DESIGN_STATEMENT = re.compile(
+    r"^\s*(?:BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|SAVEPOINT|RELEASE|END|SET|SHOW|RESET"
+    r"|DISCARD|DEALLOCATE|VACUUM|ANALYZE|CHECKPOINT|LISTEN|NOTIFY|UNLISTEN|LOCK"
+    r"|REFRESH\s+MATERIALIZED\s+VIEW)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_system_table(name: str) -> bool:
+    lowered = name.strip().strip('"`').lower()
+    if lowered.startswith(_SYSTEM_SCHEMAS):
+        return True
+    bare = lowered.rsplit(".", 1)[-1]
+    return bare.startswith("pg_") or lowered in ("unknown", "")
+
+
+def _designable(q: AgentQueryPattern) -> bool:
+    """Whether a query can inform a schema decision.
+
+    Dropped: transaction control and maintenance statements (BEGIN, COMMIT,
+    SET, SHOW, VACUUM, REFRESH MATERIALIZED VIEW, ...), and queries that touch
+    only system catalogs (pg_catalog, information_schema, mysql.*, pg_*) or
+    an unknown table.
+    """
+    if _NON_DESIGN_STATEMENT.match(q.query_text or ""):
+        return False
+    tables = q.tables_accessed or []
+    return bool(tables) and not all(_is_system_table(t) for t in tables)
+
+
 def _bad_index_counts(raw_collector: dict) -> dict[str, int]:
     """``queries_with_bad_index`` is not in the schema-design projection; read it raw."""
     counts: dict[str, int] = {}
@@ -112,7 +144,7 @@ def _hot_queries(collector: AgentCollectorInput, limit: int, raw_collector: dict
     A slow query called rarely and a fast query called constantly can both need
     an index, so neither ranking alone is enough. Ordered by load.
     """
-    patterns = collector.queries.query_patterns
+    patterns = [q for q in collector.queries.query_patterns if _designable(q)]
     by_load = sorted(patterns, key=_load, reverse=True)
     by_qps = sorted(patterns, key=_qps, reverse=True)
     chosen: dict[str, AgentQueryPattern] = {}
@@ -316,8 +348,8 @@ def _table_lines(table: dict, indent: str) -> list[str]:
     return lines
 
 
-def render_request(request: dict) -> str:
-    """Pretty JSON for the external request, with ``design_view.tables`` one per line."""
+def _render(request: dict) -> str:
+    """Pretty JSON with ``design_view.tables`` one per line."""
     view = request.get("design_view") or {}
     tables = view.get("tables")
     if not isinstance(tables, list):
@@ -336,3 +368,96 @@ def render_request(request: dict) -> str:
     closing = indent[:-2]
     rendered = '"tables": [\n' + "\n".join(body) + ("\n" + closing if body else "") + "]"
     return "".join((head, rendered, tail, "\n"))
+
+
+PAGE_CHARS = 40_000  # Read refuses pages much above ~48k characters
+# Read prefixes each line with its number and a tab; count that against the page.
+_READ_LINE_OVERHEAD = 8
+_TOP_KEY = re.compile(r'^  "([A-Za-z_]+)":')
+_VIEW_KEY = re.compile(r'^    "([A-Za-z_]+)":')
+_TABLE_LINE = re.compile(r'^\s*\{"table_name": "((?:[^"\\]|\\.)*)"')
+
+
+def _line_sections(lines: list[str]) -> list[str]:
+    """The section each line belongs to (``output_schema``, ``design_view.tables``, ...)."""
+    sections: list[str] = []
+    top, current = "header", "header"
+    for line in lines:
+        if m := _TOP_KEY.match(line):
+            top = m.group(1)
+            current = top
+        elif top == "design_view" and (m := _VIEW_KEY.match(line)):
+            current = f"design_view.{m.group(1)}"
+        sections.append(current)
+    return sections
+
+
+def compute_pages(text: str, page_chars: int = PAGE_CHARS) -> list[dict]:
+    """Split ``text`` into consecutive Read pages of at most ``page_chars`` characters.
+
+    Pages are line-aligned, 1-based (``offset`` is the first line, ``limit`` the
+    line count) and together cover every line exactly once. ``section`` names
+    what the page holds; table pages also name their first and last table.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    sections = _line_sections(lines)
+    pages: list[dict] = []
+    start, size = 0, 0
+    for n, line in enumerate(lines):
+        cost = len(line) + 1 + _READ_LINE_OVERHEAD
+        if n > start and size + cost > page_chars:
+            pages.append(_page(lines, sections, start, n))
+            start, size = n, 0
+        size += cost
+    if start < len(lines):
+        pages.append(_page(lines, sections, start, len(lines)))
+    return pages
+
+
+def _page(lines: list[str], sections: list[str], start: int, end: int) -> dict:
+    first, last = sections[start], sections[end - 1]
+    label = first if first == last else f"{first} .. {last}"
+    names = [m.group(1) for line in lines[start:end] if (m := _TABLE_LINE.match(line))]
+    if names:
+        label += f" ({names[0]} .. {names[-1]})" if len(names) > 1 else f" ({names[0]})"
+    return {"offset": start + 1, "limit": end - start, "section": label}
+
+
+def _compact_pages(text: str, pages: list[dict]) -> str:
+    """Write ``input_pages`` one page per line, so the header stays short."""
+    if not pages:
+        return text
+    start = text.index('  "input_pages": [\n')
+    end = text.index("\n  ],\n", start) + len("\n  ],")
+    body = ",\n".join(f"    {_compact(page)}" for page in pages)
+    return text[:start] + '  "input_pages": [\n' + body + "\n  ]," + text[end:]
+
+
+def render_request(request: dict, *, paged: bool = True) -> str:
+    """The external request file: pretty JSON, ``design_view.tables`` one per line.
+
+    With ``paged`` (and a ``draft_fingerprint`` to anchor it), the header also
+    lists ``input_pages`` right after ``draft_fingerprint``: the exact Read
+    pages (``offset``/``limit``, each at most ``PAGE_CHARS`` characters) that
+    cover the file, so the model never has to guess a page size. The pages
+    describe the file they are written in, so they are recomputed until stable.
+    """
+    if not paged or "draft_fingerprint" not in request:
+        return _render(request)
+    pages: list[dict] = []
+    for _ in range(10):
+        ordered: dict = {}
+        for key, value in request.items():
+            if key == "input_pages":
+                continue
+            ordered[key] = value
+            if key == "draft_fingerprint":
+                ordered["input_pages"] = pages
+        text = _compact_pages(_render(ordered), pages)
+        new_pages = compute_pages(text)
+        if new_pages == pages:
+            return text
+        pages = new_pages
+    raise RuntimeError("input_pages did not stabilize")  # pragma: no cover

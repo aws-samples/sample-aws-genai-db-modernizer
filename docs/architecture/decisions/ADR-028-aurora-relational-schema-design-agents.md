@@ -117,7 +117,7 @@ DDL, which it could not do. Both paths now work on a delta:
   rebuilds the draft, applies the delta, regenerates the DDL and returns the
   full contract, which is then validated and scope-checked as before. Unknown
   tables, columns or indexes are merge errors. `--finalize` still accepts a
-  full contract; the Bedrock agent gets one correction round on merge errors
+  full contract by converting it into a delta (see below); the Bedrock agent gets one correction round on merge errors
   and otherwise records them in `validation_failures`.
 - Delta content is LLM output built from untrusted collector text, so none of
   it is pasted into DDL: `aurora_type` must match a strict type grammar
@@ -128,5 +128,8 @@ DDL, which it could not do. Both paths now work on a delta:
   one-line grammar, and is re-rendered the same way.
 - The external request carries a `draft_fingerprint`; `--finalize` refuses to
   merge into a draft whose inputs changed since. Unmatched type rules and
-  unresolved residuals are warnings; a full-contract response is accepted
-  with a deprecation warning.
+  unresolved residuals are warnings. A full-contract response is still
+  accepted with a deprecation warning, but only by converting it into a delta:
+  its column types and index statements go through the same validation, and
+  its `generated_ddl` / `foreign_keys` are ignored and regenerated from the
+  draft.

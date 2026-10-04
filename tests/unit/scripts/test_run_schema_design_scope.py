@@ -119,7 +119,12 @@ def contract_ok(monkeypatch):
     monkeypatch.setattr(handler, "validate_schema_design_output", lambda *_: {"valid": True})
 
 
-_FINALIZE_ENGINES = sorted(e for e in _OTHER if e != "dynamodb")
+# Aurora finalize rebuilds the draft from the collector and merges the response
+# into it (#273), so a design can only contain in-scope tables; its scope
+# handling is tested in test_run_schema_design_aurora_delta.py.
+_FINALIZE_ENGINES = sorted(
+    e for e in _OTHER if e not in ("dynamodb", "aurora_mysql", "aurora_postgresql")
+)
 
 
 @pytest.mark.parametrize("engine", _FINALIZE_ENGINES)

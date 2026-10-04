@@ -284,32 +284,131 @@ def test_finalize_delta_runs_the_scope_check(monkeypatch, capsys, tmp_path):
     assert {t["table_name"] for t in calls[0]["table_definitions"]} == {"users", "orders"}
 
 
-def test_finalize_still_accepts_a_full_contract(monkeypatch, capsys, tmp_path):
+def _full_contract(**overrides) -> dict:
+    body = {
+        "job_id": JOB,
+        "source_database": DB,
+        "migration_strategy": "carry_over",
+        "table_definitions": [
+            {
+                "table_name": "users",
+                "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": False}],
+                "indexes": ['CREATE UNIQUE INDEX "idx_users_email" ON "users" ("email");'],
+            }
+        ],
+        "generated_ddl": 'CREATE TABLE "users" ("id" BIGINT);',
+        "trade_offs": [{"description": "d", "impact": "i"}],
+        "validation_passed": True,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_finalize_still_accepts_a_full_contract_by_converting_it(monkeypatch, capsys, tmp_path):
     store = _store(tmp_path)
-    store.write_json(
-        _RESPONSE,
-        {
-            "job_id": JOB,
-            "source_database": DB,
-            "migration_strategy": "carry_over",
-            "table_definitions": [
-                {
-                    "table_name": "users",
-                    "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": False}],
-                }
-            ],
-            "generated_ddl": 'CREATE TABLE "users" ("id" BIGINT);',
-            "trade_offs": [{"description": "d", "impact": "i"}],
-            "validation_passed": True,
-        },
-    )
+    store.write_json(_RESPONSE, _full_contract())
 
     status = _run(monkeypatch, capsys, tmp_path, "--finalize")
 
     assert status["status"] == "complete", status
-    assert "delta_summary" not in status
-    written = store.read_json(status["output_path"])
-    assert written["generated_ddl"] == 'CREATE TABLE "users" ("id" BIGINT);'
+    assert status["delta_summary"]["column_types_set"] == 1  # users.id TEXT -> BIGINT
+    written = AuroraPostgresqlModelOutputContract.model_validate(
+        store.read_json(status["output_path"])
+    )
+    # The DDL is regenerated from the draft, never taken from the response.
+    assert written.generated_ddl != 'CREATE TABLE "users" ("id" BIGINT);'
+    assert 'CREATE TABLE "orders"' in written.generated_ddl
+    assert '"id" BIGINT NOT NULL' in written.generated_ddl
+    assert {t.table_name for t in written.table_definitions} == {"users", "orders"}
+
+
+_REVIEWER_DDL = 'CREATE TABLE "users" ("id" BIGINT);\n\\! touch /tmp/pwned\nDROP TABLE "orders";'
+
+
+def test_full_contract_ddl_is_never_written(monkeypatch, capsys, tmp_path):
+    """B1: the reviewer's payload, generated_ddl with a psql escape and DROP TABLE."""
+    store = _store(tmp_path)
+    contract = _full_contract(generated_ddl=_REVIEWER_DDL)
+    contract["table_definitions"][0]["foreign_keys"] = ['ALTER TABLE x; DROP TABLE "orders";']
+    store.write_json(_RESPONSE, contract)
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "complete", status
+    written = json.dumps(store.read_json(status["output_path"]))
+    assert "touch" not in written and "DROP TABLE" not in written
+
+
+@pytest.mark.parametrize(
+    ("change", "fragment"),
+    [
+        (
+            {
+                "columns": [
+                    {
+                        "name": "id",
+                        "aurora_type": "BIGINT); DROP TABLE users; --",
+                        "script_derived": False,
+                    }
+                ]
+            },
+            "aurora_type",
+        ),
+        (
+            {"columns": [{"name": "nope", "aurora_type": "BIGINT", "script_derived": False}]},
+            "has no column 'nope'",
+        ),
+        (
+            {"indexes": ['CREATE INDEX "a" ON "users" ("id");\nDROP TABLE "orders";']},
+            "one line",
+        ),
+        ({"indexes": ["\\! touch /tmp/pwned"]}, "one line"),
+        ({"indexes": ['CREATE INDEX "a" ON "orders" ("id")']}, "is not ON"),
+    ],
+)
+def test_full_contract_that_does_not_convert_fails(change, fragment, monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    contract = _full_contract()
+    contract["table_definitions"][0].update(change)
+    store.write_json(_RESPONSE, contract)
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "validation_failed"
+    assert any(fragment in e for e in status["errors"]), status["errors"]
+    assert not store.exists(f"{DB}/{JOB}/schema-aurora_postgresql/v1/schema_output.json")
+
+
+def test_full_contract_with_an_out_of_scope_table_fails(monkeypatch, capsys, tmp_path):
+    store = _store(tmp_path)
+    store.write_json(
+        f"{DB}/{JOB}/assignment/v1/assignment.json",
+        {
+            "version": 1,
+            "query_assignments": [
+                {
+                    "query_id": f"q{i}",
+                    "assigned_engine": "aurora_postgresql" if i % 2 else "dynamodb",
+                    "source_tables": ["shop.users" if i % 2 else "shop.orders"],
+                    "in_scope": True,
+                }
+                for i in range(3)
+            ],
+        },
+    )
+    contract = _full_contract()
+    contract["table_definitions"].append(
+        {
+            "table_name": "orders",
+            "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": False}],
+        }
+    )
+    store.write_json(_RESPONSE, contract)
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize", "--assignment-version", "1")
+
+    assert status["status"] == "validation_failed"
+    assert any("unknown table 'orders'" in e for e in status["errors"])
 
 
 @pytest.mark.parametrize(
@@ -482,23 +581,7 @@ def test_finalize_matching_fingerprint_completes_with_warnings(monkeypatch, caps
 
 def test_finalize_full_contract_warns_it_is_deprecated(monkeypatch, capsys, tmp_path):
     store = _store(tmp_path)
-    store.write_json(
-        _RESPONSE,
-        {
-            "job_id": JOB,
-            "source_database": DB,
-            "migration_strategy": "carry_over",
-            "table_definitions": [
-                {
-                    "table_name": "users",
-                    "columns": [{"name": "id", "aurora_type": "BIGINT", "script_derived": False}],
-                }
-            ],
-            "generated_ddl": "",
-            "trade_offs": [{"description": "d", "impact": "i"}],
-            "validation_passed": True,
-        },
-    )
+    store.write_json(_RESPONSE, _full_contract())
 
     status = _run(monkeypatch, capsys, tmp_path, "--finalize")
 
@@ -524,3 +607,90 @@ def test_finalize_rejects_ddl_injection_in_types(monkeypatch, capsys, tmp_path):
 
     assert status["status"] == "validation_failed"
     assert not store.exists(f"{DB}/{JOB}/schema-aurora_postgresql/v1/schema_output.json")
+
+
+# ---------------------------------------------------------------------------
+# input_pages (B2) and hot-query filtering
+# ---------------------------------------------------------------------------
+
+
+def _wide_collector(n_tables: int = 60) -> dict:
+    collector = _collector(n_queries=200)
+    template = collector["database_schema"]["tables"][0]
+    for i in range(n_tables):
+        table = copy.deepcopy(template)
+        table["table_id"] = f"shop.wide_{i:03d}"
+        table["table_name"] = f"wide_{i:03d}"
+        table["indexes"] = [
+            {"index_name": f"idx_wide_{i:03d}_email", "columns": ["email"], "is_unique": True}
+        ]
+        table["columns"] += [
+            {
+                "column_name": f"attribute_{j:03d}",
+                "data_type": "character varying",
+                "normalized_data_type": "string",
+                "max_length": 255,
+                "nullable": True,
+            }
+            for j in range(40)
+        ]
+        collector["database_schema"]["tables"].append(table)
+    return collector
+
+
+def test_input_pages_cover_the_file_exactly_in_pages_read_accepts(monkeypatch, capsys, tmp_path):
+    from src.tools.schema.aurora_common.design_view import PAGE_CHARS
+
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", _wide_collector())
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    text = _request_text(store)
+    request = json.loads(text)
+    lines = text.split("\n")
+    assert lines[-1] == ""
+    lines.pop()
+    pages = request["input_pages"]
+    assert len(pages) > 2  # the fixture is big enough to need several pages
+    expected_offset = 1
+    for page in pages:
+        assert page["offset"] == expected_offset  # contiguous, no gap or overlap
+        chunk = lines[page["offset"] - 1 : page["offset"] - 1 + page["limit"]]
+        assert len(chunk) == page["limit"]
+        assert len("\n".join(chunk)) <= PAGE_CHARS
+        assert page["section"]
+        expected_offset += page["limit"]
+    assert expected_offset - 1 == len(lines)  # every line covered
+    # The header (with input_pages) fits in the first 40-line Read.
+    header = "\n".join(lines[:40])
+    assert '"input_pages": [' in header and f'"offset": {pages[-1]["offset"]}' in header
+    assert any("design_view.tables (" in p["section"] for p in pages)
+
+
+def test_hot_queries_skip_catalog_transaction_and_unknown_queries(monkeypatch, capsys, tmp_path):
+    collector = _collector(n_queries=0)
+    patterns = collector["queries"]["query_patterns"]
+
+    def noisy(qid: str, text: str, tables: list[str]) -> dict:
+        return {**_query(qid, "users", cps=1000.0), "query_text": text, "tables_accessed": tables}
+
+    patterns += [
+        noisy("catalog", "SELECT a.attname FROM pg_index i JOIN pg_attribute a", ["pg_index"]),
+        noisy("info", "SELECT * FROM information_schema.columns", ["information_schema.columns"]),
+        noisy("mysqlsys", "SELECT * FROM mysql.user", ["mysql.user"]),
+        noisy("begin", "BEGIN", ["unknown"]),
+        noisy("commit", "COMMIT", ["shop.users"]),
+        noisy("set", "SET statement_timeout = 0", ["shop.users"]),
+        noisy("show", "SHOW search_path", ["shop.users"]),
+        noisy("refresh", "REFRESH MATERIALIZED VIEW mv", ["shop.users"]),
+        noisy("unknown", "SELECT 1", ["unknown"]),
+        _query("real", "users", cps=1.0),
+    ]
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    hot = _request(store)["design_view"]["hot_queries"]
+    assert [q["query_id"] for q in hot] == ["real"]

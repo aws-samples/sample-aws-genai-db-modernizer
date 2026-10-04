@@ -32,7 +32,8 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 2. **Read input and domain expertise**
    a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_aurora_mysql.json`
       - In reading order it contains `migration_strategy`, `draft_fingerprint`
-        (checked by `--finalize`; do not copy it), `output_schema` (the JSON
+        (checked by `--finalize`; do not copy it), `input_pages` (the Read
+        pages that cover the file), `output_schema` (the JSON
         Schema of the delta you write, `AuroraDesignDeltaContract`) and
         `design_view`, a compact view of the deterministic draft built by the
         script from the shared draft builder
@@ -52,10 +53,12 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
           (`name [UNIQUE] (columns)`) and `foreign_keys` (`col -> table(col)`)
       - The draft itself and the collector output are not in the file, and you
         do not need them.
-      - On a large schema the file still runs to thousands of lines. Read it
-        with the Read tool in pages of `offset` and `limit: 1000` (halve
-        `limit` if Read refuses a page as too large). To jump to a section or
-        a table, search it with
+      - First Read it with `offset: 1` and `limit: 40` to see `input_pages`
+        (one page per line, right after `draft_fingerprint`). Then read
+        exactly the pages listed in `input_pages`, in order: one Read call per page with
+        that page's `offset` and `limit` (each page is sized to fit in one
+        Read). Every page's `section` says what it holds. To find one table
+        or section again, search the file with
         `uv run python scripts/search_artifacts.py '"table_name": "orders"' <request file>`.
         Never read it with `cat`, `sed`, `jq`, `grep` or a script.
    b. Read: `src/skills/aurora_mysql-data-modeling.md` (domain expertise

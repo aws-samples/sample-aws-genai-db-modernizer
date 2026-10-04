@@ -11,9 +11,11 @@ Every reference the delta makes (table, column, index) is checked against the
 draft; an unknown one is a merge error, never silently dropped (unless the
 caller asks for a lenient merge, which records the errors on the output).
 
-Nothing from the delta reaches DDL unparsed: types pass the contract's strict
+Nothing from the model reaches DDL unparsed: types pass the strict per-engine
 type grammar, and indexes are rendered from structured parts with quoted
-identifiers (``ddl_generator.render_index``). See ``sql_safety``.
+identifiers (``ddl_generator.render_index``); see ``sql_safety``. A legacy
+full-contract response goes through ``full_contract_to_delta`` first, so its
+DDL text is ignored and regenerated from the draft as well.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from src.contracts.aurora_design_delta import (
     AuroraDesignDeltaContract,
     IndexSpec,
     TypeRule,
-    is_enum_type,
+    validate_aurora_type,
 )
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
@@ -155,14 +157,11 @@ class MergeResult:
 
 
 def _check_dialect_type(engine: str, aurora_type: str, where: str, errors: list[str]) -> bool:
-    if is_enum_type(aurora_type) and engine != "aurora_mysql":
-        errors.append(
-            f"{where}: ENUM/SET literal types are Aurora MySQL only; on Aurora PostgreSQL "
-            "use TEXT (or a lookup table) and record the allowed values in a trade-off"
-        )
-        return False
-    if aurora_type.endswith("[]") and engine != "aurora_postgresql":
-        errors.append(f"{where}: array types ({aurora_type}) are Aurora PostgreSQL only")
+    """The contract checked the type for either engine; check it for this one."""
+    try:
+        validate_aurora_type(aurora_type, engine)
+    except ValueError as exc:
+        errors.append(f"{where}: {exc}")
         return False
     return True
 
@@ -524,3 +523,93 @@ def base_from_outputs(
     agent_collector, agent_analysis, _ = project_schema_design_input(collector, analysis)
     base = AuroraDesignBase.from_inputs(engine, agent_collector, collector_output)
     return base, agent_collector, agent_analysis
+
+
+def _same_type(a: str, b: str) -> bool:
+    return " ".join(a.lower().split()) == " ".join(b.lower().split())
+
+
+def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict | None, list[str]]:
+    """Convert a legacy full-contract response into a delta (issue #273, B1).
+
+    Nothing in a full contract is trusted as DDL. Its ``generated_ddl``,
+    ``foreign_keys`` and ``primary_key`` are ignored (the merge regenerates
+    them from the draft); each column whose ``aurora_type`` differs from the
+    draft becomes a ``column_types`` change (validated by the type grammar
+    when the delta is validated); each index statement is parsed with
+    ``parse_index_statement`` and becomes an add (new name) or a modify
+    (draft name, different definition). Draft indexes the response does not
+    list are kept. Unknown tables or columns, and indexes that do not parse,
+    are errors, never dropped. Returns ``(delta, errors)``.
+    """
+    errors: list[str] = []
+    by_key = {_table_key(t.table_name): t for t in base.tables}
+    draft = base.generate()
+    draft_types = {(t.table_name, c.name): c.aurora_type for t in draft.tables for c in t.columns}
+    draft_indexes = {
+        t.table_name: dict(zip(draft_index_names(src), t.index_sql, strict=True))
+        for src, t in zip(base.tables, draft.tables, strict=True)
+    }
+    tables: list[dict] = []
+    for i, table_def in enumerate(response.get("table_definitions") or []):
+        name = str((table_def or {}).get("table_name", ""))
+        table = by_key.get(_table_key(name))
+        if table is None:
+            errors.append(
+                f"table_definitions[{i}]: unknown table '{name}'; the draft has no such table"
+            )
+            continue
+        change: dict = {"table_name": table.table_name, "column_types": [], "add_indexes": []}
+        change["modify_indexes"] = []
+        columns = [c.column_name for c in table.columns]
+        for j, col in enumerate(table_def.get("columns") or []):
+            column = resolve_column(columns, str(col.get("name", "")))
+            if column is None:
+                errors.append(
+                    f"table_definitions[{i}].columns[{j}]: table '{table.table_name}' has no "
+                    f"column '{col.get('name')}'"
+                )
+                continue
+            aurora_type = str(col.get("aurora_type", ""))
+            if not _same_type(aurora_type, draft_types[(table.table_name, column)]):
+                change["column_types"].append({"column": column, "aurora_type": aurora_type})
+        existing = draft_indexes[table.table_name]
+        for j, statement in enumerate(table_def.get("indexes") or []):
+            where = f"table_definitions[{i}].indexes[{j}]"
+            try:
+                parsed = parse_index_statement(str(statement))
+            except SqlFragmentError as exc:
+                errors.append(f"{where}: {exc}")
+                continue
+            entry = {
+                "index_name": parsed.index_name,
+                "columns": parsed.columns,
+                "unique": parsed.unique,
+            }
+            if parsed.method:
+                entry["method"] = parsed.method
+            if _table_key(parsed.table) != _table_key(table.table_name):
+                errors.append(
+                    f"{where}: index '{parsed.index_name}' is not ON '{table.table_name}'"
+                )
+                continue
+            draft_name = _lookup(existing, parsed.index_name)
+            if draft_name is None:
+                change["add_indexes"].append(entry)
+            elif parsed.index_name and existing[draft_name] != _render(
+                base,
+                table,
+                _Index(parsed.index_name, parsed.columns, parsed.unique, parsed.method, [], None),
+            ):
+                change["modify_indexes"].append({**entry, "index_name": draft_name})
+        tables.append(change)
+    if errors:
+        return None, errors
+    delta = {
+        "delta_version": "1.0",
+        "tables": tables,
+        "optimizations": response.get("optimizations") or [],
+        "app_layer_notes": response.get("app_layer_notes") or [],
+        "trade_offs": response.get("trade_offs") or [],
+    }
+    return delta, []

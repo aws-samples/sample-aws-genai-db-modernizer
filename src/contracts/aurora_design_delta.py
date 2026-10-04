@@ -36,49 +36,49 @@ DELTA_VERSION = "1.0"
 # ---------------------------------------------------------------------------
 
 MAX_TYPE_LENGTH = 64
+MAX_ENUM_VALUES = 100
+MAX_ENUM_VALUE_LENGTH = 64
+MAX_ENUM_LENGTH = 2000
 
-# One or more words, optional (n) / (p, s), optional trailing words
-# (UNSIGNED, WITH TIME ZONE), optional [] array suffixes.
-_TYPE_GRAMMAR = re.compile(
-    r"[A-Za-z][A-Za-z0-9_]*(?: [A-Za-z][A-Za-z0-9_]*)*"
-    r"(?:\(\s*\d+\s*(?:,\s*\d+\s*)?\))?"
-    r"(?: [A-Za-z][A-Za-z0-9_]*)*"
-    r"(?:\[\])*"
+# Base type names each engine accepts (lower case, single spaces). A type is
+# a base name, an optional (n) / (p, s), an optional engine-specific suffix and,
+# on PostgreSQL only, [] array suffixes. Anything else, including a function
+# call such as pg_sleep(10), is rejected.
+_PG_BASES = (
+    frozenset("""smallint integer int int2 int4 int8 bigint decimal numeric real float float4 float8
+    smallserial serial serial2 serial4 serial8 bigserial money char character varchar text citext
+    bytea timestamp timestamptz date time timetz interval boolean bool uuid json jsonb xml
+    inet cidr macaddr macaddr8 tsvector tsquery point line lseg box path polygon circle bit
+    varbit int4range int8range numrange tsrange tstzrange daterange oid hstore geometry
+    geography vector""".split()) | {"double precision", "character varying", "bit varying"}
+)
+_MYSQL_BASES = (
+    frozenset(
+        """tinyint smallint mediumint int integer bigint decimal dec numeric fixed float double
+    real bit bool boolean date datetime timestamp time year char varchar binary varbinary
+    tinyblob blob mediumblob longblob tinytext text mediumtext longtext json geometry point
+    linestring polygon multipoint multilinestring multipolygon geometrycollection nchar
+    nvarchar""".split()
+    )
+    | {"double precision", "national char", "national varchar"}
+)
+_PG_SUFFIXES = frozenset({"", "with time zone", "without time zone"})
+_MYSQL_SUFFIXES = frozenset({"", "unsigned", "signed", "zerofill", "unsigned zerofill"})
+ENGINE_TYPE_RULES = {
+    "aurora_postgresql": (_PG_BASES, _PG_SUFFIXES, True),
+    "aurora_mysql": (_MYSQL_BASES, _MYSQL_SUFFIXES, False),
+}
+
+_TYPE_SHAPE = re.compile(
+    r"(?P<pre>[A-Za-z][A-Za-z0-9_]*(?: [A-Za-z][A-Za-z0-9_]*)*)"
+    r"(?P<params>\(\s*\d+\s*(?:,\s*\d+\s*)?\))?"
+    r"(?P<post>(?: [A-Za-z][A-Za-z0-9_]*)*)"
+    r"(?P<arrays>(?:\[\])*)"
 )
 # MySQL ENUM('a','b') / SET('a','b'): single-quoted literals, '' escapes only.
 _LITERAL = r"'(?:[^'\\\n\r]|'')*'"
 _ENUM_GRAMMAR = re.compile(
     rf"(?:ENUM|SET)\s*\(\s*{_LITERAL}(?:\s*,\s*{_LITERAL})*\s*\)", re.IGNORECASE
-)
-# Words that turn a type into a column constraint, a default or a statement.
-_FORBIDDEN_TYPE_WORDS = frozenset(
-    {
-        "ALTER",
-        "AS",
-        "AUTO_INCREMENT",
-        "CHECK",
-        "COLLATE",
-        "CONSTRAINT",
-        "CREATE",
-        "DEFAULT",
-        "DELETE",
-        "DROP",
-        "GENERATED",
-        "GRANT",
-        "IDENTITY",
-        "INSERT",
-        "KEY",
-        "NOT",
-        "NULL",
-        "ON",
-        "PRIMARY",
-        "REFERENCES",
-        "REVOKE",
-        "SELECT",
-        "TRUNCATE",
-        "UNIQUE",
-        "UPDATE",
-    }
 )
 
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
@@ -88,32 +88,76 @@ def is_enum_type(aurora_type: str) -> bool:
     return bool(_ENUM_GRAMMAR.fullmatch(aurora_type))
 
 
-def validate_aurora_type(value: str) -> str:
+def _check_enum(value: str) -> str:
+    literals = re.findall(_LITERAL, value)
+    if len(value) > MAX_ENUM_LENGTH:
+        raise ValueError(f"ENUM/SET type longer than {MAX_ENUM_LENGTH} characters")
+    if len(literals) > MAX_ENUM_VALUES:
+        raise ValueError(f"ENUM/SET has more than {MAX_ENUM_VALUES} values")
+    if any(len(lit) - 2 > MAX_ENUM_VALUE_LENGTH for lit in literals):
+        raise ValueError(f"ENUM/SET value longer than {MAX_ENUM_VALUE_LENGTH} characters")
+    return value
+
+
+def _type_error(engine: str | None, normalized: str) -> str | None:
+    """Why ``normalized`` is not a valid type for ``engine`` (None = either engine)."""
+    shape = _TYPE_SHAPE.fullmatch(normalized)
+    if shape is None:
+        return "is not a plain SQL type"
+    words = shape.group("pre").lower().split()
+    post = shape.group("post").lower().split()
+    engines = [engine] if engine else list(ENGINE_TYPE_RULES)
+    reasons = []
+    for name in engines:
+        bases, suffixes, arrays_ok = ENGINE_TYPE_RULES[name]
+        base_len = next((n for n in (3, 2, 1) if " ".join(words[:n]) in bases), 0)
+        if not base_len:
+            reasons.append(f"'{' '.join(words)}' is not an {name} type")
+            continue
+        suffix = " ".join([*words[base_len:], *post])
+        if suffix not in suffixes:
+            reasons.append(f"'{suffix}' is not a valid {name} type modifier")
+            continue
+        if shape.group("arrays") and not arrays_ok:
+            reasons.append(f"array types are not {name} types")
+            continue
+        return None
+    return "; ".join(reasons)
+
+
+def validate_aurora_type(value: str, engine: str | None = None) -> str:
     """Return ``value`` normalized (trimmed, single spaces) or raise ``ValueError``.
 
-    Accepts ``BIGINT``, ``VARCHAR(255)``, ``NUMERIC(10, 2)``, ``DOUBLE PRECISION``,
-    ``TIMESTAMP(3) WITH TIME ZONE``, ``INT UNSIGNED``, ``TEXT[]`` and MySQL
-    ``ENUM('a','b')`` / ``SET(...)``. Rejects anything else, including
-    ``BIGINT); DROP TABLE users; --`` and ``INT, `evil` TEXT``.
+    A type is an allowlisted base type name for the engine (``BIGINT``,
+    ``VARCHAR``, ``DOUBLE PRECISION``, ...), an optional ``(n)`` / ``(p, s)``,
+    an engine-specific suffix (``WITH TIME ZONE`` on PostgreSQL, ``UNSIGNED``
+    on MySQL) and, on PostgreSQL, ``[]`` arrays; or, on MySQL, ``ENUM`` /
+    ``SET`` with quoted literals (capped in count and length). ``engine=None``
+    accepts a type valid for either engine; the merge re-checks per engine.
+    Rejects anything else, including ``BIGINT); DROP TABLE users; --``,
+    ``INT, `evil` TEXT``, ``INT NOT NULL`` and ``pg_sleep(10)``.
     """
     if not isinstance(value, str):
         raise ValueError("aurora_type must be a string")
-    if is_enum_type(value.strip()):
-        return value.strip()
+    stripped = value.strip()
+    if is_enum_type(stripped):
+        if engine not in (None, "aurora_mysql"):
+            raise ValueError(
+                f"aurora_type {value!r}: ENUM/SET literal types are Aurora MySQL only; on "
+                "Aurora PostgreSQL use TEXT (or a lookup table)"
+            )
+        return _check_enum(stripped)
     normalized = " ".join(value.split())
     if not normalized:
         raise ValueError("aurora_type must not be blank")
     if len(normalized) > MAX_TYPE_LENGTH:
         raise ValueError(f"aurora_type longer than {MAX_TYPE_LENGTH} characters")
-    if not _TYPE_GRAMMAR.fullmatch(normalized):
+    error = _type_error(engine, normalized)
+    if error:
         raise ValueError(
-            f"aurora_type {value!r} is not a plain SQL type (e.g. BIGINT, VARCHAR(255), "
-            "NUMERIC(10,2), TIMESTAMP WITH TIME ZONE, ENUM('a','b'))"
+            f"aurora_type {value!r} {error} (give only the type, e.g. BIGINT, "
+            "VARCHAR(255), NUMERIC(10,2))"
         )
-    words = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", normalized.upper()))
-    bad = sorted(words & _FORBIDDEN_TYPE_WORDS)
-    if bad:
-        raise ValueError(f"aurora_type {value!r} contains {', '.join(bad)}; give only the type")
     return normalized
 
 
