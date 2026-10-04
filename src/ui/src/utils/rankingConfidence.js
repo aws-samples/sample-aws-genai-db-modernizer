@@ -25,3 +25,27 @@ export function analysisConfidence(item) {
   const value = item?.analysis_confidence ?? item?.confidence_score;
   return isNumber(value) ? value : null;
 }
+
+const defaultT = (key, { defaultValue, ...vars } = {}) => {
+  let text = defaultValue !== undefined ? defaultValue : key;
+  Object.entries(vars).forEach(([name, value]) => { text = text.split(`{{${name}}}`).join(value); });
+  return text;
+};
+
+/**
+ * The Target Database Details alert for one ranking entry (#152): the routed fit
+ * with the queries it covers, or the legacy wording on the analysis average.
+ */
+export function confidenceAlertText(item, t = defaultT) {
+  if (hasRoutedConfidence(item)) {
+    return t('report-results.target-db-mapping.routed-confidence-alert', {
+      score: engineConfidence(item),
+      count: item.routed_queries ?? 0,
+      defaultValue: 'The queries routed to this database fit it at {{score}}% on average ({{count}} queries)',
+    });
+  }
+  return t('report-results.target-db-mapping.confidence-alert', {
+    score: engineConfidence(item),
+    defaultValue: 'This database is recommended with {{score}}% confidence based on workload analysis',
+  });
+}

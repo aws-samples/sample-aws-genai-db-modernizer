@@ -1,4 +1,4 @@
-import { analysisConfidence, engineConfidence, hasRoutedConfidence } from '../rankingConfidence';
+import { analysisConfidence, confidenceAlertText, engineConfidence, hasRoutedConfidence } from '../rankingConfidence';
 import { formatCacheLayerLine } from '../cacheLayer';
 
 describe('engineConfidence (#152)', () => {
@@ -63,5 +63,20 @@ describe('buildReportHtml ranking (#152)', () => {
     expect(cards[1]).toContain('Fit of routed queries');
     expect(cards[1]).toContain('Analysis average 2%');
     expect(doc.body.textContent).toContain('ranked by share of the workload');
+  });
+});
+
+describe('confidenceAlertText (Target Database Details, #152)', () => {
+  it('states the routed fit, not the analysis average', () => {
+    const item = { target: 'opensearch', confidence_score: 2, routed_confidence: 60, routed_queries: 3 };
+    expect(confidenceAlertText(item)).toBe(
+      'The queries routed to this database fit it at 60% on average (3 queries)',
+    );
+  });
+
+  it('keeps the legacy wording for a report without routed confidence', () => {
+    expect(confidenceAlertText({ target: 'dynamodb', confidence_score: 48 })).toBe(
+      'This database is recommended with 48% confidence based on workload analysis',
+    );
   });
 });

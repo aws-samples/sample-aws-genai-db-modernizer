@@ -31,7 +31,7 @@ import ApiManager from "../classes/ApiManager";
 import SectionSeparator from "../components/SectionSeparator";
 import { buildReportHtml, normalizeTradeoff, riskHasContent } from "../utils/ReportHtmlExport";
 import { splitRankingByRole, formatCacheLayerLine } from "../utils/cacheLayer";
-import { analysisConfidence, engineConfidence, hasRoutedConfidence } from "../utils/rankingConfidence";
+import { analysisConfidence, confidenceAlertText, engineConfidence, hasRoutedConfidence } from "../utils/rankingConfidence";
 
 
 
@@ -1014,7 +1014,7 @@ const ReportResultsPage = memo(() => {
                       content: (
                         <SpaceBetween size="m">
                           <Alert type="info">
-                            {t('report-results.target-db-mapping.confidence-alert', { score: item.confidence_score })}
+                            {confidenceAlertText(item, t)}
                           </Alert>
 
                           <ColumnLayout columns={2} variant="text-grid">
