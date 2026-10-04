@@ -55,6 +55,7 @@ from pptx.util import Inches, Pt
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.ranking import engine_confidence
 
 from .renderers import (
     SEARCH_READ_MODEL,
@@ -754,7 +755,9 @@ def _evidence_signal(
     return pool[0]
 
 
-def _sequencing_rule_text(engines: list[dict[str, Any]], conf: dict[str, float]) -> str:
+def _sequencing_rule_text(
+    engines: list[dict[str, Any]], conf: dict[str, float], routed: bool = False
+) -> str:
     """The Engine Confidence slide's statement of the wave rule ``derive()`` applies.
 
     No-migration steps (cache layer, retained engine) always form Wave 1 because
@@ -763,10 +766,18 @@ def _sequencing_rule_text(engines: list[dict[str, Any]], conf: dict[str, float])
     sequenced last") while Wave 1 held a 48% cache layer (#220). Every
     no-migration engine under the floor is named, so the exception is explicit;
     the migration-target clause is dropped when there are none.
+
+    With ``routed`` (the report carries ``routed_confidence``, #152) the slide says
+    what the figure is: the fit of the work each engine was given.
     """
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
     has_targets = any(e["role"] == "Migration target" for e in engines)
-    text = "Confidence is the assessment's own measure of evidence strength, not a forecast. "
+    text = (
+        "Confidence is the mean fit of the queries routed to each engine (for the cache "
+        "layer, of the reads it fronts), not a forecast. "
+        if routed
+        else "Confidence is the assessment's own measure of evidence strength, not a forecast. "
+    )
     if no_move:
         low = [e for e in no_move if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
         named = (
@@ -827,7 +838,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         return f"{workload.get(eng, 0):.1f}% of workload"
 
     ranking = [r for r in (rep.get("ranking") or []) if isinstance(r, dict)]
-    conf = {r.get("target"): float(r.get("confidence_score") or 0) for r in ranking}
+    # Routed confidence (#152): the fit of the queries routed to each engine, not
+    # the average over every table it analyzed; a legacy report keeps the latter
+    conf = {r.get("target"): engine_confidence(r) for r in ranking}
+    routed = any(r.get("routed_confidence") is not None for r in ranking)
     workload = {r.get("target"): float(r.get("workload_percent") or 0) for r in ranking}
     by_workload = sorted(
         ranking, key=lambda r: (-(r.get("workload_percent") or 0), str(r.get("target")))
@@ -909,11 +923,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # 1. the engine the assessment is least sure of; 2. the engine carrying the
     # most HIGH risks; 3. the engines that need no data migration at all.
     decisions: list[dict[str, Any]] = []
-    ranked_conf = sorted(
-        ranking, key=lambda r: (float(r.get("confidence_score") or 0), str(r.get("target")))
-    )
+    ranked_conf = sorted(ranking, key=lambda r: (engine_confidence(r), str(r.get("target"))))
     weakest = ranked_conf[0] if ranked_conf else None
-    if weakest and float(weakest.get("confidence_score") or 0) < CONFIDENCE_FLOOR:
+    if weakest and engine_confidence(weakest) < CONFIDENCE_FLOOR:
         eng = str(weakest.get("target") or "")
         # A truncated journey list holds only part of the workload, so counting
         # "routed to" from it would undercount: treat it as missing and let the
@@ -1067,6 +1079,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "migrated": migrated,
         "ranking": by_workload,
         "conf": conf,
+        "routed_confidence": routed,
         "workload": workload,
         "cache": cache,
         "summary": prettify_engines(
@@ -1532,7 +1545,7 @@ def slide_decisions(prs, f):
     tf = textbox(s, 0.67, 4.05, 5.55, 2.00)
     para(
         tf,
-        _sequencing_rule_text(f["engines"], f["conf"]),
+        _sequencing_rule_text(f["engines"], f["conf"], routed=f["routed_confidence"]),
         size=11.0,
         color=WHITE,
         first=True,
