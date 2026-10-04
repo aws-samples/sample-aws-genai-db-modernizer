@@ -8,15 +8,20 @@ candidate, so their free text can still recommend it. This module makes sure the
 customer-facing report only recommends engines that are part of the target.
 
 Rule for risks (never dropped, severity never changed): a sentence *recommends* an
-eliminated engine when the nearest cue in the three words before the engine is a
-recommend cue ("with OpenSearch", "to OpenSearch", "use OpenSearch"), or, with no cue
-there and no sentence-wide trade-off cue, when the engine is the proposed doer
-("OpenSearch can handle ..."). A nearest trade-off cue ("without", "instead of",
-"consolidating", "from") keeps it. Descriptions never lose a sentence: one that
-recommends an eliminated engine gets a note that the engine is not part of the target.
-Mitigations drop recommending sentences; an emptied mitigation is replaced by a re-plan
-hint that names the absorbing engine only when the risk's queries are actually assigned
-to it. Every rewritten risk carries a ``grounding_note``.
+eliminated engine when the nearest cue in the three words before the engine, within its
+clause, is a recommend cue ("with OpenSearch", "to OpenSearch", "use OpenSearch"), or,
+with no cue there and no sentence-wide trade-off cue, when the engine is the proposed
+doer ("OpenSearch can handle ..."). A nearest trade-off cue ("without", "instead of",
+"consolidating", "from", "between") keeps it. An engine listed as an alternative right
+after "or"/"and" takes the cue before the whole list ("in the relational database or
+OpenSearch", #253); that list-derived cue yields to a sentence-wide trade-off cue and
+to a clause verb right after the mention ("... and OpenSearch is no longer required").
+Descriptions never lose a sentence: one that recommends an eliminated engine gets a note
+that the engine is not part of the target. Mitigations lose only the eliminated
+alternative when it ends a list, and otherwise drop recommending sentences; an emptied
+mitigation is replaced by a re-plan hint that names the absorbing engine only when the
+risk's queries are actually assigned to it. Every rewritten risk carries a
+``grounding_note``.
 """
 
 from __future__ import annotations
@@ -152,16 +157,23 @@ _TRADE_OFF_CUE = re.compile(
 )
 # An engine listed as an alternative ("in the relational database or OpenSearch",
 # "with Aurora MySQL, ElastiCache, or OpenSearch") is governed by the cue before the
-# whole list (#253): after a conjunction the window extends, within the same clause,
-# until a cue or a clause verb ("Data in DynamoDB is denormalized and OpenSearch ...").
+# whole list (#253). The window extends past a conjunction only when the conjunction
+# directly precedes the mention (optionally with an article), stays within the clause,
+# and stops at a clause verb. The list-derived cue is weaker than an adjacent one: it
+# yields to a sentence-wide trade-off cue, and a clause verb right after the mention
+# ("... and OpenSearch is no longer required") means "and" joined two clauses.
 _ALTERNATIVE = re.compile(r"^(?:or|and)$", re.IGNORECASE)
+_ARTICLE = re.compile(r"^(?:the|a|an|amazon)$", re.IGNORECASE)
 _ALTERNATIVE_WINDOW = 8
 _CLAUSE_BREAK = re.compile(r"[;:!?]|\.\s")
-_CLAUSE_VERB = re.compile(
-    r"^(?:is|are|was|were|be|been|being|has|have|had|does|do|did|can|will|would|should|"
-    r"must|may|might|need|needs)$",
-    re.IGNORECASE,
+_CLAUSE_VERB_WORDS = (
+    r"is|are|was|were|be|been|being|has|have|had|does|do|did|can|will|would|should|"
+    r"must|may|might|need|needs"
 )
+_CLAUSE_VERB = re.compile(rf"^(?:{_CLAUSE_VERB_WORDS})$", re.IGNORECASE)
+# A clause verb in the first two words after a mention ("OpenSearch is ...",
+# "OpenSearch domain is ...").
+_VERB_AFTER = re.compile(rf"^[^\w;:]*(?:\w+\s+)?(?:{_CLAUSE_VERB_WORDS})\b", re.IGNORECASE)
 _RECOMMEND_CUE = re.compile(
     r"^(?:with|to|use|using|uses|via|in|into|on|through|offload\w*|adopt\w*|leverag\w*|"
     r"consider\w*|move|moving|route|routing|stream|streaming|index|indexing|sync|syncing|"
@@ -185,15 +197,16 @@ _RECOMMEND_AFTER = re.compile(
 
 
 def _mention_cue(before: str) -> str | None:
-    """``"trade_off"``/``"recommend"`` for the nearest cue in the words before a mention.
+    """The nearest cue in the words before a mention, within the mention's clause.
 
-    The window is the three words before the mention, extended past a conjunction to
-    the cue that governs a list of alternatives (#253), within the same clause.
+    ``"recommend"``/``"trade_off"`` for a cue in the three words before the mention;
+    ``"list_recommend"`` for a recommend cue reached past a conjunction that directly
+    precedes the mention ("in the relational database or OpenSearch", #253).
     """
-    words = re.findall(r"[A-Za-z]+", before)
-    clause_words = len(re.findall(r"[A-Za-z]+", _CLAUSE_BREAK.split(before)[-1]))
+    words = re.findall(r"[A-Za-z]+", _CLAUSE_BREAK.split(before)[-1])
     limit = _CUE_WINDOW
     in_list = False
+    adjacent = True  # only articles so far between the conjunction and the mention
     for k, i in enumerate(range(len(words) - 1, -1, -1), start=1):
         if k > limit:
             break
@@ -203,21 +216,23 @@ def _mention_cue(before: str) -> str | None:
         if _TRADE_OFF_CUE.match(word):
             return "trade_off"
         if _RECOMMEND_CUE.match(word):
-            return "recommend"
+            return "list_recommend" if in_list else "recommend"
         if in_list and _CLAUSE_VERB.match(word):
             return None
-        if _ALTERNATIVE.match(word) and k < clause_words:
+        if adjacent and _ALTERNATIVE.match(word) and k < len(words):
             in_list = True
-            limit = max(limit, min(k + _ALTERNATIVE_WINDOW, clause_words))
+            limit = max(limit, min(k + _ALTERNATIVE_WINDOW, len(words)))
+        adjacent = adjacent and bool(_ARTICLE.match(word))
     return None
 
 
 def _recommends(sentence: str, engines: Iterable[str]) -> bool:
     """True when ``sentence`` recommends one of ``engines``.
 
-    Decided per mention by the nearest cue in the three words before it; with no cue
-    there, a sentence-wide trade-off cue keeps it, else "X can/should handle ..."
-    after the mention makes it a recommendation.
+    Decided per mention by the nearest cue before it (see ``_mention_cue``). An adjacent
+    recommend cue decides. A list-derived one yields to a sentence-wide trade-off cue
+    and to a clause verb right after the mention. With no cue, a sentence-wide trade-off
+    cue keeps it, else "X can/should handle ..." after the mention recommends.
     """
     targets = set(engines)
     for engine, start, end in engine_mentions(sentence):
@@ -226,7 +241,12 @@ def _recommends(sentence: str, engines: Iterable[str]) -> bool:
         cue = _mention_cue(sentence[:start])
         if cue == "recommend":
             return True
-        if cue == "trade_off" or _SENTENCE_TRADE_OFF.search(sentence):
+        trade_off = bool(_SENTENCE_TRADE_OFF.search(sentence))
+        if cue == "list_recommend":
+            if not trade_off and not _VERB_AFTER.match(sentence[end:]):
+                return True
+            continue
+        if cue == "trade_off" or trade_off:
             continue
         if _RECOMMEND_AFTER.match(sentence[end:]):
             return True
@@ -243,17 +263,19 @@ def recommends_engine(text: str, engine: str) -> bool:
 
 
 # A trailing alternative ("..., or OpenSearch", "... or in Amazon OpenSearch") that
-# ends its phrase: followed by punctuation, the end, or a "for"/"as" complement.
+# ends its phrase: followed by punctuation, the end, or a "for" complement.
 _ALT_LEAD = r"(?:(?:in|on|to|into|with|via|using|use)\s+)?(?:the\s+)?(?:amazon\s+)?"
-_ALT_END = r"(?=\s*(?:[;,.:)]|$)|\s+(?:for|as)\b)"
+_ALT_END = r"(?=\s*(?:[;,.:)]|$)|\s+for\b)"
+_RECOMMEND_WORD = re.compile(rf"\b{_RECOMMEND_CUE.pattern[1:-1]}\b", re.IGNORECASE)
 
 
 def _prune_alternative(sentence: str, engine: str) -> str | None:
     """``sentence`` without ``engine`` where it is the last of several alternatives (#253).
 
     "Keep in the relational database or OpenSearch; ..." -> "Keep in the relational
-    database; ...", "with A, B, or OpenSearch" -> "with A or B". None when the engine is
-    not such an alternative.
+    database; ...", "with A, B(,) or OpenSearch" -> "with A or B", "in A, B and
+    OpenSearch" -> "in A and B". Only the list after the governing cue is rewritten.
+    None when the engine is not such an alternative.
     """
     m = re.search(
         rf"(,?)\s+(or|and)\s+{_ALT_LEAD}(?:{_ENGINE_PATTERNS[engine].pattern}){_ALT_END}",
@@ -264,9 +286,11 @@ def _prune_alternative(sentence: str, engine: str) -> str | None:
         return None
     head = sentence[: m.start()]
     clause_start = max(head.rfind(";"), head.rfind(":")) + 1
-    last_comma = head.rfind(",", clause_start)
-    if m.group(1) and last_comma != -1:
-        # "A, B, or C" minus C is "A or B".
+    cues = list(_RECOMMEND_WORD.finditer(head, clause_start))
+    list_start = cues[-1].end() if cues else clause_start
+    last_comma = head.rfind(",", list_start)
+    if last_comma != -1:
+        # "A, B, or C" / "A, B or C" minus C is "A or B".
         head = f"{head[:last_comma]} {m.group(2)}{head[last_comma + 1 :]}"
     return head + sentence[m.end() :]
 

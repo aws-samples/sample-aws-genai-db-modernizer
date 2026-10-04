@@ -119,3 +119,100 @@ class TestMitigationLosesOnlyTheEliminatedAlternative:
             "(OpenSearch is not part of the target architecture; its queries run on "
             "Aurora MySQL.)"
         )
+
+
+# Review of #253: "and"/", and" joining two clauses is not a list of alternatives.
+_CLAUSE_KEEP_CASES = [
+    ("Store the rows in Aurora MySQL and OpenSearch is no longer required.", "opensearch"),
+    ("Store the data in Aurora MySQL and the OpenSearch domain is removed.", "opensearch"),
+    ("Paginate in the application, and OpenSearch is out of scope.", "opensearch"),
+    ("Keep the join in Aurora MySQL and avoid OpenSearch.", "opensearch"),
+    (
+        "Unbounded scan of wp_options in the relational database and ElastiCache is not a fit.",
+        "elasticache",
+    ),
+    ("Previously the plan routed this to DynamoDB or OpenSearch.", "opensearch"),
+    ("Keep the rows in Aurora MySQL; OpenSearch is not used.", "opensearch"),
+    ("Index the rows in Aurora MySQL; OpenSearch was dropped.", "opensearch"),
+]
+
+
+@pytest.mark.parametrize(("sentence", "engine"), _CLAUSE_KEEP_CASES)
+def test_clause_joined_mention_is_not_a_recommendation(sentence: str, engine: str) -> None:
+    assert not recommends_engine(sentence, engine)
+
+
+def test_cue_window_does_not_cross_a_semicolon() -> None:
+    assert not recommends_engine("Keep the rows in Aurora; OpenSearch.", "opensearch")
+
+
+@pytest.mark.parametrize(("sentence", "engine"), _CLAUSE_KEEP_CASES)
+def test_clause_joined_mention_does_not_resolve_an_open_risk(sentence: str, engine: str) -> None:
+    """``recommends_engine`` also decides anti-pattern resolution (#221): advice that only
+    mentions the engine the queries moved to must not resolve the risk."""
+    from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
+    from src.agents.referee.synthesis_report import build_risk_assessment
+
+    data = SynthesisData(job_id="j", database_name="db")
+    data.engines["aurora_mysql"] = EngineArtifacts(
+        "aurora_mysql",
+        analysis={
+            "workload_analysis": {
+                "anti_patterns_detected": [
+                    {
+                        "anti_pattern_type": "hot-key",
+                        "description": "Hot key reads.",
+                        "recommendation": sentence,
+                        "query_ids": ["q1"],
+                        "table_ids": ["t1"],
+                        "severity_weight": 0.9,
+                    }
+                ]
+            }
+        },
+        schema_design={},
+    )
+    data.engines[engine] = EngineArtifacts(engine, analysis={}, schema_design={})
+    data.assignment = {
+        "query_assignments": [
+            {"query_id": "q1", "assigned_engine": engine},
+            {"query_id": "q2", "assigned_engine": "aurora_mysql"},
+        ]
+    }
+    out = build_risk_assessment(data)
+    assert out["resolved_risks"] == []
+    risk = next(r for r in out["risks"] if r.get("reattributed_from") == "aurora_mysql")
+    assert risk["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    ("mitigation", "expected"),
+    [
+        (
+            "Serve it with Aurora MySQL, ElastiCache or OpenSearch.",
+            "Serve it with Aurora MySQL or ElastiCache.",
+        ),
+        (
+            "Keep it in Aurora MySQL, ElastiCache and OpenSearch.",
+            "Keep it in Aurora MySQL and ElastiCache.",
+        ),
+        (
+            "For small tables, keep it in Aurora MySQL or OpenSearch.",
+            "For small tables, keep it in Aurora MySQL.",
+        ),
+        (
+            "For small tables, keep it in Aurora MySQL, ElastiCache, or OpenSearch.",
+            "For small tables, keep it in Aurora MySQL or ElastiCache.",
+        ),
+    ],
+)
+def test_list_tail_grammar(mitigation: str, expected: str) -> None:
+    assert ground_risks([_risk(mitigation)], ELIM)[0]["mitigation"] == expected
+
+
+def test_as_complement_is_not_pruned() -> None:
+    # "and OpenSearch as the search tier" is not a trailing alternative; drop the sentence.
+    out = ground_risks(
+        [_risk("Add an index. Use Aurora MySQL and OpenSearch as the search tier.")], ELIM
+    )
+    assert out[0]["mitigation"] == "Add an index."
