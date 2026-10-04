@@ -430,6 +430,18 @@ def cache_layer_text(n: int, share: float) -> str:
     return f"{n} cached {plural_noun(n, 'read')} \u00b7 {fmt_num(share, 1)}% of calls"
 
 
+DASH = "\u2014"
+
+
+def _rationale_text(value: Any) -> str:
+    """A rationale as text; legacy reports may carry a list of reasons or nothing."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value if v)
+    return ""
+
+
 def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The full target architecture, one entry per engine, ordered by workload.
 
@@ -508,9 +520,11 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
                 # the scope text is not parsed because it can carry two numbers.
                 "migrates": migrates,
                 "cost": costs.get(eng),
-                "rationale": next(
-                    (d.get("rationale") for d in dbs if d.get("service") == eng),
-                    r.get("assignment_reason_summary") or "",
+                # Synthesis's per-engine rationale, built from the routed workload
+                # (#152); the ranking entry carries it for engines `databases` omits
+                "rationale": _rationale_text(
+                    next((d.get("rationale") for d in dbs if d.get("service") == eng), None)
+                    or r.get("rationale")
                 ),
             }
         )
@@ -634,6 +648,7 @@ body { font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,Roboto,
 .arch-box svg { max-width:100%; height:auto; }
 table { border-collapse:collapse; width:100%; font-size:.9rem; }
 th,td { text-align:left; padding:.55rem .6rem; border-bottom:1px solid #eef0f2; vertical-align:top; }
+td.why { font-size:.8rem; color:#4b5563; max-width:26rem; }
 thead th { background:#1a1a2e; color:#fff; font-weight:600; }
 tbody tr:last-child td { border-top:2px solid #d1d5db; font-weight:600; }
 .badge { display:inline-block; font-size:.72rem; padding:.28em .7em; border-radius:20px;
@@ -821,7 +836,7 @@ def render_decision_report_html(
         out += [
             "<div class=card><div class=card-b>",
             "<table><thead><tr><th>Engine</th><th>Role</th><th>Workload</th>"  # nosemgrep: string-concat-in-list -- intentional multi-line string
-            "<th>Scope</th><th>Est. monthly</th></tr></thead><tbody>",
+            "<th>Scope</th><th>Est. monthly</th><th>Why</th></tr></thead><tbody>",
         ]
         total_cost = 0.0
         total_wl = 0.0
@@ -837,14 +852,15 @@ def render_decision_report_html(
                 f"<td class=role>{esc(e['role'])}</td>"
                 f"<td>{_workload_cell(e)}</td>"
                 f"<td>{esc(e['scope'])}</td>"
-                f"<td>{_fmt_usd(c)}</td></tr>"
+                f"<td>{_fmt_usd(c)}</td>"
+                f"<td class=why>{esc(e['rationale'] or DASH)}</td></tr>"
             )
         out.append(
             f"<tr><td colspan=2>Total</td>"
             f"<td>{total_wl:.0f}%</td>"
             f"<td>{migrated} {plural_noun(migrated, 'table')} "
             f"{plural_verb(migrated, 'migrates', 'migrate')}</td>"
-            f"<td>{_fmt_usd(total_cost)}</td></tr>"
+            f"<td>{_fmt_usd(total_cost)}</td><td></td></tr>"
         )
         out.append("</tbody></table></div></div>")
 
@@ -1143,6 +1159,32 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         "groups.",
         "",
     ]
+
+    target_engines = _architecture_engines(report)
+    if target_engines:
+        # Why each engine is in the target, from the workload routed to it (#152)
+        out += [
+            "## Target engines",
+            "",
+            "| Engine | Role | Workload | Why |",
+            "|---|---|---|---|",
+        ]
+        for e in target_engines:
+            cached = e.get("cached_queries")
+            share = (
+                cache_layer_text(int(cached), float(e.get("cached_call_share") or 0))
+                if cached is not None
+                else (
+                    f"{fmt_num(e['workload'], 1)}%"
+                    if isinstance(e.get("workload"), (int, float))
+                    else "-"
+                )
+            )
+            out.append(
+                f"| {escaping.md_cell(e['engine'])} | {escaping.md_cell(e['role'])} "
+                f"| {escaping.md_cell(share)} | {escaping.md_cell(e['rationale'] or '-')} |"
+            )
+        out.append("")
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     if mappings:
