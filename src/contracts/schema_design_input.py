@@ -288,6 +288,13 @@ class SchemaDesignGroupEntry(BaseModel):
     query_count: int = Field(..., ge=0)
     table_count: int = Field(..., ge=0)
     input_file: str = Field(..., description="Filename relative to the schema version dir")
+    input_pages: list[dict[str, int]] = Field(
+        default_factory=list,
+        description=(
+            "Read tool pages ({offset, limit}, 1-based lines) that cover input_file, "
+            "each small enough for one Read call"
+        ),
+    )
 
 
 class SchemaDesignGroupsManifest(BaseModel):

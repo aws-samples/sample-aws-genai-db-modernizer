@@ -3,7 +3,7 @@
 
 Designs the complete DynamoDB schema: table structure, access patterns, GSIs, and trade-offs.
 
-**ALWAYS uses the split→per-group→merge pattern** regardless of query count. This matches cloud production behavior where queries are split into groups of ~20 for parallel processing.
+**ALWAYS uses the split→per-group→merge pattern** regardless of query count. This matches cloud production behavior where queries are split into groups of ~20 for parallel processing: at most 20 queries per group, and fewer when a group's input would not fit in two Read pages (`--split` halves such a group until each part fits).
 
 ## Tool Use
 
@@ -37,14 +37,14 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
 2. **Read the groups**
 
-   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables`, `input_file` and `draft` (paths under the artifact root, e.g. `artifacts/{database_name}/…`). Use it instead of reading the manifest.
+   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables`, `input_file`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft` (paths under the artifact root, e.g. `artifacts/{database_name}/…`). Use it instead of reading the manifest.
 
 3. **Write one draft per group**
 
-   Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{INPUT_FILE}` and `{DRAFT}` = that group's `input_file` and `draft`, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
+   Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{INPUT_FILE}`, `{INPUT_PAGES}` and `{DRAFT}` = that group's `input_file`, `input_pages` and `draft`, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
    ```text
-   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
    ```
 
    If you are yourself a subagent, do the Group draft task for each group yourself, one after another.
@@ -88,14 +88,17 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
 ## Group draft task
 
+Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files.
+
 For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json` (and run `--check-costs` on it). Do not run `--merge` or `--finalize`, do not update `.modernizer-state.json`, and do not touch other groups' drafts. Do not dispatch subagents yourself. Return a short summary: tables, access patterns, `validation_passed`.
 
 1. Read your group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
-   - Contains: `collector_output` (filtered queries + tables) and `analysis_output`
+   - Read it with the Read tool, one call per page of the group's `input_pages` (`offset`, `limit`); with no pages given, read 400 lines per call (`offset` 1, 401, 801, …) until a call returns fewer lines. Each page fits one Read call, so do not page it any other way.
+   - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
 2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
 3. Read the output contract: `src/contracts/dynamodb_model_output.py`
 4. Design the schema following Phase 3 from the skill
-5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`
+5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`, the whole JSON in one Write tool call (fix it later with Edit). Do not generate it with a script.
 6. Run the cost / hot-partition check on that draft (the external-mode equivalent of the Bedrock agent's `compute_performances_and_costs` tool — same computation):
 
    ```bash

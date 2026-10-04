@@ -19,7 +19,14 @@ Works with ArtifactStore for both local and S3 backends.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 
+from src.agents.schema_design.group_input import (
+    READ_PAGE_CHARS,
+    build_group_input,
+    read_pages,
+    render_group_input,
+)
 from src.contracts.schema_design_input import SchemaDesignGroupEntry, SchemaDesignGroupsManifest
 from src.storage.artifact_store import ArtifactStore
 
@@ -27,6 +34,11 @@ from src.storage.artifact_store import ArtifactStore
 SMALL_GROUP_THRESHOLD = 5
 # Maximum queries per group — larger groups get sub-split by primary table
 MAX_GROUP_SIZE = 20
+# Maximum characters of one group's input file: two Read pages (see
+# group_input.READ_PAGE_CHARS), so a group subagent reads its input in two or
+# three Read calls. A group over it is halved until every part fits (or has one
+# query); MAX_GROUP_SIZE stays the upper bound on queries per group (#272).
+MAX_GROUP_INPUT_CHARS = 2 * READ_PAGE_CHARS
 
 
 def get_primary_table(query: dict, db_name: str) -> str:
@@ -237,6 +249,17 @@ def build_groups(
                         }
                     )
         else:
+            # Flush first so the batch never goes over MAX_GROUP_SIZE (#272).
+            if small_batch and len(small_batch) + len(cluster_queries) > MAX_GROUP_SIZE:
+                groups.append(
+                    {
+                        "group_name": f"misc_batch_{len(groups)}",
+                        "primary_tables": sorted(set(small_tables)),
+                        "queries": small_batch[:],
+                    }
+                )
+                small_batch = []
+                small_tables = []
             small_batch.extend(cluster_queries)
             small_tables.extend(tables_in_cluster)
             if len(small_batch) >= MAX_GROUP_SIZE:
@@ -283,6 +306,69 @@ def recommendations_for_tables(table_ids: set[str], analysis_output: dict) -> li
     ]
 
 
+def fit_groups_to_budget(
+    groups: list[dict],
+    measure: Callable[[dict], int],
+    max_chars: int = MAX_GROUP_INPUT_CHARS,
+) -> list[dict]:
+    """Halve each group whose input is over ``max_chars`` until every part fits.
+
+    ``measure(group)`` returns the size of the group's rendered input. A
+    single-query group is kept whatever its size. Parts keep the group's
+    ``primary_tables`` and are named ``<group_name>_s1``, ``_s2``, ...
+    """
+    fitted: list[dict] = []
+    for group in groups:
+
+        def measure_part(qs: list[dict], group: dict = group) -> int:
+            return measure({**group, "queries": qs})
+
+        parts = _halve_to_fit(group["queries"], measure_part, max_chars)
+        if len(parts) == 1:
+            fitted.append(group)
+            continue
+        for n, part in enumerate(parts, start=1):
+            fitted.append({**group, "group_name": f"{group['group_name']}_s{n}", "queries": part})
+    return fitted
+
+
+def _halve_to_fit(
+    queries: list[dict], measure: Callable[[list[dict]], int], max_chars: int
+) -> list[list[dict]]:
+    if len(queries) <= 1 or measure(queries) <= max_chars:
+        return [queries]
+    mid = (len(queries) + 1) // 2
+    return _halve_to_fit(queries[:mid], measure, max_chars) + _halve_to_fit(
+        queries[mid:], measure, max_chars
+    )
+
+
+def _group_input(
+    job_id: str,
+    database_name: str,
+    engine: str,
+    idx: int,
+    group: dict,
+    group_tables: list[dict],
+    collector_output: dict,
+    analysis_output: dict,
+    total_queries: int,
+) -> dict:
+    return build_group_input(
+        job_id=job_id,
+        database_name=database_name,
+        engine=engine,
+        group_index=idx,
+        group_name=group["group_name"],
+        primary_tables=group["primary_tables"],
+        group_queries=group["queries"],
+        group_tables=group_tables,
+        collector_output=collector_output,
+        analysis_output=analysis_output,
+        total_queries=total_queries,
+    )
+
+
 def split_schema_input(
     job_id: str,
     database_name: str,
@@ -322,51 +408,41 @@ def split_schema_input(
     )
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 
+    def measure(group: dict) -> int:
+        tables = tables_for_queries(group["queries"], all_tables)
+        data = _group_input(
+            job_id,
+            database_name,
+            engine,
+            0,
+            group,
+            tables,
+            collector_output,
+            analysis_output,
+            len(queries),
+        )
+        return len(render_group_input(data))
+
     manifest_groups: list[SchemaDesignGroupEntry] = []
 
-    for idx, group in enumerate(groups):
+    for idx, group in enumerate(fit_groups_to_budget(groups, measure)):
         group_queries = group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables)
-        group_table_ids: set[str] = {t["table_id"] for t in group_tables if t.get("table_id")}
-        group_recs = recommendations_for_tables(group_table_ids, analysis_output)
-
-        group_db_schema = {
-            **collector_output.get("database_schema", {}),
-            "tables": group_tables,
-        }
-        group_collector = {
-            **collector_output,
-            "database_schema": group_db_schema,
-            "tables": group_tables,
-            "queries": {
-                "query_patterns": group_queries,
-                "_filtered": True,
-                "_filter_engine": engine,
-                "_group_index": idx,
-                "_group_name": group["group_name"],
-                "_original_count": len(queries),
-                "_filtered_count": len(group_queries),
-            },
-        }
-
-        group_analysis = {
-            **analysis_output,
-            "table_recommendations": group_recs,
-        }
-
-        combined = {
-            "job_id": job_id,
-            "database_name": database_name,
-            "target_engine": engine,
-            "group_index": idx,
-            "group_name": group["group_name"],
-            "group_primary_tables": group["primary_tables"],
-            "collector_output": group_collector,
-            "analysis_output": group_analysis,
-        }
-
+        text = render_group_input(
+            _group_input(
+                job_id,
+                database_name,
+                engine,
+                idx,
+                group,
+                group_tables,
+                collector_output,
+                analysis_output,
+                len(queries),
+            )
+        )
         input_file = f"input_group_{idx}.json"
-        store.write_json(f"{base_key}/{input_file}", combined)
+        store.write_bytes(f"{base_key}/{input_file}", text.encode())
 
         manifest_groups.append(
             SchemaDesignGroupEntry(
@@ -376,6 +452,7 @@ def split_schema_input(
                 query_count=len(group_queries),
                 table_count=len(group_tables),
                 input_file=input_file,
+                input_pages=read_pages(text),
             )
         )
 
@@ -384,7 +461,7 @@ def split_schema_input(
         database_name=database_name,
         target_engine=engine,
         total_queries=len(queries),
-        total_groups=len(groups),
+        total_groups=len(manifest_groups),
         groups=manifest_groups,
     )
 

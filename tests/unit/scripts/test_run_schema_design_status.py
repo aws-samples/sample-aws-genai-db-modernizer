@@ -285,6 +285,25 @@ def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_pat
     assert status["groups"][1]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_1.json")
 
 
+def test_split_prints_each_groups_read_pages(monkeypatch, capsys, tmp_path):
+    # #272: a group subagent reads its input one Read call per page.
+    pages = [{"offset": 1, "limit": 400}, {"offset": 401, "limit": 120}]
+
+    def fake_split(*, job_id, database_name, target_type, store, assignment_version):
+        _manifest(store)
+        manifest = store.read_json(f"{BASE}/groups_manifest.json")
+        manifest["groups"][0]["input_pages"] = pages
+        store.write_json(f"{BASE}/groups_manifest.json", manifest)
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_split", fake_split)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--split")
+
+    assert code == 0
+    assert status["groups"][0]["input_pages"] == pages
+    assert status["groups"][1]["input_pages"] == []  # a manifest from before #272
+
+
 def test_split_paths_are_cwd_relative_under_the_default_artifact_root(
     monkeypatch, capsys, tmp_path
 ):

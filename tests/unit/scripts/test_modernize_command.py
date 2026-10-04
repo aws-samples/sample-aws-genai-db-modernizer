@@ -363,3 +363,45 @@ def test_merge_failed_is_the_merge_verdict_not_validation_passed() -> None:
     line = next(ln for ln in phase_6.splitlines() if '`"status": "merge_failed"`' in ln)
     assert "or the merged output has `validation_passed: false`" not in line
     assert "printed `validation_failed`" in line
+
+
+# Issue #272: DynamoDB group inputs ran to 10k-20k lines, and group subagents
+# paged them with `sed -n`, searched them with `grep` and wrote their drafts
+# with heredoc scripts, all denied. The group task text now says how to read
+# (one Read call per `input_pages` page) and how to write (one Write call).
+GROUP_IO_RULE = (
+    "Read the input with the Read tool, one call per page (`offset`, `limit`); "
+    "search with the Grep tool if this session has one, else Read the page again; "
+    "write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, "
+    "heredocs or scripts to read, search or write files."
+)
+
+
+def _group_templates(text: str) -> list[str]:
+    return [
+        " ".join(t.split())
+        for t in _dispatch_templates(text)
+        if t.lstrip().startswith("Follow /design-schema-dynamodb **Group draft task**")
+    ]
+
+
+def test_dynamodb_group_dispatch_says_how_to_read_and_write() -> None:
+    for text in (_modernize_text(), (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()):
+        templates = _group_templates(text)
+        assert len(templates) == 1, templates
+        template = templates[0]
+        assert "Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}." in template
+        assert GROUP_IO_RULE in template
+        assert TOOL_USE_RULE in template  # the general rule stays word for word
+        assert "`input_pages`" in text  # the --split line field it comes from
+
+
+def test_dynamodb_group_task_reads_by_pages_and_writes_in_one_call() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    group_task = text.split("## Group draft task", 1)[1].split("\n## ", 1)[0]
+    flat = " ".join(group_task.split())
+    assert GROUP_IO_RULE in flat
+    assert "one call per page of the group's `input_pages` (`offset`, `limit`)" in flat
+    assert "the whole JSON in one Write tool call" in flat
+    assert "Do not generate it with a script." in flat
+    assert "`query_text_lines`" in flat

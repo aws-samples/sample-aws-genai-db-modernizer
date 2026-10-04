@@ -129,7 +129,7 @@ DynamoDB is always designed as split → one subagent per group → merge. **The
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split
 ```
 
-It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: one entry per group with `group_index` (`{G}`), `primary_tables`, `input_file` and `draft`. Use that line; do not read the manifest yourself.
+It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: one entry per group with `group_index` (`{G}`), `primary_tables`, `input_file`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use that line; do not read the manifest yourself.
 
 **6b. Launch every schema subagent in a SINGLE message:** one per non-DynamoDB engine, plus one per DynamoDB group.
 
@@ -139,10 +139,10 @@ It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: on
   Run /design-schema-<engine> for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
   ```
 
-- Each DynamoDB group `{G}` (`{INPUT_FILE}` and `{DRAFT}` = that group's `input_file` and `draft` from the `--split` line, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
+- Each DynamoDB group `{G}` (`{INPUT_FILE}`, `{INPUT_PAGES}` and `{DRAFT}` = that group's `input_file`, `input_pages` and `draft` from the `--split` line, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
   ```text
-  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
   ```
 
 Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
