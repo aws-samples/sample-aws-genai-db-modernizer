@@ -344,10 +344,13 @@ def _merge_aurora_delta(
         validation = validate_schema_design_output(delta, target_type)
         if not validation["valid"]:
             return MergeResult(None, validation["errors"], {})
-        converted, errors = full_contract_to_delta(base, delta)
+        conversion_warnings: list[str] = []
+        converted, errors = full_contract_to_delta(base, delta, conversion_warnings)
         if converted is None:
             return MergeResult(None, errors, {})
-        delta = converted
+        merged = merge_design_delta(base, converted)
+        merged.warnings = [*conversion_warnings, *merged.warnings]
+        return merged
     return merge_design_delta(base, delta)
 
 

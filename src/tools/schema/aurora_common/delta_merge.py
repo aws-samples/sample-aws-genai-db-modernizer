@@ -567,7 +567,9 @@ def _same_type(a: str, b: str) -> bool:
     return " ".join(a.lower().split()) == " ".join(b.lower().split())
 
 
-def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict | None, list[str]]:
+def full_contract_to_delta(
+    base: AuroraDesignBase, response: dict, warnings: list[str] | None = None
+) -> tuple[dict | None, list[str]]:
     """Convert a legacy full-contract response into a delta (issue #273, B1).
 
     Nothing in a full contract is trusted as DDL. Its ``generated_ddl``,
@@ -578,7 +580,9 @@ def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict
     ``parse_index_statement`` and becomes an add (new name) or a modify
     (draft name, different definition). Draft indexes the response does not
     list are kept. Unknown tables or columns, and indexes that do not parse,
-    are errors, never dropped. Returns ``(delta, errors)``.
+    are errors, never dropped. Returns ``(delta, errors)``; conversions worth
+    a look (a modify that drops a draft partial-index predicate, since the
+    legacy grammar has no WHERE) are appended to ``warnings``.
     """
     errors: list[str] = []
     by_key = {_table_key(t.table_name): t for t in base.tables}
@@ -643,6 +647,13 @@ def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict
                 _Index(parsed.index_name, parsed.columns, parsed.unique, parsed.method, [], None),
             ):
                 change["modify_indexes"].append({**entry, "index_name": draft_name})
+                if " WHERE " in existing[draft_name] and warnings is not None:
+                    warnings.append(
+                        f"{where}: index '{draft_name}' on '{table.table_name}' is redefined "
+                        "without the draft's partial-index predicate (WHERE ...), so it now "
+                        "covers every row; write a delta with modify_indexes and 'where' to "
+                        "keep it"
+                    )
         if change["column_types"] or change["add_indexes"] or change["modify_indexes"]:
             tables.append(change)  # only tables that differ from the draft are changes
     if errors:

@@ -425,3 +425,46 @@ def test_text_cast_on_an_integer_column_falls_back_to_a_noted_full_index():
     ]
     [note] = result.index_notes
     assert note["index"] == "idx_popular" and "::text" in note["reason"]
+
+
+def test_legacy_modify_that_drops_a_draft_predicate_warns():
+    base = AuroraDesignBase(
+        engine="aurora_postgresql",
+        job_id="j",
+        source_database="db",
+        source_engine="postgresql",
+        tables=[
+            _table(
+                [
+                    {
+                        "index_name": "idx_live",
+                        "columns": ["slug"],
+                        "is_unique": False,
+                        "predicate": "(deleted_at IS NULL)",
+                    }
+                ]
+            )
+        ],
+    )
+    draft = merge_design_delta(base, {"delta_version": "1.0"}).output
+    table = dict(draft["table_definitions"][0])
+    table["indexes"] = ['CREATE INDEX "idx_live" ON "topics" ("slug", "id");']
+    warnings: list[str] = []
+
+    delta, errors = full_contract_to_delta(base, {**draft, "table_definitions": [table]}, warnings)
+
+    assert errors == []
+    assert delta["tables"][0]["modify_indexes"][0]["index_name"] == "idx_live"
+    [warning] = warnings
+    assert "idx_live" in warning and "predicate" in warning
+
+
+def test_legacy_modify_of_a_full_index_does_not_warn():
+    base = _two_table_base()
+    draft = merge_design_delta(base, {"delta_version": "1.0"}).output
+    tables = [dict(t) for t in draft["table_definitions"]]
+    posts = next(t for t in tables if t["table_name"] == "posts")
+    posts["indexes"] = ['CREATE INDEX "idx_slug" ON "posts" ("slug", "id");']
+    warnings: list[str] = []
+    delta, errors = full_contract_to_delta(base, {**draft, "table_definitions": tables}, warnings)
+    assert errors == [] and warnings == []
