@@ -42,6 +42,13 @@ class QueryOverride(BaseModel):
     query_id: str
     assigned_engine: str | None = None
     in_scope: bool | None = None
+    cached: bool | None = Field(
+        None,
+        description=(
+            "Pin (true) or remove (false) the ElastiCache cache overlay. The cache never "
+            "owns a query; the owner engine is unchanged (#296)."
+        ),
+    )
 
 
 class ScopeNarrowing(BaseModel):
@@ -86,9 +93,10 @@ def _latest_assignment_version(store: ArtifactStore, db: str, job_id: str) -> in
 
 
 def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -> Assignment:
-    """Read a specific assignment version."""
-    path = f"{db}/{job_id}/assignment/v{version}/assignment.json"
-    data = store.read_json(path)
+    """Read a specific assignment version (legacy cache owners moved, #296)."""
+    from src.agents.referee.assignment_overrides import load_assignment_for_edit
+
+    data, _, _ = load_assignment_for_edit(store, db, job_id, version)
     return Assignment.model_validate(data)
 
 
@@ -132,6 +140,7 @@ async def put_assignments(
             query_id=o.query_id,
             assigned_engine=o.assigned_engine,
             in_scope=o.in_scope,
+            cached=o.cached,
         )
         for o in body.overrides
     ]

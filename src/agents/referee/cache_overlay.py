@@ -116,17 +116,21 @@ def write_heavy_tables(queries: Iterable[Mapping]) -> set[str]:
     return heavy
 
 
-def cache_pattern(query: Mapping, signals: Iterable[str] = ()) -> str | None:
-    """The cacheable shape of a read, or None when it is not a lookup."""
+def cache_pattern(query: Mapping) -> str | None:
+    """The cacheable shape of a read, or None when it is not a lookup.
+
+    Detected from the SQL itself, with the same keywords and shape as triage's
+    ``session_store`` and ``leaderboard_pattern`` signals (``CACHE_HINT_SIGNALS``),
+    so the overlay is re-evaluated identically wherever only the collector is at hand.
+    """
     text = str(query.get("query_text") or "")
     if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or _LOCKING_RE.search(text):
         return None
-    if query.get("has_text_search") or query.get("has_aggregation"):
+    if query.get("has_text_search") or query.get("has_aggregations"):
         return None
-    sigs = set(signals)
-    if "session_store" in sigs or SESSION_RE.search(text):
+    if SESSION_RE.search(text):
         return CACHE_HINT_SIGNALS["session_store"]
-    if "leaderboard_pattern" in sigs or _TOP_N_RE.search(text):
+    if _TOP_N_RE.search(text):
         return "top_n" if float(query.get("rows_returned_avg") or 0) > 1 else "point_lookup"
     parts = _WHERE_RE.split(text, maxsplit=1)
     if len(parts) == 2:
@@ -136,11 +140,7 @@ def cache_pattern(query: Mapping, signals: Iterable[str] = ()) -> str | None:
     return "reference_read"
 
 
-def cache_eligibility(
-    query: Mapping,
-    heavy_tables: set[str],
-    signals: Iterable[str] = (),
-) -> tuple[str, str] | None:
+def cache_eligibility(query: Mapping, heavy_tables: set[str]) -> tuple[str, str] | None:
     """``(cache_pattern, cache_reason)`` when ``query`` qualifies for the overlay, else None."""
     if str(query.get("query_type") or "").upper() != "SELECT":
         return None
@@ -152,7 +152,7 @@ def cache_eligibility(
         return None
     if heavy_tables & set(query.get("tables_accessed") or []):
         return None
-    pattern = cache_pattern(query, signals)
+    pattern = cache_pattern(query)
     if pattern is None:
         return None
     reason = f"hot {PATTERN_LABELS[pattern]}: {cps:.1f} calls/s, {rows:.1f} rows avg"
@@ -164,6 +164,43 @@ def available_cache_engine(engines: Iterable[str]) -> str | None:
     return next((e for e in sorted(CACHE_OVERLAY_ENGINES) if e in set(engines)), None)
 
 
+CUSTOMER_CACHE_REASON = "customer requested"
+
+
+def _warn(qa: dict, message: str) -> None:
+    warnings = qa.setdefault("warnings", [])
+    if message not in warnings:
+        warnings.append(message)
+
+
+def _clear(qa: dict) -> None:
+    qa["cache_engine"] = None
+    qa["cache_pattern"] = None
+    qa["cache_reason"] = None
+
+
+def pin_customer_cache(qa: dict, cache: str, query: Mapping | None, heavy: set[str]) -> None:
+    """Mark ``qa`` cached by ``cache`` because the customer asked for it (#296).
+
+    The owner is unchanged. A query that fails the hot-read rule keeps the cache
+    and carries a warning saying why it would not have been chosen.
+    """
+    verdict = cache_eligibility(query, heavy) if query else None
+    qa["cache_engine"] = cache
+    qa["cache_pattern"] = verdict[0] if verdict else (cache_pattern(query) if query else None)
+    qa["cache_reason"] = CUSTOMER_CACHE_REASON
+    qa["cache_customer_override"] = True
+    qa["cache_dropped"] = False
+    if not verdict:
+        _warn(
+            qa,
+            f"WARNING [LOW]: Query {qa.get('query_id')} is cached by {cache} at the "
+            "customer's request, but it does not meet the hot-read rule (SELECT, "
+            f">= {HOT_READ_MIN_CALLS_PER_SECOND:g} calls/s, <= {CACHE_MAX_ROWS_AVG:g} rows, "
+            "lookup shape, table not write-heavy).",
+        )
+
+
 def apply_cache_overlay(
     query_assignments: list[dict],
     queries: Iterable[Mapping],
@@ -173,7 +210,9 @@ def apply_cache_overlay(
 
     ``engines`` are the analyzed engines; with no cache engine among them no query
     is cached. Eligibility depends only on the query, so calling this again after
-    owners change re-evaluates the overlay the same way. Returns the list.
+    owners change re-evaluates the overlay the same way, and clears an earlier
+    safety-net drop (the next schema design gets its own chance). A cache the
+    customer pinned (``cache_customer_override``) is never cleared. Returns the list.
     """
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
@@ -181,15 +220,105 @@ def apply_cache_overlay(
     heavy = write_heavy_tables(query_list)
     for qa in query_assignments:
         q = by_id.get(qa.get("query_id"))
+        if qa.get("cache_customer_override"):
+            pin_customer_cache(qa, qa.get("cache_engine") or cache or "elasticache", q, heavy)
+            continue
+        qa["cache_dropped"] = False
         verdict = cache_eligibility(q, heavy) if cache and q else None
         if verdict and qa.get("assigned_engine") != cache:
             qa["cache_engine"] = cache
             qa["cache_pattern"], qa["cache_reason"] = verdict
         else:
-            qa["cache_engine"] = None
-            qa["cache_pattern"] = None
-            qa["cache_reason"] = None
+            _clear(qa)
     return query_assignments
+
+
+def fallback_owner(
+    query: Mapping | None,
+    engines: Iterable[str],
+    source_engine: str = "",
+    owner_counts: Mapping[str, int] | None = None,
+) -> str:
+    """The system-of-record engine for a query a cache owned (legacy) or was pinned to.
+
+    The source-compatible Aurora engine when analyzed, else the Aurora engine
+    ``pick_aurora_engine`` picks, else the owner candidate already serving the most
+    queries, then by name. With no candidate at all, the source-compatible Aurora
+    engine (the relational baseline).
+    """
+    from src.agents.referee.aurora_choice import pick_aurora_engine
+    from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+
+    counts = owner_counts or {}
+    candidates = sorted(owner_candidates(set(engines), query))
+    aurora = pick_aurora_engine(candidates, source_engine, counts)
+    if aurora:
+        return aurora
+    if candidates:
+        return min(candidates, key=lambda e: (-counts.get(e, 0), e))
+    return SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower(), "aurora_postgresql")
+
+
+def normalize_cache_owners(
+    assignment: dict,
+    queries: Iterable[Mapping],
+    engines: Iterable[str],
+    source_engine: str = "",
+) -> list[str]:
+    """Move queries a cache owns to a system-of-record engine, in place (#296).
+
+    An assignment written before the cache overlay has ElastiCache owners; left
+    as is, every customer edit fails validation and Reality Check re-runs keep
+    them. Each such query is owned by :func:`fallback_owner` and stays cached
+    when it is a hot read. Records one note in ``cache_notes``, refreshes the
+    overlay summary and returns the new notes (empty when nothing was owned by a
+    cache). Derived table views are the caller's to recompute.
+    """
+    qas = assignment.get("query_assignments") or []
+    legacy = [qa for qa in qas if qa.get("assigned_engine") in CACHE_OVERLAY_ENGINES]
+    if not legacy:
+        return []
+    query_list = list(queries)
+    by_id = {q.get("query_id"): q for q in query_list}
+    engine_set = set(engines)
+    heavy = write_heavy_tables(query_list)
+    counts = Counter(
+        qa.get("assigned_engine")
+        for qa in qas
+        if qa.get("assigned_engine") and qa.get("assigned_engine") not in CACHE_OVERLAY_ENGINES
+    )
+    moved: Counter = Counter()
+    kept = 0
+    cache = legacy[0]["assigned_engine"]
+    for qa in legacy:
+        q = by_id.get(qa.get("query_id"))
+        owner = fallback_owner(q, engine_set, source_engine, counts)
+        qa["assignment_reason"] = (
+            f"cache overlay migration: {qa['assigned_engine']} owned this query in an "
+            f"assignment written before the cache overlay; owned by {owner} "
+            f"(was: {qa.get('assignment_reason', '')})"
+        )
+        qa["assigned_engine"] = owner
+        qa["signal_override"] = None
+        moved[owner] += 1
+        verdict = cache_eligibility(q, heavy) if q else None
+        if verdict:
+            qa["cache_engine"] = cache
+            qa["cache_pattern"], qa["cache_reason"] = verdict
+            kept += 1
+        elif not qa.get("cache_customer_override"):
+            _clear(qa)
+    note = (
+        f"{len(legacy)} {'query' if len(legacy) == 1 else 'queries'} owned by {cache} in an "
+        "assignment written before the cache overlay moved to a system-of-record engine ("
+        + ", ".join(f"{e} {n}" for e, n in sorted(moved.items()))
+        + f"); {kept} stay cached as hot reads, the rest are no longer cached."
+    )
+    notes = assignment.setdefault("cache_notes", [])
+    if note not in notes:
+        notes.append(note)
+    assignment["cache_overlay"] = overlay_summary(qas, query_list)
+    return [note]
 
 
 def overlay_summary(
@@ -230,15 +359,24 @@ def refresh_cache_overlay(
     return assignment
 
 
+def dropped_reason(engine: str) -> str:
+    """``cache_reason`` of a query the safety net dropped."""
+    return (
+        f"cache overlay dropped after schema design: no in-scope {engine} access pattern "
+        "serves it (owner unchanged)"
+    )
+
+
 def apply_schema_safety_net(
     assignment: dict, cache_schema: Mapping | None, queries: Iterable[Mapping]
 ) -> list[str]:
     """Drop the overlay of cached queries the cache's schema design does not serve (#296).
 
     Runs after schema design. A cached query with no in-scope access pattern in the
-    cache engine's design loses ``cache_engine``; its owner is unchanged. With no
-    design (schema design did not run) nothing is dropped. Mutates ``assignment``
-    (a copy is the caller's choice) and returns the dropped query ids.
+    cache engine's design loses ``cache_engine`` (``cache_dropped`` set, the reason
+    in ``cache_reason``); its owner is unchanged. A cache the customer pinned is
+    kept, with a warning. With no design (schema design did not run) nothing is
+    dropped. Mutates ``assignment`` and returns the dropped query ids.
     """
     if not cache_schema:
         return []
@@ -250,15 +388,21 @@ def apply_schema_safety_net(
             )
     dropped: list[str] = []
     for qa in assignment.get("query_assignments") or []:
-        if (
-            qa.get("cache_engine")
-            and qa.get("in_scope", True)
-            and qa.get("query_id") not in covered
-        ):
-            dropped.append(qa["query_id"])
-            qa["cache_engine"] = None
-            qa["cache_pattern"] = None
-            qa["cache_reason"] = None
+        engine = qa.get("cache_engine")
+        if not engine or not qa.get("in_scope", True) or qa.get("query_id") in covered:
+            continue
+        if qa.get("cache_customer_override"):
+            _warn(
+                qa,
+                f"WARNING [MEDIUM]: Query {qa.get('query_id')} is cached by {engine} at the "
+                f"customer's request, but the {engine} schema design has no in-scope access "
+                "pattern for it.",
+            )
+            continue
+        dropped.append(qa["query_id"])
+        _clear(qa)
+        qa["cache_reason"] = dropped_reason(engine)
+        qa["cache_dropped"] = True
     if dropped:
         assignment["cache_overlay"] = overlay_summary(
             assignment.get("query_assignments") or [], queries

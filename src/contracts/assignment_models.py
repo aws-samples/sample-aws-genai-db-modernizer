@@ -25,7 +25,12 @@ Version History:
   query's system-of-record engine. A hot read the cache can front carries the
   optional ``cache_engine`` / ``cache_pattern`` / ``cache_reason`` fields on
   ``QueryAssignment``, and ``Assignment.cache_overlay`` summarises them (queries and
-  share of calls). All default to ``None``, so artifacts written before 1.4 still load.
+  share of calls). ``cache_customer_override`` marks a cache the customer asked for
+  (kept even when the query fails the hot-read rule), ``cache_dropped`` a cache the
+  post-schema safety net removed, and ``Assignment.cache_notes`` records cache
+  decisions (safety-net drops, legacy ElastiCache owners moved to their
+  system-of-record engine on load). All default to ``None``/False/empty, so
+  artifacts written before 1.4 still load.
 """
 
 from datetime import datetime
@@ -115,6 +120,20 @@ class QueryAssignment(BaseModel):
     cache_reason: str | None = Field(
         default=None,
         description="Short reason the query is cached (call rate and result size).",
+    )
+    cache_customer_override: bool = Field(
+        default=False,
+        description=(
+            "True when the customer asked for the cache. Re-evaluation never clears it; "
+            "a query that fails the hot-read rule keeps it with a warning."
+        ),
+    )
+    cache_dropped: bool = Field(
+        default=False,
+        description=(
+            "True when the post-schema safety net removed the cache overlay because the "
+            "cache's schema design has no in-scope access pattern for the query."
+        ),
     )
 
 
@@ -212,6 +231,13 @@ class Assignment(BaseModel):
         description=(
             "Blocking feasibility findings the customer explicitly accepted at the "
             "review gate (ADR-029 Layer C). Empty by default; recorded for audit."
+        ),
+    )
+    cache_notes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Cache layer decisions recorded for audit (#296): safety-net drops after "
+            "schema design, legacy ElastiCache owners moved to their system-of-record engine."
         ),
     )
     cache_overlay: CacheOverlaySummary | None = Field(

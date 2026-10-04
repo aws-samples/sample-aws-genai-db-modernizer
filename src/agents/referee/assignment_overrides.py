@@ -19,7 +19,17 @@ from src.agents.referee.assignment_resolver import (
     derive_table_assignments,
 )
 from src.agents.referee.assignment_validator import AssignmentValidator
-from src.agents.referee.cache_overlay import overlay_summary, refresh_cache_overlay
+from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.cache_overlay import (
+    CACHE_OVERLAY_ENGINES,
+    available_cache_engine,
+    fallback_owner,
+    normalize_cache_owners,
+    overlay_summary,
+    pin_customer_cache,
+    refresh_cache_overlay,
+    write_heavy_tables,
+)
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
@@ -45,11 +55,17 @@ class _Store(Protocol):
 
 @dataclass
 class QueryOverrideInput:
-    """One customer edit to a query's routing. ``None`` fields are left unchanged."""
+    """One customer edit to a query's routing. ``None`` fields are left unchanged.
+
+    ``cached`` pins (True) or removes (False) the cache overlay (#296). Naming a
+    cache engine as ``assigned_engine`` is the same as ``cached=True``: the cache
+    never owns a query, so the owner stays.
+    """
 
     query_id: str
     assigned_engine: str | None = None
     in_scope: bool | None = None
+    cached: bool | None = None
 
 
 @dataclass
@@ -90,10 +106,6 @@ class AssignmentValidationFailed(AssignmentOverrideError):
         super().__init__("Assignment validation failed with hard errors")
 
 
-def _read_collector_output(store: _Store, database_name: str, job_id: str) -> dict:
-    return store.read_json(f"{database_name}/{job_id}/collector/output.json")
-
-
 def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> dict[str, dict]:
     """Read every ``analysis-<engine>/analysis.json`` for the job."""
     prefix = f"{database_name}/{job_id}/"
@@ -108,6 +120,78 @@ def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> di
         if store.exists(path):
             outputs[engine] = store.read_json(path)
     return outputs
+
+
+def load_assignment_for_edit(
+    store: _Store, database_name: str, job_id: str, version: int
+) -> tuple[dict, dict, dict[str, dict]]:
+    """``(assignment, collector_output, analysis_outputs)`` with legacy cache owners moved.
+
+    An assignment written before the cache overlay (#296) can have ElastiCache
+    owners, which the validator rejects; they are moved to their system-of-record
+    engine here, in memory, with a note in ``cache_notes``, so the assignment
+    stays viewable and editable. The stored artifact is not rewritten.
+    """
+    raw = store.read_json(assignment_artifact_path(database_name, job_id, version))
+    collector_key = f"{database_name}/{job_id}/collector/output.json"
+    collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
+    analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
+    if normalize_cache_owners(
+        raw,
+        collector_output.get("queries", {}).get("query_patterns", []),
+        analysis_outputs,
+        source_database_engine(collector_output),
+    ):
+        qas = [QueryAssignment.model_validate(qa) for qa in raw["query_assignments"]]
+        raw["table_assignments"] = [
+            ta.model_dump(mode="json") for ta in derive_table_assignments(qas)
+        ]
+    return raw, collector_output, analysis_outputs
+
+
+def _apply_cache_override(
+    qa: QueryAssignment,
+    override: QueryOverrideInput,
+    cache: str,
+    query: dict | None,
+    heavy: set[str],
+    analysis_outputs: dict[str, dict],
+    source_engine: str,
+    owner_counts: dict[str, int],
+) -> str | None:
+    """Apply a cache request to ``qa`` in place; return the note to record, if any."""
+    wants_cache = override.cached is True or override.assigned_engine in CACHE_OVERLAY_ENGINES
+    if wants_cache:
+        note = None
+        if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
+            owner = fallback_owner(query, analysis_outputs, source_engine, owner_counts)
+            note = (
+                f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot own "
+                f"it; owned by {owner}, cached by {cache} as requested."
+            )
+            qa.assigned_engine = owner
+        elif override.assigned_engine in CACHE_OVERLAY_ENGINES:
+            note = (
+                f"Query {qa.query_id}: requested engine {override.assigned_engine} is a "
+                f"cache layer, not a system of record; it stays owned by {qa.assigned_engine} "
+                f"and is cached by {cache}."
+            )
+        d = qa.model_dump()
+        pin_customer_cache(d, cache, query, heavy)
+        for k in ("cache_engine", "cache_pattern", "cache_reason", "warnings"):
+            setattr(qa, k, d[k])
+        qa.cache_customer_override = True
+        qa.cache_dropped = False
+        if note:
+            qa.warnings = [*qa.warnings, f"NOTE: {note}"]
+        return note
+    if override.cached is False and qa.cache_engine:
+        qa.cache_engine = None
+        qa.cache_pattern = None
+        qa.cache_reason = "customer removed the cache"
+        qa.cache_customer_override = True
+        return None
+    return None
 
 
 def apply_assignment_overrides(
@@ -137,18 +221,46 @@ def apply_assignment_overrides(
     if current_version == 0:
         raise NoAssignmentFound
 
-    current_path = assignment_artifact_path(database_name, job_id, current_version)
-    current = Assignment.model_validate(store.read_json(current_path))
+    raw, collector_output, analysis_outputs = load_assignment_for_edit(
+        store, database_name, job_id, current_version
+    )
+    current = Assignment.model_validate(raw)
+    queries = collector_output.get("queries", {}).get("query_patterns", [])
+    query_by_id = {q.get("query_id"): q for q in queries}
+    cache = available_cache_engine(analysis_outputs) or "elasticache"
+    heavy = write_heavy_tables(queries)
+    source_engine = source_database_engine(collector_output)
+    owner_counts: dict[str, int] = {}
+    for existing in current.query_assignments:
+        owner_counts[existing.assigned_engine] = owner_counts.get(existing.assigned_engine, 0) + 1
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
+    cache_notes: list[str] = []
 
     # Per-query overrides. A changed engine marks the query customer-overridden;
-    # an in_scope toggle is a scoping change, not an engine reassignment.
+    # an in_scope toggle is a scoping change, not an engine reassignment. A cache
+    # engine is never an owner (#296): naming it, or ``cached``, pins the cache
+    # overlay and keeps the owner.
     for override in overrides:
         qa = qa_map.get(override.query_id)
         if qa is None:
             raise UnknownQuery(override.query_id)
-        if override.assigned_engine is not None:
+        note = _apply_cache_override(
+            qa,
+            override,
+            cache,
+            query_by_id.get(qa.query_id),
+            heavy,
+            analysis_outputs,
+            source_engine,
+            owner_counts,
+        )
+        if note:
+            cache_notes.append(note)
+        if (
+            override.assigned_engine is not None
+            and override.assigned_engine not in CACHE_OVERLAY_ENGINES
+        ):
             qa.assigned_engine = override.assigned_engine
             qa.customer_override = True
         if override.in_scope is not None:
@@ -157,10 +269,11 @@ def apply_assignment_overrides(
     # Co-dependency-aware propagation (ADR-029 Amendment 3): if the customer
     # re-routed a query that shares a significant JOIN group with others, move the
     # group's other in-scope members with it so the JOIN stays co-located instead
-    # of silently splitting. Read the collector once here and reuse it for the
-    # derived-view recompute below.
-    collector_output = _read_collector_output(store, database_name, job_id)
-    propagated_query_ids = _propagate_codependent_overrides(qa_map, overrides, collector_output)
+    # of silently splitting. A cache request is not a re-route.
+    owner_overrides = [o for o in overrides if o.assigned_engine not in CACHE_OVERLAY_ENGINES]
+    propagated_query_ids = _propagate_codependent_overrides(
+        qa_map, owner_overrides, collector_output
+    )
 
     # Table-level scope narrowing: a query whose tables are all excluded drops
     # out of scope; a partial overlap stays in scope with a low-severity warning.
@@ -186,10 +299,9 @@ def apply_assignment_overrides(
             "timestamp": datetime.now(UTC),
             "query_assignments": list(qa_map.values()),
             "previous_version": current_version,
+            "cache_notes": [*current.cache_notes, *cache_notes],
         }
     )
-
-    analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
 
     # Recompute derived views against the NEW routing instead of carrying the
     # previous version's forward (ADR-029 Layer B). model_copy only replaced

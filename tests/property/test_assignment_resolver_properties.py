@@ -106,7 +106,7 @@ def query_strategy(
         "tables_accessed": accessed,
         "join_count": join_count,
         "has_joins": has_joins,
-        "has_aggregation": has_aggregation,
+        "has_aggregations": has_aggregation,
         "filter_tables": filter_tables,
         "calls_per_second": 1.0,
         "rows_returned_avg": 10,
@@ -295,7 +295,7 @@ class TestCoDependencySignificanceFilter:
         table = data.draw(st.sampled_from(table_ids))
         query = {
             "join_count": data.draw(st.sampled_from([0, 1])),
-            "has_aggregation": False,
+            "has_aggregations": False,
             "filter_tables": [],
         }
         assert not is_significant_join(
@@ -316,19 +316,19 @@ class TestCoDependencySignificanceFilter:
         if criterion == "join_count":
             query = {
                 "join_count": data.draw(st.integers(min_value=2, max_value=10)),
-                "has_aggregation": False,
+                "has_aggregations": False,
                 "filter_tables": [],
             }
         elif criterion == "aggregation":
             query = {
                 "join_count": 0,
-                "has_aggregation": True,
+                "has_aggregations": True,
                 "filter_tables": [],
             }
         else:  # filter_table
             query = {
                 "join_count": 0,
-                "has_aggregation": False,
+                "has_aggregations": False,
                 "filter_tables": [table],
             }
 

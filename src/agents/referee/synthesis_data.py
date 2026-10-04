@@ -11,9 +11,11 @@ Provides a unified view of all upstream outputs for the synthesis handler:
 import logging
 from dataclasses import dataclass, field
 
+from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
     apply_schema_safety_net,
+    normalize_cache_owners,
     safety_net_note,
 )
 from src.storage.artifact_store import ArtifactStore
@@ -103,6 +105,16 @@ def load_synthesis_data(
             store,
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json",
             required=False,
+        )
+
+    # Legacy ElastiCache owners (an assignment written before the cache overlay,
+    # #296) move to their system-of-record engine, in memory only.
+    if data.assignment:
+        normalize_cache_owners(
+            data.assignment,
+            data.source_queries,
+            data.selected_engines,
+            source_database_engine(data.collector),
         )
 
     # Engines consolidation (or a customer re-route) eliminated — those with no
@@ -200,7 +212,11 @@ def _apply_cache_safety_net(data: SynthesisData) -> None:
         if not dropped:
             continue
         data.cache_overlay_dropped.extend(dropped)
-        data.cache_overlay_notes.append(safety_net_note(engine, dropped))
+        note = safety_net_note(engine, dropped)
+        data.cache_overlay_notes.append(note)
+        notes = data.assignment.setdefault("cache_notes", [])
+        if note not in notes:
+            notes.append(note)
         logger.info("Synthesis: %s overlay dropped for %d queries", engine, len(dropped))
         if not any(
             qa.get("cache_engine") == engine and qa.get("in_scope", True)

@@ -58,7 +58,7 @@ def _q(
         "tables_accessed": tables if tables is not None else ["users"],
         "join_count": 0,
         "has_joins": False,
-        "has_aggregation": False,
+        "has_aggregations": False,
         "filter_tables": [],
         **extra,
     }
@@ -111,7 +111,6 @@ class TestEligibility:
         # A Rails .first at 0.1 calls/s has the top-N shape and is not cache material
         top_n = 'SELECT * FROM "users" WHERE "users"."id" = $1 ORDER BY id LIMIT 1'
         assert cache_eligibility(_q("q", top_n, cps=0.1), set()) is None
-        assert cache_eligibility(_q("q", top_n, cps=0.1), set(), ["leaderboard_pattern"]) is None
 
     def test_writes_never_qualify(self):
         for qtype in ("INSERT", "UPDATE", "DELETE"):

@@ -78,7 +78,7 @@ def query_strategy(draw: st.DrawFn, table_ids: list[str]) -> dict:
         "tables_accessed": accessed,
         "join_count": join_count,
         "has_joins": has_joins,
-        "has_aggregation": has_aggregation,
+        "has_aggregations": has_aggregation,
         "filter_tables": filter_tables,
         "calls_per_second": 1.0,
         "rows_returned_avg": 10,

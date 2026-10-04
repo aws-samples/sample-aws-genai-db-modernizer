@@ -21,7 +21,7 @@ def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> di
                     "tables_accessed": tables,
                     "join_count": 0,
                     "has_joins": False,
-                    "has_aggregation": False,
+                    "has_aggregations": False,
                     "filter_tables": [],
                     "calls_per_second": 1.0,
                     "rows_returned_avg": 10,

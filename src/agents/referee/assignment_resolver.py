@@ -476,7 +476,9 @@ def break_owner_tie(
     """
     if source_aurora in engines:
         return source_aurora, "source-compatible engine"
-    tables = {t for qid in qids for t in (query_by_id.get(qid) or {}).get("tables_accessed") or []}
+    tables = sorted(
+        {t for qid in qids for t in (query_by_id.get(qid) or {}).get("tables_accessed") or []}
+    )
 
     def traffic(e: str) -> float:
         return round(sum(table_traffic.get((t, e), 0.0) for t in tables), 6)
@@ -521,7 +523,7 @@ def is_significant_join(query: dict, table: str) -> bool:
 
     A JOIN is significant when:
     - join_count >= 2 (multi-table join)
-    - has_aggregation is True (GROUP BY across joined tables)
+    - has_aggregations is True (GROUP BY across joined tables; the collector's field)
     - table appears in filter_tables (WHERE clause references the joined table)
 
     Light JOINs that only fetch a display field do not create co-dependencies.
@@ -530,7 +532,7 @@ def is_significant_join(query: dict, table: str) -> bool:
     """
     return (
         query.get("join_count", 0) >= 2
-        or query.get("has_aggregation", False)
+        or query.get("has_aggregations", False)
         or table in query.get("filter_tables", [])
     )
 

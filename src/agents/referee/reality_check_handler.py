@@ -18,6 +18,7 @@ from src.agents.prompt_framing import (
 )
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.cache_overlay import normalize_cache_owners
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
     corrections_for_moved_queries,
@@ -97,6 +98,16 @@ def run_reality_check_deterministic(
         analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
         if store.exists(analysis_key):
             analysis_outputs[engine] = store.read_json(analysis_key)
+
+    # An assignment written before the cache overlay (#296) has ElastiCache owners:
+    # move them to their system-of-record engine first, so the revision carries
+    # no cache owner (recorded in cache_notes).
+    normalize_cache_owners(
+        assignment,
+        collector_output.get("queries", {}).get("query_patterns", []),
+        analysis_outputs,
+        source_database_engine(collector_output),
+    )
 
     # Extract query capabilities from triage
     query_capabilities = triage.get("query_capabilities", {})

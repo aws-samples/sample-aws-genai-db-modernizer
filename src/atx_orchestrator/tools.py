@@ -590,7 +590,6 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     from src.agents.referee.assignment_review import render_assignment_summary
     from src.contracts.assignment_models import Assignment
     from src.storage.assignment_versioning import (
-        assignment_artifact_path,
         resolve_effective_assignment_version,
     )
 
@@ -604,8 +603,11 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
             }
         )
 
+    from src.agents.referee.assignment_overrides import load_assignment_for_edit
+
     assignment = Assignment.model_validate(
-        store.read_json(assignment_artifact_path(database_name, job_id, version))
+        # legacy ElastiCache owners moved to their system-of-record engine (#296)
+        load_assignment_for_edit(store, database_name, job_id, version)[0]
     )
     summary_md = render_assignment_summary(assignment)
 
@@ -671,7 +673,6 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     from src.agents.referee.assignment_review import build_review_table, render_assignment_review
     from src.contracts.assignment_models import Assignment
     from src.storage.assignment_versioning import (
-        assignment_artifact_path,
         resolve_effective_assignment_version,
     )
 
@@ -685,8 +686,11 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
             }
         )
 
+    from src.agents.referee.assignment_overrides import load_assignment_for_edit
+
     assignment = Assignment.model_validate(
-        store.read_json(assignment_artifact_path(database_name, job_id, version))
+        # legacy ElastiCache owners moved to their system-of-record engine (#296)
+        load_assignment_for_edit(store, database_name, job_id, version)[0]
     )
 
     # Try the platform HITL editable-table transport first.
@@ -824,6 +828,7 @@ def finalize_assignment_review(
         NoAssignmentFound,
         UnknownQuery,
         apply_assignment_overrides,
+        load_assignment_for_edit,
         mark_assignment_customer_approved,
     )
     from src.agents.referee.assignment_review import (
@@ -847,7 +852,8 @@ def finalize_assignment_review(
         )
 
     current = Assignment.model_validate(
-        store.read_json(assignment_artifact_path(database_name, job_id, version))
+        # legacy ElastiCache owners moved to their system-of-record engine (#296)
+        load_assignment_for_edit(store, database_name, job_id, version)[0]
     )
 
     # Resolve overrides from whichever transport the customer used. Precedence:
