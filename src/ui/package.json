@@ -52,7 +52,13 @@
     "serialize-javascript": "^7.0.3",
     "webpack-dev-server": "^5.2.5",
     "@tootallnate/once": "^3.0.1",
-    "underscore": "^1.13.8"
+    "underscore": "^1.13.8",
+    "sockjs": {
+      "uuid": "^11.1.1"
+    },
+    "@svgr/plugin-svgo": {
+      "svgo": "^2.8.4"
+    }
   },
   "devDependencies": {
     "serve": "^14.2.6"
