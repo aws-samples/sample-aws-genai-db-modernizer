@@ -2,10 +2,11 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
+  "reason": "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average.",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
-    "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged."
+    "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
+    "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average."
   ],
   "samples": {
     "wordpress": {
@@ -39,8 +40,8 @@
         },
         {
           "engines": [
-            "aurora_mysql",
-            "dynamodb"
+            "dynamodb",
+            "aurora_mysql"
           ],
           "workload_percent": 96.3,
           "cached_call_share_percent": 0.0
