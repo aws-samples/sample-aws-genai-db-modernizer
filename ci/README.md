@@ -238,6 +238,12 @@ obvious entries lives here instead:
   Both the bare and `*`-suffixed forms are listed because it's untested
   whether a headless run ever invokes the script with zero arguments (it
   always does, today) — keeping both avoids relying on that.
+- `Bash(uv run python scripts/search_artifacts.py *)`: the headless session
+  may have no Grep tool (Claude Code 2.1.288 in the internal validation
+  pipeline does not) and `grep` through Bash is not allowed, so the shared
+  tool-use rule in the commands points at this read-only search script. It
+  refuses paths that resolve outside the repo, never opens `.env`/key/
+  credential-like files, and caps its output (see its module docstring).
 - `Bash(rm *)`, `Bash(sudo *)`, `Bash(wget *)`, `Bash(nc *)` in `deny`: nothing
   in the pipeline needs any of these. They're explicit denies, not just
   absent from `allow`, as defense in depth against a prompt-injected or

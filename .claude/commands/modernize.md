@@ -5,7 +5,7 @@ Full end-to-end database modernization pipeline. The orchestrator is LIGHTWEIGHT
 
 ## Tool Use
 
-Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains. State updates to `.modernizer-state.json` use the Edit/Write tools, never `sed` or another Bash edit.
+Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. State updates to `.modernizer-state.json` use the Edit/Write tools, never `sed` or another Bash edit.
 
 ## Arguments
 
@@ -86,7 +86,7 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 2. **Dispatch a subagent** with this task text:
 
    ```text
-   Run /reality-check for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   Run /reality-check for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
    ```
 
 3. After subagent completes, resume:
@@ -136,13 +136,13 @@ It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: on
 - Each other engine:
 
   ```text
-  Run /design-schema-<engine> for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  Run /design-schema-<engine> for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
   ```
 
 - Each DynamoDB group `{G}` (`{INPUT_FILE}`, `{INPUT_PAGES}` and `{DRAFT}` = that group's `input_file`, `input_pages` and `draft` from the `--split` line, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
   ```text
-  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search it with `uv run python scripts/search_artifacts.py <regex> <path>`; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or other scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
   ```
 
 Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed", e.g. its design still failed validation after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
@@ -169,7 +169,7 @@ Make **at most 3 `--merge` attempts in total** (this is the DynamoDB retry budge
 - `"status": "validation_failed"`, or `complete` with `DynamoDB merge review: …` warnings while attempts remain: dispatch one fix subagent, wait for it, then re-run `--merge`. Pass it the `errors` and `warnings` from the `--merge` line exactly as printed:
 
   ```text
-  Follow /design-schema-dynamodb **Merge fix task** for job_id={job_id} db={database_name} assignment_version={N}. --merge printed: {MERGE_LINE}. Edit only the schema_draft_group_*.json files. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+  Follow /design-schema-dynamodb **Merge fix task** for job_id={job_id} db={database_name} assignment_version={N}. --merge printed: {MERGE_LINE}. Edit only the schema_draft_group_*.json files. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
   ```
 
 - A `complete` merge whose review warnings are still there after the last attempt is still `complete`: those notes stay in the design's trade-offs for review before migration.
@@ -186,7 +186,7 @@ Do not run `--finalize` for DynamoDB; `--merge` is its final step.
 **Dispatch subagent** with this task text:
 
 ```text
-Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
 ```
 
 ### Completion
@@ -220,7 +220,7 @@ When every subagent you dispatched has reported, do not wait for anything else. 
 4. **Subagent task descriptions are minimal.** Use the task-text templates above: the skill name, the required args, and the fixed rules below. The subagent loads the skill and follows it.
 5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents.
 6. **The reality check subagent is NON-OPTIONAL.** The orchestrator must NEVER attempt to read llm_input.json or write llm_responses/ itself.
-7. **Every dispatch's task text includes the tool-use rule:** "Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains." The subagent loads its own skill, which repeats the same rule, but the dispatch text carries it too so the rule holds even before the skill loads.
+7. **Every dispatch's task text includes the tool-use rule:** "Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`." The subagent loads its own skill, which repeats the same rule, but the dispatch text carries it too so the rule holds even before the skill loads.
 8. **Nesting is one level deep.** Only the orchestrator dispatches subagents. Every dispatch's task text includes "Do not dispatch subagents yourself." (and "Unattended: do not ask the user anything."): a subagent's own subagents report to the orchestrator, not to it, so a subagent that dispatches and then ends its turn leaves its work unfinished.
 
 ## Error Handling

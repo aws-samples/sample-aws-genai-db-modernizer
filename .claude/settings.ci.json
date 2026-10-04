@@ -15,6 +15,7 @@
       "Bash(uv run python scripts/run_synthesis.py *)",
       "Bash(uv run python scripts/run_report.py *)",
       "Bash(uv run python scripts/check_decision.py *)",
+      "Bash(uv run python scripts/search_artifacts.py *)",
       "Bash(uv run python scripts/start_local_ui.py)",
       "Bash(uv run python scripts/start_local_ui.py *)",
       "Agent",

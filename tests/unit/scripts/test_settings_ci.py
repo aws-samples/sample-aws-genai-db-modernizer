@@ -103,6 +103,25 @@ def test_start_local_ui_is_referenced_and_covered_by_an_allow_rule() -> None:
     assert any("scripts/start_local_ui.py" in rule for rule in allow)
 
 
+def test_search_artifacts_is_referenced_and_has_an_exact_allow_rule() -> None:
+    # Issue #275: the headless session may have no Grep tool and Bash `grep`
+    # is not allowed, so the commands' tool-use rule points at this script.
+    # Same exact-prefix form as the other pipeline scripts, not a broader
+    # `uv run python *` rule.
+    assert "scripts/search_artifacts.py" in _referenced_scripts()
+    allow = _load_settings()["permissions"]["allow"]
+    assert "Bash(uv run python scripts/search_artifacts.py *)" in allow
+    assert not any("grep" in rule for rule in allow), "no Bash grep allow rule"
+    assert not any(rule in allow for rule in ("Bash(uv run python *)", "Bash(uv run *)"))
+
+
+def test_every_python_bash_allow_is_an_exact_script_prefix() -> None:
+    allow = _load_settings()["permissions"]["allow"]
+    for rule in allow:
+        if rule.startswith("Bash(uv run"):
+            assert re.fullmatch(r"Bash\(uv run python scripts/[a-z_]+\.py( \*)?\)", rule), rule
+
+
 def test_no_bare_read_glob_grep_allow() -> None:
     # In-cwd reads need no rule (docs: dontAsk "file reads in your working
     # directories ... still run"); a bare Read/Glob/Grep allow would extend

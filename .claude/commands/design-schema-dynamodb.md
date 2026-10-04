@@ -7,7 +7,7 @@ Designs the complete DynamoDB schema: table structure, access patterns, GSIs, an
 
 ## Tool Use
 
-Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
 
 ## Who runs which part
 
@@ -44,7 +44,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
    Run on its own, launch one subagent per group, ALL in a single message for true parallelism, each with this task text (`{INPUT_FILE}`, `{INPUT_PAGES}` and `{DRAFT}` = that group's `input_file`, `input_pages` and `draft`, `{OTHER_GROUPS}` = the other groups' `group_index` and `primary_tables`):
 
    ```text
-   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Inspect files with the Read and Grep tools. Use Bash only for the documented `uv run python scripts/…` commands; do not use `cat`, `jq`, `python3 -c`, `sed`, `ls` or `cd` chains.
+   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search it with `uv run python scripts/search_artifacts.py <regex> <path>`; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or other scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`.
    ```
 
    If you are yourself a subagent, do the Group draft task for each group yourself, one after another.
@@ -88,7 +88,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
 ## Group draft task
 
-Read the input with the Read tool, one call per page (`offset`, `limit`); search with the Grep tool if this session has one, else Read the page again; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or scripts to read, search or write files.
+Read the input with the Read tool, one call per page (`offset`, `limit`); search it with `uv run python scripts/search_artifacts.py <regex> <path>`; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or other scripts to read, search or write files.
 
 For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json` (and run `--check-costs` on it). Do not run `--merge` or `--finalize`, do not update `.modernizer-state.json`, and do not touch other groups' drafts. Do not dispatch subagents yourself. Return a short summary: tables, access patterns, `validation_passed`.
 

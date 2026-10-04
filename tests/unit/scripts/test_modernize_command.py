@@ -36,10 +36,15 @@ AUTO_EXEMPTION_PATTERN = re.compile(r"--auto|headless|[Uu]nless `--auto`")
 # Read/Grep tools. In restricted environments those commands are denied,
 # which costs turns and can stall a phase. Every command a subagent or the
 # orchestrator follows must carry this instruction, worded identically.
+# Issue #275: the headless Claude Code session used in CI has no Grep tool,
+# so the rule names the allowlisted scripts/search_artifacts.py for searching
+# and keeps Grep only as "if this session has one".
 TOOL_USE_RULE = (
-    "Inspect files with the Read and Grep tools. Use Bash only for the "
-    "documented `uv run python scripts/…` commands; do not use `cat`, `jq`, "
-    "`python3 -c`, `sed`, `ls` or `cd` chains."
+    "Read files with the Read tool (use `offset`/`limit` for large files). "
+    "Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` "
+    "(or the Grep tool if this session has one). Use Bash only for the documented "
+    "`uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, "
+    "`ls`, `cd` chains, heredocs or `grep`."
 )
 
 COMMANDS_WITH_TOOL_USE_RULE = [
@@ -58,6 +63,7 @@ COMMANDS_WITH_TOOL_USE_RULE = [
     "analyze-dynamodb.md",
     "analyze-elasticache.md",
     "analyze-opensearch.md",
+    "design-schema.md",
 ]
 
 
@@ -136,6 +142,27 @@ def test_commands_followed_by_subagents_or_orchestrator_state_the_tool_use_rule(
         assert path.exists(), f"missing command file: {filename}"
         text = path.read_text()
         assert TOOL_USE_RULE in text, f"{filename}: missing the tool-use rule verbatim"
+
+
+def test_no_command_or_skill_relies_on_grep_or_glob_tools() -> None:
+    # Issue #275: the headless session may have no Grep or Glob tool. "Grep"
+    # may only appear inside the shared rule (as "if this session has one"),
+    # and "Glob" not at all.
+    skills_dir = REPO_ROOT / "src" / "skills"
+    files = [*COMMANDS_DIR.glob("*.md"), *skills_dir.rglob("*.md")]
+    assert files
+    for path in files:
+        text = path.read_text()
+        assert not re.search(r"\bGlob\b", text), f"{path}: names the Glob tool"
+        flat = " ".join(text.split()).replace(TOOL_USE_RULE, "")
+        assert not re.search(r"\bGrep\b", flat), f"{path}: names the Grep tool outside the rule"
+
+
+def test_tool_use_rule_names_an_allowlisted_search_script() -> None:
+    assert "uv run python scripts/search_artifacts.py" in TOOL_USE_RULE
+    assert (REPO_ROOT / "scripts" / "search_artifacts.py").exists()
+    for forbidden in ("`cat`", "`jq`", "`python3 -c`", "`sed`", "`ls`", "heredocs", "`grep`"):
+        assert forbidden in TOOL_USE_RULE
 
 
 def test_modernize_dispatch_text_includes_tool_use_rule() -> None:
@@ -369,11 +396,12 @@ def test_merge_failed_is_the_merge_verdict_not_validation_passed() -> None:
 # paged them with `sed -n`, searched them with `grep` and wrote their drafts
 # with heredoc scripts, all denied. The group task text now says how to read
 # (one Read call per `input_pages` page) and how to write (one Write call).
+# Searching goes through the allowlisted search_artifacts.py (#275).
 GROUP_IO_RULE = (
     "Read the input with the Read tool, one call per page (`offset`, `limit`); "
-    "search with the Grep tool if this session has one, else Read the page again; "
+    "search it with `uv run python scripts/search_artifacts.py <regex> <path>`; "
     "write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, "
-    "heredocs or scripts to read, search or write files."
+    "heredocs or other scripts to read, search or write files."
 )
 
 
