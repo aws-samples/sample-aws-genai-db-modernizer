@@ -11,6 +11,10 @@ Usage:
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --status
     uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
         --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_<G>.json
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb \
+        --check-costs artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_0.json \
+                       artifacts/<name>/<id>/schema-dynamodb/v<N>/schema_draft_group_1.json
+    uv run python scripts/run_schema_design.py --job-id <id> --db <name> --engine dynamodb --check-costs-all
 
 DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
 its final step. ``--finalize --engine dynamodb`` only reports whether the merged
@@ -482,32 +486,77 @@ def _contained_draft_path(artifact_root: str, db: str, job_id: str, draft: str) 
     return resolved
 
 
-def run_check_costs(artifact_root: str, job_id: str, db: str, engine: str, draft: str) -> None:
-    """Run the DynamoDB hot-partition/capacity check on one group draft (issue #198).
+def _group_draft_paths(artifact_root: str, db: str, job_id: str, version: int) -> list[str]:
+    """Every ``schema_draft_group_*.json`` for ``job_id``'s current assignment
+    version, sorted by group index (issue #313).
+
+    Used by ``--check-costs-all`` so re-checking every group draft after a
+    merge-fix pass is one command, not a shell loop over ``--status``'s group
+    count.
+    """
+    import re
+
+    schema_dir = Path(artifact_root) / db / job_id / "schema-dynamodb" / f"v{version}"
+    pattern = re.compile(r"schema_draft_group_(\d+)\.json$")
+    found: list[tuple[int, Path]] = []
+    if schema_dir.is_dir():
+        for entry in schema_dir.iterdir():
+            match = pattern.match(entry.name)
+            if match:
+                found.append((int(match.group(1)), entry))
+    found.sort(key=lambda item: item[0])
+    return [str(path) for _, path in found]
+
+
+def run_check_costs(
+    artifact_root: str, job_id: str, db: str, engine: str, drafts: list[str]
+) -> None:
+    """Run the DynamoDB hot-partition/capacity check on one or more group
+    drafts (issues #198, #313).
 
     External-mode counterpart of the Bedrock agent's Strands tool
     ``compute_performances_and_costs``: both call the same function. Read-only:
-    the draft is not modified; the caller records ``validation_passed`` /
+    no draft is modified; the caller records ``validation_passed`` /
     ``validation_failures`` from the printed result per the skill's rules.
-    Exit 0 whenever the check ran (``passed`` says whether it passed); exit 1
-    only when it could not run (wrong engine, path outside the job, unreadable
-    draft).
+    Exit 0 whenever every check ran (``passed`` says whether each passed, and
+    whether all of them did); exit 1 as soon as one draft could not be
+    checked (wrong engine, path outside the job, unreadable draft) -- no
+    partial result is printed.
+
+    One draft keeps today's shape: ``{"status": "complete", "draft": ...,
+    "passed": ..., "results": [...], ...}`` at the top level. More than one
+    draft prints ``{"status": "complete", "groups": [<that same shape per
+    draft>, ...], "passed": <all of them passed>}``.
     """
     if engine != "dynamodb":
         _error("--check-costs is only available for --engine dynamodb")
-    path = _contained_draft_path(artifact_root, db, job_id, draft)
-    if isinstance(path, str):
-        _error(path)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        _error(f"cannot read draft {draft!r}: {exc}")
-    if not isinstance(payload, dict):
-        _error(f"draft {draft!r} must be a JSON object")
 
     from src.tools.schema.dynamodb_cost_check import check_draft_costs
 
-    _output({"status": "complete", "draft": draft, **check_draft_costs(payload)})
+    group_results = []
+    for draft in drafts:
+        path = _contained_draft_path(artifact_root, db, job_id, draft)
+        if isinstance(path, str):
+            _error(path)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _error(f"cannot read draft {draft!r}: {exc}")
+        if not isinstance(payload, dict):
+            _error(f"draft {draft!r} must be a JSON object")
+        group_results.append({"draft": draft, **check_draft_costs(payload)})
+
+    if len(group_results) == 1:
+        _output({"status": "complete", **group_results[0]})
+        return
+
+    _output(
+        {
+            "status": "complete",
+            "groups": group_results,
+            "passed": all(result["passed"] for result in group_results),
+        }
+    )
 
 
 def main() -> None:
@@ -551,10 +600,23 @@ def main() -> None:
     parser.add_argument(
         "--check-costs",
         metavar="DRAFT",
+        nargs="+",
         default=None,
         help=(
-            "Run the hot-partition/capacity check on a DynamoDB group draft under the "
-            "job's schema-dynamodb/ dir and print the result (read-only)"
+            "Run the hot-partition/capacity check on one or more DynamoDB group drafts "
+            "under the job's schema-dynamodb/ dir and print the result (read-only). "
+            "One draft prints today's single-result shape; more than one prints "
+            '{"groups": [...], "passed": <all passed>}. Pass several paths rather than '
+            "looping the command: a shell loop is not an allowed command under CI."
+        ),
+    )
+    parser.add_argument(
+        "--check-costs-all",
+        action="store_true",
+        help=(
+            "Run --check-costs on every schema_draft_group_*.json of the job's current "
+            "assignment version (read-only, DynamoDB only); the single command to use to "
+            "re-check every group draft, e.g. after a merge-fix pass"
         ),
     )
     parser.add_argument(
@@ -576,7 +638,24 @@ def main() -> None:
     if violation:
         _error(violation)
 
+    if args.check_costs is not None and args.check_costs_all:
+        _error("--check-costs and --check-costs-all are mutually exclusive")
+
     from src.storage.local_store import LocalArtifactStore
+
+    if args.check_costs_all:
+        if args.engine != "dynamodb":
+            _error("--check-costs-all is only available for --engine dynamodb")
+        store = LocalArtifactStore(base_dir=args.artifact_root)
+        version = _resolve_version(store, args.job_id, args.db, args.assignment_version)
+        drafts = _group_draft_paths(args.artifact_root, args.db, args.job_id, version)
+        if not drafts:
+            _error(
+                f"no schema_draft_group_*.json found under schema-dynamodb/v{version} for "
+                f"{args.db}/{args.job_id}; run --split first"
+            )
+        run_check_costs(args.artifact_root, args.job_id, args.db, args.engine, drafts)
+        return
 
     if args.check_costs is not None:
         run_check_costs(args.artifact_root, args.job_id, args.db, args.engine, args.check_costs)

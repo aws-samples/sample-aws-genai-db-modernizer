@@ -292,6 +292,50 @@ def test_modernize_never_ends_a_turn_waiting_on_nothing() -> None:
     )
 
 
+# Issue #313: a headless /modernize --auto run's merge-fix subagent looped a
+# shell `for g in 0 1 2 3; do uv run python scripts/run_schema_design.py …
+# --check-costs …; done` around every group draft, because no command gave
+# it a single call that re-checks them all. CI's Bash allowlist denies shell
+# loops and compound commands, so every bash example in every command file
+# must be one call: no `for … in` loop, no `while` loop, no `&&`, and no `;`
+# command chain (a `;` inside a quoted argument, e.g. `python -c "a; b"`, is
+# not a chain and is fine).
+_BASH_BLOCK_PATTERN = re.compile(r"```(?:bash|sh)\n(.*?)```", re.DOTALL)
+_QUOTED_PATTERN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _bash_blocks(text: str) -> list[str]:
+    return _BASH_BLOCK_PATTERN.findall(text)
+
+
+def test_no_command_bash_example_suggests_a_shell_loop_or_compound_command() -> None:
+    for path in sorted(COMMANDS_DIR.glob("*.md")):
+        text = path.read_text()
+        for block in _bash_blocks(text):
+            assert not re.search(
+                r"\bfor\s+\w+\s+in\b", block
+            ), f"{path.name}: shell for-loop in a command example:\n{block}"
+            assert not re.search(
+                r"\bwhile\b", block
+            ), f"{path.name}: shell while-loop in a command example:\n{block}"
+            assert (
+                "&&" not in block
+            ), f"{path.name}: '&&' compound command in a command example:\n{block}"
+            unquoted = _QUOTED_PATTERN.sub("", block)
+            assert (
+                ";" not in unquoted
+            ), f"{path.name}: ';' command chain in a command example:\n{block}"
+
+
+def test_check_costs_commands_use_check_costs_all_to_recheck_every_group() -> None:
+    # The fix for #313: re-checking several (or all) group drafts is one
+    # allowed command, not a loop over --check-costs.
+    design_schema_dynamodb = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    merge_fix_task = design_schema_dynamodb.split("## Merge fix task", 1)[1]
+    assert "--check-costs-all" in merge_fix_task
+    assert "for g in" not in merge_fix_task.lower()
+
+
 def test_design_schema_dynamodb_group_task_writes_only_its_draft() -> None:
     text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
     group_task = text.split("## Group draft task", 1)[1].split("\n## ", 1)[0]

@@ -124,7 +124,13 @@ Key rules for each group draft:
 
 ## Merge fix task
 
-For the `errors` and `warnings` a `--merge` attempt printed. Edit only the `schema_draft_group_*.json` files (re-run `--check-costs` on a draft whose tables or `hot_partition_analysis` you changed). Do not run `--merge` or `--finalize` and do not update `.modernizer-state.json`: whoever dispatched you (or Step 5) re-runs `--merge`. Do not dispatch subagents yourself. Return a short summary of what you changed per error or warning.
+For the `errors` and `warnings` a `--merge` attempt printed. Edit only the `schema_draft_group_*.json` files. Once you are done editing, re-check every group draft of this version in a single call -- never loop the command over groups:
+
+```bash
+uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --check-costs-all
+```
+
+Do not run `--merge` or `--finalize` and do not update `.modernizer-state.json`: whoever dispatched you (or Step 5) re-runs `--merge`. Do not dispatch subagents yourself. Return a short summary of what you changed per error or warning.
 
 For each entry in `errors`:
 

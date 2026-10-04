@@ -163,3 +163,120 @@ def test_sandbox_contains_the_check_costs_path(tmp_path):
     )
     assert message is not None
     assert "--check-costs" in message
+
+
+# Issue #313: a headless run looped `for g in 0 1 2 3; do ... --check-costs
+# ...; done` because `--check-costs` took exactly one draft and there was no
+# single command to re-check every group. `--check-costs` now takes several
+# paths, and `--check-costs-all` discovers every group draft of the job's
+# current assignment version itself.
+
+
+def test_check_costs_accepts_several_drafts_in_one_call(monkeypatch, capsys, tmp_path):
+    passing = {"hot_partition_analysis": HOT_PARTITIONS}
+    failing = {
+        "hot_partition_analysis": [{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}]
+    }
+    p0 = _write_draft(tmp_path, passing, rel="v1/schema_draft_group_0.json")
+    p1 = _write_draft(tmp_path, failing, rel="v1/schema_draft_group_1.json")
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--check-costs", str(p0), str(p1))
+
+    assert code == 0
+    assert status["status"] == "complete"
+    assert status["passed"] is False  # overall: not every group passed
+    assert len(status["groups"]) == 2
+    assert status["groups"][0]["draft"] == str(p0)
+    assert status["groups"][0]["passed"] is True
+    assert status["groups"][1]["draft"] == str(p1)
+    assert status["groups"][1]["passed"] is False
+
+
+def test_check_costs_multi_draft_errors_on_first_bad_path(monkeypatch, capsys, tmp_path):
+    good = _write_draft(tmp_path, {"hot_partition_analysis": HOT_PARTITIONS})
+
+    code, status = _run(
+        monkeypatch, capsys, tmp_path, "--check-costs", str(good), str(tmp_path / "outside.json")
+    )
+
+    assert code == 1
+    assert status["status"] == "error"
+
+
+def test_check_costs_all_checks_every_group_draft_of_the_version(monkeypatch, capsys, tmp_path):
+    passing = {"hot_partition_analysis": HOT_PARTITIONS}
+    failing = {
+        "hot_partition_analysis": [{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}]
+    }
+    _write_draft(tmp_path, passing, rel="v1/schema_draft_group_0.json")
+    _write_draft(tmp_path, passing, rel="v1/schema_draft_group_1.json")
+    _write_draft(tmp_path, failing, rel="v1/schema_draft_group_2.json")
+
+    code, status = _run(
+        monkeypatch, capsys, tmp_path, "--check-costs-all", "--assignment-version", "1"
+    )
+
+    assert code == 0
+    assert status["status"] == "complete"
+    assert status["passed"] is False
+    assert [g["draft"].rsplit("_", 1)[-1] for g in status["groups"]] == [
+        "0.json",
+        "1.json",
+        "2.json",
+    ]
+
+
+def test_check_costs_all_is_dynamodb_only(monkeypatch, capsys, tmp_path):
+    _write_draft(tmp_path, {"hot_partition_analysis": HOT_PARTITIONS})
+
+    code, status = _run(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        "--check-costs-all",
+        "--assignment-version",
+        "1",
+        engine="documentdb",
+    )
+
+    assert code == 1
+    assert status["status"] == "error"
+    assert "dynamodb" in status["message"]
+
+
+def test_check_costs_all_errors_when_no_group_drafts_exist(monkeypatch, capsys, tmp_path):
+    code, status = _run(
+        monkeypatch, capsys, tmp_path, "--check-costs-all", "--assignment-version", "1"
+    )
+
+    assert code == 1
+    assert status["status"] == "error"
+
+
+def test_check_costs_and_check_costs_all_are_mutually_exclusive(monkeypatch, capsys, tmp_path):
+    path = _write_draft(tmp_path, {"hot_partition_analysis": HOT_PARTITIONS})
+
+    code, status = _run(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        "--check-costs",
+        str(path),
+        "--check-costs-all",
+        "--assignment-version",
+        "1",
+    )
+
+    assert code == 1
+    assert status["status"] == "error"
+
+
+def test_sandbox_contains_every_check_costs_path(tmp_path):
+    from argparse import Namespace
+
+    args = Namespace(check_costs=[str(tmp_path / "a.json"), str(tmp_path / "b.json")])
+    message = _sandbox.sandbox_violation(
+        args, environ={_sandbox.SANDBOX_ENV: "1"}, repo_root=tmp_path / "repo"
+    )
+    assert message is not None
+    assert "--check-costs" in message
