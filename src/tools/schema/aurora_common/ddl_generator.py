@@ -21,6 +21,7 @@ from src.tools.schema.aurora_common.constraint_translator import (
     default_clause,
     fk_on_delete_clause,
     identity_clause,
+    is_expression_default,
     mysql_auto_increment_clause,
     not_null_clause,
 )
@@ -42,6 +43,7 @@ class Dialect:
     quote_char: str
     auto_increment: Callable[[bool | None], str]
     resolve_type: Callable[..., TypeResolution]
+    backslash_escapes: bool = False  # MySQL string literals treat \ as an escape
 
     def q(self, identifier: str) -> str:
         c = self.quote_char
@@ -59,6 +61,7 @@ MYSQL = Dialect(
     quote_char="`",
     auto_increment=mysql_auto_increment_clause,
     resolve_type=resolve_mysql_type,
+    backslash_escapes=True,
 )
 
 
@@ -109,7 +112,8 @@ class DdlResult:
     # predicate Aurora cannot take): {"table", "index", "reason"}.
     index_notes: list[dict] = field(default_factory=list)
     # Columns that carry over but need a look: {"table", "column", "kind", "reason"};
-    # kind "time_zone" (a time-zone-aware type mapped to one without, app-layer).
+    # kind "default" (a SQL-expression default kept as a literal, #156) or
+    # "time_zone" (a time-zone-aware type mapped to one without, app-layer).
     column_notes: list[dict] = field(default_factory=list)
 
 
@@ -149,6 +153,18 @@ def _column_ddl(
 ) -> ColumnDDL:
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     notes = notes if notes is not None else []
+    if not col.is_auto_increment and is_expression_default(col.default_value):
+        notes.append(
+            {
+                "table": table_name,
+                "column": col.column_name,
+                "kind": "default",
+                "reason": (
+                    f"DEFAULT {excerpt(str(col.default_value))} is a source SQL expression; "
+                    "the draft keeps it as a quoted literal, so confirm or rewrite it."
+                ),
+            }
+        )
     if override is not None:
         # A model-decided type (#273): judged, so not script-derived and not a residual.
         resolution = TypeResolution(
@@ -193,7 +209,11 @@ def _column_from(
     )  # nosemgrep: is-function-without-parentheses -- property, not a method
     # Identity/auto-increment and default are mutually exclusive — a column
     # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
-    default = "" if auto_increment else default_clause(col.default_value)
+    default = (
+        ""
+        if auto_increment
+        else default_clause(col.default_value, backslash_escapes=dialect.backslash_escapes)
+    )
     fragment = (
         f"{dialect.q(col.column_name)} {resolution.aurora_type}"
         f"{auto_increment}"

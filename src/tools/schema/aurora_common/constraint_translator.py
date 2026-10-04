@@ -30,8 +30,30 @@ def not_null_clause(nullable: bool) -> str:
     return "" if nullable else " NOT NULL"
 
 
-def default_clause(default_value: str | int | float | bool | None) -> str:
-    """Render a column DEFAULT clause, quoting string literals safely."""
+def is_expression_default(default_value: object) -> bool:
+    """A string default that is SQL (a cast or a call), not a literal value.
+
+    It is still rendered as a quoted literal (parsing ``'lit'::type`` is #156),
+    so the draft flags it for review.
+    """
+    if not isinstance(default_value, str):
+        return False
+    text = default_value.strip()
+    return text.upper() not in _SQL_KEYWORD_DEFAULTS and ("::" in text or "(" in text)
+
+
+def default_clause(
+    default_value: str | int | float | bool | None, *, backslash_escapes: bool = False
+) -> str:
+    """Render a column DEFAULT clause, quoting string literals safely.
+
+    ``backslash_escapes`` is for MySQL, where a backslash escapes the next
+    character inside a string literal (unless NO_BACKSLASH_ESCAPES is set):
+    without doubling it, ``x\\'`` would end the literal and let the rest of
+    the default inject DDL. Doubled, the value is kept under the default
+    sql_mode and the literal still cannot be closed early under
+    NO_BACKSLASH_ESCAPES.
+    """
     if default_value is None:
         return ""
     if isinstance(default_value, bool):
@@ -41,7 +63,8 @@ def default_clause(default_value: str | int | float | bool | None) -> str:
     # string
     if default_value.strip().upper() in _SQL_KEYWORD_DEFAULTS:
         return f" DEFAULT {default_value.strip()}"
-    escaped = default_value.replace("'", "''")
+    escaped = default_value.replace("\\", "\\\\") if backslash_escapes else default_value
+    escaped = escaped.replace("'", "''")
     return f" DEFAULT '{escaped}'"
 
 

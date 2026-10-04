@@ -471,6 +471,13 @@ def merge_design_delta(
 
     for note in ddl.index_notes:
         warnings.append(f"index {note['table']}.{note['index']}: {note['reason']}")
+    defaults = [n for n in ddl.column_notes if n["kind"] == "default"]
+    if defaults:
+        sample = ", ".join(f"{n['table']}.{n['column']}" for n in defaults[:5])
+        warnings.append(
+            f"{len(defaults)} column(s) have a SQL-expression DEFAULT kept as a quoted literal "
+            f"(e.g. {sample}); review them in the draft's column_notes"
+        )
     if ddl.residuals:
         sample = ", ".join(f"{r['table']}.{r['column']}" for r in ddl.residuals[:5])
         warnings.append(
