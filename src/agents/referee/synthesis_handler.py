@@ -29,6 +29,7 @@ from src.agents.referee.synthesis_grounding import (
 from src.agents.referee.synthesis_report import (
     AURORA_ENGINES,
     build_architecture_recommendation,
+    build_cache_overlay,
     build_query_groups,
     build_ranking,
     build_risk_assessment,
@@ -95,9 +96,12 @@ def run_synthesis_deterministic(
     # engine that absorbed them.
     # Every target recommendation below is grounded in the effective set (#202).
     effective = {
-        qa["assigned_engine"]
+        engine
         for qa in (data.assignment or {}).get("query_assignments", [])
-        if qa.get("in_scope", True) and qa.get("assigned_engine")
+        if qa.get("in_scope", True)
+        # the cache layer is part of the architecture while it fronts a query (#296)
+        for engine in (qa.get("assigned_engine"), qa.get("cache_engine"))
+        if engine
     } or set(data.engines)
     eliminated = eliminated_engines(effective, reality_check_output)
     # Per-engine table scope of the effective assignment, for the summary LLM input and
@@ -177,6 +181,7 @@ def run_synthesis_deterministic(
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
         "eliminated_engines": eliminated,
+        "cache_overlay": build_cache_overlay(data),
         "known_tables": known_tables,
         "engine_tables": engine_tables,
         "effective_architecture": build_effective_architecture(
@@ -300,6 +305,7 @@ def _write_synthesis_report(
         "schema_designs": _build_schema_summaries(data),
         "trade_offs": result["trade_offs"],
         "assignment_summary": result["assignment_summary"],
+        "cache_overlay": result.get("cache_overlay"),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

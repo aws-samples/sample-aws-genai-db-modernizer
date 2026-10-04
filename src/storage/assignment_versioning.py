@@ -354,14 +354,18 @@ def engine_scope(assignment: dict, engine: str) -> EngineScope:
 
     This is the same scope the schema design input is filtered to: a table is in
     an engine's scope when at least one in-scope query assigned to that engine
-    accesses it.
+    accesses it. A cache engine owns no query: its scope is the in-scope queries
+    it fronts (``cache_engine``, the cache overlay of #296), so its design is the
+    cache-aside keys for those reads.
     """
     query_ids: set[str] = set()
     tables: set[str] = set()
     for qa in assignment.get("query_assignments") or []:
         if not isinstance(qa, dict):
             continue
-        if qa.get("assigned_engine") != engine or not qa.get("in_scope", True):
+        if engine not in (qa.get("assigned_engine"), qa.get("cache_engine")):
+            continue
+        if not qa.get("in_scope", True):
             continue
         if qa.get("query_id") is not None:
             query_ids.add(str(qa["query_id"]))
@@ -376,6 +380,7 @@ def _in_scope_engine_query_sets(
 ) -> dict[str, set[str]]:
     """Return ``engine -> {in-scope query_id, ...}`` for one assignment version.
 
+    A cache engine's set is the queries it fronts (``cache_engine``, #296).
     Empty when the version's artifact is absent.
     """
     path = assignment_artifact_path(database_name, job_id, version)
@@ -386,10 +391,10 @@ def _in_scope_engine_query_sets(
     for qa in assignment.get("query_assignments", []):
         if not qa.get("in_scope", True):
             continue
-        engine = qa.get("assigned_engine")
         qid = qa.get("query_id")
-        if engine and qid:
-            result.setdefault(engine, set()).add(qid)
+        for engine in (qa.get("assigned_engine"), qa.get("cache_engine")):
+            if engine and qid:
+                result.setdefault(engine, set()).add(qid)
     return result
 
 

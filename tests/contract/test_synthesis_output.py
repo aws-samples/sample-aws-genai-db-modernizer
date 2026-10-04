@@ -231,7 +231,7 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        assert output.contract_version == "1.1"
+        assert output.contract_version == "1.2"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

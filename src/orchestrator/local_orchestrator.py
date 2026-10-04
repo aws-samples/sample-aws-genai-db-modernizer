@@ -356,9 +356,12 @@ class LocalOrchestrator(Orchestrator):
         if self.store.exists(assignment_key):
             assignment = self.store.read_json(assignment_key)
             engines = {
-                qa["assigned_engine"]
+                engine
                 for qa in assignment.get("query_assignments", [])
                 if qa.get("in_scope", True)
+                # the cache layer is tested on the reads it fronts (#296)
+                for engine in (qa["assigned_engine"], qa.get("cache_engine"))
+                if engine
             }
         else:
             engines = set(self._get_selected_engines(job_id, database_name))

@@ -9,6 +9,11 @@ Version History:
 - 1.1 (2026-08-27): Added optional ``source`` provenance to ``AssignmentSummary``
   so a consumer can see which pipeline stage produced the consumed assignment
   version (ADR-028). Backward compatible — ``source`` defaults to ``None``.
+- 1.2 (2026-10-04): Added optional ``cache_overlay`` (#296): the cache layer's
+  queries and share of calls, which the owner distribution never counts, plus the
+  notes of the post-schema safety net. A cache-layer ``ranking`` entry carries
+  ``role: "cache_layer"``, ``cache_overlay_queries`` and
+  ``cache_call_share_percent``. Backward compatible — defaults to ``None``.
 """
 
 from datetime import datetime
@@ -127,7 +132,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.1",
+        default="1.2",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -171,6 +176,14 @@ class SynthesisOutputContract(BaseModel):
     trade_offs: list[TradeOff] = Field(default_factory=list, description="Collected trade-offs")
     assignment_summary: AssignmentSummary | None = Field(
         None, description="Summary of the assignment version used"
+    )
+    cache_overlay: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Cache layer view (#296): engine, query_count, calls_per_second, "
+            "call_share_percent, owners, patterns, dropped_query_ids and notes. The cache "
+            "owns no query, so it is never part of the owner workload share."
+        ),
     )
 
     model_config = ConfigDict(extra="allow")

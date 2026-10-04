@@ -502,7 +502,8 @@ def engine_table_scope(
     Same scope rule as schema-design input filtering (``filter_collector_for_assignment``):
     an engine's tables are the tables accessed by the in-scope queries assigned to it
     (``query_assignments[].source_tables``, falling back to the collector query's
-    ``tables_accessed``). A table can belong to several engines. Names that are not
+    ``tables_accessed``), and the cache layer's tables are those of the queries it
+    fronts (``cache_engine``, #296). A table can belong to several engines. Names that are not
     known source tables (``unknown``, ``DUAL``) are ignored.
 
     Without an assignment (unversioned run) the schema designs stand in: every engine
@@ -514,11 +515,15 @@ def engine_table_scope(
     if qas:
         accessed = {q.get("query_id"): q.get("tables_accessed") or [] for q in source_queries}
         for qa in qas:
-            engine = qa.get("assigned_engine")
-            if not engine or not qa.get("in_scope", True):
+            if not qa.get("in_scope", True):
                 continue
             tables = qa.get("source_tables") or accessed.get(qa.get("query_id"), [])
-            scope.setdefault(engine, set()).update(t for t in tables if not known or t in known)
+            # The cache layer serves the tables of the reads it fronts (#296)
+            for engine in (qa.get("assigned_engine"), qa.get("cache_engine")):
+                if engine:
+                    scope.setdefault(engine, set()).update(
+                        t for t in tables if not known or t in known
+                    )
     else:
         for m in table_mappings:
             scope.setdefault(m["recommended_database"], set()).add(m["source_table"])
@@ -566,7 +571,12 @@ def build_effective_architecture(
                 :_TOP_GROUPS_PER_ENGINE
             ],
         }
-        if "assigned_queries" in r:
+        if r.get("role") == "cache_layer":
+            # Owns no query: described by the reads it fronts, never a workload share
+            entry["role"] = "cache_layer"
+            entry["cached_queries"] = r.get("cache_overlay_queries", 0)
+            entry["cached_call_share_percent"] = r.get("cache_call_share_percent", 0)
+        elif "assigned_queries" in r:
             entry["assigned_queries"] = r["assigned_queries"]
             entry["workload_percent"] = r.get("workload_percent", 0)
         if r.get("assignment_reason_summary"):
@@ -824,6 +834,15 @@ def build_fallback_summary(effective_architecture: dict | None) -> str | None:
         ]
     for entry, name in zip(engines, names, strict=True):
         queries = entry.get("assigned_queries")
+        if entry.get("role") == "cache_layer":
+            cached = entry.get("cached_queries") or 0
+            if cached:
+                parts.append(
+                    f"{name} caches {cached} hot {'read' if cached == 1 else 'reads'} "
+                    f"({entry.get('cached_call_share_percent', 0)}% of calls) in front of "
+                    "the engines that own them."
+                )
+            continue
         if queries:
             share = entry.get("workload_percent")
             load = f"{queries} queries" + (f" ({share}% of the workload)" if share else "")

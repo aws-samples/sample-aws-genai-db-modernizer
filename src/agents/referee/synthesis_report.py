@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, overlay_summary
 from src.agents.referee.synthesis_grounding import (
     SUMMARY_GROUNDING_RULE,
     display_name,
@@ -170,10 +171,39 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
     return result
 
 
+def build_cache_overlay(data: SynthesisData) -> dict | None:
+    """The cache layer's view of the workload (#296), or None when nothing is cached.
+
+    ElastiCache owns no query, so the owner distribution (``workload_percent``) never
+    counts it. This is the separate view: the in-scope queries it fronts, their share
+    of calls, their owner engines, and the notes of the post-schema safety net.
+    """
+    if not data.assignment:
+        return None
+    summary = overlay_summary(data.assignment.get("query_assignments", []), data.source_queries)
+    if summary is None and not data.cache_overlay_notes:
+        return None
+    out = dict(summary or {})
+    out["dropped_query_ids"] = list(data.cache_overlay_dropped)
+    out["notes"] = list(data.cache_overlay_notes)
+    return out
+
+
+def is_cache_layer(entry: dict) -> bool:
+    """True for a ranking entry that is the cache layer (owns no query, #296)."""
+    return bool(entry.get("role") == "cache_layer")
+
+
 def build_ranking(data: SynthesisData) -> list[dict]:
-    """Rank target engines by confidence, cost, and pattern coverage."""
+    """Rank target engines by confidence, cost, and pattern coverage.
+
+    The cache layer (#296) owns no query: its ``workload_percent`` is 0, it carries
+    ``cache_overlay_queries`` / ``cache_call_share_percent`` instead, and it ranks
+    after every owner engine so it is never read as the main recommendation.
+    """
     ranking = []
     assignment_dist = _compute_assignment_distribution(data)
+    overlay = build_cache_overlay(data) or {}
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -260,9 +290,15 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             entry["primary_tables"] = 0
             entry["assignment_reason_summary"] = []
 
+        if engine in CACHE_OVERLAY_ENGINES and overlay.get("engine") == engine:
+            entry["role"] = "cache_layer"
+            entry["cache_overlay_queries"] = overlay.get("query_count", 0)
+            entry["cache_call_share_percent"] = overlay.get("call_share_percent", 0.0)
+            entry["cache_overlay_owners"] = overlay.get("owners", {})
+
         ranking.append(entry)
 
-    ranking.sort(key=lambda r: r["weight"], reverse=True)
+    ranking.sort(key=lambda r: (is_cache_layer(r), -r["weight"]))
     return ranking
 
 
@@ -1242,7 +1278,9 @@ def build_architecture_recommendation(
     engines_with_workload = [
         r["target"]
         for r in ranking
-        if r.get("assigned_queries", 0) > 0 or r.get("schema_design_available")
+        if r.get("assigned_queries", 0) > 0
+        or r.get("cache_overlay_queries", 0) > 0
+        or r.get("schema_design_available")
     ]
 
     # Architecture type
@@ -1297,8 +1335,25 @@ def build_architecture_recommendation(
 def _engine_rationale(data: SynthesisData, r: dict) -> str:
     """Generate a rationale string for an engine recommendation.
 
-    Access patterns are counted in scope, as in the summary (#255).
+    Access patterns are counted in scope, as in the summary (#255). The cache layer
+    is described by the reads it fronts, not by an owner share (#296).
     """
+    if is_cache_layer(r):
+        owners = ", ".join(sorted(r.get("cache_overlay_owners") or {})) or "their owner engines"
+        n = r.get("cache_overlay_queries", 0)
+        parts = [
+            f"Cache layer for {n} hot {'read' if n == 1 else 'reads'} "
+            f"({r.get('cache_call_share_percent', 0)}% of calls), cache-aside in front of "
+            f"{owners}; it owns no queries"
+        ]
+        if r.get("target_tables", 0) > 0:
+            parts.append(
+                f"schema design: {_count(r['target_tables'], 'key design', 'key designs')}, "
+                + _in_scope_phrase(*_access_pattern_scope(data, r))
+            )
+        if r["monthly_cost_usd"] > 0:
+            parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month")
+        return ". ".join(parts) + "."
     parts = [f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"]
     if r["patterns_detected"] > 0:
         parts.append(f"{r['patterns_detected']} matching workload patterns")
@@ -1438,7 +1493,15 @@ def build_summary(
                 for r in with_workload
             ]
             parts.append(f"Workload split: {', '.join(engine_parts)}.")
-        designed = [r for r in with_workload if r.get("schema_design_available")]
+        cache = [r for r in ranking if is_cache_layer(r) and r.get("cache_overlay_queries")]
+        for r in cache:
+            n = r["cache_overlay_queries"]
+            parts.append(
+                f"Cache layer: {r['target']} fronts {n} hot "
+                f"{'read' if n == 1 else 'reads'} ({r.get('cache_call_share_percent', 0)}% of "
+                "calls) cache-aside and owns no queries."
+            )
+        designed = [r for r in with_workload + cache if r.get("schema_design_available")]
         if designed:
             engines = {r["target"] for r in designed}
             groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
@@ -1510,7 +1573,7 @@ def build_summary(
         others = [
             f"{r['target']} (no queries assigned)"
             for r in ranking
-            if r.get("assigned_queries", 0) == 0
+            if r.get("assigned_queries", 0) == 0 and not is_cache_layer(r)
         ]
         listed = {r["target"] for r in ranking}
         for engine, absorber in (eliminated or {}).items():
@@ -1562,6 +1625,10 @@ def generate_executive_summary(
         if r.get("assigned_queries"):
             entry["queries"] = r["assigned_queries"]
             entry["workload_pct"] = r.get("workload_percent", 0)
+        if is_cache_layer(r):
+            entry["role"] = "cache layer (owns no queries)"
+            entry["cached_queries"] = r.get("cache_overlay_queries", 0)
+            entry["cached_call_share_pct"] = r.get("cache_call_share_percent", 0)
         if r.get("schema_design_available"):
             entry["target_tables"] = r.get("target_tables", 0)
             entry["access_patterns"] = r.get("access_patterns", 0)

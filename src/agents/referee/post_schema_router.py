@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
+from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.contracts.post_schema_router_output import QueryRouting, RouterOutput
 
@@ -131,6 +132,12 @@ def route_unsupported_queries(
     failed_engines: dict[str, set[str]] = defaultdict(set)
 
     for engine, output in schema_outputs.items():
+        # A cache engine owns none of its queries: one its design cannot serve is
+        # still served by its owner, so it is not re-routed. The synthesis safety
+        # net drops its cache overlay instead (#296).
+        if engine in CACHE_OVERLAY_ENGINES:
+            continue
+
         # 1. Parse PE routing notes (highest priority — PE confirmed these)
         pe_notes = pe_notes_by_engine.get(engine, [])
         pe_routings = _parse_pe_routing_notes(pe_notes)
