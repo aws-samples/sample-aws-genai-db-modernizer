@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from src.contracts.aurora_design_delta import validate_aurora_type
-from src.contracts.schema_design_input import AgentColumn, AgentTable
+from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
 from src.tools.schema.aurora_common.constraint_translator import (
     default_clause,
     fk_on_delete_clause,
@@ -26,6 +26,7 @@ from src.tools.schema.aurora_common.constraint_translator import (
 )
 from src.tools.schema.aurora_common.source_family import classify_source_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
+from src.tools.schema.aurora_common.sql_safety import SqlFragmentError, render_source_predicate
 from src.tools.schema.aurora_common.type_map import (
     TypeResolution,
     resolve_mysql_type,
@@ -104,6 +105,9 @@ class DdlResult:
     tables: list[TableDDL]
     full_ddl: str
     residuals: list[dict]
+    # Source indexes the draft could not carry over as written (a partial-index
+    # predicate Aurora cannot take): {"table", "index", "reason"}.
+    index_notes: list[dict] = field(default_factory=list)
 
 
 def _resolve(
@@ -195,18 +199,69 @@ def _create_table_sql(table: AgentTable, columns: list[ColumnDDL], dialect: Dial
     return f"CREATE TABLE {dialect.q(table.table_name)} (\n{body}\n);"
 
 
-def _index_sql(table: AgentTable, dialect: Dialect) -> list[str]:
+def is_primary_key_index(idx: AgentIndex, table: AgentTable) -> bool:
+    """Whether ``idx`` is the index behind the table's PRIMARY KEY.
+
+    Collectors do not always flag it (``is_primary``): PostgreSQL names it
+    ``<table>_pkey`` and the offline parser only recognises MySQL's
+    ``PRIMARY``. A unique, non-partial index on exactly the key columns (or a
+    ``*_pkey`` one on the same column set) duplicates the PRIMARY KEY.
+    """
+    if idx.is_primary:  # nosemgrep: is-function-without-parentheses -- property, not a method
+        return True
+    pk = [c.lower() for c in table.primary_key or []]
+    cols = [c.lower() for c in idx.columns]
+    if not pk or not idx.is_unique or idx.predicate:  # nosemgrep: is-function-without-parentheses
+        return False
+    return cols == pk or (idx.index_name.lower().endswith("_pkey") and set(cols) == set(pk))
+
+
+def secondary_indexes(table: AgentTable) -> list[AgentIndex]:
+    """The draft's secondary indexes, in ``TableDDL.index_sql`` order."""
+    return [i for i in table.indexes or [] if not is_primary_key_index(i, table)]
+
+
+def _index_sql(table: AgentTable, dialect: Dialect, notes: list[dict]) -> list[str]:
     statements: list[str] = []
-    for idx in table.indexes or []:
-        if idx.is_primary:  # nosemgrep: is-function-without-parentheses -- property, not a method
-            continue  # covered by PRIMARY KEY
-        unique = (
-            "UNIQUE " if idx.is_unique else ""
-        )  # nosemgrep: is-function-without-parentheses -- property, not a method
-        cols = ", ".join(dialect.q(c) for c in idx.columns)
+    columns = [c.column_name for c in table.columns]
+    for idx in secondary_indexes(table):
+        unique = bool(idx.is_unique)  # nosemgrep: is-function-without-parentheses
+        where_sql = None
+        if idx.predicate:
+            reason = ""
+            if dialect is MYSQL:
+                reason = "Aurora MySQL has no partial indexes"
+            else:
+                try:
+                    where_sql = render_source_predicate(idx.predicate, columns, dialect.q)
+                except SqlFragmentError as exc:
+                    reason = f"the predicate is outside the supported grammar ({exc})"
+            if where_sql is None:
+                notes.append(
+                    {
+                        "table": table.table_name,
+                        "index": idx.index_name,
+                        "reason": (
+                            f"Partial index (WHERE {idx.predicate}) carried over as a full "
+                            f"{'non-unique ' if unique else ''}index: {reason}."
+                            + (
+                                " Uniqueness over the subset must be enforced another way."
+                                if unique
+                                else ""
+                            )
+                        ),
+                    }
+                )
+                unique = False  # a full UNIQUE index would reject rows the source accepts
         statements.append(
-            f"CREATE {unique}INDEX {dialect.q(idx.index_name)} "
-            f"ON {dialect.q(table.table_name)} ({cols});"
+            render_index(
+                dialect,
+                table.table_name,
+                idx.index_name,
+                idx.columns,
+                unique=unique,
+                where_sql=where_sql,
+            )
         )
     return statements
 
@@ -273,6 +328,7 @@ def _generate(
     source_engine: str = "",
 ) -> DdlResult:
     residuals: list[dict] = []
+    notes: list[dict] = []
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
     family = classify_source_family(source_engine)
@@ -296,12 +352,17 @@ def _generate(
                 table_name=table.table_name,
                 columns=columns,
                 create_sql=_create_table_sql(table, columns, dialect),
-                index_sql=_index_sql(table, dialect),
+                index_sql=_index_sql(table, dialect, notes),
                 fk_sql=_fk_sql(table, dialect),
             )
         )
 
-    return DdlResult(tables=table_ddls, full_ddl=assemble_full_ddl(table_ddls), residuals=residuals)
+    return DdlResult(
+        tables=table_ddls,
+        full_ddl=assemble_full_ddl(table_ddls),
+        residuals=residuals,
+        index_notes=notes,
+    )
 
 
 def assemble_full_ddl(table_ddls: list[TableDDL]) -> str:

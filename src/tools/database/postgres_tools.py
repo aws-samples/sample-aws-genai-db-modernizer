@@ -120,7 +120,8 @@ class PostgreSQLRemoteCollector:
                 a.attname AS column_name,
                 ix.indisunique AS is_unique,
                 ix.indisprimary AS is_primary,
-                am.amname AS index_type
+                am.amname AS index_type,
+                pg_get_expr(ix.indpred, ix.indrelid) AS predicate
             FROM pg_class t
             JOIN pg_index ix ON t.oid = ix.indrelid
             JOIN pg_class i ON i.oid = ix.indexrelid
@@ -140,6 +141,7 @@ class PostgreSQLRemoteCollector:
                     "is_unique": r.get("is_unique") in (True, "t", "true"),
                     "is_primary": r.get("is_primary") in (True, "t", "true"),
                     "index_type": str(r.get("index_type") or "btree").lower(),
+                    "predicate": r.get("predicate") or None,
                 }
             indexes[name]["columns"].append(r["column_name"])
         return list(indexes.values())

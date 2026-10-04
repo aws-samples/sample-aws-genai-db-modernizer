@@ -700,6 +700,7 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
                 index_type=_normalize_index_type(i.get("index_type", "btree")),
+                predicate=i.get("predicate") or None,
             )
             for i in t.get("indexes", [])
         ] or None
@@ -749,6 +750,7 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 is_unique=i["is_unique"],
                 is_primary=i["is_primary"],
                 index_type=_normalize_index_type(i.get("index_type", "btree")),
+                predicate=i.get("predicate") or None,
             )
             for i in t.get("indexes", [])
         ] or None

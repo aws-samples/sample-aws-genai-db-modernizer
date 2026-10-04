@@ -220,6 +220,9 @@ class Index(BaseModel):
     is_unique: bool = Field(..., description="Whether index enforces uniqueness")
     is_primary: bool | None = Field(False, description="Whether this is the primary key index")
     index_type: IndexType | None = Field(None, description="Index type")
+    predicate: str | None = Field(
+        None, description="Partial-index predicate (PostgreSQL WHERE clause), if any"
+    )
 
 
 class ForeignKey(BaseModel):

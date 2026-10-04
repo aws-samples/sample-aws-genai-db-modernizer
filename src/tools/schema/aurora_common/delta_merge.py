@@ -49,6 +49,7 @@ from src.tools.schema.aurora_common.ddl_generator import (
     generate_mysql_ddl,
     generate_pg_ddl,
     render_index,
+    secondary_indexes,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
 from src.tools.schema.aurora_common.sql_safety import (
@@ -133,7 +134,7 @@ class AuroraDesignBase:
 
 def draft_index_names(table: AgentTable) -> list[str]:
     """Names of the draft's secondary indexes, in ``TableDDL.index_sql`` order."""
-    return [i.index_name for i in table.indexes or [] if not i.is_primary]
+    return [i.index_name for i in secondary_indexes(table)]
 
 
 def source_data_types(raw_collector: dict) -> dict[tuple[str, str], str]:
@@ -448,6 +449,8 @@ def merge_design_delta(
     table_ddls = {t.table_name: t for t in ddl.tables}
     index_counts = _apply_index_changes(base, contract, by_key, table_ddls, errors)
 
+    for note in ddl.index_notes:
+        warnings.append(f"index {note['table']}.{note['index']}: {note['reason']}")
     if ddl.residuals:
         sample = ", ".join(f"{r['table']}.{r['column']}" for r in ddl.residuals[:5])
         warnings.append(
@@ -456,7 +459,14 @@ def merge_design_delta(
         )
 
     summary = {
-        "tables_changed": len(seen & set(by_key)),
+        "tables_changed": len(
+            {
+                _table_key(c.table_name)
+                for c in contract.tables
+                if c.add_indexes or c.modify_indexes or c.remove_indexes or c.column_types
+            }
+            & set(by_key)
+        ),
         "column_types_set": len(overrides) - by_rule,
         "residuals_resolved_by_rule": by_rule,
         "residuals_unresolved": len(ddl.residuals),
@@ -602,7 +612,8 @@ def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict
                 _Index(parsed.index_name, parsed.columns, parsed.unique, parsed.method, [], None),
             ):
                 change["modify_indexes"].append({**entry, "index_name": draft_name})
-        tables.append(change)
+        if change["column_types"] or change["add_indexes"] or change["modify_indexes"]:
+            tables.append(change)  # only tables that differ from the draft are changes
     if errors:
         return None, errors
     delta = {

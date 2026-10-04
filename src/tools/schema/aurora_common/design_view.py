@@ -23,7 +23,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
-from src.tools.schema.aurora_common.ddl_generator import DdlResult
+from src.tools.schema.aurora_common.ddl_generator import DdlResult, secondary_indexes
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase
 
 HOT_QUERY_LIMIT = 40
@@ -253,7 +253,8 @@ def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residu
 
 
 def _index_line(index) -> str:
-    return f"{index.index_name}{' UNIQUE' if index.is_unique else ''} ({', '.join(index.columns)})"
+    line = f"{index.index_name}{' UNIQUE' if index.is_unique else ''} ({', '.join(index.columns)})"
+    return f"{line} WHERE {index.predicate}" if index.predicate else line
 
 
 def _fk_line(fk) -> str:
@@ -293,7 +294,7 @@ def build_design_view(
                 )
                 for col, ddl_col in zip(src.columns, ddl.columns, strict=True)
             ],
-            "indexes": [_index_line(i) for i in src.indexes or [] if not i.is_primary],
+            "indexes": [_index_line(i) for i in secondary_indexes(src)],
         }
         if src.foreign_keys:
             entry["foreign_keys"] = [_fk_line(fk) for fk in src.foreign_keys]
@@ -305,6 +306,7 @@ def build_design_view(
         "column_count": sum(len(t.columns) for t in draft.tables),
         "in_scope_query_count": len(collector.queries.query_patterns),
         "residual_types": _residual_types(base, draft),
+        **({"index_notes": draft.index_notes} if draft.index_notes else {}),
         "hot_queries": _hot_queries(collector, hot_query_limit, raw_collector),
         "analysis": _analysis_summary(analysis),
         "source_features": _source_features(

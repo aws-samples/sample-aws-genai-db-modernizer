@@ -79,7 +79,8 @@ indexes_data AS (
       a.attname AS column_name,
       array_position(ix.indkey, a.attnum) AS seq_in_index,
       CASE WHEN ix.indisunique THEN 0 ELSE 1 END AS non_unique,
-      am.amname AS index_type
+      am.amname AS index_type,
+      pg_get_expr(ix.indpred, ix.indrelid) AS predicate
     FROM pg_index ix
     JOIN pg_class t ON t.oid = ix.indrelid
     JOIN pg_class i ON i.oid = ix.indexrelid

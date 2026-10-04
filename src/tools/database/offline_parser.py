@@ -81,6 +81,7 @@ def parse_offline_collection(data: dict) -> dict:
                 "is_unique": not i["non_unique"],
                 "is_primary": idx_name == "PRIMARY",
                 "index_type": str(i.get("index_type") or "btree").lower(),
+                "predicate": i.get("predicate") or None,
             }
         indexes_by_table[tbl][idx_name]["columns"].append(i["column_name"])
 

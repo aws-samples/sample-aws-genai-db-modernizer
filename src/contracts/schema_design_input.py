@@ -117,6 +117,7 @@ class AgentIndex(BaseModel):
     columns: list[str]
     is_unique: bool
     is_primary: bool | None = False
+    predicate: str | None = Field(None, description="Partial-index predicate, if any")
 
 
 class AgentForeignKey(BaseModel):
@@ -377,6 +378,7 @@ def project_schema_design_input(
                         columns=idx.columns,
                         is_unique=idx.is_unique,  # nosemgrep: is-function-without-parentheses
                         is_primary=idx.is_primary,  # nosemgrep: is-function-without-parentheses
+                        predicate=idx.predicate,
                     )
                     for idx in (t.indexes or [])
                 ]

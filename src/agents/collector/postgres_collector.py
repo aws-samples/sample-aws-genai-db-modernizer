@@ -365,6 +365,7 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 is_unique=i["is_unique"],
                 is_primary=i.get("is_primary", False),
                 index_type=i.get("index_type", "btree"),
+                predicate=i.get("predicate") or None,
             )
             for i in t.get("indexes", [])
         ] or None

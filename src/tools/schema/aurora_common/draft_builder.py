@@ -46,6 +46,7 @@ def _assemble_draft(
         ],
         "full_ddl": ddl.full_ddl,
         "residuals": ddl.residuals,
+        "index_notes": ddl.index_notes,
     }
 
 

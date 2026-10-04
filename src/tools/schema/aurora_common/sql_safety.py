@@ -96,6 +96,33 @@ def render_predicate(text: str, columns: list[str], quote) -> str:
     return " ".join(out)
 
 
+_CAST = re.compile(
+    r"::\s*(?:\"[A-Za-z_][A-Za-z0-9_ ]*\"|[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s+(?:varying|precision|with(?:out)?\s+time\s+zone))?)(?:\s*\[\])*",
+    re.IGNORECASE,
+)
+_STRING = re.compile(r"'(?:[^'\\\n\r]|'')*'")
+
+
+def render_source_predicate(text: str, columns: list[str], quote) -> str:
+    """A collector's partial-index predicate, re-rendered under the ``render_predicate`` grammar.
+
+    PostgreSQL reports predicates as ``pg_get_expr`` text, which carries type
+    casts (``((status)::text = 'active'::text)``). Casts outside string
+    literals are dropped (the comparison is the same without them); the rest
+    must pass the strict predicate grammar, so collector text never reaches
+    DDL unchecked.
+    """
+    parts: list[str] = []
+    pos = 0
+    for match in _STRING.finditer(text):
+        parts.append(_CAST.sub("", text[pos : match.start()]))
+        parts.append(match.group(0))
+        pos = match.end()
+    parts.append(_CAST.sub("", text[pos:]))
+    return render_predicate("".join(parts), columns, quote)
+
+
 # ---------------------------------------------------------------------------
 # Legacy CREATE INDEX strings
 # ---------------------------------------------------------------------------
