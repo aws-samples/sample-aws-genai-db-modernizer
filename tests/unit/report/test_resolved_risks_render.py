@@ -82,7 +82,7 @@ def test_engineering_report_resolved_risks_use_display_names_for_unknown_engine(
 
 def test_decision_report_counts_resolved_risks(report: dict) -> None:
     html = renderers.render_decision_report_html(report)
-    assert "; 2 resolved by the assignment)" in html
+    assert "2 more were resolved by the assignment." in html
 
 
 def test_no_resolved_risks_no_section(report: dict) -> None:

@@ -5,11 +5,12 @@ publishing."""
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -92,6 +93,30 @@ def plural_verb(n: Any, singular: str, plural: str) -> str:
     return singular if is_one else plural
 
 
+def fmt_num(value: Any, decimals: int = 2) -> str:
+    """A metric for display: thousands separators, at most ``decimals`` places.
+
+    Sums of float metrics carry binary noise (``17.460499999999996``); rounding
+    here keeps it out of every deliverable (#259). Trailing zeros are dropped
+    (``3.0`` -> ``3``); a value that rounds to zero is ``0`` (never ``-0``), and a
+    small non-zero one is ``<0.01`` (``>-0.01`` if negative) rather than ``0``.
+    NaN and infinities print as an en dash. Anything that is not a number is
+    returned as ``str()``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}"
+    if not math.isfinite(value):
+        return "\u2013"
+    step = 10.0**-decimals
+    if value != 0 and abs(value) < step / 2:
+        return f"<{step:.{decimals}f}" if value > 0 else f">-{step:.{decimals}f}"
+    text = f"{value:,.{decimals}f}"
+    text = text.rstrip("0").rstrip(".") if "." in text else text
+    return "0" if text in ("-0", "") else text
+
+
 def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
@@ -110,6 +135,84 @@ def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:
     """engine -> design summary, only for engines whose design completed."""
     sd = report.get("schema_designs") or {}
     return {e: v for e, v in sd.items() if isinstance(v, dict) and v.get("status") == "completed"}
+
+
+def access_pattern_scope(report: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """engine -> (in-scope, out-of-scope) access patterns, from ``query_groups``.
+
+    ``schema_designs[engine].access_pattern_count`` counts every pattern, while the
+    deterministic summary counts only the in-scope ones; ``query_groups`` carries
+    each pattern with its ``in_scope`` flag. A pattern listed in several groups is
+    counted once (#255).
+    """
+    seen: dict[tuple[str, str], bool] = {}
+    for g in report.get("query_groups") or []:
+        if not isinstance(g, dict):
+            continue
+        for ap in g.get("access_patterns") or []:
+            if isinstance(ap, dict) and ap.get("engine") and ap.get("pattern_id"):
+                key = (str(ap["engine"]), str(ap["pattern_id"]))
+                seen[key] = seen.get(key, False) or ap.get("in_scope", True) is not False
+    out: dict[str, tuple[int, int]] = {}
+    for (eng, _), in_scope in sorted(seen.items()):
+        n_in, n_out = out.get(eng, (0, 0))
+        out[eng] = (n_in + 1, n_out) if in_scope else (n_in, n_out + 1)
+    return out
+
+
+# "<engine>: 15 target tables, 47 access patterns" in the deterministic summary's
+# per-engine breakdown. Those counts are in-scope patterns only; the Engineering
+# Report heading counts every pattern, so the summary says which it counts (#255).
+_PER_ENGINE_APS = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
+    + r"): ([^;()]*?), (\d+) (access patterns?)\b"
+)
+
+
+def label_in_scope_access_patterns(text: str, report: dict[str, Any] | None = None) -> str:
+    """``dynamodb: 15 target tables, 47 access patterns`` -> ``..., 47 in-scope access patterns``.
+
+    Only a count that equals the engine's in-scope total in ``report`` (see
+    ``access_pattern_scope``) is relabelled, so an older or fallback summary that
+    counted something else is never given a label that is not true. Idempotent:
+    after rewording, the digits are followed by "in-scope", not "access".
+    """
+    scope = access_pattern_scope(report or {})
+
+    def sub(m: re.Match[str]) -> str:
+        in_scope = scope.get(m.group(1), (None, 0))[0]
+        if in_scope is None or int(m.group(3)) != in_scope:
+            return m.group(0)
+        return f"{m.group(1)}: {m.group(2)}, {m.group(3)} in-scope {m.group(4)}"
+
+    return _PER_ENGINE_APS.sub(sub, text)
+
+
+# "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)." reads as 4 of
+# the 8 being resolved; the 4 are additional risks the assignment removed, listed
+# apart from the 8 open ones in the Engineering Report (#258).
+_RESOLVED_RISKS = re.compile(
+    r"\b(\d+) risk\(s\) identified \(overall: ([^;()]+); (\d+) resolved by the assignment\)\."
+)
+
+
+def label_resolved_risks(text: str) -> str:
+    """``8 risk(s) identified (overall: LOW; 4 resolved ...)`` -> ``8 open risk(s) ...; 4 more ...``."""
+
+    def sub(m: re.Match[str]) -> str:
+        n = int(m.group(3))
+        return (
+            f"{m.group(1)} open risk(s) (overall: {m.group(2)}); {n} more "
+            f"{plural_verb(n, 'was', 'were')} resolved by the assignment."
+        )
+
+    return _RESOLVED_RISKS.sub(sub, text)
+
+
+def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str:
+    """Name what each count in the deterministic summary counts (#255, #258)."""
+    return label_resolved_risks(label_in_scope_access_patterns(text, report))
 
 
 def _risk_engine_and_body(desc: Any) -> tuple[str, str]:
@@ -252,6 +355,30 @@ def _engine_role(
     return "Assessed"
 
 
+# Scope-cell suffix for source tables an engine's design serves although their
+# recommended engine is another one, and the footnote that defines it (#257).
+SHARED_TABLES_LABEL = "incl. shared"
+SHARED_TABLES_NOTE = (
+    "\u201cincl. shared\u201d counts the source tables the engine\u2019s schema design "
+    "serves, including tables also served by another engine."
+)
+
+
+def _design_source_tables(tables: Any) -> int:
+    """Distinct source tables an engine's schema design reads from."""
+    if not isinstance(tables, list):
+        return 0
+    return len(
+        {
+            str(src)
+            for t in tables
+            if isinstance(t, dict)
+            for src in (t.get("source_tables") or [])
+            if isinstance(t.get("source_tables"), list)
+        }
+    )
+
+
 def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The full target architecture, one entry per engine, ordered by workload.
 
@@ -276,14 +403,24 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         if not eng:
             continue
         role = _engine_role(eng, recommended, schema_designs, r.get("workload_percent"))
-        objs = (schema_designs.get(eng) or {}).get("tables")
-        objs = len(objs) if isinstance(objs, list) else None
+        design_tables = (schema_designs.get(eng) or {}).get("tables")
+        objs = len(design_tables) if isinstance(design_tables, list) else None
+        migrates = 0
         if role == "Migration target":
             n = src_tables.get(eng)
+            migrates = n if isinstance(n, int) else (objs or 0)
+            served = _design_source_tables(design_tables)
             scope = (
                 # Source tables mapped to the engine -- named as such, because the
                 # summary also counts the schema design's *target* tables (#219).
+                # Queries, not tables, are assigned, so the design can also serve
+                # tables mapped to another engine; say so when it does (#257).
                 f"{n} source {plural_noun(n, 'table')}"
+                + (
+                    f" ({served} {SHARED_TABLES_LABEL})"
+                    if isinstance(n, int) and served > n
+                    else ""
+                )
                 if n is not None
                 else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
             )
@@ -301,6 +438,9 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "role": role,
                 "workload": r.get("workload_percent"),
                 "scope": scope,
+                # Mapped source tables that move, for the "tables migrate" totals;
+                # the scope text is not parsed because it can carry two numbers.
+                "migrates": migrates,
                 "cost": costs.get(eng),
                 "rationale": next(
                     (d.get("rationale") for d in dbs if d.get("service") == eng),
@@ -374,7 +514,7 @@ def architecture_svg(report: dict[str, Any]) -> str:
         dashed = role == "Cache layer"
         sub_bits = [role]
         if isinstance(e.get("workload"), (int, float)):
-            sub_bits.append(f"{e['workload']}%")
+            sub_bits.append(f"{fmt_num(e['workload'], 1)}%")
         if e.get("cost") is not None:
             sub_bits.append(f"{_fmt_usd(e['cost'])}/mo")
         sub = "  \u00b7  ".join(sub_bits)
@@ -550,12 +690,7 @@ def render_decision_report_html(
     risk = report.get("risk_assessment") or {}
     tco = report.get("tco_analysis") or {}
     engines = _architecture_engines(report)
-    migrated = 0
-    for e in engines:
-        if e["role"] == "Migration target":
-            digits = "".join(ch for ch in str(e["scope"]) if ch.isdigit())
-            if digits:
-                migrated += int(digits)
+    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
     risk_level = risk.get("overall_risk_level", "not assessed")
 
     out = [
@@ -585,6 +720,8 @@ def render_decision_report_html(
         report.get("summary") if trust_generated_summary else report.get("summary_deterministic")
     )
     summary = summary or report.get("summary_deterministic")
+    if summary and summary == report.get("summary_deterministic"):
+        summary = label_summary_counts(summary, report)
     if summary:
         out += [
             "<h2 class=section-title>Executive summary</h2>",
@@ -625,7 +762,7 @@ def render_decision_report_html(
             out.append(
                 f"<tr><td>{_engine_badge(e['engine'])}</td>"
                 f"<td class=role>{esc(e['role'])}</td>"
-                f"<td>{esc(f'{wl}%') if isinstance(wl, (int, float)) else '-'}</td>"
+                f"<td>{esc(fmt_num(wl, 1) + '%') if isinstance(wl, (int, float)) else '-'}</td>"
                 f"<td>{esc(e['scope'])}</td>"
                 f"<td>{_fmt_usd(c)}</td></tr>"
             )
@@ -657,6 +794,8 @@ def render_decision_report_html(
                 f"{', '.join(esc(x) for x in migr)}; the per-engine costs above reconcile to the "
                 "projected total."
             )
+        if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in engines):
+            note_bits.append(SHARED_TABLES_NOTE)
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
@@ -676,11 +815,18 @@ def render_decision_report_html(
             )
             types_txt = ", ".join(types) if types else "several areas"
             n_resolved = len(resolved_risks(report))
-            resolved_txt = f"; {n_resolved} resolved by the assignment" if n_resolved else ""
+            # The resolved risks are not among the open ones; saying "(…; 4 resolved)"
+            # inside the open count read as 4 of them being resolved (#258).
+            resolved_txt = (
+                f" {n_resolved} more {plural_verb(n_resolved, 'was', 'were')} resolved by the "
+                "assignment."
+                if n_resolved
+                else ""
+            )
             out.append(
-                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} migration "
-                f"{plural_noun(len(risks), 'risk')} identified "
-                f"({hi} high, {med} medium{resolved_txt}) across {esc(types_txt)}. The full "
+                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} open migration "
+                f"{plural_noun(len(risks), 'risk')} "
+                f"({hi} high, {med} medium) across {esc(types_txt)}.{resolved_txt} The full "
                 "risk register, with "
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"
@@ -794,6 +940,31 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
+_ROLE_PHRASE = {
+    "Migration target": "migrate",
+    "Cache layer": "to the cache layer",
+    "Retained": "stay on the source engine",
+}
+
+
+def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> str:
+    """ ": 21 migrate, 1 to the cache layer" for the migration map heading (#258).
+
+    The Decision Report and the deck count only the tables mapped to migration
+    targets as "tables migrate"; a table mapped to the cache layer needs no data
+    migration. Empty when every mapped table migrates.
+    """
+    roles = {e["engine"]: e["role"] for e in _architecture_engines(report)}
+    counts: dict[str, int] = {}
+    for m in mappings:
+        phrase = _ROLE_PHRASE.get(roles.get(m.get("recommended_database"), ""), "elsewhere")
+        counts[phrase] = counts.get(phrase, 0) + 1
+    if set(counts) <= {"migrate"}:
+        return ""
+    order = [*_ROLE_PHRASE.values(), "elsewhere"]
+    return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -814,14 +985,15 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         f"Source database: `{escaping.md_code(db)}`. This is the build companion to the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "Decision Report: "
         "the source-to-target mapping, the per-engine target schemas, and the query "
-        "co-dependency groups.",
+        "groups.",
         "",
     ]
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     if mappings:
         out += [
-            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')})",
+            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')}"
+            f"{_mapping_split(report, mappings)})",
             "",
             "| Source table | Target engine | Target | Pattern | Confidence |",
             "|---|---|---|---|---|",
@@ -832,20 +1004,29 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(m.get('recommended_database', '?'))} "
                 f"| `{escaping.md_code(m.get('target_table', '-'))}` "
                 f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
-                f"| {escaping.md_cell(m.get('confidence_score', '-'))} |"
+                f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
             )
         out.append("")
 
     designs = _completed_designs(report)
     if designs:
         out += ["## Target schemas by engine", ""]
+        ap_scope = access_pattern_scope(report)
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
             n_aps = dz.get("access_pattern_count", 0)
+            # The deck and the summary count in-scope patterns only; say how this
+            # total splits so the two numbers reconcile (#255).
+            n_out = ap_scope.get(eng, (0, 0))[1]
+            split = (
+                f": {n_aps - n_out} in scope, {n_out} out of scope"
+                if n_out and isinstance(n_aps, int) and n_aps >= n_out
+                else ""
+            )
             out += [
                 f"### {escaping.md_text(eng)} ({len(tables)} target "
                 f"{plural_noun(len(tables), 'object')}, "
-                f"{n_aps} access {plural_noun(n_aps, 'pattern')})",
+                f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split})",
                 "",
             ]
             if tables:
@@ -866,15 +1047,15 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                             f"`{escaping.md_code(s)}`" for s in (t.get("source_tables") or [])
                         )
                         or "-",
-                        escaping.md_cell(t.get("gsi_count", "-")),
+                        escaping.md_cell(fmt_num(t.get("gsi_count", "-"))),
                     ]
                     if has_ttl:
-                        row.append(escaping.md_cell(t.get("ttl_seconds", "-")))
+                        row.append(escaping.md_cell(fmt_num(t.get("ttl_seconds", "-"))))
                     if has_shards:
                         row += [
-                            escaping.md_cell(t.get("shards", "-")),
-                            escaping.md_cell(t.get("replicas", "-")),
-                            escaping.md_cell(t.get("field_count", "-")),
+                            escaping.md_cell(fmt_num(t.get("shards", "-"))),
+                            escaping.md_cell(fmt_num(t.get("replicas", "-"))),
+                            escaping.md_cell(fmt_num(t.get("field_count", "-"))),
                         ]
                     out.append("| " + " | ".join(row) + " |")
                 out.append("")
@@ -919,9 +1100,19 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
 
     groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
     if groups:
+        # "Query groups", as the deck summary calls them: the assignment's
+        # co-dependency groups (tables that must move together) are a different,
+        # usually much smaller count the deck also shows (#258).
+        co_dep = (report.get("assignment_summary") or {}).get("co_dependency_groups")
+        out += [f"## Query groups ({len(groups)})", ""]
+        if isinstance(co_dep, int):
+            out += [
+                "Queries grouped by the access patterns that serve them. These are not the "
+                f"assignment's {co_dep} co-dependency {plural_noun(co_dep, 'group')} "
+                "(tables that must move together).",
+                "",
+            ]
         out += [
-            f"## Query co-dependency groups ({len(groups)})",
-            "",
             "| Group | Engines | Access patterns | Source queries | Design RPS |",
             "|---|---|---|---|---|",
         ]
@@ -937,7 +1128,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(g.get('group_name', '?'))} | {escaping.md_cell(engines)} "
                 f"| {len(aps) if isinstance(aps, list) else escaping.md_cell(aps or '-')} "
                 f"| {len(sqs) if isinstance(sqs, list) else escaping.md_cell(sqs or '-')} "
-                f"| {escaping.md_cell(g.get('total_design_rps', '-'))} |"
+                f"| {escaping.md_cell(fmt_num(g.get('total_design_rps', '-')))} |"
             )
         out.append("")
 

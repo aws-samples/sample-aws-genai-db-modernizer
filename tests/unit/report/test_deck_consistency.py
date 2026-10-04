@@ -227,8 +227,9 @@ class TestEvidenceFromEffectiveAssignment:
     def test_override_signal_counts_only_queries_routed_to_the_engine(self) -> None:
         f = pptx_report.derive(_report(), _export_with_journeys(RUN3_JOURNEYS))
         against = _confirm(f)["against"]
-        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
-        assert "15 " not in against
+        # 14 of the signal's 15 queries landed on ElastiCache; the deck's workload
+        # slide shows the 15, so the evidence names both (#256).
+        assert "14 of 15 leaderboard / top-n queries routed to ElastiCache" in against
 
     def test_without_override_picks_the_signal_serving_the_most_queries(self) -> None:
         journeys = dict(RUN3_JOURNEYS)
@@ -271,7 +272,7 @@ class TestTruncatedJourneys:
     def test_untruncated_journeys_still_count_the_effective_assignment(self) -> None:
         exp = _export_with_journeys(RUN3_JOURNEYS)
         against = _confirm(pptx_report.derive(_report(), exp))["against"]
-        assert "14 leaderboard / top-n queries routed to ElastiCache" in against
+        assert "14 of 15 leaderboard / top-n queries routed to ElastiCache" in against
 
 
 def _aurora_weakest() -> dict[str, Any]:
@@ -351,30 +352,40 @@ class TestJoinNames:
 
 
 class TestRiskMitigationClip:
-    """#228 review: the Risk Profile's quoted mitigation is free text from the
-    report; an unbounded one overflowed the 1.05in card."""
+    """#228 review / #249: mitigations on the Risk Profile are free text from the
+    report; each row's own mitigation is clipped so it cannot overflow its cell."""
 
-    def test_long_mitigation_is_clipped_on_a_word_boundary(self) -> None:
+    def _rows(self, mitigation: str) -> list[list[str]]:
         rep = _report()
-        long_mit = " ".join(f"step{i} validate the access pattern under load" for i in range(40))
         rep["risk_assessment"] = {
-            "mitigation_strategies": [long_mit],
+            "mitigation_strategies": ["Global strategy that is no longer quoted"],
             "risks": [
-                {"risk_id": "RISK-001", "severity": "HIGH", "description": "DynamoDB hot key"}
+                {
+                    "risk_id": "RISK-001",
+                    "severity": "HIGH",
+                    "description": "DynamoDB hot key",
+                    "mitigation": mitigation,
+                }
             ],
         }
-        text = " ".join(_deck_text(rep, _export([])).split())
-        quoted = text.split("Specified mitigation: ", 1)[1].split("\n", 1)[0]
-        mit = quoted[: quoted.index("…") + 1]
-        assert len(mit) <= pptx_report.MITIGATION_MAX_CHARS + 1
-        assert long_mit.startswith(mit[:-1])
+        f = pptx_report.derive(rep, _export([]))
+        slide = pptx_report.slide_risk(pptx_report.open_deck(keep=1), f)
+        return [
+            [c.text for c in row.cells]
+            for sh in slide.shapes
+            if sh.has_table
+            for row in sh.table.rows
+        ]
 
-    def test_short_mitigation_is_quoted_whole(self) -> None:
-        rep = _report()
-        rep["risk_assessment"] = {"mitigation_strategies": ["Run load tests first"], "risks": []}
-        text = " ".join(_deck_text(rep, _export([])).split())
-        assert "Specified mitigation: Run load tests first" in text
-        assert "Run load tests first…" not in text
+    def test_long_mitigation_is_clipped_on_a_word_boundary(self) -> None:
+        long_mit = " ".join(f"step{i} validate the access pattern under load" for i in range(40))
+        cell = self._rows(long_mit)[1][3]
+        assert cell.endswith("…")
+        assert len(cell) <= pptx_report.MITIGATION_MAX_CHARS + 1
+        assert long_mit.startswith(cell[:-1])
+
+    def test_short_mitigation_is_shown_whole(self) -> None:
+        assert self._rows("Run load tests first")[1][3] == "Run load tests first"
 
 
 class TestReattributedRiskRow:
@@ -420,6 +431,7 @@ class TestReattributedRiskRow:
             "RISK-001",
             "ElastiCache",
             "Complex GROUP BY / HAVING aggregations need pre-computed counters",
+            "—",
             "9",
         ]
 
