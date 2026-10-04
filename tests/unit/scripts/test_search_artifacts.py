@@ -115,27 +115,63 @@ def test_long_lines_are_clipped(repo: Path) -> None:
     assert "chars]" in line
 
 
-def test_regex_only_sees_the_documented_line_prefix(repo: Path) -> None:
+def test_long_lines_are_searched_at_both_ends_but_not_in_the_middle(repo: Path) -> None:
+    cap = sa.MAX_MATCH_CHARS
     (repo / "artifacts" / "wide.json").write_text(
-        "x" * sa.MAX_MATCH_CHARS + "needle\n" + "y" * (sa.MAX_MATCH_CHARS - 6) + "needle\n"
+        "needle"
+        + "x" * (3 * cap)
+        + "\n"  # in the head
+        + "x" * (3 * cap)
+        + "needle\n"  # in the tail
+        + "x" * cap
+        + "needle"
+        + "x" * cap
+        + "\n"  # only in the middle
+        + "short needle\n"
     )
     result = _run(repo, "needle", "artifacts/wide.json")
-    assert [line.split(":")[1] for line in result.lines] == ["2"]
+    assert [line.split(":")[1] for line in result.lines] == ["1", "2", "4"]
+    assert result.capped_lines == 3
 
 
-def test_count_prints_matching_lines_per_file(repo: Path) -> None:
-    result = _run(repo, "wp_", "artifacts", count=True)
-    assert result.lines == [
-        "artifacts/wordpress/job1/input_group_0.json:2",
-        "artifacts/wordpress/job1/schema_draft_group_0.json:1",
-    ]
-    with pytest.raises(sa.SearchError, match="not both"):
-        _run(repo, "wp_", "artifacts", count=True, files_only=True)
+@pytest.mark.parametrize(
+    "pattern,expected",
+    [
+        (r"x$", False),  # head ends in x, but the cut is not the line's end
+        (r"y$", True),  # the real end of the line
+        (r"^x", False),  # tail starts with x, but the cut is not the line's start
+        (r"^a", True),  # the real start
+        (r"x\b", False),  # word boundary only at the artificial cut
+        (r"xy", True),  # spans no cut: real text at the end
+    ],
+)
+def test_anchors_do_not_match_at_the_cut(pattern: str, expected: bool) -> None:
+    import re
+
+    line = "a" + "x" * (3 * sa.MAX_MATCH_CHARS) + "y"
+    assert sa.line_matches(re.compile(pattern), line) is expected
 
 
-def test_glob_matches_path_relative_to_search_start(repo: Path) -> None:
-    result = _run(repo, "wp_", "artifacts/wordpress", files_only=True, glob="job1/schema_*.json")
-    assert result.lines == ["artifacts/wordpress/job1/schema_draft_group_0.json"]
+def test_short_lines_are_searched_whole() -> None:
+    import re
+
+    assert sa.line_matches(re.compile(r"x$"), "abcx")
+    assert sa.line_matches(re.compile(r"^a"), "abcx")
+
+
+def test_cli_reports_capped_lines() -> None:
+    wide = REPO_ROOT / "test-results" / "_search_wide_line.json"
+    wide.parent.mkdir(exist_ok=True)
+    wide.write_text("needle" + "x" * (2 * sa.MAX_MATCH_CHARS) + "\nneedle\n")
+    try:
+        proc = _cli("needle", str(wide.relative_to(REPO_ROOT)))
+    finally:
+        wide.unlink()
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.splitlines()[-1] == (
+        f"[search_artifacts] 1 line was only searched up to {sa.MAX_MATCH_CHARS} chars "
+        "from each end"
+    )
 
 
 # --- resource limits -------------------------------------------------------

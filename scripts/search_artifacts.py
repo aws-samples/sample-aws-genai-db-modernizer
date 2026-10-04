@@ -27,11 +27,16 @@ Containment (always on, not only under MODERNIZER_CI_SANDBOX=1):
 * ``.env``-style, key, certificate and credential files are never opened;
 * binary files are skipped.
 
-Resource limits: the pattern is at most 500 characters, the regex only sees
-the first 4,000 characters of each line (longer lines are still printed,
-clipped, when that prefix matches), and the whole search has a 20-second
-wall-clock budget (POSIX ``setitimer``); a pattern that blows it, such as a
-catastrophic-backtracking ``(a+)+$``, ends with a JSON error, exit 2.
+Resource limits: the pattern is at most 500 characters, and the whole
+search has a 20-second wall-clock budget (POSIX ``setitimer``); a pattern
+that blows it, such as a catastrophic-backtracking ``(a+)+$``, ends with a
+JSON error, exit 2. A line longer than 20,000 characters is searched only in
+its first and last 20,000 characters, separately: a match in the head counts
+only if it ends before the cut, and a match in the tail only if it starts
+after it, so ``$``, ``^``, ``\b`` and lookaheads never match at an artificial
+cut-off. Matches that would span the unsearched middle are missed; a final
+``[search_artifacts] N lines were only searched …`` line says when this
+applied. Such lines are still printed, clipped.
 
 Error messages never echo the pattern or the path.
 
@@ -70,9 +75,9 @@ MAX_LINE_CHARS = 400
 MAX_OUTPUT_CHARS = 20_000
 BINARY_SNIFF_BYTES = 8192
 MAX_PATTERN_CHARS = 500
-# The regex only sees this prefix of each line; generated JSON can have
-# single lines of ~100k characters, where a backtracking pattern explodes.
-MAX_MATCH_CHARS = 4000
+# Longer lines are searched only in this many characters from each end;
+# generated JSON can have single lines of ~100k characters.
+MAX_MATCH_CHARS = 20_000
 TIME_BUDGET_SECONDS = 20.0
 
 SKIP_DIRS = frozenset(
@@ -155,6 +160,7 @@ class SearchResult:
     matches: int = 0
     files_matched: int = 0
     truncated_reason: str | None = None
+    capped_lines: int = 0
 
 
 def is_secret_name(name: str) -> bool:
@@ -281,6 +287,18 @@ def _clip(text: str) -> str:
     return text[:MAX_LINE_CHARS] + f"… [+{len(text) - MAX_LINE_CHARS} chars]"
 
 
+def line_matches(regex: re.Pattern[str], line: str, cap: int = MAX_MATCH_CHARS) -> bool:
+    """``regex`` matches ``line``; lines longer than ``cap`` are searched in
+    their first and last ``cap`` characters only, ignoring any match that
+    touches the cut (so anchors and lookarounds cannot fire there)."""
+    if len(line) <= cap:
+        return regex.search(line) is not None
+    head, tail = line[:cap], line[-cap:]
+    if any(m.end() < cap for m in regex.finditer(head)):
+        return True
+    return any(m.start() > 0 for m in regex.finditer(tail))
+
+
 def search(
     pattern: str,
     path: str,
@@ -335,7 +353,12 @@ def search(
         except OSError:
             continue
 
-        hits = [i for i, line in enumerate(text_lines) if regex.search(line, 0, MAX_MATCH_CHARS)]
+        hits = []
+        for i, line in enumerate(text_lines):
+            if len(line) > MAX_MATCH_CHARS:
+                result.capped_lines += 1
+            if line_matches(regex, line):
+                hits.append(i)
         hit_set = set(hits)
         if not hits:
             continue
@@ -457,6 +480,12 @@ def main(argv: list[str] | None = None) -> None:
 
     for line in result.lines:
         print(line)
+    if result.capped_lines:
+        print(
+            f"[search_artifacts] {result.capped_lines} "
+            f"{'line was' if result.capped_lines == 1 else 'lines were'} only searched up to "
+            f"{MAX_MATCH_CHARS} chars from each end"
+        )
     if result.truncated_reason:
         print(f"[search_artifacts] truncated: {result.truncated_reason}")
     if not result.files_matched:
