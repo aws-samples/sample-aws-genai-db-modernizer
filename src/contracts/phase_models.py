@@ -64,6 +64,7 @@ class PhaseRecord(BaseModel):
         None, description="Assignment version used for this phase execution"
     )
     error_message: str | None = Field(None, description="Error message if phase status is FAILED")
+    skip_reason: str | None = Field(None, description="Why the phase was skipped (status SKIPPED)")
     iteration: int = Field(
         default=1, ge=1, description="Execution iteration count (increments on retry)"
     )
@@ -113,3 +114,19 @@ SCHEMA_DESIGN requires ASSIGNMENT_REVIEW (designs use the approved assignment).
 LOAD_TEST requires SCHEMA_DESIGN (placeholder for Phase 1B).
 SYNTHESIS requires SCHEMA_DESIGN (not LOAD_TEST, so Phase 1A works without it).
 """
+
+SCHEMA_DESIGN_SKIP_REASON_NO_LLM = "llm_mode=none: every schema designer needs a model"
+"""``skip_reason`` of a SCHEMA_DESIGN phase skipped because the run has no model.
+
+Every schema designer needs a model, so with ``llm_mode="none"`` the phase is
+recorded SKIPPED with this reason (issue #281). It is the one SKIPPED status a
+later phase accepts: SYNTHESIS treats it as satisfying its SCHEMA_DESIGN
+prerequisite (synthesis reports the engines without a schema design). Any other
+SKIPPED prerequisite still blocks. ``scripts/run_assessment.py`` prints the same
+reason on its schema-design status line.
+"""
+
+SKIP_SATISFIES_PREREQUISITE: dict[Phase, dict[Phase, str]] = {
+    Phase.SYNTHESIS: {Phase.SCHEMA_DESIGN: SCHEMA_DESIGN_SKIP_REASON_NO_LLM},
+}
+"""phase -> {prerequisite: skip_reason} pairs where that explicit skip counts as met."""

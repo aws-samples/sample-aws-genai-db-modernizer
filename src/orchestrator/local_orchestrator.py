@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 
 from src.contracts.phase_models import (
     PHASE_PREREQUISITES,
+    SCHEMA_DESIGN_SKIP_REASON_NO_LLM,
+    SKIP_SATISFIES_PREREQUISITE,
     Phase,
     PhaseProgression,
     PhaseRecord,
@@ -130,10 +132,12 @@ class LocalOrchestrator(Orchestrator):
         phase: Phase,
         status: PhaseStatus,
         error_message: str | None = None,
+        skip_reason: str | None = None,
     ) -> None:
         """Update a phase record's status and timestamps in-place."""
         record = progression.phases[phase]
         record.status = status
+        record.skip_reason = skip_reason if status == PhaseStatus.SKIPPED else None
         now = datetime.now(tz=UTC)
         if status == PhaseStatus.IN_PROGRESS:
             record.started_at = now
@@ -271,10 +275,12 @@ class LocalOrchestrator(Orchestrator):
         Skips engines with zero in-scope queries (SKIPPED status).
 
         With ``llm_mode="none"`` no engine is designed: every schema designer
-        needs a model, so the phase completes without schema outputs, as in
-        the deterministic pipeline, and synthesis reports the engines without
-        a schema design (issue #281). The mode is still passed to each engine
-        call so the handler enforces it too.
+        needs a model, so the phase writes no schema outputs, as in the
+        deterministic pipeline, and is recorded SKIPPED with
+        ``SCHEMA_DESIGN_SKIP_REASON_NO_LLM`` (see ``_skip_reason``). Synthesis
+        accepts that skip and reports the engines without a schema design
+        (issue #281). The mode is still passed to each engine call so the
+        handler enforces it too.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -513,15 +519,43 @@ class LocalOrchestrator(Orchestrator):
     # ------------------------------------------------------------------
 
     def _validate_prerequisites(self, job_id: str, phase: Phase) -> None:
-        """Raise PhasePrerequisiteError if any prerequisite is not COMPLETED."""
+        """Raise PhasePrerequisiteError if any prerequisite is not met.
+
+        Met means COMPLETED, or the explicit skip ``_prerequisite_met`` accepts.
+        """
         progression = self._load_progression(job_id)
         for prereq in PHASE_PREREQUISITES[phase]:
+            if self._prerequisite_met(progression, phase, prereq):
+                continue
             prereq_status = progression.phases[prereq].status
             if prereq_status != PhaseStatus.COMPLETED:
                 raise PhasePrerequisiteError(
                     f"{prereq.value} must be COMPLETED before {phase.value} "
                     f"(current status: {prereq_status.value})"
                 )
+
+    @staticmethod
+    def _prerequisite_met(progression: PhaseProgression, phase: Phase, prereq: Phase) -> bool:
+        """COMPLETED, or the one explicit skip ``phase`` accepts (``SKIP_SATISFIES_PREREQUISITE``).
+
+        Any other SKIPPED prerequisite (no reason, another reason, another
+        phase) still blocks.
+        """
+        record = progression.phases[prereq]
+        if record.status == PhaseStatus.COMPLETED:
+            return True
+        accepted = SKIP_SATISFIES_PREREQUISITE.get(phase, {}).get(prereq)
+        return (
+            accepted is not None
+            and record.status == PhaseStatus.SKIPPED
+            and record.skip_reason == accepted
+        )
+
+    def _skip_reason(self, phase: Phase) -> str | None:
+        """Why ``phase`` was skipped by this orchestrator's run, or None if it ran."""
+        if phase == Phase.SCHEMA_DESIGN and self.llm_mode == "none":
+            return SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+        return None
 
     def _auto_complete_prerequisites(self, job_id: str, phase: Phase) -> None:
         """Run any incomplete prerequisite phases before proceeding.
@@ -531,7 +565,7 @@ class LocalOrchestrator(Orchestrator):
         """
         progression = self._load_progression(job_id)
         for prereq in PHASE_PREREQUISITES[phase]:
-            if progression.phases[prereq].status != PhaseStatus.COMPLETED:
+            if not self._prerequisite_met(progression, phase, prereq):
                 logger.info("Auto-running prerequisite %s for %s", prereq.value, phase.value)
                 # Recursively ensure prereq's own prerequisites are met
                 self._auto_complete_prerequisites(job_id, prereq)
@@ -541,7 +575,13 @@ class LocalOrchestrator(Orchestrator):
                 self._set_phase_status(progression, prereq, PhaseStatus.IN_PROGRESS)
                 self._save_progression(progression)
                 self._run_phase(job_id, prereq)
-                self._set_phase_status(progression, prereq, PhaseStatus.COMPLETED)
+                skip_reason = self._skip_reason(prereq)
+                if skip_reason:
+                    self._set_phase_status(
+                        progression, prereq, PhaseStatus.SKIPPED, skip_reason=skip_reason
+                    )
+                else:
+                    self._set_phase_status(progression, prereq, PhaseStatus.COMPLETED)
                 self._save_progression(progression)
 
     # ------------------------------------------------------------------
@@ -592,7 +632,9 @@ class LocalOrchestrator(Orchestrator):
     def resume(self, job_id: str, phase: Phase, scope: PhaseScope | None = None) -> None:
         """Validate prerequisites, then run the requested phase.
 
-        Raises PhasePrerequisiteError if any prerequisite is not COMPLETED.
+        Raises PhasePrerequisiteError if any prerequisite is not met. A phase
+        this run skips (``_skip_reason``) is recorded SKIPPED with its reason
+        instead of COMPLETED / AWAITING_REVIEW.
         """
         self._validate_prerequisites(job_id, phase)
 
@@ -612,6 +654,13 @@ class LocalOrchestrator(Orchestrator):
             )
             self._save_progression(progression)
             raise
+
+        skip_reason = self._skip_reason(phase)
+        if skip_reason:
+            # Nothing was produced, so there is nothing to review (issue #281).
+            self._set_phase_status(progression, phase, PhaseStatus.SKIPPED, skip_reason=skip_reason)
+            self._save_progression(progression)
+            return
 
         self._set_phase_status(progression, phase, PhaseStatus.COMPLETED)
 

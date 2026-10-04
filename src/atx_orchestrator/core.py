@@ -53,8 +53,13 @@ def make_store():
 def make_orchestrator(store=None):
     """Create a LocalOrchestrator bound to the given store.
 
-    llm_mode="none" keeps all phases fully deterministic. Set LLM_MODE=bedrock
-    to enable the optional LLM schema-design / synthesis passes.
+    The ATX tools use it only for ``.meta`` phase-progression persistence; they
+    run the phases through this module's ``run_*_core`` functions, not through
+    the orchestrator, so ``LLM_MODE`` (default ``"none"``) does not make an ATX
+    run deterministic. ``run_schema_design_core`` always designs with Bedrock
+    (``SCHEMA_AGENT_MODEL_ID``), and reality check takes its mode from
+    ``REALITY_CHECK_LLM_MODE``. ``LLM_MODE`` only applies to phases run through
+    the returned orchestrator (``resume`` / ``resume_lenient``).
     """
     from src.orchestrator.local_orchestrator import LocalOrchestrator
 
@@ -1376,11 +1381,12 @@ def run_synthesis_core(
     #
     #   b) schema-design never ran -> build_table_mappings derives mappings from
     #      schema_design output rather than from the assignment, so table_mappings
-    #      and query_groups are empty and build_architecture_recommendation skips
-    #      every engine via `if not tables and not schema_design_available`. The
-    #      assignment IS read and everything else populates: ranking, workload
-    #      split, architecture_type, risk assessment, executive summary.
-    #      WARN — the report is a real answer with two documented gaps.
+    #      and query_groups are empty. build_architecture_recommendation still
+    #      lists every engine with assigned queries (with no tables; #281), so
+    #      databases is NOT empty in this case. The assignment IS read and
+    #      everything else populates: ranking, workload split, architecture_type,
+    #      risk assessment, executive summary.
+    #      WARN — the report is a real answer with documented gaps.
     #
     # (b) was originally also a raise. That was wrong, and the way it was wrong is
     # worth remembering: the exception fired AFTER _write_synthesis_report had
@@ -1407,17 +1413,17 @@ def run_synthesis_core(
                 f"that does not exist. Pass the version the assignment agent actually "
                 f"produced."
             )
-        if not any_schema_design:
-            warnings.append(
-                f"No engine has schema-design output, so table_mappings, query_groups "
-                f"and recommended_architecture.databases are empty. The assignment "
-                f"(version {assignment_version}) was read correctly and every other "
-                f"section is populated: engine ranking, workload distribution, "
-                f"architecture type, risk assessment and executive summary. "
-                f"table_mappings is derived from schema-design output, not from the "
-                f"assignment, so running schema-design is what fills these three "
-                f"fields. This is a known pipeline gap, not a failure."
-            )
+    if ranking and not any_schema_design:
+        warnings.append(
+            f"No engine has schema-design output, so table_mappings and query_groups "
+            f"are empty and recommended_architecture.databases allocates no tables. "
+            f"The assignment (version {assignment_version}) was read correctly and "
+            f"every other section is populated: engine ranking, workload "
+            f"distribution, architecture type, risk assessment and executive summary. "
+            f"table_mappings is derived from schema-design output, not from the "
+            f"assignment, so running schema-design is what fills these fields. This "
+            f"is a known pipeline gap, not a failure."
+        )
 
     # The customer-facing deliverables (Decision Report HTML, Engineering Report
     # MD) and their publication now live on the orchestrator, which owns the

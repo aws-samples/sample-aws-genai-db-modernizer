@@ -568,7 +568,8 @@ def phase_synthesis(store, job_id: str, db: str, llm_mode: str) -> None:
 
     orch = LocalOrchestrator(store=store, llm_mode=llm_mode)
     progression = orch.get_progression(job_id)
-    progression.phases[Phase.SCHEMA_DESIGN].status = PhaseStatus.COMPLETED
+    if progression.phases[Phase.SCHEMA_DESIGN].status != PhaseStatus.SKIPPED:
+        progression.phases[Phase.SCHEMA_DESIGN].status = PhaseStatus.COMPLETED
     orch._save_progression(progression)
 
     orch.resume(job_id, Phase.SYNTHESIS)

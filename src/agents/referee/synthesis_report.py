@@ -1259,11 +1259,15 @@ def build_architecture_recommendation(
         engine = mapping["recommended_database"]
         engine_tables.setdefault(engine, []).append(mapping["source_table"])
 
+    # An engine with assigned queries is part of the architecture even when no
+    # schema design ran (llm_mode=none, #281): table_mappings come from schema
+    # design, so it has no tables yet, but leaving it out made the rationale
+    # read "Hybrid architecture: ." with no databases.
     databases = []
     for r in ranking:
         engine = r["target"]
         tables = engine_tables.get(engine, [])
-        if not tables and not r.get("schema_design_available"):
+        if not tables and engine not in engines_with_workload:
             continue
 
         databases.append(
@@ -1276,10 +1280,13 @@ def build_architecture_recommendation(
             }
         )
 
+    rationale = _architecture_rationale(arch_type, databases, ranking)
+    if databases and not any(r.get("schema_design_available") for r in ranking):
+        rationale += " Schema design was not run, so no tables are allocated yet."
     return {
         "databases": databases,
         "architecture_type": arch_type,
-        "rationale": _architecture_rationale(arch_type, databases, ranking),
+        "rationale": rationale,
     }
 
 

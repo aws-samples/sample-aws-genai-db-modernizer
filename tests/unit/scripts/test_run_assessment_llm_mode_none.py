@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
+# Shared with the compact run_assessment.py status line (#282): both must agree.
+SKIP_REASON = "llm_mode=none: every schema designer needs a model"
 WORDPRESS_ZIP = REPO / "docs" / "examples" / "wordpress" / "wordpress.zip"
 
 
@@ -115,7 +117,25 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     out = capsys.readouterr()
     assert "schema design skipped (llm_mode=none)" in (out.out + out.err)
     # Synthesis still produced its deterministic report.
-    assert list(job_dir.glob("synthesis/v*/report.json"))
+    (report_path,) = job_dir.glob("synthesis/v*/report.json")
+
+    # The progression records the explicit skip, not a completed design.
+    progression = json.loads((artifacts / ".meta" / f"{state['job_id']}.json").read_text())
+    schema = progression["phases"]["schema_design"]
+    assert schema["status"] == "skipped"
+    assert schema["skip_reason"] == SKIP_REASON
+    assert progression["phases"]["synthesis"]["status"] == "completed"
+
+    # Without schema design the architecture is still described (was "Hybrid
+    # architecture: ." with no databases).
+    arch = json.loads(report_path.read_text())["recommended_architecture"]
+    assert arch["architecture_type"] == "HYBRID_WITH_CACHE"
+    assert {d["service"] for d in arch["databases"]} == {"dynamodb", "elasticache", "opensearch"}
+    assert all(d["table_count"] == 0 for d in arch["databases"])
+    assert arch["rationale"] == (
+        "Hybrid architecture: dynamodb for primary data storage and elasticache for "
+        "caching hot data. Schema design was not run, so no tables are allocated yet."
+    )
 
 
 @pytest.fixture
@@ -136,14 +156,9 @@ def prepared_job(tmp_path, monkeypatch, model_calls):
     return store, job_id, db
 
 
-def test_orchestrator_passes_llm_mode_none_to_schema_design_and_synthesis(
-    prepared_job, model_calls, capsys
-):
+def _complete_up_to_schema_design(orch, job_id):
     from src.contracts.phase_models import Phase, PhaseStatus
-    from src.orchestrator.local_orchestrator import LocalOrchestrator
 
-    store, job_id, db = prepared_job
-    orch = LocalOrchestrator(store=store, llm_mode="none")
     progression = orch.get_progression(job_id)
     for phase in (
         Phase.COLLECT_TRIAGE,
@@ -155,16 +170,99 @@ def test_orchestrator_passes_llm_mode_none_to_schema_design_and_synthesis(
         orch._set_phase_status(progression, phase, PhaseStatus.COMPLETED)
     orch._save_progression(progression)
 
+
+def test_orchestrator_none_mode_skips_schema_design_and_runs_synthesis(
+    prepared_job, model_calls, capsys
+):
+    from src.contracts.phase_models import Phase, PhaseStatus
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+
+    store, job_id, db = prepared_job
+    orch = LocalOrchestrator(store=store, llm_mode="none")
+    _complete_up_to_schema_design(orch, job_id)
+
     orch.resume(job_id, Phase.SCHEMA_DESIGN)
     orch._run_post_schema_routing(job_id, db)
-    orch.confirm_schema_design(job_id)
-    orch.resume(job_id, Phase.SYNTHESIS)
+    schema = orch.get_progression(job_id).phases[Phase.SCHEMA_DESIGN]
+    assert schema.status == PhaseStatus.SKIPPED  # not COMPLETED / AWAITING_REVIEW
+    assert schema.skip_reason == SKIP_REASON
+    assert schema.completed_at is not None
+
+    orch.resume(job_id, Phase.SYNTHESIS)  # the explicit skip satisfies synthesis
 
     assert model_calls == []
     phases = orch.get_progression(job_id).phases
-    assert phases[Phase.SCHEMA_DESIGN].status == PhaseStatus.COMPLETED
+    assert phases[Phase.SCHEMA_DESIGN].status == PhaseStatus.SKIPPED
     assert phases[Phase.SYNTHESIS].status == PhaseStatus.COMPLETED
     assert "schema design skipped (llm_mode=none)" in capsys.readouterr().out
+
+
+def test_phases_api_reports_the_schema_design_skip(prepared_job, model_calls):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes import phases as phases_route
+    from src.contracts.phase_models import Phase
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+
+    store, job_id, _ = prepared_job
+    orch = LocalOrchestrator(store=store, llm_mode="none")
+    _complete_up_to_schema_design(orch, job_id)
+    orch.resume(job_id, Phase.SCHEMA_DESIGN)
+
+    app = FastAPI()
+    app.include_router(phases_route.router)
+    original = phases_route.orchestrator
+    phases_route.orchestrator = orch
+    try:
+        body = TestClient(app).get(f"/api/v1/assessments/{job_id}/phases").json()
+    finally:
+        phases_route.orchestrator = original
+    assert body["phases"]["schema_design"]["status"] == "skipped"
+    assert body["phases"]["schema_design"]["skip_reason"] == SKIP_REASON
+
+
+def test_lenient_synthesis_in_none_mode_records_the_skip(prepared_job, model_calls):
+    """resume_lenient auto-runs schema design as a prerequisite: same skip."""
+    from src.contracts.phase_models import Phase, PhaseStatus
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+
+    store, job_id, _ = prepared_job
+    orch = LocalOrchestrator(store=store, llm_mode="none")
+    _complete_up_to_schema_design(orch, job_id)
+
+    orch.resume_lenient(job_id, Phase.SYNTHESIS)
+
+    assert model_calls == []
+    phases = orch.get_progression(job_id).phases
+    assert phases[Phase.SCHEMA_DESIGN].status == PhaseStatus.SKIPPED
+    assert phases[Phase.SCHEMA_DESIGN].skip_reason == SKIP_REASON
+    assert phases[Phase.SYNTHESIS].status == PhaseStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    ("phase", "reason"),
+    [
+        ("SYNTHESIS", None),  # a SKIPPED schema design without the explicit reason
+        ("SYNTHESIS", "some other reason"),
+        ("LOAD_TEST", SKIP_REASON),  # only synthesis accepts the explicit skip
+    ],
+)
+def test_other_skipped_schema_design_still_blocks(phase, reason, tmp_path):
+    from src.contracts.phase_models import Phase, PhaseStatus
+    from src.orchestrator.base import PhasePrerequisiteError
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+    from src.storage.local_store import LocalArtifactStore
+
+    orch = LocalOrchestrator(store=LocalArtifactStore(base_dir=str(tmp_path)), llm_mode="none")
+    progression = orch._new_progression("job-1")
+    record = progression.phases[Phase.SCHEMA_DESIGN]
+    record.status = PhaseStatus.SKIPPED
+    record.skip_reason = reason
+    orch._save_progression(progression)
+
+    with pytest.raises(PhasePrerequisiteError):
+        orch.resume("job-1", Phase[phase])
 
 
 @pytest.mark.parametrize("llm_mode", ["none", "bedrock", "external"])
