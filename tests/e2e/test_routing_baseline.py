@@ -20,9 +20,10 @@ from tests.e2e.routing_baseline import BASELINE, compare, measure
 pytestmark = pytest.mark.e2e
 
 
+@pytest.mark.deterministic
 def test_routing_shape_matches_the_baseline(run: PipelineResult) -> None:
-    if run.external:
-        pytest.skip("the baseline describes the deterministic pipeline, not an external job")
+    # Deterministic pipeline only: external runs deselect the `deterministic`
+    # marker (a skip would fail under --fail-on-skip)
     baseline = json.loads(BASELINE.read_text())
     assert baseline.get("reason"), "the baseline must say why it was last updated"
     actual = measure(run.job_dir())
