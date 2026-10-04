@@ -57,9 +57,11 @@ from pptx.util import Inches, Pt
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 
 from .renderers import (
+    SEARCH_READ_MODEL,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
+    _mapping_split,
     filtered_risks,
     fmt_num,
     label_summary_counts,
@@ -994,13 +996,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     )
     waves: list[dict[str, Any]] = []
     if no_move:
+        only_cache = all(e["engine"] in cache for e in no_move)
         waves.append(
             {
                 "engines": no_move,
                 "accent": BLUE,
                 "note": (
-                    "No data migration — source-compatible or additive, so the source database "
-                    "stays authoritative and the step is reversible."
+                    # The cache fronts the current source database first (#296)
+                    "Cache-aside in front of the current source database: no data migration, "
+                    "reversible. It keeps serving the same reads as their owners move in later "
+                    "waves; invalidation follows the engine that owns each cached table."
+                    if only_cache
+                    else "No data migration — source-compatible or additive, so the source "
+                    "database stays authoritative and the step is reversible."
+                    + (" The cache fronts the current source database." if cache else "")
                 ),
             }
         )
@@ -1019,6 +1028,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             else f"{n_t} source {tables_word} · confidence {lo:.0f}% — re-scope after the gate"
         )
         waves.append({"engines": group, "accent": accent, "note": note})
+    # A search read model indexes data synced from the engines that own its
+    # tables, so it comes after every owner's wave; it never moves data (#296/#303).
+    read_models = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
+    if read_models:
+        waves.append(
+            {
+                "engines": read_models,
+                "accent": GREEN,
+                "note": (
+                    "Search read model, built after the engines that own its tables: it "
+                    "indexes data synced from them, so no system-of-record data moves to it."
+                ),
+            }
+        )
     for w in waves:
         w["names"] = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in w["engines"])
         w["workload"] = sum(
@@ -1053,6 +1076,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             )
         ),
         "n_tables": len(rep.get("table_mappings") or []),
+        # ": 20 migrate, 1 to the cache layer" (#258); says where the rest go (#296)
+        "mapping_split": _mapping_split(
+            rep, [m for m in rep.get("table_mappings") or [] if isinstance(m, dict)]
+        ),
         "n_tradeoffs": len(rep.get("trade_offs") or []),
         "assignment": assignment,
         "risks": risks,
@@ -1188,8 +1215,9 @@ def slide_summary(prs, f):
     # The summary beside this footer says "22 source tables mapped"; when some of
     # them map to the cache layer, the footer says how 21 relates to 22 (#258).
     n_mig = f["migrated"]
+    split = str(f.get("mapping_split") or "").lstrip(": ")
     subject = (
-        f"{n_mig} of the {f['n_tables']} mapped source tables"
+        f"{n_mig} of the {f['n_tables']} mapped source tables" + (f" ({split})" if split else "")
         if f["n_tables"] > n_mig > 0
         else f"{n_mig} source {plural_noun(n_mig, 'table')}"
     )
@@ -1614,8 +1642,9 @@ def slide_sequencing(prs, f):
     if first_cache and not first_pct:
         n_c = waves[0]["cached_queries"]
         subtitle = (
-            f"Wave 1 adds the cache layer for {n_c} hot {plural_noun(n_c, 'read')} "
-            f"({fmt_num(first_cache, 1)}% of calls) with no data migration"
+            f"Wave 1 puts the cache layer for {n_c} hot {plural_noun(n_c, 'read')} "
+            f"({fmt_num(first_cache, 1)}% of calls) in front of the current source database, "
+            "with no data migration"
         )
     elif first_cache:
         subtitle = (

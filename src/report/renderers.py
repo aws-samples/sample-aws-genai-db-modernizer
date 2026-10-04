@@ -302,11 +302,19 @@ def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 _CACHE_ENGINES = {"elasticache", "memorydb"}
+# Search engines are read models (#303): their data is synced from the engine
+# that owns each table, so they never hold system-of-record data, never need a
+# "data migration", and come after their owners in the wave plan.
+_SEARCH_ENGINES = {"opensearch"}
+# Only a relational engine can be the retained, source-compatible core.
+_RELATIONAL_ENGINES = {"aurora", "aurora_mysql", "aurora_postgresql"}
+SEARCH_READ_MODEL = "Search read model"
 
 _ROLE_STROKE = {
     "Retained": "#1F7A3D",
     "Migration target": "#146EB4",
     "Cache layer": "#8B5CF6",
+    SEARCH_READ_MODEL: "#2EA597",
     # Muted grey: an engine that was evaluated but serves nothing is not an active
     # component of the target architecture, and must not read as one in the diagram.
     "Evaluated": "#6B7280",
@@ -344,6 +352,9 @@ def _engine_role(
     """
     if engine in _CACHE_ENGINES:
         return "Cache layer"
+    if engine in _SEARCH_ENGINES and workload:
+        # A read model whatever its design status: never "Retained" (#296/#303)
+        return SEARCH_READ_MODEL
     if engine in recommended:
         return "Migration target"
     # Ordered deliberately: a cache engine or a real migration target keeps its role
@@ -353,7 +364,9 @@ def _engine_role(
         return "Evaluated"
     status = (schema_designs.get(engine) or {}).get("status")
     if status in ("not_available", "skipped"):
-        return "Retained"
+        # Retained means the source-compatible relational core; any other engine
+        # carrying queries without a design is still a migration target
+        return "Retained" if engine in _RELATIONAL_ENGINES else "Migration target"
     if status == "completed":
         return "Migration target"
     return "Assessed"
@@ -405,6 +418,13 @@ def cache_layer_counts(report: dict[str, Any], engine: str) -> tuple[int, float]
     return int(n or 0), float(share or 0.0)
 
 
+CACHE_WAVE_NOTE = (
+    "It goes first in front of the current source database, with no data migration, and "
+    "keeps serving the same reads as their owners move in later waves: invalidation "
+    "follows the engine that owns each cached table."
+)
+
+
 def cache_layer_text(n: int, share: float) -> str:
     """``20 cached reads · 83.4% of calls`` (#296)."""
     return f"{n} cached {plural_noun(n, 'read')} \u00b7 {fmt_num(share, 1)}% of calls"
@@ -454,6 +474,13 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
                 )
                 if n is not None
                 else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
+            )
+        elif role == SEARCH_READ_MODEL:
+            # Indexes data synced from the owners; nothing migrates to it
+            scope = (
+                f"{objs} {plural_noun(objs, 'index', 'indexes')}, synced from owners"
+                if objs
+                else "synced from owners"
             )
         elif role == "Cache layer":
             scope = f"{objs} key {plural_noun(objs, 'design')}" if objs else "cache"
@@ -830,6 +857,14 @@ def render_decision_report_html(
                 f"<b>{', '.join(esc(x) for x in retained)}</b> is retained as the relational "
                 "core (source-compatible, no migration)."
             )
+        search = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
+        if search:
+            names = ", ".join(esc(e["engine"]) for e in search)
+            note_bits.append(
+                f"<b>{names}</b> is a search read model: it serves its queries from data "
+                "synced from the engines that own those tables, holds no system-of-record "
+                "data, and is built after its owners."
+            )
         if caches:
             note_bits.append(_cache_note(engines))
         if migr:
@@ -1011,7 +1046,8 @@ def _cache_note(engines: list[dict[str, Any]]) -> str:
     return (
         f"<b>{names}</b> is an additive cache layer: it fronts {n} hot "
         f"{plural_noun(n, 'read')} ({esc(fmt_num(share, 1))}% of calls) cache-aside and owns "
-        "none of the workload: the engines listed above still own every cached read."
+        "none of the workload: the engines listed above still own every cached read. "
+        + CACHE_WAVE_NOTE
     )
 
 
@@ -1019,6 +1055,7 @@ _ROLE_PHRASE = {
     "Migration target": "migrate",
     "Cache layer": "to the cache layer",
     "Retained": "stay on the source engine",
+    SEARCH_READ_MODEL: "to the search read model",
 }
 
 
@@ -1068,7 +1105,7 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
             f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
             "none of the workload: each cached read stays with its owner engine, which "
-            "serves every miss and every write.",
+            "serves every miss and every write. " + CACHE_WAVE_NOTE,
             "",
             f"- Owner engines: {owned or '-'}",
             f"- Read shapes: {shapes or '-'}",

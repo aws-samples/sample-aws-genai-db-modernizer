@@ -356,7 +356,8 @@ class TestUnlabelledCounts:
         f = pptx_report.derive(_mapped_report(), {})
         slide = pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
         assert any(
-            "21 of the 22 mapped source tables move to a purpose-built engine" in t
+            "21 of the 22 mapped source tables (21 migrate, 1 to the cache layer) move to a "
+            "purpose-built engine" in t
             for t in _shape_texts(slide)
         )
 

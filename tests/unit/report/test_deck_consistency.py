@@ -299,26 +299,39 @@ class TestAuroraFamily:
 
 
 def _with_retained_documentdb(conf: int) -> dict[str, Any]:
+    """A second no-migration engine. Retained is only ever the source-compatible
+    relational core (#296), so this is Aurora PostgreSQL with no migration design;
+    DocumentDB in the same shape is a migration target (see below)."""
     rep = _report()
     rep["ranking"].append(
-        {"target": "documentdb", "confidence_score": conf, "workload_percent": 3.0}
+        {"target": "aurora_postgresql", "confidence_score": conf, "workload_percent": 3.0}
     )
-    rep["schema_designs"]["documentdb"] = {"status": "skipped"}
+    rep["schema_designs"]["aurora_postgresql"] = {"status": "skipped"}
     return rep
+
+
+def test_a_non_relational_engine_without_a_design_is_never_retained() -> None:
+    rep = _report()
+    rep["ranking"].append({"target": "documentdb", "confidence_score": 44, "workload_percent": 3.0})
+    rep["schema_designs"]["documentdb"] = {"status": "skipped"}
+    f = pptx_report.derive(rep, _export([]))
+    role = next(e["role"] for e in f["engines"] if e["engine"] == "documentdb")
+    assert role == "Migration target"
+    assert "documentdb" not in [e["engine"] for e in f["waves"][0]["engines"]]
 
 
 class TestSeveralNoMigrationEngines:
     def test_every_no_migration_engine_under_the_floor_is_named(self) -> None:
         text = " ".join(_deck_text(_with_retained_documentdb(44), _export([])).split())
         assert (
-            "Steps that need no data migration (ElastiCache at 48%, DocumentDB at 44%) go first"
-            in text
+            "Steps that need no data migration (ElastiCache at 48%, Aurora PostgreSQL at 44%) go "
+            "first" in text
         )
 
     def test_only_the_ones_under_the_floor_are_named(self) -> None:
         text = " ".join(_deck_text(_with_retained_documentdb(80), _export([])).split())
         assert "(ElastiCache at 48%) go first" in text
-        assert "DocumentDB at" not in text
+        assert "Aurora PostgreSQL at" not in text
 
     def test_none_under_the_floor(self) -> None:
         rep = _with_retained_documentdb(80)
@@ -331,7 +344,7 @@ class TestSeveralNoMigrationEngines:
         rep["recommended_architecture"]["databases"] = [{"service": "dynamodb", "table_count": 19}]
         rep["schema_designs"]["aurora_mysql"] = {"status": "skipped"}
         text = " ".join(_deck_text(rep, _export([])).split())
-        assert "ElastiCache, Aurora MySQL and DocumentDB keep" in text
+        assert "ElastiCache, Aurora MySQL and Aurora PostgreSQL keep" in text
 
 
 class TestNoMigrationTargets:

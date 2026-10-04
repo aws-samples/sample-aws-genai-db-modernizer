@@ -144,7 +144,12 @@ class TestDeck:
 
     def test_deck_text(self):
         text = _deck_text(_report())
-        assert "Wave 1 adds the cache layer for 20 hot reads (83.4% of calls)" in text
+        assert (
+            "Wave 1 puts the cache layer for 20 hot reads (83.4% of calls) in front of the "
+            "current source database, with no data migration"
+        ) in text
+        assert "Cache-aside in front of the current source database" in text
+        assert "invalidation follows the engine that owns each cached table" in text
         assert "ElastiCache caches 20 hot reads (83.4% of calls) and owns none of the workload" in (
             text
         )
@@ -192,3 +197,100 @@ class TestAnalysisReport:
         assert "Cache layer · 20 cached reads · 83.4% of calls" in card
         assert _cache_layer_stat({}) == ""
         assert {"cache_engine", "cache_reason"} <= set(_ASSIGNMENT_FIELDS)
+
+
+def _discourse_shape() -> dict[str, Any]:
+    """The PR #304 discourse run: OpenSearch owns 3 text-search queries, has no tables
+    or target objects ($240.96), and its schema design was skipped."""
+    return {
+        "database_name": "discourse",
+        "job_id": "cc263d38",
+        "timestamp": "2026-10-04T16:35:17Z",
+        "ranking": [
+            {
+                "target": "aurora_postgresql",
+                "confidence_score": 67,
+                "workload_percent": 76.7,
+                "assigned_queries": 1268,
+            },
+            {
+                "target": "dynamodb",
+                "confidence_score": 60,
+                "workload_percent": 23.1,
+                "assigned_queries": 383,
+            },
+            {
+                "target": "opensearch",
+                "confidence_score": 2,
+                "workload_percent": 0.2,
+                "assigned_queries": 3,
+            },
+            {
+                "target": "elasticache",
+                "confidence_score": 56,
+                "workload_percent": 0.0,
+                "assigned_queries": 0,
+                "role": "cache_layer",
+                "cache_overlay_queries": 3,
+                "cache_call_share_percent": 25.1,
+            },
+        ],
+        "recommended_architecture": {
+            "databases": [
+                {"service": "aurora_postgresql", "table_count": 158},
+                {"service": "dynamodb", "table_count": 115},
+            ]
+        },
+        "schema_designs": {
+            "aurora_postgresql": {"status": "completed", "tables": [{}] * 158},
+            "dynamodb": {"status": "completed", "tables": [{}] * 117},
+            "opensearch": {"status": "skipped"},
+            "elasticache": {"status": "completed", "tables": [{}] * 3},
+        },
+        "tco_analysis": {
+            "cost_breakdown": [
+                {"database": "aurora_postgresql", "monthly_cost_usd": 121.06},
+                {"database": "dynamodb", "monthly_cost_usd": 15.20},
+                {"database": "opensearch", "monthly_cost_usd": 240.96},
+                {"database": "elasticache", "monthly_cost_usd": 165.10},
+            ]
+        },
+        "cache_overlay": {"engine": "elasticache", "query_count": 3, "call_share_percent": 25.1},
+    }
+
+
+class TestSearchReadModel:
+    def test_opensearch_without_tables_is_a_read_model_not_retained(self):
+        rows = {e["engine"]: e for e in _architecture_engines(_discourse_shape())}
+        assert rows["opensearch"]["role"] == "Search read model"
+        assert rows["opensearch"]["scope"] == "synced from owners"
+        assert rows["opensearch"]["migrates"] == 0
+
+    def test_decision_report_never_calls_it_the_relational_core(self):
+        html = render_decision_report_html(_discourse_shape())
+        assert "retained as the relational core" not in html
+        assert "<b>opensearch</b> is a search read model" in html
+        assert "source schema retained" not in html
+
+    def test_wave_plan_puts_it_after_its_owners_never_in_the_no_migration_wave(self):
+        f = pptx_report.derive(_discourse_shape(), {})
+        waves = [[e["engine"] for e in w["engines"]] for w in f["waves"]]
+        assert waves[0] == ["elasticache"]
+        assert waves[-1] == ["opensearch"]
+        assert all("opensearch" not in w for w in waves[:-1])
+        assert "synced" in f["waves"][-1]["note"]
+        start = next(d for d in f["decisions"] if d["question"].startswith("Start"))
+        assert "OpenSearch" not in start["against"]
+
+    def test_retained_is_only_the_source_compatible_relational_engine(self):
+        rep = _discourse_shape()
+        rep["recommended_architecture"]["databases"] = [{"service": "dynamodb", "table_count": 115}]
+        rep["schema_designs"]["aurora_postgresql"] = {"status": "skipped"}
+        rows = {e["engine"]: e["role"] for e in _architecture_engines(rep)}
+        assert rows["aurora_postgresql"] == "Retained"
+        assert rows["opensearch"] == "Search read model"
+
+    def test_decision_report_cache_note_says_it_fronts_the_current_source(self):
+        html = render_decision_report_html(_discourse_shape())
+        assert "in front of the current source database, with no data migration" in html
+        assert "invalidation follows the engine that owns each cached table" in html

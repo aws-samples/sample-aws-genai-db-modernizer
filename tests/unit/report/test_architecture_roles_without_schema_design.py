@@ -100,8 +100,10 @@ def test_no_schema_design_lists_workload_engines_as_targets() -> None:
     assert _roles(report) == {
         "elasticache": "Cache layer",
         "dynamodb": "Migration target",
-        "opensearch": "Migration target",
+        # A search engine is a read model, never a migration target or retained (#296)
+        "opensearch": "Search read model",
     }
     waves = _wave_engines(report)
     assert waves[0] == ["elasticache"]
     assert sorted(e for w in waves[1:] for e in w) == ["dynamodb", "opensearch"]
+    assert waves[-1] == ["opensearch"]  # after the engines that own its tables
