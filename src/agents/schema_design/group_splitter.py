@@ -34,11 +34,13 @@ from src.storage.artifact_store import ArtifactStore
 SMALL_GROUP_THRESHOLD = 5
 # Maximum queries per group — larger groups get sub-split by primary table
 MAX_GROUP_SIZE = 20
-# Maximum characters of one group's input file: two Read pages (see
-# group_input.READ_PAGE_CHARS), so a group subagent reads its input in two or
-# three Read calls. A group over it is halved until every part fits (or has one
-# query); MAX_GROUP_SIZE stays the upper bound on queries per group (#272).
-MAX_GROUP_INPUT_CHARS = 2 * READ_PAGE_CHARS
+# Maximum size of one group's input file: three Read pages (see
+# group_input.READ_PAGE_CHARS), both in characters and in the whole-line pages
+# read_pages() lists, so a group subagent reads its input in at most three
+# Read calls. A group over it is halved until every part fits (or
+# has one query); MAX_GROUP_SIZE stays the upper bound on queries per group (#272).
+MAX_GROUP_INPUT_PAGES = 3
+MAX_GROUP_INPUT_CHARS = MAX_GROUP_INPUT_PAGES * READ_PAGE_CHARS
 
 
 def get_primary_table(query: dict, db_name: str) -> str:
@@ -297,15 +299,6 @@ def tables_for_queries(queries: list[dict], all_tables: list[dict]) -> list[dict
     ]
 
 
-def recommendations_for_tables(table_ids: set[str], analysis_output: dict) -> list[dict]:
-    """Return only the analysis recommendations relevant to the given tables."""
-    return [
-        r
-        for r in analysis_output.get("table_recommendations", [])
-        if r.get("table_id") in table_ids or r.get("table_name") in table_ids
-    ]
-
-
 def fit_groups_to_budget(
     groups: list[dict],
     measure: Callable[[dict], int],
@@ -315,13 +308,17 @@ def fit_groups_to_budget(
 
     ``measure(group)`` returns the size of the group's rendered input. A
     single-query group is kept whatever its size. Parts keep the group's
-    ``primary_tables`` and are named ``<group_name>_s1``, ``_s2``, ...
+    ``primary_tables`` and are named ``<group_name>_s1``, ``_s2``, ... Each
+    part is measured under the longest name it could get (``_s<query count>``),
+    so the written file is never larger than the size that was checked.
     """
     fitted: list[dict] = []
     for group in groups:
 
-        def measure_part(qs: list[dict], group: dict = group) -> int:
-            return measure({**group, "queries": qs})
+        longest_name = f"{group['group_name']}_s{len(group['queries'])}"
+
+        def measure_part(qs: list[dict], base: dict = group, name: str = longest_name) -> int:
+            return measure({**base, "group_name": name, "queries": qs})
 
         parts = _halve_to_fit(group["queries"], measure_part, max_chars)
         if len(parts) == 1:
@@ -414,14 +411,19 @@ def split_schema_input(
             job_id,
             database_name,
             engine,
-            0,
+            len(queries),  # no group index is larger (one group has 1+ queries)
             group,
             tables,
             collector_output,
             analysis_output,
             len(queries),
         )
-        return len(render_group_input(data))
+        text = render_group_input(data)
+        if len(read_pages(text)) > MAX_GROUP_INPUT_PAGES:
+            # Whole-line pages can pack under the character budget into more
+            # pages than intended; count that as over budget too.
+            return MAX_GROUP_INPUT_CHARS + 1
+        return len(text)
 
     manifest_groups: list[SchemaDesignGroupEntry] = []
 

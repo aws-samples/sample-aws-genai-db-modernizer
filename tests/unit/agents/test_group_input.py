@@ -6,14 +6,19 @@ import json
 
 from src.agents.schema_design.group_input import (
     LINE_WIDTH,
+    QUERY_TEXT_LINE,
+    READ_CHARS_PER_TOKEN,
     READ_PAGE_CHARS,
     READ_PAGE_LINES,
+    READ_TOKEN_LIMIT,
+    _split_text,
     build_group_input,
     read_pages,
     render_group_input,
 )
 from src.agents.schema_design.group_splitter import (
     MAX_GROUP_INPUT_CHARS,
+    MAX_GROUP_INPUT_PAGES,
     MAX_GROUP_SIZE,
     build_groups,
     fit_groups_to_budget,
@@ -126,11 +131,14 @@ def test_group_input_holds_only_the_groups_tables_and_signals() -> None:
     co, an = data["collector_output"], data["analysis_output"]
 
     assert [t["table_id"] for t in co["database_schema"]["tables"]] == [PRODUCTS]
-    # No procedures/views/triggers and no duplicate top-level tables.
+    # No procedures/views, no triggers on other tables, no duplicate top-level tables.
     assert set(co["database_schema"]) == {"tables"}
     assert "tables" not in co
-    # The source queries header (coverage denominator) is kept.
-    assert co["queries"]["total_queries_analyzed"] == collector["queries"]["total_queries_analyzed"]
+    # total_queries_analyzed counts the whole database: as the denominator of
+    # the skill's coverage check it would flag every group as incomplete.
+    assert "total_queries_analyzed" not in co["queries"]
+    assert co["queries"]["_filtered_count"] == len(co["queries"]["query_patterns"])
+    assert co["queries"]["query_log_source"] == collector["queries"]["query_log_source"]
 
     group_qids = {q["query_id"] for q in co["queries"]["query_patterns"]}
     patterns = an["workload_analysis"]["patterns_detected"]
@@ -143,6 +151,25 @@ def test_group_input_holds_only_the_groups_tables_and_signals() -> None:
     assert [r["table_id"] for r in an["table_recommendations"]] == [PRODUCTS]
 
 
+def test_group_input_keeps_the_triggers_on_its_tables() -> None:
+    collector = get_ecommerce_collector_output()
+    triggers = collector["database_schema"]["triggers"]
+    triggers.append(
+        {
+            **triggers[0],
+            "trigger_id": "ecommerce.trg_products_update",
+            "trigger_name": "trg_products_update",
+            "table_id": PRODUCTS,
+            "is_enabled": None,
+        }
+    )
+    data = _products_group(collector, _analysis(collector))
+    kept = data["collector_output"]["database_schema"]["triggers"]
+    assert [t["trigger_id"] for t in kept] == ["ecommerce.trg_products_update"]
+    assert kept[0]["definition"] == triggers[0]["definition"]
+    assert "is_enabled" not in kept[0]
+
+
 def test_group_input_drops_nulls_and_fields_the_design_does_not_read() -> None:
     collector = get_ecommerce_collector_output()
     data = _products_group(collector, _analysis(collector))
@@ -151,7 +178,8 @@ def test_group_input_drops_nulls_and_fields_the_design_does_not_read() -> None:
     assert "sample_data" not in table
     for col in table["columns"]:
         assert "data_type" in col  # the native type stays
-        assert "ordinal_position" not in col
+        # Kept: the list order is not always the ordinal, and the skill sorts by it.
+        assert "ordinal_position" in col
         assert all(v is not None for v in col.values())
     for q in co["queries"]["query_patterns"]:
         assert all(v is not None for v in q.values())
@@ -201,11 +229,43 @@ def test_long_query_text_is_also_given_in_short_lines() -> None:
         if x["query_id"] == q["query_id"]
     )
     assert slim["query_text"] == q["query_text"]
+    # Whitespace is collapsed, so the lines join to the normalised text.
     assert " ".join(slim["query_text_lines"]) == " ".join(q["query_text"].split())
-    assert max(len(ln) for ln in slim["query_text_lines"]) < 200
+    assert max(len(ln) for ln in slim["query_text_lines"]) <= QUERY_TEXT_LINE
     text = render_group_input(data)
     long_lines = [ln for ln in text.splitlines() if len(ln) > LINE_WIDTH + 40]
     assert len(long_lines) == 1 and '"query_text":' in long_lines[0]
+
+
+def test_query_text_lines_hard_wrap_long_words() -> None:
+    word = "x" * (QUERY_TEXT_LINE * 2 + 7)
+    lines = _split_text(f"SELECT {word} FROM t")
+    assert max(len(ln) for ln in lines) <= QUERY_TEXT_LINE
+    assert "".join(lines).replace(" ", "") == f"SELECT{word}FROMt"
+
+
+def test_query_text_threshold_counts_json_escapes() -> None:
+    # Under LINE_WIDTH characters, but over it once newlines and quotes are escaped.
+    text = 'SELECT "a"\n' * (LINE_WIDTH // 11 - 1)
+    assert len(text) < LINE_WIDTH < len(json.dumps(text))
+    collector = get_ecommerce_collector_output()
+    q = collector["queries"]["query_patterns"][0]
+    q["query_text"], q["tables_accessed"] = text, [PRODUCTS]
+    data = _products_group(collector, _analysis(collector))
+    slim = next(
+        x
+        for x in data["collector_output"]["queries"]["query_patterns"]
+        if x["query_id"] == q["query_id"]
+    )
+    assert "query_text_lines" in slim
+
+
+def test_read_page_stays_under_the_read_token_limit() -> None:
+    # Read estimates ~1 token per 2 characters and refuses over 25,000 tokens;
+    # keep a page at most 80% of that.
+    assert READ_TOKEN_LIMIT == 25_000 and READ_CHARS_PER_TOKEN == 2
+    assert READ_PAGE_CHARS / READ_CHARS_PER_TOKEN <= 0.8 * READ_TOKEN_LIMIT
+    assert MAX_GROUP_INPUT_CHARS <= 3 * READ_PAGE_CHARS
 
 
 def test_read_pages_cover_the_file_in_read_sized_pages() -> None:
@@ -283,4 +343,4 @@ def test_split_writes_bounded_inputs_with_read_pages(tmp_path) -> None:
         text = (tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text()
         assert len(text) <= MAX_GROUP_INPUT_CHARS
         assert g.input_pages == read_pages(text)
-        assert 1 <= len(g.input_pages) <= 3
+        assert 1 <= len(g.input_pages) <= MAX_GROUP_INPUT_PAGES

@@ -8,11 +8,14 @@ validates its ``collector_output`` / ``analysis_output`` against the full
 contract shape but holds only what the group's design uses (issue #272):
 
 - the group's queries, with the query fields the schema design projection
-  (``AgentQueryPattern``) carries, plus the source ``queries`` header
-  (``total_queries_analyzed`` etc.);
+  (``AgentQueryPattern``) carries, plus the source ``queries`` header except
+  ``total_queries_analyzed``: that counts the whole database, so the skill's
+  coverage check (patterns / total_queries_analyzed) would flag every group
+  as incomplete; a group's own count is ``_filtered_count``;
 - the tables those queries touch, with the projected table, column, index and
-  foreign-key fields (plus the native ``data_type``), and no procedures, views,
-  triggers or duplicate top-level ``tables``;
+  foreign-key fields (plus the native ``data_type``), the triggers on those
+  tables (the skill writes ``migration_notes`` for them), and no procedures,
+  views or duplicate top-level ``tables``;
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
   aggregates and table recommendations for the group's tables;
@@ -37,7 +40,14 @@ from src.contracts.analysis_output import (
     Pattern,
     TableRecommendation,
 )
-from src.contracts.collector_output import Column, ForeignKey, Index, QueryPattern, Table
+from src.contracts.collector_output import (
+    Column,
+    ForeignKey,
+    Index,
+    QueryPattern,
+    Table,
+    Trigger,
+)
 from src.contracts.schema_design_input import (
     AgentAggregateRecommendation,
     AgentAntiPattern,
@@ -54,18 +64,22 @@ from src.contracts.schema_design_input import (
 LINE_WIDTH = 1500
 # A query text longer than this is also split into ``query_text_lines``.
 QUERY_TEXT_LINE = 160
-# Characters per Read page: well under the Read tool's per-call token cap
-# (~25k tokens; JSON runs ~3-4 characters per token).
-READ_PAGE_CHARS = 60_000
+# Characters per Read page. Read refuses a call whose output it estimates
+# over READ_TOKEN_LIMIT tokens, and it estimates about one token per two
+# characters, so a page stays well under 2 * READ_TOKEN_LIMIT characters.
+READ_TOKEN_LIMIT = 25_000
+READ_CHARS_PER_TOKEN = 2
+READ_PAGE_CHARS = 40_000
 # Read returns at most this many lines per call.
 READ_PAGE_LINES = 2000
 
 # Fields a group design reads, per record: the schema design projection's
 # fields plus the full contract's required ones (so the Bedrock path still
 # validates the file).
-# ``ordinal_position`` is the list order; ``data_type`` is the native type the
-# design reads when ``normalized_data_type`` is empty.
-_COLUMN_FIELDS = (set(AgentColumn.model_fields) | {"data_type"}) - {"ordinal_position"}
+# ``data_type`` is the native type the design reads when
+# ``normalized_data_type`` is empty. ``ordinal_position`` stays: the list order
+# is not always the ordinal (MySQL), and the skill sorts attributes by it.
+_COLUMN_FIELDS = set(AgentColumn.model_fields) | {"data_type"}
 _INDEX_FIELDS = set(AgentIndex.model_fields)
 _FK_FIELDS = set(AgentForeignKey.model_fields)
 _TABLE_FIELDS = set(AgentTable.model_fields)
@@ -76,6 +90,7 @@ _AGGREGATE_FIELDS = set(AgentAggregateRecommendation.model_fields) | set(
     AggregateRecommendation.model_fields
 )
 _TABLE_REC_FIELDS = set(TableRecommendation.model_fields)
+_TRIGGER_FIELDS = set(Trigger.model_fields)
 
 
 def _required(model: type[BaseModel]) -> set[str]:
@@ -92,6 +107,7 @@ _REQUIRED = {
     "anti_pattern": _required(AntiPattern),
     "aggregate": _required(AggregateRecommendation),
     "table_rec": _required(TableRecommendation),
+    "trigger": _required(Trigger),
 }
 
 
@@ -125,10 +141,18 @@ def _slim_table(table: dict) -> dict:
 
 
 def _split_text(text: str, width: int = QUERY_TEXT_LINE) -> list[str]:
-    """Break ``text`` (whitespace collapsed) into lines of about ``width`` characters."""
+    """Break ``text`` into lines of at most ``width`` characters.
+
+    Runs of whitespace (newlines, indentation) collapse to one space, so
+    ``" ".join(lines)`` is the text with its whitespace normalised, not the
+    exact ``query_text``. A word longer than ``width`` is hard-wrapped.
+    """
     lines: list[str] = []
     current = ""
+    words: list[str] = []
     for word in re.split(r"\s+", text.strip()):
+        words.extend(word[i : i + width] for i in range(0, len(word), width))
+    for word in words:
         if current and len(current) + 1 + len(word) > width:
             lines.append(current)
             current = word
@@ -142,7 +166,7 @@ def _split_text(text: str, width: int = QUERY_TEXT_LINE) -> list[str]:
 def _slim_query(query: dict) -> dict:
     slim = _slim(query, _QUERY_FIELDS, "query")
     text = slim.get("query_text") or ""
-    if len(text) > LINE_WIDTH:
+    if len(json.dumps(text, ensure_ascii=False)) > LINE_WIDTH:  # as rendered, escapes included
         slim["query_text_lines"] = _split_text(text)
     return slim
 
@@ -179,13 +203,23 @@ def build_group_input(
     queries_header = {
         k: v
         for k, v in source_queries.items()
-        if k != "query_patterns" and not k.startswith("_") and not _empty(v)
+        if k not in ("query_patterns", "total_queries_analyzed")
+        and not k.startswith("_")
+        and not _empty(v)
     }
+    triggers = [
+        _slim(t, _TRIGGER_FIELDS, "trigger")
+        for t in collector_output.get("database_schema", {}).get("triggers") or []
+        if t.get("table_id") in table_ids
+    ]
+    group_schema: dict[str, Any] = {"tables": [_slim_table(t) for t in group_tables]}
+    if triggers:
+        group_schema["triggers"] = triggers
     group_collector = {
         "contract_version": collector_output.get("contract_version"),
         "job_id": collector_output.get("job_id"),
         "metadata": collector_output.get("metadata"),
-        "database_schema": {"tables": [_slim_table(t) for t in group_tables]},
+        "database_schema": group_schema,
         "queries": {
             **queries_header,
             "query_patterns": [_slim_query(q) for q in group_queries],

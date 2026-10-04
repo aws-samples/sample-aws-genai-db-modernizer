@@ -3,7 +3,7 @@
 
 Designs the complete DynamoDB schema: table structure, access patterns, GSIs, and trade-offs.
 
-**ALWAYS uses the split→per-group→merge pattern** regardless of query count. This matches cloud production behavior where queries are split into groups of ~20 for parallel processing: at most 20 queries per group, and fewer when a group's input would not fit in two Read pages (`--split` halves such a group until each part fits).
+**ALWAYS uses the split→per-group→merge pattern** regardless of query count. This matches cloud production behavior where queries are split into groups of ~20 for parallel processing: at most 20 queries per group, and fewer when a group's input would not fit in three Read pages (`--split` halves such a group until each part fits).
 
 ## Tool Use
 
@@ -93,8 +93,8 @@ Read the input with the Read tool, one call per page (`offset`, `limit`); search
 For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json` (and run `--check-costs` on it). Do not run `--merge` or `--finalize`, do not update `.modernizer-state.json`, and do not touch other groups' drafts. Do not dispatch subagents yourself. Return a short summary: tables, access patterns, `validation_passed`.
 
 1. Read your group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
-   - Read it with the Read tool, one call per page of the group's `input_pages` (`offset`, `limit`); with no pages given, read 400 lines per call (`offset` 1, 401, 801, …) until a call returns fewer lines. Each page fits one Read call, so do not page it any other way.
-   - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
+   - Read it with the Read tool, one call per page of the group's `input_pages` (`offset`, `limit`); with no pages given, read 200 lines per call (`offset` 1, 201, 401, …) until a call returns fewer lines. If Read reports a page is too large, read it in two halves with `offset`/`limit` (half the `limit` each). Do not page it any other way.
+   - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses; no whole-database `total_queries_analyzed`) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
 2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
 3. Read the output contract: `src/contracts/dynamodb_model_output.py`
 4. Design the schema following Phase 3 from the skill
@@ -109,6 +109,8 @@ For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job
 7. Set `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
 
 Key rules for each group draft:
+
+- Skip the skill's coverage check (`len(non-OTHER patterns) / total_queries_analyzed`): a group holds only its share of the queries (`_filtered_count`), and the input has no `total_queries_analyzed`
 
 - Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
 - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; when group IDs collide, `--merge` renumbers them `DDB-AP-1..N` across groups and rewrites the `DDB-AP-<n>` mentions in each group's draft text and design trace to match)

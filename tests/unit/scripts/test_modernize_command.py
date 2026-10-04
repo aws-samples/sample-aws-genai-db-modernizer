@@ -405,3 +405,13 @@ def test_dynamodb_group_task_reads_by_pages_and_writes_in_one_call() -> None:
     assert "the whole JSON in one Write tool call" in flat
     assert "Do not generate it with a script." in flat
     assert "`query_text_lines`" in flat
+
+
+def test_dynamodb_group_task_halves_a_page_read_refuses_and_skips_coverage() -> None:
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    flat = " ".join(text.split("## Group draft task", 1)[1].split("\n## ", 1)[0].split())
+    assert (
+        "If Read reports a page is too large, read it in two halves with `offset`/`limit`" in flat
+    )
+    assert "Skip the skill's coverage check" in flat
+    assert "would not fit in three Read pages" in text

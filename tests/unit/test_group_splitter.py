@@ -4,7 +4,6 @@ from src.agents.schema_design.group_splitter import (
     MAX_GROUP_SIZE,
     build_groups,
     get_primary_table,
-    recommendations_for_tables,
     tables_for_queries,
 )
 
@@ -94,19 +93,6 @@ class TestTablesForQueries:
         assert len(result) == 2
         names = {t["table_name"] for t in result}
         assert names == {"users", "posts"}
-
-
-class TestRecommendationsForTables:
-    def test_filters_by_table_id(self):
-        analysis = {
-            "table_recommendations": [
-                {"table_id": "db.users", "confidence_score": 90},
-                {"table_id": "db.orders", "confidence_score": 70},
-            ]
-        }
-        result = recommendations_for_tables({"db.users"}, analysis)
-        assert len(result) == 1
-        assert result[0]["table_id"] == "db.users"
 
 
 class TestAffinityGrouping:
