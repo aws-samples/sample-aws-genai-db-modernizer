@@ -133,10 +133,10 @@ class TestRationale:
             for d in build_architecture_recommendation(_data(ASSIGNMENT), ranking, [])["databases"]
         }
         assert dbs["opensearch"]["rationale"].startswith(
-            "100% mean fit across 1 query (1 table), led by full-text search (1 of 1)."
+            "100% mean fit across 1 query (1 rated table), led by full-text search (1 of 1)."
         )
         assert dbs["dynamodb"]["rationale"].startswith(
-            "100% mean fit across 6 queries (1 table), led by key-value lookups (6 of 6)."
+            "100% mean fit across 6 queries (1 rated table), led by key-value lookups (6 of 6)."
         )
         assert "average confidence across" not in dbs["opensearch"]["rationale"]
         assert dbs["opensearch"]["routed_confidence"] == 100
@@ -150,7 +150,7 @@ class TestRationale:
         text = dbs["elasticache"]["rationale"]
         assert text.startswith("Cache layer for 2 hot reads")
         assert "mostly point lookups" in text
-        assert "95% mean cache fit across 2 cached reads (1 table)" in text
+        assert "95% mean cache fit across 2 cached reads (1 rated table)" in text
 
     def test_without_assignment_the_rationale_keeps_the_analysis_average(self):
         data = _data(None)
@@ -182,7 +182,7 @@ class TestNoTableEvidence:
         dynamodb = _by_target(build_ranking(data))["dynamodb"]
         assert dynamodb["routed_confidence_evidence"] == "partial"
         # 1 of 6 queries (17%) is under the 25% label threshold
-        assert "(1 table; 1 query without table-level evidence)" in _engine_rationale(
+        assert "(1 rated table; 1 query without table-level evidence)" in _engine_rationale(
             data, dynamodb
         )
 
@@ -194,6 +194,6 @@ class TestNoTableEvidence:
         ]
         dynamodb = _by_target(build_ranking(data))["dynamodb"]
         assert (
-            "(1 table; 2 queries without table-level evidence, partly signal-based)"
+            "(1 rated table; 2 queries without table-level evidence, partly signal-based)"
             in _engine_rationale(data, dynamodb)
         )

@@ -536,6 +536,7 @@ def _extract_artifact_summary(database_name: str, job_id: str, agent_name: str) 
                         "target": r.get("target"),
                         "confidence_score": r.get("confidence_score"),
                         "routed_confidence": r.get("routed_confidence"),
+                        "routed_confidence_evidence": r.get("routed_confidence_evidence"),
                         "workload_percent": r.get("workload_percent"),
                         "role": r.get("role"),
                     }

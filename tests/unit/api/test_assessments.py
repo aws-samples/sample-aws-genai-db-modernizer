@@ -448,7 +448,32 @@ class TestSynthesisStatusSummary:
             "target": "dynamodb",
             "confidence_score": 50,
             "routed_confidence": 90,
+            "routed_confidence_evidence": None,
             "workload_percent": 91.6,
             "role": None,
         }
         assert out["ranking"][1]["role"] == "cache_layer"
+
+    def test_artifact_summary_carries_the_routed_confidence_evidence(self):
+        """#312 review: a signal-only routed fit must reach the API summary, not
+        just the deliverables, so a caller never shows a bare number as solid."""
+        store = MagicMock()
+        store.read_artifact.return_value = {
+            "ranking": [
+                {
+                    "target": "opensearch",
+                    "confidence_score": 2,
+                    "routed_confidence": 60,
+                    "routed_confidence_evidence": "signal_only",
+                    "workload_percent": 0.2,
+                },
+            ]
+        }
+        original = assessments.s3_service
+        assessments.s3_service = store
+        try:
+            out = assessments._extract_artifact_summary("db", "job", "referee-synthesis")
+        finally:
+            assessments.s3_service = original
+        assert out is not None
+        assert out["ranking"][0]["routed_confidence_evidence"] == "signal_only"

@@ -575,3 +575,18 @@ def test_engine_confidence_is_the_routed_one_with_the_analysis_average_for_audit
     legacy["ranking"][0]["confidence_score"] = 50
     first = judge_facts.build_facts(legacy)["engines"][0]
     assert (first["confidence"], first["analysis_confidence"]) == (50, 50)
+
+
+def test_confidence_evidence_flags_a_signal_only_fit_for_the_judge() -> None:
+    """#312 review: a signal-only routed fit must reach the judge as a caveat,
+    not a bare number it could read as contradicting a lower analysis average."""
+    report = _report()
+    report["ranking"][0]["routed_confidence"] = 60
+    report["ranking"][0]["routed_confidence_evidence"] = "signal_only"
+    first = judge_facts.build_facts(report)["engines"][0]
+    assert first["confidence_evidence"] == "signal_only"
+
+    legacy = _report()
+    legacy["ranking"][0]["confidence_score"] = 50
+    first = judge_facts.build_facts(legacy)["engines"][0]
+    assert first["confidence_evidence"] is None

@@ -1396,7 +1396,11 @@ def build_architecture_recommendation(
 
 
 def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
-    """``90% mean fit across 98 queries (22 tables)`` (#152); empty without one.
+    """``90% mean fit across 98 queries (22 rated tables)`` (#152); empty without one.
+
+    "Rated" because ``routed_tables`` counts only the source tables the engine's
+    *analysis* rated (#312 review) -- not every table the routed queries touch,
+    which the schema design's own table count already states elsewhere.
 
     Says "signal only — no table-level evidence" when no routed query touches a
     source table the engine's analysis rated: the fit is then the basic baseline
@@ -1414,7 +1418,7 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     if evidence == "signal_only" or (evidence is None and not n_t):
         detail = SIGNAL_ONLY_NOTE
     else:
-        detail = _count(n_t, "table", "tables")
+        detail = _count(n_t, "rated table", "rated tables")
         if unbacked:
             detail += f"; {_count(unbacked, *what)} without table-level evidence"
             if evidence_note(r) == PARTIAL_NOTE:
@@ -1426,7 +1430,7 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     """Generate a rationale string for an engine recommendation.
 
     It names the workload routed to the engine and how well the engine fits it
-    (#152), e.g. "90% mean fit across 98 queries (22 tables), led by key-value
+    (#152), e.g. "90% mean fit across 98 queries (22 rated tables), led by key-value
     lookups (36 of 98)". The analysis average over every analyzed table is the
     ``analysis_confidence`` field, not the rationale: it describes the tables the
     engine looked at, not the work it was given. A report without an assignment

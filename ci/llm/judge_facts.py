@@ -253,6 +253,14 @@ def build_facts(
                     else entry.get("confidence_score")
                 ),
                 "analysis_confidence": entry.get("confidence_score"),
+                # Whether a rated source table backs the routed fit (#152/#312): a
+                # "signal_only" or "partial" value means the deliverables show a
+                # caveat the judge must not read as a contradiction.
+                "confidence_evidence": (
+                    entry.get("routed_confidence_evidence")
+                    if entry.get("routed_confidence") is not None
+                    else None
+                ),
                 "monthly_cost_usd": cost_by_engine.get(engine, entry.get("monthly_cost_usd")),
                 "tables_served": _tables_served(
                     served.get(engine), entry.get("assigned_queries"), partial_scope

@@ -9,7 +9,7 @@
  */
 import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
-import { analysisConfidence, engineConfidence, hasRoutedConfidence } from './rankingConfidence';
+import { analysisConfidence, confidenceText, hasRoutedConfidence } from './rankingConfidence';
 
 // Normalize a trade-off (structured object or legacy string) into a consistent shape.
 export const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
@@ -192,7 +192,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         <div class="ranking-card">
           <div class="rank">Rank #${index + 1}</div>
           <div class="engine">${item.target}</div>
-          <div class="confidence">${engineConfidence(item)}%</div>
+          <div class="confidence">${confidenceText(item, true)}</div>
           <div class="confidence-label">${hasRoutedConfidence(item)
             ? t('report-results.ranking.routed-confidence', { defaultValue: 'Fit of routed queries' })
             : 'Confidence'}</div>

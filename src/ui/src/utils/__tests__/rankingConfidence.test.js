@@ -1,5 +1,15 @@
-import { analysisConfidence, confidenceAlertText, engineConfidence, hasRoutedConfidence } from '../rankingConfidence';
+import i18next from 'i18next';
+import {
+  analysisConfidence,
+  confidenceAlertText,
+  confidenceText,
+  engineConfidence,
+  evidenceNote,
+  hasRoutedConfidence,
+  isSignalOnly,
+} from '../rankingConfidence';
 import { formatCacheLayerLine } from '../cacheLayer';
+import en from '../../locales/en.json';
 
 describe('engineConfidence (#152)', () => {
   it('shows the routed fit, not the all-tables average', () => {
@@ -38,6 +48,46 @@ describe('formatCacheLayerLine cache fit (#152)', () => {
   });
 });
 
+describe('isSignalOnly / evidenceNote / confidenceText (#312 review)', () => {
+  it('labels a signal-only routed fit, long and short form', () => {
+    const item = { target: 'opensearch', routed_confidence: 60, routed_confidence_evidence: 'signal_only' };
+    expect(isSignalOnly(item)).toBe(true);
+    expect(evidenceNote(item)).toBe('signal only — no table-level evidence');
+    expect(evidenceNote(item, true)).toBe('signal only');
+    expect(confidenceText(item)).toBe('60% (signal only — no table-level evidence)');
+    expect(confidenceText(item, true)).toBe('60% (signal only)');
+  });
+
+  it('does not label a table-backed routed fit', () => {
+    const item = { target: 'dynamodb', routed_confidence: 91, routed_confidence_evidence: 'table' };
+    expect(isSignalOnly(item)).toBe(false);
+    expect(evidenceNote(item)).toBe('');
+    expect(confidenceText(item)).toBe('91%');
+  });
+
+  it('labels a partial fit only once a quarter of its queries lack table evidence', () => {
+    const mostlyBacked = {
+      routed_confidence: 91,
+      routed_confidence_evidence: 'partial',
+      routed_queries: 385,
+      routed_queries_without_table_evidence: 17,
+    };
+    expect(evidenceNote(mostlyBacked)).toBe('');
+    expect(confidenceText(mostlyBacked)).toBe('91%');
+
+    const aQuarterUnbacked = { ...mostlyBacked, routed_queries_without_table_evidence: 100 };
+    expect(evidenceNote(aQuarterUnbacked)).toBe('partly signal-based');
+    expect(confidenceText(aQuarterUnbacked)).toBe('91% (partly signal-based)');
+  });
+
+  it('is never labelled without a routed confidence (the legacy analysis-average path)', () => {
+    const item = { confidence_score: 48, routed_confidence_evidence: 'signal_only' };
+    expect(isSignalOnly(item)).toBe(false);
+    expect(evidenceNote(item)).toBe('');
+    expect(confidenceText(item)).toBe('48%');
+  });
+});
+
 describe('buildReportHtml ranking (#152)', () => {
   // eslint-disable-next-line global-require
   const { buildReportHtml } = require('../ReportHtmlExport');
@@ -64,9 +114,30 @@ describe('buildReportHtml ranking (#152)', () => {
     expect(cards[1]).toContain('Analysis average 2%');
     expect(doc.body.textContent).toContain('ranked by share of the workload');
   });
+
+  it('labels a signal-only engine on the ranking card (#312 review: discourse OpenSearch)', () => {
+    const resultsData = {
+      synthesis: {
+        database_name: 'discourse',
+        ranking: [
+          {
+            target: 'opensearch',
+            confidence_score: 2,
+            analysis_confidence: 2,
+            routed_confidence: 60,
+            routed_confidence_evidence: 'signal_only',
+            workload_percent: 0.2,
+          },
+        ],
+      },
+    };
+    const doc = new DOMParser().parseFromString(buildReportHtml({ resultsData, jobId: 'j', t }), 'text/html');
+    const card = doc.querySelector('.ranking-card').textContent;
+    expect(card).toContain('60% (signal only)');
+  });
 });
 
-describe('confidenceAlertText (Target Database Details, #152)', () => {
+describe('confidenceAlertText (Target Database Details, #152, #312)', () => {
   it('states the routed fit, not the analysis average', () => {
     const item = { target: 'opensearch', confidence_score: 2, routed_confidence: 60, routed_queries: 3 };
     expect(confidenceAlertText(item)).toBe(
@@ -77,6 +148,68 @@ describe('confidenceAlertText (Target Database Details, #152)', () => {
   it('keeps the legacy wording for a report without routed confidence', () => {
     expect(confidenceAlertText({ target: 'dynamodb', confidence_score: 48 })).toBe(
       'This database is recommended with 48% confidence based on workload analysis',
+    );
+  });
+
+  it('adds the signal-only caveat (discourse OpenSearch, #312 review)', () => {
+    const item = {
+      target: 'opensearch',
+      confidence_score: 2,
+      routed_confidence: 60,
+      routed_confidence_evidence: 'signal_only',
+      routed_queries: 3,
+    };
+    expect(confidenceAlertText(item)).toBe(
+      'The queries routed to this database fit it at 60% on average '
+      + '(3 queries; signal only — no table-level evidence)',
+    );
+  });
+
+  it('adds the partly-signal-based caveat once a quarter of its queries lack table evidence', () => {
+    const item = {
+      target: 'dynamodb',
+      routed_confidence: 91,
+      routed_confidence_evidence: 'partial',
+      routed_queries: 385,
+      routed_queries_without_table_evidence: 100,
+    };
+    expect(confidenceAlertText(item)).toBe(
+      'The queries routed to this database fit it at 91% on average '
+      + '(385 queries; partly signal-based)',
+    );
+  });
+});
+
+describe('confidenceAlertText pluralization with real i18next (#312: _one/_other, not _plural)', () => {
+  const i18n = i18next.createInstance();
+
+  beforeAll(() => i18n.init({
+    lng: 'en',
+    fallbackLng: 'en',
+    resources: { en: { translation: en } },
+    interpolation: { escapeValue: false },
+    keySeparator: false,
+  }));
+
+  const t = (key, options) => i18n.t(key, options);
+
+  it('renders "1 query" (singular), not "1 queries"', () => {
+    const item = { target: 'opensearch', routed_confidence: 60, routed_queries: 1 };
+    expect(confidenceAlertText(item, t)).toBe(
+      'The queries routed to this database fit it at 60% on average (1 query)',
+    );
+  });
+
+  it('renders "3 queries" (plural) with the signal-only caveat', () => {
+    const item = {
+      target: 'opensearch',
+      routed_confidence: 60,
+      routed_confidence_evidence: 'signal_only',
+      routed_queries: 3,
+    };
+    expect(confidenceAlertText(item, t)).toBe(
+      'The queries routed to this database fit it at 60% on average '
+      + '(3 queries; signal only — no table-level evidence)',
     );
   });
 });
