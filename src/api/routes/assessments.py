@@ -22,6 +22,7 @@ from src.api.models.responses import (
 from src.api.services.cloudwatch import CloudWatchLogsService
 from src.api.services.s3_artifacts import S3ArtifactsService
 from src.api.services.step_functions import StepFunctionsService
+from src.shared.ranking import engine_confidence, main_engine
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
 
@@ -477,10 +478,15 @@ def _summarize_artifact(summary: dict | None) -> str | None:
         # Referee synthesis
         if "ranking" in summary:
             ranking = summary.get("ranking") or []
-            if ranking and isinstance(ranking, list) and len(ranking) > 0:
-                top = ranking[0].get("target", "unknown")
-                score = ranking[0].get("confidence_score", 0)
-                return f"Top recommendation: {top} ({score}% confidence)"
+            main = main_engine(ranking) if isinstance(ranking, list) else None
+            if main:
+                # The engine owning the largest workload share, with the fit of the
+                # queries routed to it (#152); no shares (no assignment): the top entry
+                top = main.get("target", "unknown")
+                score = f"{engine_confidence(main):.0f}% confidence"
+                if main.get("workload_percent") is not None:
+                    return f"Main engine: {top} ({main['workload_percent']}% of workload, {score})"
+                return f"Top recommendation: {top} ({score})"
             return "Synthesis complete"
     except Exception:
         return None
@@ -526,7 +532,13 @@ def _extract_artifact_summary(database_name: str, job_id: str, agent_name: str) 
             ranking = data.get("ranking", [])
             return {
                 "ranking": [
-                    {"target": r.get("target"), "confidence_score": r.get("confidence_score")}
+                    {
+                        "target": r.get("target"),
+                        "confidence_score": r.get("confidence_score"),
+                        "routed_confidence": r.get("routed_confidence"),
+                        "workload_percent": r.get("workload_percent"),
+                        "role": r.get("role"),
+                    }
                     for r in ranking
                 ],
                 "recommended_schema_designs": data.get("recommended_schema_designs", []),

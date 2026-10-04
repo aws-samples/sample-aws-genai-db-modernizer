@@ -389,3 +389,66 @@ class TestGetLogs:
             "next_token": "tok123",
         }
         assert client.get("/api/v1/assessments/job-1/logs").json()["next_token"] == "tok123"
+
+
+class TestSynthesisStatusSummary:
+    """The status line names the engine owning most of the workload (#152)."""
+
+    def test_names_the_main_engine_with_its_routed_confidence(self):
+        summary = {
+            "ranking": [
+                {"target": "opensearch", "confidence_score": 13, "workload_percent": 3.7},
+                {
+                    "target": "dynamodb",
+                    "confidence_score": 50,
+                    "routed_confidence": 90,
+                    "workload_percent": 91.6,
+                },
+                {
+                    "target": "elasticache",
+                    "role": "cache_layer",
+                    "confidence_score": 48,
+                    "workload_percent": 0.0,
+                },
+            ]
+        }
+        assert (
+            assessments._summarize_artifact(summary)
+            == "Main engine: dynamodb (91.6% of workload, 90% confidence)"
+        )
+
+    def test_without_workload_shares_keeps_the_top_entry(self):
+        summary = {"ranking": [{"target": "dynamodb", "confidence_score": 70}]}
+        assert assessments._summarize_artifact(summary) == (
+            "Top recommendation: dynamodb (70% confidence)"
+        )
+
+    def test_artifact_summary_carries_the_routed_fields(self):
+        store = MagicMock()
+        store.read_artifact.return_value = {
+            "ranking": [
+                {
+                    "target": "dynamodb",
+                    "confidence_score": 50,
+                    "routed_confidence": 90,
+                    "workload_percent": 91.6,
+                    "weight": 0.5,
+                },
+                {"target": "elasticache", "role": "cache_layer", "confidence_score": 48},
+            ]
+        }
+        original = assessments.s3_service
+        assessments.s3_service = store
+        try:
+            out = assessments._extract_artifact_summary("db", "job", "referee-synthesis")
+        finally:
+            assessments.s3_service = original
+        assert out is not None
+        assert out["ranking"][0] == {
+            "target": "dynamodb",
+            "confidence_score": 50,
+            "routed_confidence": 90,
+            "workload_percent": 91.6,
+            "role": None,
+        }
+        assert out["ranking"][1]["role"] == "cache_layer"

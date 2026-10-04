@@ -8,7 +8,8 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
 
 * ``totals`` -- headline counts (tables, queries, risks), architecture type,
   overall risk.
-* ``engines`` -- per selected engine: workload, confidence, monthly cost,
+* ``engines`` -- per selected engine: workload, confidence (the routed fit the
+  deliverables show, #152; ``analysis_confidence`` is the all-tables average), monthly cost,
   schema counts, assignment reasons, the tables its assigned queries touch
   (``tables_served``) and its ``primary_tables`` from ``table_mappings``.
 * ``eliminated_engines`` -- engines dropped by reality-check, with the engine
@@ -244,7 +245,14 @@ def build_facts(
                     if is_cache
                     else {}
                 ),
-                "confidence": entry.get("confidence_score"),
+                # The deliverables show the fit of the routed queries (#152); the
+                # all-analyzed-tables average is kept apart for audit
+                "confidence": (
+                    entry["routed_confidence"]
+                    if entry.get("routed_confidence") is not None
+                    else entry.get("confidence_score")
+                ),
+                "analysis_confidence": entry.get("confidence_score"),
                 "monthly_cost_usd": cost_by_engine.get(engine, entry.get("monthly_cost_usd")),
                 "tables_served": _tables_served(
                     served.get(engine), entry.get("assigned_queries"), partial_scope

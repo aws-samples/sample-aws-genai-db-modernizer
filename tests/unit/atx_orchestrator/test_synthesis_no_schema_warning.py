@@ -57,3 +57,20 @@ def test_schema_design_present_does_not_warn() -> None:
 def test_unread_assignment_with_no_databases_still_raises() -> None:
     with pytest.raises(ValueError, match="never read the assignment"):
         _run({"ranking": [{"target": "dynamodb"}], "recommended_architecture": {}})
+
+
+def test_top_engine_is_the_main_owner_not_the_first_entry() -> None:
+    """#152: a report ordered by weight put the cache layer first; top_engine is the
+    engine owning the largest workload share, never the cache layer."""
+    summary = _run(
+        {
+            "ranking": [
+                {"target": "elasticache", "role": "cache_layer", "workload_percent": 0.0},
+                {"target": "opensearch", "workload_percent": 3.7, "schema_design_available": True},
+                {"target": "dynamodb", "workload_percent": 91.6, "schema_design_available": True},
+            ],
+            "recommended_architecture": {"databases": [{"service": "dynamodb"}]},
+            "assignment_summary": {"x": 1},
+        }
+    )
+    assert summary["top_engine"] == "dynamodb"

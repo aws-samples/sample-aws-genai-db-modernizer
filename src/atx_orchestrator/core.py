@@ -18,6 +18,7 @@ import tempfile
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
+from src.shared.ranking import main_engine
 from src.storage.assignment_versioning import (
     resolve_downstream_assignment_version,
     resolve_reality_check_input_version,
@@ -1446,7 +1447,8 @@ def run_synthesis_core(
         "database_name": database_name,
         "assignment_version": assignment_version,
         "engines_ranked": len(ranking),
-        "top_engine": ranking[0].get("target") if ranking else None,
+        # The engine owning the largest workload share, never the cache layer (#152)
+        "top_engine": (main_engine(ranking) or {}).get("target"),
         "architecture_type": architecture.get("architecture_type"),
         "recommended_databases": [d.get("service") for d in databases],
         "table_mappings": len(report.get("table_mappings") or []),
