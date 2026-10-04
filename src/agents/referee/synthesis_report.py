@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
@@ -29,7 +30,6 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
     unsupported_pattern_mitigation,
-    unsupported_pattern_text,
 )
 
 if TYPE_CHECKING:
@@ -490,8 +490,8 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
     assignment, so it still holds engines the assignment eliminated outright. Risks are
     generated per engine during analysis, while every triage-selected engine is still a
     candidate, so carrying a dropped engine's risks forward inflates the counts -- and
-    because ``overall_risk_level`` is a HIGH-count threshold (>= 3), two risks on an engine
-    that carries no workload can raise the headline rating from MEDIUM to HIGH.
+    because ``overall_risk_level`` is the highest open severity, one HIGH risk on an
+    engine that carries no workload would raise the headline rating to HIGH.
 
     Fail-open: an empty set means "cannot tell". The caller keeps every risk in that case
     rather than silently emptying the register, which would be far worse than the defect.
@@ -554,6 +554,18 @@ def build_risk_assessment(
         q["query_id"]: set(q.get("tables_accessed") or [])
         for q in data.source_queries
         if q.get("query_id")
+    }
+    # Normalised tables per query for risks built from query ids (unsupported patterns,
+    # coverage gaps): ``tables_accessed``, else the assignment's ``source_tables``.
+    normalise = _table_normaliser(data)
+    assigned_tables = {
+        qa["query_id"]: qa.get("source_tables") or []
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("query_id")
+    }
+    risk_tables = {
+        q: normalise(query_tables.get(q) or assigned_tables.get(q) or [])
+        for q in set(query_tables) | set(assigned_tables)
     }
     covered_by = {
         engine: _covered_query_ids(artifacts.schema_design or {})
@@ -783,24 +795,33 @@ def build_risk_assessment(
                     "risk_type": "MIGRATION_COMPLEXITY",
                     "severity": "MEDIUM",
                     "description": f"[{engine}] {unsupported_pattern_label(up)}: "
-                    f"{unsupported_pattern_text(up)}",
-                    "affected_tables": [],
+                    f"{_unsupported_pattern_problem(engine, up, query_text)}",
+                    "affected_tables": sorted(
+                        {t for q in unsupported_pattern_ids(up) for t in risk_tables.get(q, ())}
+                    ),
                     "mitigation": unsupported_pattern_mitigation(up),
                     "query_ids": sorted(unsupported_pattern_ids(up)),
                 }
             )
 
         # Migration notes from schema design
+        # The description names the object; the logic to build is the mitigation (#252).
         for mn in schema.get("migration_notes", []):
             risk_id += 1
+            object_label = str(mn.get("object_name") or "").strip()
+            logic = str(mn.get("application_logic_required") or "").strip()
             risks.append(
                 {
                     "risk_id": f"RISK-{risk_id:03d}",
                     "risk_type": "OPERATIONAL_RISK",
                     "severity": "MEDIUM",
-                    "description": f"[{engine}] {mn.get('object_type', '')}: {mn.get('object_name', '')} — {mn.get('application_logic_required', '')}",
-                    "affected_tables": [mn["source_table"]] if mn.get("source_table") else [],
-                    "mitigation": f"Implement as application logic: {mn.get('application_logic_required', '')}",
+                    "description": (
+                        f"[{engine}] {mn.get('object_type') or 'migration note'}: "
+                        f"{object_label or 'this object'} needs application-side logic on "
+                        f"{display_name(engine)}."
+                    ),
+                    "affected_tables": sorted(normalise([mn.get("source_table") or ""])),
+                    "mitigation": f"Implement as application logic: {logic}" if logic else None,
                     "object_type": str(mn.get("object_type") or ""),
                     "object_name": str(mn.get("object_name") or ""),
                 }
@@ -812,9 +833,10 @@ def build_risk_assessment(
             continue
         risk_id += 1
         risks.append(
-            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, query_tables)
+            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables)
         )
 
+    risks = [_without_repeated_mitigation(r) for r in risks]
     risks = ground_risks(risks, eliminated or {}, query_engine)
     resolved = ground_risks(resolved, eliminated or {}, query_engine)
     for r in resolved:
@@ -826,19 +848,8 @@ def build_risk_assessment(
             r["reason"],
         )
 
-    # Determine overall risk level
-    severities = [r["severity"] for r in risks]
-    if "CRITICAL" in severities:
-        overall = "CRITICAL"
-    elif severities.count("HIGH") >= 3:
-        overall = "HIGH"
-    elif "HIGH" in severities:
-        overall = "MEDIUM"
-    else:
-        overall = "LOW"
-
     return {
-        "overall_risk_level": overall,
+        "overall_risk_level": overall_risk_level(risks),
         "risks": risks,
         "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
         # Anti-pattern risks the effective assignment resolved (#221): kept for the
@@ -847,9 +858,113 @@ def build_risk_assessment(
     }
 
 
+def overall_risk_level(risks: list[dict]) -> str:
+    """Overall risk level: the highest severity among the open ``risks`` (#248).
+
+    Any CRITICAL risk gives CRITICAL, any HIGH gives HIGH, any MEDIUM gives MEDIUM,
+    otherwise LOW (including no risks). ``risks`` are the open risks only;
+    ``resolved_risks`` never count.
+    """
+    severities = {str(r.get("severity") or "").upper() for r in risks}
+    for level in ("CRITICAL", "HIGH", "MEDIUM"):
+        if level in severities:
+            return level
+    return "LOW"
+
+
+_SQL_EXCERPT_CHARS = 120
+
+
+def _sql_excerpt(sql: str) -> str:
+    """``sql`` on one line without backticks, clipped to ``_SQL_EXCERPT_CHARS``.
+
+    Backticks (MySQL identifier quotes) would open code spans in the Markdown engineering
+    report, whose text escaping leaves them alone.
+    """
+    one_line = " ".join(sql.replace("`", "").split())
+    if len(one_line) <= _SQL_EXCERPT_CHARS:
+        return one_line
+    return one_line[: _SQL_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _unsupported_pattern_problem(engine: str, up: dict, query_text: dict[str, str]) -> str:
+    """What an unsupported pattern's risk is about, without its fix (#252).
+
+    The ``reason`` when the contract has one (documentdb, elasticache, opensearch). The
+    dynamodb contract carries only ``pattern_type`` and ``recommendation`` -- the fix,
+    which is the risk's mitigation -- so the problem is stated from the queries instead,
+    quoting the first one's SQL.
+    """
+    reason = str(up.get("reason") or "").strip()
+    if reason:
+        return reason
+    ids = unsupported_pattern_ids(up)
+    # OpenSearch patterns carry the SQL themselves (``source_query``).
+    sql = next((query_text[q] for q in ids if query_text.get(q, "").strip()), "") or str(
+        up.get("source_query") or ""
+    )
+    head = f"{display_name(engine)} has no native equivalent for"
+    if len(ids) > 1:
+        return f"{head} these {len(ids)} queries" + (f", e.g. {_sql_excerpt(sql)}" if sql else ".")
+    subject = "this query" if ids else "this pattern"
+    return f"{head} {subject}" + (f": {_sql_excerpt(sql)}" if sql else ".")
+
+
+def _without_repeated_mitigation(risk: dict) -> dict:
+    """``risk`` with ``mitigation`` set to None when the description already contains it.
+
+    A mitigation is never a copy of the description (#252); renderers omit an empty one.
+    Compared case-insensitively with whitespace collapsed.
+    """
+    mitigation = " ".join(str(risk.get("mitigation") or "").split()).casefold()
+    description = " ".join(str(risk.get("description") or "").split()).casefold()
+    if mitigation and mitigation in description:
+        return {**risk, "mitigation": None}
+    return risk
+
+
 # Table ids analysis emits when it cannot attribute a query to a table
 # (e.g. ``SELECT FOUND_ROWS()``).
 _PLACEHOLDER_TABLES = frozenset({"unknown", "UNKNOWN", "None", "null"})
+# Names that are never a source table in a risk's ``affected_tables``.
+_PSEUDO_TABLES = _PLACEHOLDER_TABLES | {"", "DUAL", "dual"}
+_PSEUDO_TABLES_LOWER = frozenset(t.lower() for t in _PSEUDO_TABLES)
+
+
+def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]]:
+    """Map table names to the collector's source-table ids.
+
+    Source-table ids are qualified (``<db>.table`` for MySQL, ``<schema>.table`` for
+    PostgreSQL, SQL Server and Oracle) while query ``tables_accessed`` may be bare or
+    differently cased. A name that is a known id is kept; otherwise its last dotted
+    segment is matched case-insensitively against the known ids' last segments and a
+    unique match gives the known id. A name that matches nothing (or several) is kept as
+    given (fail-open). Only pseudo-tables (``unknown``, ``DUAL``) are dropped.
+    """
+    known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+    by_lower = {k.lower(): k for k in known}
+    by_segment: dict[str, set[str]] = {}
+    for k in known:
+        by_segment.setdefault(k.rsplit(".", 1)[-1].lower(), set()).add(k)
+
+    def resolve(name: str) -> str:
+        if name in known:
+            return name
+        if name.lower() in by_lower:
+            return by_lower[name.lower()]
+        matches = by_segment.get(name.rsplit(".", 1)[-1].lower(), set())
+        return next(iter(matches)) if len(matches) == 1 else name
+
+    def normalise(names: Iterable[str]) -> set[str]:
+        out: set[str] = set()
+        for raw in names:
+            name = str(raw or "").strip()
+            if name.lower() in _PSEUDO_TABLES_LOWER:
+                continue
+            out.add(resolve(name))
+        return out
+
+    return normalise
 
 
 def _access_pattern_query_ids(ap: dict) -> list[str]:

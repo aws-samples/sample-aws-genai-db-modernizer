@@ -91,13 +91,13 @@ class TestUnsupportedPatternRisksCarryRealText:
         mitigations = " ".join(r["mitigation"] for r in out["risks"])
         assert "Keep this query against MySQL" in mitigations
 
-    def test_dynamodb_risk_still_uses_pattern_type_and_recommendation(self) -> None:
-        """The one shape that was never broken keeps working unchanged."""
+    def test_dynamodb_risk_uses_pattern_type_and_recommendation(self) -> None:
+        """The recommendation is the mitigation, not the description (#252)."""
         out = build_risk_assessment(_data({"dynamodb": _DYNAMODB_UNSUPPORTED}))
         assert len(out["risks"]) == 1
         risk = out["risks"][0]
         assert "aggregation" in risk["description"]
-        assert "COUNT(*) on wp_postmeta" in risk["description"]
+        assert "COUNT(*) on wp_postmeta" not in risk["description"]
         assert risk["mitigation"] == "COUNT(*) on wp_postmeta: run a Query with Select=COUNT."
 
     def test_mixed_engines_all_twelve_risks_have_real_text(self) -> None:

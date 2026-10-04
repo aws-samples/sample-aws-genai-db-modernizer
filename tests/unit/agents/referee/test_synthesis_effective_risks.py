@@ -187,25 +187,22 @@ class TestEliminatedEngineNeverATarget:
         complementary = [s for s in strategies if "unsupported query pattern" in s]
         assert complementary and "Aurora MySQL" in complementary[0]
 
-    def test_description_kept_whole_mitigation_filtered(self, result) -> None:
+    def test_description_states_the_problem_mitigation_filtered(self, result) -> None:
+        # The description states the problem, not the fix (#252); the mitigation loses
+        # only the sentence recommending the eliminated engine.
         risk = self._risk(result, "text search")
         assert risk["description"] == (
-            "[dynamodb] text search: Stream orders to OpenSearch via OpenSearch Ingestion for "
-            "keyword search. Keep exact order-id lookups on the base table. (OpenSearch "
-            "is not part of the target architecture; its queries run on Aurora MySQL.)"
+            "[dynamodb] text search: DynamoDB has no native equivalent for this pattern."
         )
         assert risk["mitigation"] == "Keep exact order-id lookups on the base table."
         assert "grounding_note" in risk
 
-    def test_description_with_only_a_recommendation_is_kept_with_a_note(self, result) -> None:
+    def test_description_does_not_repeat_the_eliminated_engine_recommendation(self, result) -> None:
         risk = self._risk(result, "aggregation")
         assert risk["description"].startswith(
-            "[dynamodb] aggregation: Index order totals in OpenSearch for dashboards."
+            "[dynamodb] aggregation: DynamoDB has no native equivalent for this query"
         )
-        assert risk["description"].endswith(
-            "(OpenSearch is not part of the target architecture; its queries run on "
-            "Aurora MySQL.)"
-        )
+        assert "opensearch" not in risk["description"].lower()
 
     def test_absorber_not_claimed_for_queries_assigned_elsewhere(self, result) -> None:
         # q-orders stays on DynamoDB, so "handle this on Aurora MySQL" would be false.
