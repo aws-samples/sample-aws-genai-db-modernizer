@@ -113,6 +113,11 @@ def test_every_cited_path_exists() -> None:
     for path in sorted(cited):
         if "<" in path or path.endswith(("...", "…")):
             continue  # placeholder
+        if path.startswith(".github/") and not (REPO_ROOT / ".github").is_dir():
+            # GitHub-only paths (issue templates, workflows): the internal
+            # validation mirror intentionally ships without .github/, so they
+            # can only be checked where that directory exists.
+            continue
         if "*" in path:
             if not list(REPO_ROOT.glob(path)):
                 missing.append(path)
