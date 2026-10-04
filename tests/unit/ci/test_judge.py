@@ -14,6 +14,7 @@ import json
 import re
 import stat
 import sys
+import time
 from pathlib import Path
 
 from ci.llm import judge
@@ -195,9 +196,28 @@ def test_trailing_text_after_the_object_is_ignored_and_recorded(tmp_path: Path) 
     assert result["response_trailing_chars"] == len(trailing.rstrip())
 
 
-def test_second_json_object_after_the_first_is_ignored(tmp_path: Path) -> None:
-    # The shape of the real failure: "Extra data: line 3 column 1".
+def test_two_valid_objects_with_different_scores_is_ambiguous(tmp_path: Path) -> None:
+    # The shape of the real failure ("Extra data: line 3 column 1"), but with
+    # a second, conflicting answer: fail closed rather than pick one.
     second = json.dumps({"scores": ALL_TWOS, "notes": {}})
+    result, code = _run_with_reply(tmp_path, _inner(PASSING_SCORES) + "\n\n" + second)
+
+    assert code == 2, result
+    assert "ambiguous judge response: 2 differing valid score objects" in result["error"]
+
+
+def test_identical_duplicate_objects_are_graded(tmp_path: Path) -> None:
+    result, code = _run_with_reply(
+        tmp_path, _inner(PASSING_SCORES) + "\n\n" + _inner(PASSING_SCORES)
+    )
+
+    assert code == 0, result
+    assert result["scores"] == PASSING_SCORES
+    assert result["response_trailing_chars"] == len(_inner(PASSING_SCORES)) + 2
+
+
+def test_malformed_second_object_is_ignored_and_first_is_graded(tmp_path: Path) -> None:
+    second = '{"summary": "unterminated'
     result, code = _run_with_reply(tmp_path, _inner(PASSING_SCORES) + "\n\n" + second)
 
     assert code == 0, result
@@ -239,6 +259,31 @@ def test_garbage_with_braces_is_still_a_parse_error(tmp_path: Path) -> None:
 
     assert code == 2, result
     assert "could not parse judge response as JSON" in result["error"]
+
+
+def test_oversized_adversarial_reply_errors_fast(tmp_path: Path) -> None:
+    reply = _inner(PASSING_SCORES) + '{"a": "' * 500_000  # ~3.5 MB
+    start = time.monotonic()
+    result, code = _run_with_reply(tmp_path, reply)
+    elapsed = time.monotonic() - start
+
+    assert code == 2, result
+    assert "too long to parse" in result["error"]
+    assert elapsed < 2, elapsed
+
+
+def test_brace_flood_within_length_limit_hits_the_decode_attempt_cap() -> None:
+    # Unterminated, deeply nested candidates: each "{" fails to decode.
+    reply = '{"a": [' * 20_000
+    assert len(reply) <= judge.MAX_REPLY_CHARS
+    start = time.monotonic()
+    try:
+        judge.parse_judge_reply(reply)
+    except judge.JudgeError as exc:
+        assert "too many '{' candidates" in str(exc)
+    else:
+        raise AssertionError("expected JudgeError")
+    assert time.monotonic() - start < 2
 
 
 def test_front_matter_thresholds_are_honoured(tmp_path: Path) -> None:

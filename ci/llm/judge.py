@@ -1054,6 +1054,12 @@ def call_claude_cli(prompt: str, settings_path: Path, claude_bin: str) -> dict[s
     return parsed
 
 
+# Bounds on scanning the judge's reply: a sane rubric answer is a few KB, so
+# anything past these limits is treated as a judge error rather than scanned.
+MAX_REPLY_CHARS = 200_000
+MAX_DECODE_ATTEMPTS = 200
+
+
 def iter_json_objects(text: str) -> Iterator[tuple[dict[str, Any], int]]:
     """Yield ``(object, end_offset)`` for each top-level JSON object found in
     ``text``, left to right.
@@ -1062,13 +1068,27 @@ def iter_json_objects(text: str) -> Iterator[tuple[dict[str, Any], int]]:
     complete value and stops, so leading prose, a ```json fence, and anything
     after the object (more prose, a second object) are all tolerated. After a
     successful decode the scan resumes past the object, so its nested objects
-    are never yielded on their own."""
+    are never yielded on their own. Raises ``JudgeError`` if ``text`` is
+    longer than ``MAX_REPLY_CHARS`` or needs more than ``MAX_DECODE_ATTEMPTS``
+    decode attempts."""
+    if len(text) > MAX_REPLY_CHARS:
+        raise JudgeError(
+            f"judge response too long to parse: {len(text)} chars "
+            f"(limit {MAX_REPLY_CHARS}); result={text[:2000]!r}"
+        )
     decoder = json.JSONDecoder()
+    attempts = 0
     pos = text.find("{")
     while pos != -1:
+        attempts += 1
+        if attempts > MAX_DECODE_ATTEMPTS:
+            raise JudgeError(
+                f"judge response has too many '{{' candidates to parse "
+                f"(limit {MAX_DECODE_ATTEMPTS}); result={text[:2000]!r}"
+            )
         try:
             value, end = decoder.raw_decode(text, pos)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             pos = text.find("{", pos + 1)
             continue
         if isinstance(value, dict):
@@ -1080,17 +1100,29 @@ def parse_judge_reply(text: str) -> tuple[dict[str, int], dict[str, str], int]:
     """Return ``(scores, notes, trailing_chars)`` from the first JSON object in
     the judge's reply that passes ``validate_scores``.
 
-    ``trailing_chars`` counts the non-whitespace-trimmed characters after that
-    object that were ignored. If no object decodes at all, raises
-    ``JudgeError`` ("could not parse ..."); if objects decode but none
-    validate, re-raises the first object's validation error."""
+    ``trailing_chars`` counts the characters after that object (trailing
+    whitespace trimmed) that were ignored. Fails closed with ``JudgeError``:
+    if no object decodes ("could not parse ..."); if objects decode but none
+    validate (the first object's validation error); or if two or more
+    schema-valid objects carry different scores ("ambiguous ..."). Identical
+    duplicates are fine."""
     first_error: JudgeError | None = None
+    valid: list[tuple[dict[str, int], dict[str, str], int]] = []
     for payload, end in iter_json_objects(text):
         try:
             scores, notes = validate_scores(payload)
         except JudgeError as exc:
             first_error = first_error or exc
             continue
+        valid.append((scores, notes, end))
+    if valid:
+        distinct = {tuple(sorted(scores.items())) for scores, _, _ in valid}
+        if len(distinct) > 1:
+            raise JudgeError(
+                f"ambiguous judge response: {len(valid)} differing valid score objects; "
+                f"result={text[:2000]!r}"
+            )
+        scores, notes, end = valid[0]
         return scores, notes, len(text[end:].rstrip())
     if first_error is not None:
         raise first_error
