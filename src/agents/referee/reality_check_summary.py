@@ -44,9 +44,24 @@ _ENGINE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Clause boundaries: punctuation and conjunctions that start a new statement.
+# Clause boundaries: punctuation and conjunctions that start a new statement. A comma
+# inside an engine list ("DocumentDB, OpenSearch are consolidated away") is not one:
+# see _clauses.
 _CLAUSE_SPLIT = re.compile(
     r"[.;:!?,()]|\b(?:while|whereas|but|so|because|which|although)\b", re.IGNORECASE
+)
+_LIST_LEFT = re.compile(r"(?:" + _ENGINE_RE.pattern + r")\s*$", re.IGNORECASE)
+_LIST_RIGHT = re.compile(
+    r"^\s*(?:(?:and|or)\s+)?(?:(?:the|amazon)\s+)*(?:" + _ENGINE_RE.pattern + r")",
+    re.IGNORECASE,
+)
+_CONJUNCTION_START = re.compile(r"^\s*(?:and|or)\b", re.IGNORECASE)
+# A parenthetical engine list after "from five engines" or "the initial assignment
+# placed 107 queries on 5 engines" names the starting point, not the outcome.
+_HISTORY_LIST = re.compile(
+    r"(?P<lead>\b(?:from|initial\w*|original\w*|previous\w*|formerly)\b[^.()]*?\bengines\s*)"
+    r"\([^()]*\)",
+    re.IGNORECASE,
 )
 
 # An engine after one of these, in the same clause, is described as eliminated
@@ -58,13 +73,20 @@ _FORWARD_CUES = re.compile(
     re.IGNORECASE,
 )
 # An engine before one of these is described as eliminated ("DocumentDB is retired",
-# "OpenSearch folds into Aurora", "a dedicated OpenSearch domain would not justify").
+# "OpenSearch folds into Aurora", "a dedicated OpenSearch domain would not justify",
+# "OpenSearch is not required", "DocumentDB goes away").
 _BACKWARD_CUES = re.compile(
-    r"\b(?:(?:is|are|was|were|be|been|being|gets?|got)\s+(?:\w+ly\s+)?"
+    r"\b(?:(?:is|are|was|were|be|been|being|gets?|got)\s+(?:(?:\w+ly|both|all|also|now|then)\s+){0,2}"
     r"(?:removed|eliminated|dropped|retired|decommissioned|replaced|absorbed|consolidated"
     r"|folded|merged|not\s+needed|no\s+longer\s+needed|unnecessary|not\s+justified)"
     r"|(?:consolidat|fold|merg|absorb)\w*\s+(?:in)?to|(?:consolidat|fold|merg)\w*\s+onto"
-    r"|would\s+(?:not|have)|no\s+longer|not\s+needed|unnecessary)\b",
+    r"|not\s+(?:required|needed|part\s+of)|drop(?:s|ped)?\s+out|go(?:es)?\s+away|went\s+away"
+    r"|would\s+(?:not|have)|no\s+longer|unnecessary)\b",
+    re.IGNORECASE,
+)
+# "no OpenSearch domain", "not DocumentDB": the engine right after is eliminated.
+_NEGATION_BEFORE = re.compile(
+    r"(?:^|\b)(?:no|not)\s+(?:(?:the|a|an|amazon|separate|dedicated|standalone)\s+)*$",
     re.IGNORECASE,
 )
 # Statements that an engine carries work; they end the reach of an elimination cue.
@@ -73,14 +95,23 @@ _KEEP_CUES = re.compile(
     r"|serv(?:e|es|ed|ing)|handl\w*|cover\w*|takes?|carr(?:y|ies)|owns?|hosts?|primary)\b",
     re.IGNORECASE,
 )
-# A clause about part of an engine's workload does not eliminate the engine.
-_PARTIAL = re.compile(
-    r"\b(?:partial\w*|partly|some\s+of|part\s+of|most\s+of|reduced|fewer)\b", re.IGNORECASE
+# Part of an engine's workload moving does not eliminate the engine: "is partially
+# consolidated" (in the cue) or "part of Aurora MySQL" (right before the engine).
+_PARTIAL_IN_CUE = re.compile(r"\b(?:partial\w*|partly)\b", re.IGNORECASE)
+_PARTIAL_BEFORE = re.compile(
+    r"\b(?:part|some|most|much)\s+of\s+(?:(?:the|amazon)\s+)*$", re.IGNORECASE
 )
-# "the 6 DocumentDB queries consolidate into DynamoDB": queries move, the engine is
-# not named as kept or eliminated.
-_QUERY_LEVEL_AFTER = re.compile(r"^(?:'s)?\s+(?:[\w-]+\s+){0,2}?quer(?:y|ies)\b", re.IGNORECASE)
+# "the 6 DocumentDB queries consolidate into DynamoDB", "OpenSearch's text search":
+# the sentence is about the engine's queries, not about the engine.
+_QUERY_LEVEL_AFTER = re.compile(
+    r"^(?:['’]s\b|\s+(?:[\w-]+\s+){0,2}?quer(?:y|ies)\b)", re.IGNORECASE
+)
 _SOURCE_BEFORE = re.compile(r"\b(?:from|off)\s+(?:(?:the|amazon|a|an)\s+)*$", re.IGNORECASE)
+# "previously ran on OpenSearch", "formerly assigned to OpenSearch": history.
+_HISTORY_WORD = re.compile(r"\b(?:previously|formerly|originally|initially)\b", re.IGNORECASE)
+_PREPOSITION_BEFORE = re.compile(
+    r"\b(?:on|from|to|in|by|with)\s+(?:(?:the|a|an|amazon)\s+)*$", re.IGNORECASE
+)
 # The destination of a move: kept, whatever cue the clause carries.
 _TARGET_BEFORE = re.compile(
     r"\b(?:into|onto|to|by|on|in|with|via)\s+(?:(?:the|a|an|amazon|single|one)\s+)*$",
@@ -96,7 +127,28 @@ def _engine_key(match: re.Match) -> str:
 
 
 def _clauses(text: str) -> list[str]:
-    return [c for c in _CLAUSE_SPLIT.split(text) if c and c.strip()]
+    text = _HISTORY_LIST.sub(lambda m: m.group("lead"), text)
+    clauses: list[str] = []
+    current, pos = "", 0
+    for m in _CLAUSE_SPLIT.finditer(text):
+        piece = text[pos : m.start()]
+        pos = m.end()
+        # Keep a comma between two listed engines inside the clause: "A, B" always,
+        # "A, and B" only inside a list already open ("A, B, and C"); otherwise ", and"
+        # starts a new statement ("... into DynamoDB, and DynamoDB feeds OpenSearch").
+        right = _LIST_RIGHT.match(text[pos:])
+        if (
+            m.group() == ","
+            and right
+            and _LIST_LEFT.search(current + piece)
+            and (current or not _CONJUNCTION_START.match(text[pos:]))
+        ):
+            current += piece + ","
+            continue
+        clauses.append(current + piece)
+        current = ""
+    clauses.append(current + text[pos:])
+    return [c for c in clauses if c.strip()]
 
 
 def _keep_between(clause: str, start: int, end: int) -> bool:
@@ -110,24 +162,30 @@ def _claims(summary: str) -> tuple[set[str], set[str]]:
     for clause in _clauses(summary):
         forward = list(_FORWARD_CUES.finditer(clause))
         backward = list(_BACKWARD_CUES.finditer(clause))
-        partial = bool(_PARTIAL.search(clause))
         for m in _ENGINE_RE.finditer(clause):
             engine = _engine_key(m)
             before, after = clause[: m.start()], clause[m.end() :]
             if _QUERY_LEVEL_AFTER.match(after) or _SOURCE_BEFORE.search(before):
                 continue
+            if _HISTORY_WORD.search(before) and _PREPOSITION_BEFORE.search(before):
+                continue
+            if _NEGATION_BEFORE.search(before):
+                eliminated.add(engine)
+                continue
             if _TARGET_BEFORE.search(before):
                 kept.add(engine)
                 continue
-            gone = not partial and (
-                any(
-                    f.end() <= m.start() and not _keep_between(clause, f.end(), m.start())
-                    for f in forward
-                )
-                or any(
-                    b.start() >= m.end() and not _keep_between(clause, m.end(), b.start())
-                    for b in backward
-                )
+            if _PARTIAL_BEFORE.search(before):
+                kept.add(engine)
+                continue
+            gone = any(
+                f.end() <= m.start() and not _keep_between(clause, f.end(), m.start())
+                for f in forward
+            ) or any(
+                b.start() >= m.end()
+                and not _keep_between(clause, m.end(), b.start())
+                and not _PARTIAL_IN_CUE.search(b.group())
+                for b in backward
             )
             (eliminated if gone else kept).add(engine)
     return kept, eliminated
@@ -199,7 +257,11 @@ def check_summary_against_records(
                 f"The summary describes {display_engine(real)} as eliminated, but the final "
                 f"assignment keeps {_queries(kept[real])} on it."
             )
+    in_play = set(before_distribution) | set(after_distribution)
     for engine in sorted(said_kept - said_gone):
+        if not _family(engine, in_play):
+            # Never assigned any query ("Neptune is not part of the target").
+            continue
         if engine == _AURORA_FAMILY:
             if _family(engine, kept) or not _family(engine, eliminated):
                 continue
@@ -233,7 +295,7 @@ def build_final_summary(
     evaluated = [display_engine(e) for e in before_distribution]
     ranked = sorted(kept, key=lambda e: (-kept[e], e))
     sentences = [
-        f"The assessment evaluated {_queries(total)} across {len(evaluated)} "
+        f"The initial assignment placed {_queries(total)} on {len(evaluated)} "
         f"{'engine' if len(evaluated) == 1 else 'engines'} ({_join(evaluated)})."
     ]
     if len(ranked) == 1:
@@ -274,8 +336,12 @@ def finalize_executive_summary(result: dict) -> None:
     when it contradicts them and was replaced by :func:`build_final_summary`, None
     when there is no summary. Mutates ``result``.
     """
-    # Re-running keeps the original LLM text, not an earlier fallback.
-    llm_summary = result.get("executive_summary_llm") or result.get("executive_summary")
+    # Re-running over an earlier fallback checks the original LLM text again, not the
+    # fallback; otherwise executive_summary is the LLM text to check (a new one too).
+    if result.get("executive_summary_source") == "deterministic_fallback":
+        llm_summary = result.get("executive_summary_llm")
+    else:
+        llm_summary = result.get("executive_summary")
     result["executive_summary_llm"] = llm_summary
     if not llm_summary:
         result["executive_summary"] = None

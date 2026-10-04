@@ -23,6 +23,7 @@ from src.agents.referee.consolidation_validator import (
     validate_consolidations,
 )
 from src.agents.referee.reality_check import (
+    AURORA_ABSORPTION_QUERY_THRESHOLD,
     AURORA_ENGINES,
     reconcile_consolidations,
     refresh_patterns_and_recommendations,
@@ -175,8 +176,31 @@ def prepare_reality_check_llm_input(deterministic_result: dict) -> dict:
             "unique_value_assessment": deterministic_result["unique_value_assessment"],
             "architectural_patterns": deterministic_result["architectural_patterns"],
             "recommendations": deterministic_result["recommendations"],
+            "absorption_candidates": absorption_candidates(
+                deterministic_result["before_distribution"],
+                deterministic_result["after_distribution"],
+            ),
         },
     }
+
+
+def absorption_candidates(
+    before_distribution: dict[str, int], after_distribution: dict[str, int]
+) -> list[str]:
+    """Engines whose fate can still change after the LLM's corrections (#236).
+
+    When the input has an Aurora engine, a correction that keeps Aurora re-runs the
+    Aurora absorption at finalize, and it can absorb any non-Aurora engine left with
+    fewer than ``AURORA_ABSORPTION_QUERY_THRESHOLD`` queries. The external LLM writes
+    its summary before that, so it must not state these engines' final fate.
+    """
+    if not AURORA_ENGINES & set(before_distribution):
+        return []
+    return sorted(
+        engine
+        for engine, count in after_distribution.items()
+        if engine not in AURORA_ENGINES and 0 < count < AURORA_ABSORPTION_QUERY_THRESHOLD
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +251,10 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
 
     if "executive_summary" in llm_output:
         result["executive_summary"] = llm_output["executive_summary"]
+        # A new summary is checked afresh at write time (finalize_executive_summary).
+        result.pop("executive_summary_source", None)
+        result.pop("executive_summary_llm", None)
+        result.pop("executive_summary_validation_warnings", None)
 
     return result
 

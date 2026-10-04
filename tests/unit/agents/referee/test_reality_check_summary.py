@@ -165,6 +165,37 @@ ACCURATE_SUMMARIES = {
 }
 
 
+# Correct descriptions of the final records written by the PR #260 reviewer; the
+# first version of the check rejected all of them.
+REVIEWER_CORRECT_SUMMARIES = [
+    # Comma lists: the elimination verb applies to every listed engine.
+    "DocumentDB, OpenSearch are consolidated away, and DynamoDB, ElastiCache and "
+    "Aurora MySQL carry the workload.",
+    "DocumentDB, OpenSearch and part of Aurora MySQL consolidate into DynamoDB, "
+    "ElastiCache and Aurora MySQL.",
+    "DocumentDB, OpenSearch drop out, and the target keeps DynamoDB, ElastiCache and "
+    "Aurora MySQL.",
+    # "no <engine>" / "<engine> is not required / not part of / not needed".
+    "The target runs on DynamoDB, ElastiCache and Aurora MySQL, with no OpenSearch domain "
+    "and no DocumentDB cluster.",
+    "No OpenSearch domain is required: Aurora MySQL serves the text search.",
+    "OpenSearch is not required, because Aurora MySQL serves the three text search queries.",
+    "OpenSearch is not part of the target architecture.",
+    "DocumentDB, OpenSearch are not needed: DynamoDB and Aurora MySQL take their queries.",
+    "DocumentDB and OpenSearch are both retired.",
+    # "drops out", "goes away".
+    "OpenSearch drops out of the architecture, and DocumentDB goes away.",
+    # History and possessives are neutral.
+    "Aurora MySQL keeps the text search that previously ran on OpenSearch.",
+    "The text search queries formerly assigned to OpenSearch run on Aurora MySQL.",
+    "The workload moves from five engines (DynamoDB, Aurora MySQL, ElastiCache, DocumentDB "
+    "and OpenSearch) to three.",
+    "Aurora MySQL takes over OpenSearch's text search.",
+    # An engine that was never in play is not a claim about the final records.
+    "Neptune is not part of the target, and DynamoDB serves the key lookups.",
+]
+
+
 def _check(summary: str) -> list[str]:
     return check_summary_against_records(summary, BEFORE, AFTER, CONSOLIDATIONS)
 
@@ -210,11 +241,29 @@ class TestCheckSummaryAgainstRecords:
     def test_no_engine_named_passes(self):
         assert _check("The migration removes join-heavy reads from the hot path.") == []
 
+    @pytest.mark.parametrize("summary", REVIEWER_CORRECT_SUMMARIES)
+    def test_reviewer_phrasings_of_the_final_records_pass(self, summary):
+        # PR #260 review: correct summaries the first version of the check rejected.
+        assert _check(summary) == []
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "DocumentDB, Aurora MySQL are consolidated away.",
+            "With no Aurora MySQL cluster, DynamoDB serves the workload.",
+            "Aurora MySQL is not required.",
+            "ElastiCache drops out of the architecture.",
+            "The workload runs on DynamoDB and OpenSearch.",
+        ],
+    )
+    def test_the_new_cues_still_catch_contradictions(self, summary):
+        assert _check(summary) != []
+
 
 class TestBuildFinalSummary:
     def test_describes_the_final_records(self):
         text = build_final_summary(BEFORE, AFTER, CONSOLIDATIONS)
-        assert "107 queries" in text
+        assert text.startswith("The initial assignment placed 107 queries on 5 engines")
         assert (
             "DynamoDB (63 queries), ElastiCache (34 queries) and Aurora MySQL (10 queries)" in text
         )
@@ -275,6 +324,34 @@ class TestFinalizeExecutiveSummary:
         assert result["executive_summary_source"] == "llm"
         assert result["executive_summary_llm"] == text
         assert result["executive_summary_validation_warnings"] == []
+
+    def test_a_new_llm_summary_replaces_the_audit_copy(self):
+        # Finalizing twice: the second LLM summary must be checked, not the first.
+        result = self._result(RUN_UI_RC_SUMMARY)
+        finalize_executive_summary(result)
+        from src.agents.referee.reality_check_handler import apply_reality_check_llm_output
+
+        text = ACCURATE_SUMMARIES["run-ui"]
+        apply_reality_check_llm_output(result, {"executive_summary": text})
+        finalize_executive_summary(result)
+        assert result["executive_summary"] == text
+        assert result["executive_summary_source"] == "llm"
+        assert result["executive_summary_llm"] == text
+
+    def test_a_kept_llm_summary_is_not_resurrected_from_the_audit_field(self):
+        result = self._result(ACCURATE_SUMMARIES["run-ui"])
+        finalize_executive_summary(result)
+        result["executive_summary"] = ACCURATE_SUMMARIES["run2"]
+        finalize_executive_summary(result)
+        assert result["executive_summary"] == ACCURATE_SUMMARIES["run2"]
+        assert result["executive_summary_llm"] == ACCURATE_SUMMARIES["run2"]
+
+    def test_refinalizing_a_fallback_keeps_the_original_llm_text(self):
+        result = self._result(RUN_UI_RC_SUMMARY)
+        finalize_executive_summary(result)
+        finalize_executive_summary(result)
+        assert result["executive_summary_llm"] == RUN_UI_RC_SUMMARY
+        assert result["executive_summary_source"] == "deterministic_fallback"
 
     def test_no_summary_stays_none(self):
         result = self._result(None)
@@ -397,3 +474,63 @@ class TestHandlerShipsFinalSummary:
         once = deepcopy({k: det[k] for k in ("consolidations", "recommendations")})
         _settle_records(det)
         assert {k: det[k] for k in ("consolidations", "recommendations")} == once
+
+    def test_settling_is_idempotent_with_an_override_and_a_correction(self):
+        from copy import deepcopy
+
+        from src.agents.referee.reality_check_handler import (
+            _settle_records,
+            apply_reality_check_llm_output,
+            run_reality_check_deterministic,
+        )
+        from tests.unit.agents.referee.test_reality_check_llm_seam import _mock_store
+
+        det = deepcopy(run_reality_check_deterministic("job-1", "mydb", _mock_store(), 1))
+        # The customer pinned DDB-AP-2 to DynamoDB; a later step moved it anyway.
+        for qa in det["assignment"]["query_assignments"]:
+            if qa["query_id"] == "DDB-AP-2":
+                qa["customer_override"] = True
+        for qa in det["revised_assignments"]:
+            if qa["query_id"] == "DDB-AP-2":
+                qa["assigned_engine"] = "documentdb"
+        apply_reality_check_llm_output(
+            det,
+            {
+                "consolidation_corrections": [
+                    {"query_id": "DOC-AP-1", "original_engine": "documentdb", "reason": "x"}
+                ]
+            },
+        )
+        keys = ("consolidations", "recommendations", "revised_assignments", "after_distribution")
+        _settle_records(det)
+        once = deepcopy({k: det[k] for k in keys})
+        assert once["after_distribution"] == {"dynamodb": 2, "documentdb": 1}
+        _settle_records(det)
+        assert {k: det[k] for k in keys} == once
+
+
+class TestAbsorptionCandidates:
+    def test_small_engines_are_flagged_when_aurora_is_in_play(self):
+        from src.agents.referee.reality_check_handler import absorption_candidates
+
+        # The run-ui-wordpress preview (reality-check/llm_input.json): Aurora MySQL fully
+        # moved away, OpenSearch left with 4 queries.
+        before = dict(BEFORE)
+        preview_after = {"dynamodb": 69, "elasticache": 34, "opensearch": 4}
+        assert absorption_candidates(before, preview_after) == ["opensearch"]
+
+    def test_no_aurora_no_candidates(self):
+        from src.agents.referee.reality_check_handler import absorption_candidates
+
+        assert absorption_candidates({"dynamodb": 5, "opensearch": 2}, {"opensearch": 2}) == []
+
+    def test_llm_input_carries_the_flag(self):
+        from src.agents.referee.reality_check_handler import (
+            prepare_reality_check_llm_input,
+            run_reality_check_deterministic,
+        )
+        from tests.unit.agents.referee.test_reality_check_llm_seam import _mock_store
+
+        det = run_reality_check_deterministic("job-1", "mydb", _mock_store(), 1)
+        payload = prepare_reality_check_llm_input(det)
+        assert payload["executive_summary"]["absorption_candidates"] == []

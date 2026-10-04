@@ -122,6 +122,10 @@ Do NOT flag:
      to stays in the architecture. Finalize can still move queries (a restored Aurora
      can absorb a small engine), so name an engine as kept or eliminated only as the
      final records will show it.
+   - Do not state the final fate of any engine listed in
+     `executive_summary.absorption_candidates`: it is small enough for Aurora to
+     absorb it at finalize if your corrections keep Aurora, so neither "stays" nor
+     "is eliminated" is known yet. Describe the work it does, not whether it stays.
    - Finalize checks the summary against the final records. If it names a kept engine
      as eliminated, or an eliminated one as kept, the customer sees a summary built
      from the records instead (`executive_summary_source: deterministic_fallback`);
