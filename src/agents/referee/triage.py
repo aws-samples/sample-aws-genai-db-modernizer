@@ -31,7 +31,7 @@ Schema signals:
 Cross-cutting signals:
   Text search (LIKE/ILIKE, tsvector, MATCH AGAINST, REGEXP, pg_trgm) → OpenSearch
   Time range filters → DynamoDB, Keyspaces, OpenSearch
-  Leaderboard (ORDER BY + LIMIT) → ElastiCache
+  Leaderboard (hot SELECT with ORDER BY + LIMIT) → ElastiCache (cache-overlay hint only, #296)
   Subqueries → Aurora
   High-frequency reads (≥10 cps) → DynamoDB, ElastiCache
 """
@@ -42,6 +42,8 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+
+from src.agents.referee.cache_overlay import HOT_READ_MIN_CALLS_PER_SECOND
 
 logger = logging.getLogger(__name__)
 
@@ -357,8 +359,15 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         if q.get("has_time_range_filter"):
             time_ranges.append(qid)
 
-        # Cross-cutting: Leaderboard (ORDER BY + LIMIT)
-        if re.search(r"order\s+by\b.*\blimit\b", text):
+        # Cross-cutting: Leaderboard / top-N (ORDER BY + LIMIT). Only a hot SELECT
+        # counts: a Rails ``.first`` / ``find_by`` at 0.01 calls/s has the same
+        # shape and is not cache material (#296). The signal is a cache-overlay
+        # hint, never an ownership override.
+        if (
+            qtype == "SELECT"
+            and cps >= HOT_READ_MIN_CALLS_PER_SECOND
+            and re.search(r"order\s+by\b.*\blimit\b", text)
+        ):
             leaderboards.append(qid)
 
         # Cross-cutting: Subqueries
@@ -503,7 +512,8 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
             _signal(
                 "leaderboard_pattern",
                 ["elasticache"],
-                "leaderboard queries (ORDER BY + LIMIT)",
+                f"hot leaderboard / top-N queries (ORDER BY + LIMIT, "
+                f"≥{HOT_READ_MIN_CALLS_PER_SECOND:g} calls/s)",
                 leaderboards,
             )
         )

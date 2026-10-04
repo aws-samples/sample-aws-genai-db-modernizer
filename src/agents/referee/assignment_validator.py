@@ -4,6 +4,8 @@ Assignment Validator — Validates assignments for co-dependency conflicts.
 Pure function, no side effects. Detects:
 - Co-dependent queries split across engines → WARNING per split
 - Queries assigned to engine that did not analyze them → hard ERROR
+- Queries owned by an engine that may not own them (a cache layer, or a write on
+  an engine that is not a system of record, #296) → hard ERROR
 
 Requirements: 3.1, 3.2, 3.3, 3.4
 """
@@ -11,6 +13,7 @@ Requirements: 3.1, 3.2, 3.3, 3.4
 from __future__ import annotations
 
 from src.agents.referee.assignment_resolver import build_co_dependency_groups
+from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, can_own
 from src.contracts.assignment_models import Assignment, ValidationResult
 
 
@@ -45,8 +48,23 @@ class AssignmentValidator:
                     f"Analyzed engines: {sorted(analyzed_engines)}"
                 )
 
-        # --- WARNING: co-dependent queries split across engines ---
+        # --- Hard ERROR: an engine that may not own the query owns it (#296) ---
         queries = collector_output.get("queries", {}).get("query_patterns", [])
+        query_by_id = {q.get("query_id"): q for q in queries}
+        for qa in assignment.query_assignments:
+            if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
+                errors.append(
+                    f"ERROR: Query {qa.query_id} is owned by '{qa.assigned_engine}', a cache "
+                    "layer and not a system of record. Assign it to the engine that stores "
+                    "its data; the cache can still front it as a cache overlay."
+                )
+            elif not can_own(qa.assigned_engine, query_by_id.get(qa.query_id)):
+                errors.append(
+                    f"ERROR: Query {qa.query_id} is a write owned by '{qa.assigned_engine}', "
+                    "which is not a system of record for its tables."
+                )
+
+        # --- WARNING: co-dependent queries split across engines ---
         tables = collector_output.get("database_schema", {}).get("tables", [])
         co_dep_groups = build_co_dependency_groups(queries, tables)
 

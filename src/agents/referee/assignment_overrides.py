@@ -19,10 +19,12 @@ from src.agents.referee.assignment_resolver import (
     derive_table_assignments,
 )
 from src.agents.referee.assignment_validator import AssignmentValidator
+from src.agents.referee.cache_overlay import overlay_summary, refresh_cache_overlay
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
     AssignmentStatus,
+    CacheOverlaySummary,
     QueryAssignment,
     ValidationResult,
 )
@@ -194,6 +196,13 @@ def apply_assignment_overrides(
     # query_assignments, so table_assignments and co_dependency_groups would
     # otherwise go stale relative to the customer's edits.
     _recompute_derived_views(new_assignment, collector_output)
+    # The cache overlay summary counts in-scope queries only, so a scope edit
+    # changes it; a customer re-route never touches a query's cache overlay.
+    summary = overlay_summary(
+        [qa.model_dump() for qa in new_assignment.query_assignments],
+        collector_output.get("queries", {}).get("query_patterns", []),
+    )
+    new_assignment.cache_overlay = CacheOverlaySummary(**summary) if summary else None
 
     validation = AssignmentValidator().validate(new_assignment, collector_output, analysis_outputs)
     if not validation.valid:
@@ -385,6 +394,11 @@ def refresh_consolidated_assignment(
     out["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
     out["co_dependency_groups"] = co_dependency_groups
     out["validation_warnings"] = validation.warnings
+    # Re-evaluate the cache overlay against the consolidated routing (#296): an
+    # overlay survives its owner's consolidation, and the summary follows scope.
+    refresh_cache_overlay(
+        out, collector_output.get("queries", {}).get("query_patterns", []), analysis_outputs
+    )
     if dead_engines:
         pruned: list[dict] = []
         for qa in qa_dicts:

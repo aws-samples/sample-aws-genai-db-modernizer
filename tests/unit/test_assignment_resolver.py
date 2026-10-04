@@ -134,7 +134,10 @@ class TestSignalOverrides:
         q2 = next(qa for qa in result.query_assignments if qa.query_id == "q2")
         q3 = next(qa for qa in result.query_assignments if qa.query_id == "q3")
         assert q1.assigned_engine == "opensearch"
-        assert q2.assigned_engine == "elasticache"
+        # leaderboard_pattern is a cache-overlay hint, never ownership (#296): the
+        # cache owns nothing, so q2 goes to its highest-confidence owner
+        assert q2.assigned_engine == "dynamodb"
+        assert q2.signal_override is None
         assert q3.assigned_engine == "dynamodb"  # no override, highest confidence wins
 
 

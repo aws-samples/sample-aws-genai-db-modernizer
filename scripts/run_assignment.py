@@ -84,6 +84,8 @@ def main() -> None:
             "status": "complete",
             "distribution": distribution,
             "total_queries": len(assignments_list),
+            # Queries the cache layer fronts (#296); never part of the distribution
+            "cache_overlay": assignment.get("cache_overlay"),
         }
     )
 

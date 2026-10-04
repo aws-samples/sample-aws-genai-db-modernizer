@@ -20,6 +20,12 @@ Version History:
   ``QueryAssignment``, set when a query is moved automatically to stay co-located
   with a co-dependent query the customer re-routed (ADR-029 Amendment 3).
   Defaults to False, backward compatible with artifacts written before it existed.
+- 1.4 (2026-10-04): Added the cache overlay (#296). ElastiCache is a cache layer, not
+  a system of record, so it never owns a query: ``assigned_engine`` is always the
+  query's system-of-record engine. A hot read the cache can front carries the
+  optional ``cache_engine`` / ``cache_pattern`` / ``cache_reason`` fields on
+  ``QueryAssignment``, and ``Assignment.cache_overlay`` summarises them (queries and
+  share of calls). All default to ``None``, so artifacts written before 1.4 still load.
 """
 
 from datetime import datetime
@@ -92,6 +98,58 @@ class QueryAssignment(BaseModel):
         default_factory=list,
         description="Warnings associated with this query assignment",
     )
+    cache_engine: str | None = Field(
+        default=None,
+        description=(
+            "Cache layer that fronts this query (cache-aside), e.g. 'elasticache'. "
+            "The query stays owned by assigned_engine; the cache never owns it (#296)."
+        ),
+    )
+    cache_pattern: str | None = Field(
+        default=None,
+        description=(
+            "Cacheable read shape that qualified the query for the cache overlay: "
+            "point_lookup, top_n, session_lookup or reference_read."
+        ),
+    )
+    cache_reason: str | None = Field(
+        default=None,
+        description="Short reason the query is cached (call rate and result size).",
+    )
+
+
+class CacheOverlaySummary(BaseModel):
+    """The cache layer's share of the workload (#296).
+
+    The cache owns no query, so the owner distribution never counts it. This is
+    the separate view: how many in-scope queries it fronts and their share of calls.
+    """
+
+    engine: str = Field(..., description="Cache engine, e.g. 'elasticache'")
+    query_count: int = Field(..., ge=0, description="In-scope queries the cache fronts")
+    calls_per_second: float = Field(
+        ..., ge=0, description="Combined call rate of those queries (calls/s)"
+    )
+    call_share_percent: float = Field(
+        ...,
+        ge=0,
+        le=100,
+        description="Their share of the in-scope workload's calls (percent)",
+    )
+    owners: dict[str, int] = Field(
+        default_factory=dict,
+        description="Owner engine -> number of cached queries it owns",
+    )
+    patterns: dict[str, int] = Field(
+        default_factory=dict,
+        description="cache_pattern -> number of cached queries",
+    )
+    min_calls_per_second: float = Field(
+        ..., ge=0, description="Hot-read call-rate floor a query had to meet"
+    )
+    max_rows_avg: float = Field(
+        ..., ge=0, description="Largest average result size a cached query may return"
+    )
 
 
 class TableAssignment(BaseModel):
@@ -154,6 +212,13 @@ class Assignment(BaseModel):
         description=(
             "Blocking feasibility findings the customer explicitly accepted at the "
             "review gate (ADR-029 Layer C). Empty by default; recorded for audit."
+        ),
+    )
+    cache_overlay: CacheOverlaySummary | None = Field(
+        None,
+        description=(
+            "Cache layer summary (#296): queries the cache fronts and their share of "
+            "calls. None when no query qualifies or no cache engine was analyzed."
         ),
     )
 

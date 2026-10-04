@@ -399,6 +399,8 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
             "assignment_version": version,
             "distribution": distribution,
             "total_queries": total,
+            # Queries the cache layer fronts (#296); never part of the distribution
+            "cache_overlay": assignment.get("cache_overlay"),
             "artifact": artifact,
         },
     )

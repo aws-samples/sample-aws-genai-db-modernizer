@@ -9,7 +9,14 @@ Implements the assignment resolution algorithm:
   5. Assign co-dependent groups atomically (all queries → best engine for group)
   6. Assign remaining queries individually (highest adjusted score wins)
   7. Fallback to aurora for queries with no scores
-  8. Derive table assignments
+  8. Mark the cache overlay (hot reads ElastiCache can front, #296)
+  9. Derive table assignments
+
+Only system-of-record engines own queries (#296): ElastiCache is a cache layer
+(``cache_overlay.CACHE_OVERLAY_ENGINES``) and never owns one, and an engine that
+is not a system of record never owns a write. Exact score ties go to the
+source-compatible engine, then to the engine already serving more of the query's
+tables' traffic (calls/s), then to the engine with more queries, then by name.
 
 The key insight: assignment happens QUERY BY QUERY, not table by table.
 Triage signals like text_search→opensearch override table-level averages
@@ -24,11 +31,18 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
+from src.agents.referee.cache_overlay import (
+    apply_cache_overlay,
+    can_own,
+    overlay_summary,
+)
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
+from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
     AssignmentStatus,
+    CacheOverlaySummary,
     QueryAssignment,
     TableAssignment,
 )
@@ -36,11 +50,12 @@ from src.contracts.assignment_models import (
 # Triage signals that strongly indicate an engine is the RIGHT fit for a query.
 # When a signal maps query→engine and that engine was selected by triage,
 # the query should go to that engine regardless of table-level confidence.
+# Cache signals (leaderboard_pattern, session_store) are not here: ElastiCache
+# never owns a query, so they are only cache-overlay hints for hot reads (#296,
+# ``cache_overlay.CACHE_HINT_SIGNALS``).
 SIGNAL_ENGINE_OVERRIDES: dict[str, str] = {
     "text_search": "opensearch",
-    "leaderboard_pattern": "elasticache",
     "graph_traversal": "neptune",
-    "session_store": "elasticache",
 }
 
 # Analysis anti-pattern types that indicate an engine is the WRONG fit for a query.
@@ -125,7 +140,10 @@ class AssignmentResolver:
 
                 scores[qid][engine] = adjusted
 
-        # Step 5: Assign co-dependent groups atomically
+        # Step 5: Assign co-dependent groups atomically. Only engines that may own
+        # every query of the group compete (cache engines never own; engines that
+        # are not a system of record own no write, #296).
+        query_by_id = {q["query_id"]: q for q in queries}
         assigned: dict[str, str] = {}
         assigned_confidence: dict[str, int] = {}
         assigned_reason: dict[str, str] = {}
@@ -135,23 +153,38 @@ class AssignmentResolver:
         # rest are assigned, since it can depend on how many queries each
         # Aurora engine already serves (#288).
         fallback_qids: list[str] = []
+        # Exact score ties, resolved once every untied query is placed: the
+        # tie-break looks at the traffic each engine already serves (#296).
+        tied: list[tuple[list[str], list[str], int, str]] = []
 
         for group in co_dep_groups:
-            if not analysis_outputs:
+            candidates = [
+                e
+                for e in analysis_outputs
+                if all(can_own(e, query_by_id.get(qid)) for qid in group)
+            ]
+            if not candidates:
                 for qid in group:
                     fallback_qids.append(qid)
                     assigned[qid] = ""
                     assigned_confidence[qid] = 0
                     assigned_reason[qid] = "no analysis available"
                 continue
-            best_engine = max(
-                analysis_outputs.keys(),
-                key=lambda e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group),
-            )
+            group_score = {
+                e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group)
+                for e in candidates
+            }
+            top = max(group_score.values())
+            best = [e for e in candidates if group_score[e] == top]
+            if len(best) > 1:
+                tied.append((list(group), best, 0, "co-dependency group"))
+                for qid in group:
+                    assigned[qid] = ""
+                continue
             for qid in group:
-                assigned[qid] = best_engine
-                assigned_confidence[qid] = scores.get(qid, {}).get(best_engine, 0)
-                assigned_reason[qid] = f"co-dependency group → {best_engine}"
+                assigned[qid] = best[0]
+                assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
+                assigned_reason[qid] = f"co-dependency group → {best[0]}"
 
         # Step 6: Assign remaining queries individually
         for query in queries:
@@ -160,7 +193,7 @@ class AssignmentResolver:
                 continue
 
             # Check signal override first
-            if qid in signal_overrides:
+            if qid in signal_overrides and can_own(signal_overrides[qid]["engine"], query):
                 engine = signal_overrides[qid]["engine"]
                 signal = signal_overrides[qid]["signal"]
                 assigned[qid] = engine
@@ -169,19 +202,44 @@ class AssignmentResolver:
                 assigned_signal[qid] = signal
                 continue
 
-            # Otherwise pick highest adjusted score
-            query_scores = scores.get(qid, {})
+            # Otherwise pick highest adjusted score among the engines that may own it
+            query_scores = {e: s for e, s in scores.get(qid, {}).items() if can_own(e, query)}
             if query_scores:
-                best = max(query_scores, key=lambda k: query_scores[k])
-                assigned[qid] = best
-                assigned_confidence[qid] = query_scores[best]
-                assigned_reason[qid] = f"highest confidence for {best}"
+                top_score = max(query_scores.values())
+                best = [e for e in query_scores if query_scores[e] == top_score]
+                if len(best) > 1:
+                    tied.append(([qid], best, top_score, "individual"))
+                    assigned[qid] = ""
+                    continue
+                assigned[qid] = best[0]
+                assigned_confidence[qid] = top_score
+                assigned_reason[qid] = f"highest confidence for {best[0]}"
             else:
                 # Step 7: Fallback to aurora engine from triage
                 fallback_qids.append(qid)
                 assigned[qid] = ""
                 assigned_confidence[qid] = 0
                 assigned_reason[qid] = "no engine scored this query"
+
+        # Step 6b: Resolve exact ties against the traffic already placed (#296).
+        if tied:
+            source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
+            table_traffic, engine_counts = _placed_traffic(assigned, query_by_id)
+            for qids, best, top_score, kind in tied:
+                winner, why = break_owner_tie(
+                    best, qids, query_by_id, source_aurora, table_traffic, engine_counts
+                )
+                for qid in qids:
+                    assigned[qid] = winner
+                    if kind == "individual":
+                        assigned_confidence[qid] = top_score
+                        assigned_reason[qid] = (
+                            f"highest confidence for {winner} (tie with "
+                            f"{', '.join(e for e in best if e != winner)}: {why})"
+                        )
+                    else:
+                        assigned_confidence[qid] = scores.get(qid, {}).get(winner, 0)
+                        assigned_reason[qid] = f"co-dependency group → {winner} (tie: {why})"
 
         if fallback_qids:
             aurora_fallback = _resolve_aurora_fallback(
@@ -191,6 +249,18 @@ class AssignmentResolver:
             )
             for qid in fallback_qids:
                 assigned[qid] = aurora_fallback
+
+        # Step 8: Cache overlay (#296): hot bounded reads get cache_engine; the
+        # owner stays the engine assigned above.
+        overlay_dicts = apply_cache_overlay(
+            [
+                {"query_id": q["query_id"], "assigned_engine": assigned[q["query_id"]]}
+                for q in queries
+            ],
+            queries,
+            analysis_outputs.keys(),
+        )
+        overlay_by_id = {o["query_id"]: o for o in overlay_dicts}
 
         # Build query→tables lookup
         query_tables: dict[str, list[str]] = {}
@@ -218,10 +288,13 @@ class AssignmentResolver:
                     source_tables=query_tables.get(qid, []),
                     assignment_reason=reason,
                     signal_override=assigned_signal.get(qid),
+                    cache_engine=overlay_by_id[qid]["cache_engine"],
+                    cache_pattern=overlay_by_id[qid]["cache_pattern"],
+                    cache_reason=overlay_by_id[qid]["cache_reason"],
                 )
             )
 
-        # Step 8: Derive table assignments
+        # Step 9: Derive table assignments
         table_assignments = derive_table_assignments(query_assignments)
 
         # Flatten co-dep groups to list of lists of query_ids
@@ -237,6 +310,7 @@ class AssignmentResolver:
             table_assignments=table_assignments,
             co_dependency_groups=co_dep_lists,
             validation_warnings=[],
+            cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
         )
 
     def _build_signal_overrides(
@@ -354,6 +428,66 @@ class AssignmentResolver:
             scores = [r.get("confidence_score", 0) for r in table_recs.values()]
             return int(sum(scores) / len(scores))
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Owner tie-break (#296)
+# ---------------------------------------------------------------------------
+
+
+def _overlay_model(summary: dict | None) -> CacheOverlaySummary | None:
+    return CacheOverlaySummary(**summary) if summary else None
+
+
+def _placed_traffic(
+    assigned: Mapping[str, str], query_by_id: Mapping[str, dict]
+) -> tuple[dict[tuple[str, str], float], Counter]:
+    """``(table, engine) -> calls/s`` and ``engine -> queries`` of the placed queries."""
+    traffic: dict[tuple[str, str], float] = defaultdict(float)
+    counts: Counter = Counter()
+    for qid, engine in assigned.items():
+        if not engine:
+            continue
+        counts[engine] += 1
+        q = query_by_id.get(qid) or {}
+        cps = float(q.get("calls_per_second") or 0)
+        for table in q.get("tables_accessed") or []:
+            traffic[(table, engine)] += cps
+    return traffic, counts
+
+
+def break_owner_tie(
+    engines: list[str],
+    qids: list[str],
+    query_by_id: Mapping[str, dict],
+    source_aurora: str | None,
+    table_traffic: Mapping[tuple[str, str], float],
+    engine_counts: Mapping[str, int],
+) -> tuple[str, str]:
+    """Pick the owner among engines with the same score, and say why (#296).
+
+    1. the source-compatible engine (the Aurora engine of the source's dialect);
+    2. the engine already serving more of the queries' tables' traffic (calls/s);
+    3. the engine already serving more queries;
+    4. the engine name, so the pick never depends on dict or set order.
+
+    Cache engines are never in ``engines`` (they own nothing), so a tie can never
+    tip a query, hot or not, onto the cache.
+    """
+    if source_aurora in engines:
+        return source_aurora, "source-compatible engine"
+    tables = {t for qid in qids for t in (query_by_id.get(qid) or {}).get("tables_accessed") or []}
+
+    def traffic(e: str) -> float:
+        return round(sum(table_traffic.get((t, e), 0.0) for t in tables), 6)
+
+    ranked = sorted(engines, key=lambda e: (-traffic(e), -engine_counts.get(e, 0), e))
+    winner, runner_up = ranked[0], ranked[1]
+    if traffic(winner) > traffic(runner_up):
+        return winner, f"serves more of these tables' traffic ({traffic(winner):.2f} calls/s)"
+    if engine_counts.get(winner, 0) > engine_counts.get(runner_up, 0):
+        return winner, "serves more queries"
+    return winner, "name order"
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +653,10 @@ def derive_table_assignments(
 # ---------------------------------------------------------------------------
 
 
+def _query_type(query_id: str, queries: list[dict]) -> str:
+    return next((q.get("query_type", "") for q in queries if q.get("query_id") == query_id), "")
+
+
 def enforce_exclusions_on_overrides(
     assignment: Assignment,
     queries: list[dict],
@@ -550,7 +688,11 @@ def enforce_exclusions_on_overrides(
         # This assignment violates a hard exclusion — find the next-best engine
         all_exclusions = check_all_exclusions(qa.query_id, query_text)
         excluded_engines = {e.excluded_engine for e in all_exclusions}
-        valid_engines = available_engines - excluded_engines
+        valid_engines = {
+            e
+            for e in available_engines - excluded_engines
+            if can_own(e, {"query_type": _query_type(qa.query_id, queries)})
+        }
 
         if valid_engines:
             # Pick the first valid engine (in practice, the resolver would score these)
