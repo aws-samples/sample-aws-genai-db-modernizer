@@ -29,6 +29,7 @@ from src.agents.schema_design.scope import (
     apply_scope_violations,
     assess_schema_scope,
 )
+from src.contracts.aurora_design_delta import is_design_delta
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 
@@ -213,6 +214,15 @@ def finalize_schema_design(
     llm_response_key = f"{prefix}/llm_responses/schema_design_{target_type}.json"
     output = store.read_json(llm_response_key)
 
+    delta_summary: dict | None = None
+    if target_type in _NON_GROUPED_ENGINES and is_design_delta(output):
+        merged = _merge_aurora_delta(
+            store, database_name, job_id, target_type, output, assignment_version
+        )
+        if merged.output is None:
+            return {"status": "validation_failed", "errors": merged.errors}
+        output, delta_summary = merged.output, merged.summary
+
     validation = validate_schema_design_output(output, target_type)
     if not validation["valid"]:
         return {"status": "validation_failed", "errors": validation["errors"]}
@@ -224,7 +234,38 @@ def finalize_schema_design(
     output_key = f"{prefix}/schema-{target_type}/v{version}/schema_output.json"
     store.write_json(output_key, output)
 
-    return scope_status(report, output_key)
+    status = scope_status(report, output_key)
+    if delta_summary is not None:
+        status["delta_summary"] = delta_summary
+    return status
+
+
+def _merge_aurora_delta(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    delta: dict,
+    assignment_version: int,
+):
+    """Rebuild the deterministic Aurora draft and merge an LLM delta into it (#273).
+
+    The draft is rebuilt from the same assignment-filtered input the external
+    request was prepared from, so it is the draft the model's view described.
+    """
+    from src.tools.schema.aurora_common.delta_merge import base_from_outputs, merge_design_delta
+
+    inputs = prepare_schema_design_input(
+        job_id=job_id,
+        database_name=database_name,
+        target_type=target_type,
+        store=store,
+        assignment_version=assignment_version,
+    )
+    base, _, _ = base_from_outputs(
+        target_type, inputs["collector_output"], inputs["analysis_output"]
+    )
+    return merge_design_delta(base, delta)
 
 
 def scope_status(report: ScopeReport, output_key: str) -> dict:

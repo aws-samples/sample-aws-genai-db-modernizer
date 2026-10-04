@@ -94,6 +94,37 @@ def _resolve_version(store, job_id: str, db: str, requested: int | None) -> int:
     return resolve_downstream_assignment_version(store, db, job_id)
 
 
+_AURORA_ENGINES = ("aurora_postgresql", "aurora_mysql")
+
+
+def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
+    """Compact Aurora request: design view + delta schema (issue #273).
+
+    ``--finalize`` rebuilds the same draft from the store and merges the
+    model's delta into it, so neither the draft nor the full collector output
+    has to reach the model.
+    """
+    from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
+    from src.tools.schema.aurora_common.delta_merge import base_from_outputs
+    from src.tools.schema.aurora_common.design_view import build_design_view
+
+    collector_output = llm_request["collector_output"]
+    base, agent_collector, agent_analysis = base_from_outputs(
+        engine, collector_output, llm_request["analysis_output"]
+    )
+    return {
+        "target_type": engine,
+        "database_name": llm_request["database_name"],
+        "job_id": llm_request["job_id"],
+        "response_kind": "aurora_design_delta",
+        "migration_strategy": base.migration_strategy,
+        "design_view": build_design_view(
+            base, agent_collector, agent_analysis, raw_collector=collector_output
+        ),
+        "output_schema": AuroraDesignDeltaContract.model_json_schema(),
+    }
+
+
 def run_external(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Prepare LLM input payload and write it; print awaiting_llm status."""
     from src.agents.schema_design.handler import prepare_schema_design_input
@@ -106,29 +137,13 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         assignment_version=assignment_version,
     )
 
-    # Inject the output schema so the LLM knows exactly what to produce
-    llm_request["output_schema"] = _get_output_schema(engine)
-
-    if engine in ("aurora_postgresql", "aurora_mysql"):
-        from src.contracts.analysis_output import AnalysisOutputContract
-        from src.contracts.collector_output import CollectorOutputContract
-        from src.contracts.schema_design_input import project_schema_design_input
-        from src.tools.schema.aurora_common.draft_builder import build_mysql_draft, build_pg_draft
-
-        _DRAFT_BUILDERS = {
-            "aurora_postgresql": build_pg_draft,
-            "aurora_mysql": build_mysql_draft,
-        }
-
-        collector = CollectorOutputContract.model_validate(llm_request["collector_output"])
-        analysis = AnalysisOutputContract.model_validate(llm_request["analysis_output"])
-        agent_collector, _, _ = project_schema_design_input(collector, analysis)
-        build_draft = _DRAFT_BUILDERS[engine]
-        draft, strategy = build_draft(
-            agent_collector.tables, agent_collector.source_database_engine
-        )
-        llm_request["draft"] = draft
-        llm_request["migration_strategy"] = strategy
+    if engine in _AURORA_ENGINES:
+        # Issue #273: the model writes only a delta against the deterministic
+        # draft, so it gets a compact view, not the collector + full draft.
+        llm_request = _aurora_delta_request(llm_request, engine)
+    else:
+        # Inject the output schema so the LLM knows exactly what to produce
+        llm_request["output_schema"] = _get_output_schema(engine)
 
     llm_request_path = f"{db}/{job_id}/llm_requests/schema_design_{engine}.json"
     store.write_json(llm_request_path, llm_request)

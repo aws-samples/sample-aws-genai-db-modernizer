@@ -97,3 +97,25 @@ coverage for a future engine rather than a live path.
   must be maintained per source family.
 - **Follow-up:** data migration/ETL execution, Aurora load-testing subpackages,
   and Oracle/SQL-Server → Aurora MySQL remain out of scope.
+
+## Amendment: the LLM writes a delta, not the full contract (issue #273)
+
+Asking the model to return the full contract made its output grow with the
+schema: on the discourse sample (142 tables, 1,588 columns) the external
+request was 4.18 MB and the model had to transcribe every column and the whole
+DDL, which it could not do. Both paths now work on a delta:
+
+- The model receives a compact `design_view` of the draft
+  (`src/tools/schema/aurora_common/design_view.py`: tables with one line per
+  column, indexes, read/write rates, residuals grouped by source data type, the
+  hottest queries, source features), not the draft or the collector output.
+- It returns an `AuroraDesignDeltaContract` (`src/contracts/aurora_design_delta.py`,
+  `delta_version` "1.0"): per-table index add/modify/remove and column-type
+  overrides, residual `type_rules` by source data type, optimizations,
+  app-layer notes, trade-offs.
+- `merge_design_delta` (`src/tools/schema/aurora_common/delta_merge.py`)
+  rebuilds the draft, applies the delta, regenerates the DDL and returns the
+  full contract, which is then validated and scope-checked as before. Unknown
+  tables, columns or indexes are merge errors. `--finalize` still accepts a
+  full contract; the Bedrock agent gets one correction round on merge errors
+  and otherwise records them in `validation_failures`.

@@ -58,6 +58,17 @@ MYSQL = Dialect(
 )
 
 
+@dataclass(frozen=True)
+class TypeOverride:
+    """A column type decided outside the type map (the model's delta, #273)."""
+
+    aurora_type: str
+    reason: str = ""
+
+
+TypeOverrides = dict[tuple[str, str], TypeOverride]
+
+
 @dataclass
 class ColumnDDL:
     name: str
@@ -86,10 +97,20 @@ class DdlResult:
 
 
 def _column_ddl(
-    table_name: str, col: AgentColumn, residuals: list[dict], dialect: Dialect
+    table_name: str,
+    col: AgentColumn,
+    residuals: list[dict],
+    dialect: Dialect,
+    override: TypeOverride | None = None,
 ) -> ColumnDDL:
-    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
+    if override is not None:
+        # A model-decided type (#273): judged, so not script-derived and not a residual.
+        resolution = TypeResolution(
+            aurora_type=override.aurora_type, needs_judgment=True, reason=override.reason
+        )
+        return _column_from(col, resolution, source_type, dialect, script_derived=False)
+    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
     if resolution.needs_judgment:
         residuals.append(
             {
@@ -100,6 +121,19 @@ def _column_ddl(
                 "reason": resolution.reason,
             }
         )
+    return _column_from(
+        col, resolution, source_type, dialect, script_derived=not resolution.needs_judgment
+    )
+
+
+def _column_from(
+    col: AgentColumn,
+    resolution: TypeResolution,
+    source_type: str | None,
+    dialect: Dialect,
+    *,
+    script_derived: bool,
+) -> ColumnDDL:
     auto_increment = dialect.auto_increment(
         col.is_auto_increment
     )  # nosemgrep: is-function-without-parentheses -- property, not a method
@@ -116,7 +150,7 @@ def _column_ddl(
         name=col.column_name,
         aurora_type=resolution.aurora_type,
         source_type=source_type,
-        script_derived=not resolution.needs_judgment,
+        script_derived=script_derived,
         needs_judgment=resolution.needs_judgment,
         judgment_reason=resolution.reason,
         fragment=fragment,
@@ -162,12 +196,26 @@ def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     return statements
 
 
-def _generate(tables: list[AgentTable], dialect: Dialect) -> DdlResult:
+def _generate(
+    tables: list[AgentTable],
+    dialect: Dialect,
+    type_overrides: TypeOverrides | None = None,
+) -> DdlResult:
     residuals: list[dict] = []
     table_ddls: list[TableDDL] = []
+    overrides = type_overrides or {}
 
     for table in tables:
-        columns = [_column_ddl(table.table_name, c, residuals, dialect) for c in table.columns]
+        columns = [
+            _column_ddl(
+                table.table_name,
+                c,
+                residuals,
+                dialect,
+                overrides.get((table.table_name, c.column_name)),
+            )
+            for c in table.columns
+        ]
         table_ddls.append(
             TableDDL(
                 table_name=table.table_name,
@@ -178,21 +226,32 @@ def _generate(tables: list[AgentTable], dialect: Dialect) -> DdlResult:
             )
         )
 
-    # Assemble: all CREATE TABLEs, then all indexes, then all FKs.
+    return DdlResult(tables=table_ddls, full_ddl=assemble_full_ddl(table_ddls), residuals=residuals)
+
+
+def assemble_full_ddl(table_ddls: list[TableDDL]) -> str:
+    """All CREATE TABLEs, then all indexes, then all FKs (so ordering never breaks a reference)."""
     parts: list[str] = [t.create_sql for t in table_ddls]
     for t in table_ddls:
         parts.extend(t.index_sql)
     for t in table_ddls:
         parts.extend(t.fk_sql)
-
-    return DdlResult(tables=table_ddls, full_ddl="\n\n".join(parts), residuals=residuals)
-
-
-def generate_pg_ddl(tables: list[AgentTable]) -> DdlResult:
-    """Translate normalized source tables into Aurora PostgreSQL DDL."""
-    return _generate(tables, POSTGRES)
+    return "\n\n".join(parts)
 
 
-def generate_mysql_ddl(tables: list[AgentTable]) -> DdlResult:
-    """Translate normalized source tables into Aurora MySQL DDL."""
-    return _generate(tables, MYSQL)
+def generate_pg_ddl(
+    tables: list[AgentTable], type_overrides: TypeOverrides | None = None
+) -> DdlResult:
+    """Translate normalized source tables into Aurora PostgreSQL DDL.
+
+    ``type_overrides`` maps ``(table_name, column_name)`` to a model-decided
+    type (#273); those columns are emitted with it and are not residuals.
+    """
+    return _generate(tables, POSTGRES, type_overrides)
+
+
+def generate_mysql_ddl(
+    tables: list[AgentTable], type_overrides: TypeOverrides | None = None
+) -> DdlResult:
+    """Translate normalized source tables into Aurora MySQL DDL (see ``generate_pg_ddl``)."""
+    return _generate(tables, MYSQL, type_overrides)

@@ -1,9 +1,9 @@
 """Unit tests for scripts/run_schema_design.py::run_external.
 
-Verifies the aurora_postgresql branch attaches the deterministic
-script-first draft (ADR-028) to the written llm_request, giving the
-external/interactive seam the same script-first fidelity as the automated
-Bedrock path.
+Verifies the Aurora branches describe the deterministic script-first draft
+(ADR-028) in the written llm_request. Since issue #273 that is a compact
+``design_view`` of the draft (the model answers with a delta), not the draft
+itself, giving the external seam the same draft as the automated Bedrock path.
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def _base_store() -> MagicMock:
     )
 
 
-def test_run_external_attaches_deterministic_draft_for_aurora_postgresql(capsys):
+def test_run_external_attaches_draft_view_for_aurora_postgresql(capsys):
     store = _base_store()
 
     run_external(store, "job-001", "mydb", "aurora_postgresql", assignment_version=0)
@@ -123,12 +123,12 @@ def test_run_external_attaches_deterministic_draft_for_aurora_postgresql(capsys)
     written_key = next(k for k in store._written if "schema_design_aurora_postgresql.json" in k)
     llm_request = store._written[written_key]
 
-    assert "draft" in llm_request
-    draft = llm_request["draft"]
-    assert "full_ddl" in draft
-    assert "users" in draft["full_ddl"]
-    assert draft["tables"][0]["columns"][0]["aurora_type"] == "BIGINT"
+    assert "draft" not in llm_request  # #273: compact view, not the draft
+    view = llm_request["design_view"]
+    assert view["tables"][0]["table_name"] == "users"
+    assert view["tables"][0]["columns"][0] == "id BIGINT"
     assert llm_request["migration_strategy"] == "translate"
+    assert llm_request["output_schema"]["title"] == "AuroraDesignDeltaContract"
 
     # stdout status line should still report awaiting_llm
     captured = capsys.readouterr()
@@ -208,7 +208,7 @@ _ANALYSIS_AURORA_MYSQL = {
 }
 
 
-def test_run_external_attaches_deterministic_draft_for_aurora_mysql(capsys):
+def test_run_external_attaches_draft_view_for_aurora_mysql(capsys):
     store = _mock_store(
         {
             "collector/output.json": _COLLECTOR_AURORA_MYSQL,
@@ -221,12 +221,12 @@ def test_run_external_attaches_deterministic_draft_for_aurora_mysql(capsys):
     written_key = next(k for k in store._written if "schema_design_aurora_mysql.json" in k)
     llm_request = store._written[written_key]
 
-    assert "draft" in llm_request
-    draft = llm_request["draft"]
-    assert "full_ddl" in draft
-    assert "`" in draft["full_ddl"]
-    assert "CREATE TABLE `users`" in draft["full_ddl"]
+    assert "draft" not in llm_request  # #273: compact view, not the draft
+    view = llm_request["design_view"]
+    assert view["tables"][0]["table_name"] == "users"
+    assert view["tables"][0]["columns"][0] == "id BIGINT"
     assert llm_request["migration_strategy"] == "carry_over"
+    assert llm_request["output_schema"]["title"] == "AuroraDesignDeltaContract"
 
     # stdout status line should still report awaiting_llm
     captured = capsys.readouterr()

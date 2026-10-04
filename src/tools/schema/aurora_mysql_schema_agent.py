@@ -2,12 +2,13 @@
 
 Flow:
   1. Load projected input (collector + analysis + decision trace)
-  2. Compact input to fit within Bedrock token limits
-  3. Run the deterministic core (source-family classification + DDL generation)
-     to produce an authoritative draft the designer must reconcile
-  4. SchemaDesignRunner handles: designer invocation with retries,
-     PE review loop, duplicate feedback detection, graceful fallback
-  5. Returns final output + trace log
+  2. Run the deterministic core (source-family classification + DDL generation)
+     and build a compact design view of the draft (issue #273)
+  3. SchemaDesignRunner handles: designer invocation with retries,
+     PE review loop, duplicate feedback detection, graceful fallback; the
+     designer returns only an AuroraDesignDeltaContract
+  4. Merge the delta into the draft deterministically (one correction round
+     on merge errors) and return the full output contract + trace log
 """
 
 from __future__ import annotations
@@ -25,12 +26,18 @@ from strands.models.bedrock import BedrockModel
 from src.agents.prompt_framing import (
     SYSTEM_PROMPT_DATA_DIRECTIVE,
     frame_customer_requests,
-    frame_untrusted,
 )
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.collector_output import CollectorOutputContract
-from src.contracts.schema_design_input import AgentTable, project_schema_design_input
+from src.contracts.schema_design_input import project_schema_design_input
+from src.tools.schema.aurora_common.bedrock_delta import designer_prompt as build_designer_prompt
+from src.tools.schema.aurora_common.bedrock_delta import (
+    merge_or_correct,
+    pe_review_prompt,
+    prepare_delta_design,
+)
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
 
 logger = logging.getLogger(__name__)
@@ -146,7 +153,8 @@ def load_agent_input() -> dict:
         )
 
     with open(collector_path, encoding="utf-8") as f:
-        collector = CollectorOutputContract.model_validate(json.load(f))
+        raw_collector = json.load(f)
+    collector = CollectorOutputContract.model_validate(raw_collector)
 
     with open(analysis_path, encoding="utf-8") as f:
         analysis = AnalysisOutputContract.model_validate(json.load(f))
@@ -170,59 +178,9 @@ def load_agent_input() -> dict:
         "analysis": agent_analysis.model_dump(mode="json"),
         "context": agent_context.model_dump(mode="json"),
         "decision_trace": decision_trace,
+        # Raw source data_type per column: what residual type_rules match (#273).
+        "raw_collector": raw_collector,
     }
-
-
-def _compact_agent_input(agent_input: dict) -> None:
-    """Compact agent input to reduce token count for inline prompt injection."""
-    keep_fields = {
-        "query_id",
-        "query_text",
-        "query_type",
-        "tables_accessed",
-        "calls_per_second",
-        "frequency_per_hour",
-        "rows_returned_avg",
-        "has_joins",
-        "join_count",
-        "has_aggregations",
-        "has_subqueries",
-        "has_text_search",
-        "text_search_type",
-        "has_time_range_filter",
-        "filter_columns",
-        "sort_columns",
-    }
-    for qp in agent_input.get("collector", {}).get("queries", {}).get("query_patterns") or []:
-        text = qp.get("query_text") or ""
-        if len(text) > 200:
-            qp["query_text"] = text[:200] + "..."
-        for key in list(qp.keys()):
-            if key not in keep_fields:
-                del qp[key]
-
-    dt = agent_input.get("decision_trace") or {}
-    dt.pop("query_matches", None)
-
-
-def _build_draft(agent_input: dict) -> tuple[dict, str]:
-    """Run the deterministic core; return (draft dict, migration_strategy).
-
-    Delegates to the shared draft builder (ADR-028) so the automated agent
-    and the external/interactive seam produce an identical draft.
-    """
-    from src.tools.schema.aurora_common.draft_builder import build_mysql_draft
-
-    collector = agent_input.get("collector", {})
-    source_engine = collector.get("source_database_engine", "")
-    raw_tables = collector.get("tables", [])
-    if not raw_tables:
-        logger.warning(
-            "[schema-design/aurora_mysql] Collector has no tables; "
-            "draft will be empty and the designer will have nothing to translate."
-        )
-    tables = [AgentTable.model_validate(t) for t in raw_tables]
-    return build_mysql_draft(tables, source_engine)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +190,7 @@ def _build_draft(agent_input: dict) -> tuple[dict, str]:
 
 def _invoke_pe_reviewer(
     model: BedrockModel,
-    design_output: AuroraMySQLModelOutputContract,
+    design_output: AuroraDesignDeltaContract,
     agent_input_summary: dict,
     pe_skill_path: str | None = None,
 ) -> PEReviewResult:
@@ -248,22 +206,7 @@ def _invoke_pe_reviewer(
         callback_handler=None,
     )
 
-    design_json = design_output.model_dump(mode="json")
-
-    prompt = (
-        "Review the following Aurora MySQL schema design.\n\n"
-        + "## Source Database Summary\n"
-        + f"Tables: {len(design_output.table_definitions)}, "
-        + f"Migration strategy: {design_output.migration_strategy}, "
-        + f"Source tables: {agent_input_summary.get('table_count', 0)}\n\n"
-        + "## Design Output\n"
-        + frame_untrusted(
-            json.dumps(design_json, indent=2, default=str),
-            label="schema design output to review (JSON; echoes source names)",
-        )
-        + "\n\nEvaluate this design following your review process. "
-        + "Return a PEReviewResult with your verdict and any change requests."
-    )
+    prompt = pe_review_prompt("aurora_mysql", design_output, agent_input_summary)
 
     result = pe_agent(prompt)
     output = getattr(result, "structured_output", None)
@@ -312,8 +255,10 @@ def run_aurora_mysql_schema_agent(
     duplicate PE feedback detection, and consistent logging.
 
     Before invoking the designer, runs the deterministic core (source-family
-    classification + DDL generation) to produce an authoritative draft that
-    the designer must reconcile rather than re-derive from scratch.
+    classification + DDL generation). The designer sees a compact view of
+    that draft and returns only a delta, which is merged into the draft
+    deterministically (issue #273), so neither its prompt nor its output
+    grows with the schema beyond one short line per column.
 
     Args:
         collector_path: Path to collector JSON (preferred over env var).
@@ -337,38 +282,29 @@ def run_aurora_mysql_schema_agent(
     print("[schema-design/aurora_mysql] Loading agent input...")
     agent_input = load_agent_input()
 
-    # Compact input to fit within Bedrock token limits.
-    _compact_agent_input(agent_input)
-
-    # Run the deterministic core to produce the authoritative draft.
-    draft, strategy = _build_draft(agent_input)
-    # NOTE: the draft duplicates column info already in collector.tables.
-    # Accepted overhead for now; a future pass can compact collector.tables columns
-    # since the draft is authoritative for column types. See ADR-028.
-    agent_input["draft"] = draft
-    agent_input["migration_strategy"] = strategy
-    input_json = json.dumps(agent_input, indent=2, default=str)
-    print(f"[schema-design/aurora_mysql] Compacted input: {len(input_json):,} chars")
+    # Issue #273: the designer sees a compact view of the deterministic draft
+    # and returns only a delta; the full contract is merged deterministically.
+    base, view = prepare_delta_design("aurora_mysql", agent_input)
+    if not base.tables:
+        logger.warning(
+            "[schema-design/aurora_mysql] Collector has no tables; "
+            "there is no draft to design against."
+        )
+        raise ValueError("Aurora MySQL schema design has no tables to design")
+    print(
+        f"[schema-design/aurora_mysql] Design view: "
+        f"{len(json.dumps(view, default=str)):,} chars for {len(base.tables)} tables"
+    )
 
     designer = Agent(
         model=model,
         system_prompt=system_prompt,
         tools=[],
-        structured_output_model=AuroraMySQLModelOutputContract,
+        structured_output_model=AuroraDesignDeltaContract,
         callback_handler=None,
     )
 
-    designer_prompt = (
-        "Here is the projected input plus the deterministic draft for your "
-        "Aurora MySQL schema design:\n\n"
-        + frame_untrusted(input_json, label="projected schema-design input (JSON)")
-        + "\n\n"
-        + f"The migration_strategy is '{strategy}'. The draft's column types are "
-        "authoritative unless flagged in residuals. Resolve every residual, add "
-        "Aurora optimizations from the query patterns, record app-layer notes for "
-        "untranslatable features, and return the complete "
-        "AuroraMySQLModelOutputContract."
-    )
+    designer_prompt = build_designer_prompt("aurora_mysql", view)
 
     # Inject revision context if this is a revision-triggered redesign
     if _revision_context_path:
@@ -391,16 +327,11 @@ def run_aurora_mysql_schema_agent(
                 "\n\n".join(revision_sections)
             )
 
-    input_summary = {
-        "table_count": len(agent_input.get("collector", {}).get("tables", [])),
-        "pattern_count": len(
-            agent_input.get("collector", {}).get("queries", {}).get("query_patterns", [])
-        ),
-    }
+    input_summary = {"table_count": len(base.tables), "design_view": view}
 
     runner = SchemaDesignRunner(
         target_type="aurora_mysql",
-        output_model=AuroraMySQLModelOutputContract,
+        output_model=AuroraDesignDeltaContract,
         model=model,
         designer_agent=designer,
         pe_skill_path=pe_skill_path or DEFAULT_PE_SKILL_PATH,
@@ -408,4 +339,9 @@ def run_aurora_mysql_schema_agent(
         format_pe_feedback_fn=_format_pe_feedback,
     )
 
-    return runner.run(designer_prompt, input_summary)
+    delta: AuroraDesignDeltaContract
+    delta, trace = runner.run(designer_prompt, input_summary)
+    output = merge_or_correct(
+        "aurora_mysql", base, delta, runner, AuroraMySQLModelOutputContract, trace
+    )
+    return output, trace
