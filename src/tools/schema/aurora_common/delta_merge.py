@@ -379,6 +379,26 @@ def _apply_index_changes(
     return counts
 
 
+def _time_zone_notes(ddl: DdlResult) -> list[dict]:
+    """One deterministic app-layer note for time-zone-aware columns mapped to DATETIME/TIME."""
+    cols = [f"{n['table']}.{n['column']}" for n in ddl.column_notes if n["kind"] == "time_zone"]
+    if not cols:
+        return []
+    shown = ", ".join(cols[:10]) + (f" and {len(cols) - 10} more" if len(cols) > 10 else "")
+    return [
+        {
+            "feature": "time_zone",
+            "source_object": shown,
+            "recommendation": (
+                "These PostgreSQL timestamptz/timetz columns become DATETIME/TIME on Aurora "
+                "MySQL, which store no time zone: convert to UTC during the data load and "
+                "have the application write and read UTC (or set time_zone='+00:00' on its "
+                "connections)."
+            ),
+        }
+    ]
+
+
 def _default_trade_off(base: AuroraDesignBase, n_tables: int) -> dict:
     strategy = base.migration_strategy
     how = (
@@ -506,7 +526,8 @@ def merge_design_delta(
             for t, t_ddl in ((t, table_ddls[t.table_name]) for t in base.tables)
         ],
         "generated_ddl": assemble_full_ddl(ddl.tables),
-        "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes],
+        "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
+        + _time_zone_notes(ddl),
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
         "validation_passed": not errors,
@@ -584,8 +605,11 @@ def full_contract_to_delta(base: AuroraDesignBase, response: dict) -> tuple[dict
             if not _same_type(aurora_type, draft_types[(table.table_name, column)]):
                 change["column_types"].append({"column": column, "aurora_type": aurora_type})
         existing = draft_indexes[table.table_name]
+        draft_statements = set(existing.values())
         for j, statement in enumerate(table_def.get("indexes") or []):
             where = f"table_definitions[{i}].indexes[{j}]"
+            if str(statement) in draft_statements:
+                continue  # the draft's own rendering (incl. partial indexes): unchanged
             try:
                 parsed = parse_index_statement(str(statement))
             except SqlFragmentError as exc:

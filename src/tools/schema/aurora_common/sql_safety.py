@@ -97,30 +97,69 @@ def render_predicate(text: str, columns: list[str], quote) -> str:
 
 
 _CAST = re.compile(
-    r"::\s*(?:\"[A-Za-z_][A-Za-z0-9_ ]*\"|[A-Za-z_][A-Za-z0-9_]*"
-    r"(?:\s+(?:varying|precision|with(?:out)?\s+time\s+zone))?)(?:\s*\[\])*",
+    r"::\s*(?P<type>\"[A-Za-z_][A-Za-z0-9_ ]*\"|[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s+(?:varying|precision|with(?:out)?\s+time\s+zone))?)(?P<arrays>(?:\s*\[\])*)",
     re.IGNORECASE,
 )
 _STRING = re.compile(r"'(?:[^'\\\n\r]|'')*'")
+# The casts pg_get_expr adds to a text column compared with a literal.
+_COLUMN_TEXT_CASTS = frozenset({"text", "character varying", "varchar", "bpchar"})
+_CAST_OPERAND = re.compile(
+    r"(?:\(\s*(?P<pcol>\"?[A-Za-z_][A-Za-z0-9_$]*\"?)\s*\)"
+    r"|(?<![A-Za-z0-9_$.\"])(?P<num>-?\d+(?:\.\d+)?)"
+    r"|(?<![A-Za-z0-9_$.])(?P<col>\"?[A-Za-z_][A-Za-z0-9_$]*\"?))\s*$"
+)
+
+
+def _strip_casts(segment: str, after_literal: bool, out: list[str]) -> None:
+    """Append ``segment`` (text between string literals) to ``out`` without its safe casts."""
+    pos = 0
+    for match in _CAST.finditer(segment):
+        before = "".join(out) + segment[pos : match.start()]
+        cast = " ".join(match.group("type").strip('"').lower().split())
+        operand = _CAST_OPERAND.search(before)
+        on_literal = (after_literal and pos == 0 and not segment[: match.start()].strip()) or (
+            operand is not None and operand.group("num") is not None
+        )
+        on_column = operand is not None and (operand.group("pcol") or operand.group("col"))
+        if on_literal:
+            pass  # 'x'::text, 5::integer: the literal takes the column's type anyway
+        elif on_column and cast in _COLUMN_TEXT_CASTS and not match.group("arrays"):
+            pass  # (status)::text: PostgreSQL's own cast of a text column
+        else:
+            raise SqlFragmentError(
+                f"where: the cast {match.group(0).strip()!r} changes the comparison; "
+                "only casts on literals and text casts on columns can be dropped"
+            )
+        out.append(segment[pos : match.start()])
+        pos = match.end()
+    out.append(segment[pos:])
 
 
 def render_source_predicate(text: str, columns: list[str], quote) -> str:
     """A collector's partial-index predicate, re-rendered under the ``render_predicate`` grammar.
 
     PostgreSQL reports predicates as ``pg_get_expr`` text, which carries type
-    casts (``((status)::text = 'active'::text)``). Casts outside string
-    literals are dropped (the comparison is the same without them); the rest
-    must pass the strict predicate grammar, so collector text never reaches
-    DDL unchecked.
+    casts (``((status)::text = 'active'::text)``). Only casts that do not
+    change the comparison are dropped: a cast on a literal (``'x'::text``,
+    ``5::integer``; the literal is then typed by the column it is compared
+    with) and the text casts PostgreSQL puts on a text column (``::text``,
+    ``::character varying``, ``::bpchar``). Any other cast, e.g.
+    ``(created_at)::date`` or ``(amount)::integer``, changes the meaning and
+    raises ``SqlFragmentError``; the draft then falls back to a full index and
+    notes it. The rest must pass the strict predicate grammar, so collector
+    text never reaches DDL unchecked.
     """
-    parts: list[str] = []
+    out: list[str] = []
     pos = 0
+    after_literal = False
     for match in _STRING.finditer(text):
-        parts.append(_CAST.sub("", text[pos : match.start()]))
-        parts.append(match.group(0))
+        _strip_casts(text[pos : match.start()], after_literal, out)
+        out.append(match.group(0))
         pos = match.end()
-    parts.append(_CAST.sub("", text[pos:]))
-    return render_predicate("".join(parts), columns, quote)
+        after_literal = True
+    _strip_casts(text[pos:], after_literal, out)
+    return render_predicate("".join(out), columns, quote)
 
 
 # ---------------------------------------------------------------------------

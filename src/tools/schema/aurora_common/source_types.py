@@ -8,7 +8,9 @@ MySQL the draft resolves each column from its native ``data_type`` first:
   the canonical way (PostgreSQL ``int4``/``integer`` -> ``INTEGER``,
   ``character varying(n)`` -> ``VARCHAR(n)``, ``timestamp without time zone``
   -> ``TIMESTAMP``, ``_int4`` -> ``INTEGER[]``; MySQL ``bigint(20) unsigned``
-  -> ``BIGINT UNSIGNED``, ``tinyint(1)`` and ``enum(...)`` as written);
+  -> ``BIGINT UNSIGNED``, ``tinyint(1)`` and ``enum(...)`` as written).
+  Array udt names carry no element length, so ``_bpchar`` -> ``TEXT[]`` and
+  ``_bit`` -> ``VARBIT[]`` rather than truncating ``CHAR[]`` / ``BIT[]``;
 * cross engine (``translate``): through the tables below.
 
 Every result is checked against the target engine's type allowlist
@@ -24,22 +26,24 @@ PostgreSQL -> Aurora MySQL
     boolean -> BOOLEAN; char(n) -> CHAR(n) (VARCHAR(n) above 255);
     varchar(n) -> VARCHAR(n) (LONGTEXT above 16383); text, citext and
     unbounded varchar -> LONGTEXT; bytea -> LONGBLOB; date -> DATE;
-    timestamp[tz](p) -> DATETIME(p) (MySQL TIMESTAMP stops in 2038; store UTC);
-    time[tz](p) -> TIME(p); json/jsonb/hstore/arrays -> JSON; uuid -> CHAR(36);
+    timestamp[tz](p) -> DATETIME(p) (MySQL TIMESTAMP stops in 2038; the tz
+    variants carry a "store UTC" app-layer note); time[tz](p) -> TIME(p); json/jsonb/hstore/arrays -> JSON; uuid -> CHAR(36);
     inet/cidr -> VARCHAR(43); macaddr -> VARCHAR(17); macaddr8 -> VARCHAR(23);
     xml -> LONGTEXT; bit(n) -> BIT(n); oid -> INT UNSIGNED;
-    geometry/geography -> GEOMETRY. A LONGTEXT/LONGBLOB column, or a
-    VARCHAR over 768 characters, that is part of a key or index is a residual
-    (MySQL cannot index it without a length). interval, tsvector, tsquery,
+    geometry/geography -> GEOMETRY. A LONGTEXT/LONGBLOB/JSON/GEOMETRY column,
+    or a VARCHAR over 768 characters, that is part of a key or index is a
+    residual (MySQL cannot index it directly), and so is a LONGTEXT/LONGBLOB/
+    JSON/GEOMETRY column with a DEFAULT (MySQL 8 takes only an expression
+    default there). interval, tsvector, tsquery,
     ranges, geometric types, vectors, varbit and user-defined types are
     residuals.
 
 MySQL -> Aurora PostgreSQL
     tinyint (incl. tinyint(1)) and smallint -> SMALLINT (smallint unsigned ->
     INTEGER); mediumint -> INTEGER; int -> INTEGER (unsigned -> BIGINT);
-    bigint -> BIGINT (also unsigned: values above 2^63-1 do not fit, which
-    keys and foreign keys never reach in practice; NUMERIC(20,0) would break
-    identity columns and foreign keys); decimal(p,s) -> NUMERIC(p,s) (bare
+    bigint -> BIGINT; bigint unsigned -> NUMERIC(20,0), except in a key,
+    index or foreign key, where it stays BIGINT (identity columns and foreign
+    keys need an integer type; values above 2^63-1 do not fit there); decimal(p,s) -> NUMERIC(p,s) (bare
     decimal -> NUMERIC(10,0), MySQL's default); float -> REAL;
     double/real -> DOUBLE PRECISION; bit(n) -> BIT(n); bool -> BOOLEAN;
     char/varchar(n) -> CHAR/VARCHAR(n); *text -> TEXT; binary, varbinary and
@@ -188,7 +192,11 @@ def _parse_pg(raw: str, max_length: int | None) -> _Parsed | None:
     base = _PG_ALIASES.get(name) or (name if name in _PG_VERBATIM else None)
     if base is None:
         return None
-    if base in _PG_LENGTH_TYPES and not params and max_length and max_length > 0:
+    if arrays and not params:
+        # An array's udt_name carries no element length: char[] would become
+        # char(1)[] and bit[] bit(1)[], truncating every element.
+        base = {"char": "text", "bit": "varbit"}.get(base, base)
+    elif base in _PG_LENGTH_TYPES and not params and max_length and max_length > 0:
         params = (max_length,)
     return _Parsed(base=base, params=params, arrays=arrays, raw=raw)
 
@@ -339,7 +347,16 @@ def _residual(fallback: str, reason: str) -> TypeResolution:
     return TypeResolution(aurora_type=fallback, needs_judgment=True, reason=reason)
 
 
-def _pg_to_mysql(p: _Parsed, indexed: bool) -> TypeResolution | str | None:
+# Aurora MySQL types that cannot be (fully) indexed and take no literal DEFAULT
+# (MySQL 8 accepts only an expression default on them).
+_MYSQL_UNINDEXABLE = ("LONGTEXT", "LONGBLOB", "JSON", "GEOMETRY")
+_UTC_NOTE = (
+    "Aurora MySQL DATETIME has no time zone; the application must write and read "
+    "these values in UTC (PostgreSQL {kind} converted them on the way in)."
+)
+
+
+def _pg_to_mysql_type(p: _Parsed, indexed: bool) -> TypeResolution | str | None:
     if p.arrays:
         return "JSON"
     if p.base in _PG_TO_MYSQL_FIXED:
@@ -352,43 +369,59 @@ def _pg_to_mysql(p: _Parsed, indexed: bool) -> TypeResolution | str | None:
             "PostgreSQL numeric has no precision/scale that fits Aurora MySQL; "
             "confirm DECIMAL(p,s).",
         )
-    long_type = _PG_TO_MYSQL_LONG.get(p.base)
     if p.base == "varchar":
-        if not p.params:
-            long_type = "LONGTEXT"
-        elif p.params[0] > _MYSQL_VARCHAR_MAX:
-            long_type = "LONGTEXT"
-        elif indexed and p.params[0] > _MYSQL_INDEX_CHARS:
+        if not p.params or p.params[0] > _MYSQL_VARCHAR_MAX:
+            return "LONGTEXT"
+        if indexed and p.params[0] > _MYSQL_INDEX_CHARS:
             return _residual(
                 f"VARCHAR({_MYSQL_INDEX_CHARS})",
                 f"Indexed varchar({p.params[0]}) exceeds the Aurora MySQL index key length; "
                 "confirm a shorter VARCHAR or a prefix index.",
             )
-        else:
-            return f"VARCHAR({p.params[0]})"
+        return f"VARCHAR({p.params[0]})"
     if p.base == "char":
         n = p.params[0] if p.params else 1
         return f"CHAR({n})" if n <= 255 else f"VARCHAR({n})"
+    if p.base in _PG_TO_MYSQL_LONG:
+        return _PG_TO_MYSQL_LONG[p.base]
     if p.base == "bytea":
-        long_type = "LONGBLOB"
-    if long_type:
-        if indexed:
-            return _residual(
-                "VARCHAR(255)",
-                f"Unbounded {p.base} column is part of a key or index; Aurora MySQL cannot "
-                "index LONGTEXT/LONGBLOB, so confirm a VARCHAR(n) length.",
-            )
-        return long_type
+        return "LONGBLOB"
     if p.base in ("timestamp", "timestamptz", "time", "timetz"):
         precision = min(p.params[0], 6) if p.params else 6
         name = "DATETIME" if p.base.startswith("timestamp") else "TIME"
+        if p.base in ("timestamptz", "timetz"):
+            return TypeResolution(
+                f"{name}({precision})", needs_judgment=False, note=_UTC_NOTE.format(kind=p.base)
+            )
         return f"{name}({precision})"
     if p.base == "bit" and (not p.params or p.params[0] <= 64):
         return f"BIT({p.params[0] if p.params else 1})"
     return None
 
 
-def _mysql_to_pg(p: _Parsed) -> str | None:
+def _pg_to_mysql(p: _Parsed, indexed: bool, has_default: bool) -> TypeResolution | str | None:
+    result = _pg_to_mysql_type(p, indexed)
+    aurora_type = result.aurora_type if isinstance(result, TypeResolution) else result
+    if aurora_type not in _MYSQL_UNINDEXABLE:
+        return result
+    what = "array" if p.arrays else p.base
+    if indexed:
+        return _residual(
+            "VARCHAR(255)",
+            f"PostgreSQL {what} column is part of a key or index, but its Aurora MySQL type "
+            f"{aurora_type} cannot be indexed directly; confirm a VARCHAR(n) length, a "
+            "generated column or a prefix/functional index.",
+        )
+    if has_default:
+        return _residual(
+            aurora_type,
+            f"PostgreSQL {what} column has a DEFAULT, but Aurora MySQL {aurora_type} columns "
+            "take only an expression default; confirm DEFAULT (expr) or drop it.",
+        )
+    return result
+
+
+def _mysql_to_pg(p: _Parsed, indexed: bool) -> str | None:
     if p.base in ("tinyint", "smallint"):
         return "INTEGER" if p.base == "smallint" and p.unsigned else "SMALLINT"
     if p.base == "mediumint":
@@ -396,7 +429,9 @@ def _mysql_to_pg(p: _Parsed) -> str | None:
     if p.base == "int":
         return "BIGINT" if p.unsigned else "INTEGER"
     if p.base == "bigint":
-        return "BIGINT"
+        # Keys stay BIGINT (identity columns and foreign keys need an integer
+        # type); other unsigned values keep their full range.
+        return "NUMERIC(20,0)" if p.unsigned and not indexed else "BIGINT"
     if p.base == "decimal":
         return f"NUMERIC({','.join(map(str, p.params))})" if p.params else "NUMERIC(10,0)"
     if p.base == "float":
@@ -450,11 +485,13 @@ def resolve_source_type(
     target: str,
     max_length: int | None = None,
     indexed: bool = False,
+    has_default: bool = False,
 ) -> TypeResolution | None:
     """Aurora type for a PostgreSQL/MySQL source ``data_type``, or ``None`` if unmapped.
 
     ``indexed`` says the column is part of the primary key, an index or a
-    foreign key (Aurora MySQL cannot index unbounded text).
+    foreign key (Aurora MySQL cannot index unbounded text); ``has_default``
+    that it has a DEFAULT (Aurora MySQL TEXT/BLOB/JSON/GEOMETRY take none).
     """
     if not data_type or source_family not in ("postgresql", "mysql"):
         return None
@@ -466,14 +503,20 @@ def resolve_source_type(
         if target == "aurora_postgresql":
             result = _render_pg(parsed)
         else:
-            result = _pg_to_mysql(parsed, indexed)
+            result = _pg_to_mysql(parsed, indexed, has_default)
     else:
         parsed = _parse_mysql(data_type, max_length)
         if parsed is None:
             return None
-        result = _render_mysql(parsed) if target == "aurora_mysql" else _mysql_to_pg(parsed)
+        if target == "aurora_mysql":
+            result = _render_mysql(parsed)
+        else:
+            result = _mysql_to_pg(parsed, indexed)
     if result is None:
         return None
     if isinstance(result, TypeResolution):
-        return result
+        if result.needs_judgment:
+            return result
+        checked = _checked(result.aurora_type, target)
+        return checked and TypeResolution(checked.aurora_type, False, note=result.note)
     return _checked(result, target)

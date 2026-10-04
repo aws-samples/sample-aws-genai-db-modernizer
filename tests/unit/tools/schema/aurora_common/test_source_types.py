@@ -156,7 +156,7 @@ def test_mysql_unmappable_or_hostile_types_have_no_source_mapping(raw):
         ("mediumint", None, "INTEGER"),
         ("int", None, "INTEGER"),
         ("int unsigned", None, "BIGINT"),
-        ("bigint unsigned", None, "BIGINT"),
+        ("bigint unsigned", None, "NUMERIC(20,0)"),  # not a key: full unsigned range
         ("decimal(19,4)", None, "NUMERIC(19,4)"),
         ("decimal", None, "NUMERIC(10,0)"),
         ("double", None, "DOUBLE PRECISION"),
@@ -245,3 +245,45 @@ def test_pg_types_without_a_mysql_equivalent_have_no_mapping(raw):
 def test_other_source_families_use_the_normalized_type():
     assert resolve_source_type("NUMBER(10)", source_family="other", target=PG) is None
     assert resolve_source_type(None, source_family="postgresql", target=PG) is None
+
+
+def test_mysql_bigint_unsigned_key_stays_bigint_on_pg():
+    # identity columns and foreign keys need an integer type
+    assert _type("bigint unsigned", "mysql", PG, indexed=True) == "BIGINT"
+
+
+@pytest.mark.parametrize(
+    "raw,max_length,expected",
+    [
+        ("_bpchar", None, "TEXT[]"),  # no element length: CHAR[] would be char(1)[]
+        ("_bit", None, "VARBIT[]"),
+        ("_varchar", 50, "VARCHAR[]"),  # max_length is not the element length
+        ("character(3)[]", None, "CHAR(3)[]"),
+    ],
+)
+def test_pg_arrays_never_truncate_elements(raw, max_length, expected):
+    assert _type(raw, "postgresql", PG, max_length=max_length) == expected
+
+
+@pytest.mark.parametrize("raw", ["jsonb", "json", "hstore", "_int4", "geometry", "text"])
+def test_pg_to_mysql_unindexable_types_in_a_key_are_residuals(raw):
+    res = resolve_source_type(raw, source_family="postgresql", target=MY, indexed=True)
+    assert res is not None and res.needs_judgment
+    validate_aurora_type(res.aurora_type, MY)
+
+
+@pytest.mark.parametrize(
+    "raw,target_type",
+    [("jsonb", "JSON"), ("text", "LONGTEXT"), ("bytea", "LONGBLOB"), ("geography", "GEOMETRY")],
+)
+def test_pg_to_mysql_defaults_on_text_blob_json_geometry_are_residuals(raw, target_type):
+    res = resolve_source_type(raw, source_family="postgresql", target=MY, has_default=True)
+    assert res is not None and res.needs_judgment
+    assert res.aurora_type == target_type and "DEFAULT" in res.reason
+
+
+@pytest.mark.parametrize("raw", ["timestamp with time zone", "time with time zone"])
+def test_pg_time_zone_types_on_mysql_carry_a_utc_note(raw):
+    res = resolve_source_type(raw, source_family="postgresql", target=MY)
+    assert res is not None and not res.needs_judgment and "UTC" in res.note
+    assert resolve_source_type("timestamp", source_family="postgresql", target=MY).note == ""

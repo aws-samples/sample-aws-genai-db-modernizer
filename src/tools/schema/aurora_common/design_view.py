@@ -307,6 +307,7 @@ def build_design_view(
         "in_scope_query_count": len(collector.queries.query_patterns),
         "residual_types": _residual_types(base, draft),
         **({"index_notes": draft.index_notes} if draft.index_notes else {}),
+        **({"column_notes": draft.column_notes} if draft.column_notes else {}),
         "hot_queries": _hot_queries(collector, hot_query_limit, raw_collector),
         "analysis": _analysis_summary(analysis),
         "source_features": _source_features(

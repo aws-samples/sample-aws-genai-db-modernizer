@@ -108,11 +108,20 @@ class DdlResult:
     # Source indexes the draft could not carry over as written (a partial-index
     # predicate Aurora cannot take): {"table", "index", "reason"}.
     index_notes: list[dict] = field(default_factory=list)
+    # Columns that carry over but need a look: {"table", "column", "kind", "reason"};
+    # kind "time_zone" (a time-zone-aware type mapped to one without, app-layer).
+    column_notes: list[dict] = field(default_factory=list)
+
+
+def excerpt(text: str, limit: int = 80) -> str:
+    """Collector text echoed into notes: repr'd (no raw newlines/quotes) and truncated."""
+    return repr(text[:limit]) + ("..." if len(text) > limit else "")
 
 
 def _resolve(
     col: AgentColumn, dialect: Dialect, source_family: str, indexed: bool
 ) -> TypeResolution:
+    has_default = col.default_value is not None and not col.is_auto_increment
     """The source ``data_type`` first (PostgreSQL/MySQL sources, #274), else the normalized type."""
     resolution = resolve_source_type(
         col.data_type,
@@ -120,6 +129,7 @@ def _resolve(
         target=dialect.name,
         max_length=col.max_length,
         indexed=indexed,
+        has_default=has_default,
     )
     if resolution is not None:
         return resolution
@@ -135,8 +145,10 @@ def _column_ddl(
     *,
     source_family: str = "other",
     indexed: bool = False,
+    notes: list[dict] | None = None,
 ) -> ColumnDDL:
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
+    notes = notes if notes is not None else []
     if override is not None:
         # A model-decided type (#273): judged, so not script-derived and not a residual.
         resolution = TypeResolution(
@@ -144,6 +156,15 @@ def _column_ddl(
         )
         return _column_from(col, resolution, source_type, dialect, script_derived=False)
     resolution = _resolve(col, dialect, source_family, indexed)
+    if resolution.note:
+        notes.append(
+            {
+                "table": table_name,
+                "column": col.column_name,
+                "kind": "time_zone",
+                "reason": resolution.note,
+            }
+        )
     if resolution.needs_judgment:
         residuals.append(
             {
@@ -206,6 +227,10 @@ def is_primary_key_index(idx: AgentIndex, table: AgentTable) -> bool:
     ``<table>_pkey`` and the offline parser only recognises MySQL's
     ``PRIMARY``. A unique, non-partial index on exactly the key columns (or a
     ``*_pkey`` one on the same column set) duplicates the PRIMARY KEY.
+
+    Limitation: collectors report neither operator classes nor collations,
+    so a unique index on the key columns with a different opclass or
+    collation (e.g. ``text_pattern_ops``) is treated as a duplicate too.
     """
     if idx.is_primary:  # nosemgrep: is-function-without-parentheses -- property, not a method
         return True
@@ -242,7 +267,8 @@ def _index_sql(table: AgentTable, dialect: Dialect, notes: list[dict]) -> list[s
                         "table": table.table_name,
                         "index": idx.index_name,
                         "reason": (
-                            f"Partial index (WHERE {idx.predicate}) carried over as a full "
+                            f"Partial index (WHERE {excerpt(idx.predicate)}) carried over as a "
+                            "full "
                             f"{'non-unique ' if unique else ''}index: {reason}."
                             + (
                                 " Uniqueness over the subset must be enforced another way."
@@ -329,6 +355,7 @@ def _generate(
 ) -> DdlResult:
     residuals: list[dict] = []
     notes: list[dict] = []
+    column_notes: list[dict] = []
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
     family = classify_source_family(source_engine)
@@ -344,6 +371,7 @@ def _generate(
                 overrides.get((table.table_name, c.column_name)),
                 source_family=family,
                 indexed=c.column_name.lower() in keyed,
+                notes=column_notes,
             )
             for c in table.columns
         ]
@@ -362,6 +390,7 @@ def _generate(
         full_ddl=assemble_full_ddl(table_ddls),
         residuals=residuals,
         index_notes=notes,
+        column_notes=column_notes,
     )
 
 

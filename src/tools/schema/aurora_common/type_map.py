@@ -20,12 +20,14 @@ class TypeResolution:
 
     ``aurora_type`` always holds a usable type (a safe fallback when judgment is
     needed). ``needs_judgment`` flags that the LLM should confirm or refine it,
-    and ``reason`` explains why.
+    and ``reason`` explains why. ``note`` is an application-layer remark on a
+    resolved type (e.g. time zones dropped by a cross-engine mapping).
     """
 
     aurora_type: str
     needs_judgment: bool
     reason: str = ""
+    note: str = ""
 
 
 # Direct, unambiguous mappings that ignore length.
