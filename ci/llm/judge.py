@@ -58,8 +58,12 @@ help text, so parsing here is deliberately tolerant: every field read off
 the outer CLI JSON uses ``.get()`` with a safe default, and anything
 unexpected about the outer JSON surfaces as a judge error (exit 2) rather
 than a crash. The CLI's own JSON only wraps the *model's* answer (its
-``result`` field, a string) -- that string is parsed a second time as the
-rubric JSON object, tolerating a fenced ```json code block.
+``result`` field, a string) -- that string is scanned for the first complete
+JSON object that validates as a rubric answer (``parse_judge_reply``),
+tolerating leading prose, a fenced ```json code block, and trailing content
+(counted as ``response_trailing_chars`` in the output). Only the reply is
+parsed leniently; the nonce fences live in the prompt, and the judge has no
+tools, so this does not widen the injection surface.
 
 Exit codes: 0 pass, 1 fail (parsed fine, didn't meet the rubric's pass rule),
 2 judge error (bad/missing CLI output, missing deliverable, bad rubric file).
@@ -76,7 +80,7 @@ import re
 import secrets
 import subprocess  # nosec B404 -- intentional subprocess use to invoke the claude CLI
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -133,7 +137,6 @@ PROMPT_INPUTS: tuple[tuple[str, str], ...] = (
 )
 
 _FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
-_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 class JudgeError(Exception):
@@ -1051,20 +1054,49 @@ def call_claude_cli(prompt: str, settings_path: Path, claude_bin: str) -> dict[s
     return parsed
 
 
-def extract_json_object(text: str) -> dict[str, Any]:
-    """Parse ``text`` as JSON, tolerating a ```json fenced code block (and, as
-    a last resort, surrounding prose) around the object."""
-    fence_match = _FENCE_RE.search(text)
-    candidate = fence_match.group(1) if fence_match else text
-    parsed: dict[str, Any]
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        start, end = candidate.find("{"), candidate.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise
-        parsed = json.loads(candidate[start : end + 1])
-    return parsed
+def iter_json_objects(text: str) -> Iterator[tuple[dict[str, Any], int]]:
+    """Yield ``(object, end_offset)`` for each top-level JSON object found in
+    ``text``, left to right.
+
+    Each ``{`` is tried with ``json.JSONDecoder.raw_decode``, which decodes one
+    complete value and stops, so leading prose, a ```json fence, and anything
+    after the object (more prose, a second object) are all tolerated. After a
+    successful decode the scan resumes past the object, so its nested objects
+    are never yielded on their own."""
+    decoder = json.JSONDecoder()
+    pos = text.find("{")
+    while pos != -1:
+        try:
+            value, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos = text.find("{", pos + 1)
+            continue
+        if isinstance(value, dict):
+            yield value, end
+        pos = text.find("{", end)
+
+
+def parse_judge_reply(text: str) -> tuple[dict[str, int], dict[str, str], int]:
+    """Return ``(scores, notes, trailing_chars)`` from the first JSON object in
+    the judge's reply that passes ``validate_scores``.
+
+    ``trailing_chars`` counts the non-whitespace-trimmed characters after that
+    object that were ignored. If no object decodes at all, raises
+    ``JudgeError`` ("could not parse ..."); if objects decode but none
+    validate, re-raises the first object's validation error."""
+    first_error: JudgeError | None = None
+    for payload, end in iter_json_objects(text):
+        try:
+            scores, notes = validate_scores(payload)
+        except JudgeError as exc:
+            first_error = first_error or exc
+            continue
+        return scores, notes, len(text[end:].rstrip())
+    if first_error is not None:
+        raise first_error
+    raise JudgeError(
+        f"could not parse judge response as JSON: no JSON object found; result={text[:2000]!r}"
+    )
 
 
 def validate_scores(payload: dict[str, Any]) -> tuple[dict[str, int], dict[str, str]]:
@@ -1126,14 +1158,7 @@ def run_judge(
         if not isinstance(inner_text, str):
             raise JudgeError(f"claude CLI JSON has no string 'result' field: {outer!r}")
 
-        try:
-            payload = extract_json_object(inner_text)
-        except json.JSONDecodeError as exc:
-            raise JudgeError(
-                f"could not parse judge response as JSON: {exc}; result={inner_text[:2000]!r}"
-            ) from exc
-
-        scores, notes = validate_scores(payload)
+        scores, notes, trailing_chars = parse_judge_reply(inner_text)
     except JudgeError as exc:
         error: dict[str, Any] = {"error": str(exc)}
         if prompt_stats is not None:
@@ -1149,6 +1174,8 @@ def run_judge(
         "pass": passed,
         "model": outer.get("model"),
         "cost_usd": outer.get("total_cost_usd"),
+        # characters after the graded JSON object that were ignored
+        "response_trailing_chars": trailing_chars,
         **(prompt_stats or {}),
     }
     return result, (0 if passed else 1)

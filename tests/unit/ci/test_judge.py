@@ -172,6 +172,75 @@ def test_fenced_json_code_block_is_tolerated(tmp_path: Path) -> None:
     assert result["scores"] == PASSING_SCORES
 
 
+def _run_with_reply(tmp_path: Path, reply: str) -> tuple[dict, int]:
+    _build_job_dir(tmp_path)
+    stub = _write_stub(tmp_path, _outer(reply), tmp_path / "argv.json")
+    return judge.run_judge(artifact_root=str(tmp_path), db=DB, job=JOB, claude_bin=str(stub))
+
+
+def test_clean_reply_records_zero_trailing_chars(tmp_path: Path) -> None:
+    result, code = _run_with_reply(tmp_path, _inner(PASSING_SCORES))
+
+    assert code == 0, result
+    assert result["response_trailing_chars"] == 0
+
+
+def test_trailing_text_after_the_object_is_ignored_and_recorded(tmp_path: Path) -> None:
+    # Trailing prose with braces defeats a first-"{"-to-last-"}" slice.
+    trailing = "\n\nNote: see {facts.engines} for detail."
+    result, code = _run_with_reply(tmp_path, _inner(PASSING_SCORES) + trailing)
+
+    assert code == 0, result
+    assert result["scores"] == PASSING_SCORES
+    assert result["response_trailing_chars"] == len(trailing.rstrip())
+
+
+def test_second_json_object_after_the_first_is_ignored(tmp_path: Path) -> None:
+    # The shape of the real failure: "Extra data: line 3 column 1".
+    second = json.dumps({"scores": ALL_TWOS, "notes": {}})
+    result, code = _run_with_reply(tmp_path, _inner(PASSING_SCORES) + "\n\n" + second)
+
+    assert code == 0, result
+    assert result["scores"] == PASSING_SCORES
+    assert result["response_trailing_chars"] == len(second) + 2
+
+
+def test_fence_with_leading_prose_and_braces_is_tolerated(tmp_path: Path) -> None:
+    reply = (
+        "I graded each {criterion} below.\n```json\n"
+        + _inner(PASSING_SCORES)
+        + "\n```\nThose are my scores {final}."
+    )
+    result, code = _run_with_reply(tmp_path, reply)
+
+    assert code == 0, result
+    assert result["scores"] == PASSING_SCORES
+    assert result["response_trailing_chars"] > 0
+
+
+def test_invalid_first_object_falls_through_to_a_valid_second(tmp_path: Path) -> None:
+    first = json.dumps({"scores": {"grounded": 9}})
+    result, code = _run_with_reply(tmp_path, first + "\n" + _inner(ALL_TWOS))
+
+    assert code == 1, result
+    assert result["scores"] == ALL_TWOS
+
+
+def test_only_invalid_objects_reports_the_first_validation_error(tmp_path: Path) -> None:
+    first = json.dumps({"scores": {"grounded": 9}})
+    result, code = _run_with_reply(tmp_path, first + "\n" + json.dumps({"other": 1}))
+
+    assert code == 2, result
+    assert "is not an integer in 1-5" in result["error"]
+
+
+def test_garbage_with_braces_is_still_a_parse_error(tmp_path: Path) -> None:
+    result, code = _run_with_reply(tmp_path, "{oops} not {json at all")
+
+    assert code == 2, result
+    assert "could not parse judge response as JSON" in result["error"]
+
+
 def test_front_matter_thresholds_are_honoured(tmp_path: Path) -> None:
     """A custom rubric with a stricter pass_mean than the default must change
     the pass/fail outcome for the exact same scores."""
