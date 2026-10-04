@@ -19,11 +19,11 @@ This is the same validation that runs in production via Bedrock (see `src/agents
 
 ## CRITICAL: How This Works
 
-You have ONE job: read `llm_input.json`, apply the engine capabilities reference below to challenge each consolidation, and write the response. That file contains ALL the information you need — the SQL, the signals, the consolidation decisions. Do NOT:
+You have ONE job: read `llm_input.json`, apply the engine capabilities reference below to challenge each consolidation, and write the response. That file contains ALL the information you need: for each consolidation, the queries it moved with their SQL and signals, plus the distributions for the summary. Do NOT:
 
 - Run ad-hoc Python scripts to "explore" the data
 - Read other artifact files (analysis results, collector output, assignment files)
-- Read portions of files incrementally — read the full `llm_input.json` in one shot
+- Read the file in any other slices than its `read_pages`
 - Investigate the codebase to "understand" how things work
 
 You are a reviewer receiving a complete brief. Read it, apply judgment, write the verdict.
@@ -33,20 +33,22 @@ You are a reviewer receiving a complete brief. Read it, apply judgment, write th
 1. **Read state**
    Read `.modernizer-state.json` for `job_id`, `database_name`.
 
-2. **Read the LLM input (ONE read, full file)**
-   Read `./artifacts/{database_name}/{job_id}/reality-check/llm_input.json`
+2. **Read the LLM input, page by page**
+   File: `./artifacts/{database_name}/{job_id}/reality-check/llm_input.json`
+
+   The file is written one record per line and is small (tens of KB to a few hundred KB). Its second line is `"read_pages": [{"offset": …, "limit": …}, …]`: the Read tool pages that cover the whole file, each small enough for one Read call. First Read it with `offset` 1 and `limit` 2 to get `read_pages`, then Read every page in order with its `offset` and `limit` (the first page starts at line 1). If Read reports a page is too large, read it in two halves (half the `limit` each). Do not page it any other way.
 
    Focus on:
-   - `consolidation_validation.consolidations` — what was moved and why
-   - `consolidation_validation.query_signals` — the signal map per query (keyed by query_id)
-   - `executive_summary.before_distribution` / `after_distribution` — the shift
-   - `executive_summary.unique_value_assessment` — what each engine uniquely provides
+   - `consolidation_validation.consolidations`: what was moved and why. Each entry has `from_engine`, `to_engine`, `query_count` and `moved_queries`, one record per moved query: `query_id`, `type`, `cps` (calls per second), `tables`, `signals` (triage signals such as `complex_joins`, `aggregations`, `subqueries`, `text_search`) and `sql` (the first 500 characters; `sql_chars` gives the full length when it was cut)
+   - `executive_summary.before_distribution` / `after_distribution`: the shift
+   - `executive_summary.unique_value_assessment`: what each engine uniquely provides (query counts per engine)
+   - `executive_summary.absorption_candidates` and `executive_summary.scope` (tables, queries and engines evaluated)
 
-3. **For EACH consolidation, validate the moved queries (using ONLY what you just read)**
+3. **For EACH consolidation, validate its moved queries (using ONLY what you just read)**
 
-   For each consolidation entry (from_engine → to_engine), find the moved queries in `query_signals` and check:
-   - What SQL patterns do these queries have? (the SQL is in the file you already read)
-   - What signals were detected (complex_joins, aggregations, subqueries, text_search, etc.)? (in the file you already read)
+   For each consolidation entry (from_engine → to_engine), go through its `moved_queries` and check:
+   - What SQL patterns do these queries have? (`sql`)
+   - What signals were detected? (`signals`)
    - Can the target engine actually serve these patterns? (use the reference below)
 
    You do NOT need to read any other files. Everything is in `llm_input.json`.
@@ -104,7 +106,7 @@ Do NOT flag:
    {
      "consolidation_corrections": [
        {
-         "query_id": "hash_from_query_signals",
+         "query_id": "query_id_from_moved_queries",
          "original_engine": "aurora_mysql",
          "reason": "3-table JOIN with GROUP BY and HAVING clause requires relational engine"
        }
@@ -113,7 +115,7 @@ Do NOT flag:
    }
    ```
 
-   - Each correction: `query_id`, `original_engine` (the engine it was moved FROM), `reason`
+   - Each correction: `query_id` (copied exactly from `moved_queries`), `original_engine` (the consolidation's `from_engine`), `reason`
    - If ALL consolidations are genuinely valid (rare for Aurora consolidations), use `[]`
    - **Do not default to empty.** Actually read the SQL and think critically.
 

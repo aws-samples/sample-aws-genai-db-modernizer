@@ -12,6 +12,7 @@ Seam functions:
 from __future__ import annotations
 
 import inspect
+import json
 from unittest.mock import MagicMock, patch
 
 from src.agents.referee.reality_check_handler import (
@@ -126,9 +127,14 @@ def _mock_store() -> MagicMock:
     def write_json(path, data):
         written[path] = data
 
+    def write_bytes(path, data):
+        # The external request is rendered JSON text (#285)
+        written[path] = json.loads(data.decode())
+
     store.read_json.side_effect = read_json
     store.exists.side_effect = exists
     store.write_json.side_effect = write_json
+    store.write_bytes.side_effect = write_bytes
     store._written = written
     return store
 
@@ -276,15 +282,15 @@ class TestPrepareLlmInputHasCorrectStructure:
         cv = payload["consolidation_validation"]
         assert "consolidations" in cv
 
-    def test_consolidation_validation_has_collector_output(self):
+    def test_consolidation_validation_is_compact(self):
+        """No full collector or analysis outputs: the request must stay readable (#285)."""
         payload = prepare_reality_check_llm_input(self._get_det())
         cv = payload["consolidation_validation"]
-        assert "collector_output" in cv
+        assert set(cv) == {"consolidations"}
 
-    def test_consolidation_validation_has_analysis_outputs(self):
+    def test_has_read_pages(self):
         payload = prepare_reality_check_llm_input(self._get_det())
-        cv = payload["consolidation_validation"]
-        assert "analysis_outputs" in cv
+        assert payload["read_pages"][0]["offset"] == 1
 
     def test_executive_summary_has_before_distribution(self):
         payload = prepare_reality_check_llm_input(self._get_det())
@@ -320,13 +326,17 @@ class TestPrepareLlmInputHasCorrectStructure:
         """The consolidations in the payload match those from the deterministic result."""
         det = self._get_det()
         payload = prepare_reality_check_llm_input(det)
-        assert payload["consolidation_validation"]["consolidations"] == det["consolidations"]
+        reviewed = payload["consolidation_validation"]["consolidations"]
+        assert [{k: v for k, v in c.items() if k != "moved_queries"} for c in reviewed] == det[
+            "consolidations"
+        ]
         assert payload["executive_summary"]["consolidations"] == det["consolidations"]
 
-    def test_collector_output_matches_deterministic(self):
+    def test_each_consolidation_lists_its_moved_queries(self):
         det = self._get_det()
         payload = prepare_reality_check_llm_input(det)
-        assert payload["consolidation_validation"]["collector_output"] == det["collector_output"]
+        for c in payload["consolidation_validation"]["consolidations"]:
+            assert len(c["moved_queries"]) == c["query_count"]
 
     def test_distributions_match_deterministic(self):
         det = self._get_det()

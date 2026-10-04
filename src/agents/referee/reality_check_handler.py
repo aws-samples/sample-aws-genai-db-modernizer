@@ -30,6 +30,12 @@ from src.agents.referee.reality_check import (
     rerun_aurora_absorption,
     run_reality_check,
 )
+from src.agents.referee.reality_check_request import (
+    build_reality_check_request,
+    query_signal_map,
+    render_reality_check_request,
+    with_read_pages,
+)
 from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
@@ -149,39 +155,18 @@ def run_reality_check_deterministic(
 
 
 def prepare_reality_check_llm_input(deterministic_result: dict) -> dict:
-    """Format the LLM input payload from a deterministic result dict.
+    """Format the external LLM request from a deterministic result dict (#285).
 
-    Returns a dict with two sub-keys:
-        consolidation_validation: inputs for validate_consolidations()
-        executive_summary: context for _generate_executive_summary()
+    Returns a compact, bounded request (``reality_check_request``):
+        read_pages: Read tool pages covering the rendered request
+        consolidation_validation: the consolidations, each with its moved queries
+        executive_summary: context for the executive summary
     """
-    triage = deterministic_result.get("triage", {})
-    signals = triage.get("signals", [])
-    query_signals_map: dict[str, list] = defaultdict(list)
-    for signal in signals:
-        for qid in signal.get("query_ids", []):
-            query_signals_map[qid].append(signal.get("signal", ""))
-
-    return {
-        "consolidation_validation": {
-            "consolidations": deterministic_result["consolidations"],
-            "collector_output": deterministic_result["collector_output"],
-            "analysis_outputs": deterministic_result["analysis_outputs"],
-            "query_signals": dict(query_signals_map),
-        },
-        "executive_summary": {
-            "before_distribution": deterministic_result["before_distribution"],
-            "after_distribution": deterministic_result["after_distribution"],
-            "consolidations": deterministic_result["consolidations"],
-            "unique_value_assessment": deterministic_result["unique_value_assessment"],
-            "architectural_patterns": deterministic_result["architectural_patterns"],
-            "recommendations": deterministic_result["recommendations"],
-            "absorption_candidates": absorption_candidates(
-                deterministic_result["before_distribution"],
-                deterministic_result["after_distribution"],
-            ),
-        },
-    }
+    det = deterministic_result
+    request = build_reality_check_request(
+        det, absorption_candidates(det["before_distribution"], det["after_distribution"])
+    )
+    return with_read_pages(request)
 
 
 def absorption_candidates(
@@ -351,7 +336,8 @@ def run_reality_check_handler(
     elif llm_mode == "external":
         llm_input = prepare_reality_check_llm_input(det)
         llm_input_key = f"{database_name}/{job_id}/reality-check/llm_input.json"
-        store.write_json(llm_input_key, llm_input)
+        # One record per line, so the Read pages in its header stay small (#285)
+        store.write_bytes(llm_input_key, render_reality_check_request(llm_input).encode())
         awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
         store.write_json(awaiting_key, {"status": "awaiting_llm", "input_key": llm_input_key})
         print(f"[reality-check] LLM input written to {llm_input_key} — awaiting external LLM")
@@ -605,18 +591,12 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_map = {q["query_id"]: q for q in queries}
 
-    # Build signal map from triage — same logic as the original handler
-    signals = det.get("triage", {}).get("signals", [])
-    query_signals_map: dict[str, list[str]] = defaultdict(list)
-    for signal in signals:
-        for qid in signal.get("query_ids", []):
-            query_signals_map[qid].append(signal.get("signal", ""))
-
     corrections = validate_consolidations(
         consolidations=det["consolidations"],
         revised_assignments=det["revised_assignments"],
         query_map=query_map,
-        query_signals=dict(query_signals_map),
+        query_signals=query_signal_map(det.get("triage", {})),
+        original_assignments=det["assignment"].get("query_assignments"),
     )
     if corrections:
         print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")

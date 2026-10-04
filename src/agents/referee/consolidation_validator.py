@@ -19,6 +19,8 @@ import json
 import logging
 import os
 
+from src.agents.referee.reality_check_request import moved_queries, moved_query_record
+
 logger = logging.getLogger(__name__)
 
 # Engine-specific context for the LLM to understand architectural constraints
@@ -59,6 +61,7 @@ def validate_consolidations(
     revised_assignments: list[dict],
     query_map: dict[str, dict],
     query_signals: dict[str, list[str]],
+    original_assignments: list[dict] | None = None,
 ) -> list[dict]:
     """Validate consolidation decisions using an LLM.
 
@@ -71,6 +74,8 @@ def validate_consolidations(
         revised_assignments: The revised query assignments after consolidation
         query_map: {query_id: query_pattern_dict} from collector
         query_signals: {query_id: [signal_names]} from triage
+        original_assignments: the assignments before consolidation; with them a
+            moved query is found by its engine change (see ``moved_queries``)
 
     Returns:
         List of correction dicts: [{"query_id": str, "original_engine": str,
@@ -80,57 +85,34 @@ def validate_consolidations(
     if not consolidations:
         return []
 
-    # Build the validation requests per consolidation
     corrections: list[dict] = []
 
     for consolidation in consolidations:
         from_engine = consolidation["from_engine"]
         to_engine = consolidation["to_engine"]
 
-        # Find the queries that were moved in this consolidation
-        moved_queries = [
-            qa
-            for qa in revised_assignments
-            if qa["assigned_engine"] == to_engine
-            and f"consolidated from {from_engine}" in qa.get("assignment_reason", "")
+        # The same records the external request lists for this consolidation (#285)
+        query_details = [
+            moved_query_record(qa["query_id"], query_map, query_signals)
+            for qa in moved_queries(consolidation, revised_assignments, original_assignments)
         ]
 
-        if not moved_queries:
-            continue
-
-        # Build query details for the LLM
-        query_details = []
-        for qa in moved_queries[:MAX_QUERIES_PER_CALL]:
-            qid = qa["query_id"]
-            q = query_map.get(qid, {})
-            signals = query_signals.get(qid, [])
-            query_details.append(
-                {
-                    "query_id": qid,
-                    "sql": q.get("query_text", "")[:500],  # Truncate long SQL
-                    "type": q.get("query_type", ""),
-                    "tables": q.get("tables_accessed", []),
-                    "signals": signals,
-                    "cps": q.get("calls_per_second", 0),
-                }
+        # Every moved query is reviewed, MAX_QUERIES_PER_CALL per call
+        for start in range(0, len(query_details), MAX_QUERIES_PER_CALL):
+            flagged = _call_llm_validator(
+                from_engine=from_engine,
+                to_engine=to_engine,
+                queries=query_details[start : start + MAX_QUERIES_PER_CALL],
             )
-
-        # Call LLM for validation
-        flagged = _call_llm_validator(
-            from_engine=from_engine,
-            to_engine=to_engine,
-            queries=query_details,
-        )
-
-        for entry in flagged:
-            corrections.append(
-                {
-                    "query_id": entry["query_id"],
-                    "original_engine": from_engine,
-                    "failed_target": to_engine,
-                    "reason": entry.get("reason", "LLM flagged as unserviceable"),
-                }
-            )
+            for entry in flagged:
+                corrections.append(
+                    {
+                        "query_id": entry["query_id"],
+                        "original_engine": from_engine,
+                        "failed_target": to_engine,
+                        "reason": entry.get("reason", "LLM flagged as unserviceable"),
+                    }
+                )
 
     return corrections
 
