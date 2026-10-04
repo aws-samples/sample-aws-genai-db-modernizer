@@ -5,6 +5,7 @@ publishing."""
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -97,14 +98,23 @@ def fmt_num(value: Any, decimals: int = 2) -> str:
 
     Sums of float metrics carry binary noise (``17.460499999999996``); rounding
     here keeps it out of every deliverable (#259). Trailing zeros are dropped
-    (``3.0`` -> ``3``). Anything that is not a number is returned as ``str()``.
+    (``3.0`` -> ``3``); a value that rounds to zero is ``0`` (never ``-0``), and a
+    small non-zero one is ``<0.01`` (``>-0.01`` if negative) rather than ``0``.
+    NaN and infinities print as an en dash. Anything that is not a number is
+    returned as ``str()``.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, int):
         return f"{value:,}"
+    if not math.isfinite(value):
+        return "\u2013"
+    step = 10.0**-decimals
+    if value != 0 and abs(value) < step / 2:
+        return f"<{step:.{decimals}f}" if value > 0 else f">-{step:.{decimals}f}"
     text = f"{value:,.{decimals}f}"
-    return text.rstrip("0").rstrip(".") if "." in text else text
+    text = text.rstrip("0").rstrip(".") if "." in text else text
+    return "0" if text in ("-0", "") else text
 
 
 def _fmt_usd(x: Any) -> str:
@@ -160,13 +170,23 @@ _PER_ENGINE_APS = re.compile(
 )
 
 
-def label_in_scope_access_patterns(text: str) -> str:
+def label_in_scope_access_patterns(text: str, report: dict[str, Any] | None = None) -> str:
     """``dynamodb: 15 target tables, 47 access patterns`` -> ``..., 47 in-scope access patterns``.
 
-    Idempotent: after rewording, the digits are followed by "in-scope", not
-    "access", so the text is never matched again.
+    Only a count that equals the engine's in-scope total in ``report`` (see
+    ``access_pattern_scope``) is relabelled, so an older or fallback summary that
+    counted something else is never given a label that is not true. Idempotent:
+    after rewording, the digits are followed by "in-scope", not "access".
     """
-    return _PER_ENGINE_APS.sub(r"\1: \2, \3 in-scope \4", text)
+    scope = access_pattern_scope(report or {})
+
+    def sub(m: re.Match[str]) -> str:
+        in_scope = scope.get(m.group(1), (None, 0))[0]
+        if in_scope is None or int(m.group(3)) != in_scope:
+            return m.group(0)
+        return f"{m.group(1)}: {m.group(2)}, {m.group(3)} in-scope {m.group(4)}"
+
+    return _PER_ENGINE_APS.sub(sub, text)
 
 
 # "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)." reads as 4 of
@@ -179,14 +199,20 @@ _RESOLVED_RISKS = re.compile(
 
 def label_resolved_risks(text: str) -> str:
     """``8 risk(s) identified (overall: LOW; 4 resolved ...)`` -> ``8 open risk(s) ...; 4 more ...``."""
-    return _RESOLVED_RISKS.sub(
-        r"\1 open risk(s) (overall: \2); \3 more were resolved by the assignment.", text
-    )
+
+    def sub(m: re.Match[str]) -> str:
+        n = int(m.group(3))
+        return (
+            f"{m.group(1)} open risk(s) (overall: {m.group(2)}); {n} more "
+            f"{plural_verb(n, 'was', 'were')} resolved by the assignment."
+        )
+
+    return _RESOLVED_RISKS.sub(sub, text)
 
 
-def label_summary_counts(text: str) -> str:
+def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str:
     """Name what each count in the deterministic summary counts (#255, #258)."""
-    return label_resolved_risks(label_in_scope_access_patterns(text))
+    return label_resolved_risks(label_in_scope_access_patterns(text, report))
 
 
 def _risk_engine_and_body(desc: Any) -> tuple[str, str]:
@@ -329,6 +355,15 @@ def _engine_role(
     return "Assessed"
 
 
+# Scope-cell suffix for source tables an engine's design serves although their
+# recommended engine is another one, and the footnote that defines it (#257).
+SHARED_TABLES_LABEL = "incl. shared"
+SHARED_TABLES_NOTE = (
+    "\u201cincl. shared\u201d counts the source tables the engine\u2019s schema design "
+    "serves, including tables also served by another engine."
+)
+
+
 def _design_source_tables(tables: Any) -> int:
     """Distinct source tables an engine's schema design reads from."""
     if not isinstance(tables, list):
@@ -381,7 +416,11 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
                 # Queries, not tables, are assigned, so the design can also serve
                 # tables mapped to another engine; say so when it does (#257).
                 f"{n} source {plural_noun(n, 'table')}"
-                + (f" ({served} incl. shared)" if isinstance(n, int) and served > n else "")
+                + (
+                    f" ({served} {SHARED_TABLES_LABEL})"
+                    if isinstance(n, int) and served > n
+                    else ""
+                )
                 if n is not None
                 else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
             )
@@ -682,7 +721,7 @@ def render_decision_report_html(
     )
     summary = summary or report.get("summary_deterministic")
     if summary and summary == report.get("summary_deterministic"):
-        summary = label_summary_counts(summary)
+        summary = label_summary_counts(summary, report)
     if summary:
         out += [
             "<h2 class=section-title>Executive summary</h2>",
@@ -755,6 +794,8 @@ def render_decision_report_html(
                 f"{', '.join(esc(x) for x in migr)}; the per-engine costs above reconcile to the "
                 "projected total."
             )
+        if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in engines):
+            note_bits.append(SHARED_TABLES_NOTE)
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 

@@ -73,7 +73,7 @@ class TestAccessPatternScope:
         assert "### elasticache (1 target object, 13 access patterns)" in md
 
     def test_summary_labels_per_engine_counts_as_in_scope(self) -> None:
-        out = renderers.label_in_scope_access_patterns(RUN5_SUMMARY)
+        out = renderers.label_in_scope_access_patterns(RUN5_SUMMARY, _design_report())
         assert "dynamodb: 15 target tables, 47 in-scope access patterns;" in out
         assert "elasticache: 12 key designs, 13 in-scope access patterns;" in out
         # The aggregate was already labelled and is left alone.
@@ -81,8 +81,19 @@ class TestAccessPatternScope:
         assert "in-scope in-scope" not in out
 
     def test_summary_labelling_is_idempotent(self) -> None:
-        once = renderers.label_in_scope_access_patterns(RUN5_SUMMARY)
-        assert renderers.label_in_scope_access_patterns(once) == once
+        once = renderers.label_in_scope_access_patterns(RUN5_SUMMARY, _design_report())
+        assert renderers.label_in_scope_access_patterns(once, _design_report()) == once
+
+    def test_count_that_is_not_the_in_scope_total_is_left_alone(self) -> None:
+        """An older or fallback summary may count all patterns (51); labelling that
+        "in-scope" would be false (#267 review)."""
+        text = RUN5_SUMMARY.replace("47 access patterns", "51 access patterns")
+        out = renderers.label_in_scope_access_patterns(text, _design_report())
+        assert "dynamodb: 15 target tables, 51 access patterns;" in out
+        assert "13 in-scope access patterns" in out
+
+    def test_without_query_groups_nothing_is_labelled(self) -> None:
+        assert renderers.label_in_scope_access_patterns(RUN5_SUMMARY, {}) == RUN5_SUMMARY
 
     def test_deck_summary_says_in_scope(self) -> None:
         rep = {**_design_report(), "summary_deterministic": RUN5_SUMMARY}
@@ -250,7 +261,7 @@ def _risk_slide(risks: list[dict[str, Any]]) -> tuple[list[list[str]], str]:
         for sh in slide.shapes
         if sh.has_text_frame
         and ("risk" in sh.text_frame.text.lower())
-        and ("mitigation" in sh.text_frame.text.lower() or "remain" in sh.text_frame.text.lower())
+        and any(w in sh.text_frame.text.lower() for w in ("mitigation", "remain", "recognised"))
     )
     return rows, caption
 
@@ -264,14 +275,19 @@ class TestRiskProfileSeverityFallback:
         rows, caption = _risk_slide(risks)
         # The busiest four, by affected-query count; the count comes from query_ids.
         assert [r[0] for r in rows[1:]] == ["RISK-002", "RISK-005", "RISK-003", "RISK-001"]
-        assert rows[1][3] == "6"
-        assert caption.startswith("No HIGH risks remain; the top MEDIUM risks are below.")
+        assert rows[1][4] == "6"
+        # Each row shows its own mitigation, not mitigation_strategies[0].
+        assert rows[1][3] == "Keep a counter per key via UpdateItem."
+        assert caption.startswith("No HIGH risks remain; the table shows the top MEDIUM risks.")
+        assert "below" not in caption and "above" not in caption
         assert "Each HIGH risk" not in caption
 
     def test_only_low_risks_lists_the_low_risks(self) -> None:
         rows, caption = _risk_slide([_risk("RISK-001", "LOW", 2)])
         assert [r[0] for r in rows[1:]] == ["RISK-001"]
-        assert caption.startswith("No HIGH or MEDIUM risks remain; the top LOW risk is below.")
+        assert caption.startswith(
+            "No HIGH or MEDIUM risks remain; the table shows the top LOW risk."
+        )
 
     def test_high_risks_keep_the_high_caption_and_rows(self) -> None:
         rows, caption = _risk_slide([_risk("RISK-001", "MEDIUM", 9), _risk("RISK-002", "HIGH", 1)])
@@ -399,3 +415,66 @@ class TestNumberFormatting:
         f = pptx_report.derive(_cache_report(), exp)
         slide = pptx_report.slide_workload(pptx_report.open_deck(keep=1), f)
         assert any("1,337.5 queries/sec" in t for t in _shape_texts(slide))
+
+
+class TestReviewFollowUps:
+    """#267 review: singular resolved risk, unrated severities, colours, footnote."""
+
+    def test_one_resolved_risk_is_singular(self) -> None:
+        text = "3 risk(s) identified (overall: LOW; 1 resolved by the assignment)."
+        assert renderers.label_resolved_risks(text) == (
+            "3 open risk(s) (overall: LOW); 1 more was resolved by the assignment."
+        )
+
+    def test_risks_without_a_recognised_severity_are_shown_as_unrated(self) -> None:
+        risks = [_risk("RISK-001", "SEVERE", 2), _risk("RISK-002", "", 5)]
+        rows, caption = _risk_slide(risks)
+        assert [r[0] for r in rows[1:]] == ["RISK-002", "RISK-001"]
+        assert "No open risks remain" not in caption
+        assert caption.startswith("No risk has a recognised severity; the table shows the top")
+        f = pptx_report.derive({**_cache_report(), "risk_assessment": {"risks": risks}}, {})
+        assert f["sev"] == {"UNRATED": 2}
+
+    def test_severity_bar_uses_the_table_colour(self) -> None:
+        f = pptx_report.derive(
+            {**_cache_report(), "risk_assessment": {"risks": [_risk("RISK-001", "LOW", 1)]}}, {}
+        )
+        slide = pptx_report.slide_risk(pptx_report.open_deck(keep=1), f)
+        fills = {
+            str(sh.fill.fore_color.rgb)
+            for sh in slide.shapes
+            if sh.shape_type == 1 and sh.fill.type == 1 and sh.height < 300000
+        }
+        assert str(pptx_report._risk_accent("LOW")) in fills
+        assert str(pptx_report.BLUE) not in fills
+
+    def test_shared_tables_footnote_in_decision_report_and_deck(self) -> None:
+        html = renderers.render_decision_report_html(_shared_tables_report())
+        assert "including tables also served by another engine" in html
+        f = pptx_report.derive(_shared_tables_report(), {})
+        slide = pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
+        assert any(
+            "including tables also served by another engine" in t for t in _shape_texts(slide)
+        )
+
+    def test_no_footnote_without_shared_tables(self) -> None:
+        rep = _shared_tables_report()
+        rep["schema_designs"]["dynamodb"]["tables"] = []
+        assert "also served by another engine" not in renderers.render_decision_report_html(rep)
+
+
+class TestFmtNumEdges:
+    def test_never_negative_zero(self) -> None:
+        assert renderers.fmt_num(-0.0) == "0"
+        assert renderers.fmt_num(-0.004) == ">-0.01"
+        assert renderers.fmt_num(0.0) == "0"
+
+    def test_small_positive_is_not_zero(self) -> None:
+        assert renderers.fmt_num(0.004) == "<0.01"
+        assert renderers.fmt_num(0.005) == "0.01"
+        assert renderers.fmt_num(0.04, 1) == "<0.1"
+
+    def test_non_finite(self) -> None:
+        assert renderers.fmt_num(float("nan")) == "\u2013"
+        assert renderers.fmt_num(float("inf")) == "\u2013"
+        assert renderers.fmt_num(float("-inf")) == "\u2013"

@@ -57,7 +57,10 @@ from pptx.util import Inches, Pt
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 
 from .renderers import (
+    SHARED_TABLES_LABEL,
+    SHARED_TABLES_NOTE,
     _architecture_engines,
+    _repeats,
     filtered_risks,
     label_summary_counts,
     plural_noun,
@@ -129,10 +132,9 @@ SIGNAL_LABEL = {
     "text_search": "Full-text search (LIKE, MATCH, tsvector)",
     "time_series": "Time-series / event log",
 }
-# The Risk Profile quotes one mitigation in a 1.05in card at 12pt: four lines of
-# ~150 characters, less the fixed lead-in sentence. Free text from the report, so
-# it is clipped rather than allowed to overflow the card.
-MITIGATION_MAX_CHARS = 380
+# The Risk Profile shows each listed risk's own mitigation in a table cell; free
+# text from the report, so it is clipped rather than allowed to overflow the row.
+MITIGATION_MAX_CHARS = 52
 # A migration target the assessment is at least this confident in is sequenced before
 # the ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
@@ -527,6 +529,13 @@ _REATTRIBUTED_LEAD = re.compile(
 
 
 SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+# Risks whose severity is none of SEVERITY_ORDER are shown, not dropped (#249 review).
+UNRATED = "UNRATED"
+
+
+def _severity(risk: dict[str, Any]) -> str:
+    level = str(risk.get("severity") or "").upper()
+    return level if level in SEVERITY_ORDER else UNRATED
 
 
 def _risk_query_count(risk: dict[str, Any]) -> int:
@@ -543,18 +552,19 @@ def _risk_caption(level: str, n_shown: int) -> str:
 
     The fixed "Each HIGH risk carries ..." sentence sat above an empty table on a
     run whose risks were all MEDIUM; the caption now names what the table lists.
+    It sits below the table, so it does not point up or down.
     """
     if level in ("CRITICAL", "HIGH"):
-        return f"Each {level} risk carries an affected-query count and a documented mitigation. "
+        return f"Each {level} risk carries an affected-query count and a documented mitigation."
     if not level:
-        return "No open risks remain. "
+        return "No open risks remain."
+    risks_word = plural_noun(n_shown, "risk")
+    if level == UNRATED:
+        return f"No risk has a recognised severity; the table shows the top unrated {risks_word}."
     above = " or ".join(
         k for k in ("HIGH", "MEDIUM") if SEVERITY_ORDER.index(k) < SEVERITY_ORDER.index(level)
     )
-    return (
-        f"No {above} risks remain; the top {level} "
-        f"{plural_noun(n_shown, 'risk')} {plural_verb(n_shown, 'is', 'are')} below. "
-    )
+    return f"No {above} risks remain; the table shows the top {level} {risks_word}."
 
 
 def clean_risk_text(description: str) -> tuple[str, str]:
@@ -785,7 +795,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     risks = sorted(filtered_risks(rep), key=lambda r: str(r.get("risk_id")))
     sev: dict[str, int] = {}
     for r in risks:
-        k = str(r.get("severity", "")).upper()
+        k = _severity(r)
         sev[k] = sev.get(k, 0) + 1
     high = [r for r in risks if str(r.get("severity", "")).upper() == "HIGH"]
     high_by_engine: dict[str, int] = {}
@@ -800,9 +810,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # The Risk Profile table lists the highest severity present, so a run with no
     # HIGH risks still shows its top MEDIUM (or LOW) risks rather than an empty
     # table (#249). Within that severity, the risks touching the most queries first.
-    shown_level = next((k for k in SEVERITY_ORDER if sev.get(k)), "")
+    shown_level = next((k for k in (*SEVERITY_ORDER, UNRATED) if sev.get(k)), "")
     shown_risks = sorted(
-        (r for r in risks if str(r.get("severity", "")).upper() == shown_level),
+        (r for r in risks if _severity(r) == shown_level),
         key=lambda r: (-_risk_query_count(r), str(r.get("risk_id"))),
     )
     if shown_level == "HIGH":
@@ -983,7 +993,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "workload": workload,
         "summary": prettify_engines(
             label_summary_counts(
-                name_target_tables(strip_cost(str(rep.get("summary_deterministic") or "")))
+                name_target_tables(strip_cost(str(rep.get("summary_deterministic") or ""))),
+                rep,
             )
         ),
         "n_tables": len(rep.get("table_mappings") or []),
@@ -1128,7 +1139,12 @@ def slide_summary(prs, f):
             if kept
             else ""
         )
-        + "Full detail in the Decision and Engineering reports.",
+        + "Full detail in the Decision and Engineering reports."
+        + (
+            f" {SHARED_TABLES_NOTE}"
+            if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in f["engines"])
+            else ""
+        ),
         t=5.92,
         color=MUTED,
         size=9.5,
@@ -1433,7 +1449,9 @@ def slide_risk(prs, f):
     n_high = f["sev"].get("HIGH", 0)
     set_title(s, "Risk Profile")
     mix = ", ".join(
-        f"{f['sev'][k]} {k}" for k in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if f["sev"].get(k)
+        f"{f['sev'][k]} {k.lower() if k == UNRATED else k}"
+        for k in (*SEVERITY_ORDER, UNRATED)
+        if f["sev"].get(k)
     )
     n_risks = len(f["risks"])
     sub = f"{n_risks} {plural_noun(n_risks, 'risk')}: {mix}"
@@ -1441,13 +1459,14 @@ def slide_risk(prs, f):
         sub += f"  ·  {_root_cause_sentence(n_high, f['high_type'])}"
     set_subtitle(s, sub)
 
-    present = [
-        (k, c) for k, c in (("HIGH", PINK), ("MEDIUM", YELLOW), ("LOW", BLUE)) if f["sev"].get(k)
-    ]
+    # Same colours as the table's Engine column (_risk_accent). Up to three rows
+    # keep the old spacing; more are packed so they stay clear of the BY TYPE card.
+    present = [(k, _risk_accent(k)) for k in (*SEVERITY_ORDER, UNRATED) if f["sev"].get(k)]
+    step = 0.50 if len(present) <= 3 else 1.20 / len(present)
     top_n = max((f["sev"].get(k, 0) for k, _ in present), default=1) or 1
     for i, (k, colour) in enumerate(present):
         cnt = f["sev"][k]
-        y = BODY_TOP + 0.10 + i * 0.50
+        y = BODY_TOP + 0.10 + i * step
         tf = textbox(s, 0.67, y - 0.04, 1.05, 0.32)
         para(tf, k, size=11.0, bold=True, color=colour, first=True)
         bar(s, 1.75, y, max(2.9 * cnt / top_n, 0.05), 0.24, colour)
@@ -1459,16 +1478,22 @@ def slide_risk(prs, f):
     para(tf, "BY TYPE", size=9.5, bold=True, color=MUTED, first=True)
     para(tf, "  ·  ".join(f"{c} {t}" for t, c in f["by_type"][:3]), size=11.5, color=PAPER)
 
-    rows = [("#", "Engine", "What it is", "Queries")]
+    # Each row carries its own mitigation (#249), clipped; a mitigation that only
+    # restates the risk is not repeated.
+    rows = [("#", "Engine", "What it is", "Mitigation", "Queries")]
     for r in f["shown_risks"][:4]:
         desc, _ = clean_risk_text(str(r.get("description") or ""))
         n_q = _risk_query_count(r)
         eng = risk_engine(str(r.get("description") or "")) or "(general)"
+        mit = str(r.get("mitigation") or "").strip()
+        shown = clip(desc, 70)
         rows.append(
             (
                 str(r.get("risk_id") or ""),
                 ENGINE_LABEL.get(eng, eng),
-                clip(desc, 78),
+                shown,
+                # Repeated only if the reader can already see it in the clipped text.
+                clip(mit, MITIGATION_MAX_CHARS) if mit and not _repeats(mit, shown) else "—",
                 str(n_q) if n_q else "",
             )
         )
@@ -1478,7 +1503,7 @@ def slide_risk(prs, f):
         BODY_TOP,
         6.05,
         rows,
-        col_w=[1.05, 1.55, 2.55, 0.90],
+        col_w=[0.85, 1.00, 1.90, 1.55, 0.75],
         head_size=10.0,
         body_size=9.0,
         row_h=0.56,
@@ -1488,21 +1513,14 @@ def slide_risk(prs, f):
 
     card(s, 0.67, 5.05, 11.43, 1.05, GREEN)
     tf = textbox(s, 0.90, 5.17, 11.0, 0.9)
-    mit = f["mitigations"][0] if f["mitigations"] else ""
     para(
         tf,
-        (
-            _risk_caption(f["shown_level"], min(len(f["shown_risks"]), 4))
-            + (
-                f"Specified mitigation: {clip(mit, MITIGATION_MAX_CHARS)}"
-                if mit
-                else (
-                    "Mitigations are listed per risk in the Engineering Report."
-                    if f["shown_risks"]
-                    else ""
-                )
-            )
-        ).strip(),
+        _risk_caption(f["shown_level"], min(len(f["shown_risks"]), 4))
+        + (
+            " The full mitigation of every risk is in the Engineering Report."
+            if f["shown_risks"]
+            else ""
+        ),
         size=12.0,
         color=WHITE,
         first=True,
