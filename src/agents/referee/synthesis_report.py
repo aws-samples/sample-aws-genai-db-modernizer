@@ -1259,16 +1259,20 @@ def build_architecture_recommendation(
         engine = mapping["recommended_database"]
         engine_tables.setdefault(engine, []).append(mapping["source_table"])
 
-    # An engine with assigned queries is part of the architecture even when no
-    # schema design ran (llm_mode=none, #281): table_mappings come from schema
-    # design, so it has no tables yet, but leaving it out made the rationale
-    # read "Hybrid architecture: ." with no databases.
+    # When NO engine has a schema design (llm_mode=none, #281), table_mappings
+    # are empty, so every engine with workload is listed with no tables; leaving
+    # them all out made the rationale read "Hybrid architecture: .". In a run
+    # where some engine was designed, an engine with workload but no design is
+    # the retained engine: it stays out of databases, so the report renderers
+    # call it "Retained" and the deck puts it in the no-migration Wave 1.
+    no_schema_design = not any(r.get("schema_design_available") for r in ranking)
     databases = []
     for r in ranking:
         engine = r["target"]
         tables = engine_tables.get(engine, [])
-        if not tables and engine not in engines_with_workload:
-            continue
+        if not tables and not r.get("schema_design_available"):
+            if not (no_schema_design and engine in engines_with_workload):
+                continue
 
         databases.append(
             {
@@ -1281,7 +1285,7 @@ def build_architecture_recommendation(
         )
 
     rationale = _architecture_rationale(arch_type, databases, ranking)
-    if databases and not any(r.get("schema_design_available") for r in ranking):
+    if databases and no_schema_design:
         rationale += " Schema design was not run, so no tables are allocated yet."
     return {
         "databases": databases,
