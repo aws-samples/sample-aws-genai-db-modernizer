@@ -135,7 +135,11 @@ def load_agent_input() -> dict:
         raise ValueError("COLLECTOR_OUTPUT_PATH and ANALYSIS_OUTPUT_PATH must be set")
 
     with open(collector_path, encoding="utf-8") as f:
-        collector = CollectorOutputContract.model_validate(json.load(f))
+        raw_collector = json.load(f)
+    collector = CollectorOutputContract.model_validate(raw_collector)
+    # Owner writes on the cached tables, read-only context for invalidation (#296);
+    # the contract projection below would drop it.
+    invalidation_context = raw_collector.get("cache_invalidation_context")
 
     with open(analysis_path, encoding="utf-8") as f:
         analysis = AnalysisOutputContract.model_validate(json.load(f))
@@ -159,6 +163,7 @@ def load_agent_input() -> dict:
         "analysis": agent_analysis.model_dump(mode="json"),
         "context": agent_context.model_dump(mode="json"),
         "decision_trace": decision_trace,
+        **({"cache_invalidation_context": invalidation_context} if invalidation_context else {}),
     }
 
 

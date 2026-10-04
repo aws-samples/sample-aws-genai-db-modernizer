@@ -8,6 +8,10 @@ ElastiCache is a cache layer, not a system of record. Every query you receive
 is owned by another engine (its `assigned_engine`) and fronted by the cache
 (the cache overlay): design cache-aside keys with TTLs and invalidation on
 the owner's writes. The owner serves every cache miss and every write.
+The owners' writes on the cached tables arrive as read-only context in
+`cache_invalidation_context.write_queries` (`context_only: true`): reference
+them only in `cache_invalidation[].source_write_query_ids`, never as access
+patterns or keys.
 
 ## Design Phases
 

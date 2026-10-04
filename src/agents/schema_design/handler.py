@@ -23,6 +23,7 @@ import tempfile
 from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
+from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
 from src.agents.schema_design.scope import (
     EMPTY_REPORT,
     ScopeReport,
@@ -121,7 +122,57 @@ def filter_collector_for_assignment(
     filtered["database_schema"] = dict(collector_output.get("database_schema", {}))
     filtered["database_schema"]["tables"] = filtered_tables
 
+    if target_engine in CACHE_OVERLAY_ENGINES:
+        writes = _invalidation_writes(original_queries, assignment, in_scope_tables)
+        if writes:
+            filtered["cache_invalidation_context"] = {
+                "note": INVALIDATION_CONTEXT_NOTE,
+                "write_queries": writes,
+            }
+
     return filtered
+
+
+INVALIDATION_CONTEXT_NOTE = (
+    "Read-only context, not design scope: the owner engines' write queries on the "
+    "cached tables. Use their query_id values only in "
+    "cache_invalidation[].source_write_query_ids; never design keys or access "
+    "patterns for them."
+)
+
+
+def _invalidation_writes(
+    queries: list[dict], assignment: dict, cached_tables: set[str]
+) -> list[dict]:
+    """The owners' in-scope writes on the tables the cache fronts (#296).
+
+    A cache-aside design must say which writes invalidate each key, but the cache's
+    scope is reads only. These writes are passed as marked context so
+    ``source_write_query_ids`` can be filled; the scope check never treats them as
+    the cache's design scope.
+    """
+    in_scope = {
+        qa.get("query_id")
+        for qa in assignment.get("query_assignments") or []
+        if isinstance(qa, dict) and qa.get("in_scope", True)
+    }
+    out = []
+    for q in queries:
+        if q.get("query_id") not in in_scope or not is_write_query(q):
+            continue
+        if not cached_tables & set(q.get("tables_accessed") or []):
+            continue
+        out.append(
+            {
+                "query_id": q.get("query_id"),
+                "query_type": q.get("query_type"),
+                "query_text": q.get("query_text"),
+                "tables_accessed": q.get("tables_accessed") or [],
+                "calls_per_second": q.get("calls_per_second"),
+                "context_only": True,
+            }
+        )
+    return out
 
 
 def prepare_schema_design_input(

@@ -28,6 +28,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    Produce JSON conforming to `output_schema` from the request file. Key principles:
    - Design only the tables and queries assigned to this engine; finalize rejects others. The request's `collector_output` holds exactly that scope: reference only its tables and `query_id`s
    - ElastiCache is a cache layer and owns no query: its scope is the cache overlay, the hot reads (`cache_engine: "elasticache"`) that another engine owns. Design cache-aside keys for those reads; the owner engine serves every miss and every write. A read you cannot serve goes in `unsupported_patterns`: after schema design its cache overlay is dropped and its owner is unchanged
+   - `collector_output.cache_invalidation_context.write_queries` lists the owners' writes on the cached tables (`context_only: true`). Use their `query_id` values only in `cache_invalidation[].source_write_query_ids`; they are not design scope, so never design keys or access patterns for them
    - Key naming patterns with appropriate data structures (hash, sorted_set, list, etc.)
    - TTL policies per key pattern
    - Cache invalidation strategies
