@@ -149,3 +149,33 @@ def test_without_assignment_the_top_engine_summary_is_kept() -> None:
     assert "Schema design produced 10 target tables with 13 in-scope access patterns" in text
     assert "Other targets evaluated: dynamodb (50%), aurora_mysql (50%)." in text
     assert text.count("source tables mapped") == 1
+
+
+def _rationale(data: SynthesisData, target: str) -> str:
+    from src.agents.referee.synthesis_report import build_architecture_recommendation
+
+    rank = {
+        **next(r for r in RANKING if r["target"] == target),
+        "tables_analyzed": 50,
+        "patterns_detected": 0,
+        "monthly_cost_usd": 0,
+    }
+    dbs = build_architecture_recommendation(data, [rank], MAPPINGS)["databases"]
+    return str(dbs[0]["rationale"])
+
+
+def test_engine_rationale_counts_in_scope_access_patterns() -> None:
+    """The recommended-architecture rationale counts like the summary (#255)."""
+    data = _data()
+    patterns = [{"pattern_id": f"p{i}", "in_scope": i >= 5} for i in range(52)]
+    data.engines = {
+        "dynamodb": EngineArtifacts("dynamodb", schema_design={"access_patterns": patterns}),
+        "elasticache": EngineArtifacts("elasticache", schema_design={"access_patterns": [{}] * 13}),
+    }
+    assert (
+        "schema design: 20 target tables, 47 in-scope access patterns (plus 5 out of scope)."
+        in _rationale(data, "dynamodb")
+    )
+    text = _rationale(data, "elasticache")
+    assert "schema design: 10 target tables, 13 in-scope access patterns." in text
+    assert "out of scope" not in text

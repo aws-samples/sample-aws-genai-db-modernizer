@@ -1270,7 +1270,7 @@ def build_architecture_recommendation(
             {
                 "service": engine,
                 "table_count": len(tables),
-                "rationale": _engine_rationale(r),
+                "rationale": _engine_rationale(data, r),
                 "tables": tables,
                 "confidence_score": r["confidence_score"],
             }
@@ -1283,14 +1283,18 @@ def build_architecture_recommendation(
     }
 
 
-def _engine_rationale(r: dict) -> str:
-    """Generate a rationale string for an engine recommendation."""
+def _engine_rationale(data: SynthesisData, r: dict) -> str:
+    """Generate a rationale string for an engine recommendation.
+
+    Access patterns are counted in scope, as in the summary (#255).
+    """
     parts = [f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"]
     if r["patterns_detected"] > 0:
         parts.append(f"{r['patterns_detected']} matching workload patterns")
     if r.get("target_tables", 0) > 0:
         parts.append(
-            f"schema design: {r['target_tables']} target tables, {r.get('access_patterns', 0)} access patterns"
+            f"schema design: {r['target_tables']} target tables, "
+            + _in_scope_phrase(*_access_pattern_scope(data, r))
         )
     if r["monthly_cost_usd"] > 0:
         parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month")
