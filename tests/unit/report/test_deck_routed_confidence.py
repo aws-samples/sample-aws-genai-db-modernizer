@@ -9,6 +9,7 @@ before it existed keeps ``confidence_score``.
 
 from __future__ import annotations
 
+import io
 from typing import Any
 
 from src.report import pptx_report
@@ -145,3 +146,87 @@ class TestRuleText:
         f = pptx_report.derive(_report(), {})
         text = pptx_report._sequencing_rule_text(f["engines"], f["conf"])
         assert text.startswith("Confidence is the assessment's own measure of evidence strength")
+
+
+def _signal_only(rep: dict[str, Any]) -> dict[str, Any]:
+    """discourse after the #312 review: OpenSearch's 3 queries read ``unknown`` tables."""
+    _by_target(rep, "opensearch").update(
+        routed_confidence_evidence="signal_only",
+        routed_queries=3,
+        routed_queries_without_table_evidence=3,
+    )
+    return rep
+
+
+class TestSignalOnlyEvidence:
+    """#152 decision: the 50% rule stays, but a signal-only score is never solid."""
+
+    def test_signal_only_engine_gets_the_confirm_card_above_the_floor(self) -> None:
+        f = pptx_report.derive(_signal_only(_report()), {})
+        card = next(d for d in f["decisions"] if d["question"].startswith("Confirm"))
+        assert card["question"] == "Confirm OpenSearch?"
+        assert card["badge"] == "60% (signal only — no table-level evidence)"
+        assert card["against"].startswith("No table-level evidence; confirm the requirement")
+
+    def test_the_weakest_under_the_floor_keeps_the_card_and_names_the_other(self) -> None:
+        rep = _signal_only(_report())
+        _by_target(rep, "dynamodb")["routed_confidence"] = 45
+        cards = [
+            d
+            for d in pptx_report.derive(rep, {})["decisions"]
+            if d["question"].startswith("Confirm")
+        ]
+        assert [c["question"] for c in cards] == ["Confirm DynamoDB?"]
+        assert cards[0]["badge"] == "45% confidence"
+        assert cards[0]["against"].endswith("also confirm OpenSearch")
+
+    def test_ranking_rows_and_waves_carry_the_label(self) -> None:
+        f = pptx_report.derive(_signal_only(_report()), {})
+        assert f["conf_text"]["opensearch"] == "60% (signal only)"
+        assert f["conf_text"]["aurora_postgresql"] == "93%"
+        search_wave = next(w for w in f["waves"] if w["names"] == "OpenSearch")
+        assert search_wave["conf_text"] == "60% (signal only)"
+        # the 50% rule is unchanged: 60 is not sequenced as unsure
+        assert all("re-scope" not in w["note"] for w in f["waves"])
+
+    def test_partial_evidence_is_labelled_from_a_quarter(self) -> None:
+        rep = _report()
+        _by_target(rep, "dynamodb").update(
+            routed_confidence_evidence="partial",
+            routed_queries=385,
+            routed_queries_without_table_evidence=100,
+        )
+        f = pptx_report.derive(rep, {})
+        assert f["conf_text"]["dynamodb"] == "91% (partly signal-based)"
+        owner_wave = next(w for w in f["waves"] if "DynamoDB" in w["names"])
+        assert "confidence from 91%" in owner_wave["note"]  # Aurora (93) is not the minimum
+        _by_target(rep, "dynamodb")["routed_queries_without_table_evidence"] = 17
+        assert pptx_report.derive(rep, {})["conf_text"]["dynamodb"] == "91%"
+
+    def test_wave_note_labels_a_signal_only_minimum(self) -> None:
+        rep = _report()
+        _by_target(rep, "dynamodb").update(
+            routed_confidence=55, routed_confidence_evidence="signal_only"
+        )
+        owner_wave = next(
+            w for w in pptx_report.derive(rep, {})["waves"] if "DynamoDB" in w["names"]
+        )
+        assert "confidence from 55% (signal only — no table-level evidence)" in owner_wave["note"]
+
+    def test_the_deck_renders_the_labels(self) -> None:
+        from pptx import Presentation  # noqa: PLC0415 - only this test needs it
+
+        data = pptx_report.render_executive_summary_pptx(_signal_only(_report()), {})
+        text = " ".join(
+            shape.text_frame.text
+            for slide in Presentation(io.BytesIO(data)).slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+        )
+        assert "Confirm OpenSearch?" in text
+        assert "60% (signal only — no table-level evidence)" in text
+
+
+def test_confidence_phrase_keeps_the_label_after_the_word() -> None:
+    assert pptx_report._confidence_phrase("93%") == "93% confidence"
+    assert pptx_report._confidence_phrase("60% (signal only)") == "60% confidence (signal only)"

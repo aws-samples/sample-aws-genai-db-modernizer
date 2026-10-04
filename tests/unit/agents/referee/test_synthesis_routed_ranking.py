@@ -171,7 +171,7 @@ class TestNoTableEvidence:
         assert opensearch["routed_confidence_evidence"] == "signal_only"
         assert opensearch["routed_tables"] == 0
         assert _engine_rationale(data, opensearch).startswith(
-            "60% mean fit across 1 query (no table-level evidence), led by full-text search"
+            "60% mean fit across 1 query (signal only — no table-level evidence), led by full-text search"
         )
 
     def test_partial_evidence_is_counted(self):
@@ -181,6 +181,19 @@ class TestNoTableEvidence:
         ]
         dynamodb = _by_target(build_ranking(data))["dynamodb"]
         assert dynamodb["routed_confidence_evidence"] == "partial"
+        # 1 of 6 queries (17%) is under the 25% label threshold
         assert "(1 table; 1 query without table-level evidence)" in _engine_rationale(
             data, dynamodb
+        )
+
+    def test_partial_evidence_from_a_quarter_is_partly_signal_based(self):
+        data = _data(ASSIGNMENT)
+        data.collector["queries"]["query_patterns"] = [
+            {**q, "tables_accessed": ["unknown"]} if q["query_id"] in ("k0", "k1") else q
+            for q in QUERIES
+        ]
+        dynamodb = _by_target(build_ranking(data))["dynamodb"]
+        assert (
+            "(1 table; 2 queries without table-level evidence, partly signal-based)"
+            in _engine_rationale(data, dynamodb)
         )

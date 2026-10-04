@@ -50,3 +50,46 @@ def main_engine(ranking: Sequence[Mapping[str, Any]] | None) -> Mapping[str, Any
         # max() keeps the first of equal shares, i.e. the ranking's own order
         return max(owners, key=lambda r: float(r.get("workload_percent") or 0))
     return owners[0]
+
+
+# A routed confidence is "partly signal-based" when at least this share of the
+# engine's routed queries has no table-level evidence (#152).
+PARTIAL_EVIDENCE_MIN_SHARE = 0.25
+
+SIGNAL_ONLY_NOTE = "signal only — no table-level evidence"
+SIGNAL_ONLY_SHORT = "signal only"
+PARTIAL_NOTE = "partly signal-based"
+
+
+def is_signal_only(entry: Mapping[str, Any]) -> bool:
+    """True when no source table the engine's analysis rated backs its routed fit."""
+    return entry.get("routed_confidence") is not None and (
+        entry.get("routed_confidence_evidence") == "signal_only"
+    )
+
+
+def evidence_note(entry: Mapping[str, Any], short: bool = False) -> str:
+    """How much a routed confidence rests on signals alone, or "" when it does not.
+
+    A signal-only fit is the basic baseline plus the signal bonus, never a
+    measurement, so it is always labelled. A ``partial`` fit is labelled only when
+    at least PARTIAL_EVIDENCE_MIN_SHARE of the engine's routed queries lack table
+    evidence.
+    """
+    if entry.get("routed_confidence") is None:
+        return ""
+    evidence = entry.get("routed_confidence_evidence")
+    if evidence == "signal_only":
+        return SIGNAL_ONLY_SHORT if short else SIGNAL_ONLY_NOTE
+    if evidence == "partial":
+        n = int(entry.get("routed_queries") or 0)
+        unbacked = int(entry.get("routed_queries_without_table_evidence") or 0)
+        if n and unbacked / n >= PARTIAL_EVIDENCE_MIN_SHARE:
+            return PARTIAL_NOTE
+    return ""
+
+
+def confidence_text(entry: Mapping[str, Any], short: bool = False) -> str:
+    """``60% (signal only — no table-level evidence)``; ``93%`` when table-backed."""
+    note = evidence_note(entry, short=short)
+    return f"{engine_confidence(entry):.0f}%" + (f" ({note})" if note else "")

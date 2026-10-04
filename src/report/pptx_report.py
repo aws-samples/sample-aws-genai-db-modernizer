@@ -55,7 +55,7 @@ from pptx.util import Inches, Pt
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
-from src.shared.ranking import engine_confidence
+from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
 
 from .renderers import (
     SEARCH_READ_MODEL,
@@ -802,6 +802,12 @@ def _sequencing_rule_text(
     return text.strip()
 
 
+def _confidence_phrase(text: str) -> str:
+    """``93%`` -> ``93% confidence``; ``60% (signal only)`` -> ``60% confidence (signal only)``."""
+    pct, _, note = text.partition(" (")
+    return f"{pct} confidence" + (f" ({note}" if note else "")
+
+
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     """All deck content, derived from the two artifacts."""
     arch = rep.get("recommended_architecture") or {}
@@ -841,6 +847,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # Routed confidence (#152): the fit of the queries routed to each engine, not
     # the average over every table it analyzed; a legacy report keeps the latter
     conf = {r.get("target"): engine_confidence(r) for r in ranking}
+    # A signal-only fit is never shown as solid (#152): every confidence the deck
+    # prints carries its evidence note ("60% (signal only — no table-level evidence)")
+    by_target = {r.get("target"): r for r in ranking}
+
+    def conf_text(eng: Any, short: bool = False) -> str:
+        entry = by_target.get(eng)
+        return confidence_text(entry, short=short) if entry else f"{conf.get(eng, 0):.0f}%"
+
     routed = any(r.get("routed_confidence") is not None for r in ranking)
     workload = {r.get("target"): float(r.get("workload_percent") or 0) for r in ranking}
     by_workload = sorted(
@@ -924,8 +938,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # most HIGH risks; 3. the engines that need no data migration at all.
     decisions: list[dict[str, Any]] = []
     ranked_conf = sorted(ranking, key=lambda r: (engine_confidence(r), str(r.get("target"))))
-    weakest = ranked_conf[0] if ranked_conf else None
-    if weakest and engine_confidence(weakest) < CONFIDENCE_FLOOR:
+    # The Confirm card goes to the weakest engine under the floor and, whatever its
+    # number, to an engine whose routed fit has no table-level evidence (#152). One
+    # card: the first candidate by confidence; the others are named on it.
+    confirm = [
+        r for r in ranked_conf if engine_confidence(r) < CONFIDENCE_FLOOR or is_signal_only(r)
+    ]
+    if confirm:
+        weakest = confirm[0]
         eng = str(weakest.get("target") or "")
         # A truncated journey list holds only part of the workload, so counting
         # "routed to" from it would undercount: treat it as missing and let the
@@ -946,14 +966,24 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             _evidence_signal(eng, weakest, q_signals, signals, assigned),
             eng if assigned else None,
         )
+        lead = (
+            "No table-level evidence; confirm the requirement"
+            if is_signal_only(weakest)
+            else f"Lowest confidence of the {len(ranking)} {plural_noun(len(ranking), 'engine')}"
+        )
+        also = [ENGINE_LABEL.get(str(r.get("target")), str(r.get("target"))) for r in confirm[1:]]
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
-                "badge": f"{conf.get(eng, 0):.0f}% confidence",
+                "badge": (
+                    f"{conf_text(eng)} confidence"
+                    if not is_signal_only(weakest)
+                    else conf_text(eng)
+                ),
                 "accent": ENGINE_COLOR.get(eng, ORANGE),
                 "against": (
-                    f"Lowest confidence of the {len(ranking)} {plural_noun(len(ranking), 'engine')} · "
-                    f"{evidence} · {share_text(eng)}"
+                    f"{lead} · {evidence} · {share_text(eng)}"
+                    + (f" · also confirm {join_names(also)}" if also else "")
                 ),
                 "action": "Requirement validation pending.",
             }
@@ -966,7 +996,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "badge": f"{high_by_engine[eng]} of {len(high)} HIGH {plural_noun(len(high), 'risk')}",
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
-                    f"Carries the most HIGH risks · {conf.get(eng, 0):.0f}% confidence · "
+                    f"Carries the most HIGH risks · {conf_text(eng)} confidence · "
                     f"{share_text(eng)}"
                 ),
                 "action": "Scope defined as the matching table subset.",
@@ -1030,14 +1060,15 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     for group, accent in ((confident, YELLOW), (unsure, ORANGE)):
         if not group:
             continue
-        lo = min(conf.get(e["engine"], 0) for e in group)
+        lo_eng = min(group, key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"]
+        lo = conf_text(lo_eng)
         n_t = sum(e["migrates"] for e in group)
         tables_word = plural_noun(n_t, "table")
         note = (
             f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "
-            f"· confidence from {lo:.0f}%"
+            f"· confidence from {lo}"
             if group is confident
-            else f"{n_t} source {tables_word} · confidence {lo:.0f}% — re-scope after the gate"
+            else f"{n_t} source {tables_word} · confidence {lo} — re-scope after the gate"
         )
         waves.append({"engines": group, "accent": accent, "note": note})
     # A search read model indexes data synced from the engines that own its
@@ -1064,6 +1095,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         )
         w["cached_share"] = sum(cache[e["engine"]][1] for e in w["engines"] if e["engine"] in cache)
         w["high"] = sum(high_by_engine.get(e["engine"], 0) for e in w["engines"])
+        w["conf_text"] = conf_text(
+            min(w["engines"], key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"],
+            short=True,
+        )
 
     top = q_signals[0] if q_signals else None
     second = q_signals[1] if len(q_signals) > 1 else None
@@ -1079,6 +1114,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "migrated": migrated,
         "ranking": by_workload,
         "conf": conf,
+        "conf_text": {t: conf_text(t, short=True) for t in conf},
         "routed_confidence": routed,
         "workload": workload,
         "cache": cache,
@@ -1298,7 +1334,7 @@ def slide_evidence(prs, f):
             line = (
                 f"{ENGINE_LABEL.get(eng, eng)}   {f['workload'].get(eng, 0):.1f}%   ·   "
                 f"{assigned:,} {plural_noun(assigned, 'query', 'queries')}   ·   "
-                f"{f['conf'].get(eng, 0):.0f}% confidence"
+                + _confidence_phrase(f["conf_text"].get(eng, "0%"))
             )
         para(tf, line, size=11.5, first=True)
 
@@ -1482,7 +1518,8 @@ def slide_decisions(prs, f):
         s,
         (
             f"{n_ranking} recommended {engines_word}  ·  lowest confidence "
-            f"{ENGINE_LABEL.get(weak[0], weak[0])} at {weak[1]:.0f}%"
+            f"{ENGINE_LABEL.get(weak[0], weak[0])} at "
+            f"{f['conf_text'].get(weak[0], f'{weak[1]:.0f}%')}"
             if weak
             else f"{n_ranking} recommended {engines_word}"
         ),
@@ -1502,13 +1539,13 @@ def slide_decisions(prs, f):
                     if eng in f["cache"]
                     else f"{f['workload'].get(eng, 0):.1f}%"
                 ),
-                f"{c:.0f}%",
+                f["conf_text"].get(eng, f"{c:.0f}%"),
                 str(f["high_by_engine"].get(eng, 0)),
                 role,
             )
         )
         emph[(i, 0)] = ENGINE_COLOR.get(eng, PAPER)
-        if c < CONFIDENCE_FLOOR:
+        if c < CONFIDENCE_FLOOR or "(" in f["conf_text"].get(eng, ""):
             emph[(i, 2)] = ORANGE
         if f["high_by_engine"].get(eng, 0):
             emph[(i, 3)] = PINK
@@ -1682,7 +1719,8 @@ def slide_sequencing(prs, f):
                 if w.get("cached_share") and not w["workload"]
                 else f"{w['workload']:.1f}% workload"
             ),
-            f"{min(f['conf'].get(e['engine'], 0) for e in w['engines']):.0f}% confidence",
+            # A labelled figure ("60% (signal only)") fills the cell on its own
+            w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} confidence",
             f"{w['high']} HIGH {plural_noun(w['high'], 'risk')}",
         )
         for j, val in enumerate(stats):

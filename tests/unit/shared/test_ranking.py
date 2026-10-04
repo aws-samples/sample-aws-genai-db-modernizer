@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.shared.ranking import engine_confidence, main_engine
+from src.shared.ranking import confidence_text, engine_confidence, is_signal_only, main_engine
 
 
 class TestEngineConfidence:
@@ -38,3 +38,34 @@ class TestMainEngine:
     def test_empty(self):
         assert main_engine([]) is None
         assert main_engine(None) is None
+
+
+class TestEvidenceNote:
+    """#152 decision: a signal-only score is never presented as solid."""
+
+    def test_signal_only_is_always_labelled(self):
+        e = {"routed_confidence": 60, "routed_confidence_evidence": "signal_only"}
+        assert confidence_text(e) == "60% (signal only — no table-level evidence)"
+        assert confidence_text(e, short=True) == "60% (signal only)"
+        assert is_signal_only(e)
+
+    def test_partial_is_labelled_from_a_quarter_of_the_queries(self):
+        e = {
+            "routed_confidence": 90,
+            "routed_confidence_evidence": "partial",
+            "routed_queries": 8,
+            "routed_queries_without_table_evidence": 2,
+        }
+        assert confidence_text(e) == "90% (partly signal-based)"
+        e["routed_queries_without_table_evidence"] = 1
+        assert confidence_text(e) == "90%"
+
+    def test_table_backed_and_legacy_entries_are_plain(self):
+        assert (
+            confidence_text({"routed_confidence": 93, "routed_confidence_evidence": "table"})
+            == "93%"
+        )
+        assert confidence_text({"confidence_score": 2}) == "2%"
+        assert not is_signal_only(
+            {"confidence_score": 2, "routed_confidence_evidence": "signal_only"}
+        )

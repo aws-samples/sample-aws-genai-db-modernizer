@@ -32,7 +32,12 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
-from src.shared.ranking import engine_confidence
+from src.shared.ranking import (
+    PARTIAL_NOTE,
+    SIGNAL_ONLY_NOTE,
+    engine_confidence,
+    evidence_note,
+)
 from src.shared.signal_labels import signal_noun
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
@@ -1393,9 +1398,11 @@ def build_architecture_recommendation(
 def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     """``90% mean fit across 98 queries (22 tables)`` (#152); empty without one.
 
-    Says "no table-level evidence" when no routed query touches a source table the
-    engine's analysis rated: the fit is then the basic baseline plus the signal
-    bonus, not a measurement.
+    Says "signal only — no table-level evidence" when no routed query touches a
+    source table the engine's analysis rated: the fit is then the basic baseline
+    plus the signal bonus, not a measurement. A partial fit adds "partly
+    signal-based" once at least a quarter of the queries lack table evidence (the
+    labels and threshold of ``src.shared.ranking``, which the deck uses too).
     """
     fit = r.get("routed_confidence")
     if fit is None:
@@ -1405,11 +1412,13 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     unbacked = int(r.get("routed_queries_without_table_evidence") or 0)
     evidence = r.get("routed_confidence_evidence")
     if evidence == "signal_only" or (evidence is None and not n_t):
-        detail = "no table-level evidence"
+        detail = SIGNAL_ONLY_NOTE
     else:
         detail = _count(n_t, "table", "tables")
         if unbacked:
             detail += f"; {_count(unbacked, *what)} without table-level evidence"
+            if evidence_note(r) == PARTIAL_NOTE:
+                detail += f", {PARTIAL_NOTE}"
     return f"{fit}% {noun} across {_count(n, *what)} ({detail})"
 
 

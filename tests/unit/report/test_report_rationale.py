@@ -14,7 +14,7 @@ from src.report import renderers
 
 DDB = "90% mean fit across 98 queries (22 tables), led by key-value lookups (36 of 98)."
 AURORA = "87% mean fit across 5 queries (7 tables)."
-OS = "60% mean fit across 3 queries (no table-level evidence), led by full-text search (3 of 3)."
+OS = "60% mean fit across 3 queries (signal only — no table-level evidence), led by full-text search (3 of 3)."
 
 
 def _report() -> dict[str, Any]:
