@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to Database Modernizer Assessment! This document provides guidelines for contributing to the project.
 
+Coding agents and power users: [AGENTS.md](AGENTS.md) is the short working guide (repo map, test tiers, headless rules).
+
 ## Table of Contents
 
 1. [Code of Conduct](#code-of-conduct)

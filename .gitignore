@@ -83,7 +83,8 @@ docs/superpowers/
 
 # LOCAL files
 workspace/
-CLAUDE.md
+# Personal Claude Code notes (the root CLAUDE.md is tracked: it imports AGENTS.md)
+CLAUDE.local.md
 
 # scripts/start_local_ui.py pid file and server logs
 .local-ui/
