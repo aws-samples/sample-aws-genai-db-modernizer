@@ -526,6 +526,37 @@ _REATTRIBUTED_LEAD = re.compile(
 )
 
 
+SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+
+
+def _risk_query_count(risk: dict[str, Any]) -> int:
+    """Affected queries: the "(N remaining)" count in the description, else ``query_ids``."""
+    _, n_q = clean_risk_text(str(risk.get("description") or ""))
+    if n_q:
+        return int(n_q)
+    ids = risk.get("query_ids")
+    return len(ids) if isinstance(ids, list) else 0
+
+
+def _risk_caption(level: str, n_shown: int) -> str:
+    """The Risk Profile caption for the severity its table shows (#249).
+
+    The fixed "Each HIGH risk carries ..." sentence sat above an empty table on a
+    run whose risks were all MEDIUM; the caption now names what the table lists.
+    """
+    if level in ("CRITICAL", "HIGH"):
+        return f"Each {level} risk carries an affected-query count and a documented mitigation. "
+    if not level:
+        return "No open risks remain. "
+    above = " or ".join(
+        k for k in ("HIGH", "MEDIUM") if SEVERITY_ORDER.index(k) < SEVERITY_ORDER.index(level)
+    )
+    return (
+        f"No {above} risks remain; the top {level} "
+        f"{plural_noun(n_shown, 'risk')} {plural_verb(n_shown, 'is', 'are')} below. "
+    )
+
+
 def clean_risk_text(description: str) -> tuple[str, str]:
     """Return (prose, query_count) for a risk description.
 
@@ -766,6 +797,16 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     for r in risks:
         t = str(r.get("risk_type") or "other").replace("_", " ").lower()
         by_type[t] = by_type.get(t, 0) + 1
+    # The Risk Profile table lists the highest severity present, so a run with no
+    # HIGH risks still shows its top MEDIUM (or LOW) risks rather than an empty
+    # table (#249). Within that severity, the risks touching the most queries first.
+    shown_level = next((k for k in SEVERITY_ORDER if sev.get(k)), "")
+    shown_risks = sorted(
+        (r for r in risks if str(r.get("severity", "")).upper() == shown_level),
+        key=lambda r: (-_risk_query_count(r), str(r.get("risk_id"))),
+    )
+    if shown_level == "HIGH":
+        shown_risks = high  # unchanged: HIGH rows stay in risk-id order
     # "all the same root cause" is only claimed when the HIGH risks really do
     # share one risk_type.
     high_types = sorted({str(r.get("risk_type") or "") for r in high})
@@ -952,6 +993,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "sev": sev,
         "high": high,
         "high_by_engine": high_by_engine,
+        "shown_level": shown_level,
+        "shown_risks": shown_risks,
         "by_type": sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])),
         "one_root_cause": one_root_cause,
         "high_type": high_types[0].replace("_", " ").lower() if one_root_cause else "",
@@ -1410,10 +1453,18 @@ def slide_risk(prs, f):
     para(tf, "  ·  ".join(f"{c} {t}" for t, c in f["by_type"][:3]), size=11.5, color=PAPER)
 
     rows = [("#", "Engine", "What it is", "Queries")]
-    for r in f["high"][:4]:
-        desc, n_q = clean_risk_text(str(r.get("description") or ""))
+    for r in f["shown_risks"][:4]:
+        desc, _ = clean_risk_text(str(r.get("description") or ""))
+        n_q = _risk_query_count(r)
         eng = risk_engine(str(r.get("description") or "")) or "(general)"
-        rows.append((str(r.get("risk_id") or ""), ENGINE_LABEL.get(eng, eng), clip(desc, 78), n_q))
+        rows.append(
+            (
+                str(r.get("risk_id") or ""),
+                ENGINE_LABEL.get(eng, eng),
+                clip(desc, 78),
+                str(n_q) if n_q else "",
+            )
+        )
     table(
         s,
         6.05,
@@ -1425,7 +1476,7 @@ def slide_risk(prs, f):
         body_size=9.0,
         row_h=0.56,
         head_h=0.32,
-        emphasis={(i, 1): PINK for i in range(1, len(rows))},
+        emphasis={(i, 1): _risk_accent(f["shown_level"]) for i in range(1, len(rows))},
     )
 
     card(s, 0.67, 5.05, 11.43, 1.05, GREEN)
@@ -1433,12 +1484,18 @@ def slide_risk(prs, f):
     mit = f["mitigations"][0] if f["mitigations"] else ""
     para(
         tf,
-        "Each HIGH risk carries an affected-query count and a documented mitigation. "
-        + (
-            f"Specified mitigation: {clip(mit, MITIGATION_MAX_CHARS)}"
-            if mit
-            else "Mitigations are listed per risk in the Engineering Report."
-        ),
+        (
+            _risk_caption(f["shown_level"], min(len(f["shown_risks"]), 4))
+            + (
+                f"Specified mitigation: {clip(mit, MITIGATION_MAX_CHARS)}"
+                if mit
+                else (
+                    "Mitigations are listed per risk in the Engineering Report."
+                    if f["shown_risks"]
+                    else ""
+                )
+            )
+        ).strip(),
         size=12.0,
         color=WHITE,
         first=True,

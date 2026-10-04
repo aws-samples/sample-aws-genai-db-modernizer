@@ -225,3 +225,62 @@ class TestSharedSourceTables:
         assert [w["note"].split(" ")[0] for w in f["waves"] if "source table" in w["note"]] == [
             "21"
         ]
+
+
+def _risk(rid: str, sev: str, n_queries: int, engine: str = "dynamodb") -> dict[str, Any]:
+    return {
+        "risk_id": rid,
+        "severity": sev,
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "description": f"[{engine}] aggregation: count rows for {rid} in the application",
+        "mitigation": "Keep a counter per key via UpdateItem.",
+        "query_ids": [f"{rid}-q{i}" for i in range(n_queries)],
+    }
+
+
+def _risk_slide(risks: list[dict[str, Any]]) -> tuple[list[list[str]], str]:
+    rep = {**_cache_report(), "risk_assessment": {"risks": risks}}
+    f = pptx_report.derive(rep, {})
+    slide = pptx_report.slide_risk(pptx_report.open_deck(keep=1), f)
+    rows = [
+        [c.text for c in row.cells] for sh in slide.shapes if sh.has_table for row in sh.table.rows
+    ]
+    caption = next(
+        sh.text_frame.text
+        for sh in slide.shapes
+        if sh.has_text_frame
+        and ("risk" in sh.text_frame.text.lower())
+        and ("mitigation" in sh.text_frame.text.lower() or "remain" in sh.text_frame.text.lower())
+    )
+    return rows, caption
+
+
+class TestRiskProfileSeverityFallback:
+    """#249: with no HIGH risks the Risk Profile table was empty and the caption
+    still said "Each HIGH risk carries ..."."""
+
+    def test_only_medium_risks_lists_the_top_medium_risks(self) -> None:
+        risks = [_risk(f"RISK-00{i}", "MEDIUM", n) for i, n in enumerate([1, 6, 2, 1, 3], 1)]
+        rows, caption = _risk_slide(risks)
+        # The busiest four, by affected-query count; the count comes from query_ids.
+        assert [r[0] for r in rows[1:]] == ["RISK-002", "RISK-005", "RISK-003", "RISK-001"]
+        assert rows[1][3] == "6"
+        assert caption.startswith("No HIGH risks remain; the top MEDIUM risks are below.")
+        assert "Each HIGH risk" not in caption
+
+    def test_only_low_risks_lists_the_low_risks(self) -> None:
+        rows, caption = _risk_slide([_risk("RISK-001", "LOW", 2)])
+        assert [r[0] for r in rows[1:]] == ["RISK-001"]
+        assert caption.startswith("No HIGH or MEDIUM risks remain; the top LOW risk is below.")
+
+    def test_high_risks_keep_the_high_caption_and_rows(self) -> None:
+        rows, caption = _risk_slide([_risk("RISK-001", "MEDIUM", 9), _risk("RISK-002", "HIGH", 1)])
+        assert [r[0] for r in rows[1:]] == ["RISK-002"]
+        assert caption.startswith(
+            "Each HIGH risk carries an affected-query count and a documented mitigation."
+        )
+
+    def test_no_risks_says_so(self) -> None:
+        rows, caption = _risk_slide([])
+        assert rows[1:] == []
+        assert caption.startswith("No open risks remain.")
