@@ -177,6 +177,22 @@
   white-space: nowrap;
 }
 
+/* Cache overlay indicator (#296): a cached read keeps its owner engine above
+   this badge, which just flags that ElastiCache also serves it as a cache
+   layer. cache_reason (if any) is attached as the native title tooltip. */
+.cache-overlay-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-style: italic;
+  background: rgba(49, 132, 232, 0.1);
+  color: var(--dbm-text-secondary);
+  white-space: nowrap;
+}
+
 /* ============================================ */
 /* Query List — CloudWatch-style expandable     */
 /* ============================================ */

@@ -11,7 +11,16 @@
  * All strings are routed through i18next's `t` (#254) so they are translatable,
  * and counts (access patterns, tables) are pluralised via CLDR `_one`/`_other`
  * keys in locales/en.json instead of being hardcoded as always-plural English.
+ *
+ * #296 cache overlay: `afterDist` must never attribute a workload share to
+ * ElastiCache once a `cacheOverlay` is present (it is a cache layer, not an
+ * owner) -- so a surviving-engine count or "We map N to ElastiCache" sentence
+ * can't appear alongside it. Instead, a trailing sentence names it as a cache
+ * layer with its own cached-read count and share of calls. Old artifacts with
+ * no cacheOverlay and ElastiCache still as a real owner render exactly as
+ * before.
  */
+import { ownerDistribution, formatCacheLayerLine } from './cacheLayer';
 
 // Fallback used when no `t` is supplied, so the function stays safe to call
 // without react-i18next (e.g. a caller that forgets to wire it up). It mirrors
@@ -29,15 +38,18 @@ function defaultT(key, options = {}) {
 export function buildAssignmentSummary({
   llmSummary,
   databaseName,
-  afterDist = {},
+  afterDist: rawAfterDist = {},
   tableCount = 0,
   patterns = [],
+  cacheOverlay = null,
   engineLabel = (engine) => engine,
   t = defaultT,
 }) {
   const narrative = typeof llmSummary === 'string' ? llmSummary.trim() : '';
+  const afterDist = ownerDistribution(rawAfterDist, !!cacheOverlay);
   const engines = Object.keys(afterDist);
-  if (engines.length === 0) return narrative;
+  const cacheLine = formatCacheLayerLine(cacheOverlay, { t });
+  if (engines.length === 0) return [narrative, cacheLine].filter(Boolean).join(' ');
 
   const totalQueries = Object.values(afterDist).reduce((a, b) => a + b, 0);
   const database = databaseName || t('assignment-gate.summary.default-database', {
@@ -94,6 +106,13 @@ export function buildAssignmentSummary({
         defaultValue: 'Recommended integration pattern: {{pattern}}.',
       }));
     }
+  }
+
+  if (cacheLine) {
+    parts.push(t('assignment-gate.summary.cache-layer', {
+      cacheLine,
+      defaultValue: '{{cacheLine}}.',
+    }));
   }
 
   return parts.join(' ');

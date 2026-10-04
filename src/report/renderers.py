@@ -383,6 +383,33 @@ def _design_source_tables(tables: Any) -> int:
     )
 
 
+def cache_layer_counts(report: dict[str, Any], engine: str) -> tuple[int, float] | None:
+    """``(cached queries, % of calls)`` of a cache-layer engine, or None (#296).
+
+    The cache owns no query, so it has no workload share; it is described by the hot
+    reads it fronts. ``None`` for a legacy report where the cache owned queries.
+    """
+    entry = next(
+        (
+            r
+            for r in report.get("ranking") or []
+            if isinstance(r, dict) and r.get("target") == engine
+        ),
+        {},
+    )
+    overlay = report.get("cache_overlay") or {}
+    if entry.get("role") != "cache_layer" and overlay.get("engine") != engine:
+        return None
+    n = entry.get("cache_overlay_queries", overlay.get("query_count", 0))
+    share = entry.get("cache_call_share_percent", overlay.get("call_share_percent", 0.0))
+    return int(n or 0), float(share or 0.0)
+
+
+def cache_layer_text(n: int, share: float) -> str:
+    """``20 cached reads · 83.4% of calls`` (#296)."""
+    return f"{n} cached {plural_noun(n, 'read')} \u00b7 {fmt_num(share, 1)}% of calls"
+
+
 def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The full target architecture, one entry per engine, ordered by workload.
 
@@ -430,17 +457,25 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
             )
         elif role == "Cache layer":
             scope = f"{objs} key {plural_noun(objs, 'design')}" if objs else "cache"
+            cached = cache_layer_counts(report, eng)
+            if cached and not objs:
+                scope = "cache-aside"
         elif role == "Retained":
             scope = "source schema retained"
         elif role == "Evaluated":
             scope = "no queries assigned"
         else:
             scope = "\u2014"
+        cached = cache_layer_counts(report, eng) if role == "Cache layer" else None
         rows.append(
             {
                 "engine": eng,
                 "role": role,
-                "workload": r.get("workload_percent"),
+                # The cache layer owns no query: no workload share, its cached reads
+                # and their share of calls instead (#296)
+                "workload": None if cached else r.get("workload_percent"),
+                "cached_queries": cached[0] if cached else None,
+                "cached_call_share": cached[1] if cached else None,
                 "scope": scope,
                 # Mapped source tables that move, for the "tables migrate" totals;
                 # the scope text is not parsed because it can carry two numbers.
@@ -517,10 +552,17 @@ def architecture_svg(report: dict[str, Any]) -> str:
         stroke = _ROLE_STROKE.get(role, "#6B7280")
         dashed = role == "Cache layer"
         sub_bits = [role]
-        if isinstance(e.get("workload"), (int, float)):
-            sub_bits.append(f"{fmt_num(e['workload'], 1)}%")
-        if e.get("cost") is not None:
-            sub_bits.append(f"{_fmt_usd(e['cost'])}/mo")
+        if e.get("cached_queries") is not None:
+            # Room for role + cache counts only; the cost is in the table below
+            sub_bits.append(
+                f"{e['cached_queries']} {plural_noun(e['cached_queries'], 'read')} \u00b7 "
+                f"{fmt_num(e['cached_call_share'], 1)}% of calls"
+            )
+        else:
+            if isinstance(e.get("workload"), (int, float)):
+                sub_bits.append(f"{fmt_num(e['workload'], 1)}%")
+            if e.get("cost") is not None:
+                sub_bits.append(f"{_fmt_usd(e['cost'])}/mo")
         sub = "  \u00b7  ".join(sub_bits)
         p.append(box(right_x, y, box_w, box_h, str(e["engine"]), sub, stroke, dashed=dashed))
         dash_line = ' stroke-dasharray="5 4"' if dashed else ""
@@ -766,7 +808,7 @@ def render_decision_report_html(
             out.append(
                 f"<tr><td>{_engine_badge(e['engine'])}</td>"
                 f"<td class=role>{esc(e['role'])}</td>"
-                f"<td>{esc(fmt_num(wl, 1) + '%') if isinstance(wl, (int, float)) else '-'}</td>"
+                f"<td>{_workload_cell(e)}</td>"
                 f"<td>{esc(e['scope'])}</td>"
                 f"<td>{_fmt_usd(c)}</td></tr>"
             )
@@ -789,9 +831,7 @@ def render_decision_report_html(
                 "core (source-compatible, no migration)."
             )
         if caches:
-            note_bits.append(
-                f"<b>{', '.join(esc(x) for x in caches)}</b> is an additive cache layer."
-            )
+            note_bits.append(_cache_note(engines))
         if migr:
             note_bits.append(
                 f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned to "
@@ -949,6 +989,32 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
+def _workload_cell(e: dict[str, Any]) -> str:
+    """Workload column of the recommendation table (owner share, or cache counts)."""
+    esc = escaping.html_text
+    if e.get("cached_queries") is not None:
+        return esc(cache_layer_text(e["cached_queries"], e["cached_call_share"]))
+    wl = e.get("workload")
+    return esc(fmt_num(wl, 1) + "%") if isinstance(wl, (int, float)) else "-"
+
+
+def _cache_note(engines: list[dict[str, Any]]) -> str:
+    """The recommendation note for the cache layer (#296)."""
+    esc = escaping.html_text
+    caches = [e for e in engines if e["role"] == "Cache layer"]
+    names = ", ".join(esc(e["engine"]) for e in caches)
+    counted = [e for e in caches if e.get("cached_queries") is not None]
+    if not counted:
+        return f"<b>{names}</b> is an additive cache layer."
+    n = sum(e["cached_queries"] for e in counted)
+    share = sum(e["cached_call_share"] for e in counted)
+    return (
+        f"<b>{names}</b> is an additive cache layer: it fronts {n} hot "
+        f"{plural_noun(n, 'read')} ({esc(fmt_num(share, 1))}% of calls) cache-aside and owns "
+        "none of the workload: the engines listed above still own every cached read."
+    )
+
+
 _ROLE_PHRASE = {
     "Migration target": "migrate",
     "Cache layer": "to the cache layer",
@@ -972,6 +1038,49 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
         return ""
     order = [*_ROLE_PHRASE.values(), "elsewhere"]
     return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
+
+
+def _cache_layer_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report section for the cache layer (#296); empty without one.
+
+    The cache owns no query: each cached read stays with its owner engine and the
+    cache serves it cache-aside. The section states the eligibility rule so the
+    build team can see why these reads, and only these, are cached.
+    """
+    overlay = report.get("cache_overlay") or {}
+    engine = overlay.get("engine")
+    n = int(overlay.get("query_count") or 0)
+    notes = [x for x in (overlay.get("notes") or []) if x]
+    if not engine or (not n and not notes):
+        return []
+    out = [f"## Cache layer ({escaping.md_text(engine)})", ""]
+    if n:
+        owners = overlay.get("owners") or {}
+        owned = ", ".join(f"{escaping.md_text(e)} {c}" for e, c in sorted(owners.items()) if e)
+        patterns = overlay.get("patterns") or {}
+        shapes = ", ".join(
+            f"{escaping.md_text(str(p).replace('_', ' '))} {c}"
+            for p, c in sorted(patterns.items())
+            if p
+        )
+        out += [
+            f"{escaping.md_text(engine)} fronts {n} hot {plural_noun(n, 'read')} "
+            f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
+            f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
+            "none of the workload: each cached read stays with its owner engine, which "
+            "serves every miss and every write.",
+            "",
+            f"- Owner engines: {owned or '-'}",
+            f"- Read shapes: {shapes or '-'}",
+            "- Eligible: a SELECT at "
+            f"\u2265 {fmt_num(overlay.get('min_calls_per_second', 0))} calls/s returning "
+            f"\u2264 {fmt_num(overlay.get('max_rows_avg', 0))} rows on average, with a point, "
+            "top-N, session or small reference-read shape, on tables that are not "
+            "write-heavy.",
+        ]
+    out += [f"- {escaping.md_text(x)}" for x in notes]
+    out.append("")
+    return out
 
 
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
@@ -1016,6 +1125,8 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
             )
         out.append("")
+
+    out += _cache_layer_md(report)
 
     designs = _completed_designs(report)
     if designs:

@@ -61,6 +61,7 @@ from .renderers import (
     SHARED_TABLES_NOTE,
     _architecture_engines,
     filtered_risks,
+    fmt_num,
     label_summary_counts,
     plural_noun,
     plural_verb,
@@ -810,6 +811,18 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)
     migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
+    # The cache layer owns no query (#296): it is shown by the reads it fronts and
+    # their share of calls, never by a share of the workload.
+    cache = {
+        e["engine"]: (e["cached_queries"], e["cached_call_share"])
+        for e in engines
+        if e.get("cached_queries") is not None
+    }
+
+    def share_text(eng: str) -> str:
+        if eng in cache:
+            return f"cache layer for {fmt_num(cache[eng][1], 1)}% of calls"
+        return f"{workload.get(eng, 0):.1f}% of workload"
 
     ranking = [r for r in (rep.get("ranking") or []) if isinstance(r, dict)]
     conf = {r.get("target"): float(r.get("confidence_score") or 0) for r in ranking}
@@ -926,7 +939,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": ENGINE_COLOR.get(eng, ORANGE),
                 "against": (
                     f"Lowest confidence of the {len(ranking)} {plural_noun(len(ranking), 'engine')} · "
-                    f"{evidence} · {workload.get(eng, 0):.1f}% of workload"
+                    f"{evidence} · {share_text(eng)}"
                 ),
                 "action": "Requirement validation pending.",
             }
@@ -940,7 +953,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
                     f"Carries the most HIGH risks · {conf.get(eng, 0):.0f}% confidence · "
-                    f"{workload.get(eng, 0):.1f}% of workload"
+                    f"{share_text(eng)}"
                 ),
                 "action": "Scope defined as the matching table subset.",
             }
@@ -948,12 +961,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
     if no_move:
         names = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in no_move)
-        pct = sum(workload.get(e["engine"], 0) for e in no_move)
+        pct = sum(workload.get(e["engine"], 0) for e in no_move if e["engine"] not in cache)
         no_move_high = sum(high_by_engine.get(e["engine"], 0) for e in no_move)
+        cached_share = sum(cache[e["engine"]][1] for e in no_move if e["engine"] in cache)
+        badge = (
+            f"{pct:.0f}% of workload"
+            if not cached_share
+            else (
+                f"{pct:.0f}% of workload + cache" if pct else f"{cached_share:.0f}% of calls cached"
+            )
+        )
         decisions.append(
             {
                 "question": "Start with the no-migration step?",
-                "badge": f"{pct:.0f}% of workload",
+                "badge": badge,
                 "accent": BLUE,
                 "against": (
                     f"{names} · no data migration · "
@@ -1000,7 +1021,13 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         waves.append({"engines": group, "accent": accent, "note": note})
     for w in waves:
         w["names"] = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in w["engines"])
-        w["workload"] = sum(workload.get(e["engine"], 0) for e in w["engines"])
+        w["workload"] = sum(
+            workload.get(e["engine"], 0) for e in w["engines"] if e["engine"] not in cache
+        )
+        w["cached_queries"] = sum(
+            cache[e["engine"]][0] for e in w["engines"] if e["engine"] in cache
+        )
+        w["cached_share"] = sum(cache[e["engine"]][1] for e in w["engines"] if e["engine"] in cache)
         w["high"] = sum(high_by_engine.get(e["engine"], 0) for e in w["engines"])
 
     top = q_signals[0] if q_signals else None
@@ -1018,6 +1045,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "ranking": by_workload,
         "conf": conf,
         "workload": workload,
+        "cache": cache,
         "summary": prettify_engines(
             label_summary_counts(
                 name_target_tables(strip_cost(str(rep.get("summary_deterministic") or ""))),
@@ -1124,7 +1152,11 @@ def slide_summary(prs, f):
             (
                 ENGINE_LABEL.get(e["engine"], e["engine"]),
                 e["role"],
-                f"{wl:.1f}%" if isinstance(wl, (int, float)) else "—",
+                (
+                    f"{fmt_num(e['cached_call_share'], 1)}% calls"
+                    if e.get("cached_queries") is not None
+                    else f"{wl:.1f}%" if isinstance(wl, (int, float)) else "—"
+                ),
                 str(e["scope"]),
             )
         )
@@ -1146,8 +1178,13 @@ def slide_summary(prs, f):
     # two roles that do, not negatively against "Migration target": an "Evaluated"
     # engine (assignment routed it nothing) also fails that negative test, and naming
     # it here claimed it keeps a share of the workload it does not carry.
-    kept = [e for e in f["engines"] if e["role"] in NO_MIGRATION_ROLES]
+    kept = [
+        e
+        for e in f["engines"]
+        if e["role"] in NO_MIGRATION_ROLES and e.get("cached_queries") is None
+    ]
     kept_pct = sum(e.get("workload") or 0 for e in kept)
+    caches = [e for e in f["engines"] if e.get("cached_queries")]
     # The summary beside this footer says "22 source tables mapped"; when some of
     # them map to the cache layer, the footer says how 21 relates to 22 (#258).
     n_mig = f["migrated"]
@@ -1165,6 +1202,12 @@ def slide_summary(prs, f):
             f"with no data migration. "
             if kept
             else ""
+        )
+        + "".join(
+            f"{ENGINE_LABEL.get(e['engine'], e['engine'])} caches {e['cached_queries']} hot "
+            f"{plural_noun(e['cached_queries'], 'read')} "
+            f"({fmt_num(e['cached_call_share'], 1)}% of calls) and owns none of the workload. "
+            for e in caches
         )
         + "Full detail in the Decision and Engineering reports."
         + (
@@ -1204,14 +1247,19 @@ def slide_evidence(prs, f):
         bar(s, left, y + 0.05, 0.16, 0.16, ENGINE_COLOR.get(eng, BLUE))
         tf = textbox(s, left + 0.28, y, 5.6, 0.34)
         assigned = r.get("assigned_queries", 0)
-        para(
-            tf,
-            f"{ENGINE_LABEL.get(eng, eng)}   {f['workload'].get(eng, 0):.1f}%   ·   "
-            f"{assigned:,} {plural_noun(assigned, 'query', 'queries')}   ·   "
-            f"{f['conf'].get(eng, 0):.0f}% confidence",
-            size=11.5,
-            first=True,
-        )
+        if eng in f["cache"]:
+            n_c, share_c = f["cache"][eng]
+            line = (
+                f"{ENGINE_LABEL.get(eng, eng)}   cache layer   ·   {n_c:,} cached "
+                f"{plural_noun(n_c, 'read')}   ·   {fmt_num(share_c, 1)}% of calls"
+            )
+        else:
+            line = (
+                f"{ENGINE_LABEL.get(eng, eng)}   {f['workload'].get(eng, 0):.1f}%   ·   "
+                f"{assigned:,} {plural_noun(assigned, 'query', 'queries')}   ·   "
+                f"{f['conf'].get(eng, 0):.0f}% confidence"
+            )
+        para(tf, line, size=11.5, first=True)
 
     card(s, 6.60, 2.72, 5.5, 2.10, BLUE)
     tf = textbox(s, 6.85, 2.86, 5.05, 1.85)
@@ -1408,7 +1456,11 @@ def slide_decisions(prs, f):
         rows.append(
             (
                 ENGINE_LABEL.get(eng, eng),
-                f"{f['workload'].get(eng, 0):.1f}%",
+                (
+                    f"{fmt_num(f['cache'][eng][1], 1)}% calls"
+                    if eng in f["cache"]
+                    else f"{f['workload'].get(eng, 0):.1f}%"
+                ),
                 f"{c:.0f}%",
                 str(f["high_by_engine"].get(eng, 0)),
                 role,
@@ -1558,7 +1610,21 @@ def slide_sequencing(prs, f):
     waves = f["waves"]
     set_title(s, "Migration Sequencing")
     first_pct = waves[0]["workload"] if waves else 0.0
-    set_subtitle(s, f"Wave 1 covers {first_pct:.1f}% of the workload with no data migration")
+    first_cache = waves[0].get("cached_share", 0.0) if waves else 0.0
+    if first_cache and not first_pct:
+        n_c = waves[0]["cached_queries"]
+        subtitle = (
+            f"Wave 1 adds the cache layer for {n_c} hot {plural_noun(n_c, 'read')} "
+            f"({fmt_num(first_cache, 1)}% of calls) with no data migration"
+        )
+    elif first_cache:
+        subtitle = (
+            f"Wave 1 covers {first_pct:.1f}% of the workload, plus the cache layer for "
+            f"{fmt_num(first_cache, 1)}% of calls, with no data migration"
+        )
+    else:
+        subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload with no data migration"
+    set_subtitle(s, subtitle)
 
     y = BODY_TOP - 0.02
     for i, w in enumerate(waves):
@@ -1569,7 +1635,11 @@ def slide_sequencing(prs, f):
         tf = textbox(s, 2.25, y + 0.05, 4.4, 0.35)
         para(tf, w["names"], size=13.0, bold=True, color=WHITE, first=True)
         stats = (
-            f"{w['workload']:.1f}% workload",
+            (
+                f"{fmt_num(w['cached_share'], 1)}% calls cached"
+                if w.get("cached_share") and not w["workload"]
+                else f"{w['workload']:.1f}% workload"
+            ),
             f"{min(f['conf'].get(e['engine'], 0) for e in w['engines']):.0f}% confidence",
             f"{w['high']} HIGH {plural_noun(w['high'], 'risk')}",
         )

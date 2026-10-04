@@ -76,7 +76,8 @@ _SOURCE_FIELDS = (
     "performance",
     "characteristics",
 )
-_ASSIGNMENT_FIELDS = ("assigned_engine", "confidence", "in_scope")
+# cache_engine/cache_reason: the cache layer fronting the query, if any (#296)
+_ASSIGNMENT_FIELDS = ("assigned_engine", "confidence", "in_scope", "cache_engine", "cache_reason")
 
 # ---------------------------------------------------------------------------
 # Graph access
@@ -524,6 +525,28 @@ def _engine_badges(after_distribution: dict) -> str:
     )
 
 
+def _cache_layer_stat(synthesis: dict) -> str:
+    """The "Cache Layer" stat card (#296); mirrors ``cacheLayerStat`` in ExportReport.js.
+
+    The cache owns no query, so it is not among the target-engine badges (an owner
+    distribution); it gets its own card with its cached reads and share of calls.
+    """
+    overlay = synthesis.get("cache_overlay") or {}
+    if not overlay:
+        return ""
+    n = int(overlay.get("query_count") or 0)
+    parts = ["Cache layer", f"{n} cached {'read' if n == 1 else 'reads'}"]
+    share = overlay.get("call_share_percent")
+    if isinstance(share, (int, float)) and not isinstance(share, bool):
+        parts.append(f"{share:.1f}% of calls")
+    return (
+        '<div class="stat-card"><div class="stat-label">Cache Layer</div>'
+        '<div class="stat-value" style="font-size: 14px;">'
+        + escaping.html_text(" \u00b7 ".join(parts))
+        + "</div></div>"
+    )
+
+
 def _banner_html(export_data: dict) -> str:
     truncated = (export_data.get("queryJourneys") or {}).get("truncated")
     if not truncated:
@@ -671,6 +694,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__ENGINE_BADGES__": _engine_badges(after),
         "__PROJECTED_COST__": f"{projected:,.2f}",
         "__TOTAL_PATTERNS__": str(total_patterns),
+        "__CACHE_LAYER_STAT__": _cache_layer_stat(synthesis),
     }
 
     template = _read_template("analysis_report.html.tpl")

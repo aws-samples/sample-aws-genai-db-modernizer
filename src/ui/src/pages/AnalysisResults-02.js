@@ -39,6 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine } from "../utils/cacheLayer";
 
 
 // ============================================
@@ -217,7 +218,15 @@ const AnalysisResultsPage = memo(() => {
 
   const synthesis = resultsData?.synthesis || {};
   const realityCheck = synthesis?.reality_check || {};
-  const afterDist = realityCheck?.after_distribution || {};
+  // #296 cache overlay: a top-level synthesis.cache_overlay signals that
+  // ElastiCache is a cache layer here, not an owner -- defensively strip it
+  // from the owner distribution so it can't show up as its own Sankey/target
+  // engine node with a workload share. Legacy reports with no cache_overlay
+  // (ElastiCache still a real owner) are unaffected. Plain consts (not
+  // useMemo) to match realityCheck/synthesis above, which are the same.
+  const cacheOverlay = getCacheOverlay(synthesis);
+  const afterDist = ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay);
+  const cacheLayerLine = formatCacheLayerLine(cacheOverlay, { t });
 
   // Filter schema designs to only engines with actual content
   const activeDesigns = useMemo(() => {
@@ -1583,6 +1592,14 @@ const AnalysisResultsPage = memo(() => {
                         ))}
                       </SpaceBetween>
                     </Box>
+                    {/* #296: ElastiCache is a cache layer, not a target engine --
+                        it never contributes a workload share, so it gets its own
+                        note instead of a badge in the list above. */}
+                    {cacheLayerLine && (
+                      <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                        {cacheLayerLine}
+                      </Box>
+                    )}
                   </Box>
                   <Box>
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.projected-cost')}</Box>

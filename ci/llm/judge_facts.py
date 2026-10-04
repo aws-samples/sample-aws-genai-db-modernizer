@@ -14,6 +14,9 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
 * ``eliminated_engines`` -- engines dropped by reality-check, with the engine
   that absorbed their queries.
 * ``reality_check`` -- before/after query distribution and each move.
+* ``cache_overlay`` -- the cache layer (#296): ElastiCache owns no query, so it
+  is never part of the workload distribution; this block gives the hot reads it
+  fronts (count, share of calls, owner engines) and the safety-net notes.
 * ``tco`` -- the full ``tco_analysis`` (small).
 * ``risks`` -- one compact entry per risk, including the engine(s) its
   queries are actually assigned to.
@@ -81,11 +84,12 @@ def _assigned_queries(
     qas = (assignment or {}).get("query_assignments") or []
     if qas:
         for qa in qas:
-            engine = qa.get("assigned_engine")
+            # The cache layer serves the tables of the reads it fronts (#296)
+            engines = {e for e in (qa.get("assigned_engine"), qa.get("cache_engine")) if e}
             yield (
                 qa.get("query_id"),
                 list(qa.get("source_tables") or []),
-                {engine} if engine else set(),
+                engines,
                 bool(qa.get("in_scope", True)),
             )
         return
@@ -223,11 +227,23 @@ def build_facts(
     engines = []
     for entry in ranking:
         engine = entry.get("target") or entry.get("engine")
+        is_cache = entry.get("role") == "cache_layer"
         engines.append(
             {
                 "engine": engine,
                 "assigned_queries": entry.get("assigned_queries"),
-                "workload_percent": entry.get("workload_percent"),
+                "workload_percent": None if is_cache else entry.get("workload_percent"),
+                # The cache layer owns no query: workload_percent is null and the
+                # cached_* fields describe it instead (#296)
+                **(
+                    {
+                        "role": "cache_layer",
+                        "cached_queries": entry.get("cache_overlay_queries"),
+                        "cached_call_share_percent": entry.get("cache_call_share_percent"),
+                    }
+                    if is_cache
+                    else {}
+                ),
                 "confidence": entry.get("confidence_score"),
                 "monthly_cost_usd": cost_by_engine.get(engine, entry.get("monthly_cost_usd")),
                 "tables_served": _tables_served(
@@ -286,6 +302,7 @@ def build_facts(
     )
     rc = report.get("reality_check") or {}
     waves = report.get("migration_waves")
+    overlay = report.get("cache_overlay") or {}
 
     return {
         "source": {
@@ -329,6 +346,25 @@ def build_facts(
                 for m in rc.get("consolidations") or []
             ],
         },
+        **(
+            {
+                "cache_overlay": {
+                    "engine": overlay.get("engine"),
+                    "rule": (
+                        "the cache owns no query; it fronts hot reads cache-aside and is "
+                        "not part of the workload distribution"
+                    ),
+                    "cached_queries": overlay.get("query_count"),
+                    "call_share_percent": overlay.get("call_share_percent"),
+                    "owners": overlay.get("owners"),
+                    "min_calls_per_second": overlay.get("min_calls_per_second"),
+                    "max_rows_avg": overlay.get("max_rows_avg"),
+                    "notes": [_cap(n) for n in overlay.get("notes") or []],
+                }
+            }
+            if overlay
+            else {}
+        ),
         "tco": {
             **tco,
             "assumptions": [_cap(a) for a in tco.get("assumptions") or []],

@@ -8,6 +8,7 @@
  * tag from ./escapeHtml, which HTML-escapes every interpolation by default (#242).
  */
 import { html } from './escapeHtml';
+import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
 
 // Normalize a trade-off (structured object or legacy string) into a consistent shape.
 export const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
@@ -70,7 +71,12 @@ const asArray = (value) => (Array.isArray(value) ? value : []);
 export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => {
   const synthesis = resultsData?.synthesis || {};
   const triage = resultsData?.triage_summary || {};
-  const ranking = asArray(synthesis.ranking);
+  // #296 cache overlay: pull the trailing role: "cache_layer" ranking entry (if
+  // any) out of the ranked owners so it renders as its own cache layer card
+  // instead of a ranked engine with workload_percent 0 / "0%" confidence.
+  const { owners: ownerRanking, cacheLayer } = splitRankingByRole(asArray(synthesis.ranking));
+  const ranking = ownerRanking;
+  const cacheLayerLine = formatCacheLayerLine(cacheLayer, { t, withLabel: false });
   const tableMappings = asArray(synthesis.table_mappings);
   const riskAssessment = synthesis.risk_assessment || {};
   const risks = asArray(riskAssessment.risks).filter(risk => riskHasContent(risk.description));
@@ -194,6 +200,12 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         </div>
       `)}
     </div>
+    ${cacheLayer ? html`
+    <div class="ranking-card" style="margin-top: 20px; border-color: #d91515; text-align: left; display: flex; align-items: center; gap: 12px;">
+      <span class="badge badge-red">${t('cache-layer.badge-label', { defaultValue: 'Cache layer' })}</span>
+      <span>${cacheLayerLine}</span>
+    </div>
+    ` : ''}
   </div>
 
   <div class="section-separator">

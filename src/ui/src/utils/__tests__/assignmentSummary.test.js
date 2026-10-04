@@ -106,3 +106,75 @@ describe('buildAssignmentSummary', () => {
     );
   });
 });
+
+describe('#296 cache overlay', () => {
+  const CACHE_OVERLAY = {
+    engine: 'elasticache',
+    query_count: 20,
+    calls_per_second: 120.4,
+    call_share_percent: 83.4,
+    owners: { dynamodb: 20 },
+  };
+
+  test('new-shape artifact: afterDist already excludes elasticache (owners-only); the hero names it as a cache layer, never "N to ElastiCache"', () => {
+    const summary = build({
+      afterDist: { dynamodb: 69, opensearch: 4 },
+      cacheOverlay: CACHE_OVERLAY,
+    });
+    expect(summary).toBe(
+      'Your wordpress workload has 73 access patterns across 50 tables. '
+      + 'We map 69 to DynamoDB, 4 to OpenSearch. '
+      + 'Recommended integration pattern: Command Query Responsibility Segregation (CQRS). '
+      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+    );
+    expect(summary).not.toContain('ElastiCache');
+    expect(summary).not.toMatch(/\b0%/);
+  });
+
+  test('defensively strips elasticache out of afterDist when a cacheOverlay is present, even if the artifact still lists it as an owner', () => {
+    const summary = build({ afterDist: AFTER, cacheOverlay: CACHE_OVERLAY });
+    expect(summary).toBe(
+      'Your wordpress workload has 73 access patterns across 50 tables. '
+      + 'We map 69 to DynamoDB, 4 to OpenSearch. '
+      + 'Recommended integration pattern: Command Query Responsibility Segregation (CQRS). '
+      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+    );
+  });
+
+  test('legacy artifact (no cacheOverlay): elasticache keeps rendering as a real owner, exactly as before', () => {
+    expect(build()).toBe(
+      'Your wordpress workload has 107 access patterns across 50 tables. '
+      + 'We map 69 to DynamoDB, 34 to ElastiCache, 4 to OpenSearch. '
+      + 'Recommended integration pattern: Command Query Responsibility Segregation (CQRS).',
+    );
+  });
+
+  test('single surviving owner plus a cache overlay: cache-layer sentence still appended', () => {
+    const summary = build({
+      afterDist: { dynamodb: 12 },
+      tableCount: 0,
+      cacheOverlay: CACHE_OVERLAY,
+    });
+    expect(summary).toBe(
+      'Your wordpress workload has 12 access patterns. All access patterns map to DynamoDB. '
+      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+    );
+  });
+
+  test('no owners survive but a cache overlay exists: cache-layer line alone (no empty "We map" sentence)', () => {
+    expect(build({ afterDist: {}, cacheOverlay: CACHE_OVERLAY })).toBe(
+      'Cache layer · 20 cached reads · 83.4% of calls',
+    );
+  });
+
+  test('LLM summary present alongside a cache overlay: fact line, then LLM prose, then the cache-layer sentence', () => {
+    expect(build({
+      afterDist: { dynamodb: 69, opensearch: 4 },
+      llmSummary: LLM,
+      cacheOverlay: CACHE_OVERLAY,
+    })).toBe(
+      `Your wordpress workload has 73 access patterns across 50 tables. ${LLM} `
+      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+    );
+  });
+});

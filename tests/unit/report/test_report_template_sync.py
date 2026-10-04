@@ -151,6 +151,7 @@ def test_shell_placeholders_are_all_present(sync):
         "__ENGINE_BADGES__",
         "__PROJECTED_COST__",
         "__TOTAL_PATTERNS__",
+        "__CACHE_LAYER_STAT__",
     ):
         assert placeholder in shell, f"missing {placeholder}"
     assert "${" not in shell, "an unmapped JS interpolation survived into the template"

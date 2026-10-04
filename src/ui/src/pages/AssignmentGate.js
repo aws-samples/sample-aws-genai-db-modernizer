@@ -33,6 +33,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { buildAssignmentSummary } from "../utils/assignmentSummary";
+import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine } from "../utils/cacheLayer";
 
 import './AssignmentGate.css';
 
@@ -294,10 +295,25 @@ const AssignmentGatePage = memo(() => {
   // ---- Computed data ----
 
   const consolidations = useMemo(() => realityCheck?.consolidations || [], [realityCheck]);
-  const beforeDist = useMemo(() => realityCheck?.before_distribution || {}, [realityCheck]);
-  const afterDist = useMemo(() => realityCheck?.after_distribution || {}, [realityCheck]);
   const patterns = useMemo(() => realityCheck?.architectural_patterns || [], [realityCheck]);
   const recommendations = useMemo(() => realityCheck?.recommendations || [], [realityCheck]);
+
+  // #296 cache overlay: the assignment artifact carries an optional top-level
+  // cache_overlay describing ElastiCache's cached-reads/call-share, separate
+  // from the owner distributions below. Its presence is also the signal that
+  // before/after_distribution are the new owners-only shape, so legacy
+  // artifacts (no cache_overlay, ElastiCache still a real owner) keep
+  // rendering exactly as before.
+  const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
+  const beforeDist = useMemo(
+    () => ownerDistribution(realityCheck?.before_distribution, !!cacheOverlay),
+    [realityCheck, cacheOverlay],
+  );
+  const afterDist = useMemo(
+    () => ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay),
+    [realityCheck, cacheOverlay],
+  );
+  const cacheLayerLine = useMemo(() => formatCacheLayerLine(cacheOverlay, { t }), [cacheOverlay, t]);
 
   // Eliminated engines
   const eliminatedEngines = useMemo(() => {
@@ -337,9 +353,10 @@ const AssignmentGatePage = memo(() => {
     afterDist,
     tableCount,
     patterns,
+    cacheOverlay,
     engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
     t,
-  }), [realityCheck, databaseName, afterDist, tableCount, patterns, t]);
+  }), [realityCheck, databaseName, afterDist, tableCount, patterns, cacheOverlay, t]);
 
   // Sankey data from after_distribution
   const sankeyData = useMemo(() => {
@@ -704,6 +721,13 @@ const AssignmentGatePage = memo(() => {
             data={sankeyData}
             onNodeClick={handleSankeyNodeClick}
           />
+          {/* #296: the Sankey only ever shows owner engines (ElastiCache never
+              owns a query); its cache_overlay role is called out below it. */}
+          {cacheLayerLine && (
+            <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
+              {cacheLayerLine}
+            </Box>
+          )}
         </Container>
       )}
 
@@ -945,6 +969,11 @@ const AssignmentGatePage = memo(() => {
               const isMoved = item.assignment_reason?.includes('reality check');
               const details = queryDetailsMap[item.query_id];
               const signals = querySignalsMap[item.query_id] || [];
+              // #296: a cached read keeps its owner engine above but also carries
+              // cache_engine/cache_pattern/cache_reason -- show it as a small
+              // "cached by <engine>" indicator, never as its own owner row.
+              const cacheInfo = getQueryCacheInfo(item);
+              const cacheEngineLabel = cacheInfo ? (ENGINE_COLORS[cacheInfo.engine]?.label || cacheInfo.engine) : null;
 
               return (
                 <div key={item.query_id} className={`query-list-row ${isExpanded ? 'query-list-row--expanded' : ''} ${isMoved ? 'query-list-row--moved' : ''}`}>
@@ -974,6 +1003,14 @@ const AssignmentGatePage = memo(() => {
                         triggerVariant="option"
                         expandToViewport
                       />
+                      {cacheInfo && (
+                        <span
+                          className="cache-overlay-indicator"
+                          title={cacheInfo.reason || undefined}
+                        >
+                          {formatCachedByLine(cacheEngineLabel, { t })}
+                        </span>
+                      )}
                     </div>
                     <div className="query-list-col query-list-col--confidence">
                       {item.confidence ?? '-'}%

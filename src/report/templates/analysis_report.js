@@ -642,7 +642,7 @@
       tabsHtml += '<div id="tab-general" class="tab-content" style="display: block;">';
       tabsHtml += '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px;">';
       tabsHtml += '<div><div class="key-value-label">Query Type</div><div>' + escapeHtml(source.query_type || '—') + '</div></div>';
-      tabsHtml += '<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">' + escapeHtml(assignment.assigned_engine || '—') + '</span></div></div>';
+      tabsHtml += '<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">' + escapeHtml(assignment.assigned_engine || '—') + '</span>' + (assignment.cache_engine ? ('<div style="margin-top: 4px; font-size: 12px; font-style: italic; color: var(--color-text-secondary);">Cached by ' + escapeHtml(ENGINE_LABELS[assignment.cache_engine] || assignment.cache_engine) + '</div>') : '') + '</div></div>';
       tabsHtml += '<div><div class="key-value-label">Confidence</div><div>' + escapeHtml(String(assignment.confidence || '—')) + '%</div></div>';
       tabsHtml += '<div><div class="key-value-label">Frequency (per hour)</div><div>' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : '—') + '</div></div>';
       tabsHtml += '<div><div class="key-value-label">Calls per Second</div><div>' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : '—') + '</div></div>';

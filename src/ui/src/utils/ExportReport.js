@@ -20,6 +20,7 @@
 // HTML escaping for the shell below; the embedded client script carries its own copy
 // (the exported file is standalone). Both escape & < > " ' -- see ./escapeHtml.js.
 import { escapeHtml, jsonForScript } from './escapeHtml';
+import { getCacheOverlay, formatCacheLayerLine } from './cacheLayer';
 
 // Engine, operation and chart colours are NOT declared here. The palette lives in
 // exactly one place -- the :root block of REPORT_CSS below -- and both the badges
@@ -828,7 +829,10 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      tabsHtml += \'<div id="tab-general" class="tab-content" style="display: block;">\';\n';
   script += '      tabsHtml += \'<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px;">\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Query Type</div><div>\' + escapeHtml(source.query_type || \'—\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span></div></div>\';\n';
+  // #296 cache overlay: a cached read keeps assigned_engine as its real owner;
+  // cache_engine (e.g. "elasticache") just flags that it is also served from a
+  // cache layer, so it is shown as a small secondary line, never as the engine.
+  script += '      tabsHtml += \'<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span>\' + (assignment.cache_engine ? (\'<div style="margin-top: 4px; font-size: 12px; font-style: italic; color: var(--color-text-secondary);">Cached by \' + escapeHtml(ENGINE_LABELS[assignment.cache_engine] || assignment.cache_engine) + \'</div>\') : \'\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Confidence</div><div>\' + escapeHtml(String(assignment.confidence || \'—\')) + \'%</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Frequency (per hour)</div><div>\' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Calls per Second</div><div>\' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : \'—\') + \'</div></div>\';\n';
@@ -931,6 +935,17 @@ export const generateHTMLReport = (data) => {
     .map(engine => '<span class="badge" data-engine="' + escapeHtml(engine) + '">' + escapeHtml(engine) + '</span>')
     .join('');
 
+  // #296 cache overlay: synthesis.cache_overlay (same shape as the synthesis
+  // report's top-level field) describes ElastiCache as a cache layer, never a
+  // workload share -- shown as its own stat, not folded into Target Engines.
+  // This export is i18n-exempt (standalone, English-only), so the English
+  // default text from formatCacheLayerLine is used directly.
+  const cacheOverlay = getCacheOverlay(results?.synthesis);
+  const cacheLayerStat = cacheOverlay
+    ? '<div class="stat-card"><div class="stat-label">Cache Layer</div>'
+      + '<div class="stat-value" style="font-size: 14px;">' + escapeHtml(formatCacheLayerLine(cacheOverlay)) + '</div></div>'
+    : '';
+
   // Untrusted report.json text in the shell, escaped once here. The ATX renderer
   // (src/report/analysis_report.py) fills the same slots with escaping.html_text.
   const safeJobId = escapeHtml(jobId);
@@ -997,6 +1012,7 @@ export const generateHTMLReport = (data) => {
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
         <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$${projectedCost}/mo</div></div>
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div></div>
+        ${cacheLayerStat}
       </div>
     </div>
 

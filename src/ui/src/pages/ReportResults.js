@@ -30,6 +30,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import SectionSeparator from "../components/SectionSeparator";
 import { buildReportHtml, normalizeTradeoff, riskHasContent } from "../utils/ReportHtmlExport";
+import { splitRankingByRole, formatCacheLayerLine } from "../utils/cacheLayer";
 
 
 
@@ -451,7 +452,12 @@ const ReportResultsPage = memo(() => {
 
   const synthesis = resultsData?.synthesis || {};
   const triage = resultsData?.triage_summary || {};
-  const ranking = synthesis?.ranking || [];
+  // #296 cache overlay: the ranking array may carry a trailing role: "cache_layer"
+  // entry for ElastiCache (workload_percent 0, assigned_queries 0 by design --
+  // it never owns a query). Split it out so it renders as a cache layer card
+  // instead of a ranked owner with a misleading "0%".
+  const { owners: ranking, cacheLayer } = splitRankingByRole(synthesis?.ranking);
+  const cacheLayerLine = formatCacheLayerLine(cacheLayer, { t, withLabel: false });
   const queryGroups = synthesis?.query_groups || [];
   const tableMappings = synthesis?.table_mappings || [];
   const riskAssessment = synthesis?.risk_assessment || {};
@@ -900,6 +906,25 @@ const ReportResultsPage = memo(() => {
                       </Box>
                     ))}
                   </ColumnLayout>
+
+                  {/* #296: ElastiCache's cache_layer ranking entry is never an owner
+                      (workload_percent 0, assigned_queries 0 by design), so it gets
+                      its own card -- cached-read count and call share, not a rank. */}
+                  {cacheLayer && (
+                    <Box padding={{ top: 'l' }}>
+                      <Box
+                        padding="l"
+                        style={{ borderLeft: '3px solid #d13212', backgroundColor: '#fef2f2', borderRadius: '4px' }}
+                      >
+                        <SpaceBetween direction="horizontal" size="l" alignItems="center">
+                          <Badge color={ENGINE_COLORS[cacheLayer.target] || 'red'}>
+                            {t('cache-layer.badge-label', { defaultValue: 'Cache layer' })}
+                          </Badge>
+                          <Box fontSize="body-m">{cacheLayerLine}</Box>
+                        </SpaceBetween>
+                      </Box>
+                    </Box>
+                  )}
                 </Container>
 
                 {/* Table Mappings */}
