@@ -19,7 +19,12 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
-from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, overlay_summary
+from src.agents.referee.cache_overlay import (
+    CACHE_OVERLAY_ENGINES,
+    PATTERN_LABELS,
+    overlay_summary,
+)
+from src.agents.referee.routed_confidence import routed_fits
 from src.agents.referee.synthesis_grounding import (
     SUMMARY_GROUNDING_RULE,
     display_name,
@@ -27,6 +32,8 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
+from src.shared.ranking import engine_confidence
+from src.shared.signal_labels import signal_noun
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -209,15 +216,29 @@ def is_cache_layer(entry: dict) -> bool:
 
 
 def build_ranking(data: SynthesisData) -> list[dict]:
-    """Rank target engines by confidence, cost, and pattern coverage.
+    """Rank target engines by the share of the workload routed to them (#152).
+
+    Each entry keeps ``analysis_confidence`` (suitability averaged over every table
+    the engine analyzed, also as ``confidence_score``) and ``weight`` for audit, and
+    carries ``routed_confidence``: the mean fit of the queries the effective
+    assignment routes to it. Owners come first, largest
+    workload share first (weight, then name, break ties); without an assignment the
+    weight order stands.
 
     The cache layer (#296) owns no query: its ``workload_percent`` is 0, it carries
-    ``cache_overlay_queries`` / ``cache_call_share_percent`` instead, and it ranks
-    after every owner engine so it is never read as the main recommendation.
+    ``cache_overlay_queries`` / ``cache_call_share_percent`` instead, its routed
+    confidence is measured on the reads it fronts, and it ranks after every owner
+    engine so it is never read as the main recommendation.
     """
     ranking = []
     assignment_dist = _compute_assignment_distribution(data)
     overlay = build_cache_overlay(data) or {}
+    fits = routed_fits(
+        data.assignment,
+        data.triage,
+        data.source_queries,
+        {e: a.analysis or {} for e, a in data.engines.items()},
+    )
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -261,10 +282,12 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             g = ap.get("pattern_group", "ungrouped")
             pattern_groups.setdefault(g, []).append(ap)
 
+        fit = fits.get(engine)
         entry = {
             "target": engine,
             "confidence_score": round(avg_confidence),  # backward compat
             "analysis_confidence": round(avg_confidence),
+            "routed_confidence": fit.confidence if fit else None,
             "weight": weight,
             "monthly_cost_usd": monthly_cost,
             "tables_analyzed": len(table_recs),
@@ -287,6 +310,12 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             "access_patterns": len(access_patterns),
             "pattern_groups": len(pattern_groups),
         }
+        if fit is not None:
+            entry["routed_confidence_basis"] = fit.basis
+            entry["routed_queries"] = fit.queries
+            entry["routed_tables"] = fit.tables
+            entry["routed_lead"] = fit.lead_signal
+            entry["routed_lead_count"] = fit.lead_count
 
         # Enrich with assignment distribution when available
         if assignment_dist and engine in assignment_dist:
@@ -312,7 +341,14 @@ def build_ranking(data: SynthesisData) -> list[dict]:
 
         ranking.append(entry)
 
-    ranking.sort(key=lambda r: (is_cache_layer(r), -r["weight"]))
+    ranking.sort(
+        key=lambda r: (
+            is_cache_layer(r),
+            -float(r.get("workload_percent") or 0),
+            -r["weight"],
+            r["target"],
+        )
+    )
     return ranking
 
 
@@ -1333,6 +1369,7 @@ def build_architecture_recommendation(
                 "rationale": _engine_rationale(data, r),
                 "tables": tables,
                 "confidence_score": r["confidence_score"],
+                "routed_confidence": r.get("routed_confidence"),
             }
         )
 
@@ -1346,8 +1383,28 @@ def build_architecture_recommendation(
     }
 
 
+def _routed_phrase(r: dict, noun: str, verb: str) -> str:
+    """``95% fit over the 6 tables served`` (#152); empty without a routed confidence."""
+    fit = r.get("routed_confidence")
+    if fit is None:
+        return ""
+    n_t = int(r.get("routed_tables") or 0)
+    return (
+        f"{fit}% {noun} over the {_count(n_t, 'table', 'tables')} {verb}"
+        if n_t
+        else (f"{fit}% {noun}")
+    )
+
+
 def _engine_rationale(data: SynthesisData, r: dict) -> str:
     """Generate a rationale string for an engine recommendation.
+
+    It names the workload routed to the engine and how well the engine fits it
+    (#152), e.g. "101 queries, led by full-text search (98 of 101); 85% fit over
+    the 6 tables served". The analysis average over every analyzed table is the
+    ``analysis_confidence`` field, not the rationale: it describes the tables the
+    engine looked at, not the work it was given. A report without an assignment
+    keeps that average, since nothing is routed yet.
 
     Access patterns are counted in scope, as in the summary (#255). The cache layer
     is described by the reads it fronts, not by an owner share (#296).
@@ -1355,11 +1412,15 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     if is_cache_layer(r):
         owners = ", ".join(sorted(r.get("cache_overlay_owners") or {})) or "their owner engines"
         n = r.get("cache_overlay_queries", 0)
-        parts = [
+        lead = r.get("routed_lead")
+        shape = f", mostly {PATTERN_LABELS.get(lead, lead.replace('_', ' '))}s" if lead else ""
+        head = (
             f"Cache layer for {n} hot {'read' if n == 1 else 'reads'} "
-            f"({r.get('cache_call_share_percent', 0)}% of calls), cache-aside in front of "
-            f"{owners}; it owns no queries"
-        ]
+            f"({r.get('cache_call_share_percent', 0)}% of calls){shape}, cache-aside in front "
+            f"of {owners}; it owns no queries"
+        )
+        fit = _routed_phrase(r, "cache fit", "it fronts")
+        parts = [head + (f"; {fit}" if fit else "")]
         if r.get("target_tables", 0) > 0:
             parts.append(
                 f"schema design: {_count(r['target_tables'], 'key design', 'key designs')}, "
@@ -1368,9 +1429,24 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         if r["monthly_cost_usd"] > 0:
             parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month")
         return ". ".join(parts) + "."
-    parts = [f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"]
-    if r["patterns_detected"] > 0:
-        parts.append(f"{r['patterns_detected']} matching workload patterns")
+    if r.get("routed_confidence") is not None:
+        n = int(r.get("routed_queries") or 0)
+        lead = r.get("routed_lead")
+        head = _count(n, "query", "queries") + (
+            f", led by {signal_noun(lead)} ({r.get('routed_lead_count', 0)} of {n})" if lead else ""
+        )
+        parts = [f"{head}; {_routed_phrase(r, 'fit', 'served')}"]
+    elif "assigned_queries" in r:
+        parts = [
+            f"No queries routed; {r['confidence_score']}% average confidence across "
+            f"{r['tables_analyzed']} analyzed tables"
+        ]
+    else:
+        parts = [
+            f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"
+        ]
+        if r["patterns_detected"] > 0:
+            parts.append(f"{r['patterns_detected']} matching workload patterns")
     if r.get("target_tables", 0) > 0:
         parts.append(
             f"schema design: {r['target_tables']} target tables, "
@@ -1389,7 +1465,10 @@ def _architecture_rationale(
     """Generate architecture-level rationale."""
     if arch_type == "SINGLE_DATABASE":
         if databases:
-            return f"Workload analysis indicates {databases[0]['service']} as the primary target with {databases[0]['confidence_score']}% confidence."
+            return (
+                f"Workload analysis indicates {databases[0]['service']} as the primary "
+                f"target with {engine_confidence(databases[0]):.0f}% confidence."
+            )
         return "Insufficient data to recommend a specific architecture."
     elif arch_type == "HYBRID_WITH_CACHE":
         primary = [d for d in databases if "cache" not in d["service"].lower()]
@@ -1474,8 +1553,9 @@ def build_summary(
     With assignment data the summary describes the whole workload split: schema-design
     totals over every engine that carries queries, and "other targets" are only the
     engines that carry none (left empty by the assignment, or eliminated by the
-    reality check, see ``synthesis_grounding.eliminated_engines``). ``ranking[0]`` is
-    an analysis-weight ordering, not the main engine (#219).
+    reality check, see ``synthesis_grounding.eliminated_engines``). With an
+    assignment the ranking is ordered by workload share (#152); without one
+    ``ranking[0]`` is the analysis-weight leader.
     """
     if not ranking:
         return "No analysis results available."
@@ -1635,7 +1715,7 @@ def generate_executive_summary(
     # Build focused context — only what a CTO needs to see
     engine_workload = []
     for r in ranking:
-        entry = {"engine": r["target"], "confidence": r["confidence_score"]}
+        entry = {"engine": r["target"], "confidence": round(engine_confidence(r))}
         if r.get("assigned_queries"):
             entry["queries"] = r["assigned_queries"]
             entry["workload_pct"] = r.get("workload_percent", 0)

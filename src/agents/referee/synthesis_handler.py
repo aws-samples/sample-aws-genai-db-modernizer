@@ -322,7 +322,12 @@ def _write_synthesis_report(
     print(f"[synthesis] Report written to {key}")
 
     ranking = result["ranking"]
-    ranking_str = ", ".join(f"{r['target']}={r['confidence_score']}%" for r in ranking)
+    # Routed confidence (#152), the analysis average alongside for audit
+    ranking_str = ", ".join(
+        f"{r['target']}={r.get('routed_confidence')}% routed "
+        f"(analysis {r['confidence_score']}%)"
+        for r in ranking
+    )
     print(f"[synthesis] Ranking: [{ranking_str}]")
     if data.assignment:
         workload_parts = []

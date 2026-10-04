@@ -45,6 +45,32 @@ class TestEngineRanking:
         with pytest.raises(ValidationError):
             EngineRanking(target="dynamodb", confidence_score=-1)
 
+    def test_routed_confidence_fields_are_optional(self):
+        """1.3 (#152): routed confidence next to the analysis average, both optional."""
+        legacy = EngineRanking(target="opensearch", confidence_score=2)
+        assert legacy.routed_confidence is None
+        assert legacy.analysis_confidence is None
+        r = EngineRanking(
+            target="opensearch",
+            confidence_score=2,
+            analysis_confidence=2,
+            routed_confidence=60,
+            routed_confidence_basis="owned_queries",
+            routed_queries=3,
+            routed_tables=1,
+            weight=0.212,
+        )
+        assert (r.analysis_confidence, r.routed_confidence) == (2, 60)
+        assert r.routed_confidence_basis == "owned_queries"
+
+    def test_routed_confidence_bounds(self):
+        with pytest.raises(ValidationError):
+            EngineRanking(target="dynamodb", confidence_score=50, routed_confidence=101)
+        with pytest.raises(ValidationError):
+            EngineRanking(
+                target="dynamodb", confidence_score=50, routed_confidence_basis="all_tables"
+            )
+
     def test_extra_fields_allowed(self):
         r = EngineRanking(target="dynamodb", confidence_score=85, custom_field="value")
         assert r.model_extra["custom_field"] == "value"
@@ -231,7 +257,7 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        assert output.contract_version == "1.2"
+        assert output.contract_version == "1.3"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

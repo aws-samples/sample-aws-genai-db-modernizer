@@ -14,10 +14,17 @@ Version History:
   notes of the post-schema safety net. A cache-layer ``ranking`` entry carries
   ``role: "cache_layer"``, ``cache_overlay_queries`` and
   ``cache_call_share_percent``. Backward compatible — defaults to ``None``.
+- 1.3 (2026-10-04): Added optional ``routed_confidence`` to ``EngineRanking``
+  (#152): the mean per-query fit of the queries the effective assignment routes
+  to the engine (for the cache layer, of the reads it fronts; see
+  ``routed_confidence_basis``), with ``routed_queries`` and ``routed_tables``.
+  ``analysis_confidence`` (= ``confidence_score``, the average over every analyzed
+  table) and ``weight`` are declared as audit fields. The ranking is ordered by
+  workload share. Backward compatible — every new field defaults to ``None``.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +43,27 @@ class EngineRanking(BaseModel):
     migration_complexity_avg: str | None = Field(None, description="LOW, MEDIUM, HIGH")
     assigned_queries: int | None = Field(None, ge=0)
     workload_percent: float | None = Field(None, ge=0, le=100)
+    analysis_confidence: int | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Audit: suitability averaged over every analyzed table (= confidence_score)",
+    )
+    routed_confidence: int | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description=(
+            "Mean per-query fit of the queries routed to the engine (cache layer: of the "
+            "reads it fronts). None without an assignment or with no routed query (#152)"
+        ),
+    )
+    routed_confidence_basis: Literal["owned_queries", "cached_reads"] | None = Field(None)
+    routed_queries: int | None = Field(None, ge=0)
+    routed_tables: int | None = Field(None, ge=0)
+    weight: float | None = Field(
+        None, description="Audit: the analysis weight that ordered the ranking before #152"
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -132,7 +160,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.2",
+        default="1.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -144,7 +172,9 @@ class SynthesisOutputContract(BaseModel):
     needs_deeper_analysis: bool = Field(
         default=False, description="Whether any engine needs further analysis"
     )
-    ranking: list[EngineRanking] = Field(..., description="Engine rankings by confidence")
+    ranking: list[EngineRanking] = Field(
+        ..., description="Engines by workload share, owners first, then the cache layer (#152)"
+    )
     summary: str = Field(..., description="Executive summary text")
     summary_deterministic: str = Field(..., description="Deterministic summary (no LLM)")
     summary_source: str = Field(
