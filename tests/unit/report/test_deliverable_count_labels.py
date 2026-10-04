@@ -478,3 +478,84 @@ class TestFmtNumEdges:
         assert renderers.fmt_num(float("nan")) == "\u2013"
         assert renderers.fmt_num(float("inf")) == "\u2013"
         assert renderers.fmt_num(float("-inf")) == "\u2013"
+
+
+# Real run-5 records: the description is "<type>: <mitigation>".
+RUN5_RISK_001 = {
+    "risk_id": "RISK-001",
+    "severity": "MEDIUM",
+    "risk_type": "MIGRATION_COMPLEXITY",
+    "description": (
+        "[dynamodb] aggregation: COUNT(*) on postmeta by post and meta_key: Query the "
+        "META#<meta_key># prefix and count items in the application (or keep a counter). "
+        "SUM over child posts' postmeta: compute in the application after Querying each "
+        "child post, or maintain a materialized total via UpdateItem."
+    ),
+    "mitigation": (
+        "COUNT(*) on postmeta by post and meta_key: Query the META#<meta_key># prefix and "
+        "count items in the application (or keep a counter). SUM over child posts' postmeta: "
+        "compute in the application after Querying each child post, or maintain a "
+        "materialized total via UpdateItem."
+    ),
+    "query_ids": ["q1", "q2"],
+}
+RUN5_RISK_007 = {
+    "risk_id": "RISK-007",
+    "severity": "MEDIUM",
+    "risk_type": "MIGRATION_COMPLEXITY",
+    "description": (
+        "[elasticache] unsupported pattern: Database metadata and session administration "
+        "statements with no data to cache. None needed; remain with the relational database."
+    ),
+    "mitigation": "None needed; remain with the relational database.",
+    "query_ids": ["q3"],
+}
+# The #268 shape: the description states the problem, the mitigation is separate.
+SEPARATE_RISK = {
+    "risk_id": "RISK-002",
+    "severity": "MEDIUM",
+    "risk_type": "MIGRATION_COMPLEXITY",
+    "description": (
+        "[dynamodb] COUNT of comments per post and approval status has no server-side "
+        "equivalent in DynamoDB."
+    ),
+    "mitigation": "Maintain a counter per (post, status) via UpdateItem on write.",
+    "query_ids": ["q4"],
+}
+
+
+class TestRiskRowSplitsDescriptionAndMitigation:
+    """#249 review: descriptions shaped "<type>: <mitigation>" made the Mitigation
+    column repeat the "What it is" text."""
+
+    def _rows(self, *risks: dict[str, Any]) -> dict[str, list[str]]:
+        rows, _ = _risk_slide(list(risks))
+        return {r[0]: r for r in rows[1:]}
+
+    def test_type_prefixed_description_shows_type_and_mitigation_apart(self) -> None:
+        row = self._rows(RUN5_RISK_001)["RISK-001"]
+        assert row[1] == "DynamoDB"
+        assert row[2] == "Aggregation"
+        assert row[3].startswith("COUNT(*) on postmeta by post and meta_key")
+        assert "COUNT(*)" not in row[2]
+
+    def test_mitigation_suffix_is_removed_from_what_it_is(self) -> None:
+        row = self._rows(RUN5_RISK_007)["RISK-007"]
+        assert row[2].startswith("Unsupported pattern: Database metadata and session")
+        assert "None needed" not in row[2]
+        assert row[3] == "None needed; remain with the relational database."
+
+    def test_separate_mitigation_renders_both_columns(self) -> None:
+        row = self._rows(SEPARATE_RISK)["RISK-002"]
+        assert row[2].startswith("COUNT of comments per post and approval status")
+        assert row[3] == "Maintain a counter per (post, status) via UpdateItem on write."
+
+    def test_description_equal_to_mitigation_is_shown_once(self) -> None:
+        risk = {
+            **SEPARATE_RISK,
+            "mitigation": "COUNT of comments per post and approval "
+            "status has no server-side equivalent in DynamoDB.",
+        }
+        row = self._rows(risk)["RISK-002"]
+        assert row[2].startswith("COUNT of comments")
+        assert row[3] == "—"

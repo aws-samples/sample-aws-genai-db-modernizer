@@ -60,7 +60,6 @@ from .renderers import (
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
-    _repeats,
     filtered_risks,
     label_summary_counts,
     plural_noun,
@@ -134,7 +133,7 @@ SIGNAL_LABEL = {
 }
 # The Risk Profile shows each listed risk's own mitigation in a table cell; free
 # text from the report, so it is clipped rather than allowed to overflow the row.
-MITIGATION_MAX_CHARS = 52
+MITIGATION_MAX_CHARS = 66
 # A migration target the assessment is at least this confident in is sequenced before
 # the ones it is not. Stated as a constant so the wave split is reproducible.
 CONFIDENCE_FLOOR = 50
@@ -565,6 +564,34 @@ def _risk_caption(level: str, n_shown: int) -> str:
         k for k in ("HIGH", "MEDIUM") if SEVERITY_ORDER.index(k) < SEVERITY_ORDER.index(level)
     )
     return f"No {above} risks remain; the table shows the top {level} {risks_word}."
+
+
+def split_risk_text(description: str, mitigation: str) -> tuple[str, str]:
+    """(what it is, mitigation) for a Risk Profile row, without saying either twice.
+
+    Several analysis risks are described as "<type>: <mitigation>" (``aggregation:
+    COUNT(*) on postmeta ...: Query the META# prefix ...``) or end with their
+    mitigation, so the full description contains the mitigation. That text is
+    removed from the description, leaving the type or the problem ("Aggregation").
+    A mitigation that is the whole description is shown once, under "What it is".
+    Matched case-insensitively with whitespace collapsed, against the *full*
+    description -- the clipped cell text would hide most repeats (#249 review).
+    """
+    desc = " ".join(str(description or "").split())
+    mit = " ".join(str(mitigation or "").split())
+    if mit:
+        at = desc.casefold().find(mit.casefold())
+        if at >= 0:
+            rest = (desc[:at] + " " + desc[at + len(mit) :]).strip(" :;,.-\u2014")
+            rest = " ".join(rest.split())
+            if not rest:
+                return _capitalize(desc), ""
+            return _capitalize(rest), mit
+    return _capitalize(desc), mit
+
+
+def _capitalize(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 def clean_risk_text(description: str) -> tuple[str, str]:
@@ -1485,15 +1512,13 @@ def slide_risk(prs, f):
         desc, _ = clean_risk_text(str(r.get("description") or ""))
         n_q = _risk_query_count(r)
         eng = risk_engine(str(r.get("description") or "")) or "(general)"
-        mit = str(r.get("mitigation") or "").strip()
-        shown = clip(desc, 70)
+        what, mit = split_risk_text(desc, str(r.get("mitigation") or ""))
         rows.append(
             (
                 str(r.get("risk_id") or ""),
                 ENGINE_LABEL.get(eng, eng),
-                shown,
-                # Repeated only if the reader can already see it in the clipped text.
-                clip(mit, MITIGATION_MAX_CHARS) if mit and not _repeats(mit, shown) else "—",
+                clip(what, 66),
+                clip(mit, MITIGATION_MAX_CHARS) if mit else "—",
                 str(n_q) if n_q else "",
             )
         )
@@ -1503,7 +1528,7 @@ def slide_risk(prs, f):
         BODY_TOP,
         6.05,
         rows,
-        col_w=[0.85, 1.00, 1.90, 1.55, 0.75],
+        col_w=[0.80, 0.95, 1.80, 1.75, 0.75],
         head_size=10.0,
         body_size=9.0,
         row_h=0.56,
