@@ -150,6 +150,10 @@ deterministic job.
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
 - `judge.json` -- `ci/llm/judge.py`'s rubric scores.
+- `job-logs/` -- the run's own logs, copied by the EXIT trap (`ci/llm/run.py
+  collect-logs`) because only this directory is uploaded: `run_assessment.log`
+  from `artifacts/<db>/<job>/_logs/` and the local UI's `local-ui-api.log` /
+  `local-ui-serve.log` (ui/both), each capped at its last 1 MB.
 - `steps.json` -- exit code of every step (`build-ui` (ui/both, run *before*
   the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
   never builds inside a Bash tool call), `claude`, `check-transcript`,

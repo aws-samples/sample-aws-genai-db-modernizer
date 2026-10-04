@@ -6,6 +6,8 @@ Usage:
     uv run python ci/llm/run.py results --out results.json \
         --transcript-summary summary.json --pytest-junit J1 [J2] \
         --judge judge.json --mode chat|ui|both --fixture wordpress|discourse
+    uv run python ci/llm/run.py collect-logs --artifact-root artifacts --out DIR \
+        [--db DB --job JOB] [--extra-log .local-ui/api.log ...]
 
 Transcript shapes
 ------------------
@@ -768,6 +770,73 @@ def cmd_results(args: argparse.Namespace) -> None:
     sys.exit(0 if row["pass"] else 1)
 
 
+# The CI job uploads only test-results/, so the run's own diagnostic logs (the
+# compact-mode run_assessment.py log under artifacts/<db>/<job>/_logs/, #278,
+# and the local UI's server logs) are copied next to the transcript. Each file
+# keeps at most its last LOG_COPY_MAX_BYTES so the upload stays bounded.
+LOG_COPY_MAX_BYTES = 1_000_000
+
+
+def _copy_tail(src: Path, dest: Path, max_bytes: int) -> dict:
+    size = src.stat().st_size
+    with src.open("rb") as f:
+        if size > max_bytes:
+            f.seek(size - max_bytes)
+        data = f.read()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if size > max_bytes:
+        note = f"[truncated: last {max_bytes} of {size} bytes of {src}]\n".encode()
+        data = note + data
+    dest.write_bytes(data)
+    return {"src": str(src), "dest": str(dest), "bytes": size, "truncated": size > max_bytes}
+
+
+def collect_logs(
+    artifact_root: Path,
+    out_dir: Path,
+    db: str = "",
+    job: str = "",
+    state_file: Path | None = None,
+    extra_logs: list[Path] | None = None,
+    max_bytes: int = LOG_COPY_MAX_BYTES,
+) -> list[dict]:
+    """Copy the job's ``_logs/*`` and ``extra_logs`` into ``out_dir/job-logs/``.
+
+    ``db``/``job`` default to ``.modernizer-state.json`` (a run that failed
+    before check-transcript found them). Missing files are skipped.
+    """
+    if (not db or not job) and state_file is not None and state_file.is_file():
+        try:
+            state = json.loads(state_file.read_text())
+            db = db or str(state.get("database_name") or "")
+            job = job or str(state.get("job_id") or "")
+        except (OSError, ValueError):
+            pass
+    sources: list[tuple[Path, str]] = []
+    if db and job:
+        log_dir = artifact_root / db / job / "_logs"
+        if log_dir.is_dir():
+            sources += [(p, p.name) for p in sorted(log_dir.iterdir()) if p.is_file()]
+    for extra in extra_logs or []:
+        if extra.is_file():
+            sources.append((extra, f"{extra.parent.name.lstrip('.')}-{extra.name}"))
+    return [_copy_tail(src, out_dir / "job-logs" / name, max_bytes) for src, name in sources]
+
+
+def cmd_collect_logs(args: argparse.Namespace) -> None:
+    copied = collect_logs(
+        Path(args.artifact_root),
+        Path(args.out),
+        db=args.db or "",
+        job=args.job or "",
+        state_file=(
+            Path(args.state_file) if args.state_file else REPO_ROOT / ".modernizer-state.json"
+        ),
+        extra_logs=[Path(p) for p in args.extra_log],
+    )
+    print(json.dumps({"copied": copied}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -806,6 +875,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to claude-exit.txt for a wall-clock wall_duration_s (optional)",
     )
     p2.set_defaults(func=cmd_results)
+
+    p3 = sub.add_parser(
+        "collect-logs", help="Copy the job's _logs/ and other small logs into the output dir."
+    )
+    p3.add_argument("--artifact-root", required=True)
+    p3.add_argument("--out", required=True)
+    p3.add_argument("--db", default="")
+    p3.add_argument("--job", default="")
+    p3.add_argument("--state-file", default=None)
+    p3.add_argument("--extra-log", action="append", default=[])
+    p3.set_defaults(func=cmd_collect_logs)
 
     return parser
 

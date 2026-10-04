@@ -371,7 +371,7 @@ uv run python scripts/run_assessment.py --job-id <id> --db <name> --resume-reali
 
 This runs the deterministic pipeline (Collect, Triage, Analyze, Assign, Reality Check) and stops. Schema design and synthesis require LLM reasoning and are handled separately via Claude Code slash commands or `--all --llm-mode bedrock`.
 
-In a terminal the script prints its full progress. When stdout is not a terminal (a pipe, CI, or a headless Claude Code session), stdout has only the `{"phase": ...}` status lines and a final `{"log": ...}` line; the progress goes to `artifacts/<db>/<job>/logs/run_assessment.log`. Add `--verbose` to get the full progress on stdout anyway.
+In a terminal the script prints its full progress. When stdout is not a terminal (a pipe, CI, or a headless Claude Code session), stdout has only the `{"phase": ...}` status lines and a final `{"log": ...}` line; the progress goes to `artifacts/<db>/<job>/_logs/run_assessment.log`. Add `--verbose` to get the full progress on stdout anyway.
 
 ---
 

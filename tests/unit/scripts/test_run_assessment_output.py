@@ -6,7 +6,7 @@ a file outside the repository and returns only a 2 KB preview, so the
 ``{"phase": ...}`` status lines /modernize needs were out of reach. Now,
 unless ``--verbose`` is given or stdout is a TTY, stdout carries only the
 status lines plus one final ``{"log": ...}`` line, and the progress goes to
-``artifacts/<db>/<job>/logs/run_assessment.log``.
+``artifacts/<db>/<job>/_logs/run_assessment.log``.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def test_discourse_stdout_is_status_lines_then_log_pointer(discourse_compact):
     job_id = status[0]["job_id"]
 
     assert set(pointer) == {"log", "log_offset", "log_lines"}
-    assert pointer["log"] == f"artifacts/discourse/{job_id}/logs/run_assessment.log"
+    assert pointer["log"] == f"artifacts/discourse/{job_id}/_logs/run_assessment.log"
     log = (tmp_path / pointer["log"]).read_text(encoding="utf-8").splitlines()
     assert pointer["log_offset"] == 1
     assert pointer["log_lines"] == len(log)
@@ -128,7 +128,7 @@ def test_verbose_prints_progress_to_stdout_and_writes_no_log(tmp_path):
     assert phases == ASSESSMENT_PHASES
     assert '"log"' not in out.splitlines()[-1]
     assert "Database Modernizer Assessment" in proc.stderr
-    assert not list((tmp_path / "artifacts").glob("*/*/logs"))
+    assert not list((tmp_path / "artifacts").glob("*/*/_logs"))
 
 
 def test_error_before_the_job_exists_is_reported_inline(tmp_path):
@@ -165,7 +165,7 @@ def test_uncaught_exception_becomes_an_error_status_line(monkeypatch, tmp_path, 
             "phase": "triage",
             "status": "error",
             "message": "RuntimeError: triage exploded",
-            "log": "artifacts/wordpress/job-1/logs/run_assessment.log",
+            "log": "artifacts/wordpress/job-1/_logs/run_assessment.log",
         }
     ]
     log = (tmp_path / pointer["log"]).read_text(encoding="utf-8")
@@ -174,6 +174,40 @@ def test_uncaught_exception_becomes_an_error_status_line(monkeypatch, tmp_path, 
     assert out.err == ""
     assert not isinstance(sys.stdout, CompactConsole)
     assert not isinstance(sys.stderr, CompactConsole)
+
+
+def test_keyboard_interrupt_still_prints_the_phase_error_line(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+    )
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_assessment, "phase_triage", interrupted)
+    monkeypatch.setattr(sys, "argv", ["run_assessment.py", "--file", "c.json", "--db", "wordpress"])
+    with pytest.raises(KeyboardInterrupt):
+        run_assessment.main()
+    *status, pointer = _json_lines(capsys.readouterr().out)
+    assert status[-1]["phase"] == "triage"
+    assert status[-1]["status"] == "error"
+    assert status[-1]["message"].startswith("KeyboardInterrupt")
+    assert pointer["log"] == "artifacts/wordpress/job-1/_logs/run_assessment.log"
+
+
+def test_log_dir_is_not_listed_as_an_agent(discourse_compact):
+    from src.api.services.local_s3 import LocalS3Service
+    from src.storage.local_store import LocalArtifactStore
+
+    tmp_path, proc = discourse_compact
+    job_id = _json_lines(proc.stdout)[0]["job_id"]
+    assert (tmp_path / "artifacts" / "discourse" / job_id / "_logs").is_dir()
+    agents = LocalS3Service(LocalArtifactStore(str(tmp_path / "artifacts"))).list_agent_artifacts(
+        "discourse", job_id
+    )
+    assert "referee-triage" in agents
+    assert not any("logs" in a for a in agents)
 
 
 class _Tty(io.StringIO):
@@ -191,6 +225,97 @@ def test_modernize_reads_the_status_lines_and_the_log_pointer():
     text = (REPO_ROOT / ".claude" / "commands" / "modernize.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
     assert '"log_offset"' in text and '"log_lines"' in text
-    assert "logs/run_assessment.log" in text
+    assert "_logs/run_assessment.log" in text
     assert "do not add `--verbose`" in flat
     assert "`offset` = `log_offset` and `limit` = `log_lines`" in flat
+
+
+# --- #283: every path a status line names is the real artifact -------------
+
+
+def _printed_paths(status: list[dict]) -> list[str]:
+    paths: list[str] = []
+    for line in status:
+        for key in ("artifact", "llm_request"):
+            if key in line:
+                paths.append(line[key])
+        paths.extend((line.get("artifacts") or {}).values())
+    return paths
+
+
+def test_discourse_status_paths_exist_and_are_cwd_relative(discourse_compact):
+    tmp_path, proc = discourse_compact
+    *status, _ = _json_lines(proc.stdout)
+    paths = _printed_paths(status)
+    assert len(paths) >= 9  # collect, triage, 5 analyses, assignment, llm_request
+    for path in paths:
+        assert path.startswith("artifacts/discourse/"), path
+        assert (tmp_path / path).is_file(), path
+    by_phase = {s["phase"]: s for s in status}
+    assert by_phase["assignment"]["assignment_version"] == 1
+    assert by_phase["assignment"]["artifact"].endswith("/assignment/v1/assignment.json")
+    assert by_phase["reality_check"]["input_version"] == 1
+
+
+def _run_all_in_process(monkeypatch, tmp_path, capsys) -> list[dict]:
+    """``--all -y --llm-mode none`` on wordpress, with schema design doing nothing
+    (as with #284: no designer runs without a model) and synthesis deterministic."""
+    from src.agents.referee.synthesis_handler import run_synthesis
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+
+    with zipfile.ZipFile(REPO_ROOT / "docs" / "examples" / "wordpress" / "wordpress.zip") as z:
+        z.extractall(tmp_path / "input")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(LocalOrchestrator, "_run_schema_design", lambda self, *a, **k: None)
+    monkeypatch.setattr(LocalOrchestrator, "_run_post_schema_routing", lambda self, *a: None)
+
+    def synthesis(self, job_id, db):
+        v = self._get_assignment_version(job_id, db)
+        run_synthesis(job_id, db, self.store, assignment_version=v, llm_mode="none")
+
+    monkeypatch.setattr(LocalOrchestrator, "_run_synthesis", synthesis)
+    argv = ["run_assessment.py", "--file", "input/wordpress-collection.json", "--db", "wordpress"]
+    monkeypatch.setattr(sys, "argv", [*argv, "--llm-mode", "none", "--all", "-y"])
+    run_assessment.main()
+    *status, _ = _json_lines(capsys.readouterr().out)
+    return status
+
+
+def test_all_status_lines_name_real_artifacts(monkeypatch, tmp_path, capsys):
+    status = _run_all_in_process(monkeypatch, tmp_path, capsys)
+    by_phase = {s["phase"]: s for s in status}
+    assert list(by_phase) == [*ASSESSMENT_PHASES, "schema_design", "synthesis"]
+    for path in _printed_paths(status):
+        assert path.startswith("artifacts/wordpress/"), path
+        assert (tmp_path / path).is_file(), path
+
+    version = by_phase["synthesis"]["assignment_version"]
+    assert by_phase["synthesis"]["status"] == "complete"
+    assert by_phase["synthesis"]["artifact"].endswith(f"/synthesis/v{version}/report.json")
+
+    schema = by_phase["schema_design"]
+    assert schema["status"] == "skipped"
+    assert schema["reason"] == "llm_mode=none: every schema designer needs a model"
+    assert schema["artifacts"] == {}
+    assert schema["skipped_engines"]  # every in-scope engine, none designed
+
+
+def test_schema_design_lists_only_engines_with_output(monkeypatch, tmp_path, capsys):
+    _run_all_in_process(monkeypatch, tmp_path, capsys)
+    state = json.loads((tmp_path / run_assessment.STATE_FILE).read_text())
+    job, db = state["job_id"], state["database_name"]
+    from src.storage.local_store import LocalArtifactStore
+
+    store = LocalArtifactStore("artifacts")
+    status = run_assessment._schema_design_status(store, job, db, "bedrock")
+    assert status["status"] == "skipped"
+    assert status["reason"] == "no engine wrote a schema_output.json"
+
+    engine = status["skipped_engines"][0]
+    version = status["assignment_version"]
+    store.write_json(f"{db}/{job}/schema-{engine}/v{version}/schema_output.json", {})
+    status = run_assessment._schema_design_status(store, job, db, "bedrock")
+    assert status["status"] == "complete"
+    assert list(status["artifacts"]) == [engine]
+    assert (tmp_path / status["artifacts"][engine]).is_file()
+    assert engine not in status.get("skipped_engines", [])

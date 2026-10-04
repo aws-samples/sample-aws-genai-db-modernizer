@@ -1091,3 +1091,59 @@ def test_e2e_llm_missing_model_access_still_writes_results(tmp_path: Path) -> No
     results = json.loads((tmp_path / "llm-chat-wordpress" / "results.json").read_text())
     assert results["pass"] is False
     assert results["error"] == "require-env failed before the run"
+
+
+# ---------------------------------------------------------------------------
+# collect-logs: the run's diagnostic logs reach the uploaded test-results/
+# ---------------------------------------------------------------------------
+
+
+def test_collect_logs_copies_the_job_log_dir_and_extra_logs(tmp_path: Path) -> None:
+    log_dir = tmp_path / "artifacts" / "wordpress" / "j1" / "_logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "run_assessment.log").write_text("progress\n")
+    ui = tmp_path / ".local-ui"
+    ui.mkdir()
+    (ui / "api.log").write_text("api up\n")
+    out = tmp_path / "out"
+
+    copied = run.collect_logs(
+        tmp_path / "artifacts",
+        out,
+        db="wordpress",
+        job="j1",
+        extra_logs=[ui / "api.log", ui / "missing.log"],
+    )
+
+    assert [c["truncated"] for c in copied] == [False, False]
+    assert (out / "job-logs" / "run_assessment.log").read_text() == "progress\n"
+    assert (out / "job-logs" / "local-ui-api.log").read_text() == "api up\n"
+
+
+def test_collect_logs_bounds_each_file_and_falls_back_to_the_state_file(tmp_path: Path) -> None:
+    log_dir = tmp_path / "artifacts" / "discourse" / "j2" / "_logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "run_assessment.log").write_bytes(b"x" * 5000 + b"END")
+    state = tmp_path / ".modernizer-state.json"
+    state.write_text(json.dumps({"database_name": "discourse", "job_id": "j2"}))
+
+    copied = run.collect_logs(
+        tmp_path / "artifacts", tmp_path / "out", state_file=state, max_bytes=100
+    )
+
+    assert copied[0]["truncated"] is True and copied[0]["bytes"] == 5003
+    data = (tmp_path / "out" / "job-logs" / "run_assessment.log").read_bytes()
+    assert data.startswith(b"[truncated: last 100 of 5003 bytes")
+    assert data.endswith(b"x" * 97 + b"END")
+    assert len(data.split(b"\n", 1)[1]) == 100
+
+
+def test_collect_logs_without_a_job_copies_nothing(tmp_path: Path) -> None:
+    assert run.collect_logs(tmp_path / "artifacts", tmp_path / "out") == []
+
+
+def test_e2e_llm_collects_logs_on_exit() -> None:
+    text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    on_exit = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]
+    assert "ci/llm/run.py collect-logs" in on_exit
+    assert '--out "$OUT"' in on_exit

@@ -90,6 +90,13 @@ CLAUDE_STARTED=0
 on_exit() {
   local rc=$?
   if [ "$CLAUDE_STARTED" = "1" ]; then
+    # Only test-results/ is uploaded: copy the run's own logs (the compact
+    # run_assessment.py log in artifacts/<db>/<job>/_logs/, the local UI's
+    # server logs) into $OUT/job-logs/, each capped at its last 1 MB.
+    uv run python ci/llm/run.py collect-logs --artifact-root "$ARTIFACT_ROOT" --out "$OUT" \
+      --db "${DB:-}" --job "${JOB:-}" \
+      --extra-log "$REPO_ROOT/.local-ui/api.log" --extra-log "$REPO_ROOT/.local-ui/serve.log" \
+      >/dev/null 2>&1 || true
     # The run may have left its own local API/UI up (ui/both modes); stop them
     # via the same allowlisted script /modernize uses, not pkill -- see
     # scripts/start_local_ui.py's module docstring.

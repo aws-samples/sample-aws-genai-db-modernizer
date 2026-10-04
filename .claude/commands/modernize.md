@@ -83,10 +83,11 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
 Its stdout is short and is the whole tool result: one JSON status line per phase (`{"phase": "collect", ...}`, `"triage"`, `"analysis"`, `"assignment"`, `"reality_check"`), then one last line that points at the progress log:
 
 ```text
-{"log": "artifacts/{database_name}/{job_id}/logs/run_assessment.log", "log_offset": 1, "log_lines": 1376}
+{"log": "artifacts/{database_name}/{job_id}/_logs/run_assessment.log", "log_offset": 1, "log_lines": 1376}
 ```
 
 - Take `job_id` from the `collect` line and the next step from the `reality_check` line. Run the command exactly as shown: do not pipe it through `tail`, `cut` or anything else, and do not add `--verbose` (that prints the full progress to stdout, about 100 KB on a large schema, which the session cannot see inline).
+- `status` is one of `"complete"`, `"awaiting_llm"` (reality check only, see below), `"skipped"` (the phase wrote nothing new; `reason` says why; continue as if it completed) or `"error"`. Paths in a line (`artifact`, `artifacts`, `llm_request`) are the files the phase wrote, relative to the repository root (`artifacts/{database_name}/{job_id}/...`); versioned phases also print `assignment_version`. You never need to open them.
 - A line with `"status": "error"` (or a non-zero exit) is a phase failure for that line's `phase`, with its `message` as the reason (see Error Handling). Only then, if the message is not enough, Read the `log` path with the Read tool, `offset` = `log_offset` and `limit` = `log_lines` (for a long log, read just the last 200 lines of that range). If the last line is `{"log": null, "output_tail": ...}` the job directory was never created; `output_tail` is the output.
 
 **If reality check returns `awaiting_llm` (this is the expected path):**

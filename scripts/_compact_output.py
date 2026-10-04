@@ -13,7 +13,7 @@ status lines passed to :meth:`CompactConsole.status` reach the real stdout.
 When the script ends, :meth:`CompactConsole.close` prints one last JSON line
 that points at the log::
 
-    {"log": "artifacts/<db>/<job>/logs/run_assessment.log", "log_offset": 1, "log_lines": 1371}
+    {"log": "artifacts/<db>/<job>/_logs/run_assessment.log", "log_offset": 1, "log_lines": 1371}
 
 ``log_offset``/``log_lines`` are the Read tool ``offset``/``limit`` of the
 lines this run appended (the log is appended to across runs of the same job).
@@ -35,7 +35,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 TAIL_CHARS = 4000
 
 
-def _display_path(path: str) -> str:
+def display_path(path: str) -> str:
     """``path`` relative to the cwd when it is under it (the form Read allows), else absolute."""
     absolute = os.path.abspath(path)
     rel = os.path.relpath(absolute)
@@ -112,7 +112,7 @@ class CompactConsole:
         self.flush()
         total = _count_lines(self.path)
         return {
-            "log": _display_path(self.path),
+            "log": display_path(self.path),
             "log_offset": self._offset,
             "log_lines": total - self._offset + 1,
         }

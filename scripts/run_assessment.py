@@ -25,7 +25,7 @@ Output modes (issue #278):
     * Compact (default when stdout is not a terminal, e.g. a headless Claude Code
       session or a pipe): stdout carries only the ``{"phase": ...}`` status lines
       and one final line pointing at the log that holds the banners and progress:
-      ``{"log": "artifacts/<db>/<job>/logs/run_assessment.log", "log_offset": N,
+      ``{"log": "artifacts/<db>/<job>/_logs/run_assessment.log", "log_offset": N,
       "log_lines": M}`` (``log_offset``/``log_lines`` = this run's lines, as Read
       ``offset``/``limit``; the log is appended to by later runs of the job). An
       unexpected exception becomes ``{"phase": <phase>, "status": "error", ...}``
@@ -45,7 +45,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts._compact_output import CompactConsole, want_verbose  # noqa: E402
+from scripts._compact_output import CompactConsole, display_path, want_verbose  # noqa: E402
 
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -108,9 +108,9 @@ def _output(phase: str, data: dict) -> None:
 
 
 def _attach_log(artifact_root: str, db: str, job_id: str) -> None:
-    """In compact mode, send progress to ``<artifact_root>/<db>/<job>/logs/``."""
+    """In compact mode, send progress to ``<artifact_root>/<db>/<job>/_logs/``."""
     if _CONSOLE is not None:
-        _CONSOLE.attach(os.path.join(artifact_root, db, job_id, "logs", LOG_NAME))
+        _CONSOLE.attach(os.path.join(artifact_root, db, job_id, "_logs", LOG_NAME))
 
 
 def _start_phase(phase: str) -> None:
@@ -126,6 +126,12 @@ def _error(phase: str, message: str) -> None:
 def _log(phase: str, msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     print(f"[{phase}] {msg}  [{ts}]", flush=True)
+
+
+def _path(store, key: str) -> str:
+    """Filesystem path of artifact ``key``: cwd-relative (``artifacts/<db>/...``)
+    under the default root, absolute when the root is outside the cwd (#283)."""
+    return display_path(os.path.join(str(store.base_dir), key))
 
 
 def _log_artifact(phase: str, path: str) -> None:
@@ -263,7 +269,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     tables = collector_data.get("database_schema", {}).get("tables", [])
     queries = collector_data.get("queries", {}).get("query_patterns", [])
 
-    artifact = f"{db_name}/{job_id}/collector/output.json"
+    artifact = _path(store, collector_path)
     _log_artifact("collect", artifact)
     _output(
         "collect",
@@ -294,7 +300,7 @@ def phase_triage(store, job_id: str, db: str) -> list[str]:
     selected = [a["agent_type"] for a in triage_output.get("selected_agents", [])]
     skipped = [a["agent_type"] for a in triage_output.get("skipped_agents", [])]
 
-    artifact = f"{db}/{job_id}/referee-triage/triage.json"
+    artifact = _path(store, triage_path)
     _log_artifact("triage", artifact)
     _output(
         "triage",
@@ -340,13 +346,21 @@ def phase_analysis(
                 _log("analysis", f"{engine} FAILED: {e}")
 
     artifacts = {
-        engine: f"{db}/{job_id}/analysis-{engine}/"
+        engine: _path(store, f"{db}/{job_id}/analysis-{engine}/analysis.json")
         for engine in results
         if results[engine] == "complete"
+        and store.exists(f"{db}/{job_id}/analysis-{engine}/analysis.json")
     }
     for engine, path in artifacts.items():
         _log_artifact(f"analysis/{engine}", path)
-    _output("analysis", {"status": "complete", "results": results, "artifacts": artifacts})
+    data: dict = {"status": "complete", "results": results, "artifacts": artifacts}
+    failed = sorted(set(results) - set(artifacts))
+    if failed:
+        data["failed"] = failed
+    if not artifacts:
+        data["status"] = "error"
+        data["message"] = f"no analysis output written for {failed}"
+    _output("analysis", data)
     return results
 
 
@@ -376,12 +390,13 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
         distribution[engine] = distribution.get(engine, 0) + 1
 
     total = sum(distribution.values())
-    artifact = assignment_path
+    artifact = _path(store, assignment_path)
     _log_artifact("assignment", artifact)
     _output(
         "assignment",
         {
             "status": "complete",
+            "assignment_version": version,
             "distribution": distribution,
             "total_queries": total,
             "artifact": artifact,
@@ -401,16 +416,43 @@ def phase_reality_check(store, job_id: str, db: str, llm_mode: str) -> str:
     # newest version Reality Check did not produce and writes the next version.
     summary = run_reality_check_handler(job_id, db, store, llm_mode=llm_mode)
 
+    versions = {
+        "input_version": summary.get("input_version"),
+        "output_version": summary.get("output_version"),
+    }
     if summary["status"] == "awaiting_llm":
         llm_input_path = f"{db}/{job_id}/reality-check/llm_input.json"
         if store.exists(llm_input_path):
-            _output("reality_check", {"status": "awaiting_llm", "llm_request": llm_input_path})
+            _output(
+                "reality_check",
+                {
+                    "status": "awaiting_llm",
+                    **versions,
+                    "llm_request": _path(store, llm_input_path),
+                },
+            )
             return "awaiting_llm"
 
-    artifact = f"{db}/{job_id}/reality-check/output.json"
-    _log_artifact("reality-check", artifact)
-    _output("reality_check", {"status": "complete", "artifact": artifact})
+    data: dict = {"status": "complete", **versions, **_reality_check_artifact(store, job_id, db)}
+    if summary["status"] == "skipped":
+        # Nothing was (re)written: the lineage was already consolidated (#283).
+        data["status"] = "skipped"
+        data["reason"] = "reality check already ran for this assignment lineage"
+    _output("reality_check", data)
     return "complete"
+
+
+def _reality_check_artifact(store, job_id: str, db: str) -> dict:
+    """``artifact`` (the RC output) and ``assignment_version`` (the effective
+    assignment downstream phases use) for a reality_check status line."""
+    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+
+    out: dict = {"assignment_version": resolve_downstream_assignment_version(store, db, job_id)}
+    key = f"{db}/{job_id}/reality-check/output.json"
+    if store.exists(key):
+        out["artifact"] = _path(store, key)
+        _log_artifact("reality-check", out["artifact"])
+    return out
 
 
 def phase_reality_check_finalize(
@@ -432,9 +474,10 @@ def phase_reality_check_finalize(
         store, job_id, db, store.read_json(llm_response_path), assignment_version
     )
 
-    artifact = f"{db}/{job_id}/reality-check/output.json"
-    _log_artifact("reality-check", artifact)
-    _output("reality_check", {"status": "complete", "finalized": True, "artifact": artifact})
+    _output(
+        "reality_check",
+        {"status": "complete", "finalized": True, **_reality_check_artifact(store, job_id, db)},
+    )
 
 
 def _surviving_engines(store, job_id: str, db: str, selected: list[str]) -> list[str]:
@@ -477,12 +520,42 @@ def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> None:
     # Post-schema routing
     orch._run_post_schema_routing(job_id, db)
 
-    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+    _output("schema_design", _schema_design_status(store, job_id, db, llm_mode))
+
+
+def _schema_design_status(store, job_id: str, db: str, llm_mode: str) -> dict:
+    """Status line for schema design from the outputs that exist (#283).
+
+    ``complete`` lists each engine's real ``schema_output.json``; engines in
+    scope without one are ``skipped_engines``. With no output at all the phase
+    is ``skipped`` with a ``reason`` (e.g. ``--llm-mode none``: every schema
+    designer needs a model).
+    """
+    from src.storage.assignment_versioning import (
+        engines_with_in_scope_queries,
+        resolve_downstream_assignment_version,
+    )
 
     version = resolve_downstream_assignment_version(store, db, job_id)
-    artifact = f"{db}/{job_id}/schema-*/v{version}/schema_output.json"
-    _log_artifact("schema-design", artifact)
-    _output("schema_design", {"status": "complete", "artifact": artifact})
+    in_scope = sorted(engines_with_in_scope_queries(store, db, job_id, version))
+    artifacts: dict[str, str] = {}
+    for engine in in_scope:
+        key = f"{db}/{job_id}/schema-{engine}/v{version}/schema_output.json"
+        if store.exists(key):
+            artifacts[engine] = _path(store, key)
+            _log_artifact(f"schema-design/{engine}", artifacts[engine])
+    data: dict = {"status": "complete", "assignment_version": version, "artifacts": artifacts}
+    missing = [e for e in in_scope if e not in artifacts]
+    if missing:
+        data["skipped_engines"] = missing
+    if not artifacts:
+        data["status"] = "skipped"
+        data["reason"] = (
+            "llm_mode=none: every schema designer needs a model"
+            if llm_mode == "none"
+            else "no engine wrote a schema_output.json"
+        )
+    return data
 
 
 # ============================================================
@@ -499,9 +572,29 @@ def phase_synthesis(store, job_id: str, db: str, llm_mode: str) -> None:
     orch._save_progression(progression)
 
     orch.resume(job_id, Phase.SYNTHESIS)
-    artifact = f"{db}/{job_id}/referee-synthesis/report.json"
-    _log_artifact("synthesis", artifact)
-    _output("synthesis", {"status": "complete", "artifact": artifact})
+    _output("synthesis", _synthesis_status(store, job_id, db))
+
+
+def _synthesis_status(store, job_id: str, db: str) -> dict:
+    """Status line naming the report synthesis actually wrote (#283):
+    ``synthesis/v<N>/report.json`` (legacy ``referee-synthesis/`` only when the
+    job has no versioned assignment)."""
+    from src.storage.assignment_versioning import (
+        resolve_downstream_assignment_version,
+        synthesis_report_candidates,
+    )
+
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    for key in synthesis_report_candidates(store, db, job_id):
+        if store.exists(key):
+            artifact = _path(store, key)
+            _log_artifact("synthesis", artifact)
+            return {"status": "complete", "assignment_version": version, "artifact": artifact}
+    return {
+        "status": "error",
+        "assignment_version": version,
+        "message": "synthesis wrote no report.json",
+    }
 
 
 # ============================================================
@@ -556,7 +649,7 @@ def main() -> None:
         help=(
             "Print the full progress to stdout (the default only when stdout is a "
             "terminal). Otherwise stdout has only the phase status lines and a "
-            "pointer to artifacts/<db>/<job>/logs/run_assessment.log"
+            "pointer to artifacts/<db>/<job>/_logs/run_assessment.log"
         ),
     )
     args = parser.parse_args()
@@ -578,7 +671,9 @@ def main() -> None:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"### run_assessment.py {' '.join(sys.argv[1:])}  [{ts}]", flush=True)
         _run(args)
-    except Exception as exc:
+    except SystemExit:
+        raise  # _error() already printed the phase's error line
+    except BaseException as exc:  # incl. KeyboardInterrupt: still report the phase
         import traceback
 
         traceback.print_exc()
@@ -740,7 +835,8 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:
+    except BaseException as exc:
         if getattr(exc, "__compact_logged__", False):
-            sys.exit(1)  # already reported on stdout; traceback is in the log
+            # Already reported on stdout; the traceback is in the log.
+            sys.exit(130 if isinstance(exc, KeyboardInterrupt) else 1)
         raise
