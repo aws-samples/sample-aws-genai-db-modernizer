@@ -123,3 +123,18 @@ def test_pg_to_mysql_json_with_default_is_a_residual_not_invalid_ddl():
     table = _table(_col("tools", "json", "'[]'::json"))
     result = generate_mysql_ddl([table], source_engine="postgresql")
     assert [r["column"] for r in result.residuals] == ["tools"]
+
+
+def test_mysql_backslash_default_is_a_residual_for_sql_mode_review():
+    result = generate_mysql_ddl(
+        [_table(_col("note", "varchar(50)", "a\\b"))], source_engine="mysql"
+    )
+    [residual] = result.residuals
+    assert residual["column"] == "note" and "NO_BACKSLASH_ESCAPES" in residual["reason"]
+    assert "DEFAULT 'a\\\\b'" in result.full_ddl  # still escaped, type unchanged
+    assert "SET SESSION" not in result.full_ddl
+
+
+def test_pg_backslash_default_is_not_a_residual():
+    result = generate_pg_ddl([_table(_col("note", "text", "a\\b"))], source_engine="postgresql")
+    assert result.residuals == []

@@ -172,6 +172,26 @@ def _column_ddl(
         )
         return _column_from(col, resolution, source_type, dialect, script_derived=False)
     resolution = _resolve(col, dialect, source_family, indexed)
+    if (
+        dialect.backslash_escapes
+        and not col.is_auto_increment
+        and isinstance(col.default_value, str)
+        and "\\" in col.default_value
+        and not resolution.needs_judgment
+    ):
+        # The doubled backslash is exact only without NO_BACKSLASH_ESCAPES; a
+        # session SET in the DDL would change sql_mode for whatever runs next,
+        # so the column is left for review instead (rare: none on the samples).
+        resolution = TypeResolution(
+            resolution.aurora_type,
+            needs_judgment=True,
+            reason=(
+                f"DEFAULT {excerpt(col.default_value)} contains a backslash, written as \\\\ "
+                "for MySQL's default sql_mode; confirm the server does not set "
+                "NO_BACKSLASH_ESCAPES (where it would be two characters) or set the default "
+                "by hand."
+            ),
+        )
     if resolution.note:
         notes.append(
             {
