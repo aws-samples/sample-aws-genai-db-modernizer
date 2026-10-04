@@ -7,7 +7,7 @@ facts that would show a drift toward decomposition:
 - the owner distribution after Reality Check (share of in-scope queries per engine),
 - the share kept on the source-compatible engine (Aurora MySQL for MySQL,
   Aurora PostgreSQL for PostgreSQL),
-- the number of owner engines,
+- the number of owner engines and the queries each owns,
 - the cache overlay (queries, share of calls), which is never an owner share,
 - the deck's wave plan (``pptx_report.derive``): engines and workload per wave.
 
@@ -34,6 +34,18 @@ BASELINE = Path(__file__).parent / "baselines" / "routing_baseline.json"
 # A share (percentage points of in-scope queries, of calls, or of a wave's
 # workload) may move this much before the guard fails.
 TOLERANCE_PP = 5.0
+
+# A query count (owned by an engine, or cached) may move by at most
+# max(MIN_QUERY_DELTA, QUERY_DELTA_RATIO x baseline count). The share rule alone
+# misses small engines: OpenSearch going from 3 to 83 of discourse's 1,654
+# queries is 0.2% -> 5.0%, under 5 pp, but 80 queries is far over max(5, 0).
+MIN_QUERY_DELTA = 5
+QUERY_DELTA_RATIO = 0.25
+
+
+def query_tolerance(baseline_count: int) -> int:
+    """How many queries a count may move from ``baseline_count`` before the guard fails."""
+    return max(MIN_QUERY_DELTA, int(QUERY_DELTA_RATIO * baseline_count))
 
 
 def _latest(job_dir: Path, sub: str, name: str) -> Path:
@@ -82,6 +94,7 @@ def measure(job_dir: Path) -> dict[str, Any]:
         "assignment_version": assignment.get("version"),
         "queries_in_scope": len(in_scope),
         "owner_share_percent": {e: round(n / total * 100, 1) for e, n in sorted(owners.items())},
+        "owner_queries": dict(sorted(owners.items())),
         "source_compatible_share_percent": round(owners.get(source_compatible, 0) / total * 100, 1),
         "owner_engines": len(owners),
         "cache_overlay": {
@@ -103,6 +116,16 @@ def compare(
         a = actual["owner_share_percent"].get(e, 0.0)
         if abs(a - b) > tol:
             problems.append(f"owner share of {e}: {b}% -> {a}% (tolerance {tol} pp)")
+    base_counts = baseline.get("owner_queries", {})
+    for e in sorted(set(base_counts) | set(actual.get("owner_queries", {}))):
+        b_n, a_n = base_counts.get(e, 0), actual.get("owner_queries", {}).get(e, 0)
+        if abs(a_n - b_n) > query_tolerance(b_n):
+            problems.append(
+                f"queries owned by {e}: {b_n} -> {a_n} (tolerance {query_tolerance(b_n)})"
+            )
+    b_c, a_c = baseline["cache_overlay"]["queries"], actual["cache_overlay"]["queries"]
+    if abs(a_c - b_c) > query_tolerance(b_c):
+        problems.append(f"cached reads: {b_c} -> {a_c} (tolerance {query_tolerance(b_c)})")
     b, a = baseline["source_compatible_share_percent"], actual["source_compatible_share_percent"]
     if abs(a - b) > tol:
         problems.append(f"source-compatible share: {b}% -> {a}% (tolerance {tol} pp)")
@@ -148,6 +171,9 @@ def _write(reason: str) -> None:
                     '--reason "..."'
                 ),
                 "tolerance_pp": TOLERANCE_PP,
+                "query_tolerance": (
+                    f"max({MIN_QUERY_DELTA}, {QUERY_DELTA_RATIO} x baseline count) queries"
+                ),
                 "reason": reason,
                 "history": history,
                 "samples": samples,
