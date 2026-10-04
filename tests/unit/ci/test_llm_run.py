@@ -1147,3 +1147,33 @@ def test_e2e_llm_collects_logs_on_exit() -> None:
     on_exit = text[text.index("on_exit() {") : text.index("trap on_exit EXIT")]
     assert "ci/llm/run.py collect-logs" in on_exit
     assert '--out "$OUT"' in on_exit
+
+
+@pytest.mark.parametrize(
+    ("db", "job"),
+    [("..", "x"), ("../..", "x"), ("wordpress", ".."), ("wordpress", "../j1"), ("/etc", "x")],
+)
+def test_collect_logs_refuses_names_that_leave_the_artifact_root(
+    tmp_path: Path, db: str, job: str
+) -> None:
+    root = tmp_path / "artifacts"
+    (root / "wordpress" / "j1" / "_logs").mkdir(parents=True)
+    (root / "wordpress" / "j1" / "_logs" / "run_assessment.log").write_text("ok\n")
+    outside = tmp_path / "x" / "_logs"
+    outside.mkdir(parents=True)
+    (outside / "secret.log").write_text("secret\n")
+    if db.startswith("/"):
+        db = str(tmp_path)  # absolute path to a dir that has x/_logs under it
+
+    assert run.collect_logs(root, tmp_path / "out", db=db, job=job) == []
+    assert not (tmp_path / "out" / "job-logs").exists()
+
+
+def test_collect_logs_refuses_unsafe_names_from_the_state_file(tmp_path: Path) -> None:
+    (tmp_path / "x" / "_logs").mkdir(parents=True)
+    (tmp_path / "x" / "_logs" / "secret.log").write_text("secret\n")
+    state = tmp_path / ".modernizer-state.json"
+    state.write_text(json.dumps({"database_name": "..", "job_id": "x"}))
+    root = tmp_path / "artifacts"
+    root.mkdir()
+    assert run.collect_logs(root, tmp_path / "out", state_file=state) == []

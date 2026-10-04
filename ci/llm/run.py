@@ -813,9 +813,12 @@ def collect_logs(
         except (OSError, ValueError):
             pass
     sources: list[tuple[Path, str]] = []
-    if db and job:
-        log_dir = artifact_root / db / job / "_logs"
-        if log_dir.is_dir():
+    # db/job come from the CLI or the state file: never let them leave the
+    # artifact root (e.g. "../.." or an absolute path), whatever the caller checked.
+    if db and job and _is_safe_name(db) and _is_safe_name(job):
+        root = artifact_root.resolve()
+        log_dir = (artifact_root / db / job / "_logs").resolve()
+        if log_dir.is_relative_to(root) and log_dir.is_dir():
             sources += [(p, p.name) for p in sorted(log_dir.iterdir()) if p.is_file()]
     for extra in extra_logs or []:
         if extra.is_file():
