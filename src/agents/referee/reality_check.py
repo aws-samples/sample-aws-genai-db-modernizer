@@ -791,7 +791,7 @@ def _run_aurora_absorption_pass(
     # qualify only when tiny, and are handled all-or-nothing below.
     candidates = [
         e
-        for e in surviving_engines
+        for e in sorted(surviving_engines)
         if e not in AURORA_ENGINES
         and len(engine_queries.get(e, [])) > 0
         and (
@@ -1059,9 +1059,9 @@ def _find_best_absorber_for_query(
     qid = qa["query_id"]
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
     required_caps = (query_capabilities or {}).get(qid, [])
-    candidates = []
+    candidates: list[dict] = []
 
-    for target_engine in committed_engines:
+    for target_engine in sorted(committed_engines):
         if target_engine == source_engine:
             continue
 
@@ -1106,10 +1106,16 @@ def _find_best_absorber_for_query(
     if not candidates:
         return None
 
-    # Sort: highest fit score wins, with mandatory secondary as tiebreaker
+    # Sort: highest fit score wins, with mandatory secondary and table overlap
+    # as tiebreakers, then engine name so the pick never depends on set order
+    # (and so PYTHONHASHSEED) (#288).
     candidates.sort(
-        key=lambda c: (c["fit_score"], c["is_mandatory_secondary"], c["table_overlap"]),
-        reverse=True,
+        key=lambda c: (
+            -c["fit_score"],
+            not c["is_mandatory_secondary"],
+            -c["table_overlap"],
+            c["target_engine"],
+        )
     )
     return candidates[0]
 

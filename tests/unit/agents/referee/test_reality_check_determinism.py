@@ -139,3 +139,90 @@ class TestEliminatedEnginesOrderIsHashSeedIndependent:
         # regression to list(set(...)) is caught even if, by coincidence, both
         # seeds happened to agree with each other but not with the sorted order.
         assert result_seed_1 == ["documentdb", "opensearch", "redis"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #288: per-query placement and assignment resolution must not depend on
+# set iteration order (and so on PYTHONHASHSEED).
+# ---------------------------------------------------------------------------
+
+
+class TestAbsorberTieBreakIsOrderIndependent:
+    """``_find_best_absorber_for_query`` iterated a set of committed engines and
+    sorted on a partial key, so a fit/overlap tie went to whichever engine the
+    set yielded first (#288)."""
+
+    @staticmethod
+    def _pick(committed_order: list[str]) -> str:
+        from src.agents.referee.reality_check import _find_best_absorber_for_query
+
+        analysis = {"table_recommendations": [{"table_id": "t1", "confidence_score": 80}]}
+        absorber = _find_best_absorber_for_query(
+            {"query_id": "q1", "assigned_engine": "documentdb"},
+            committed_order,  # type: ignore[arg-type]  # a list pins the iteration order
+            "documentdb",
+            {},
+            {
+                "q1": {"tables_accessed": ["t1"]},
+                "q2": {"tables_accessed": ["t1"]},
+                "q3": {"tables_accessed": ["t1"]},
+            },
+            {"aurora_postgresql": analysis, "dynamodb": analysis},
+            {
+                "aurora_postgresql": [{"query_id": "q2"}],
+                "dynamodb": [{"query_id": "q3"}],
+            },
+            set(),
+            "dynamodb",
+        )
+        assert absorber is not None
+        return str(absorber["target_engine"])
+
+    def test_tie_goes_to_the_same_engine_whatever_the_iteration_order(self):
+        forward = self._pick(["aurora_postgresql", "dynamodb", "documentdb"])
+        backward = self._pick(["documentdb", "dynamodb", "aurora_postgresql"])
+        assert forward == backward == "aurora_postgresql"
+
+
+_ASSIGNMENT_CHILD = textwrap.dedent("""
+    import json
+
+    from src.agents.referee.assignment_resolver import (
+        _resolve_aurora_fallback,
+        build_co_dependency_groups,
+    )
+
+    queries = [
+        {"query_id": f"q{i}", "join_count": 2, "has_joins": True,
+         "tables_accessed": ["orders", f"t{i % 3}"]}
+        for i in range(12)
+    ]
+    print(json.dumps({
+        "groups": build_co_dependency_groups(queries, []),
+        "fallback": _resolve_aurora_fallback({"aurora_mysql", "aurora_postgresql", "dynamodb"}),
+    }))
+    """)
+
+
+class TestAssignmentResolutionIsHashSeedIndependent:
+    """Co-dependency groups were built from sets and the Aurora fallback took the
+    first element of a set, so both varied with PYTHONHASHSEED (#288)."""
+
+    def test_co_dependency_groups_and_fallback_match_across_hash_seeds(self):
+        outputs = set()
+        for seed in ("0", "1", "2", "3", "4", "5"):
+            env = dict(os.environ, PYTHONHASHSEED=seed)
+            proc = subprocess.run(
+                [sys.executable, "-c", _ASSIGNMENT_CHILD],
+                cwd=REPO,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert proc.returncode == 0, proc.stderr
+            outputs.add(proc.stdout.strip().splitlines()[-1])
+        assert len(outputs) == 1, outputs
+        result = json.loads(outputs.pop())
+        assert result["groups"] == [[f"q{i}" for i in range(12)]]
+        assert result["fallback"] == "aurora_postgresql"

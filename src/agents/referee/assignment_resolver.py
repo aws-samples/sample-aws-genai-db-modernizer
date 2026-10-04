@@ -357,7 +357,9 @@ def _resolve_aurora_fallback(selected_engines: set[str]) -> str:
     """
     aurora_selected = AURORA_ENGINES & selected_engines
     if aurora_selected:
-        return next(iter(aurora_selected))
+        # Both selected: prefer PostgreSQL, as Reality Check does. Never take
+        # the set's first element, its order depends on PYTHONHASHSEED (#288).
+        return min(aurora_selected, key=lambda e: (e != "aurora_postgresql", e))
     # No Aurora engine selected — check if any engine in analysis is Aurora
     return "aurora"
 
@@ -397,13 +399,15 @@ def build_co_dependency_groups(
 
     Requirements: 2.3
     """
-    # Map: table → set of query_ids with significant JOINs on that table
-    table_to_queries: dict[str, set[str]] = {}
+    # Map: table → query_ids (input order, deduplicated) with significant JOINs
+    # on that table. A dict, not a set: set order depends on PYTHONHASHSEED and
+    # would leak into the group order and membership order (#288).
+    table_to_queries: dict[str, dict[str, None]] = {}
     for q in queries:
         if q.get("has_joins") or q.get("join_count", 0) > 0:
             for table in q.get("tables_accessed", []):
                 if is_significant_join(q, table):
-                    table_to_queries.setdefault(table, set()).add(q["query_id"])
+                    table_to_queries.setdefault(table, {})[q["query_id"]] = None
 
     # Union-find with path compression
     parent: dict[str, str] = {}
@@ -433,7 +437,7 @@ def build_co_dependency_groups(
 
     # Also include query_ids that appear in table_to_queries but not in parent
     # (single-entry sets that were never unioned)
-    all_qids_in_tables = set()
+    all_qids_in_tables: dict[str, None] = {}
     for qids in table_to_queries.values():
         all_qids_in_tables.update(qids)
     for qid in all_qids_in_tables:
