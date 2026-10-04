@@ -263,6 +263,7 @@ class TestGraphBackedJourneys:
         mock_services["store"].list_prefix.assert_called_once()
 
     def test_detail_served_from_graph_when_available(self, mock_services):
+        from contextlib import contextmanager
         from unittest.mock import patch
 
         from src.api.routes import graph as graph_route
@@ -270,8 +271,12 @@ class TestGraphBackedJourneys:
 
         journey = {"query_id": "q_001", "source": {"query_type": "SELECT"}, "assignment": None}
 
+        @contextmanager
+        def _lease(job_id):
+            yield MagicMock(), "test_db"
+
         with (
-            patch.object(graph_route, "_get_graph", return_value=(MagicMock(), "test_db")),
+            patch.object(graph_route, "graph_lease", _lease),
             patch.object(graph_queries, "query_journey", return_value=journey),
         ):
             resp = client.get("/api/v1/assessments/job-1/query-journeys/q_001")

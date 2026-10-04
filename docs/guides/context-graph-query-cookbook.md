@@ -25,17 +25,21 @@ Response shape:
 {"columns": ["..."], "rows": [{"...": "..."}], "row_count": 12, "truncated": false}
 ```
 
-The raw query endpoint is off by default. Start the API with
-`MODERNIZER_ENABLE_RAW_GRAPH_QUERY=1` to enable it; otherwise it returns `403`.
-The curated `GET` endpoints below are always on.
+The raw query endpoint and the rebuild endpoint (below) are off by default.
+Start the API with `MODERNIZER_ENABLE_RAW_GRAPH_QUERY=1` to enable them;
+otherwise they return `403`. The curated `GET` endpoints below are always on.
 
 Limits on the raw endpoint:
 
 - One read statement per request: `MATCH`, `OPTIONAL MATCH`, `WITH`, `UNWIND`,
-  `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, and `CALL` of `show_tables`,
-  `table_info`, `show_connection` or `db_version`. Other statements return `400`.
-- It returns at most 1,000 rows. `truncated: true` means more rows matched; add
-  `ORDER BY` with `SKIP`/`LIMIT` to page.
+  `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, `EXISTS { }` / `COUNT { }`
+  subqueries, and `CALL` of `show_tables`, `table_info`, `show_connection` or
+  `db_version`. `UNION` and other statements return `400`.
+- Queries are at most 10,000 characters of ASCII text outside quoted strings,
+  with bounded nesting; request bodies are at most 64 KiB.
+- The engine returns at most 1,000 rows. `truncated: true` means more rows
+  matched; add `ORDER BY` with `SKIP`/`LIMIT` to page. A final `LIMIT` must be
+  an integer literal.
 - Every graph read, curated or raw, runs on a read-only database handle with a
   10-second query timeout.
 
@@ -220,4 +224,5 @@ wrong. The graph only contains what the S3 artifacts contain.
 | `AntiPattern` (queries 5, A, D) | Analysis stage (per engine). |
 
 To confirm what exists, run the node census (query 1). To force a fresh build
-from current artifacts, `POST /api/v1/assessments/{job_id}/graph/rebuild`.
+from current artifacts, `POST /api/v1/assessments/{job_id}/graph/rebuild`
+(requires `MODERNIZER_ENABLE_RAW_GRAPH_QUERY=1`).

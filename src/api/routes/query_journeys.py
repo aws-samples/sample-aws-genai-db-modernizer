@@ -38,17 +38,17 @@ def _journeys_from_graph(job_id: str) -> list[dict] | None:
         from src.api.routes import graph as graph_route
         from src.graph import queries as graph_queries
 
-        store, _db = graph_route._get_graph(job_id)
-        return graph_queries.query_journeys(store)
+        with graph_route.graph_lease(job_id) as (store, _db):
+            return graph_queries.query_journeys(store)
     except Exception:  # noqa: BLE001 - graph not wired/available -> artifact fallback
-        # Includes the 503 _get_graph raises when the graph layer isn't
+        # Includes the 503 graph_lease raises when the graph layer isn't
         # configured: that just means "no graph here", so fall back to the
         # journey artifacts rather than failing the request.
         return None
 
 
 @router.get("/{job_id}/query-journeys")
-async def list_query_journeys(
+def list_query_journeys(
     job_id: str,
     page: int = Query(default=1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(default=50, ge=1, description="Items per page (max 200)"),
@@ -117,7 +117,7 @@ async def list_query_journeys(
 
 
 @router.get("/{job_id}/query-journeys/{query_id}")
-async def get_query_journey(job_id: str, query_id: str):
+def get_query_journey(job_id: str, query_id: str):
     """Return the full modernization journey for a single query.
 
     Served from the context graph when available, falling back to the per-query
@@ -126,8 +126,8 @@ async def get_query_journey(job_id: str, query_id: str):
         from src.api.routes import graph as graph_route
         from src.graph import queries as graph_queries
 
-        store, _db = graph_route._get_graph(job_id)
-        journey = graph_queries.query_journey(store, query_id)
+        with graph_route.graph_lease(job_id) as (store, _db):
+            journey = graph_queries.query_journey(store, query_id)
         if journey is not None:
             return journey
         # Graph is available but has no such query — fall through to the artifact
