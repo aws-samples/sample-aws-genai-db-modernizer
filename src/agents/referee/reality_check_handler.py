@@ -29,6 +29,7 @@ from src.agents.referee.reality_check import (
     rerun_aurora_absorption,
     run_reality_check,
 )
+from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.storage.artifact_store import ArtifactStore
@@ -309,7 +310,8 @@ def run_reality_check_handler(
             f"{len(lw['query_ids'])} queries (replaces {lw['replaces_engine']})"
         )
 
-    # Step 2: LLM phase — determined by llm_mode
+    # Step 2: LLM phase — determined by llm_mode. Bedrock validates the
+    # consolidations here; its summary is written after the sweep (step 3b).
     if llm_mode == "bedrock":
         _run_bedrock_llm_phase(det, database_name)
 
@@ -335,6 +337,12 @@ def run_reality_check_handler(
     for qa in det["revised_assignments"]:
         sweep_distribution[qa["assigned_engine"]] += 1
     det["after_distribution"] = dict(sweep_distribution)
+
+    # Step 3b: the Bedrock summary describes the settled records, not the
+    # pre-correction ones (#236); write_reality_check_result still checks it.
+    if llm_mode == "bedrock":
+        _settle_records(det)
+        _run_bedrock_summary(det, database_name)
 
     # Step 4: validate and write output. In external mode the output is a
     # deterministic preview; the revised assignment is left to the finalize step
@@ -374,17 +382,11 @@ def write_reality_check_result(
     Returns the version written, or None when nothing was consolidated (or
     ``write_revision`` is False).
     """
-    _restore_customer_overrides(result)
-    # Every step above can move queries and edit records on its own: fit the records
-    # to the net moves so they reconcile before_ with after_distribution (#218).
-    result["consolidations"] = reconcile_consolidations(
-        result["assignment"].get("query_assignments", []),
-        result["revised_assignments"],
-        result["consolidations"],
-    )
-    # The sanity sweep and the override restore run after pattern detection and can
-    # still move queries: recompute so the output matches the assignment it ships with.
-    refresh_patterns_and_recommendations(result)
+    _settle_records(result)
+    # The summary was written before the steps that settle the records (in external
+    # mode, by the LLM from the deterministic preview): it must describe the final
+    # records, or be replaced by one that does (#236).
+    finalize_executive_summary(result)
     consolidated = bool(result["consolidations"]) and write_revision
     # max() guards a store whose listing lags its reads: the revision must land
     # above its own input even then.
@@ -402,6 +404,11 @@ def write_reality_check_result(
             "consolidations": result["consolidations"],
             "architectural_patterns": result["architectural_patterns"],
             "executive_summary": result["executive_summary"],
+            "executive_summary_source": result.get("executive_summary_source"),
+            "executive_summary_llm": result.get("executive_summary_llm"),
+            "executive_summary_validation_warnings": result.get(
+                "executive_summary_validation_warnings", []
+            ),
             "recommendations": result["recommendations"],
             "before_distribution": result["before_distribution"],
             "after_distribution": result["after_distribution"],
@@ -502,6 +509,23 @@ def _skipped(previous_run) -> dict:
     }
 
 
+def _settle_records(result: dict) -> None:
+    """Bring the records in line with the final revised assignment. Idempotent.
+
+    Restores customer overrides, fits the consolidation records to the net moves so
+    they reconcile ``before_`` with ``after_distribution`` (#218; every earlier step
+    can move queries and edit records on its own), and recomputes patterns and
+    recommendations, which were detected before the sweep and the restore.
+    """
+    _restore_customer_overrides(result)
+    result["consolidations"] = reconcile_consolidations(
+        result["assignment"].get("query_assignments", []),
+        result["revised_assignments"],
+        result["consolidations"],
+    )
+    refresh_patterns_and_recommendations(result)
+
+
 def _restore_customer_overrides(result: dict) -> None:
     """Put every ``customer_override`` query back on the engine the customer chose.
 
@@ -536,41 +560,38 @@ def _restore_customer_overrides(result: dict) -> None:
 
 
 def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
-    """Run the Bedrock LLM phase: validate consolidations + generate executive summary.
+    """Run the Bedrock consolidation validation and apply its corrections.
 
-    Mutates det in place via apply_reality_check_llm_output.
-    This is the original bedrock behavior extracted to a helper.
+    Mutates det in place via apply_reality_check_llm_output. The executive summary
+    is generated later by :func:`_run_bedrock_summary`, once the corrections, the
+    sanity sweep and the record reconciliation have settled the outcome (#236).
     """
-    llm_output: dict = {}
+    if not det["consolidations"]:
+        return
+    collector_output = det["collector_output"]
+    queries = collector_output.get("queries", {}).get("query_patterns", [])
+    query_map = {q["query_id"]: q for q in queries}
 
-    # LLM validation of consolidation decisions
-    if det["consolidations"]:
-        collector_output = det["collector_output"]
-        revised_assignments = det["revised_assignments"]
+    # Build signal map from triage — same logic as the original handler
+    signals = det.get("triage", {}).get("signals", [])
+    query_signals_map: dict[str, list[str]] = defaultdict(list)
+    for signal in signals:
+        for qid in signal.get("query_ids", []):
+            query_signals_map[qid].append(signal.get("signal", ""))
 
-        queries = collector_output.get("queries", {}).get("query_patterns", [])
-        query_map = {q["query_id"]: q for q in queries}
+    corrections = validate_consolidations(
+        consolidations=det["consolidations"],
+        revised_assignments=det["revised_assignments"],
+        query_map=query_map,
+        query_signals=dict(query_signals_map),
+    )
+    if corrections:
+        print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
+        apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
 
-        # Build signal map from triage — same logic as the original handler
-        triage = det.get("triage", {})
-        signals = triage.get("signals", [])
-        query_signals_map: dict[str, list[str]] = defaultdict(list)
-        for signal in signals:
-            for qid in signal.get("query_ids", []):
-                query_signals_map[qid].append(signal.get("signal", ""))
 
-        corrections = validate_consolidations(
-            consolidations=det["consolidations"],
-            revised_assignments=revised_assignments,
-            query_map=query_map,
-            query_signals=dict(query_signals_map),
-        )
-
-        if corrections:
-            print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
-            llm_output["consolidation_corrections"] = corrections
-
-    # Generate executive summary
+def _run_bedrock_summary(det: dict, database_name: str) -> None:
+    """Generate the Bedrock executive summary from the settled records."""
     executive_summary = _generate_executive_summary(
         database_name=database_name,
         collector_output=det["collector_output"],
@@ -583,10 +604,7 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
         analysis_outputs=det["analysis_outputs"],
     )
     if executive_summary is not None:
-        llm_output["executive_summary"] = executive_summary
-
-    if llm_output:
-        apply_reality_check_llm_output(det, llm_output)
+        apply_reality_check_llm_output(det, {"executive_summary": executive_summary})
 
 
 def _generate_executive_summary(

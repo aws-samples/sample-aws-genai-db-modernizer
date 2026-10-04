@@ -6,6 +6,8 @@ consolidation decisions, architectural patterns, and recommendations.
 
 Version History:
 - 1.0 (2026-04-16): Initial version — CTO-level engine consolidation
+- 1.3 (2026-10-03): executive_summary describes the final records; the LLM text and
+  the check findings are kept in executive_summary_llm / _validation_warnings (#236)
 """
 
 from pydantic import BaseModel, Field
@@ -92,7 +94,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.2", description="Contract version")
+    contract_version: str = Field(default="1.3", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -115,7 +117,24 @@ class RealityCheckOutputContract(BaseModel):
     )
     executive_summary: str | None = Field(
         None,
-        description="LLM-generated executive summary of the workload and architecture recommendation (2-3 sentences)",
+        description=(
+            "Executive summary of the final consolidation (2-3 sentences): the LLM summary "
+            "when it matches the final records, else one built from them"
+        ),
+    )
+    executive_summary_source: str | None = Field(
+        None,
+        description=(
+            "Which text executive_summary holds: llm, or deterministic_fallback (the LLM "
+            "summary contradicted the final records); None when there is no summary"
+        ),
+    )
+    executive_summary_llm: str | None = Field(
+        None, description="LLM-written summary as received, kept for audit even when replaced"
+    )
+    executive_summary_validation_warnings: list[str] = Field(
+        default_factory=list,
+        description="Where the LLM summary contradicted the final records",
     )
     recommendations: list[str] = Field(..., description="Human-readable recommendations")
     before_distribution: dict[str, int] = Field(

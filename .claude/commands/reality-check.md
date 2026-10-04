@@ -118,6 +118,14 @@ Do NOT flag:
    - **Do not default to empty.** Actually read the SQL and think critically.
 
    **Executive summary rules:**
+   - Describe the outcome *after* your corrections: an engine you send queries back
+     to stays in the architecture. Finalize can still move queries (a restored Aurora
+     can absorb a small engine), so name an engine as kept or eliminated only as the
+     final records will show it.
+   - Finalize checks the summary against the final records. If it names a kept engine
+     as eliminated, or an eliminated one as kept, the customer sees a summary built
+     from the records instead (`executive_summary_source: deterministic_fallback`);
+     your text stays in `executive_summary_llm` for audit.
    - 2-3 sentences for a CTO audience
    - No first person ('I found'), no hedging, no confidence scores
    - Use second person ('Your workload...') or passive ('The analysis shows...')

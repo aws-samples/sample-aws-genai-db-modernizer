@@ -162,7 +162,24 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.2"
+        assert output.contract_version == "1.3"
+
+    def test_summary_audit_fields_default_and_roundtrip(self, valid_reality_check_data):
+        # Additive in 1.3 (#236): outputs written before the fields existed still validate.
+        output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
+        assert output.executive_summary_source is None
+        assert output.executive_summary_llm is None
+        assert output.executive_summary_validation_warnings == []
+        valid_reality_check_data.update(
+            executive_summary="Final.",
+            executive_summary_source="deterministic_fallback",
+            executive_summary_llm="Stale.",
+            executive_summary_validation_warnings=["OpenSearch has no queries."],
+        )
+        dumped = RealityCheckOutputContract.model_validate(valid_reality_check_data).model_dump()
+        assert dumped["executive_summary_source"] == "deterministic_fallback"
+        assert dumped["executive_summary_llm"] == "Stale."
+        assert dumped["executive_summary_validation_warnings"] == ["OpenSearch has no queries."]
 
     def test_output_assignment_version_defaults_to_none(self, valid_reality_check_data):
         # Additive in 1.2: outputs written before the field existed still validate.

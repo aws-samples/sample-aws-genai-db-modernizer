@@ -69,7 +69,12 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int | None) ->
     finalize_reality_check(
         store, job_id, db, store.read_json(llm_response_path), assignment_version
     )
-    _output({"status": "complete"})
+    output_key = f"{db}/{job_id}/reality-check/output.json"
+    output = store.read_json(output_key) if store.exists(output_key) else {}
+    # deterministic_fallback: the LLM summary contradicted the final records (#236).
+    _output(
+        {"status": "complete", "executive_summary_source": output.get("executive_summary_source")}
+    )
 
 
 def main() -> None:
