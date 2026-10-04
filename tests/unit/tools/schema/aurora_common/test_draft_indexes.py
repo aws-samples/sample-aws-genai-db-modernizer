@@ -116,7 +116,7 @@ def _q(name: str) -> str:
 )
 def test_source_predicates_drop_casts_and_pass_the_grammar(predicate, expected):
     columns = ["id", "slug", "status", "deleted_at"]
-    assert render_source_predicate(predicate, columns, _q) == expected
+    assert render_source_predicate(predicate, columns, _q, {"slug", "status"}) == expected
 
 
 @pytest.mark.parametrize(
@@ -130,11 +130,13 @@ def test_source_predicates_drop_casts_and_pass_the_grammar(predicate, expected):
         "((id)::integer > 5)",
         "(slug::integer = 1)",
         "((status)::text[] = '{a}'::text[])",
+        # a text cast on a non-text column compares as text ('10' < '9')
+        "((id)::text > '9')",
     ],
 )
 def test_source_predicates_outside_the_grammar_are_rejected(predicate):
     with pytest.raises(SqlFragmentError):
-        render_source_predicate(predicate, ["id", "slug"], _q)
+        render_source_predicate(predicate, ["id", "slug", "status"], _q, {"slug", "status"})
 
 
 def test_pg_draft_carries_the_partial_index_predicate():
@@ -386,3 +388,40 @@ def test_full_contract_echo_with_a_partial_index_has_no_errors_and_no_changes():
 
     assert errors == []
     assert delta["tables"] == []
+
+
+def test_text_cast_on_an_integer_column_falls_back_to_a_noted_full_index():
+    table = AgentTable.model_validate(
+        {
+            "table_id": "db.topics",
+            "table_name": "topics",
+            "row_count": 1,
+            "columns": [
+                {"column_name": "views", "data_type": "integer", "nullable": True},
+                {"column_name": "status", "data_type": "character varying", "nullable": True},
+            ],
+            "indexes": [
+                {
+                    "index_name": "idx_popular",
+                    "columns": ["views"],
+                    "is_unique": False,
+                    "predicate": "((views)::text > '9'::text)",
+                },
+                {
+                    "index_name": "idx_open",
+                    "columns": ["status"],
+                    "is_unique": False,
+                    "predicate": "((status)::text = 'open'::text)",
+                },
+            ],
+        }
+    )
+
+    result = generate_pg_ddl([table], source_engine="postgresql")
+
+    assert result.tables[0].index_sql == [
+        'CREATE INDEX "idx_popular" ON "topics" ("views");',
+        'CREATE INDEX "idx_open" ON "topics" ("status") WHERE ( ( "status" ) = \'open\' );',
+    ]
+    [note] = result.index_notes
+    assert note["index"] == "idx_popular" and "::text" in note["reason"]

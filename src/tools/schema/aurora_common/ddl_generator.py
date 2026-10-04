@@ -266,7 +266,22 @@ def secondary_indexes(table: AgentTable) -> list[AgentIndex]:
     return [i for i in table.indexes or [] if not is_primary_key_index(i, table)]
 
 
-def _index_sql(table: AgentTable, dialect: Dialect, notes: list[dict]) -> list[str]:
+_TEXT_TYPES = ("VARCHAR", "CHAR", "CHARACTER", "TEXT", "CITEXT")
+
+
+def _text_columns(columns: list[ColumnDDL]) -> set[str]:
+    """Columns whose draft type is a (non-array) character type."""
+    return {
+        c.name
+        for c in columns
+        if "[" not in c.aurora_type
+        and c.aurora_type.split("(")[0].split()[0].upper() in _TEXT_TYPES
+    }
+
+
+def _index_sql(
+    table: AgentTable, dialect: Dialect, notes: list[dict], text_columns: set[str]
+) -> list[str]:
     statements: list[str] = []
     columns = [c.column_name for c in table.columns]
     for idx in secondary_indexes(table):
@@ -278,7 +293,9 @@ def _index_sql(table: AgentTable, dialect: Dialect, notes: list[dict]) -> list[s
                 reason = "Aurora MySQL has no partial indexes"
             else:
                 try:
-                    where_sql = render_source_predicate(idx.predicate, columns, dialect.q)
+                    where_sql = render_source_predicate(
+                        idx.predicate, columns, dialect.q, text_columns
+                    )
                 except SqlFragmentError as exc:
                     reason = f"the predicate is outside the supported grammar ({exc})"
             if where_sql is None:
@@ -400,7 +417,7 @@ def _generate(
                 table_name=table.table_name,
                 columns=columns,
                 create_sql=_create_table_sql(table, columns, dialect),
-                index_sql=_index_sql(table, dialect, notes),
+                index_sql=_index_sql(table, dialect, notes, _text_columns(columns)),
                 fk_sql=_fk_sql(table, dialect),
             )
         )
