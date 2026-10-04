@@ -118,6 +118,16 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true }
     }));
   }
 
+  // A cache-layer ranking entry carries its cache fit: the mean fit of the reads
+  // it fronts (#152)
+  const fit = overlay.routed_confidence;
+  if (typeof fit === 'number' && Number.isFinite(fit)) {
+    parts.push(t('cache-layer.cache-fit', {
+      percent: fit.toFixed(0),
+      defaultValue: '{{percent}}% cache fit',
+    }));
+  }
+
   return parts.join(' · ');
 }
 

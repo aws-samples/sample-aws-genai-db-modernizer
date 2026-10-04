@@ -9,6 +9,7 @@
  */
 import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
+import { analysisConfidence, engineConfidence, hasRoutedConfidence } from './rankingConfidence';
 
 // Normalize a trade-off (structured object or legacy string) into a consistent shape.
 export const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
@@ -182,7 +183,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
 
   <div class="section-separator">
     <h2>Database Ranking</h2>
-    <div class="desc">AWS database services ranked by confidence score based on workload analysis, access patterns, and migration complexity</div>
+    <div class="desc">${t('report-results.ranking.description', { defaultValue: 'AWS database services ranked by share of the workload; confidence is the fit of the queries routed to each engine' })}</div>
   </div>
 
   <div class="container">
@@ -191,8 +192,11 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         <div class="ranking-card">
           <div class="rank">Rank #${index + 1}</div>
           <div class="engine">${item.target}</div>
-          <div class="confidence">${item.confidence_score}%</div>
-          <div class="confidence-label">Confidence</div>
+          <div class="confidence">${engineConfidence(item)}%</div>
+          <div class="confidence-label">${hasRoutedConfidence(item)
+            ? t('report-results.ranking.routed-confidence', { defaultValue: 'Fit of routed queries' })
+            : 'Confidence'}</div>
+          ${hasRoutedConfidence(item) && analysisConfidence(item) !== null ? html`<div class="confidence-label">${t('report-results.ranking.analysis-confidence', { score: analysisConfidence(item), defaultValue: 'Analysis average {{score}}%' })}</div>` : ''}
           <div style="margin-top: 15px; font-size: 12px; color: #666;">
             ${item.tables_analyzed || 0} tables · ${item.access_patterns || 0} patterns<br>
             $${fixed(item.monthly_cost_usd, 2, '0')}/mo

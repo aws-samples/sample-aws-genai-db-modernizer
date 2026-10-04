@@ -31,6 +31,7 @@ import ApiManager from "../classes/ApiManager";
 import SectionSeparator from "../components/SectionSeparator";
 import { buildReportHtml, normalizeTradeoff, riskHasContent } from "../utils/ReportHtmlExport";
 import { splitRankingByRole, formatCacheLayerLine } from "../utils/cacheLayer";
+import { analysisConfidence, engineConfidence, hasRoutedConfidence } from "../utils/rankingConfidence";
 
 
 
@@ -876,8 +877,17 @@ const ReportResultsPage = memo(() => {
                           </Box>
 
                           <Box textAlign="center">
-                            <Box fontSize="display-l" fontWeight="bold">{item.confidence_score}%</Box>
-                            <Box variant="small" color="text-body-secondary">{t('report-results.ranking.confidence')}</Box>
+                            <Box fontSize="display-l" fontWeight="bold">{engineConfidence(item)}%</Box>
+                            <Box variant="small" color="text-body-secondary">
+                              {hasRoutedConfidence(item)
+                                ? t('report-results.ranking.routed-confidence')
+                                : t('report-results.ranking.confidence')}
+                            </Box>
+                            {hasRoutedConfidence(item) && analysisConfidence(item) !== null && (
+                              <Box variant="small" color="text-body-secondary">
+                                {t('report-results.ranking.analysis-confidence', { score: analysisConfidence(item) })}
+                              </Box>
+                            )}
                           </Box>
 
                           <Box textAlign="center">
