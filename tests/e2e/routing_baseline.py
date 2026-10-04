@@ -1,0 +1,176 @@
+"""Routing regression guard: the shape of the recommended modernization per sample.
+
+The modernizer should recommend incremental, wave-based modernization, not a full
+decomposition. This module measures, from one deterministic pipeline run, the
+facts that would show a drift toward decomposition:
+
+- the owner distribution after Reality Check (share of in-scope queries per engine),
+- the share kept on the source-compatible engine (Aurora MySQL for MySQL,
+  Aurora PostgreSQL for PostgreSQL),
+- the number of owner engines,
+- the cache overlay (queries, share of calls), which is never an owner share,
+- the deck's wave plan (``pptx_report.derive``): engines and workload per wave.
+
+``tests/e2e/test_routing_baseline.py`` compares a run against
+``tests/e2e/baselines/routing_baseline.json``. Update the baseline deliberately,
+in the PR that changes routing, with a reason line:
+
+    uv run python -m tests.e2e.routing_baseline --write --reason "why it moved (#NNN)"
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+REPO = Path(__file__).resolve().parents[2]
+BASELINE = Path(__file__).parent / "baselines" / "routing_baseline.json"
+
+# A share (percentage points of in-scope queries, of calls, or of a wave's
+# workload) may move this much before the guard fails.
+TOLERANCE_PP = 5.0
+
+
+def _latest(job_dir: Path, sub: str, name: str) -> Path:
+    paths = sorted(job_dir.glob(f"{sub}/v*/{name}"), key=lambda p: int(p.parent.name.lstrip("v")))
+    if not paths:
+        raise FileNotFoundError(f"no {sub}/v*/{name} under {job_dir}")
+    return paths[-1]
+
+
+def measure(job_dir: Path) -> dict[str, Any]:
+    """The routing shape of one job (see module docstring)."""
+    from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+    from src.report import pptx_report
+
+    report = json.loads(_latest(job_dir, "synthesis", "report.json").read_text())
+    version = (report.get("assignment_summary") or {}).get("version")
+    assignment_path = (
+        job_dir / "assignment" / f"v{version}" / "assignment.json"
+        if version
+        else _latest(job_dir, "assignment", "assignment.json")
+    )
+    assignment = json.loads(assignment_path.read_text())
+    collector = json.loads((job_dir / "collector" / "output.json").read_text())
+    source = str(
+        ((collector.get("metadata") or {}).get("source_database") or {}).get("engine") or ""
+    ).lower()
+    source_compatible = SOURCE_ENGINE_TO_AURORA.get(source, "")
+
+    in_scope = [qa for qa in assignment["query_assignments"] if qa.get("in_scope", True)]
+    owners = Counter(qa["assigned_engine"] for qa in in_scope)
+    total = len(in_scope) or 1
+    overlay = assignment.get("cache_overlay") or {}
+
+    f = pptx_report.derive(report, {})
+    waves = [
+        {
+            "engines": [e["engine"] for e in w["engines"]],
+            "workload_percent": round(float(w["workload"]), 1),
+            "cached_call_share_percent": round(float(w.get("cached_share") or 0), 1),
+        }
+        for w in f["waves"]
+    ]
+    return {
+        "source_engine": source,
+        "source_compatible_engine": source_compatible,
+        "assignment_version": assignment.get("version"),
+        "queries_in_scope": len(in_scope),
+        "owner_share_percent": {e: round(n / total * 100, 1) for e, n in sorted(owners.items())},
+        "source_compatible_share_percent": round(owners.get(source_compatible, 0) / total * 100, 1),
+        "owner_engines": len(owners),
+        "cache_overlay": {
+            "queries": overlay.get("query_count", 0),
+            "call_share_percent": overlay.get("call_share_percent", 0.0),
+        },
+        "waves": waves,
+    }
+
+
+def compare(
+    baseline: dict[str, Any], actual: dict[str, Any], tol: float = TOLERANCE_PP
+) -> list[str]:
+    """Differences beyond tolerance between a sample's baseline and a run; [] if none."""
+    problems: list[str] = []
+    engines = set(baseline["owner_share_percent"]) | set(actual["owner_share_percent"])
+    for e in sorted(engines):
+        b = baseline["owner_share_percent"].get(e, 0.0)
+        a = actual["owner_share_percent"].get(e, 0.0)
+        if abs(a - b) > tol:
+            problems.append(f"owner share of {e}: {b}% -> {a}% (tolerance {tol} pp)")
+    b, a = baseline["source_compatible_share_percent"], actual["source_compatible_share_percent"]
+    if abs(a - b) > tol:
+        problems.append(f"source-compatible share: {b}% -> {a}% (tolerance {tol} pp)")
+    if baseline["owner_engines"] != actual["owner_engines"]:
+        problems.append(f"owner engines: {baseline['owner_engines']} -> {actual['owner_engines']}")
+    b, a = (
+        baseline["cache_overlay"]["call_share_percent"],
+        actual["cache_overlay"]["call_share_percent"],
+    )
+    if abs(a - b) > tol:
+        problems.append(f"cache overlay call share: {b}% -> {a}% (tolerance {tol} pp)")
+    bw = [w["engines"] for w in baseline["waves"]]
+    aw = [w["engines"] for w in actual["waves"]]
+    if bw != aw:
+        problems.append(f"wave structure: {bw} -> {aw}")
+    else:
+        for i, (bwave, awave) in enumerate(zip(baseline["waves"], actual["waves"], strict=True)):
+            for key in ("workload_percent", "cached_call_share_percent"):
+                if abs(awave[key] - bwave[key]) > tol:
+                    problems.append(
+                        f"wave {i + 1} {key}: {bwave[key]} -> {awave[key]} (tolerance {tol} pp)"
+                    )
+    return problems
+
+
+def _write(reason: str) -> None:
+    from tests.e2e.pipeline import run_pipeline
+
+    samples: dict[str, Any] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for sample in ("wordpress", "discourse"):
+            result = run_pipeline(sample, Path(tmp) / "artifacts", job_id=f"baseline-{sample}")
+            samples[sample] = measure(result.job_dir())
+    previous = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+    history = [*previous.get("history", []), reason]
+    BASELINE.parent.mkdir(parents=True, exist_ok=True)
+    BASELINE.write_text(
+        json.dumps(
+            {
+                "about": (
+                    "Routing regression guard (tests/e2e/test_routing_baseline.py). Update "
+                    "deliberately with: uv run python -m tests.e2e.routing_baseline --write "
+                    '--reason "..."'
+                ),
+                "tolerance_pp": TOLERANCE_PP,
+                "reason": reason,
+                "history": history,
+                "samples": samples,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"wrote {BASELINE}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--write", action="store_true", help="regenerate the baseline")
+    parser.add_argument("--reason", default="", help="why the baseline moved (required)")
+    args = parser.parse_args()
+    if not args.write:
+        parser.error("nothing to do: pass --write --reason '...'")
+    if not args.reason.strip():
+        parser.error("--reason is required: say why the routing shape moved")
+    _write(args.reason.strip())
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(REPO))
+    main()

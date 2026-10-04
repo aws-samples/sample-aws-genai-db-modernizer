@@ -1,0 +1,92 @@
+{
+  "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
+  "tolerance_pp": 5.0,
+  "reason": "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
+  "history": [
+    "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries."
+  ],
+  "samples": {
+    "wordpress": {
+      "source_engine": "mysql",
+      "source_compatible_engine": "aurora_mysql",
+      "assignment_version": 2,
+      "queries_in_scope": 107,
+      "owner_share_percent": {
+        "aurora_mysql": 4.7,
+        "dynamodb": 91.6,
+        "opensearch": 3.7
+      },
+      "source_compatible_share_percent": 4.7,
+      "owner_engines": 3,
+      "cache_overlay": {
+        "queries": 20,
+        "call_share_percent": 83.4
+      },
+      "waves": [
+        {
+          "engines": [
+            "elasticache"
+          ],
+          "workload_percent": 0.0,
+          "cached_call_share_percent": 83.4
+        },
+        {
+          "engines": [
+            "aurora_mysql",
+            "dynamodb"
+          ],
+          "workload_percent": 96.3,
+          "cached_call_share_percent": 0.0
+        },
+        {
+          "engines": [
+            "opensearch"
+          ],
+          "workload_percent": 3.7,
+          "cached_call_share_percent": 0.0
+        }
+      ]
+    },
+    "discourse": {
+      "source_engine": "postgresql",
+      "source_compatible_engine": "aurora_postgresql",
+      "assignment_version": 2,
+      "queries_in_scope": 1654,
+      "owner_share_percent": {
+        "aurora_postgresql": 76.5,
+        "dynamodb": 23.3,
+        "opensearch": 0.2
+      },
+      "source_compatible_share_percent": 76.5,
+      "owner_engines": 3,
+      "cache_overlay": {
+        "queries": 3,
+        "call_share_percent": 25.1
+      },
+      "waves": [
+        {
+          "engines": [
+            "elasticache"
+          ],
+          "workload_percent": 0.0,
+          "cached_call_share_percent": 25.1
+        },
+        {
+          "engines": [
+            "aurora_postgresql",
+            "dynamodb"
+          ],
+          "workload_percent": 99.8,
+          "cached_call_share_percent": 0.0
+        },
+        {
+          "engines": [
+            "opensearch"
+          ],
+          "workload_percent": 0.2,
+          "cached_call_share_percent": 0.0
+        }
+      ]
+    }
+  }
+}
