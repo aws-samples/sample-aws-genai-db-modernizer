@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
@@ -554,6 +555,18 @@ def build_risk_assessment(
         for q in data.source_queries
         if q.get("query_id")
     }
+    # Normalised tables per query for risks built from query ids (unsupported patterns,
+    # coverage gaps): ``tables_accessed``, else the assignment's ``source_tables``.
+    normalise = _table_normaliser(data)
+    assigned_tables = {
+        qa["query_id"]: qa.get("source_tables") or []
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("query_id")
+    }
+    risk_tables = {
+        q: normalise(query_tables.get(q) or assigned_tables.get(q) or [])
+        for q in set(query_tables) | set(assigned_tables)
+    }
     covered_by = {
         engine: _covered_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
@@ -783,7 +796,9 @@ def build_risk_assessment(
                     "severity": "MEDIUM",
                     "description": f"[{engine}] {unsupported_pattern_label(up)}: "
                     f"{_unsupported_pattern_problem(engine, up, query_text)}",
-                    "affected_tables": [],
+                    "affected_tables": sorted(
+                        {t for q in unsupported_pattern_ids(up) for t in risk_tables.get(q, ())}
+                    ),
                     "mitigation": unsupported_pattern_mitigation(up),
                     "query_ids": sorted(unsupported_pattern_ids(up)),
                 }
@@ -805,7 +820,7 @@ def build_risk_assessment(
                         f"{object_label or 'this object'} needs application-side logic on "
                         f"{display_name(engine)}."
                     ),
-                    "affected_tables": [mn["source_table"]] if mn.get("source_table") else [],
+                    "affected_tables": sorted(normalise([mn.get("source_table") or ""])),
                     "mitigation": f"Implement as application logic: {logic}" if logic else None,
                     "object_type": str(mn.get("object_type") or ""),
                     "object_name": str(mn.get("object_name") or ""),
@@ -818,7 +833,7 @@ def build_risk_assessment(
             continue
         risk_id += 1
         risks.append(
-            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, query_tables)
+            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables)
         )
 
     risks = [_without_repeated_mitigation(r) for r in risks]
@@ -904,6 +919,35 @@ def _without_repeated_mitigation(risk: dict) -> dict:
 # Table ids analysis emits when it cannot attribute a query to a table
 # (e.g. ``SELECT FOUND_ROWS()``).
 _PLACEHOLDER_TABLES = frozenset({"unknown", "UNKNOWN", "None", "null"})
+# Names that are never a source table in a risk's ``affected_tables``.
+_PSEUDO_TABLES = _PLACEHOLDER_TABLES | {"", "DUAL", "dual"}
+
+
+def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]]:
+    """Map table names to the collector's source-table ids (``<db>.table``).
+
+    A bare name is qualified with ``<db>.`` when that is a known source table; names
+    that are not source tables (``unknown``, ``DUAL``) are dropped. Without a known
+    table list the names are kept as given, minus pseudo-tables (fail-open).
+    """
+    known = {str(t["table_id"]) for t in data.source_tables if t.get("table_id")}
+    prefix = f"{data.database_name}." if data.database_name else ""
+
+    def normalise(names: Iterable[str]) -> set[str]:
+        out: set[str] = set()
+        for raw in names:
+            name = str(raw or "").strip()
+            if name in _PSEUDO_TABLES:
+                continue
+            if not known:
+                out.add(name)
+            elif name in known:
+                out.add(name)
+            elif prefix and f"{prefix}{name}" in known:
+                out.add(f"{prefix}{name}")
+        return out
+
+    return normalise
 
 
 def _access_pattern_query_ids(ap: dict) -> list[str]:
