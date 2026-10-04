@@ -56,7 +56,13 @@ from pptx.util import Inches, Pt
 # (issue #206).
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 
-from .renderers import _architecture_engines, filtered_risks, plural_noun, plural_verb
+from .renderers import (
+    _architecture_engines,
+    filtered_risks,
+    label_in_scope_access_patterns,
+    plural_noun,
+    plural_verb,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -934,7 +940,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "conf": conf,
         "workload": workload,
         "summary": prettify_engines(
-            name_target_tables(strip_cost(str(rep.get("summary_deterministic") or "")))
+            label_in_scope_access_patterns(
+                name_target_tables(strip_cost(str(rep.get("summary_deterministic") or "")))
+            )
         ),
         "n_tables": len(rep.get("table_mappings") or []),
         "n_tradeoffs": len(rep.get("trade_offs") or []),

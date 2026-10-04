@@ -9,7 +9,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -110,6 +110,48 @@ def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:
     """engine -> design summary, only for engines whose design completed."""
     sd = report.get("schema_designs") or {}
     return {e: v for e, v in sd.items() if isinstance(v, dict) and v.get("status") == "completed"}
+
+
+def access_pattern_scope(report: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """engine -> (in-scope, out-of-scope) access patterns, from ``query_groups``.
+
+    ``schema_designs[engine].access_pattern_count`` counts every pattern, while the
+    deterministic summary counts only the in-scope ones; ``query_groups`` carries
+    each pattern with its ``in_scope`` flag. A pattern listed in several groups is
+    counted once (#255).
+    """
+    seen: dict[tuple[str, str], bool] = {}
+    for g in report.get("query_groups") or []:
+        if not isinstance(g, dict):
+            continue
+        for ap in g.get("access_patterns") or []:
+            if isinstance(ap, dict) and ap.get("engine") and ap.get("pattern_id"):
+                key = (str(ap["engine"]), str(ap["pattern_id"]))
+                seen[key] = seen.get(key, False) or ap.get("in_scope", True) is not False
+    out: dict[str, tuple[int, int]] = {}
+    for (eng, _), in_scope in sorted(seen.items()):
+        n_in, n_out = out.get(eng, (0, 0))
+        out[eng] = (n_in + 1, n_out) if in_scope else (n_in, n_out + 1)
+    return out
+
+
+# "<engine>: 15 target tables, 47 access patterns" in the deterministic summary's
+# per-engine breakdown. Those counts are in-scope patterns only; the Engineering
+# Report heading counts every pattern, so the summary says which it counts (#255).
+_PER_ENGINE_APS = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
+    + r"): ([^;()]*?), (\d+) (access patterns?)\b"
+)
+
+
+def label_in_scope_access_patterns(text: str) -> str:
+    """``dynamodb: 15 target tables, 47 access patterns`` -> ``..., 47 in-scope access patterns``.
+
+    Idempotent: after rewording, the digits are followed by "in-scope", not
+    "access", so the text is never matched again.
+    """
+    return _PER_ENGINE_APS.sub(r"\1: \2, \3 in-scope \4", text)
 
 
 def _risk_engine_and_body(desc: Any) -> tuple[str, str]:
@@ -585,6 +627,8 @@ def render_decision_report_html(
         report.get("summary") if trust_generated_summary else report.get("summary_deterministic")
     )
     summary = summary or report.get("summary_deterministic")
+    if summary and summary == report.get("summary_deterministic"):
+        summary = label_in_scope_access_patterns(summary)
     if summary:
         out += [
             "<h2 class=section-title>Executive summary</h2>",
@@ -839,13 +883,22 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     designs = _completed_designs(report)
     if designs:
         out += ["## Target schemas by engine", ""]
+        ap_scope = access_pattern_scope(report)
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
             n_aps = dz.get("access_pattern_count", 0)
+            # The deck and the summary count in-scope patterns only; say how this
+            # total splits so the two numbers reconcile (#255).
+            n_out = ap_scope.get(eng, (0, 0))[1]
+            split = (
+                f": {n_aps - n_out} in scope, {n_out} out of scope"
+                if n_out and isinstance(n_aps, int) and n_aps >= n_out
+                else ""
+            )
             out += [
                 f"### {escaping.md_text(eng)} ({len(tables)} target "
                 f"{plural_noun(len(tables), 'object')}, "
-                f"{n_aps} access {plural_noun(n_aps, 'pattern')})",
+                f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split})",
                 "",
             ]
             if tables:
