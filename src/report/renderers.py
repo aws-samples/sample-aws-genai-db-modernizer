@@ -163,6 +163,8 @@ def access_pattern_scope(report: dict[str, Any]) -> dict[str, tuple[int, int]]:
 # "<engine>: 15 target tables, 47 access patterns" in the deterministic summary's
 # per-engine breakdown. Those counts are in-scope patterns only; the Engineering
 # Report heading counts every pattern, so the summary says which it counts (#255).
+# Synthesis now writes "in-scope access patterns" itself; this only relabels a
+# report.json produced before that.
 _PER_ENGINE_APS = re.compile(
     r"\b("
     + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
@@ -191,7 +193,9 @@ def label_in_scope_access_patterns(text: str, report: dict[str, Any] | None = No
 
 # "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)." reads as 4 of
 # the 8 being resolved; the 4 are additional risks the assignment removed, listed
-# apart from the 8 open ones in the Engineering Report (#258).
+# apart from the 8 open ones in the Engineering Report (#258). Synthesis now writes
+# "8 open migration risks (...); 4 more were resolved by the assignment." itself,
+# which this pattern does not match; it only rewords an older report.json.
 _RESOLVED_RISKS = re.compile(
     r"\b(\d+) risk\(s\) identified \(overall: ([^;()]+); (\d+) resolved by the assignment\)\."
 )

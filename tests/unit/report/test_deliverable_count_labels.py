@@ -559,3 +559,79 @@ class TestRiskRowSplitsDescriptionAndMitigation:
         row = self._rows(risk)["RISK-002"]
         assert row[2].startswith("COUNT of comments")
         assert row[3] == "—"
+
+
+def _new_summary_report() -> dict[str, Any]:
+    """A report whose summary synthesis wrote with the labels already in (#255, #258)."""
+    from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
+    from src.agents.referee.synthesis_report import build_summary
+
+    rep = _design_report()
+    by_engine: dict[str, list[dict[str, Any]]] = {}
+    for g in rep["query_groups"]:
+        for ap in g["access_patterns"]:
+            by_engine.setdefault(ap["engine"], [])
+            if ap not in by_engine[ap["engine"]]:
+                by_engine[ap["engine"]].append(ap)
+    data = SynthesisData(
+        job_id="j",
+        database_name="wordpress",
+        collector={
+            "database_schema": {"tables": [{"table_id": f"wp.t{i}"} for i in range(50)]},
+            "queries": {"query_patterns": [{"query_id": f"q{i}"} for i in range(107)]},
+        },
+    )
+    data.engines = {
+        e: EngineArtifacts(e, schema_design={"access_patterns": aps})
+        for e, aps in by_engine.items()
+    }
+    ranking = [
+        {"target": "dynamodb", "assigned_queries": 63, "workload_percent": 58.9,
+         "schema_design_available": True, "target_tables": 15, "access_patterns": 51},
+        {"target": "elasticache", "assigned_queries": 34, "workload_percent": 31.8,
+         "schema_design_available": True, "target_tables": 12, "access_patterns": 13},
+    ]  # fmt: skip
+    risks = {"overall_risk_level": "LOW", "risks": [{}] * 8, "resolved_risks": [{}] * 4}
+    rep["ranking"] = ranking
+    rep["risk_assessment"] = {
+        "overall_risk_level": "LOW",
+        "risks": [_risk(f"RISK-00{i}", "MEDIUM", 1) for i in range(1, 9)],
+        "resolved_risks": [{"engine": "dynamodb", "severity": "HIGH", "description": "x"}] * 4,
+    }
+    rep["summary_deterministic"] = build_summary(
+        data, ranking, [], {"projected_monthly_cost": 0}, risks, rep["query_groups"]
+    )
+    return rep
+
+
+class TestLabelsWrittenAtSource:
+    """Synthesis writes the labels itself; the render-time relabelling of an older
+    ``report.json`` must not label them a second time."""
+
+    LABELS = (
+        "dynamodb: 15 target tables, 47 in-scope access patterns",
+        "elasticache: 12 key designs, 13 in-scope access patterns",
+        "60 in-scope access patterns (plus 4 out of scope)",
+        "8 open migration risks (overall: LOW); 4 more were resolved by the assignment.",
+    )
+
+    def test_synthesis_writes_the_labels(self) -> None:
+        text = _new_summary_report()["summary_deterministic"]
+        for label in self.LABELS:
+            assert text.count(label) == 1, (label, text)
+
+    def test_each_label_appears_once_in_every_deliverable(self) -> None:
+        rep = _new_summary_report()
+        html = renderers.render_decision_report_html(rep)
+        f = pptx_report.derive(rep, {})
+        slide = pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
+        deck = " ".join(_shape_texts(slide))
+        for label in self.LABELS:
+            assert html.count(label) == 1, (label, "decision report")
+            pretty = pptx_report.prettify_engines(label)
+            assert deck.count(pretty) == 1, (pretty, deck)
+        for text in (html, deck):
+            assert "in-scope in-scope" not in text
+            assert "open open" not in text
+            assert "risk(s)" not in text
+            assert "more more" not in text

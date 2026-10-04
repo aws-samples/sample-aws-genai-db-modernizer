@@ -1339,14 +1339,41 @@ def _count(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
-def _in_scope_access_patterns(data: SynthesisData, rank: dict) -> int:
-    """In-scope access patterns of an engine's schema design (ranking counts all)."""
+def _access_pattern_scope(data: SynthesisData, rank: dict) -> tuple[int, int]:
+    """``(in_scope, out_of_scope)`` access patterns of an engine's schema design.
+
+    The ranking counts every pattern; without the design itself all of them are
+    taken as in scope (nothing is known to be out of scope).
+    """
     artifacts = data.engines.get(rank["target"])
     if artifacts is None or artifacts.schema_design is None:
-        return int(rank.get("access_patterns", 0))
-    return sum(
-        1 for ap in artifacts.schema_design.get("access_patterns", []) if ap.get("in_scope", True)
-    )
+        return int(rank.get("access_patterns", 0)), 0
+    patterns = artifacts.schema_design.get("access_patterns", [])
+    n_in = sum(1 for ap in patterns if ap.get("in_scope", True))
+    return n_in, len(patterns) - n_in
+
+
+def _in_scope_phrase(n_in: int, n_out: int) -> str:
+    """``47 in-scope access patterns (plus 4 out of scope)`` (#255).
+
+    The Engineering Report heading counts every pattern, so the summary says that
+    it counts in-scope ones and how many it leaves out.
+    """
+    text = _count(n_in, "in-scope access pattern", "in-scope access patterns")
+    return text + (f" (plus {n_out} out of scope)" if n_out else "")
+
+
+def _risk_sentence(n_open: int, level: str, n_resolved: int) -> str:
+    """``8 open migration risks (overall: LOW); 4 more were resolved by the assignment.``
+
+    The resolved risks are not part of the open ones; the Engineering Report lists
+    them apart (#258).
+    """
+    text = f"{_count(n_open, 'open migration risk', 'open migration risks')} (overall: {level})"
+    if n_resolved:
+        verb = "was" if n_resolved == 1 else "were"
+        text += f"; {n_resolved} more {verb} resolved by the assignment"
+    return text + "."
 
 
 def build_summary(
@@ -1400,12 +1427,12 @@ def build_summary(
         if designed:
             engines = {r["target"] for r in designed}
             groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
-            in_scope = {r["target"]: _in_scope_access_patterns(data, r) for r in designed}
+            scope = {r["target"]: _access_pattern_scope(data, r) for r in designed}
             per_engine = "; ".join(
                 f"{r['target']}: {_count(r.get('target_tables', 0), *_object_noun(r['target']))}"
                 + (
-                    f", {_count(in_scope[r['target']], 'access pattern', 'access patterns')}"
-                    if in_scope[r["target"]]
+                    f", {_count(scope[r['target']][0], 'in-scope access pattern', 'in-scope access patterns')}"
+                    if scope[r["target"]][0]
                     else ""
                 )
                 for r in designed
@@ -1413,8 +1440,10 @@ def build_summary(
             parts.append(
                 f"Schema design produced "
                 f"{sum(r.get('target_tables', 0) for r in designed)} target objects and "
-                f"{sum(in_scope.values())} in-scope access patterns "
-                f"across {groups} query groups ({per_engine})."
+                + _in_scope_phrase(
+                    sum(n for n, _ in scope.values()), sum(n for _, n in scope.values())
+                )
+                + f" across {groups} query groups ({per_engine})."
             )
     else:
         parts.append(
@@ -1425,7 +1454,7 @@ def build_summary(
         if top.get("schema_design_available"):
             parts.append(
                 f"Schema design produced {top['target_tables']} target tables with "
-                f"{top['access_patterns']} access patterns across "
+                f"{_in_scope_phrase(*_access_pattern_scope(data, top))} across "
                 f"{top['pattern_groups']} query groups."
             )
 
@@ -1448,11 +1477,12 @@ def build_summary(
     # Risks
     risk_count = len(risks.get("risks", []))
     if risk_count > 0:
-        n_resolved = len(risks.get("resolved_risks") or [])
         parts.append(
-            f"{risk_count} risk(s) identified (overall: {risks['overall_risk_level']}"
-            + (f"; {n_resolved} resolved by the assignment" if n_resolved else "")
-            + ")."
+            _risk_sentence(
+                risk_count,
+                risks["overall_risk_level"],
+                len(risks.get("resolved_risks") or []),
+            )
         )
 
     # Query groups

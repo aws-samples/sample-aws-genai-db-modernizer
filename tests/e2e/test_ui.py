@@ -166,7 +166,7 @@ def test_report_page_renders_the_full_report(
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert r.job_id in text and r.db in text, (r.db, "job id / database name missing")
-        assert "risk(s) identified" in text, (r.db, "executive summary missing")
+        assert "open migration risk" in text, (r.db, "executive summary missing")
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

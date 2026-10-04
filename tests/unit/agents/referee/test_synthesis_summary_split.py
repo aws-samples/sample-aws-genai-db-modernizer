@@ -70,8 +70,8 @@ def test_schema_totals_cover_every_engine_with_workload() -> None:
     text = _summary()
     assert (
         "Schema design produced 39 target objects and 65 in-scope access patterns across 3 "
-        "query groups (dynamodb: 20 target tables, 52 access patterns; elasticache: 10 key designs, "
-        "13 access patterns; aurora_mysql: 9 target tables)."
+        "query groups (dynamodb: 20 target tables, 52 in-scope access patterns; elasticache: "
+        "10 key designs, 13 in-scope access patterns; aurora_mysql: 9 target tables)."
     ) in text
     assert "10 target tables with 13 access patterns" not in text
 
@@ -85,14 +85,30 @@ def test_only_in_scope_access_patterns_are_counted() -> None:
         "aurora_mysql": EngineArtifacts("aurora_mysql", schema_design={"access_patterns": []}),
     }
     text = build_summary(data, RANKING, MAPPINGS, TCO, RISKS, GROUPS)
-    assert "60 in-scope access patterns" in text
-    assert "(dynamodb: 20 target tables, 47 access patterns; elasticache: 10 key designs" in text
+    assert "60 in-scope access patterns (plus 5 out of scope) across" in text
+    assert (
+        "(dynamodb: 20 target tables, 47 in-scope access patterns; elasticache: 10 key designs"
+    ) in text
+
+
+def test_no_out_of_scope_count_when_every_pattern_is_in_scope() -> None:
+    assert "out of scope" not in _summary()
 
 
 def test_resolved_risks_are_counted_in_the_risk_sentence() -> None:
     risks = {**RISKS, "resolved_risks": [{}, {}, {}]}
     text = build_summary(_data(), RANKING, MAPPINGS, TCO, risks, GROUPS)
-    assert "1 risk(s) identified (overall: MEDIUM; 3 resolved by the assignment)." in text
+    assert (
+        "1 open migration risk (overall: MEDIUM); 3 more were resolved by the assignment."
+    ) in text
+    assert "risk(s)" not in text
+
+
+def test_risk_sentence_singular_and_plural() -> None:
+    one_resolved = {"risks": [{}, {}], "overall_risk_level": "LOW", "resolved_risks": [{}]}
+    text = build_summary(_data(), RANKING, MAPPINGS, TCO, one_resolved, GROUPS)
+    assert "2 open migration risks (overall: LOW); 1 more was resolved by the assignment." in text
+    assert "1 open migration risk (overall: MEDIUM)." in _summary()
 
 
 def test_workload_split_is_ordered_by_assigned_queries() -> None:
@@ -130,6 +146,6 @@ def test_without_assignment_the_top_engine_summary_is_kept() -> None:
     ]
     text = _summary(ranking)
     assert "Top recommendation: elasticache with 50% average confidence." in text
-    assert "Schema design produced 10 target tables with 13 access patterns" in text
+    assert "Schema design produced 10 target tables with 13 in-scope access patterns" in text
     assert "Other targets evaluated: dynamodb (50%), aurora_mysql (50%)." in text
     assert text.count("source tables mapped") == 1
