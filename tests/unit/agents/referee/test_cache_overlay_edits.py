@@ -379,3 +379,51 @@ class TestOpenSearchAbsorber:
         assert may_absorb("opensearch", "q", {}, {}, {"q": ["inverted_index"]})
         assert not may_absorb("opensearch", "q", {}, {}, {})
         assert may_absorb("dynamodb", "q", {}, {}, {})
+
+
+class TestCustomerChoiceSurvivesRefresh:
+    """A Reality Check refresh re-evaluates the overlay; the customer's choice wins."""
+
+    QUERIES = [_query("hot", 5.0), _query("cold", 0.01)]
+    ENGINES = ["dynamodb", "elasticache"]
+
+    def _refresh(self, qas: list[dict]) -> dict[str, dict]:
+        from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+
+        out = refresh_consolidated_assignment(
+            {"job_id": JOB, "version": 2, "query_assignments": qas},
+            {"queries": {"query_patterns": self.QUERIES}, "database_schema": {"tables": []}},
+            {e: {} for e in self.ENGINES},
+        )
+        return {qa["query_id"]: qa for qa in out["query_assignments"]}
+
+    def test_unpin_survives_refresh(self, pin_store):
+        result = apply_assignment_overrides(
+            pin_store, DB, JOB, [QueryOverrideInput(query_id="hot", cached=False)]
+        )
+        hot = next(qa for qa in result.assignment.query_assignments if qa.query_id == "hot")
+        refreshed = self._refresh([hot.model_dump()])["hot"]
+        assert refreshed["cache_engine"] is None  # a hot read, but the customer said no
+        assert refreshed["cache_customer_override"] is True
+        assert refreshed["cache_reason"] == "customer removed the cache"
+
+    def test_unpin_of_an_uncached_query_is_recorded(self, pin_store):
+        result = apply_assignment_overrides(
+            pin_store, DB, JOB, [QueryOverrideInput(query_id="cold", cached=False)]
+        )
+        cold = next(qa for qa in result.assignment.query_assignments if qa.query_id == "cold")
+        assert cold.cache_customer_override is True and cold.cache_engine is None
+
+    def test_pin_survives_refresh(self, pin_store):
+        result = apply_assignment_overrides(
+            pin_store, DB, JOB, [QueryOverrideInput(query_id="cold", cached=True)]
+        )
+        cold = next(qa for qa in result.assignment.query_assignments if qa.query_id == "cold")
+        refreshed = self._refresh([cold.model_dump()])["cold"]
+        assert refreshed["cache_engine"] == "elasticache"  # cold, but the customer said yes
+        assert refreshed["cache_reason"] == CUSTOMER_CACHE_REASON
+
+    def test_apply_cache_overlay_keeps_a_removal(self):
+        qas = [_qa("hot", "dynamodb", cache_engine=None, cache_customer_override=True)]
+        apply_cache_overlay(qas, self.QUERIES, self.ENGINES)
+        assert qas[0]["cache_engine"] is None

@@ -124,8 +124,10 @@ class QueryAssignment(BaseModel):
     cache_customer_override: bool = Field(
         default=False,
         description=(
-            "True when the customer asked for the cache. Re-evaluation never clears it; "
-            "a query that fails the hot-read rule keeps it with a warning."
+            "True when the customer decided the cache for this query: cached when "
+            "cache_engine is set (kept even if the query fails the hot-read rule, with a "
+            "warning), not cached when cache_engine is empty. Re-evaluation keeps the "
+            "customer's choice either way."
         ),
     )
     cache_dropped: bool = Field(

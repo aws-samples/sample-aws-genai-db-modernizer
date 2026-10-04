@@ -165,6 +165,7 @@ def available_cache_engine(engines: Iterable[str]) -> str | None:
 
 
 CUSTOMER_CACHE_REASON = "customer requested"
+CUSTOMER_UNCACHE_REASON = "customer removed the cache"
 
 
 def _warn(qa: dict, message: str) -> None:
@@ -212,7 +213,8 @@ def apply_cache_overlay(
     is cached. Eligibility depends only on the query, so calling this again after
     owners change re-evaluates the overlay the same way, and clears an earlier
     safety-net drop (the next schema design gets its own chance). A cache the
-    customer pinned (``cache_customer_override``) is never cleared. Returns the list.
+    customer decided (``cache_customer_override``) is kept as decided: a pin is
+    never cleared and a removal is never re-enabled. Returns the list.
     """
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
@@ -221,7 +223,15 @@ def apply_cache_overlay(
     for qa in query_assignments:
         q = by_id.get(qa.get("query_id"))
         if qa.get("cache_customer_override"):
-            pin_customer_cache(qa, qa.get("cache_engine") or cache or "elasticache", q, heavy)
+            # The customer decided: cached (cache_engine set) stays cached, removed
+            # (cache_engine empty) stays removed, whatever the rules say.
+            if qa.get("cache_engine"):
+                pin_customer_cache(qa, qa["cache_engine"], q, heavy)
+            else:
+                qa["cache_engine"] = None
+                qa["cache_pattern"] = None
+                qa["cache_reason"] = CUSTOMER_UNCACHE_REASON
+                qa["cache_dropped"] = False
             continue
         qa["cache_dropped"] = False
         verdict = cache_eligibility(q, heavy) if cache and q else None

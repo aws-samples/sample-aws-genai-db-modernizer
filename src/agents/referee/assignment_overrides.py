@@ -22,6 +22,7 @@ from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
+    CUSTOMER_UNCACHE_REASON,
     available_cache_engine,
     fallback_owner,
     normalize_cache_owners,
@@ -185,11 +186,14 @@ def _apply_cache_override(
         if note:
             qa.warnings = [*qa.warnings, f"NOTE: {note}"]
         return note
-    if override.cached is False and qa.cache_engine:
+    if override.cached is False:
+        # Recorded even when the query is not cached now, so a later re-evaluation
+        # (Reality Check refresh) never caches it against the customer's choice
         qa.cache_engine = None
         qa.cache_pattern = None
-        qa.cache_reason = "customer removed the cache"
+        qa.cache_reason = CUSTOMER_UNCACHE_REASON
         qa.cache_customer_override = True
+        qa.cache_dropped = False
         return None
     return None
 
