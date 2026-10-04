@@ -77,6 +77,16 @@ def test_rejects_symlink_escaping_repo(tmp_path: Path) -> None:
         link.unlink()
 
 
+def test_unresolvable_paths_are_refused_not_raised(tmp_path: Path) -> None:
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    for value in (str(loop), "x\0y"):
+        message = _sandbox.sandbox_violation(_ns(file=value), environ=ON)
+        assert message is not None and "--file" in message
+    # An over-long in-repo name resolves (non-strict) and is not an escape.
+    assert _sandbox.sandbox_violation(_ns(file="a" * 5000), environ=ON) is None
+
+
 @pytest.mark.parametrize("value", ["../x", "a/b", "a b", "", ".", "..", "x;rm", "é"])
 @pytest.mark.parametrize("attr", ["db", "job_id"])
 def test_rejects_unsafe_names(attr: str, value: str) -> None:

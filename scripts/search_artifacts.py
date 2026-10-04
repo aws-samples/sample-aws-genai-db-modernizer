@@ -9,6 +9,7 @@ whole file:
     uv run python scripts/search_artifacts.py '"query_id"' artifacts/<db>/<job>/schema-dynamodb/v2
     uv run python scripts/search_artifacts.py 'class TradeOff' src/contracts --context 5
     uv run python scripts/search_artifacts.py 'users' artifacts/<db> --glob 'schema_draft_group_*.json' --files-only
+    uv run python scripts/search_artifacts.py '"query_id"' artifacts/<db>/<job> --count
 
 Output is grep-like: ``path:line:text`` for a match and ``path-line-text`` for
 a context line, paths relative to the repo root, with ``--`` between
@@ -26,6 +27,14 @@ Containment (always on, not only under MODERNIZER_CI_SANDBOX=1):
 * ``.env``-style, key, certificate and credential files are never opened;
 * binary files are skipped.
 
+Resource limits: the pattern is at most 500 characters, the regex only sees
+the first 4,000 characters of each line (longer lines are still printed,
+clipped, when that prefix matches), and the whole search has a 20-second
+wall-clock budget (POSIX ``setitimer``); a pattern that blows it, such as a
+catastrophic-backtracking ``(a+)+$``, ends with a JSON error, exit 2.
+
+Error messages never echo the pattern or the path.
+
 Under MODERNIZER_CI_SANDBOX=1 the path is also checked with
 :func:`scripts._sandbox.sandbox_violation`, like every other allowlisted
 script.
@@ -41,8 +50,10 @@ import fnmatch
 import json
 import os
 import re
+import signal
 import sys
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NoReturn
@@ -58,6 +69,11 @@ MAX_LINE_CHARS = 400
 # session then has to search again (issue #275); stay well under that.
 MAX_OUTPUT_CHARS = 20_000
 BINARY_SNIFF_BYTES = 8192
+MAX_PATTERN_CHARS = 500
+# The regex only sees this prefix of each line; generated JSON can have
+# single lines of ~100k characters, where a backtracking pattern explodes.
+MAX_MATCH_CHARS = 4000
+TIME_BUDGET_SECONDS = 20.0
 
 SKIP_DIRS = frozenset(
     {
@@ -73,8 +89,13 @@ SKIP_DIRS = frozenset(
         ".local-ui",
         ".aws",
         ".ssh",
+        ".docker",
+        ".kube",
+        ".gnupg",
     }
 )
+# Multi-component directories never entered (compared case-insensitively).
+SKIP_DIR_PATHS: tuple[tuple[str, ...], ...] = ((".config", "gcloud"),)
 
 # Never opened, whether named directly or found while walking a directory.
 SECRET_NAME_PATTERNS: tuple[str, ...] = (
@@ -103,11 +124,29 @@ SECRET_NAME_PATTERNS: tuple[str, ...] = (
     "*secret*",
     "*.tfstate",
     "*.tfvars",
+    "*.crt",
+    "*.cer",
+    "*.der",
+    "*.ppk",
+    "*.p8",
+    "*.asc",
+    "*.gpg",
+    ".htpasswd",
+    ".boto",
+    "*token*",
+    "kubeconfig",
+    "kubeconfig.*",
+    "*sa-key*.json",
+    "*service-account*.json",
 )
 
 
 class SearchError(Exception):
     """A refused or invalid request; reported as a JSON error, exit 2."""
+
+
+class SearchTimeout(SearchError):
+    """The search ran past its wall-clock budget."""
 
 
 @dataclass
@@ -127,28 +166,67 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or path.is_relative_to(root)
 
 
+def _is_skipped_dir(name: str) -> bool:
+    return name.lower() in SKIP_DIRS
+
+
+def refusal_reason(parts: tuple[str, ...]) -> str | None:
+    """Why a repo-relative path (as ``parts``) must not be read, or ``None``.
+
+    The single check for both the search path and every file found while
+    walking (after resolving symlinks), so a link cannot reach a skipped
+    directory or a secret file the direct path would be refused for."""
+    lowered = tuple(part.lower() for part in parts)
+    if any(is_secret_name(part) for part in lowered):
+        return "path looks like a credential or secret file; refused"
+    if any(_is_skipped_dir(part) for part in lowered):
+        return "path is inside a directory this search never reads; refused"
+    for skip in SKIP_DIR_PATHS:
+        n = len(skip)
+        if any(lowered[i : i + n] == skip for i in range(len(lowered) - n + 1)):
+            return "path is inside a directory this search never reads; refused"
+    return None
+
+
+def _safe_resolve(path: Path) -> Path | None:
+    """``path.resolve()``, or ``None`` on a symlink loop, an over-long name,
+    an embedded NUL or another OS error."""
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
 def resolve_search_path(raw: str, repo_root: Path) -> Path:
     """Resolve ``raw`` (relative to the cwd, like the other scripts) and refuse
     anything outside ``repo_root`` or inside a skipped/secret location."""
     root = repo_root.resolve()
-    resolved = Path(raw).resolve()
+    resolved = _safe_resolve(Path(raw))
+    if resolved is None:
+        raise SearchError("path cannot be resolved (symlink loop, invalid or too long); refused")
     if not _inside(resolved, root):
-        raise SearchError(f"path {raw!r} resolves outside the repository root ({root}); refused")
-    rel_parts = resolved.relative_to(root).parts
-    if any(is_secret_name(part) for part in (*rel_parts, Path(raw).name)):
-        raise SearchError(f"path {raw!r} looks like a credential or secret file; refused")
-    if any(part in SKIP_DIRS for part in rel_parts):
-        raise SearchError(f"path {raw!r} is inside a directory this search never reads")
-    if not resolved.exists():
-        raise SearchError(f"path {raw!r} does not exist")
+        raise SearchError("path resolves outside the repository root; refused")
+    reason = refusal_reason((*resolved.relative_to(root).parts, Path(raw).name))
+    if reason:
+        raise SearchError(reason)
+    try:
+        exists = resolved.exists()
+    except (OSError, ValueError):
+        exists = False
+    if not exists:
+        raise SearchError("path does not exist")
     return resolved
 
 
-def _matches_glob(rel_path: str, name: str, glob: str | None) -> bool:
+def _matches_glob(name: str, rel_paths: tuple[str, ...], glob: str | None) -> bool:
+    """``glob`` against the file name, or against any of ``rel_paths`` (the
+    repo-relative path and the path relative to the search start)."""
     if glob is None:
         return True
     pattern = glob.removeprefix("**/")
-    return fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, glob)
+    if fnmatch.fnmatch(name, pattern):
+        return True
+    return any(fnmatch.fnmatch(rel, glob) or fnmatch.fnmatch(rel, pattern) for rel in rel_paths)
 
 
 def iter_files(start: Path, repo_root: Path, glob: str | None) -> Iterator[Path]:
@@ -161,23 +239,30 @@ def iter_files(start: Path, repo_root: Path, glob: str | None) -> Iterator[Path]
         def walk() -> Iterator[Path]:
             for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
                 dirnames[:] = sorted(
-                    d for d in dirnames if d not in SKIP_DIRS and not is_secret_name(d)
+                    d for d in dirnames if not _is_skipped_dir(d) and not is_secret_name(d)
                 )
                 for filename in sorted(filenames):
                     yield Path(dirpath) / filename
 
         candidates = walk()
 
+    start_dir = start if start.is_dir() else start.parent
     for candidate in candidates:
         if is_secret_name(candidate.name):
             continue
-        resolved = candidate.resolve()
-        if not _inside(resolved, root) or not resolved.is_file():
+        resolved = _safe_resolve(candidate)
+        if resolved is None or not _inside(resolved, root):
             continue
-        if is_secret_name(resolved.name):
+        try:
+            if not resolved.is_file():
+                continue
+        except OSError:
+            continue
+        if refusal_reason(resolved.relative_to(root).parts):
             continue
         rel = resolved.relative_to(root).as_posix()
-        if not _matches_glob(rel, resolved.name, glob):
+        from_start = candidate.relative_to(start_dir).as_posix()
+        if not _matches_glob(resolved.name, (rel, from_start), glob):
             continue
         yield resolved
 
@@ -206,16 +291,22 @@ def search(
     files_only: bool = False,
     ignore_case: bool = False,
     glob: str | None = None,
+    count: bool = False,
     max_output_chars: int = MAX_OUTPUT_CHARS,
 ) -> SearchResult:
     if context < 0 or context > MAX_CONTEXT:
         raise SearchError(f"--context must be between 0 and {MAX_CONTEXT}")
     if max_matches < 1:
         raise SearchError("--max-matches must be at least 1")
+    if files_only and count:
+        raise SearchError("use either --files-only or --count, not both")
+    if len(pattern) > MAX_PATTERN_CHARS:
+        raise SearchError(f"pattern is longer than {MAX_PATTERN_CHARS} characters")
     try:
         regex = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as exc:
-        raise SearchError(f"invalid regular expression {pattern!r}: {exc}") from exc
+        where = f" at position {exc.pos}" if exc.pos is not None else ""
+        raise SearchError(f"invalid regular expression: {exc.msg}{where}") from exc
 
     root = repo_root.resolve()
     start = resolve_search_path(path, root)
@@ -244,14 +335,15 @@ def search(
         except OSError:
             continue
 
-        hits = [i for i, line in enumerate(text_lines) if regex.search(line)]
+        hits = [i for i, line in enumerate(text_lines) if regex.search(line, 0, MAX_MATCH_CHARS)]
         hit_set = set(hits)
         if not hits:
             continue
         result.files_matched += 1
 
-        if files_only:
-            if not emit(rel):
+        if files_only or count:
+            result.matches += len(hits)
+            if not emit(f"{rel}:{len(hits)}" if count else rel):
                 return result
             continue
 
@@ -301,11 +393,39 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--files-only", action="store_true", help="Print only the paths of matching files"
     )
+    parser.add_argument(
+        "--count", action="store_true", help="Print path:N (matching lines) per matching file"
+    )
     parser.add_argument("--ignore-case", "-i", action="store_true", help="Case-insensitive")
     parser.add_argument(
-        "--glob", help="Only search files whose name or repo-relative path matches this glob"
+        "--glob",
+        help="Only search files whose name, repo-relative path or path relative to "
+        "the search path matches this glob",
     )
     return parser
+
+
+@contextmanager
+def time_budget(seconds: float) -> Iterator[None]:
+    """Raise :class:`SearchTimeout` if the body runs longer than ``seconds``.
+
+    Uses ``SIGALRM``/``setitimer`` (POSIX, main thread); the regex engine
+    checks for signals, so a catastrophic-backtracking match is interrupted.
+    A no-op where that is unavailable."""
+    if not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    def _expired(signum: int, frame: object) -> None:
+        raise SearchTimeout("regex exceeded time budget; simplify the pattern")
+
+    previous = signal.signal(signal.SIGALRM, _expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def _error(message: str) -> NoReturn:
@@ -316,20 +436,22 @@ def _error(message: str) -> NoReturn:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
-    violation = sandbox_violation(args, path_args=("path",), name_args=())
-    if violation:
-        _error(violation)
+    if sandbox_violation(args, path_args=("path",), name_args=()):
+        # The sandbox message echoes the argument; keep this script's errors generic.
+        _error("path resolves outside the repository root; refused under MODERNIZER_CI_SANDBOX=1")
 
     try:
-        result = search(
-            args.pattern,
-            args.path,
-            context=args.context,
-            max_matches=args.max_matches,
-            files_only=args.files_only,
-            ignore_case=args.ignore_case,
-            glob=args.glob,
-        )
+        with time_budget(TIME_BUDGET_SECONDS):
+            result = search(
+                args.pattern,
+                args.path,
+                context=args.context,
+                max_matches=args.max_matches,
+                files_only=args.files_only,
+                count=args.count,
+                ignore_case=args.ignore_case,
+                glob=args.glob,
+            )
     except SearchError as exc:
         _error(str(exc))
 

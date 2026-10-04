@@ -54,7 +54,13 @@ def sandbox_violation(
         value = getattr(args, attr, None)
         if value is None:
             continue
-        resolved = Path(value).resolve()
+        try:
+            resolved = Path(value).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return (
+                f"{_flag(attr)} cannot be resolved (symlink loop, invalid or too long); "
+                f"refused under {SANDBOX_ENV}=1"
+            )
         if not resolved.is_relative_to(root):
             return (
                 f"{_flag(attr)} {value!r} resolves outside the repository root ({root}); "

@@ -109,10 +109,66 @@ def test_output_is_capped(repo: Path) -> None:
 
 
 def test_long_lines_are_clipped(repo: Path) -> None:
-    (repo / "artifacts" / "wide.json").write_text("x" * 5000 + "needle\n")
+    (repo / "artifacts" / "wide.json").write_text("needle" + "x" * 5000 + "\n")
     (line,) = _run(repo, "needle", "artifacts/wide.json").lines
     assert len(line) < sa.MAX_LINE_CHARS + 100
     assert "chars]" in line
+
+
+def test_regex_only_sees_the_documented_line_prefix(repo: Path) -> None:
+    (repo / "artifacts" / "wide.json").write_text(
+        "x" * sa.MAX_MATCH_CHARS + "needle\n" + "y" * (sa.MAX_MATCH_CHARS - 6) + "needle\n"
+    )
+    result = _run(repo, "needle", "artifacts/wide.json")
+    assert [line.split(":")[1] for line in result.lines] == ["2"]
+
+
+def test_count_prints_matching_lines_per_file(repo: Path) -> None:
+    result = _run(repo, "wp_", "artifacts", count=True)
+    assert result.lines == [
+        "artifacts/wordpress/job1/input_group_0.json:2",
+        "artifacts/wordpress/job1/schema_draft_group_0.json:1",
+    ]
+    with pytest.raises(sa.SearchError, match="not both"):
+        _run(repo, "wp_", "artifacts", count=True, files_only=True)
+
+
+def test_glob_matches_path_relative_to_search_start(repo: Path) -> None:
+    result = _run(repo, "wp_", "artifacts/wordpress", files_only=True, glob="job1/schema_*.json")
+    assert result.lines == ["artifacts/wordpress/job1/schema_draft_group_0.json"]
+
+
+# --- resource limits -------------------------------------------------------
+
+
+def test_pattern_length_is_capped(repo: Path) -> None:
+    with pytest.raises(sa.SearchError, match="longer than"):
+        _run(repo, "a" * (sa.MAX_PATTERN_CHARS + 1), "artifacts")
+
+
+def test_time_budget_interrupts_catastrophic_backtracking(repo: Path) -> None:
+    (repo / "artifacts" / "redos.txt").write_text("a" * 40 + "b\n")
+    with pytest.raises(sa.SearchTimeout, match="time budget"), sa.time_budget(0.5):
+        _run(repo, r"(a+)+$", "artifacts/redos.txt")
+
+
+def test_time_budget_is_cleared_after_a_fast_search(repo: Path) -> None:
+    import signal
+
+    with sa.time_budget(5):
+        _run(repo, "wp_", "artifacts")
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_errors_do_not_echo_pattern_or_path(repo: Path) -> None:
+    for kwargs in (
+        {"pattern": "(SECRETPAT", "path": "artifacts"},
+        {"pattern": "x", "path": "/etc/SECRETPATH"},
+        {"pattern": "x", "path": "artifacts/SECRETPATH"},
+    ):
+        with pytest.raises(sa.SearchError) as info:
+            sa.search(kwargs["pattern"], kwargs["path"], repo_root=repo)
+        assert "SECRET" not in str(info.value)
 
 
 def test_binary_files_are_skipped(repo: Path) -> None:
@@ -179,7 +235,31 @@ def test_walk_does_not_follow_directory_symlinks_out_of_repo(repo: Path, tmp_pat
 
 
 @pytest.mark.parametrize(
-    "name", [".env", ".env.local", "prod.env", "server.pem", "id_rsa", ".npmrc", "credentials"]
+    "name",
+    [
+        ".env",
+        ".env.local",
+        "prod.env",
+        "server.pem",
+        "id_rsa",
+        ".npmrc",
+        "credentials",
+        "ca.crt",
+        "x.cer",
+        "x.der",
+        "putty.ppk",
+        "AuthKey.p8",
+        "key.asc",
+        "key.gpg",
+        ".htpasswd",
+        ".boto",
+        "token.txt",
+        "github_token.json",
+        "kubeconfig",
+        "gcp-sa-key.json",
+        "my-service-account.json",
+        "SERVER.PEM",
+    ],
 )
 def test_credential_like_files_are_never_read(repo: Path, name: str) -> None:
     (repo / name).write_text("AWS_SECRET=needle\n")
@@ -188,13 +268,62 @@ def test_credential_like_files_are_never_read(repo: Path, name: str) -> None:
     assert _run(repo, "needle", ".").files_matched == 0
 
 
-@pytest.mark.parametrize("skip", [".git", ".venv", "node_modules", ".local-ui"])
+@pytest.mark.parametrize(
+    "skip",
+    [
+        ".git",
+        ".venv",
+        "node_modules",
+        ".local-ui",
+        ".docker",
+        ".kube",
+        ".gnupg",
+        ".GIT",
+        ".Venv",
+        "Node_Modules",
+        ".config/gcloud",
+    ],
+)
 def test_skipped_directories_are_not_read(repo: Path, skip: str) -> None:
-    (repo / skip).mkdir()
+    (repo / skip).mkdir(parents=True)
     (repo / skip / "f.txt").write_text("needle\n")
     assert _run(repo, "needle", ".").files_matched == 0
     with pytest.raises(sa.SearchError, match="never reads"):
         _run(repo, "needle", f"{skip}/f.txt")
+
+
+def test_walk_skips_file_symlinks_into_skipped_dirs(repo: Path) -> None:
+    (repo / ".git").mkdir()
+    (repo / ".git" / "config").write_text("needle\n")
+    probe = repo / "artifacts" / "_probe"
+    probe.mkdir()
+    (probe / "gitdir").symlink_to(Path("..") / ".." / ".git" / "config")
+    (probe / "envlink").symlink_to(Path("..") / ".." / ".git")
+    (repo / "artifacts" / "ok.txt").write_text("needle\n")
+    assert _run(repo, "needle", "artifacts", files_only=True).lines == ["artifacts/ok.txt"]
+    with pytest.raises(sa.SearchError, match="never reads"):
+        _run(repo, "needle", "artifacts/_probe/gitdir")
+
+
+def test_walk_skips_symlink_into_secret_file(repo: Path) -> None:
+    (repo / ".env").write_text("needle\n")
+    (repo / "artifacts" / "innocent.txt").symlink_to(repo / ".env")
+    assert _run(repo, "needle", "artifacts").files_matched == 0
+
+
+def test_symlink_loop_is_an_error_at_start_and_skipped_in_walk(repo: Path) -> None:
+    loop = repo / "artifacts" / "loop"
+    loop.symlink_to(loop)
+    (repo / "artifacts" / "ok.txt").write_text("needle\n")
+    with pytest.raises(sa.SearchError, match="cannot be resolved"):
+        _run(repo, "needle", "artifacts/loop")
+    assert _run(repo, "needle", "artifacts", files_only=True).lines == ["artifacts/ok.txt"]
+
+
+@pytest.mark.parametrize("path", ["a" * 5000, "artifacts/x\0y"])
+def test_unresolvable_start_paths_are_errors(repo: Path, path: str) -> None:
+    with pytest.raises(sa.SearchError):
+        _run(repo, "needle", path)
 
 
 # --- CLI -------------------------------------------------------------------
@@ -218,6 +347,22 @@ def test_cli_finds_lines_in_the_repo_source_tree() -> None:
     proc = _cli("^def sandbox_violation", "scripts/_sandbox.py")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert proc.stdout.startswith("scripts/_sandbox.py:")
+
+
+def test_cli_symlink_loop_is_rc2_not_a_traceback(tmp_path: Path) -> None:
+    loop = REPO_ROOT / "test-results" / "_search_loop_link"
+    loop.parent.mkdir(exist_ok=True)
+    if loop.is_symlink():
+        loop.unlink()
+    loop.symlink_to(loop)
+    try:
+        for sandbox in (False, True):
+            proc = _cli("x", str(loop), sandbox=sandbox)
+            assert proc.returncode == 2, proc.stdout + proc.stderr
+            assert "Traceback" not in proc.stderr
+            assert json.loads(proc.stdout.strip().splitlines()[-1])["status"] == "error"
+    finally:
+        loop.unlink()
 
 
 def test_cli_no_match_exits_1() -> None:
