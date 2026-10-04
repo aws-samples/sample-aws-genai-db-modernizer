@@ -306,7 +306,7 @@ The Python API can run locally with `uvicorn`, but requires valid AWS credential
 uv sync
 
 # Run the API server locally on port 8000
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 You need the following environment variables (or AWS profile) configured:

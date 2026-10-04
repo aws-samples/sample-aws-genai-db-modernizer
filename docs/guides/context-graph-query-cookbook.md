@@ -22,8 +22,22 @@ Content-Type: application/json
 Response shape:
 
 ```json
-{"columns": ["..."], "rows": [{"...": "..."}], "row_count": 12}
+{"columns": ["..."], "rows": [{"...": "..."}], "row_count": 12, "truncated": false}
 ```
+
+The raw query endpoint is off by default. Start the API with
+`MODERNIZER_ENABLE_RAW_GRAPH_QUERY=1` to enable it; otherwise it returns `403`.
+The curated `GET` endpoints below are always on.
+
+Limits on the raw endpoint:
+
+- One read statement per request: `MATCH`, `OPTIONAL MATCH`, `WITH`, `UNWIND`,
+  `RETURN`, `ORDER BY`, `SKIP`, `LIMIT`, and `CALL` of `show_tables`,
+  `table_info`, `show_connection` or `db_version`. Other statements return `400`.
+- It returns at most 1,000 rows. `truncated: true` means more rows matched; add
+  `ORDER BY` with `SKIP`/`LIMIT` to page.
+- Every graph read, curated or raw, runs on a read-only database handle with a
+  10-second query timeout.
 
 The graph is built lazily on first access (or explicitly via
 `POST /api/v1/assessments/{job_id}/graph/rebuild`) from the assessment's S3

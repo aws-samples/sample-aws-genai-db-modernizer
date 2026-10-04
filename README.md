@@ -278,7 +278,7 @@ Run the React web interface locally to visualize results, browse query journeys,
 
 ```bash
 # Start the API server
-ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 
 # Build and serve the UI (in another terminal)
 cd src/ui && npm ci

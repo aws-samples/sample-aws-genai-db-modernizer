@@ -37,6 +37,10 @@ AWS_REGION      ?= us-east-1
 PARENT_DOMAIN   ?= example.com
 SUBDOMAIN       ?= modernizer
 DESIRED_COUNT   ?= 1
+# Bind address for `make local` / `make local-api`. Loopback by default; set
+# API_HOST=0.0.0.0 to listen on all interfaces. (Not named HOST: zsh sets
+# HOST to the machine name.)
+API_HOST        ?= 127.0.0.1
 
 # Derived names
 STACK_NAME_PREFIX := $(PROJECT_NAME)
@@ -191,12 +195,12 @@ local: ## Start local API + UI for development
 	@echo "  API:  http://localhost:8000"
 	@echo "  UI:   http://localhost:3000"
 	@ARTIFACT_DIR=./artifacts \
-		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 &
+		uv run uvicorn src.api.main:app --host $(API_HOST) --port 8000 &
 	@cd src/ui && npm start
 
 local-api: ## Start only the local API server
 	ARTIFACT_DIR=./artifacts \
-		uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+		uv run uvicorn src.api.main:app --host $(API_HOST) --port 8000 --reload
 
 test: ## Run all tests (unit, contract, property, graph; no integration or e2e). Needs agent-builder-sdk-aws-transform (see header above) for full green.
 	./ci/test.sh --cov=src --cov-report=term

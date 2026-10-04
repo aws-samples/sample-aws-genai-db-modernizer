@@ -9,14 +9,33 @@ import ladybug as lb
 
 logger = logging.getLogger(__name__)
 
+# Bounds applied to API reads (read-only handles opened by GraphStoreCache).
+READ_QUERY_TIMEOUT_MS = 10_000
+MAX_RESULT_ROWS = 1_000
+
 
 class GraphStore:
     """Embedded graph database backed by LadybugDB."""
 
-    def __init__(self, db_path: str):
-        """Open (or create) the database at db_path."""
-        self._db = lb.Database(db_path)
+    def __init__(
+        self,
+        db_path: str,
+        *,
+        read_only: bool = False,
+        query_timeout_ms: int | None = None,
+    ):
+        """Open the database at db_path.
+
+        A read-write handle creates the database if it does not exist. A
+        read-only handle requires an existing database and rejects every write
+        at the engine level. ``query_timeout_ms`` interrupts any statement that
+        runs longer than the given number of milliseconds.
+        """
+        self.read_only = read_only
+        self._db = lb.Database(db_path, read_only=read_only)
         self._conn = lb.Connection(self._db)
+        if query_timeout_ms is not None:
+            self._conn.set_query_timeout(query_timeout_ms)
 
     def _execute_single(self, cypher: str, params: dict | None = None) -> lb.QueryResult:
         """Run one Cypher statement and return its single QueryResult.
@@ -38,6 +57,18 @@ class GraphStore:
         result = self._execute_single(cypher, params)
         # rows_as_dict() switches each row to a {column: value} dict.
         return cast("list[dict[Any, Any]]", list(result.rows_as_dict()))
+
+    def query_bounded(
+        self, cypher: str, params: dict | None = None, max_rows: int = MAX_RESULT_ROWS
+    ) -> tuple[list[dict], bool]:
+        """Run a Cypher query, returning at most ``max_rows`` rows.
+
+        Returns ``(rows, truncated)`` where ``truncated`` is True when the
+        result had more than ``max_rows`` rows.
+        """
+        result = self._execute_single(cypher, params).rows_as_dict()
+        rows = cast("list[dict[Any, Any]]", result.get_n(max_rows))
+        return rows, result.has_next()
 
     def execute(self, cypher: str, params: dict | None = None) -> None:
         """Run a Cypher statement that doesn't return results (DDL, inserts)."""
