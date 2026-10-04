@@ -57,11 +57,21 @@ class TestEngineRanking:
             routed_confidence=60,
             routed_confidence_basis="owned_queries",
             routed_queries=3,
-            routed_tables=1,
+            routed_tables=0,
+            routed_confidence_evidence="signal_only",
+            routed_queries_without_table_evidence=3,
+            routed_lead="text_search",
+            routed_lead_count=3,
             weight=0.212,
         )
+        assert r.routed_confidence_evidence == "signal_only"
+        assert (r.routed_lead, r.routed_lead_count) == ("text_search", 3)
         assert (r.analysis_confidence, r.routed_confidence) == (2, 60)
         assert r.routed_confidence_basis == "owned_queries"
+
+    def test_routed_confidence_evidence_values(self):
+        with pytest.raises(ValidationError):
+            EngineRanking(target="x", confidence_score=1, routed_confidence_evidence="guess")
 
     def test_routed_confidence_bounds(self):
         with pytest.raises(ValidationError):

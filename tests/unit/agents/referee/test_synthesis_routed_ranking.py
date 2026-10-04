@@ -133,10 +133,10 @@ class TestRationale:
             for d in build_architecture_recommendation(_data(ASSIGNMENT), ranking, [])["databases"]
         }
         assert dbs["opensearch"]["rationale"].startswith(
-            "1 query, led by full-text search (1 of 1); 100% fit over the 1 table served."
+            "100% mean fit across 1 query (1 table), led by full-text search (1 of 1)."
         )
         assert dbs["dynamodb"]["rationale"].startswith(
-            "6 queries, led by key-value lookups (6 of 6); "
+            "100% mean fit across 6 queries (1 table), led by key-value lookups (6 of 6)."
         )
         assert "average confidence across" not in dbs["opensearch"]["rationale"]
         assert dbs["opensearch"]["routed_confidence"] == 100
@@ -150,11 +150,37 @@ class TestRationale:
         text = dbs["elasticache"]["rationale"]
         assert text.startswith("Cache layer for 2 hot reads")
         assert "mostly point lookups" in text
-        assert "95% cache fit over the 1 table it fronts" in text
+        assert "95% mean cache fit across 2 cached reads (1 table)" in text
 
     def test_without_assignment_the_rationale_keeps_the_analysis_average(self):
         data = _data(None)
         dynamodb = _by_target(build_ranking(data))["dynamodb"]
         assert _engine_rationale(data, dynamodb).startswith(
             "50% average confidence across 4 tables"
+        )
+
+
+class TestNoTableEvidence:
+    def test_rationale_says_when_no_table_backs_the_fit(self):
+        """discourse OpenSearch: its queries read tables_accessed ["unknown"]."""
+        data = _data(ASSIGNMENT)
+        data.collector["queries"]["query_patterns"] = [
+            {**q, "tables_accessed": ["unknown"]} if q["query_id"] == "s1" else q for q in QUERIES
+        ]
+        opensearch = _by_target(build_ranking(data))["opensearch"]
+        assert opensearch["routed_confidence_evidence"] == "signal_only"
+        assert opensearch["routed_tables"] == 0
+        assert _engine_rationale(data, opensearch).startswith(
+            "60% mean fit across 1 query (no table-level evidence), led by full-text search"
+        )
+
+    def test_partial_evidence_is_counted(self):
+        data = _data(ASSIGNMENT)
+        data.collector["queries"]["query_patterns"] = [
+            {**q, "tables_accessed": ["unknown"]} if q["query_id"] == "k0" else q for q in QUERIES
+        ]
+        dynamodb = _by_target(build_ranking(data))["dynamodb"]
+        assert dynamodb["routed_confidence_evidence"] == "partial"
+        assert "(1 table; 1 query without table-level evidence)" in _engine_rationale(
+            data, dynamodb
         )

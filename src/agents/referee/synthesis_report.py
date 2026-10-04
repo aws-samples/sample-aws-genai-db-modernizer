@@ -238,6 +238,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         data.triage,
         data.source_queries,
         {e: a.analysis or {} for e, a in data.engines.items()},
+        source_tables=[str(t["table_id"]) for t in data.source_tables if t.get("table_id")],
     )
 
     for engine, artifacts in data.engines.items():
@@ -316,6 +317,8 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             entry["routed_tables"] = fit.tables
             entry["routed_lead"] = fit.lead_signal
             entry["routed_lead_count"] = fit.lead_count
+            entry["routed_confidence_evidence"] = fit.evidence
+            entry["routed_queries_without_table_evidence"] = fit.unbacked_queries
 
         # Enrich with assignment distribution when available
         if assignment_dist and engine in assignment_dist:
@@ -349,6 +352,10 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             r["target"],
         )
     )
+    # Every engine carries its rationale, so the reports can show it for an engine
+    # recommended_architecture.databases leaves out (the retained engine, #152)
+    for entry in ranking:
+        entry["rationale"] = _engine_rationale(data, entry)
     return ranking
 
 
@@ -1366,7 +1373,7 @@ def build_architecture_recommendation(
             {
                 "service": engine,
                 "table_count": len(tables),
-                "rationale": _engine_rationale(data, r),
+                "rationale": r.get("rationale") or _engine_rationale(data, r),
                 "tables": tables,
                 "confidence_score": r["confidence_score"],
                 "routed_confidence": r.get("routed_confidence"),
@@ -1383,25 +1390,35 @@ def build_architecture_recommendation(
     }
 
 
-def _routed_phrase(r: dict, noun: str, verb: str) -> str:
-    """``95% fit over the 6 tables served`` (#152); empty without a routed confidence."""
+def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
+    """``90% mean fit across 98 queries (22 tables)`` (#152); empty without one.
+
+    Says "no table-level evidence" when no routed query touches a source table the
+    engine's analysis rated: the fit is then the basic baseline plus the signal
+    bonus, not a measurement.
+    """
     fit = r.get("routed_confidence")
     if fit is None:
         return ""
+    n = int(r.get("routed_queries") or 0)
     n_t = int(r.get("routed_tables") or 0)
-    return (
-        f"{fit}% {noun} over the {_count(n_t, 'table', 'tables')} {verb}"
-        if n_t
-        else (f"{fit}% {noun}")
-    )
+    unbacked = int(r.get("routed_queries_without_table_evidence") or 0)
+    evidence = r.get("routed_confidence_evidence")
+    if evidence == "signal_only" or (evidence is None and not n_t):
+        detail = "no table-level evidence"
+    else:
+        detail = _count(n_t, "table", "tables")
+        if unbacked:
+            detail += f"; {_count(unbacked, *what)} without table-level evidence"
+    return f"{fit}% {noun} across {_count(n, *what)} ({detail})"
 
 
 def _engine_rationale(data: SynthesisData, r: dict) -> str:
     """Generate a rationale string for an engine recommendation.
 
     It names the workload routed to the engine and how well the engine fits it
-    (#152), e.g. "101 queries, led by full-text search (98 of 101); 85% fit over
-    the 6 tables served". The analysis average over every analyzed table is the
+    (#152), e.g. "90% mean fit across 98 queries (22 tables), led by key-value
+    lookups (36 of 98)". The analysis average over every analyzed table is the
     ``analysis_confidence`` field, not the rationale: it describes the tables the
     engine looked at, not the work it was given. A report without an assignment
     keeps that average, since nothing is routed yet.
@@ -1419,7 +1436,7 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
             f"({r.get('cache_call_share_percent', 0)}% of calls){shape}, cache-aside in front "
             f"of {owners}; it owns no queries"
         )
-        fit = _routed_phrase(r, "cache fit", "it fronts")
+        fit = _routed_phrase(r, "mean cache fit", ("cached read", "cached reads"))
         parts = [head + (f"; {fit}" if fit else "")]
         if r.get("target_tables", 0) > 0:
             parts.append(
@@ -1432,10 +1449,14 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     if r.get("routed_confidence") is not None:
         n = int(r.get("routed_queries") or 0)
         lead = r.get("routed_lead")
-        head = _count(n, "query", "queries") + (
-            f", led by {signal_noun(lead)} ({r.get('routed_lead_count', 0)} of {n})" if lead else ""
-        )
-        parts = [f"{head}; {_routed_phrase(r, 'fit', 'served')}"]
+        parts = [
+            _routed_phrase(r, "mean fit", ("query", "queries"))
+            + (
+                f", led by {signal_noun(lead)} ({r.get('routed_lead_count', 0)} of {n})"
+                if lead
+                else ""
+            )
+        ]
     elif "assigned_queries" in r:
         parts = [
             f"No queries routed; {r['confidence_score']}% average confidence across "

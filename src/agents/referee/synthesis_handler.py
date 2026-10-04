@@ -117,6 +117,10 @@ def run_synthesis_deterministic(
     risk_assessment = build_risk_assessment(data, eliminated)
     print("[synthesis] Building architecture recommendation...")
     architecture = build_architecture_recommendation(data, ranking, table_mappings)
+    # Intentionally the analysis average (confidence_score), not routed_confidence
+    # (#152): this flag asks for a deeper *analysis* of an engine, a property of the
+    # analysis over its tables, and it is computed whether or not an assignment
+    # exists. The routed fit judges the assigned work and drives the deliverables.
     needs_deeper = any(
         40 <= r["confidence_score"] < 70 and r.get("migration_complexity_avg") == "HIGH"
         for r in ranking

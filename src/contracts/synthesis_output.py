@@ -17,7 +17,12 @@ Version History:
 - 1.3 (2026-10-04): Added optional ``routed_confidence`` to ``EngineRanking``
   (#152): the mean per-query fit of the queries the effective assignment routes
   to the engine (for the cache layer, of the reads it fronts; see
-  ``routed_confidence_basis``), with ``routed_queries`` and ``routed_tables``.
+  ``routed_confidence_basis``), with ``routed_queries``, ``routed_tables`` (real
+  source tables only), ``routed_confidence_evidence`` (``table`` / ``partial`` /
+  ``signal_only``: whether a rated source table backs the fit),
+  ``routed_queries_without_table_evidence``, ``routed_lead`` and
+  ``routed_lead_count`` (the signal or cache pattern that leads the routed queries)
+  and the engine's ``rationale``.
   ``analysis_confidence`` (= ``confidence_score``, the average over every analyzed
   table) and ``weight`` are declared as audit fields. The ranking is ordered by
   workload share. Backward compatible — every new field defaults to ``None``.
@@ -60,7 +65,26 @@ class EngineRanking(BaseModel):
     )
     routed_confidence_basis: Literal["owned_queries", "cached_reads"] | None = Field(None)
     routed_queries: int | None = Field(None, ge=0)
-    routed_tables: int | None = Field(None, ge=0)
+    routed_tables: int | None = Field(None, ge=0, description="Real source tables only")
+    routed_confidence_evidence: Literal["table", "partial", "signal_only"] | None = Field(
+        None,
+        description=(
+            "Whether a source table the engine's analysis rated backs the fit; signal_only "
+            "means the fit is the basic baseline plus the signal bonus"
+        ),
+    )
+    routed_queries_without_table_evidence: int | None = Field(None, ge=0)
+    routed_lead: str | None = Field(
+        None,
+        description=(
+            "Owners: the triage signal that is a plurality of the routed queries; cache "
+            "layer: the most common cache_pattern. None without a clear plurality"
+        ),
+    )
+    routed_lead_count: int | None = Field(None, ge=0)
+    rationale: str | None = Field(
+        None, description="Why the engine is in the target, from its routed workload (#152)"
+    )
     weight: float | None = Field(
         None, description="Audit: the analysis weight that ordered the ranking before #152"
     )

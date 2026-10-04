@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.agents.referee.reality_check import BASIC_CRUD_SCORE, SIGNAL_MATCH_BONUS
 from src.agents.referee.routed_confidence import BASIS_CACHED, BASIS_OWNED, routed_fits
 
@@ -86,22 +88,78 @@ class TestOwnerFit:
         assert routed_fits(None, TRIAGE, QUERIES, ANALYSIS) == {}
 
 
+class TestCustomerOverride:
+    def test_an_overridden_query_gets_the_new_owners_fit(self):
+        """A customer moves k1 to OpenSearch: OpenSearch's fit for it counts, not DynamoDB's."""
+        a = _assignment(
+            _qa("k1", "opensearch", confidence=95, assignment_reason="customer override"),
+            _qa("k2", "dynamodb"),
+        )
+        fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
+        # OpenSearch rates users 10 and serves key-value lookups (get by _id): 10 + bonus.
+        # The stored confidence (95) and DynamoDB's fit (90+) are not used.
+        assert fits["opensearch"].queries == 1
+        assert fits["opensearch"].confidence == 10 + SIGNAL_MATCH_BONUS
+        assert fits["dynamodb"].queries == 1
+
+
 class TestLeadSignal:
     def test_workload_characteristics_never_lead(self):
         a = _assignment(_qa("s1", "opensearch"), _qa("s2", "opensearch"))
         fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["opensearch"]
         assert (fit.lead_signal, fit.lead_count) == ("text_search", 2)
 
-    def test_a_signal_the_engine_serves_leads(self):
+    def test_a_tie_names_no_lead(self):
         triage = {
             "signals": [
-                {"signal": "status_filters", "query_ids": ["k1", "k2"]},
-                {"signal": "key_value_lookups", "query_ids": ["k1"]},
+                {"signal": "status_filters", "query_ids": ["k1"]},
+                {"signal": "key_value_lookups", "query_ids": ["k2"]},
             ]
         }
         a = _assignment(_qa("k1", "dynamodb"), _qa("k2", "dynamodb"))
         fit = routed_fits(a, triage, QUERIES, ANALYSIS)["dynamodb"]
-        assert (fit.lead_signal, fit.lead_count) == ("key_value_lookups", 1)
+        assert (fit.lead_signal, fit.lead_count) == (None, 0)
+
+    def test_a_plurality_under_the_minimum_share_names_no_lead(self):
+        queries = [_q(f"q{i}", "users") for i in range(10)]
+        triage = {"signals": [{"signal": "key_value_lookups", "query_ids": ["q0", "q1"]}]}
+        a = _assignment(*(_qa(f"q{i}", "dynamodb") for i in range(10)))
+        assert routed_fits(a, triage, queries, ANALYSIS)["dynamodb"].lead_signal is None
+        triage["signals"][0]["query_ids"].append("q2")  # 3 of 10 >= 25%
+        assert routed_fits(a, triage, queries, ANALYSIS)["dynamodb"].lead_signal == (
+            "key_value_lookups"
+        )
+
+
+class TestTableEvidence:
+    def test_unknown_tables_are_not_counted_and_flag_signal_only(self):
+        """discourse: the 3 OpenSearch queries have tables_accessed ["unknown"], so
+        the fit is the CRUD baseline plus the signal bonus, a constant."""
+        queries = [_q(f"t{i}", "unknown") for i in range(3)]
+        triage = {"signals": [{"signal": "text_search", "query_ids": ["t0", "t1", "t2"]}]}
+        a = _assignment(*(_qa(f"t{i}", "opensearch") for i in range(3)))
+        fit = routed_fits(a, triage, queries, ANALYSIS, source_tables=["posts", "users"])[
+            "opensearch"
+        ]
+        assert fit.confidence == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
+        assert fit.tables == 0
+        assert fit.evidence == "signal_only"
+        assert fit.unbacked_queries == 3
+
+    def test_names_that_are_not_source_tables_do_not_count(self):
+        queries = [_q("a", "posts", "pg_type"), _q("b", "w")]
+        a = _assignment(_qa("a", "opensearch"), _qa("b", "opensearch"))
+        fit = routed_fits(a, TRIAGE, queries, ANALYSIS, source_tables=["posts", "users", "meta"])[
+            "opensearch"
+        ]
+        assert fit.tables == 1
+        assert fit.evidence == "partial"
+        assert fit.unbacked_queries == 1
+
+    def test_fully_backed(self):
+        a = _assignment(_qa("s1", "opensearch"), _qa("s2", "opensearch"))
+        fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS, source_tables=["posts"])["opensearch"]
+        assert (fit.evidence, fit.unbacked_queries, fit.tables) == ("table", 0, 1)
 
 
 class TestCacheLayer:
@@ -119,11 +177,19 @@ class TestCacheLayer:
         assert fit.confidence == 65
         assert (fit.lead_signal, fit.lead_count) == ("point_lookup", 2)
 
-    def test_cache_hint_signal_earns_the_bonus(self):
-        triage = {"signals": [{"signal": "leaderboard_pattern", "query_ids": ["k1"]}]}
-        a = _assignment(_qa("k1", "dynamodb", cache_engine="elasticache", cache_pattern="top_n"))
-        fit = routed_fits(a, triage, QUERIES, ANALYSIS)["elasticache"]
+    @pytest.mark.parametrize("pattern", ["top_n", "session_lookup"])
+    def test_the_overlays_cache_pattern_earns_the_bonus(self, pattern):
+        a = _assignment(_qa("k1", "dynamodb", cache_engine="elasticache", cache_pattern=pattern))
+        fit = routed_fits(a, {"signals": []}, QUERIES, ANALYSIS)["elasticache"]
         assert fit.confidence == 60 + SIGNAL_MATCH_BONUS
+
+    def test_a_triage_hint_on_a_point_lookup_earns_nothing(self):
+        """leaderboard_pattern fires on reads the overlay classified as point lookups."""
+        triage = {"signals": [{"signal": "leaderboard_pattern", "query_ids": ["k1"]}]}
+        a = _assignment(
+            _qa("k1", "dynamodb", cache_engine="elasticache", cache_pattern="point_lookup")
+        )
+        assert routed_fits(a, triage, QUERIES, ANALYSIS)["elasticache"].confidence == 60
 
     def test_cache_without_cached_reads_has_none(self):
         a = _assignment(_qa("k1", "dynamodb"))
@@ -133,3 +199,4 @@ class TestCacheLayer:
         a = _assignment(_qa("x", "dynamodb"))
         fit = routed_fits(a, {"signals": []}, [_q("x", "unknown")], ANALYSIS)["dynamodb"]
         assert fit.confidence == BASIC_CRUD_SCORE
+        assert fit.evidence == "signal_only"
