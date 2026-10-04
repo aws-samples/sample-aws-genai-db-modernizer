@@ -110,7 +110,7 @@ class AuroraDesignBase:
         )
 
     def generate(self, type_overrides: TypeOverrides | None = None) -> DdlResult:
-        return _GENERATORS[self.engine](self.tables, type_overrides)
+        return _GENERATORS[self.engine](self.tables, type_overrides, self.source_engine)
 
     def fingerprint(self) -> str:
         """Hash of everything the draft is built from.

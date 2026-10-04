@@ -779,12 +779,24 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
     return tables
 
 
+# PostgreSQL information_schema types that hide the real type; the offline
+# export's ``data_type`` (udt_name: ``_int4``, ``halfvec``) names it (#274).
+_OPAQUE_PG_TYPES = {"ARRAY", "USER-DEFINED"}
+
+
+def _native_type(c: dict) -> str:
+    column_type = c.get("column_type")
+    if column_type in _OPAQUE_PG_TYPES and c.get("data_type"):
+        return str(c["data_type"])
+    return str(column_type or c.get("data_type", ""))
+
+
 def _build_columns(raw: list[dict]) -> list[Column]:
     return [
         Column(
             column_name=c["column_name"],
             ordinal_position=c.get("ordinal_position"),
-            data_type=c.get("column_type") or c.get("data_type", ""),
+            data_type=_native_type(c),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
             # Cross-engine boolean coercion:

@@ -52,12 +52,12 @@ def _assemble_draft(
 def build_pg_draft(tables: list[AgentTable], source_engine: str) -> tuple[dict, str]:
     """Return (draft dict, migration_strategy) for Aurora PostgreSQL."""
     strategy = migration_strategy(source_engine, "aurora_postgresql")
-    ddl = generate_pg_ddl(tables)
+    ddl = generate_pg_ddl(tables, source_engine=source_engine)
     return _assemble_draft(tables, ddl, strategy, source_engine), strategy
 
 
 def build_mysql_draft(tables: list[AgentTable], source_engine: str) -> tuple[dict, str]:
     """Return (draft dict, migration_strategy) for Aurora MySQL."""
     strategy = migration_strategy(source_engine, "aurora_mysql")
-    ddl = generate_mysql_ddl(tables)
+    ddl = generate_mysql_ddl(tables, source_engine=source_engine)
     return _assemble_draft(tables, ddl, strategy, source_engine), strategy

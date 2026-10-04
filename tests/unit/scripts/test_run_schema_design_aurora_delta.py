@@ -50,15 +50,17 @@ def _collector(n_queries: int = 3) -> dict:
                     "row_count": 100,
                     "primary_key": ["id"],
                     "columns": [
+                        # Residuals: PostgreSQL domains, which have no deterministic
+                        # mapping (their definition is not collected).
                         {
                             "column_name": "id",
-                            "data_type": "bigint",
+                            "data_type": "user_id_domain",
                             "normalized_data_type": None,
                             "nullable": False,
                         },
                         {
                             "column_name": "email",
-                            "data_type": "character varying",
+                            "data_type": "email_address",
                             "normalized_data_type": "string",
                             "nullable": False,
                         },
@@ -176,11 +178,11 @@ def test_request_is_a_compact_view_with_the_delta_schema(monkeypatch, capsys, tm
     view = request["design_view"]
     assert view["migration_strategy"] == "carry_over"
     users = next(t for t in view["tables"] if t["table_name"] == "users")
-    assert "id TEXT NOT NULL (residual; source bigint)" in users["columns"]
+    assert "id TEXT NOT NULL (residual; source user_id_domain)" in users["columns"]
     assert users["indexes"] == ["idx_users_email UNIQUE (email)"]
     assert users["read_qps"] > 0
     residual_types = {r["source_data_type"]: r["count"] for r in view["residual_types"]}
-    assert residual_types == {"bigint": 1, "character varying": 1}
+    assert residual_types == {"user_id_domain": 1, "email_address": 1}
     assert view["source_features"]["triggers"][0]["trigger_name"] == "trg_orders"
     assert "full_ddl" not in json.dumps(request)
 
@@ -212,8 +214,8 @@ def test_finalize_with_delta_merges_and_validates(monkeypatch, capsys, tmp_path)
         {
             "delta_version": "1.0",
             "type_rules": [
-                {"source_data_type": "bigint", "aurora_type": "BIGINT"},
-                {"source_data_type": "character varying", "aurora_type": "VARCHAR(320)"},
+                {"source_data_type": "user_id_domain", "aurora_type": "BIGINT"},
+                {"source_data_type": "email_address", "aurora_type": "VARCHAR(320)"},
             ],
             "tables": [
                 {
@@ -483,7 +485,7 @@ def test_view_carries_column_flags_foreign_keys_and_source_types(monkeypatch, ca
     view = _request(store)["design_view"]
     orders_view = next(t for t in view["tables"] if t["table_name"] == "orders")
     assert orders_view["columns"] == [
-        "id BIGINT NOT NULL AI (source integer)",  # integer widened to BIGINT
+        "id INTEGER NOT NULL AI",  # carried over from the source type (#274)
         "user_id BIGINT DEFAULT 0 (source bigint unsigned)",
     ]
     assert orders_view["foreign_keys"] == ["user_id -> users(id)"]
@@ -598,7 +600,10 @@ def test_finalize_rejects_ddl_injection_in_types(monkeypatch, capsys, tmp_path):
         {
             "delta_version": "1.0",
             "type_rules": [
-                {"source_data_type": "bigint", "aurora_type": "BIGINT); DROP TABLE users; --"}
+                {
+                    "source_data_type": "user_id_domain",
+                    "aurora_type": "BIGINT); DROP TABLE users; --",
+                }
             ],
         },
     )

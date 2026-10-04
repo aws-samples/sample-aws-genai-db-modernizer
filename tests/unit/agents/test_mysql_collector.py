@@ -876,3 +876,32 @@ class TestNormalizeDatetimeStr:
         """Only triggers on the specific YYYY-MM-DDHH:MM:SS shape."""
         # Length 22 but doesn't have '-' at positions 4 and 7 → not touched
         assert _normalize_datetime_str("abcdefghij1234567890zx") == "abcdefghij1234567890zx"
+
+
+# ---------------------------------------------------------------------------
+# _build_columns: PostgreSQL ARRAY / USER-DEFINED keep the real type (#274)
+# ---------------------------------------------------------------------------
+
+
+class TestOpaquePostgresTypes:
+    @staticmethod
+    def _col(column_type, data_type):
+        return {
+            "column_name": "c",
+            "data_type": data_type,
+            "column_type": column_type,
+            "is_nullable": "YES",
+        }
+
+    def test_array_uses_the_udt_name(self):
+        assert _build_columns([self._col("ARRAY", "_int4")])[0].data_type == "_int4"
+
+    def test_user_defined_uses_the_udt_name(self):
+        assert _build_columns([self._col("USER-DEFINED", "halfvec")])[0].data_type == "halfvec"
+
+    def test_other_types_keep_the_column_type(self):
+        assert _build_columns([self._col("bigint", "int8")])[0].data_type == "bigint"
+        assert (
+            _build_columns([self._col("bigint unsigned", "bigint")])[0].data_type
+            == "bigint unsigned"
+        )

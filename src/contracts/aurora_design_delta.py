@@ -50,7 +50,8 @@ _PG_BASES = (
     bytea timestamp timestamptz date time timetz interval boolean bool uuid json jsonb xml
     inet cidr macaddr macaddr8 tsvector tsquery point line lseg box path polygon circle bit
     varbit int4range int8range numrange tsrange tstzrange daterange oid hstore geometry
-    geography vector""".split()) | {"double precision", "character varying", "bit varying"}
+    geography vector halfvec sparsevec""".split())
+    | {"double precision", "character varying", "bit varying"}
 )
 _MYSQL_BASES = (
     frozenset(

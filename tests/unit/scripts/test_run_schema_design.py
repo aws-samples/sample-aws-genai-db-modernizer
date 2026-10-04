@@ -228,7 +228,8 @@ def test_run_external_attaches_draft_view_for_aurora_mysql(capsys):
     assert "draft" not in llm_request  # #273: compact view, not the draft
     view = llm_request["design_view"]
     assert view["tables"][0]["table_name"] == "users"
-    assert view["tables"][0]["columns"][0].startswith("id BIGINT NOT NULL AI")
+    # MySQL source: the int carries over as INT (#274)
+    assert view["tables"][0]["columns"][0].startswith("id INT NOT NULL AI")
     assert llm_request["migration_strategy"] == "carry_over"
     assert llm_request["output_schema"]["title"] == "AuroraDesignDeltaContract"
 

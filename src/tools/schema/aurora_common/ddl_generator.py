@@ -24,6 +24,8 @@ from src.tools.schema.aurora_common.constraint_translator import (
     mysql_auto_increment_clause,
     not_null_clause,
 )
+from src.tools.schema.aurora_common.source_family import classify_source_family
+from src.tools.schema.aurora_common.source_types import resolve_source_type
 from src.tools.schema.aurora_common.type_map import (
     TypeResolution,
     resolve_mysql_type,
@@ -104,12 +106,31 @@ class DdlResult:
     residuals: list[dict]
 
 
+def _resolve(
+    col: AgentColumn, dialect: Dialect, source_family: str, indexed: bool
+) -> TypeResolution:
+    """The source ``data_type`` first (PostgreSQL/MySQL sources, #274), else the normalized type."""
+    resolution = resolve_source_type(
+        col.data_type,
+        source_family=source_family,
+        target=dialect.name,
+        max_length=col.max_length,
+        indexed=indexed,
+    )
+    if resolution is not None:
+        return resolution
+    return dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
+
+
 def _column_ddl(
     table_name: str,
     col: AgentColumn,
     residuals: list[dict],
     dialect: Dialect,
     override: TypeOverride | None = None,
+    *,
+    source_family: str = "other",
+    indexed: bool = False,
 ) -> ColumnDDL:
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     if override is not None:
@@ -118,13 +139,13 @@ def _column_ddl(
             aurora_type=override.aurora_type, needs_judgment=True, reason=override.reason
         )
         return _column_from(col, resolution, source_type, dialect, script_derived=False)
-    resolution = dialect.resolve_type(col.normalized_data_type, max_length=col.max_length)
+    resolution = _resolve(col, dialect, source_family, indexed)
     if resolution.needs_judgment:
         residuals.append(
             {
                 "table": table_name,
                 "column": col.column_name,
-                "source_type": source_type,
+                "source_type": source_type or col.data_type,
                 "fallback_type": resolution.aurora_type,
                 "reason": resolution.reason,
             }
@@ -235,16 +256,29 @@ def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     return statements
 
 
+def _key_columns(table: AgentTable) -> set[str]:
+    """Columns in the primary key, an index or a foreign key."""
+    cols = {c.lower() for c in table.primary_key or []}
+    for idx in table.indexes or []:
+        cols.update(c.lower() for c in idx.columns)
+    for fk in table.foreign_keys or []:
+        cols.update(c.lower() for c in fk.columns)
+    return cols
+
+
 def _generate(
     tables: list[AgentTable],
     dialect: Dialect,
     type_overrides: TypeOverrides | None = None,
+    source_engine: str = "",
 ) -> DdlResult:
     residuals: list[dict] = []
     table_ddls: list[TableDDL] = []
     overrides = type_overrides or {}
+    family = classify_source_family(source_engine)
 
     for table in tables:
+        keyed = _key_columns(table)
         columns = [
             _column_ddl(
                 table.table_name,
@@ -252,6 +286,8 @@ def _generate(
                 residuals,
                 dialect,
                 overrides.get((table.table_name, c.column_name)),
+                source_family=family,
+                indexed=c.column_name.lower() in keyed,
             )
             for c in table.columns
         ]
@@ -279,18 +315,25 @@ def assemble_full_ddl(table_ddls: list[TableDDL]) -> str:
 
 
 def generate_pg_ddl(
-    tables: list[AgentTable], type_overrides: TypeOverrides | None = None
+    tables: list[AgentTable],
+    type_overrides: TypeOverrides | None = None,
+    source_engine: str = "",
 ) -> DdlResult:
     """Translate normalized source tables into Aurora PostgreSQL DDL.
 
     ``type_overrides`` maps ``(table_name, column_name)`` to a model-decided
     type (#273); those columns are emitted with it and are not residuals.
+    ``source_engine`` is the collector's source engine: for a PostgreSQL or
+    MySQL source each column's native ``data_type`` is mapped first (#274,
+    ``source_types``), and the normalized type is the fallback.
     """
-    return _generate(tables, POSTGRES, type_overrides)
+    return _generate(tables, POSTGRES, type_overrides, source_engine)
 
 
 def generate_mysql_ddl(
-    tables: list[AgentTable], type_overrides: TypeOverrides | None = None
+    tables: list[AgentTable],
+    type_overrides: TypeOverrides | None = None,
+    source_engine: str = "",
 ) -> DdlResult:
     """Translate normalized source tables into Aurora MySQL DDL (see ``generate_pg_ddl``)."""
-    return _generate(tables, MYSQL, type_overrides)
+    return _generate(tables, MYSQL, type_overrides, source_engine)

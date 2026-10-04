@@ -98,6 +98,9 @@ class MigrationComplexity(str, Enum):
 class AgentColumn(BaseModel):
     column_name: str
     ordinal_position: int | None = None
+    data_type: str | None = Field(
+        None, description="Native source type (the Aurora draft maps it first, #274)"
+    )
     normalized_data_type: NormalizedDataType | None = None
     max_length: int | None = Field(None, description="Used for item_size_bytes estimation")
     nullable: bool
@@ -354,6 +357,7 @@ def project_schema_design_input(
                     AgentColumn(
                         column_name=c.column_name,
                         ordinal_position=c.ordinal_position,
+                        data_type=c.data_type or None,
                         normalized_data_type=(
                             NormalizedDataType(c.normalized_data_type.value)
                             if c.normalized_data_type
