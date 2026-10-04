@@ -115,7 +115,7 @@ class TestSharedRiskFilter:
     def test_decision_report_count_matches_filtered_risks(self, report: dict) -> None:
         n = len(renderers.filtered_risks(report))
         html = renderers.render_decision_report_html(report)
-        assert f"{n} migration risks identified" in html
+        assert f"{n} open migration risks" in html
 
     def test_engineering_report_count_matches_filtered_risks(self, report: dict) -> None:
         n = len(renderers.filtered_risks(report))
@@ -133,7 +133,7 @@ class TestSharedRiskFilter:
         """The regression this guards: before #201/#210 this was 9 / 9 / 12."""
         html_n = int(
             re.search(
-                r"(\d+) migration risks identified", renderers.render_decision_report_html(report)
+                r"(\d+) open migration risks", renderers.render_decision_report_html(report)
             ).group(1)
         )
         md_n = int(

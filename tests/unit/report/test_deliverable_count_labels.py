@@ -284,3 +284,79 @@ class TestRiskProfileSeverityFallback:
         rows, caption = _risk_slide([])
         assert rows[1:] == []
         assert caption.startswith("No open risks remain.")
+
+
+def _mapped_report() -> dict[str, Any]:
+    """22 mapped tables: 19 DynamoDB + 2 Aurora MySQL migrate, 1 maps to ElastiCache."""
+    rep = _shared_tables_report()
+    rep["table_mappings"] = [
+        {"source_table": f"wp.t{i}", "recommended_database": "dynamodb"} for i in range(19)
+    ] + [
+        {"source_table": "wp.postmeta", "recommended_database": "aurora_mysql"},
+        {"source_table": "wp.usermeta", "recommended_database": "aurora_mysql"},
+        {"source_table": "wp.order_items", "recommended_database": "elasticache"},
+    ]
+    rep["assignment_summary"] = {"query_count": 107, "co_dependency_groups": 1}
+    rep["query_groups"] = [
+        {"group_name": f"Group {i}", "engines": ["dynamodb"], "access_patterns": []}
+        for i in range(29)
+    ]
+    rep["risk_assessment"] = {
+        "overall_risk_level": "LOW",
+        "risks": [_risk(f"RISK-00{i}", "MEDIUM", 1) for i in range(1, 9)],
+        "resolved_risks": [
+            {"engine": "dynamodb", "severity": "HIGH", "description": "[dynamodb] x"}
+        ]
+        * 4,
+    }
+    rep["summary_deterministic"] = (
+        "22 source tables mapped to aurora_mysql, dynamodb, elasticache. "
+        "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)."
+    )
+    return rep
+
+
+class TestUnlabelledCounts:
+    """#258: query groups vs co-dependency groups, mapped vs migrating tables, and
+    open vs resolved risks."""
+
+    def test_engineering_report_calls_query_groups_query_groups(self) -> None:
+        md = renderers.render_engineering_report_md(_mapped_report())
+        assert "## Query groups (29)" in md
+        assert "co-dependency groups (29)" not in md
+        assert "assignment's 1 co-dependency group" in md
+
+    def test_migration_map_heading_splits_migrating_and_cache_tables(self) -> None:
+        md = renderers.render_engineering_report_md(_mapped_report())
+        assert "## Migration map (22 tables: 21 migrate, 1 to the cache layer)" in md
+
+    def test_migration_map_heading_plain_when_every_table_migrates(self) -> None:
+        rep = _mapped_report()
+        rep["table_mappings"] = rep["table_mappings"][:21]
+        md = renderers.render_engineering_report_md(rep)
+        assert "## Migration map (21 tables)" in md
+
+    def test_deck_footer_reconciles_mapped_and_migrating_tables(self) -> None:
+        f = pptx_report.derive(_mapped_report(), {})
+        slide = pptx_report.slide_summary(pptx_report.open_deck(keep=1), f)
+        assert any(
+            "21 of the 22 mapped source tables move to a purpose-built engine" in t
+            for t in _shape_texts(slide)
+        )
+
+    def test_decision_report_separates_open_and_resolved_risks(self) -> None:
+        html = renderers.render_decision_report_html(_mapped_report(), trust_generated_summary=True)
+        assert "8 open migration risks (0 high, 8 medium) across migration complexity" in html
+        assert "4 more were resolved by the assignment." in html
+        assert "4 resolved by the assignment)" not in html
+
+    def test_summary_risk_sentence_separates_open_and_resolved(self) -> None:
+        out = renderers.label_resolved_risks(_mapped_report()["summary_deterministic"])
+        assert "8 open risk(s) (overall: LOW); 4 more were resolved by the assignment." in out
+        assert renderers.label_resolved_risks(out) == out
+
+    def test_deck_summary_separates_open_and_resolved(self) -> None:
+        f = pptx_report.derive(_mapped_report(), {})
+        assert "8 open risk(s) (overall: LOW); 4 more were resolved by the assignment." in (
+            f["summary"]
+        )

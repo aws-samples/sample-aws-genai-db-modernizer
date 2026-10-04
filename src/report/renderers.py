@@ -154,6 +154,26 @@ def label_in_scope_access_patterns(text: str) -> str:
     return _PER_ENGINE_APS.sub(r"\1: \2, \3 in-scope \4", text)
 
 
+# "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)." reads as 4 of
+# the 8 being resolved; the 4 are additional risks the assignment removed, listed
+# apart from the 8 open ones in the Engineering Report (#258).
+_RESOLVED_RISKS = re.compile(
+    r"\b(\d+) risk\(s\) identified \(overall: ([^;()]+); (\d+) resolved by the assignment\)\."
+)
+
+
+def label_resolved_risks(text: str) -> str:
+    """``8 risk(s) identified (overall: LOW; 4 resolved ...)`` -> ``8 open risk(s) ...; 4 more ...``."""
+    return _RESOLVED_RISKS.sub(
+        r"\1 open risk(s) (overall: \2); \3 more were resolved by the assignment.", text
+    )
+
+
+def label_summary_counts(text: str) -> str:
+    """Name what each count in the deterministic summary counts (#255, #258)."""
+    return label_resolved_risks(label_in_scope_access_patterns(text))
+
+
 def _risk_engine_and_body(desc: Any) -> tuple[str, str]:
     """Split a risk description into its ``[engine]`` prefix and the remaining text.
 
@@ -647,7 +667,7 @@ def render_decision_report_html(
     )
     summary = summary or report.get("summary_deterministic")
     if summary and summary == report.get("summary_deterministic"):
-        summary = label_in_scope_access_patterns(summary)
+        summary = label_summary_counts(summary)
     if summary:
         out += [
             "<h2 class=section-title>Executive summary</h2>",
@@ -739,11 +759,18 @@ def render_decision_report_html(
             )
             types_txt = ", ".join(types) if types else "several areas"
             n_resolved = len(resolved_risks(report))
-            resolved_txt = f"; {n_resolved} resolved by the assignment" if n_resolved else ""
+            # The resolved risks are not among the open ones; saying "(…; 4 resolved)"
+            # inside the open count read as 4 of them being resolved (#258).
+            resolved_txt = (
+                f" {n_resolved} more {plural_verb(n_resolved, 'was', 'were')} resolved by the "
+                "assignment."
+                if n_resolved
+                else ""
+            )
             out.append(
-                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} migration "
-                f"{plural_noun(len(risks), 'risk')} identified "
-                f"({hi} high, {med} medium{resolved_txt}) across {esc(types_txt)}. The full "
+                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} open migration "
+                f"{plural_noun(len(risks), 'risk')} "
+                f"({hi} high, {med} medium) across {esc(types_txt)}.{resolved_txt} The full "
                 "risk register, with "
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"
@@ -857,6 +884,31 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
+_ROLE_PHRASE = {
+    "Migration target": "migrate",
+    "Cache layer": "to the cache layer",
+    "Retained": "stay on the source engine",
+}
+
+
+def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> str:
+    """ ": 21 migrate, 1 to the cache layer" for the migration map heading (#258).
+
+    The Decision Report and the deck count only the tables mapped to migration
+    targets as "tables migrate"; a table mapped to the cache layer needs no data
+    migration. Empty when every mapped table migrates.
+    """
+    roles = {e["engine"]: e["role"] for e in _architecture_engines(report)}
+    counts: dict[str, int] = {}
+    for m in mappings:
+        phrase = _ROLE_PHRASE.get(roles.get(m.get("recommended_database"), ""), "elsewhere")
+        counts[phrase] = counts.get(phrase, 0) + 1
+    if set(counts) <= {"migrate"}:
+        return ""
+    order = [*_ROLE_PHRASE.values(), "elsewhere"]
+    return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -877,14 +929,15 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         f"Source database: `{escaping.md_code(db)}`. This is the build companion to the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "Decision Report: "
         "the source-to-target mapping, the per-engine target schemas, and the query "
-        "co-dependency groups.",
+        "groups.",
         "",
     ]
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     if mappings:
         out += [
-            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')})",
+            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')}"
+            f"{_mapping_split(report, mappings)})",
             "",
             "| Source table | Target engine | Target | Pattern | Confidence |",
             "|---|---|---|---|---|",
@@ -991,9 +1044,19 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
 
     groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
     if groups:
+        # "Query groups", as the deck summary calls them: the assignment's
+        # co-dependency groups (tables that must move together) are a different,
+        # usually much smaller count the deck also shows (#258).
+        co_dep = (report.get("assignment_summary") or {}).get("co_dependency_groups")
+        out += [f"## Query groups ({len(groups)})", ""]
+        if isinstance(co_dep, int):
+            out += [
+                "Queries grouped by the access patterns that serve them. These are not the "
+                f"assignment's {co_dep} co-dependency {plural_noun(co_dep, 'group')} "
+                "(tables that must move together).",
+                "",
+            ]
         out += [
-            f"## Query co-dependency groups ({len(groups)})",
-            "",
             "| Group | Engines | Access patterns | Source queries | Design RPS |",
             "|---|---|---|---|---|",
         ]

@@ -59,7 +59,7 @@ from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from .renderers import (
     _architecture_engines,
     filtered_risks,
-    label_in_scope_access_patterns,
+    label_summary_counts,
     plural_noun,
     plural_verb,
 )
@@ -982,7 +982,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "conf": conf,
         "workload": workload,
         "summary": prettify_engines(
-            label_in_scope_access_patterns(
+            label_summary_counts(
                 name_target_tables(strip_cost(str(rep.get("summary_deterministic") or "")))
             )
         ),
@@ -1110,10 +1110,17 @@ def slide_summary(prs, f):
     # it here claimed it keeps a share of the workload it does not carry.
     kept = [e for e in f["engines"] if e["role"] in NO_MIGRATION_ROLES]
     kept_pct = sum(e.get("workload") or 0 for e in kept)
+    # The summary beside this footer says "22 source tables mapped"; when some of
+    # them map to the cache layer, the footer says how 21 relates to 22 (#258).
+    n_mig = f["migrated"]
+    subject = (
+        f"{n_mig} of the {f['n_tables']} mapped source tables"
+        if f["n_tables"] > n_mig > 0
+        else f"{n_mig} source {plural_noun(n_mig, 'table')}"
+    )
     footer_note(
         s,
-        f"{f['migrated']} source {plural_noun(f['migrated'], 'table')} "
-        f"{plural_verb(f['migrated'], 'moves', 'move')} to a purpose-built engine; "
+        f"{subject} {plural_verb(n_mig, 'moves', 'move')} to a purpose-built engine; "
         + (
             f"{join_names([ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept])} "
             f"{plural_verb(len(kept), 'keeps', 'keep')} {kept_pct:.1f}% of the workload "
