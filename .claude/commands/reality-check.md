@@ -78,6 +78,7 @@ Use these to judge whether a target engine can handle the moved queries:
 
 - CAN DO: sorted sets, counters, session storage, pub/sub, hot-path caching, leaderboards
 - CANNOT DO: complex queries, persistence as source of truth, multi-dimension filters, JOINs
+- Never a consolidation target: it owns no query. Hot reads keep their owner engine and are fronted by the cache (the cache overlay, `cache_engine`)
 
 **Aurora MySQL/PostgreSQL** — Relational database
 

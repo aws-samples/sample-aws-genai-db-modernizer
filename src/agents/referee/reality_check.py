@@ -26,6 +26,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
+from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
@@ -70,6 +71,7 @@ ENGINE_CAPABILITIES: dict[str, set[str]] = {
     "elasticache": {
         "session_store",
         "leaderboard",
+        "leaderboard_simple",  # sorted sets serve any top-N (#296)
         "rate_limiting",
         "pub_sub",
         "caching",
@@ -167,6 +169,10 @@ SIGNAL_TO_CAPABILITY: dict[str, str] = {
     "text_search": "text_search",
     "key_value_lookups": "key_value_lookup",
     "leaderboard_pattern": "leaderboard_simple",
+    # SUM/COUNT/AVG with GROUP BY or JOINs: an engine without aggregation must not
+    # absorb them on table confidence alone (#296: WooCommerce SUM...JOIN reports
+    # were consolidated into ElastiCache)
+    "aggregations": "aggregation",
     "time_series": "time_series_simple",
     "metadata_config": "metadata_config",
     "session_store": "session_store",
@@ -401,12 +407,18 @@ def run_reality_check(
         }
 
         # Decision: consolidate this engine?
-        # Protected engines (primary, mandatory with unique queries) never consolidate
+        # The primary engine never consolidates. A mandatory engine keeps only its
+        # mandatory queries protected (#296): its other queries are judged like any
+        # engine's, so one text-search query no longer shields a hundred others.
+        # Pass 2 never moves mandatory queries, so the engine stays (partially
+        # consolidated) whenever its non-mandatory queries go.
         if engine == primary_engine_name:
             continue
 
-        if engine in mandatory_committed_engines and unique_queries:
-            continue
+        if engine in mandatory_committed_engines:
+            unique_queries = [q for q in unique_queries if q not in mandatory_query_ids]
+            if not redundant_queries and not unique_queries:
+                continue  # nothing but mandatory queries
 
         if not unique_queries:
             # All queries can be served equally well elsewhere — remove
@@ -484,6 +496,10 @@ def run_reality_check(
             if qa["query_id"] not in mandatory_query_ids and qa["query_id"] not in absorbed_by_id
         ]
         if not movable_qas:
+            if any(qa["query_id"] in mandatory_query_ids for qa in qas):
+                # Only mandatory queries left: the engine stays committed (#296)
+                engines_to_consolidate.remove(engine)
+                committed_engines.add(engine)
             continue
 
         base_cost = ENGINE_BASE_COST.get(engine, 100)
@@ -504,6 +520,9 @@ def run_reality_check(
                 serviceable_qas.append(qa)
             else:
                 unserviceable_qas.append(qa)
+
+        # Mandatory queries stay on the engine, so it stays too (#296)
+        retained_mandatory = [qa for qa in qas if qa["query_id"] in mandatory_query_ids]
 
         # If all queries are unserviceable, engine must stay
         if not serviceable_qas and unserviceable_qas:
@@ -556,7 +575,8 @@ def run_reality_check(
                         )
 
             total_moved = sum(len(v) for v in placement.values())
-            is_partial = len(unserviceable_qas) > 0
+            is_partial = bool(unserviceable_qas or retained_mandatory)
+            retained_qas = unserviceable_qas + retained_mandatory
 
             # Record consolidations per target
             for target_engine, placed_qas in placement.items():
@@ -569,17 +589,35 @@ def run_reality_check(
                         f"{total_moved} queries can be served by existing engines"
                         + (
                             f" ({len(unserviceable_qas)} retained due to capability requirements)"
-                            if is_partial
+                            if unserviceable_qas
+                            else ""
+                        )
+                        + (
+                            f" ({len(retained_mandatory)} mandatory signal queries retained)"
+                            if retained_mandatory
                             else ""
                         )
                     ),
                     "saved_cost_estimate": 0,
                     "action": "partial" if is_partial else "full",
                     "queries_retained": (
-                        [qa["query_id"] for qa in unserviceable_qas] if is_partial else []
+                        [qa["query_id"] for qa in retained_qas] if is_partial else []
                     ),
                     "retention_reason": (
-                        "Queries require capabilities no committed engine provides"
+                        "; ".join(
+                            r
+                            for r, present in (
+                                (
+                                    "Queries require capabilities no committed engine provides",
+                                    unserviceable_qas,
+                                ),
+                                (
+                                    "Mandatory signal queries stay on their engine",
+                                    retained_mandatory,
+                                ),
+                            )
+                            if present
+                        )
                         if is_partial
                         else None
                     ),
@@ -600,8 +638,12 @@ def run_reality_check(
                 committed_engines.add(engine)
 
                 # Suggest lightweight alternative if orphan set is small
-                lw_rec = _suggest_lightweight_for_orphans(
-                    unserviceable_qas, len(movable_qas), query_capabilities, engine
+                lw_rec = (
+                    _suggest_lightweight_for_orphans(
+                        unserviceable_qas, len(movable_qas), query_capabilities, engine
+                    )
+                    if unserviceable_qas
+                    else None
                 )
                 if lw_rec:
                     lightweight_recommendations.append(lw_rec)
@@ -1074,6 +1116,11 @@ def _find_best_absorber_for_query(
 
     for target_engine in sorted(committed_engines):
         if target_engine == source_engine:
+            continue
+
+        # Write gate (#296): a cache never owns a query, and an engine that is not
+        # a system of record never owns a write
+        if not can_own(target_engine, query_map.get(qid, qa)):
             continue
 
         # Serviceability gate: skip engines that can't serve hard requirements
