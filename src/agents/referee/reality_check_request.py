@@ -21,6 +21,7 @@ cannot read, and still without the list of moved queries (#285). It now holds:
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -28,6 +29,9 @@ from src.agents.schema_design.group_input import read_pages, render_group_input
 
 # SQL characters kept per moved query (the Bedrock validator's long-standing cut).
 SQL_CHARS = 500
+# Most characters the kept SQL may take as a JSON string: quotes and control
+# characters are escaped, and Read truncates a line past 2000 characters.
+SQL_JSON_CHARS = 1000
 
 # Keys of ``unique_value_assessment`` entries that hold query id lists; the
 # request carries their counts instead.
@@ -71,15 +75,18 @@ def moved_query_record(
     """What a reviewer needs to judge one moved query."""
     q = query_map.get(query_id, {})
     text = q.get("query_text", "") or ""
+    sql = text[:SQL_CHARS]
+    while len(json.dumps(sql, ensure_ascii=False)) > SQL_JSON_CHARS:
+        sql = sql[: len(sql) * 3 // 4]
     record: dict[str, Any] = {
         "query_id": query_id,
         "type": q.get("query_type", ""),
         "cps": round(float(q.get("calls_per_second") or 0), 3),
         "tables": q.get("tables_accessed", []) or [],
         "signals": query_signals.get(query_id, []),
-        "sql": text[:SQL_CHARS],
+        "sql": sql,
     }
-    if len(text) > SQL_CHARS:
+    if len(sql) < len(text):
         record["sql_chars"] = len(text)  # the SQL above is truncated
     return record
 
@@ -92,16 +99,20 @@ def build_reality_check_request(det: dict, absorption_candidates: list[str]) -> 
     signals = query_signal_map(det.get("triage", {}))
     original = det.get("assignment", {}).get("query_assignments")
 
-    reviewed = [
-        {
-            **c,
-            "moved_queries": [
-                moved_query_record(qa["query_id"], query_map, signals)
-                for qa in moved_queries(c, det["revised_assignments"], original)
-            ],
-        }
-        for c in det["consolidations"]
-    ]
+    # A query listed under an earlier record of the same move is not listed again
+    listed: dict[tuple[str, str], set[str]] = defaultdict(set)
+    reviewed = []
+    for c in det["consolidations"]:
+        seen = listed[(c["from_engine"], c["to_engine"])]
+        ids = [
+            qa["query_id"]
+            for qa in moved_queries(c, det["revised_assignments"], original)
+            if qa["query_id"] not in seen
+        ]
+        seen.update(ids)
+        reviewed.append(
+            {**c, "moved_queries": [moved_query_record(q, query_map, signals) for q in ids]}
+        )
     return {
         "consolidation_validation": {"consolidations": reviewed},
         "executive_summary": {

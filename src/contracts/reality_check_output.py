@@ -8,6 +8,8 @@ Version History:
 - 1.0 (2026-04-16): Initial version — CTO-level engine consolidation
 - 1.3 (2026-10-03): executive_summary describes the final records; the LLM text and
   the check findings are kept in executive_summary_llm / _validation_warnings (#236)
+- 1.4 (2026-10-04): validation_incomplete lists consolidation validation batches that
+  got no LLM verdict (#285)
 """
 
 from pydantic import BaseModel, Field
@@ -94,7 +96,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.3", description="Contract version")
+    contract_version: str = Field(default="1.4", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -146,4 +148,12 @@ class RealityCheckOutputContract(BaseModel):
     lightweight_recommendations: list[LightweightRecommendation] = Field(
         default_factory=list,
         description="Lightweight managed-service alternatives for small orphan query sets",
+    )
+    validation_incomplete: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Consolidation validation batches that got no LLM verdict (from_engine, "
+            "to_engine, batch as 1-based start-end of total, error); their moves stand "
+            "unreviewed"
+        ),
     )

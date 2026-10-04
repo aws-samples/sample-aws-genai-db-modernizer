@@ -157,9 +157,15 @@ class TestRealityCheckRefresh:
         result = _rc_result(_qas(dynamodb=5, elasticache=2, aurora_mysql=3))
         result["after_distribution"] = {"dynamodb": 5, "elasticache": 2, "aurora_mysql": 3}
         corrected = _qas(dynamodb=5, elasticache=2, aurora_mysql=3)
-        with patch(
-            "src.agents.referee.reality_check_handler.apply_corrections",
-            return_value=(corrected, result["consolidations"]),
+        with (
+            patch(
+                "src.agents.referee.reality_check_handler.apply_corrections",
+                return_value=(corrected, result["consolidations"]),
+            ),
+            patch(  # the placeholder correction names no moved query (#285)
+                "src.agents.referee.reality_check_handler.corrections_for_moved_queries",
+                side_effect=lambda corrections, *_: corrections,
+            ),
         ):
             apply_reality_check_llm_output(result, {"consolidation_corrections": [{"q": 1}]})
         assert "opensearch" not in _engines_in(result["architectural_patterns"])

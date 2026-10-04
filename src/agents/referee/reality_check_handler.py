@@ -19,6 +19,7 @@ from src.agents.prompt_framing import (
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.consolidation_validator import (
     apply_corrections,
+    corrections_for_moved_queries,
     sanity_sweep,
     validate_consolidations,
 )
@@ -210,7 +211,14 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
     result = deterministic_result
 
     if "consolidation_corrections" in llm_output:
-        corrections = llm_output["consolidation_corrections"]
+        # Only queries a consolidation moved can be sent back (#285): an external
+        # response could name any id, or one the review never saw.
+        corrections = corrections_for_moved_queries(
+            llm_output["consolidation_corrections"] or [],
+            result["consolidations"],
+            result["revised_assignments"],
+            result.get("assignment", {}).get("query_assignments"),
+        )
         if corrections:
             surviving_engines = set(result["after_distribution"].keys())
             all_original_engines = set(result["before_distribution"].keys())
@@ -432,6 +440,7 @@ def write_reality_check_result(
             "before_distribution": result["before_distribution"],
             "after_distribution": result["after_distribution"],
             "lightweight_recommendations": result.get("lightweight_recommendations", []),
+            "validation_incomplete": result.get("validation_incomplete", []),
         }
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"
@@ -591,13 +600,22 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_map = {q["query_id"]: q for q in queries}
 
+    incomplete: list[dict] = []
     corrections = validate_consolidations(
         consolidations=det["consolidations"],
         revised_assignments=det["revised_assignments"],
         query_map=query_map,
         query_signals=query_signal_map(det.get("triage", {})),
         original_assignments=det["assignment"].get("query_assignments"),
+        incomplete=incomplete,
     )
+    if incomplete:
+        # Batches with no verdict keep their moves; record them for audit
+        det["validation_incomplete"] = incomplete
+        print(
+            f"[reality-check] WARNING: {len(incomplete)} validation batch(es) got no "
+            "verdict; their moves stand unreviewed"
+        )
     if corrections:
         print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
         apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})

@@ -162,7 +162,20 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.3"
+        assert output.contract_version == "1.4"
+
+    def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
+        # Additive in 1.4 (#285): earlier outputs still validate.
+        assert (
+            RealityCheckOutputContract.model_validate(
+                valid_reality_check_data
+            ).validation_incomplete
+            == []
+        )
+        gap = {"from_engine": "documentdb", "to_engine": "dynamodb", "batch": "31-60", "total": 68}
+        valid_reality_check_data["validation_incomplete"] = [gap]
+        dumped = RealityCheckOutputContract.model_validate(valid_reality_check_data).model_dump()
+        assert dumped["validation_incomplete"] == [gap]
 
     def test_summary_audit_fields_default_and_roundtrip(self, valid_reality_check_data):
         # Additive in 1.3 (#236): outputs written before the fields existed still validate.
