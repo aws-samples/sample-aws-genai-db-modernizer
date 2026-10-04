@@ -338,6 +338,23 @@ def test_prompt_includes_all_six_criterion_keys(tmp_path: Path) -> None:
     assert not any("DynamoDB selected" in arg for arg in recorded_argv)
 
 
+def test_prompt_demands_exactly_one_json_object(tmp_path: Path) -> None:
+    _build_job_dir(tmp_path)
+    argv_file = tmp_path / "argv.json"
+    stub = _write_stub(tmp_path, _outer(_inner(PASSING_SCORES)), argv_file)
+
+    result, code = judge.run_judge(
+        artifact_root=str(tmp_path), db=DB, job=JOB, claude_bin=str(stub)
+    )
+    assert code == 0, result
+
+    prompt = argv_file.with_suffix(".stdin").read_text()
+    assert (
+        "Reply with exactly one JSON object and nothing else \u2014 no prose, no code "
+        "fences, no second object."
+    ) in prompt
+
+
 def test_isolation_flags_passed_only_when_cli_help_lists_them(tmp_path: Path) -> None:
     _build_job_dir(tmp_path)
     argv_file = tmp_path / "argv.json"

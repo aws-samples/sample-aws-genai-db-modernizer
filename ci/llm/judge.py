@@ -139,6 +139,14 @@ PROMPT_INPUTS: tuple[tuple[str, str], ...] = (
 _FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
 
+# parse_judge_reply tolerates extra content but fails closed on conflicting
+# answers, so the model is told up front to send exactly one object.
+ONE_OBJECT_INSTRUCTION = (
+    "Reply with exactly one JSON object and nothing else \u2014 no prose, no code "
+    "fences, no second object."
+)
+
+
 class JudgeError(Exception):
     """Anything that makes grading impossible: missing deliverable, bad rubric
     file, bad CLI invocation, or a judge response that doesn't parse/validate.
@@ -914,6 +922,7 @@ def build_prompt_with_stats(
             '"roadmap": n, "tone": n}, '
             '"notes": {"grounded": "...", "justified_engines": "...", "cost": "...", '
             '"risks": "...", "roadmap": "...", "tone": "..."}}',
+            ONE_OBJECT_INSTRUCTION,
         ]
         return parts
 
