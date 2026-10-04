@@ -338,7 +338,8 @@ const AssignmentGatePage = memo(() => {
     tableCount,
     patterns,
     engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
-  }), [realityCheck, databaseName, afterDist, tableCount, patterns]);
+    t,
+  }), [realityCheck, databaseName, afterDist, tableCount, patterns, t]);
 
   // Sankey data from after_distribution
   const sankeyData = useMemo(() => {
