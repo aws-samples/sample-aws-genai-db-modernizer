@@ -32,6 +32,7 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
+import { buildAssignmentSummary } from "../utils/assignmentSummary";
 
 import './AssignmentGate.css';
 
@@ -319,11 +320,6 @@ const AssignmentGatePage = memo(() => {
     return tables.length;
   }, [collectorData]);
 
-  // Total queries
-  const totalQueries = useMemo(() => {
-    return Object.values(afterDist).reduce((a, b) => a + b, 0);
-  }, [afterDist]);
-
   // Build headline
   const headline = useMemo(() => {
     if (survivingEngines.length === 0) return 'Analyzing your workload...';
@@ -333,38 +329,16 @@ const AssignmentGatePage = memo(() => {
     return `Recommended architecture: ${engineNames.join(', ')} and ${last}`;
   }, [survivingEngines]);
 
-  // Build executive summary — prefer LLM-generated when available
-  const executiveSummary = useMemo(() => {
-    // Use LLM summary from reality check if available
-    if (realityCheck?.executive_summary) return realityCheck.executive_summary;
-
-    // Fallback: build client-side
-    if (survivingEngines.length === 0) return '';
-
-    const parts = [];
-    const engineNames = survivingEngines.map(e => ENGINE_COLORS[e]?.label || e);
-
-    const sizeStr = tableCount > 0
-      ? `${totalQueries} access patterns across ${tableCount} tables`
-      : `${totalQueries} access patterns`;
-    parts.push(`Your ${databaseName || 'database'} workload has ${sizeStr}.`);
-
-    if (survivingEngines.length === 1) {
-      parts.push(`All access patterns map to ${engineNames[0]}.`);
-    } else {
-      const distParts = Object.entries(afterDist)
-        .filter(([, count]) => count > 0)
-        .sort((a, b) => b[1] - a[1])
-        .map(([engine, count]) => `${count} to ${ENGINE_COLORS[engine]?.label || engine}`);
-      parts.push(`We map ${distParts.join(', ')}.`);
-
-      if (patterns.length > 0) {
-        parts.push(`Recommended integration pattern: ${patterns[0].name}.`);
-      }
-    }
-
-    return parts.join(' ');
-  }, [realityCheck, survivingEngines, totalQueries, tableCount, databaseName, afterDist, patterns]);
+  // Build executive summary — the fact line (database, size) always leads; the
+  // LLM-generated reality-check summary follows it when available (#250)
+  const executiveSummary = useMemo(() => buildAssignmentSummary({
+    llmSummary: realityCheck?.executive_summary,
+    databaseName,
+    afterDist,
+    tableCount,
+    patterns,
+    engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
+  }), [realityCheck, databaseName, afterDist, tableCount, patterns]);
 
   // Sankey data from after_distribution
   const sankeyData = useMemo(() => {
