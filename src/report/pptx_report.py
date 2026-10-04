@@ -741,12 +741,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
 
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)
-    migrated = 0
-    for e in engines:
-        if e["role"] == "Migration target":
-            digits = "".join(ch for ch in str(e["scope"]) if ch.isdigit())
-            if digits:
-                migrated += int(digits)
+    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
 
     ranking = [r for r in (rep.get("ranking") or []) if isinstance(r, dict)]
     conf = {r.get("target"): float(r.get("confidence_score") or 0) for r in ranking}
@@ -916,7 +911,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         if not group:
             continue
         lo = min(conf.get(e["engine"], 0) for e in group)
-        n_t = sum(int("".join(ch for ch in str(e["scope"]) if ch.isdigit()) or 0) for e in group)
+        n_t = sum(e["migrates"] for e in group)
         tables_word = plural_noun(n_t, "table")
         note = (
             f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "

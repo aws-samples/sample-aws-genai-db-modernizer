@@ -294,6 +294,21 @@ def _engine_role(
     return "Assessed"
 
 
+def _design_source_tables(tables: Any) -> int:
+    """Distinct source tables an engine's schema design reads from."""
+    if not isinstance(tables, list):
+        return 0
+    return len(
+        {
+            str(src)
+            for t in tables
+            if isinstance(t, dict)
+            for src in (t.get("source_tables") or [])
+            if isinstance(t.get("source_tables"), list)
+        }
+    )
+
+
 def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     """The full target architecture, one entry per engine, ordered by workload.
 
@@ -318,14 +333,20 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         if not eng:
             continue
         role = _engine_role(eng, recommended, schema_designs, r.get("workload_percent"))
-        objs = (schema_designs.get(eng) or {}).get("tables")
-        objs = len(objs) if isinstance(objs, list) else None
+        design_tables = (schema_designs.get(eng) or {}).get("tables")
+        objs = len(design_tables) if isinstance(design_tables, list) else None
+        migrates = 0
         if role == "Migration target":
             n = src_tables.get(eng)
+            migrates = n if isinstance(n, int) else (objs or 0)
+            served = _design_source_tables(design_tables)
             scope = (
                 # Source tables mapped to the engine -- named as such, because the
                 # summary also counts the schema design's *target* tables (#219).
+                # Queries, not tables, are assigned, so the design can also serve
+                # tables mapped to another engine; say so when it does (#257).
                 f"{n} source {plural_noun(n, 'table')}"
+                + (f" ({served} incl. shared)" if isinstance(n, int) and served > n else "")
                 if n is not None
                 else (f"{objs} {plural_noun(objs, 'target object')}" if objs else "\u2014")
             )
@@ -343,6 +364,9 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "role": role,
                 "workload": r.get("workload_percent"),
                 "scope": scope,
+                # Mapped source tables that move, for the "tables migrate" totals;
+                # the scope text is not parsed because it can carry two numbers.
+                "migrates": migrates,
                 "cost": costs.get(eng),
                 "rationale": next(
                     (d.get("rationale") for d in dbs if d.get("service") == eng),
@@ -592,12 +616,7 @@ def render_decision_report_html(
     risk = report.get("risk_assessment") or {}
     tco = report.get("tco_analysis") or {}
     engines = _architecture_engines(report)
-    migrated = 0
-    for e in engines:
-        if e["role"] == "Migration target":
-            digits = "".join(ch for ch in str(e["scope"]) if ch.isdigit())
-            if digits:
-                migrated += int(digits)
+    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
     risk_level = risk.get("overall_risk_level", "not assessed")
 
     out = [

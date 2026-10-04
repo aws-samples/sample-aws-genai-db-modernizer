@@ -163,3 +163,65 @@ class TestLeaderboardCounts:
         texts = _shape_texts(slide)
         assert any("WHOLE WORKLOAD" in t for t in texts)
         assert "Leaderboard / top-N (ORDER BY + LIMIT)" in texts
+
+
+def _shared_tables_report() -> dict[str, Any]:
+    """DynamoDB is the recommended engine of 19 tables; its design reads 21 (run 5)."""
+    ddb_mapped = [f"wp.t{i}" for i in range(19)]
+    return {
+        "database_name": "wordpress",
+        "ranking": [
+            {"target": "dynamodb", "workload_percent": 58.9},
+            {"target": "elasticache", "workload_percent": 31.8},
+            {"target": "aurora_mysql", "workload_percent": 9.3},
+        ],
+        "recommended_architecture": {
+            "databases": [
+                {"service": "dynamodb", "table_count": 19},
+                {"service": "aurora_mysql", "table_count": 2},
+            ]
+        },
+        "schema_designs": {
+            "dynamodb": {
+                "status": "completed",
+                "tables": [
+                    {"table_name": "a", "source_tables": ddb_mapped[:10] + ["wp.postmeta"]},
+                    {"table_name": "b", "source_tables": ddb_mapped[10:] + ["wp.order_items"]},
+                ],
+            },
+            "elasticache": {"status": "completed", "tables": [{}, {}]},
+            "aurora_mysql": {
+                "status": "completed",
+                "tables": [{"source_tables": ["wp.postmeta", "wp.usermeta"]}],
+            },
+        },
+    }
+
+
+class TestSharedSourceTables:
+    """#257: Scope "19 source tables" (tables whose recommended engine is DynamoDB)
+    vs the 21 source tables the DynamoDB design serves."""
+
+    def test_scope_names_the_tables_the_design_also_serves(self) -> None:
+        rows = {e["engine"]: e for e in renderers._architecture_engines(_shared_tables_report())}
+        assert rows["dynamodb"]["scope"] == "19 source tables (21 incl. shared)"
+        assert rows["dynamodb"]["migrates"] == 19
+
+    def test_scope_unchanged_when_the_design_serves_only_mapped_tables(self) -> None:
+        rows = {e["engine"]: e for e in renderers._architecture_engines(_shared_tables_report())}
+        assert rows["aurora_mysql"]["scope"] == "2 source tables"
+        assert rows["elasticache"]["scope"] == "2 key designs"
+
+    def test_decision_report_total_still_sums_mapped_tables(self) -> None:
+        html = renderers.render_decision_report_html(_shared_tables_report())
+        assert "19 source tables (21 incl. shared)" in html
+        assert "21 tables migrate" in html
+        assert "<h3>21</h3><p>Tables migrate</p>" in html
+        assert "1921" not in html
+
+    def test_deck_totals_still_sum_mapped_tables(self) -> None:
+        f = pptx_report.derive(_shared_tables_report(), {})
+        assert f["migrated"] == 21
+        assert [w["note"].split(" ")[0] for w in f["waves"] if "source table" in w["note"]] == [
+            "21"
+        ]
