@@ -502,7 +502,7 @@ def _surviving_engines(store, job_id: str, db: str, selected: list[str]) -> list
 # ============================================================
 # Phase: Schema Design
 # ============================================================
-def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> None:
+def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> dict:
     _banner("SCHEMA DESIGN")
     from src.contracts.phase_models import Phase, PhaseStatus
     from src.orchestrator.local_orchestrator import LocalOrchestrator
@@ -520,7 +520,9 @@ def phase_schema_design(store, job_id: str, db: str, llm_mode: str) -> None:
     # Post-schema routing
     orch._run_post_schema_routing(job_id, db)
 
-    _output("schema_design", _schema_design_status(store, job_id, db, llm_mode))
+    status = _schema_design_status(store, job_id, db, llm_mode)
+    _output("schema_design", status)
+    return status
 
 
 def _schema_design_status(store, job_id: str, db: str, llm_mode: str) -> dict:
@@ -549,9 +551,11 @@ def _schema_design_status(store, job_id: str, db: str, llm_mode: str) -> dict:
     if missing:
         data["skipped_engines"] = missing
     if not artifacts:
+        from src.contracts.phase_models import SCHEMA_DESIGN_SKIP_REASON_NO_LLM
+
         data["status"] = "skipped"
         data["reason"] = (
-            "llm_mode=none: every schema designer needs a model"
+            SCHEMA_DESIGN_SKIP_REASON_NO_LLM
             if llm_mode == "none"
             else "no engine wrote a schema_output.json"
         )
@@ -821,8 +825,13 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
             input()
 
         _start_phase("schema_design")
-        phase_schema_design(store, job_id, db_name, args.llm_mode)
-        state["phase_status"]["schema_design"] = "complete"
+        schema_status = phase_schema_design(store, job_id, db_name, args.llm_mode)
+        if schema_status["status"] == "skipped":
+            # Same status and reason as the status line and the SKIPPED phase (#281).
+            state["phase_status"]["schema_design"] = "skipped"
+            state.setdefault("skip_reasons", {})["schema_design"] = schema_status["reason"]
+        else:
+            state["phase_status"]["schema_design"] = "complete"
         state["current_phase"] = "synthesis"
         _write_state(state)
 

@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-# Shared with the compact run_assessment.py status line (#282): both must agree.
+# Shared by the SKIPPED phase record, the compact status line (#282) and the state file.
 SKIP_REASON = "llm_mode=none: every schema designer needs a model"
 WORDPRESS_ZIP = REPO / "docs" / "examples" / "wordpress" / "wordpress.zip"
 
@@ -108,14 +108,22 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
 
     state = json.loads((tmp_path / run_assessment.STATE_FILE).read_text())
     assert state["current_phase"] == "done"
-    assert state["phase_status"]["schema_design"] == "complete"
+    assert state["phase_status"]["schema_design"] == "skipped"
+    assert state["skip_reasons"] == {"schema_design": SKIP_REASON}
     assert state["phase_status"]["synthesis"] == "complete"
 
     job_dir = artifacts / "wordpress" / state["job_id"]
     # Schema design was skipped, not half-run: no designer output, no group split.
     assert list(job_dir.glob("schema-*/**/*.json")) == []
-    out = capsys.readouterr()
-    assert "schema design skipped (llm_mode=none)" in (out.out + out.err)
+    out = capsys.readouterr().out
+    # Compact stdout (#282): the status line carries the same skip and reason ...
+    lines = [json.loads(line) for line in out.splitlines() if line.startswith("{")]
+    (schema_line,) = [line for line in lines if line.get("phase") == "schema_design"]
+    assert schema_line["status"] == "skipped"
+    assert schema_line["reason"] == SKIP_REASON
+    # ... and the progress log has the per-engine skip message.
+    log = (tmp_path / lines[-1]["log"]).read_text()
+    assert "schema design skipped (llm_mode=none)" in log
     # Synthesis still produced its deterministic report.
     (report_path,) = job_dir.glob("synthesis/v*/report.json")
 
@@ -315,3 +323,52 @@ def test_run_schema_design_with_injected_none_mode_skips_the_designer(tmp_path, 
     )
     assert model_calls == []
     assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_state_records_complete_schema_design_when_an_engine_has_output(
+    monkeypatch, tmp_path, model_calls
+):
+    """Only an all-skipped schema design is "skipped" in the state file."""
+    from scripts import run_assessment
+    from src.orchestrator.local_orchestrator import LocalOrchestrator
+
+    def design_one(self, job_id, db, scope):
+        version = self._get_assignment_version(job_id, db)
+        engine = sorted(self._get_engines_with_in_scope_queries(job_id, db, version))[0]
+        self.store.write_json(f"{db}/{job_id}/schema-{engine}/v{version}/schema_output.json", {})
+
+    monkeypatch.setattr(LocalOrchestrator, "_run_schema_design", design_one)
+    monkeypatch.setattr(LocalOrchestrator, "_run_post_schema_routing", lambda self, *a: None)
+    monkeypatch.setattr(LocalOrchestrator, "_run_synthesis", lambda self, *a: None)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_assessment.py",
+            "--file",
+            str(_wordpress_collection(tmp_path)),
+            "--db",
+            "wordpress",
+            "--llm-mode",
+            "bedrock",
+            "--all",
+            "-y",
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ],
+    )
+    # Reality check would call Bedrock; run it deterministically.
+    real_rc = run_assessment.phase_reality_check
+    monkeypatch.setattr(
+        run_assessment,
+        "phase_reality_check",
+        lambda store, job_id, db, llm_mode: real_rc(store, job_id, db, "none"),
+    )
+
+    run_assessment.main()
+
+    state = json.loads((tmp_path / run_assessment.STATE_FILE).read_text())
+    assert state["phase_status"]["schema_design"] == "complete"
+    assert "skip_reasons" not in state
+    assert model_calls == []
