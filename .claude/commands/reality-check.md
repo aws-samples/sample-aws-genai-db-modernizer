@@ -153,3 +153,6 @@ Do NOT flag:
    ```bash
    uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
    ```
+
+   It prints a `{"phase": "reality_check", ...}` status line, then a `{"log": ...}` line
+   naming the progress log. A `"status": "error"` line's `message` is the reason.

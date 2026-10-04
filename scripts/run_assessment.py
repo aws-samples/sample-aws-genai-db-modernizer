@@ -20,6 +20,19 @@ Usage:
 
 Outputs JSON to stdout after each phase (one line per phase for UI/orchestrator progress).
 Updates .modernizer-state.json after each phase so the UI can track progress.
+
+Output modes (issue #278):
+    * Compact (default when stdout is not a terminal, e.g. a headless Claude Code
+      session or a pipe): stdout carries only the ``{"phase": ...}`` status lines
+      and one final line pointing at the log that holds the banners and progress:
+      ``{"log": "artifacts/<db>/<job>/logs/run_assessment.log", "log_offset": N,
+      "log_lines": M}`` (``log_offset``/``log_lines`` = this run's lines, as Read
+      ``offset``/``limit``; the log is appended to by later runs of the job). An
+      unexpected exception becomes ``{"phase": <phase>, "status": "error", ...}``
+      with the traceback in the log. Before the job directory exists the final
+      line is ``{"log": null, "output_tail": "..."}``.
+    * Verbose (``--verbose``, or stdout is a terminal): the full colored
+      progress on stdout and banners on stderr, as before; no log file.
 """
 
 import json
@@ -31,6 +44,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scripts._compact_output import CompactConsole, want_verbose  # noqa: E402
 
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -71,12 +86,36 @@ class _ColorizedStream:
         return getattr(self._stream, name)
 
 
-sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
+LOG_NAME = "run_assessment.log"
+
+# Set by main() in compact mode (see the module docstring); None when verbose.
+_CONSOLE: CompactConsole | None = None
+# The phase running now, so an unexpected exception is reported against it.
+_CURRENT_PHASE = "init"
+
+
+def _want_verbose(flag: bool, stdout=None) -> bool:
+    return want_verbose(flag, stdout)
 
 
 def _output(phase: str, data: dict) -> None:
     """Print phase progress as JSON to stdout."""
-    print(json.dumps({"phase": phase, **data}), flush=True)
+    line = json.dumps({"phase": phase, **data})
+    if _CONSOLE is not None:
+        _CONSOLE.status(line)
+    else:
+        print(line, flush=True)
+
+
+def _attach_log(artifact_root: str, db: str, job_id: str) -> None:
+    """In compact mode, send progress to ``<artifact_root>/<db>/<job>/logs/``."""
+    if _CONSOLE is not None:
+        _CONSOLE.attach(os.path.join(artifact_root, db, job_id, "logs", LOG_NAME))
+
+
+def _start_phase(phase: str) -> None:
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = phase
 
 
 def _error(phase: str, message: str) -> None:
@@ -511,7 +550,51 @@ def main() -> None:
         default="./artifacts",
         help="Root directory for local artifacts (default: ./artifacts)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Print the full progress to stdout (the default only when stdout is a "
+            "terminal). Otherwise stdout has only the phase status lines and a "
+            "pointer to artifacts/<db>/<job>/logs/run_assessment.log"
+        ),
+    )
     args = parser.parse_args()
+
+    if _want_verbose(args.verbose):
+        sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
+        try:
+            _run(args)
+        finally:
+            sys.stdout = sys.stdout._stream  # type: ignore[attr-defined]
+        return
+
+    global _CONSOLE
+    _start_phase("init")
+    console = CompactConsole(sys.stdout, sys.stderr)
+    _CONSOLE = console
+    sys.stdout = sys.stderr = console  # type: ignore[assignment]
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"### run_assessment.py {' '.join(sys.argv[1:])}  [{ts}]", flush=True)
+        _run(args)
+    except Exception as exc:
+        import traceback
+
+        traceback.print_exc()
+        info = console.pointer()
+        message = f"{type(exc).__name__}: {exc}"[:1000]
+        _output(_CURRENT_PHASE, {"status": "error", "message": message, "log": info["log"]})
+        exc.__compact_logged__ = True  # type: ignore[attr-defined]
+        raise
+    finally:
+        sys.stdout, sys.stderr = console.stdout, console.stderr
+        _CONSOLE = None
+        console.close()
+
+
+def _run(args) -> None:  # type: ignore[no-untyped-def]
+    """Run the phases ``args`` asks for (main() has set up the output mode)."""
 
     from scripts._sandbox import sandbox_violation
 
@@ -527,6 +610,8 @@ def main() -> None:
     if args.resume_reality_check:
         if not args.job_id or not args.db:
             _error("init", "--resume-reality-check requires --job-id and --db")
+        _attach_log(args.artifact_root, args.db, args.job_id)
+        _start_phase("reality_check")
         phase_reality_check_finalize(store, args.job_id, args.db)
         state = _read_state()
         state["selected_engines"] = _surviving_engines(
@@ -552,7 +637,9 @@ def main() -> None:
     # Determine starting point
     if args.file:
         # Full pipeline from collector file
+        _start_phase("collect")
         job_id, db_name = phase_collect(args.file, args.db, store)
+        _attach_log(args.artifact_root, db_name, job_id)
         state = {
             "job_id": job_id,
             "database_name": db_name,
@@ -569,6 +656,7 @@ def main() -> None:
         db_name = args.db
         if not db_name:
             _error("init", "--db is required when using --job-id")
+        _attach_log(args.artifact_root, db_name, job_id)
         state = _read_state()
         if state and args.mode:
             state["experience_mode"] = args.mode
@@ -588,6 +676,7 @@ def main() -> None:
         return  # unreachable
 
     # Phase: Triage
+    _start_phase("triage")
     selected_engines = phase_triage(store, job_id, db_name)
     state["selected_engines"] = selected_engines
     state["phase_status"]["triage"] = "complete"
@@ -598,18 +687,21 @@ def main() -> None:
     # The LLM advisor enriches text but does not change routing decisions.
     # Real LLM value starts at reality-check. Pass --llm-mode to analysis only
     # if you explicitly want richer recommendation text (at ~9min cost).
+    _start_phase("analysis")
     phase_analysis(store, job_id, db_name, selected_engines, llm_mode="none")
     state["phase_status"]["analysis"] = "complete"
     state["current_phase"] = "assignment"
     _write_state(state)
 
     # Phase: Assignment
+    _start_phase("assignment")
     phase_assignment(store, job_id, db_name)
     state["phase_status"]["assignment"] = "complete"
     state["current_phase"] = "reality_check"
     _write_state(state)
 
     # Phase: Reality Check
+    _start_phase("reality_check")
     rc_status = phase_reality_check(store, job_id, db_name, args.llm_mode)
     if rc_status == "awaiting_llm":
         state["phase_status"]["reality_check"] = "awaiting_llm"
@@ -627,15 +719,18 @@ def main() -> None:
         if not args.yes:
             print(
                 "\n  Assignment complete. Press Enter to continue to Schema Design (Ctrl+C to stop).",
-                file=sys.stderr,
+                file=_CONSOLE.stderr if _CONSOLE is not None else sys.stderr,
+                flush=True,
             )
             input()
 
+        _start_phase("schema_design")
         phase_schema_design(store, job_id, db_name, args.llm_mode)
         state["phase_status"]["schema_design"] = "complete"
         state["current_phase"] = "synthesis"
         _write_state(state)
 
+        _start_phase("synthesis")
         phase_synthesis(store, job_id, db_name, args.llm_mode)
         state["phase_status"]["synthesis"] = "complete"
         state["current_phase"] = "done"
@@ -643,4 +738,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        if getattr(exc, "__compact_logged__", False):
+            sys.exit(1)  # already reported on stdout; traceback is in the log
+        raise

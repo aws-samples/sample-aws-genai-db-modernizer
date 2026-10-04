@@ -55,7 +55,7 @@ The orchestrator's job is ONLY:
 
 - Read `.modernizer-state.json` for current state
 - Dispatch subagents for each phase
-- Read the script's stdout (1-line JSON status)
+- Read the script's stdout (its JSON status lines)
 - Update `.modernizer-state.json` (via the Edit/Write tools, never `sed` or another Bash edit)
 - Present brief summaries to the user
 - Handle errors and decision gates
@@ -78,7 +78,16 @@ Run the full deterministic pipeline in one command (no subagent needed):
 uv run python scripts/run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}
 ```
 
-The database name is derived from the collector filename (e.g., `wordpress-collection.json` → `wordpress`). The script outputs one JSON line per phase to stdout and updates `.modernizer-state.json` after each phase so the UI shows progress.
+The database name is derived from the collector filename (e.g., `wordpress-collection.json` → `wordpress`). The script updates `.modernizer-state.json` after each phase so the UI shows progress.
+
+Its stdout is short and is the whole tool result: one JSON status line per phase (`{"phase": "collect", ...}`, `"triage"`, `"analysis"`, `"assignment"`, `"reality_check"`), then one last line that points at the progress log:
+
+```text
+{"log": "artifacts/{database_name}/{job_id}/logs/run_assessment.log", "log_offset": 1, "log_lines": 1376}
+```
+
+- Take `job_id` from the `collect` line and the next step from the `reality_check` line. Run the command exactly as shown: do not pipe it through `tail`, `cut` or anything else, and do not add `--verbose` (that prints the full progress to stdout, about 100 KB on a large schema, which the session cannot see inline).
+- A line with `"status": "error"` (or a non-zero exit) is a phase failure for that line's `phase`, with its `message` as the reason (see Error Handling). Only then, if the message is not enough, Read the `log` path with the Read tool, `offset` = `log_offset` and `limit` = `log_lines` (for a long log, read just the last 200 lines of that range). If the last line is `{"log": null, "output_tail": ...}` the job directory was never created; `output_tail` is the output.
 
 **If reality check returns `awaiting_llm` (this is the expected path):**
 
@@ -94,6 +103,8 @@ The database name is derived from the collector filename (e.g., `wordpress-colle
    ```bash
    uv run python scripts/run_assessment.py --job-id {job_id} --db {database_name} --resume-reality-check
    ```
+
+   It prints the same way: a `{"phase": "reality_check", ...}` status line (`"status": "complete"`, or `"error"` with a `message`), then the `{"log": ...}` line (this run's lines are appended to the same log).
 
 **DO NOT read the LLM input file yourself. DO NOT produce the consolidation response yourself. The subagent handles this with a clean context following the /reality-check skill.**
 
@@ -218,7 +229,7 @@ When every subagent you dispatched has reported, do not wait for anything else. 
 2. **Parallel phases launch in a SINGLE message** to enable true concurrency.
 3. **Only dispatch for selected engines.** If triage selects 2 engines, launch 2 subagents — not 4.
 4. **Subagent task descriptions are minimal.** Use the task-text templates above: the skill name, the required args, and the fixed rules below. The subagent loads the skill and follows it.
-5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents.
+5. **The orchestrator reads ONLY `.modernizer-state.json` and script stdout.** Never artifact contents. The one exception is the `run_assessment.py` progress log named by its `{"log": ...}` line, and only to diagnose a phase that printed `"status": "error"`.
 6. **The reality check subagent is NON-OPTIONAL.** The orchestrator must NEVER attempt to read llm_input.json or write llm_responses/ itself.
 7. **Every dispatch's task text includes the tool-use rule:** "Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`." The subagent loads its own skill, which repeats the same rule, but the dispatch text carries it too so the rule holds even before the skill loads.
 8. **Nesting is one level deep.** Only the orchestrator dispatches subagents. Every dispatch's task text includes "Do not dispatch subagents yourself." (and "Unattended: do not ask the user anything."): a subagent's own subagents report to the orchestrator, not to it, so a subagent that dispatches and then ends its turn leaves its work unfinished.
