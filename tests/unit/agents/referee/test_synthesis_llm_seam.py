@@ -360,7 +360,7 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
         assert "effective_architecture" in prepare_synthesis_llm_input(self._det())
 
     def test_has_migration_waves(self):
-        # Review finding 12: the LLM gets the waves as read-only facts, so an
+        # #225: the LLM gets the waves as read-only facts, so an
         # executive-summary narrative can't silently assume a different sequence.
         assert "migration_waves" in prepare_synthesis_llm_input(self._det())
 

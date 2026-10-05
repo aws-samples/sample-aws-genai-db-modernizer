@@ -1775,7 +1775,7 @@ def slide_sequencing(prs, f):
             (
                 f"{fmt_num(w['cached_share'], 1)}% calls cached"
                 if w.get("cached_share") and not w["workload"]
-                else f"{w['workload']:.1f}% workload"
+                else f"{w['workload']:.1f}% query patterns"
             ),
             # A labelled figure ("60% (signal only)") fills the cell on its own
             w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} confidence",
@@ -1784,12 +1784,13 @@ def slide_sequencing(prs, f):
         for j, val in enumerate(stats):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)
             para(tf, val, size=11.5, bold=(j == 1), color=PAPER if j != 1 else accent, first=True)
-        # #225: every wave shows its own real gate (not one fixed "load test at
-        # production scale" banner drawn only after wave 1), and the text is
-        # clipped (or the rationale dropped) to fit the card (#225 re-check item 3).
+        # #225: every wave shows its own gate, and the text is clipped (or the
+        # rationale dropped) to fit the card.
         box_w, box_h = 9.6, card_h - 0.44
         rationale_text, gate_text = _wave_card_text(w["note"], w.get("gate", ""), box_w, box_h)
         tf = textbox(s, 2.25, y + 0.44, box_w, max(box_h, 0.01))
+        # No top/bottom inset: the text area is the full box _wave_card_text budgets for.
+        tf.margin_top = tf.margin_bottom = 0
         if rationale_text:
             para(tf, rationale_text, size=10.0, color=MUTED, first=True, space_after=1)
         if gate_text:

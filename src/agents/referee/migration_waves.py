@@ -283,7 +283,8 @@ def _table_group_coverage_note(
             clauses.append(
                 f"{n_q} {_plural(n_q, 'query').replace('querys', 'queries')} read {n_t} "
                 f"{_plural(n_t, 'table')} ({', '.join(owned_table_list)}) {display_engine(other)} "
-                f"owns ({wave_text}); keep a copy in sync via CDC until then."
+                f"owns ({wave_text}) and keeps owning; keep a {display_engine(dynamo_engine)} copy of "
+                f"them in sync via CDC."
             )
     if no_owned_table:
         clauses.append(
@@ -477,7 +478,7 @@ def _search_wave(
     fallback_owner = retained_engine or (source_engine or None)
 
     if not rows:
-        # Review finding 2: queries exist, but the SQL gave no resolvable source
+        # #225: queries exist, but the SQL gave no resolvable source
         # table (every ``source_tables`` entry was pseudo/unknown or dropped as
         # parser noise). Say so explicitly instead of silently showing no owner.
         owner_label = display_engine(fallback_owner) if fallback_owner else "the source database"

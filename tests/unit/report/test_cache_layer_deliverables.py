@@ -151,7 +151,7 @@ class TestDeck:
         ) in text
         # This fixture has no relational engine in ranking, so the source engine
         # can't be inferred and the sentence falls back to the generic phrasing
-        # rather than naming a database (#225 re-check item 8).
+        # rather than naming a database.
         assert "cache-aside in front of the current source database" in text
         assert "Cache hit rate and invalidation verified against the source database" in text
         assert "ElastiCache caches 20 hot reads (83.4% of calls) and owns none of the workload" in (

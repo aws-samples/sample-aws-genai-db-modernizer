@@ -784,7 +784,7 @@ def render_decision_report_html(
     risk = report.get("risk_assessment") or {}
     tco = report.get("tco_analysis") or {}
     engines = _architecture_engines(report)
-    # #225 re-check item 5: prefer the schema-design-based figure (#257/#258)
+    # #225: prefer the schema-design-based figure (#257/#258)
     # when it has one; fall back to the wave-table count (resolve_migration_waves,
     # the same fallback the deck tile uses) only when that figure is 0, so this
     # sentence can't disagree with the roadmap just below it on the same page.

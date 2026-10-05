@@ -248,7 +248,7 @@ def test_existing_reality_check_is_left_alone():
 
 
 # ---------------------------------------------------------------------------
-# migration_waves backfill (#225 re-check item 4): a report synthesized
+# migration_waves backfill (#225): a report synthesized
 # before #225 has no migration_waves at all, so the interactive report must
 # fall back to the same roadmap the decision report, engineering report, deck
 # and /results API already derive via resolve_migration_waves -- not render

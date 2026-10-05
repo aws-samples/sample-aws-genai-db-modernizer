@@ -536,7 +536,7 @@ class TestPseudoAndUnknownTables:
 
 class TestOwnerWaveCoverage:
     def test_every_table_opensearch_serves_has_an_owner_wave(self):
-        """Review finding 1's regression test: no wave table is left without an
+        """#225: no wave table is left without an
         owner wave somewhere in the roadmap (the product rule in the task body:
         "Every table [OpenSearch] serves has a durable owner ... in an owner
         wave")."""
