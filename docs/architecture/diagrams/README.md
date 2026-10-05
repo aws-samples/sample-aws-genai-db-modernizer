@@ -1,6 +1,6 @@
 # Architecture Diagrams
 
-Mermaid diagrams for the Database Modernizer Assessment architecture. Render in GitLab/GitHub, VS Code (with Mermaid extension), or [mermaid.live](https://mermaid.live/).
+Mermaid diagrams for the Database Modernizer Assessment architecture. Render in GitHub, VS Code (with Mermaid extension), or [mermaid.live](https://mermaid.live/).
 
 ## Diagrams
 
@@ -22,4 +22,4 @@ Diagrams 2 (ECS Fargate deployment), 3 (Docker Compose deployment) and 12
 [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)
 and have been deleted.
 
-**Related:** [High-Level Design](../high-level-design.md) · [ADRs](../decisions/) · [Implementation Guides](../guides/)
+**Related:** [High-Level Design](../high-level-design.md) · [ADRs](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/architecture/decisions/) · [Implementation Guides](../../guides/README.md)

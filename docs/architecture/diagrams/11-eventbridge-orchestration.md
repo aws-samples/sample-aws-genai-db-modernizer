@@ -1,11 +1,11 @@
 > **Status: Superseded**
-> This document describes the original EventBridge-based orchestration architecture. It has been superseded by [11-orchestration-architecture.md](11-orchestration-architecture.md) per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md). EventBridge now handles progress notifications only. Retained for historical context.
+> This document describes the original EventBridge-based orchestration architecture. It has been superseded by [11-orchestration-architecture.md](11-orchestration-architecture.md) per [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md). EventBridge now handles progress notifications only. Retained for historical context.
 
 ---
 
 # EventBridge Orchestration
 
-> **⚠️ Superseded by [Orchestration Architecture](11-orchestration-architecture.md)** per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md). EventBridge now handles progress notifications only — Step Functions orchestrates the workflow. Retained for historical reference.
+> **⚠️ Superseded by [Orchestration Architecture](11-orchestration-architecture.md)** per [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md). EventBridge now handles progress notifications only — Step Functions orchestrates the workflow. Retained for historical reference.
 
 Event-driven agent orchestration using EventBridge and ECS Fargate. Agents are decoupled — they communicate through events, not direct calls.
 

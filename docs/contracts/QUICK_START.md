@@ -63,7 +63,7 @@ Version format: **MAJOR.MINOR** (no PATCH)
 - Breaking changes → Increment MAJOR version (1.2 → 2.0)
 - New features → Increment MINOR version (1.2 → 1.3)
 
-**See:** [ADR-008: Contract Versioning](../architecture/decisions/ADR-008-contract-versioning.md)
+**See:** [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 
 ## For Contract Maintainers
 
@@ -148,10 +148,10 @@ git log --oneline -- src/contracts/
 ## Resources
 
 - **Main Spec**: [agent-contracts-spec.md](agent-contracts-spec.md)
-- **Pydantic Models**: [src/contracts/](../../src/contracts/)
+- **Pydantic Models**: [src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)
 - **Deprecated Schemas**: [schemas/README.md](schemas/README.md)
-- **ADR-002**: [Structured Output with Pydantic](../architecture/decisions/ADR-002-structured-output-and-validation.md)
-- **ADR-008**: [Contract Versioning](../architecture/decisions/ADR-008-contract-versioning.md)
+- **ADR-002**: [Structured Output with Pydantic](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
+- **ADR-008**: [Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 
 ## Questions?
 

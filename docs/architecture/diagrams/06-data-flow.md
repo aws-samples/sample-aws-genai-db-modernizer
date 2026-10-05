@@ -109,4 +109,4 @@ JavaScript (k6 scripts).
 
 ---
 
-**Related:** [Storage Architecture](07-storage-architecture.md) | [Workflow Sequence](05-workflow-sequence.md) (superseded — see banner) | [ADR-019](../decisions/ADR-019-query-journey-materialization.md) | [ADR-020](../decisions/ADR-020-load-testing-stage.md)
+**Related:** [Storage Architecture](07-storage-architecture.md) | [Workflow Sequence](05-workflow-sequence.md) (superseded — see banner) | [ADR-019](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md) | [ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)

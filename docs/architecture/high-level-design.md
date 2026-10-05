@@ -32,8 +32,8 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 - **Local orchestration**: A single `LocalOrchestrator` runs phases as direct function calls against the local artifact store — no job-scheduling service, message bus, or hosted workflow engine
 - **Two human-in-the-loop gates**: Pipeline pauses after triage (assignment review) and after reality check (schema design approval); the user resumes each gate via the UI, API, or the relevant Claude Code command
 - **Reality check consolidation**: CTO-level engine consolidation eliminates low-value engines, reducing operational complexity
-- **Load testing validation**: k6 empirical performance testing against real target infrastructure with per-pattern latency and cost measurement ([ADR-020](decisions/ADR-020-load-testing-stage.md))
-- **Query journey materialization**: Progressive per-query files tracking each query from source through assignment, schema design, and load testing ([ADR-019](decisions/ADR-019-query-journey-materialization.md)), now served from the context graph read-model ([ADR-023](decisions/ADR-023-context-graph-layer.md))
+- **Load testing validation**: k6 empirical performance testing against real target infrastructure with per-pattern latency and cost measurement ([ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md))
+- **Query journey materialization**: Progressive per-query files tracking each query from source through assignment, schema design, and load testing ([ADR-019](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)), now served from the context graph read-model ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
 - **Hybrid analysis selection**: AI-driven triage selects relevant analysis agents; the local orchestrator executes them deterministically
 - **AWS Transform integration**: `src/atx_orchestrator/` lets AWS Transform run the same agents over S3-backed storage, independent of the local-only API/UI path
 - **Bedrock integration**: AWS Bedrock for AI-powered analysis (optional, enhances results)
@@ -84,7 +84,7 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 **Application Layer:**
 
 - Web UI (React SPA, local build): Assessment report viewer, interactive recommendation review, query journey explorer
-- API Server (FastAPI, run locally with `uvicorn`): REST endpoints for the UI, loopback-only by default (see [`src/api/host_guard.py`](../../src/api/host_guard.py))
+- API Server (FastAPI, run locally with `uvicorn`): REST endpoints for the UI, loopback-only by default (see [`src/api/host_guard.py`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/api/host_guard.py))
 - Orchestrator (`LocalOrchestrator`): runs phases as direct function calls against the local artifact store — no job-scheduling service or message bus
 
 **Agent Layer (Strands SDK):**
@@ -100,7 +100,7 @@ The core pipeline is **fully deterministic** — pattern detection, scoring, ass
 
 **Cross-Cutting Concerns:**
 
-- Query Journey Materialization: per-query detail served from the context graph read-model, with a fallback to legacy progressive per-query files for jobs that predate it ([ADR-023](decisions/ADR-023-context-graph-layer.md))
+- Query Journey Materialization: per-query detail served from the context graph read-model, with a fallback to legacy progressive per-query files for jobs that predate it ([ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md))
 
 **Data Storage Layer:**
 
@@ -152,9 +152,9 @@ was retired in favor of running the tool directly where the user already is
 (see [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)).
 The CloudFormation templates, Docker images and deploy scripts for the hosted
 service are gone. Two CloudFormation templates remain for unrelated reasons:
-[`example-ci-runner-iam.yaml`](../../infrastructure/cloudformation/example-ci-runner-iam.yaml),
+[`example-ci-runner-iam.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/example-ci-runner-iam.yaml),
 a sample for anyone standing up their own CI runner role, and
-[`automation.yaml`](../../infrastructure/cloudformation/automation.yaml),
+[`automation.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/automation.yaml),
 which provisions a per-VPC SSM automation instance for the opt-in live
 collection path described in §2.2 and §7.1 (kept per a maintainer decision —
 see [#342](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/342)
@@ -289,7 +289,7 @@ the hosted-deployment removal.
 - **Future engines**: OpenSearch (k6 HTTP module), ElastiCache (xk6-redis), DocumentDB (xk6-mongo)
 - Generated k6 scripts serve dual purpose: test execution AND customer deliverable (copy-paste ready code)
 - Non-blocking: on failure, catches and proceeds to synthesis (results still valid without load test)
-- Per [ADR-020](decisions/ADR-020-load-testing-stage.md)
+- Per [ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
 
 **9. Query Journey Read-Model (Cross-Cutting)**
 
@@ -303,7 +303,7 @@ the hosted-deployment removal.
 - Supersedes the progressive per-query journey files in [ADR-019]
   (decisions/ADR-019-query-journey-materialization.md), which caused artifact-API
   throttling on the ATX backend when writing ~1,654 files serially
-- Per [ADR-023](decisions/ADR-023-context-graph-layer.md)
+- Per [ADR-023](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md)
 
 ### 3.2 Strands SDK Architecture
 
@@ -333,7 +333,7 @@ the hosted-deployment removal.
 **Local orchestration.** A prior version of this project used a three-layer
 cloud orchestration (Step Functions for workflow, EventBridge for
 notifications, ECS tasks per agent — see
-[ADR-016](decisions/ADR-016-compute-and-orchestration-strategy.md), now
+[ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), now
 superseded). The current `LocalOrchestrator` (`src/orchestrator/`) replaces
 all three layers with direct, in-process function calls against the local
 artifact store:
@@ -512,7 +512,7 @@ Job IDs are UUIDs: the API uses a full `uuid.uuid4()`; the local scripts and ski
 
 **API Server:**
 
-- FastAPI application, run locally with `uv run uvicorn src.api.main:app` (see [README.md](../../README.md))
+- FastAPI application, run locally with `uv run uvicorn src.api.main:app` (see [README.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/README.md))
 - Loopback-only by default — `HostAllowlistMiddleware` (`src/api/host_guard.py`) rejects requests not addressed to a loopback host name; `MODERNIZER_ALLOWED_HOSTS` overrides it
 - REST endpoints for job management; the UI is served separately (`npm start` / local build)
 - CORS restricted to the local UI origin (`ALLOWED_ORIGIN`, default `http://localhost:3000`)
@@ -785,47 +785,46 @@ Pre-commit hooks run a subset of these scans locally (`cfn-nag` and Checkov on
 
 **Key ADRs:**
 
-- [ADR-001: State Management and Checkpoints](decisions/ADR-001-state-management-and-checkpoints.md)
-- [ADR-002: Structured Output and Validation](decisions/ADR-002-structured-output-and-validation.md)
-- [ADR-003: Progress Reporting Architecture](decisions/ADR-003-progress-reporting-architecture.md)
-- [ADR-004: RDS Tools and AWS Integration](decisions/ADR-004-rds-tools-and-aws-integration.md)
-- [ADR-005: Mini-Collectors for Large Databases](decisions/ADR-005-mini-collectors-for-large-databases.md)
-- [ADR-006: Analysis Agent Patterns](decisions/ADR-006-analysis-agent-patterns.md)
-- [ADR-007: Referee Orchestration](decisions/ADR-007-referee-orchestration.md)
-- [ADR-008: Contract Versioning](decisions/ADR-008-contract-versioning.md)
-- [ADR-009: Testing Infrastructure](decisions/ADR-009-testing-infrastructure.md)
-- [ADR-010: Release Management](decisions/ADR-010-release-management.md)
-- [ADR-011: Monorepo Structure](decisions/ADR-011-monorepo-structure.md)
-- [ADR-012: CloudFormation over CDK](decisions/ADR-012-cloudformation-over-cdk.md)
-- [ADR-013: Core Infrastructure Cost Optimization](decisions/ADR-013-core-infrastructure-cost-optimization.md)
-- [ADR-014: CI/CD Pipeline and Ephemeral Environments](decisions/ADR-014-cicd-pipeline-and-ephemeral-environments.md)
-- [ADR-015: DNS Naming Convention](decisions/ADR-015-dns-naming-convention.md)
-- [ADR-016: Compute and Orchestration Strategy](decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [ADR-017: Analysis Agent Scoring Framework](decisions/ADR-017-analysis-agent-scoring-framework.md)
-- [ADR-018: Reality Check and Human Approval Gate](decisions/ADR-018-reality-check-and-human-gate.md)
-- [ADR-019: Query Journey Materialization](decisions/ADR-019-query-journey-materialization.md)
-- [ADR-020: Load Testing Stage Architecture](decisions/ADR-020-load-testing-stage.md)
+- [ADR-001: State Management and Checkpoints](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-001-state-management-and-checkpoints.md)
+- [ADR-002: Structured Output and Validation](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
+- [ADR-003: Progress Reporting Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-003-progress-reporting-architecture.md)
+- [ADR-004: RDS Tools and AWS Integration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
+- [ADR-005: Mini-Collectors for Large Databases](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-005-mini-collectors-for-large-databases.md)
+- [ADR-006: Analysis Agent Patterns](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-006-analysis-agent-patterns.md)
+- [ADR-007: Referee Orchestration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-007-referee-orchestration.md)
+- [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
+- [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
+- [ADR-010: Release Management](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-010-release-management.md)
+- [ADR-011: Monorepo Structure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-011-monorepo-structure.md)
+- [ADR-012: CloudFormation over CDK](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-012-cloudformation-over-cdk.md)
+- [ADR-013: Core Infrastructure Cost Optimization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-013-core-infrastructure-cost-optimization.md)
+- [ADR-014: CI/CD Pipeline and Ephemeral Environments](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-014-cicd-pipeline-and-ephemeral-environments.md)
+- [ADR-015: DNS Naming Convention](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-015-dns-naming-convention.md)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-017: Analysis Agent Scoring Framework](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-017-analysis-agent-scoring-framework.md)
+- [ADR-018: Reality Check and Human Approval Gate](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-018-reality-check-and-human-gate.md)
+- [ADR-019: Query Journey Materialization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)
+- [ADR-020: Load Testing Stage Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
 
 ### Appendix B: Related Documentation
 
 **Architecture:**
 
 - [Architecture Diagrams](diagrams/README.md) - Comprehensive Mermaid diagrams
-- [Business Requirements](../01-requirements/business-requirements.md) - Business context and requirements
 
 **Contracts:**
 
 - [Agent Contracts Specification](../contracts/agent-contracts-spec.md) - Input/output contracts
-- [Contract Schemas](../contracts/schemas/) - JSON schemas for validation
+- [Contract Schemas](../contracts/schemas/README.md) - JSON schemas for validation
 
 **Data Specifications:**
 
-- [Database Collection Matrix](../data-specs/database-collection-matrix.md) - Data collection requirements
-- [Redis Migration Patterns](../data-specs/redis-migration-patterns.md) - Redis-specific patterns
+- [Database Collection Matrix](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/data-specs/database-collection-matrix.md) - Data collection requirements
+- [Redis Migration Patterns](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/data-specs/redis-migration-patterns.md) - Redis-specific patterns
 
 **Implementation:**
 
-- [Implementation Guides](../guides/) - Detailed implementation guidance
+- [Implementation Guides](../guides/README.md) - Detailed implementation guidance
 - [Testing Guide](../guides/testing-guide.md) - Testing strategies
 - [Load Testing New Engine Guide](../guides/load-testing-new-engine.md) - How to add load testing for new target engines
 

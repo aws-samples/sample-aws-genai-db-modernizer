@@ -15,17 +15,17 @@ the current architecture is:
 
 See [High-Level Design §3.3](../architecture/high-level-design.md#33-orchestration-pattern)
 for the current orchestration pattern, and
-[ADR-016](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+[ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 for the original (now superseded) rationale.
 
 ## Core Guides
 
 | Guide | Purpose | Audience |
 |-------|---------|----------|
-| [strands-agent-development-guide.md](strands-agent-development-guide.md) | Strands SDK agent patterns and entrypoint | Developers, AI assistants |
-| [strands-collector-guide.md](strands-collector-guide.md) | Collector agent implementation with Strands SDK | Developers, AI assistants |
+| [strands-agent-development-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-agent-development-guide.md) | Strands SDK agent patterns and entrypoint | Developers, AI assistants |
+| [strands-collector-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-collector-guide.md) | Collector agent implementation with Strands SDK | Developers, AI assistants |
 | [new-analysis-agent-guide.md](new-analysis-agent-guide.md) | Analysis agent implementation for target databases | Developers, AI assistants |
-| [referee-agent-guide.md](referee-agent-guide.md) | Referee-Triage and Referee-Synthesis agents | Developers, AI assistants |
+| [referee-agent-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/referee-agent-guide.md) | Referee-Triage and Referee-Synthesis agents | Developers, AI assistants |
 | [testing-guide.md](testing-guide.md) | Testing strategies for all agent types | Developers, QA |
 | [storage-architecture-guide.md](storage-architecture-guide.md) | Storage abstraction layer patterns | Developers |
 | [context-graph-query-cookbook.md](context-graph-query-cookbook.md) | Ready-to-run Cypher queries for the context graph | Developers, Solutions Architects |
@@ -59,10 +59,10 @@ output = mysql_collector(input_contract)
 
 ### For Developers
 
-1. Read [strands-agent-development-guide.md](strands-agent-development-guide.md) for the agent entrypoint pattern
-2. Read [strands-collector-guide.md](strands-collector-guide.md) for collector patterns
-3. Review [analysis-agent-guide.md](analysis-agent-guide.md) for analysis patterns
-4. Study [referee-agent-guide.md](referee-agent-guide.md) for triage + synthesis patterns
+1. Read [strands-agent-development-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-agent-development-guide.md) for the agent entrypoint pattern
+2. Read [strands-collector-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-collector-guide.md) for collector patterns
+3. Review [new-analysis-agent-guide.md](new-analysis-agent-guide.md) for analysis patterns
+4. Study [referee-agent-guide.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/referee-agent-guide.md) for triage + synthesis patterns
 5. Check [testing-guide.md](testing-guide.md) for testing strategies
 
 ### For AI Assistants
@@ -196,9 +196,9 @@ Before implementing any agent:
 ## Related Documentation
 
 - **Architecture:** [../architecture/high-level-design.md](../architecture/high-level-design.md)
-- **ADR-016:** [../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- **ADR-016:** [../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 - **Contracts:** [../contracts/agent-contracts-spec.md](../contracts/agent-contracts-spec.md)
-- **Data Specs:** [../data-specs/](../data-specs/)
+- **Data Specs:** [data-specs/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/data-specs/)
 
 ---
 

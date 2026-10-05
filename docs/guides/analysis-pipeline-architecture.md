@@ -21,7 +21,7 @@ Key points:
 - `LocalOrchestrator` runs selected agents concurrently in-process, via a
   `ThreadPoolExecutor` (no Step Functions, no per-agent ECS task — that
   hosted mechanism was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175);
-  see [ADR-016](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), now superseded)
+  see [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), now superseded)
 - Each agent reads collector output from the local artifact store (or S3,
   for AWS Transform-orchestrated jobs) using env vars, and writes its
   analysis output back the same way
@@ -63,7 +63,7 @@ Each analysis agent runs as a plain function call in the same process pool
 the local artifact store, performs analysis, and writes results back the
 same way (or to S3, for jobs run through the AWS Transform integration).
 
-See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+See [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 (superseded — describes the retired hosted mechanism) and
 [High-Level Design §3.3](../architecture/high-level-design.md#33-orchestration-pattern)
 for the current one.
@@ -412,7 +412,7 @@ def test_dynamodb_agent(mock_agent_class):
     assert output.total_analyses == 1
 ```
 
-See [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-infrastructure.md)
+See [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
 
 ---
 
@@ -452,9 +452,9 @@ jobs). Schema design uses the same pattern
 
 ## Related Documentation
 
-- [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [ADR-006: Analysis Agent Patterns](../architecture/decisions/ADR-006-analysis-agent-patterns.md)
-- [Referee Agent Guide](referee-agent-guide.md)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-006: Analysis Agent Patterns](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-006-analysis-agent-patterns.md)
+- [Referee Agent Guide](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/referee-agent-guide.md)
 - [Storage Architecture Guide](storage-architecture-guide.md)
 
 ---

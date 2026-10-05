@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Deterministic end-to-end run: pipeline with no LLM -> deliverables -> browser and PDF checks -> UI smoke.
-# Usage: ci/e2e.sh [extra pytest args]     (needs: uv, node 22, playwright browsers)
+# Deterministic end-to-end run: pipeline with no LLM -> deliverables -> browser and
+# PDF checks -> UI smoke -> help site checks.
+# Usage: ci/e2e.sh [extra pytest args]     (needs: uv, node 22, playwright browsers,
+#   the `docs` extra for the mkdocs build this script does itself)
 #
 # Env vars read:
 #   E2E_OUTPUT       - where Playwright artifacts (screenshots, traces, junit) and
@@ -48,19 +50,26 @@ fi
 
 build_ui
 
+log "build the help site (#325)"
+# tests/e2e/test_docs_site.py only serves and checks site/ -- same split as
+# build_ui/test_ui.py above. Needs the `docs` extra (mkdocs, mkdocs-material).
+uv run mkdocs build --strict
+uv run python scripts/build_docs_sample.py --site-dir site
+
 log "pipeline + report checks (chromium, webkit)"
 # --output is its own subdirectory, not $E2E_OUTPUT itself: pytest-playwright's
 # delete_output_dir autouse fixture rmtree()s whatever --output points at, at the
 # start of EVERY session. Pointing both invocations' --output straight at
 # $E2E_OUTPUT would let the second invocation silently delete the first
 # invocation's junit file and the deliverables already copied there.
-uv run pytest tests/e2e --ignore=tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip \
+uv run pytest tests/e2e --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py \
+  -m e2e -p no:xdist --fail-on-skip \
   --browser chromium --browser webkit \
   --output="$E2E_OUTPUT/pw-reports" --screenshot=only-on-failure --tracing=retain-on-failure \
   --junitxml="$E2E_OUTPUT/e2e-reports-junit.xml" "$@" $E2E_REPORT_ARGS
 
-log "pipeline + UI smoke (chromium only)"
-uv run pytest tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip \
+log "UI smoke + help site checks (chromium only)"
+uv run pytest tests/e2e/test_ui.py tests/e2e/test_docs_site.py -m e2e -p no:xdist --fail-on-skip \
   --browser chromium \
   --output="$E2E_OUTPUT/pw-ui" --screenshot=only-on-failure --tracing=retain-on-failure \
   --junitxml="$E2E_OUTPUT/e2e-ui-junit.xml" "$@" $E2E_UI_ARGS

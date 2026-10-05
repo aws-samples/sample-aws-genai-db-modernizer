@@ -27,6 +27,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `ci/` | CI-agnostic entry points (`lint.sh`, `test.sh`, `e2e.sh`, `e2e-llm.sh`) and the quality judge (`ci/llm/`) |
 | `tests/` | `unit/`, `contract/`, `property/`, `graph/` (gated), `e2e/` (deterministic end-to-end), `integration/` (live stack, not gated) |
 | `docs/examples/` | Sample fixtures: `wordpress/` and `discourse/` |
+| `mkdocs.yml`, `docs/` (minus `exclude_docs`) | Help site sources (`scripts/build_docs_sample.py` renders the sample report into it; `.github/workflows/docs.yml` builds and deploys it) |
 
 ## How commands, skills and scripts fit together
 
@@ -74,6 +75,7 @@ phase deterministically, whatever `--llm-mode` says.
 ```bash
 ./scripts/setup_dev.sh                       # uv sync --extra dev + pre-commit hooks
 uv sync --extra dev --extra e2e              # add the e2e extra (Playwright, pypdf)
+uv sync --extra docs                         # add the docs extra (mkdocs, mkdocs-material) to build the help site
 uv pip install "agent-builder-sdk-aws-transform>=1.0.0"   # needed for a fully green make test
 ```
 
@@ -86,7 +88,7 @@ and `ci/e2e-llm.sh` build it for you.
 |---|---|---|---|
 | Lint | `make lint` (all pre-commit hooks) or `./ci/lint.sh` (ruff, black, isort, mypy, `validate_skills.py`) | style, types, markdownlint, secrets, command references | free: `ci/lint.sh` seconds, `make lint` about 2 minutes |
 | Unit/contract | `make test` (or `./ci/test.sh -q`) | unit, contract, property, graph; `--fail-on-skip`, no network | free, about 2 minutes |
-| Deterministic e2e | `make e2e` (or `./ci/e2e.sh`) | full pipeline on both samples with no model, HTML in Chromium + WebKit, PDF, UI smoke | free, minutes (UI build + browsers) |
+| Deterministic e2e | `make e2e` (or `./ci/e2e.sh`) | full pipeline on both samples with no model, HTML in Chromium + WebKit, PDF, UI smoke, the built help site | free, minutes (UI build + browsers) |
 | Headless LLM e2e | `make e2e-llm` (both mode by default, `E2E_LLM_FIXTURE=wordpress` by default) | real `/modernize --auto` run, the same deliverable checks, a rubric judge | real tokens, both mode: wordpress about $4 and roughly 6 minutes; discourse about $11 |
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 

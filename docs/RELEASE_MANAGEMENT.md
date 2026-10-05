@@ -14,8 +14,8 @@ This document describes the release management process for Database Modernizer A
 
 **Related ADRs:**
 
-- [ADR-010: Release Management and Version Control](02-architecture/decisions/ADR-010-release-management.md)
-- [ADR-011: Monorepo Structure](02-architecture/decisions/ADR-011-monorepo-structure.md)
+- [ADR-010: Release Management and Version Control](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-010-release-management.md)
+- [ADR-011: Monorepo Structure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-011-monorepo-structure.md)
 
 ---
 
@@ -55,7 +55,7 @@ docker-compose up  # Or: aws cloudformation deploy
 
 ### Why Monorepo?
 
-See [ADR-011: Monorepo Structure](02-architecture/decisions/ADR-011-monorepo-structure.md) for complete rationale.
+See [ADR-011: Monorepo Structure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-011-monorepo-structure.md) for complete rationale.
 
 **Key Benefits:**
 
@@ -500,7 +500,7 @@ git cherry-pick <commit-hash>
 
 ## Related Documents
 
-- [ADR-010: Release Management and Version Control](02-architecture/decisions/ADR-010-release-management.md)
-- [ADR-008: Contract Versioning](02-architecture/decisions/ADR-008-contract-versioning.md)
+- [ADR-010: Release Management and Version Control](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-010-release-management.md)
+- [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 - [Conventional Commits Specification](https://www.conventionalcommits.org/)
 - [Semantic Versioning Specification](https://semver.org/)

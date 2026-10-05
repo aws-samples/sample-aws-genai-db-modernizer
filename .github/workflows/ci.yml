@@ -80,7 +80,7 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
-        run: uv sync --locked --extra dev --extra e2e
+        run: uv sync --locked --extra dev --extra e2e --extra docs
       - name: End-to-end
         run: ./ci/e2e.sh
       - name: Upload results

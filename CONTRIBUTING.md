@@ -350,11 +350,13 @@ uv run pytest tests/contract/ -v
 `make test` needs the AWS Transform SDK for the `atx_orchestrator` tests
 (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`; see
 `tests/unit/atx_orchestrator/conftest.py`) and `make e2e` needs the `e2e`
-extra (`uv sync --extra e2e`), Node 22, and Playwright's browsers (`ci/e2e.sh`
-installs the browsers and builds the UI itself). `make e2e-llm` needs all of
-that plus model access and costs real tokens -- its approximate cost/time
-per run is to be measured on the first internal-pipeline run (see
-`ci/README.md`'s `e2e-llm.sh` section).
+extra (`uv sync --extra e2e`), the `docs` extra (`uv sync --extra docs`,
+needed to build the help site this suite also checks), Node 22, and
+Playwright's browsers (`ci/e2e.sh` installs the browsers and builds the UI
+and the help site itself). `make e2e-llm` needs all of that plus model
+access and costs real tokens -- its approximate cost/time per run is to be
+measured on the first internal-pipeline run (see `ci/README.md`'s
+`e2e-llm.sh` section).
 
 ### Local Pipeline Testing
 

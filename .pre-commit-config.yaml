@@ -18,6 +18,9 @@ repos:
       - id: check-added-large-files
         name: Check for large files
         args: ['--maxkb=1000']
+        # The README / help-site demo GIF is a time-lapse of a full run; keep the
+        # 1 MB limit for everything else.
+        exclude: ^docs/assets/[^/]+\.gif$
       - id: check-merge-conflict
         name: Check for merge conflicts
       - id: check-case-conflict

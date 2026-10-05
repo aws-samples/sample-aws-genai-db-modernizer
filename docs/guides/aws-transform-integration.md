@@ -3,7 +3,7 @@
 How the existing deterministic database modernization pipeline runs on AWS
 Transform, and how to work on the integration. The code lives in
 `src/atx_orchestrator/`; this guide is the reader-oriented companion to that
-module's [`README.md`](../../src/atx_orchestrator/README.md).
+module's [`README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md).
 
 **Audience:** developers and solutions architects picking up the AWS Transform
 integration.
@@ -174,6 +174,6 @@ the team's operational handoff rather than in this repo.
 
 ## Related documentation
 
-- Module reference: [`src/atx_orchestrator/README.md`](../../src/atx_orchestrator/README.md)
-- Compute and orchestration strategy: [ADR-016](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- Module reference: [`src/atx_orchestrator/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md)
+- Compute and orchestration strategy: [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 - Agent contracts: [../contracts/agent-contracts-spec.md](../contracts/agent-contracts-spec.md)

@@ -454,7 +454,7 @@ if __name__ == "__main__":
 
 - [High-Level Design](../high-level-design.md) - Section 3.5 (Agent Communication)
 - [Architecture Review](../ARCHITECTURE_REVIEW.md) - Point #1
-- [Strands Collector Guide](../guides/strands-collector-guide.md)
+- [Strands Collector Guide](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-collector-guide.md)
 - [Agent Contracts Spec](../contracts/agent-contracts-spec.md)
 
 ---

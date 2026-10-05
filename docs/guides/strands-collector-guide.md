@@ -79,7 +79,7 @@ def on_complete(context):
     save_checkpoint(job_id, stage_name, context.result)
 ```
 
-**Full Details:** [ADR-001](../architecture/decisions/ADR-001-state-management-and-checkpoints.md)
+**Full Details:** [ADR-001](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-001-state-management-and-checkpoints.md)
 
 ---
 
@@ -116,7 +116,7 @@ agent = Agent(
 output = agent(input_data)
 ```
 
-**Full Details:** [ADR-002](../architecture/decisions/ADR-002-structured-output-and-validation.md)
+**Full Details:** [ADR-002](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
 
 ---
 
@@ -145,7 +145,7 @@ def on_complete(context):
     publish_progress(job_id, stage_name, "completed")
 ```
 
-**Full Details:** [ADR-003](../architecture/decisions/ADR-003-progress-reporting-architecture.md)
+**Full Details:** [ADR-003](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-003-progress-reporting-architecture.md)
 
 ---
 
@@ -181,7 +181,7 @@ tools = [
 ]
 ```
 
-**Full Details:** [ADR-004](../architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
+**Full Details:** [ADR-004](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
 
 ---
 
@@ -861,7 +861,7 @@ validate_output = Tool(
 
 ## 6. AWS Integration and RDS Tools
 
-**Architecture Decision:** See [ADR-004: RDS Tools and AWS Integration](../architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
+**Architecture Decision:** See [ADR-004: RDS Tools and AWS Integration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
 
 ### 6.1 Unified Credential Manager
 
@@ -1677,7 +1677,7 @@ def resume_or_collect(job_id: str, input_contract: dict) -> CollectorOutput:
     return collector.collect()
 ```
 
-**See:** [ADR-001: State Management and Checkpoints](../architecture/decisions/ADR-001-state-management-and-checkpoints.md)
+**See:** [ADR-001: State Management and Checkpoints](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-001-state-management-and-checkpoints.md)
 
 ---
 
@@ -1733,7 +1733,7 @@ async def _collect_parallel(self, tables: List[str]) -> CollectorOutput:
 | 1,000 tables | 2 hours | 15 min | 8x |
 | 5,000 tables | 10 hours | 20 min | 30x |
 
-**See:** [ADR-005: Mini-Collectors for Large Databases](../architecture/decisions/ADR-005-mini-collectors-for-large-databases.md)
+**See:** [ADR-005: Mini-Collectors for Large Databases](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-005-mini-collectors-for-large-databases.md)
 
 ---
 
@@ -1784,7 +1784,7 @@ rds_client = boto3.client(
 token = rds_client.generate_db_auth_token(...)
 ```
 
-**See:** [ADR-004: RDS Tools and AWS Integration](../architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
+**See:** [ADR-004: RDS Tools and AWS Integration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-004-rds-tools-and-aws-integration.md)
 
 ---
 
@@ -1843,7 +1843,7 @@ def test_mysql_collector_agent(mock_agent_class):
     assert output.contract_version == "1.2"
 ```
 
-**See:** [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-infrastructure.md)
+**See:** [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
 
 ---
 

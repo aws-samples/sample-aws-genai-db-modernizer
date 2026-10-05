@@ -9,7 +9,7 @@
 > [High-Level Design §3.3](../high-level-design.md#33-orchestration-pattern).
 > Retained for historical context.
 
-Three-layer orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md): Step Functions for workflow (with two human-in-the-loop approval gates — after triage and after reality check), EventBridge for notifications, agents for internal parallelism.
+Three-layer orchestration per [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md): Step Functions for workflow (with two human-in-the-loop approval gates — after triage and after reality check), EventBridge for notifications, agents for internal parallelism.
 
 ```mermaid
 graph TB
@@ -99,4 +99,4 @@ Collectors decide at runtime whether to spawn mini-collectors via `ecs:RunTask`.
 
 ---
 
-**Related:** [Workflow Sequence](05-workflow-sequence.md) | [Progress Reporting](10-progress-reporting.md) | [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md)
+**Related:** [Workflow Sequence](05-workflow-sequence.md) | [Progress Reporting](10-progress-reporting.md) | [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)

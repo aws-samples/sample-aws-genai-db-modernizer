@@ -12,7 +12,7 @@
 > Retained for the agent taxonomy; don't read the orchestration mechanism
 > as current.
 
-Multi-agent architecture using Strands SDK, originally designed around Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
+Multi-agent architecture using Strands SDK, originally designed around Step Functions orchestration per [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
 
 ```mermaid
 graph TB

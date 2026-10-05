@@ -40,31 +40,38 @@ credentials. Accepts extra pytest args, e.g. `./ci/test.sh --cov=src
 The deterministic end-to-end suite (`tests/e2e/`): runs the full pipeline
 (collect → triage → analysis per engine → assignment → reality check →
 synthesis → report) with no LLM and no AWS credentials, then checks the HTML
-reports in real browsers (Chromium + WebKit), the PDF content, and a local-UI
-smoke test against the produced artifacts.
+reports in real browsers (Chromium + WebKit), the PDF content, a local-UI
+smoke test, and the built help site, against the produced artifacts.
 
-Prerequisites: `uv`, Node 22, and Playwright's browser binaries (the script
-installs them). The UI build step honors whatever npm registry is already
-configured (an internal mirror locally, the public registry in CI) — it is
-never hardcoded here.
+Prerequisites: `uv` (with the `docs` extra installed, for the `mkdocs build`
+this script runs itself), Node 22, and Playwright's browser binaries (the
+script installs them). The UI build step honors whatever npm registry is
+already configured (an internal mirror locally, the public registry in CI) —
+it is never hardcoded here.
+
+Before either pytest invocation, this script also builds the help site
+(`mkdocs build --strict`, then `scripts/build_docs_sample.py --site-dir
+site`), the same way it builds the UI — `tests/e2e/test_docs_site.py` only
+serves and checks `site/`, it does not build it.
 
 Runs pytest **twice**, not once:
 
-1. `tests/e2e --ignore=tests/e2e/test_ui.py` with `--browser chromium --browser webkit`
-   → `$E2E_OUTPUT/e2e-reports-junit.xml`
-2. `tests/e2e/test_ui.py` with `--browser chromium` only
-   → `$E2E_OUTPUT/e2e-ui-junit.xml`
+1. `tests/e2e --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py`
+   with `--browser chromium --browser webkit` → `$E2E_OUTPUT/e2e-reports-junit.xml`
+2. `tests/e2e/test_ui.py tests/e2e/test_docs_site.py` with `--browser chromium`
+   only → `$E2E_OUTPUT/e2e-ui-junit.xml`
 
-`test_ui.py` is Chromium-only (`pytest.mark.only_browser("chromium")`), and
-pytest-playwright implements that marker as a runtime skip rather than a
-deselection. Under a single `--browser chromium --browser webkit` invocation
-combined with `--fail-on-skip`, the webkit parametrizations of the UI suite
-would be skipped-then-failed. Splitting into two invocations keeps
-`--fail-on-skip` meaningful for both suites. The cost: each invocation is its
-own pytest session, so the deterministic pipeline runs the two sample
-pipelines once each per invocation — ~15s total (wordpress ~6s, discourse
-~9s, measured), rather than once overall across both invocations. Accepted as
-cheap relative to the correctness it buys.
+`test_ui.py` and `test_docs_site.py` are both Chromium-only
+(`pytest.mark.only_browser("chromium")`), and pytest-playwright implements
+that marker as a runtime skip rather than a deselection. Under a single
+`--browser chromium --browser webkit` invocation combined with
+`--fail-on-skip`, the webkit parametrizations of either suite would be
+skipped-then-failed. Splitting into two invocations keeps `--fail-on-skip`
+meaningful for all three suites. The cost: each invocation is its own pytest
+session, so the deterministic pipeline runs the two sample pipelines once
+each per invocation — ~15s total (wordpress ~6s, discourse ~9s, measured),
+rather than once overall across both invocations. Accepted as cheap relative
+to the correctness it buys.
 
 `tests/e2e/conftest.py`'s `run`/`all_runs` fixtures cache each sample's
 pipeline result in a module-level dict rather than relying on pytest's own

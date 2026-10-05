@@ -5,7 +5,7 @@ dashboard-style summaries and multi-hop impact/provenance analysis.
 
 **Audience:** Developers, solutions architects, anyone exploring an assessment.
 
-See [ADR-023: Context Graph Layer](../architecture/decisions/ADR-023-context-graph-layer.md)
+See [ADR-023: Context Graph Layer](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md)
 for why the graph exists. This guide is how to query it.
 
 ## How to run a query

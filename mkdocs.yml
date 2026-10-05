@@ -1,0 +1,105 @@
+# Help site for Database Modernizer Assessment, built with Material for MkDocs.
+#
+# A Zensical (https://zensical.org/) spike for this generator found one gap
+# against our requirements at 0.0.68: it has no `exclude_docs` support (the
+# key is silently ignored, so pages under it still build and stay reachable).
+# `pymdownx.snippets` `--8<--` includes DO expand correctly under Zensical.
+# `exclude_docs` is how this file keeps the architecture-decisions/design-spec
+# docs and everything else outside the nav off the published site (see the
+# allowlist below), so that one missing feature is enough to use Material for
+# MkDocs 9.7 instead, per the documented fallback. See the pull request for
+# #325 for the full spike notes.
+site_name: Database Modernizer Assessment
+site_description: Run a full database modernization assessment with Claude Code.
+site_url: https://aws-samples.github.io/sample-aws-genai-db-modernizer/
+repo_url: https://github.com/aws-samples/sample-aws-genai-db-modernizer
+repo_name: aws-samples/sample-aws-genai-db-modernizer
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+
+# Allowlist, not a denylist: only the nav pages below plus their assets are
+# published. Everything else under docs/ (architecture decision records,
+# design specs, contracts, guides, RELEASE_MANAGEMENT.md, contract-validation.md,
+# the sample zips/results under examples/, and the three guides #343 flags as
+# still describing the retired hosted deployment) stays out of the built
+# site -- it stays as plain Markdown/data in the repo, and is linked from the
+# site as a GitHub link wherever a page actually references it. Gitignore-style
+# patterns: exclude everything at the top of docs_dir, then re-include exactly
+# the files/directories this site serves.
+exclude_docs: |
+  /*
+  !/index.md
+  !/get-started.md
+  !/use-claude-code.md
+  !/other-ways-to-run-it.md
+  !/understand-the-results.md
+  !/sample.md
+  !/faq.md
+  !/contribute.md
+  !/assets/
+  !/assets/**
+
+nav:
+  - Home: index.md
+  - Get started: get-started.md
+  - Use Claude Code: use-claude-code.md
+  - Other ways to run it: other-ways-to-run-it.md
+  - Understand the results: understand-the-results.md
+  - Sample report: sample.md
+  - FAQ: faq.md
+  - Contribute: contribute.md
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.tabs.link
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.snippets:
+      base_path:
+        - "."
+        - docs
+      check_paths: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/aws-samples/sample-aws-genai-db-modernizer

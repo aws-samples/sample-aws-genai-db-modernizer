@@ -546,14 +546,14 @@ async def test_triage_to_synthesis_flow():
     assert risk["complexity"] == "low"
 ```
 
-See [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-infrastructure.md)
+See [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
 
 ---
 
 ## Related Documentation
 
-- [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [ADR-007: Referee Orchestration](../architecture/decisions/ADR-007-referee-orchestration.md) (superseded by ADR-016 triage/synthesis split)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-007: Referee Orchestration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-007-referee-orchestration.md) (superseded by ADR-016 triage/synthesis split)
 - [Analysis Agent Guide](analysis-agent-guide.md)
 - [Storage Architecture Guide](storage-architecture-guide.md)
 

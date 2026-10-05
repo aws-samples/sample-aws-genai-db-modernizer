@@ -11,7 +11,7 @@
 > [High-Level Design §3.3](../high-level-design.md#33-orchestration-pattern).
 > Retained for historical context.
 
-Job submission to completion, originally built around Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
+Job submission to completion, originally built around Step Functions orchestration per [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
 
 ```mermaid
 sequenceDiagram
@@ -169,4 +169,4 @@ sequenceDiagram
 
 ---
 
-**Related:** [Orchestration Architecture](11-orchestration-architecture.md) | [Progress Reporting](10-progress-reporting.md) | [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md) | [ADR-019](../decisions/ADR-019-query-journey-materialization.md) | [ADR-020](../decisions/ADR-020-load-testing-stage.md)
+**Related:** [Orchestration Architecture](11-orchestration-architecture.md) | [Progress Reporting](10-progress-reporting.md) | [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md) | [ADR-019](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md) | [ADR-020](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)

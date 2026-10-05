@@ -27,8 +27,8 @@ As of Database Modernizer Assessment v2.0, we use **Pydantic models** instead of
 
 **See:**
 
-- [ADR-002: Structured Output with Pydantic](../../architecture/decisions/ADR-002-structured-output-and-validation.md)
-- [Pydantic Contracts](../../../src/contracts/)
+- [ADR-002: Structured Output with Pydantic](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
+- [Pydantic Contracts](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)
 
 ---
 

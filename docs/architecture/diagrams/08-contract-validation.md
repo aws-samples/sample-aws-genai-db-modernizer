@@ -40,4 +40,4 @@ Agent version (code) and contract version (data structure) are decoupled. Agent 
 
 ---
 
-**Related:** [Agent Framework](04-agent-framework.md) | [Contracts Spec](../contracts/agent-contracts-spec.md)
+**Related:** [Agent Framework](04-agent-framework.md) | [Contracts Spec](../../contracts/agent-contracts-spec.md)

@@ -672,11 +672,11 @@ All collector agents follow this pattern:
 ## Related Documentation
 
 - [High-Level Design](../architecture/high-level-design.md)
-- [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 - [Agent Framework Diagram](../architecture/architecture-diagrams/04-agent-framework.md)
 - [Orchestration Architecture](../architecture/architecture-diagrams/11-orchestration-architecture.md)
 - [Progress Reporting Diagram](../architecture/architecture-diagrams/10-progress-reporting.md)
-- [Strands Collector Guide](strands-collector-guide.md)
+- [Strands Collector Guide](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-collector-guide.md)
 - [Contract Specifications](../../contracts/README.md)
 
 ---

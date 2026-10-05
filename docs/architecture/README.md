@@ -7,8 +7,8 @@ This directory contains the high-level design and architecture documentation for
 | Document                                     | Purpose                                 | Audience                   |
 | ---------------------------------------------- | --------------------------------------- | --------------------------- |
 | [high-level-design.md](high-level-design.md) | Complete system architecture and design | All developers, architects |
-| [diagrams/](diagrams/)                       | Visual architecture diagrams            | All stakeholders           |
-| [decisions/](decisions/)                     | Architecture Decision Records (history) | All developers, architects |
+| [diagrams/](diagrams/README.md)              | Visual architecture diagrams            | All stakeholders           |
+| [decisions/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/architecture/decisions/) | Architecture Decision Records (history) | All developers, architects |
 
 ## Architecture Overview
 
@@ -84,15 +84,15 @@ orchestration; the current `LocalOrchestrator` is in the HLD).
 ## Related Documentation
 
 - **Agent Contracts**: [../contracts/agent-contracts-spec.md](../contracts/agent-contracts-spec.md)
-- **Data Specifications**: [../data-specs/](../data-specs/)
-- **Implementation Guides**: [../guides/](../guides/)
+- **Data Specifications**: [data-specs/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/data-specs/)
+- **Implementation Guides**: [../guides/](../guides/README.md)
 
 ## Contributing
 
 When updating architecture documentation:
 
 1. **Update HLD**: Modify [high-level-design.md](high-level-design.md) — it's the canonical source, this file is just an index
-2. **Update diagrams**: Add/update diagrams in [diagrams/](diagrams/)
+2. **Update diagrams**: Add/update diagrams in [diagrams/](diagrams/README.md)
 3. **Version bump**: Update the version number and revision history in the HLD
 4. **Document decisions**: Add ADRs for significant architectural changes
 

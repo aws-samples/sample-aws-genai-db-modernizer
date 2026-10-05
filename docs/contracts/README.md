@@ -10,15 +10,15 @@ This directory contains the formal contract specifications for all agents in the
 | -------------------------------------------------- | ------------------------------------------------------------ | ----------------------------- |
 | [agent-contracts-spec.md](agent-contracts-spec.md) | Main specification with overview, versioning, and guidelines | All developers                |
 | [QUICK_START.md](QUICK_START.md)                   | Quick reference for common tasks                             | Developers                    |
-| [../../src/contracts/](../../src/contracts/)       | Pydantic model implementations (source code)                 | Developers, Tools             |
-| [schemas/](schemas/)                               | JSON Schema definitions (reference only)                     | External tools, documentation |
+| [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)       | Pydantic model implementations (source code)                 | Developers, Tools             |
+| [schemas/](schemas/README.md)                      | JSON Schema definitions (reference only)                     | External tools, documentation |
 
 ## 🚀 Quick Start
 
 ### For Developers
 
 1. **Read the spec**: Start with [agent-contracts-spec.md](agent-contracts-spec.md)
-2. **Find your contract**: Check [../../src/contracts/](../../src/contracts/) directory
+2. **Find your contract**: Check [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/) directory
 3. **Validate your code**: Use Pydantic models for validation
 4. **Quick reference**: See [QUICK_START.md](QUICK_START.md)
 
@@ -67,13 +67,13 @@ This directory contains the formal contract specifications for all agents in the
 
 | Contract            | Source of Truth                                                                              |
 | ------------------- | -------------------------------------------------------------------------------------------- |
-| Collector           | [src/contracts/collector_output.py](../../src/contracts/collector_output.py)                 |
-| Analysis            | [src/contracts/analysis_output.py](../../src/contracts/analysis_output.py)                   |
-| Referee (Triage)    | [src/contracts/referee_triage_output.py](../../src/contracts/referee_triage_output.py)       |
-| Referee (Synthesis) | [src/contracts/referee_synthesis_output.py](../../src/contracts/referee_synthesis_output.py) |
-| Assignment          | [src/contracts/assignment_output.py](../../src/contracts/assignment_output.py)               |
-| Schema Design       | [src/contracts/schema_design_output.py](../../src/contracts/schema_design_output.py)         |
-| Load Test           | [src/contracts/load_test_output.py](../../src/contracts/load_test_output.py)                 |
+| Collector           | [src/contracts/collector_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/collector_output.py)                 |
+| Analysis            | [src/contracts/analysis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/analysis_output.py)                   |
+| Referee (Triage)    | [src/contracts/triage_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/triage_output.py)                       |
+| Referee (Synthesis) | [src/contracts/synthesis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/synthesis_output.py)                 |
+| Assignment          | [src/contracts/assignment_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/assignment_models.py)               |
+| Schema Design       | [src/contracts/schema_design_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/schema_design_output.py)         |
+| Load Test           | [src/contracts/load_test_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/load_test_models.py)                 |
 
 ## 🔄 Current Status
 
@@ -157,7 +157,7 @@ See section 8 of [agent-contracts-spec.md](agent-contracts-spec.md) for complete
 ## 🔗 Related Documentation
 
 - **Architecture**: [../architecture/high-level-design.md](../architecture/high-level-design.md)
-- **Data Specifications**: [../data-specs/](../data-specs/)
+- **Data Specifications**: [data-specs/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/data-specs/)
 
 ## ❓ Questions?
 

@@ -21,7 +21,7 @@ Key principles:
 - Contract validation at every layer
 - E2E with real RDS (manual only, not automated)
 
-See [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-infrastructure.md)
+See [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
 
 ---
 
@@ -602,8 +602,8 @@ tests/
 
 ## Related Documentation
 
-- [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-infrastructure.md)
-- [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 
 ---
 

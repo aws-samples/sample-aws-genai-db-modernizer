@@ -325,9 +325,9 @@ This keeps agent code simple — no partial state recovery logic. The cost of re
 
 ## Related Documentation
 
-- [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
 - [High-Level Design](../architecture/high-level-design.md)
-- [Storage Architecture Diagram](../architecture/architecture-diagrams/07-storage-architecture.md)
+- [Storage Architecture Diagram](../architecture/diagrams/07-storage-architecture.md)
 
 ---
 

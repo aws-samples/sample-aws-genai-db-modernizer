@@ -55,6 +55,7 @@ def _corpus() -> str:
         ".claude/commands/*.md",
         "Makefile",
         "tests/e2e/*.py",
+        "mkdocs.yml",
     ):
         parts.extend(p.read_text(errors="ignore") for p in REPO_ROOT.glob(pattern))
     return "\n".join(parts)

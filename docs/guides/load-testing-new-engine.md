@@ -377,7 +377,7 @@ Before submitting your PR:
 
 ## Reference
 
-- [ADR-020: Load Testing Stage Architecture](../architecture/decisions/ADR-020-load-testing-stage.md)
-- [ADR-019: Query Journey Materialization](../architecture/decisions/ADR-019-query-journey-materialization.md)
+- [ADR-020: Load Testing Stage Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
+- [ADR-019: Query Journey Materialization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)
 - DynamoDB reference implementation: `src/agents/load_test/dynamodb/`
 - Contracts: `src/contracts/load_test_models.py`

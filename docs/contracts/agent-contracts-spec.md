@@ -31,8 +31,8 @@ This document defines the formal contracts (interfaces) for all agents in the Da
 
 **Related ADRs:**
 
-- [ADR-002: Structured Output with Pydantic](../architecture/decisions/ADR-002-structured-output-and-validation.md)
-- [ADR-008: Contract Versioning](../architecture/decisions/ADR-008-contract-versioning.md)
+- [ADR-002: Structured Output with Pydantic](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
+- [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 
 ---
 
@@ -138,7 +138,7 @@ All contracts follow **Semantic Versioning** with **MAJOR.MINOR format** (not PA
 
 **Why no PATCH?** Pydantic models handle bug fixes without version changes. PATCH is unnecessary.
 
-**See:** [ADR-008: Contract Versioning](../architecture/decisions/ADR-008-contract-versioning.md)
+**See:** [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 
 ### 2.2 Agent Version vs Contract Version
 
@@ -209,7 +209,7 @@ class CollectorOutput(BaseModel):
 - New agents must work with old contract versions (forward compatibility via Pydantic's `extra="ignore"`)
 - Version adapters handle MAJOR version migrations
 
-**See:** [ADR-008: Contract Versioning](../architecture/decisions/ADR-008-contract-versioning.md)
+**See:** [ADR-008: Contract Versioning](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)
 
 ---
 
