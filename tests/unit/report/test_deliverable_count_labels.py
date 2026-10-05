@@ -232,10 +232,10 @@ class TestSharedSourceTables:
 
     def test_deck_totals_still_sum_mapped_tables(self) -> None:
         f = pptx_report.derive(_shared_tables_report(), {})
+        # The schema-design-based figure (#257/#258) is preferred when it has
+        # one; PR #315 review finding 9 only needs the fallback below it for a
+        # report where that figure is 0 but a wave clearly moves real tables.
         assert f["migrated"] == 21
-        assert [w["note"].split(" ")[0] for w in f["waves"] if "source table" in w["note"]] == [
-            "21"
-        ]
 
 
 def _risk(rid: str, sev: str, n_queries: int, engine: str = "dynamodb") -> dict[str, Any]:

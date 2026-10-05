@@ -25,7 +25,8 @@ STORED_WAVES = [
         "wave": 1,
         "title": "Cache hot reads with ElastiCache",
         "engines": ["elasticache"],
-        "moves_from": ["aurora_mysql"],
+        "moves_from": [],
+        "fronts": "mysql",
         "serves_from": [],
         "tables": [],
         "table_count": 0,
@@ -40,7 +41,7 @@ STORED_WAVES = [
         "wave": 2,
         "title": "Move key-value and point-lookup queries to DynamoDB",
         "engines": ["dynamodb"],
-        "moves_from": ["aurora_mysql"],
+        "moves_from": ["mysql"],
         "serves_from": [],
         "tables": ["wordpress.wp_posts", "wordpress.wp_postmeta"],
         "table_count": 2,
@@ -181,7 +182,7 @@ class TestEngineeringReportRoadmap:
         assert "`wordpress.wp_posts`" in md
         assert "`wordpress.wp_postmeta`" in md
         assert "1 table group" in md
-        assert "Moves from: Aurora MySQL" in md
+        assert "Moves from: the source MySQL database" in md
         assert "### Wave 3: Keep the rest on Aurora MySQL" in md
         assert "Gate before the next wave: End state" in md
 
@@ -211,20 +212,94 @@ class TestEngineeringReportRoadmap:
 class TestDeckUsesStoredWaves:
     def test_dynamodb_and_aurora_are_separate_waves_when_stored(self):
         f = pptx_report.derive(_report_with_waves(), {})
-        engine_lists = [[e["engine"] for e in w["engines"]] for w in f["waves"]]
+        engine_lists = [w["engines"] for w in f["waves"]]
         assert engine_lists == [["elasticache"], ["dynamodb"], ["aurora_mysql"]]
 
-    def test_falls_back_to_the_on_the_fly_algorithm_without_a_stored_roadmap(self):
+    def test_deck_matches_resolve_migration_waves_without_a_stored_roadmap(self):
+        # Review finding 10: the deck's old on-the-fly algorithm is gone -- it
+        # now always matches resolve_migration_waves, the same fallback the
+        # decision report and engineering report use (4 waves: cache, DynamoDB
+        # and Aurora separate, not merged the way the deleted algorithm did).
+        from src.report.renderers import resolve_migration_waves
+
         rep = _legacy_report()
         f = pptx_report.derive(rep, {})
-        # The legacy algorithm merges the no-migration roles (cache + retained)
-        # into one wave 1, unlike the stored #225 roadmap above.
-        assert [e["engine"] for e in f["waves"][0]["engines"]] == ["elasticache"]
+        engine_lists = [w["engines"] for w in f["waves"]]
+        assert engine_lists == [w["engines"] for w in resolve_migration_waves(rep)]
+        assert engine_lists[0] == ["elasticache"]
 
     def test_last_wave_is_retained_when_stored(self):
         f = pptx_report.derive(_report_with_waves(), {})
         assert f["waves"][-1]["workload"] == 4.7
         assert f["waves"][-1]["cached_queries"] == 0
+        assert f["waves"][-1]["no_migration"] is True
+
+    def test_wave_1_no_migration_claim_matches_the_resolved_wave(self):
+        # Review finding 9: "no data migration" is only claimed when wave 1
+        # really is the cache or retained wave, not whichever wave happens to
+        # come first (e.g. DynamoDB with no cache overlay).
+        rep = _report_with_waves()
+        rep["migration_waves"] = [
+            {
+                "wave": 1,
+                "title": "Move key-value and point-lookup queries to DynamoDB",
+                "engines": ["dynamodb"],
+                "moves_from": ["mysql"],
+                "serves_from": [],
+                "tables": ["wordpress.wp_posts"],
+                "table_count": 1,
+                "table_groups": None,
+                "query_count": 98,
+                "workload_share_percent": 91.6,
+                "share_basis": "queries",
+                "rationale": "moves to DynamoDB",
+                "gate": "parity confirmed",
+            }
+        ]
+        rep["cache_overlay"] = None
+        f = pptx_report.derive(rep, {})
+        assert f["waves"][0]["no_migration"] is False
+
+    def test_six_waves_fit_above_the_constraints_card(self):
+        # Review finding 9: the sizing must not blow past the slide for up to
+        # 6 waves (cache, KV, other, search, document, retained).
+        from pptx import Presentation
+
+        rep = _report_with_waves()
+        rep["migration_waves"] = [
+            {
+                "wave": i + 1,
+                "title": f"Wave {i + 1}",
+                "engines": [eng],
+                "moves_from": ["mysql"] if eng not in ("elasticache", "opensearch") else [],
+                "serves_from": ["dynamodb"] if eng == "opensearch" else [],
+                "tables": [],
+                "table_count": 0,
+                "table_groups": None,
+                "query_count": 1,
+                "workload_share_percent": 10.0,
+                "share_basis": "calls" if eng == "elasticache" else "queries",
+                "rationale": "r",
+                "gate": "g",
+            }
+            for i, eng in enumerate(
+                [
+                    "elasticache",
+                    "dynamodb",
+                    "aurora_mysql",
+                    "opensearch",
+                    "documentdb",
+                    "aurora_mysql",
+                ]
+            )
+        ]
+        f = pptx_report.derive(rep, {})
+        assert len(f["waves"]) == 6
+        prs = pptx_report.open_deck()
+        s = pptx_report.slide_sequencing(prs, f)
+        # Every shape must stay within the 7.5" slide height.
+        max_bottom = max(shape.top + shape.height for shape in s.shapes)
+        assert max_bottom <= Presentation(str(pptx_report.TEMPLATE)).slide_height
 
 
 class TestJudgeFactsPassthrough:

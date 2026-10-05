@@ -10,7 +10,13 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine, display_source_database
+from src.shared.migration_wave_engines import CACHE_ENGINES as _WAVE_CACHE_ENGINES
+from src.shared.migration_wave_engines import DOCUMENT_ENGINES as _WAVE_DOCUMENT_ENGINES
+from src.shared.migration_wave_engines import KV_ENGINES as _WAVE_KV_ENGINES
+from src.shared.migration_wave_engines import NAMED_ENGINES as _WAVE_NAMED_ENGINES
+from src.shared.migration_wave_engines import RELATIONAL_ENGINES as _WAVE_RELATIONAL_ENGINES
+from src.shared.migration_wave_engines import SEARCH_ENGINES as _WAVE_SEARCH_ENGINES
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -1095,10 +1101,17 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
     return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
 
 
-# Mirrors src.agents.referee.migration_waves's engine buckets (#225): kept in
-# sync by hand because src/report never imports src/agents (clean layering).
-_KV_ENGINES = frozenset({"dynamodb"})
-_DOCUMENT_ENGINES = frozenset({"documentdb"})
+# The wave-specific engine buckets come from src/shared/migration_wave_engines.py
+# (PR #315 review finding 12), the same ones src.agents.referee.migration_waves
+# uses -- not the broader _CACHE_ENGINES/_RELATIONAL_ENGINES above (which also
+# recognize memorydb and generic aurora for whole-report role classification):
+# src/report never imports src/agents (clean layering), so both modules import
+# the shared bucket set instead of each hand-mirroring the other's copy.
+
+# A raw source-engine key (collector's source_database_engine) a legacy report's
+# retained Aurora engine implies, best-effort: report.json has no source_engine
+# field of its own, only the Aurora target it was mapped to.
+_RELATIONAL_TO_SOURCE_ENGINE = {"aurora_mysql": "mysql", "aurora_postgresql": "postgresql"}
 
 
 def resolve_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1134,37 +1147,69 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     retained_engine = next(
         (
             e
-            for e in sorted(_RELATIONAL_ENGINES)
-            if e in by_engine and (by_engine[e].get("assigned_queries") or tables_for(e))
+            for e in sorted(_WAVE_RELATIONAL_ENGINES)
+            if e in by_engine
+            and (
+                by_engine[e].get("assigned_queries")
+                or tables_for(e)
+                or by_engine[e].get("workload_percent")
+            )
         ),
         None,
     )
+    # Best-effort raw source-engine key, for `fronts`/`moves_from` (findings 3/4):
+    # report.json has no source_engine field, only the Aurora target it mapped to.
+    source_engine = _RELATIONAL_TO_SOURCE_ENGINE.get(retained_engine or "")
 
     waves: list[dict[str, Any]] = []
 
     overlay = report.get("cache_overlay") or {}
     cache_engine = overlay.get("engine")
     n_cached = int(overlay.get("query_count") or 0)
-    if cache_engine in _CACHE_ENGINES and n_cached:
-        share = round(float(overlay.get("call_share_percent") or 0.0), 1)
-        owners = sorted(overlay.get("owners") or {})
-        owner_names = ", ".join(display_engine(o) for o in owners) or "its owner engine"
+    share_basis = "calls"
+    share = round(float(overlay.get("call_share_percent") or 0.0), 1)
+    if not (cache_engine in _WAVE_CACHE_ENGINES and n_cached):
+        # Older shape: cache stats embedded on the ranking entry itself
+        # (``role: "cache_layer"``, #296) with no top-level ``cache_overlay``.
+        cache_rank = next(
+            (
+                r
+                for e, r in by_engine.items()
+                if e in _WAVE_CACHE_ENGINES and r.get("cache_overlay_queries")
+            ),
+            None,
+        )
+        if cache_rank:
+            cache_engine = cache_rank.get("target")
+            n_cached = int(cache_rank.get("cache_overlay_queries") or 0)
+            share = round(float(cache_rank.get("cache_call_share_percent") or 0.0), 1)
+        else:
+            # Even older shape (pre-#296): the cache engine listed directly in
+            # ``ranking`` with its own workload share, no cache stats anywhere.
+            cache_engine = next((e for e in sorted(_WAVE_CACHE_ENGINES) if e in by_engine), None)
+            cache_rank_entry = by_engine.get(cache_engine) if cache_engine else None
+            n_cached = int((cache_rank_entry or {}).get("assigned_queries") or 0)
+            share = round(float((cache_rank_entry or {}).get("workload_percent") or 0.0), 1)
+            share_basis = "queries"
+    if cache_engine in _WAVE_CACHE_ENGINES and (n_cached or share):
         waves.append(
             {
                 "title": f"Cache hot reads with {display_engine(cache_engine)}",
                 "engines": [cache_engine],
-                "moves_from": [retained_engine] if retained_engine else [],
+                "moves_from": [],
                 "serves_from": [],
+                "fronts": source_engine,
                 "tables": [],
                 "table_count": 0,
                 "table_groups": None,
                 "query_count": n_cached,
                 "workload_share_percent": share,
-                "share_basis": "calls",
+                "share_basis": share_basis,
                 "rationale": (
-                    f"{n_cached} hot {plural_noun(n_cached, 'read')} ({fmt_num(share, 1)}% of "
-                    f"calls), cache-aside in front of {owner_names}: no data migration, fully "
-                    "reversible."
+                    f"{n_cached} hot {plural_noun(n_cached, 'read')} "
+                    f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'the workload'}), "
+                    "cache-aside in front of the current source database "
+                    "(MySQL/PostgreSQL): no data migration, fully reversible."
                 ),
                 "gate": "Cache hit rate and invalidation verified against the source database.",
             }
@@ -1173,13 +1218,15 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     def migration_wave(engine: str, title: str) -> dict[str, Any] | None:
         tables = tables_for(engine)
         n = int(by_engine.get(engine, {}).get("assigned_queries") or 0)
-        if not n and not tables:
+        share = round(float(by_engine.get(engine, {}).get("workload_percent") or 0.0), 1)
+        # The oldest report shape tracks workload_percent only, no assigned_queries
+        # at all (always 0) -- a nonzero share is still "something to move".
+        if not n and not tables and not share:
             return None
-        share = round(float(by_engine[engine].get("workload_percent") or 0.0), 1)
         return {
             "title": title,
             "engines": [engine],
-            "moves_from": [retained_engine] if retained_engine else [],
+            "moves_from": [source_engine] if source_engine else [],
             "serves_from": [],
             "tables": tables,
             "table_count": len(tables),
@@ -1194,16 +1241,15 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
             "gate": "Query parity confirmed before the next wave.",
         }
 
-    for engine in sorted(_KV_ENGINES & set(by_engine)):
+    for engine in sorted(_WAVE_KV_ENGINES & set(by_engine)):
         wave = migration_wave(
             engine, f"Move key-value and point-lookup queries to {display_engine(engine)}"
         )
         if wave:
             waves.append(wave)
 
-    named = _CACHE_ENGINES | _KV_ENGINES | _SEARCH_ENGINES | _DOCUMENT_ENGINES | _RELATIONAL_ENGINES
     others = sorted(
-        (e for e in by_engine if e not in named),
+        (e for e in by_engine if e not in _WAVE_NAMED_ENGINES),
         key=lambda e: (-float(by_engine[e].get("workload_percent") or 0.0), e),
     )
     for engine in others:
@@ -1211,36 +1257,52 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         if wave:
             waves.append(wave)
 
-    for engine in sorted(_SEARCH_ENGINES & set(by_engine)):
+    for engine in sorted(_WAVE_SEARCH_ENGINES & set(by_engine)):
         n = int(by_engine.get(engine, {}).get("assigned_queries") or 0)
         tables = tables_for(engine)
-        if not n and not tables:
+        share = round(float(by_engine.get(engine, {}).get("workload_percent") or 0.0), 1)
+        if not n and not tables and not share:
             continue
-        share = round(float(by_engine[engine].get("workload_percent") or 0.0), 1)
+        fallback_owner = retained_engine or source_engine
+        lead_in = (
+            f"{n} search/analytics {plural_noun(n, 'query', 'queries')} "
+            f"({fmt_num(share, 1)}% of the workload) build a read model in "
+            f"{display_engine(engine)}"
+        )
+        if tables:
+            rationale = (
+                f"{lead_in}, synced from the engines that own its tables: "
+                f"{display_engine(engine)} never becomes the system of record, and recovery is "
+                "always by re-indexing."
+            )
+            serves_from: list[str] = []
+        else:
+            owner_label = (
+                display_engine(fallback_owner) if fallback_owner else "the source database"
+            )
+            rationale = (
+                f"{lead_in}. The indexed tables could not be resolved from the table mappings, "
+                f"so {owner_label} is treated as the owner of record until they can be."
+            )
+            serves_from = [fallback_owner] if fallback_owner else []
         waves.append(
             {
                 "title": f"Sync search and analytics read models to {display_engine(engine)}",
                 "engines": [engine],
                 "moves_from": [],
-                "serves_from": [],
+                "serves_from": serves_from,
                 "tables": tables,
                 "table_count": len(tables),
                 "table_groups": None,
                 "query_count": n,
                 "workload_share_percent": share,
                 "share_basis": "queries",
-                "rationale": (
-                    f"{n} search/analytics {plural_noun(n, 'query', 'queries')} "
-                    f"({fmt_num(share, 1)}% of the workload) build a read model in "
-                    f"{display_engine(engine)}, synced from the engines that own its tables: "
-                    f"{display_engine(engine)} never becomes the system of record, and "
-                    "recovery is always by re-indexing."
-                ),
+                "rationale": rationale,
                 "gate": "Sync lag inside SLA and every served table still has a durable owner.",
             }
         )
 
-    for engine in sorted(_DOCUMENT_ENGINES & set(by_engine)):
+    for engine in sorted(_WAVE_DOCUMENT_ENGINES & set(by_engine)):
         wave = migration_wave(engine, f"Move document-shaped data to {display_engine(engine)}")
         if wave:
             waves.append(wave)
@@ -1248,8 +1310,8 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     if retained_engine:
         tables = tables_for(retained_engine)
         n = int(by_engine.get(retained_engine, {}).get("assigned_queries") or 0)
-        if n or tables:
-            share = round(float(by_engine[retained_engine].get("workload_percent") or 0.0), 1)
+        share = round(float(by_engine.get(retained_engine, {}).get("workload_percent") or 0.0), 1)
+        if n or tables or share:
             waves.append(
                 {
                     "title": f"Keep the rest on {display_engine(retained_engine)}",
@@ -1264,8 +1326,8 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                     "share_basis": "queries",
                     "rationale": (
                         f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of "
-                        f"the workload) stay on {display_engine(retained_engine)}, carried "
-                        "over 1:1 with no migration."
+                        f"the workload) stay on {display_engine(retained_engine)}: a "
+                        "homogeneous migration, schema carried over 1:1."
                     ),
                     "gate": "End state: every earlier wave's gate has passed.",
                 }
@@ -1290,8 +1352,12 @@ def _roadmap_html(report: dict[str, Any]) -> list[str]:
         share = fmt_num(w.get("workload_share_percent", 0), 1)
         tables = w.get("table_count") or 0
         table_bit = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
+        # `names` is already escaped; escaping it again (via `esc(title or names)`) would
+        # double-escape it when the title is missing (review finding 13).
+        title_html = esc(w["title"]) if w.get("title") else names
+        wave_no = esc(str(w.get("wave") or ""))
         out.append(
-            f"<p><b>Wave {w.get('wave')}: {esc(w.get('title') or names)}</b> — "
+            f"<p><b>Wave {wave_no}: {title_html}</b> — "
             f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis}){table_bit}. "
             f"{esc(w.get('rationale') or '')}</p>"
         )
@@ -1327,15 +1393,21 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         if groups:
             out.append(f"- {len(groups)} table {plural_noun(len(groups), 'group')}:")
             for g in groups:
-                g_tables = ", ".join(
-                    f"`{escaping.md_code(t)}`" for t in (g.get("tables") or [])[:10]
+                g_table_ids = g.get("tables") or []
+                g_tables = ", ".join(f"`{escaping.md_code(t)}`" for t in g_table_ids[:10])
+                more = f" (+{len(g_table_ids) - 10} more)" if len(g_table_ids) > 10 else ""
+                g_n = g.get("query_count", 0)
+                kind = f", {g['kind']}" if g.get("kind") else ""
+                out.append(
+                    f"  - {g_n} {plural_noun(g_n, 'query', 'queries')}{kind}: {g_tables}{more}"
                 )
-                out.append(f"  - {g.get('query_count', 0)} queries: {g_tables}")
         if w.get("moves_from"):
             out.append(
                 "- Moves from: "
-                + ", ".join(escaping.md_text(display_engine(e)) for e in w["moves_from"])
+                + ", ".join(escaping.md_text(display_source_database(e)) for e in w["moves_from"])
             )
+        if w.get("fronts"):
+            out.append(f"- Fronts: {escaping.md_text(display_source_database(w['fronts']))}")
         if w.get("serves_from"):
             out.append(
                 "- Synced from (durable owner): "

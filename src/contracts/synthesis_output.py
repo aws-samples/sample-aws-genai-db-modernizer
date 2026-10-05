@@ -36,6 +36,15 @@ Version History:
   wave. ``None`` for a report synthesized before this field existed; every
   deliverable falls back to deriving the same shape itself. Backward
   compatible — defaults to ``None``.
+- 1.5 (2026-10-04): PR #315 review fixes. ``MigrationWave`` gained ``fronts``
+  (the cache wave's fronted source engine; ``moves_from`` is now always empty
+  for the cache, and the source engine rather than the end-state engine for
+  every other wave) and ``table_owners`` (a search/analytics read-model
+  wave's per-table durable owner and sync pattern). ``table_groups`` is now
+  typed ``list[TableGroup]`` (``tables``, ``query_count`` as distinct
+  DynamoDB-assigned query IDs, ``kind``: ``co_dependency`` or
+  ``independent``) instead of untyped dicts. All new fields are optional and
+  default to ``None``/empty, so an older ``migration_waves`` still loads.
 """
 
 from datetime import datetime
@@ -182,6 +191,46 @@ class AssignmentSummary(BaseModel):
     co_dependency_groups: int = Field(default=0, ge=0)
 
 
+class TableGroup(BaseModel):
+    """One DynamoDB table group within a wave (#225 review finding 15).
+
+    Either a co-dependency group (queries sharing a significant JOIN,
+    ``assignment.co_dependency_groups``) that touches at least one of this
+    wave's tables, or the remainder of tables that belong to no such group
+    (``kind: "independent"``, review finding 7).
+    """
+
+    tables: list[str] = Field(..., description="Tables in this group")
+    query_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Distinct DynamoDB-assigned query IDs touching this group's tables "
+            "(review finding 8 — not every engine's query count, and not double-"
+            "counted for a multi-table query)"
+        ),
+    )
+    kind: Literal["co_dependency", "independent"] | None = Field(
+        None,
+        description=(
+            "Whether this group came from a co-dependency group or is the remainder. "
+            "None for a wave written before this field existed."
+        ),
+    )
+
+
+class TableOwner(BaseModel):
+    """One table a search/analytics read-model wave serves, and its durable owner."""
+
+    table: str = Field(..., description="Table identifier")
+    owner: str = Field(
+        ..., description="Engine that durably owns this table (never the read model)"
+    )
+    sync: Literal["zero-ETL", "OpenSearch Ingestion", "CDC"] = Field(
+        ..., description="How the read model stays current with the owner"
+    )
+
+
 class MigrationWave(BaseModel):
     """One step of the incremental migration roadmap (#225).
 
@@ -200,25 +249,42 @@ class MigrationWave(BaseModel):
     engines: list[str] = Field(..., description="The wave's target engine(s)")
     moves_from: list[str] = Field(
         default_factory=list,
-        description="Engine(s) this wave's tables/queries move away from, if any",
+        description=(
+            "The source engine(s) (e.g. 'mysql') this wave's tables/queries move away "
+            "from, if any -- always the current source database, never an end-state "
+            "engine an earlier wave has not reached yet (review finding 4)"
+        ),
     )
     serves_from: list[str] = Field(
         default_factory=list,
         description=(
             "For a read-model wave only: the owner engine(s) it syncs from and never "
-            "replaces as the system of record"
+            "replaces as the system of record. Falls back to the retained/source engine "
+            "when the indexed tables could not be resolved from the SQL (review finding 2)"
+        ),
+    )
+    fronts: str | None = Field(
+        None,
+        description=(
+            "Cache wave only: the source engine (e.g. 'mysql') it fronts. The cache "
+            "always moves no data (moves_from is empty); this is the fronted engine "
+            "(review finding 3)"
         ),
     )
     tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
-    table_count: int = Field(..., ge=0)
-    table_groups: list[dict[str, Any]] | None = Field(
+    table_count: int = Field(..., ge=0, description="Number of source tables this wave covers")
+    table_groups: list[TableGroup] | None = Field(
+        None,
+        description="DynamoDB wave only: tables grouped table group by table group (review finding 15)",
+    )
+    table_owners: list[TableOwner] | None = Field(
         None,
         description=(
-            "DynamoDB wave only: tables grouped table group by table group, respecting "
-            "co-dependency groups, each as {tables, query_count}"
+            "Search/analytics read-model wave only: each served table's durable owner "
+            "and sync pattern (review finding 1)"
         ),
     )
-    query_count: int = Field(..., ge=0)
+    query_count: int = Field(..., ge=0, description="Number of queries this wave covers")
     workload_share_percent: float = Field(
         ..., ge=0, le=100, description="Share of the workload, or of calls for the cache wave"
     )
@@ -243,7 +309,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.4",
+        default="1.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

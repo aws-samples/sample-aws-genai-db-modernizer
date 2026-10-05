@@ -112,7 +112,9 @@ describe('buildReportHtml ranking (#152)', () => {
     expect(cards[1]).toContain('60%');
     expect(cards[1]).toContain('Fit of routed queries');
     expect(cards[1]).toContain('Analysis average 2%');
-    expect(doc.body.textContent).toContain('ranked by share of the workload');
+    // PR #315 review finding 11: owner shares are of query patterns, a
+    // different basis than the cache's share of calls -- label it as such.
+    expect(doc.body.textContent).toContain('ranked by share of query patterns');
   });
 
   it('labels a signal-only engine on the ranking card (#312 review: discourse OpenSearch)', () => {

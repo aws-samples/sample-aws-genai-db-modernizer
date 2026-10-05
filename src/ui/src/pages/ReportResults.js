@@ -32,6 +32,11 @@ import SectionSeparator from "../components/SectionSeparator";
 import { buildReportHtml, normalizeTradeoff, riskHasContent } from "../utils/ReportHtmlExport";
 import { splitRankingByRole, formatCacheLayerLine } from "../utils/cacheLayer";
 import { analysisConfidence, confidenceAlertText, confidenceText, hasRoutedConfidence } from "../utils/rankingConfidence";
+import { displayEngine } from "../utils/engineNames";
+
+// A wave with more tables than this shows "+N more" rather than every name
+// (PR #315 review finding 14 -- discourse wave 4 lists 226 tables).
+const MAX_INLINE_ROADMAP_TABLES = 20;
 
 
 
@@ -1602,7 +1607,7 @@ const ReportResultsPage = memo(() => {
                           <SpaceBetween direction="horizontal" size="s" alignItems="center">
                             <Badge color="blue">{t('report-results.roadmap.wave-label', { number: wave.wave })}</Badge>
                             {(wave.engines || []).map((engine) => (
-                              <Badge key={engine} color={ENGINE_COLORS[engine] || 'grey'}>{engine}</Badge>
+                              <Badge key={engine} color={ENGINE_COLORS[engine] || 'grey'}>{displayEngine(engine)}</Badge>
                             ))}
                           </SpaceBetween>
                           <Box variant="h4">{wave.title}</Box>

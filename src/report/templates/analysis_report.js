@@ -448,7 +448,10 @@
         html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
         html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(wave.rationale) + '</div>';
         if ((wave.tables || []).length > 0) {
-          html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> ' + escapeHtml(wave.tables.join(', ')) + '</div>';
+          const waveTables = wave.tables;
+          const shownTables = waveTables.slice(0, 20).join(', ');
+          const moreTables = waveTables.length > 20 ? ' (+' + (waveTables.length - 20) + ' more)' : '';
+          html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> ' + escapeHtml(shownTables) + escapeHtml(moreTables) + '</div>';
         }
         if (wave.gate) {
           html += '<div style="font-size: 12px; color: var(--color-blue); margin-top: 6px;">Gate before the next wave: ' + escapeHtml(wave.gate) + '</div>';

@@ -629,7 +629,10 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';
   script += '        html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(wave.rationale) + \'</div>\';\n';
   script += '        if ((wave.tables || []).length > 0) {\n';
-  script += '          html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> \' + escapeHtml(wave.tables.join(\', \')) + \'</div>\';\n';
+  script += '          const waveTables = wave.tables;\n';
+  script += '          const shownTables = waveTables.slice(0, 20).join(\', \');\n';
+  script += '          const moreTables = waveTables.length > 20 ? \' (+\' + (waveTables.length - 20) + \' more)\' : \'\';\n';
+  script += '          html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> \' + escapeHtml(shownTables) + escapeHtml(moreTables) + \'</div>\';\n';
   script += '        }\n';
   script += '        if (wave.gate) {\n';
   script += '          html += \'<div style="font-size: 12px; color: var(--color-blue); margin-top: 6px;">Gate before the next wave: \' + escapeHtml(wave.gate) + \'</div>\';\n';

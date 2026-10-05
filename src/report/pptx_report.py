@@ -55,10 +55,10 @@ from pptx.util import Inches, Pt
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.migration_wave_engines import RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
 
 from .renderers import (
-    SEARCH_READ_MODEL,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
@@ -68,6 +68,7 @@ from .renderers import (
     label_summary_counts,
     plural_noun,
     plural_verb,
+    resolve_migration_waves,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,11 +146,12 @@ CONFIDENCE_FLOOR = 50
 # any confidence; CONFIDENCE_FLOOR orders only the migration targets.
 NO_MIGRATION_ROLES = ("Retained", "Cache layer")
 
-# Accent lookup for a stored ``migration_waves`` entry (#225): the source-compatible
+# Accent lookup for a resolved ``migration_waves`` entry (#225): the source-compatible
 # relational engine, carried over 1:1, gets the same "no further migration" blue as
 # the cache; a search read model is green; everything else is a migration target.
-_WAVE_RETAINED_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
-_WAVE_SEARCH_ENGINES = frozenset({"opensearch"})
+# Imported from src/shared (review finding 12) so this can't drift from the builder.
+_WAVE_RETAINED_ENGINES = RELATIONAL_ENGINES
+_WAVE_SEARCH_ENGINES = SEARCH_ENGINES
 
 LAYOUT_HERO = "Default 32"  # aurora full-bleed background + 48pt title
 LAYOUT_CONTENT = "Default 5"  # title + subtitle, plain dark background
@@ -835,7 +837,19 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
 
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)
-    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
+    # The one wave source (#225 review finding 10): every deliverable, including
+    # this deck, calls resolve_migration_waves -- never a second, on-the-fly split.
+    stored_waves = resolve_migration_waves(rep)
+    # Review finding 9: "0 source tables migrate" could contradict a wave that
+    # clearly moves real tables, when no schema design exists yet to drive the
+    # per-engine ``migrates`` count below. Prefer that richer, schema-design-based
+    # figure when it has one (keeps every other count label, #257/#258,
+    # unchanged); fall back to summing the tables a wave actually migrates
+    # (moves_from non-empty — never the cache, which moves nothing, or the
+    # search/retained waves, which don't move data either) only when it is 0.
+    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
+        w.get("table_count", 0) for w in stored_waves if w.get("moves_from")
+    )
     # The cache layer owns no query (#296): it is shown by the reads it fronts and
     # their share of calls, never by a share of the workload.
     cache = {
@@ -1039,102 +1053,46 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # assignment (#225) -- one sequencing rule: cache, then key-value/point
     # lookups, then any other direct target, then search/analytics read models
     # and document data, then whatever is retained on the source-compatible
-    # relational engine. The deck only maps each stored wave onto its own slide
-    # fields (accent colour; HIGH-risk count and confidence come from the
-    # per-engine figures already computed above). A report synthesized before
-    # #225 has no ``migration_waves`` and falls back to the on-the-fly
-    # confidence-floor split this module always used, unchanged.
-    stored_waves = rep.get("migration_waves")
+    # relational engine. The deck only maps each resolved wave onto its own
+    # slide fields; it never derives a second, on-the-fly split (#225 review
+    # finding 10 — this used to disagree with the decision/engineering reports
+    # for a report synthesized before #225; resolve_migration_waves already
+    # falls back to the same shape they use, so the deck calls it too, like
+    # every other deliverable).
     waves: list[dict[str, Any]] = []
-    if stored_waves:
-        engines_by_key = {e["engine"]: e for e in engines}
-        for sw in stored_waves:
-            wave_engines = [
-                engines_by_key[e] for e in sw.get("engines") or [] if e in engines_by_key
-            ]
-            if not wave_engines:
-                continue
-            keys = set(sw.get("engines") or [])
-            if sw.get("share_basis") == "calls" or keys & _WAVE_RETAINED_ENGINES:
-                accent = BLUE
-            elif keys & _WAVE_SEARCH_ENGINES:
-                accent = GREEN
-            else:
-                accent = YELLOW
-            waves.append(
-                {"engines": wave_engines, "accent": accent, "note": sw.get("rationale", "")}
-            )
-    else:
-        # Legacy fallback: no stored roadmap, so derive one wave 1 is whatever
-        # needs no data migration. The migration targets then split on
-        # CONFIDENCE_FLOOR: the ones the assessment is confident in go before
-        # the ones it is not.
-        targets = sorted(
-            (e for e in engines if e["role"] == "Migration target"),
-            key=lambda e: (-conf.get(e["engine"], 0), e["engine"]),
+    for sw in stored_waves:
+        wave_keys = [str(e) for e in (sw.get("engines") or []) if e]
+        if not wave_keys:
+            continue
+        keys = set(wave_keys)
+        if sw.get("share_basis") == "calls" or keys & _WAVE_RETAINED_ENGINES:
+            accent = BLUE
+        elif keys & _WAVE_SEARCH_ENGINES:
+            accent = GREEN
+        else:
+            accent = YELLOW
+        is_cache_share = sw.get("share_basis") == "calls"
+        share = float(sw.get("workload_share_percent") or 0.0)
+        waves.append(
+            {
+                "engines": wave_keys,
+                "accent": accent,
+                "note": sw.get("rationale", ""),
+                "gate": sw.get("gate", ""),
+                # A wave moves no data only when it has nothing to move away from
+                # (the cache, which only fronts reads; the search read model and
+                # retained wave, which sync/stay rather than migrate).
+                "no_migration": not sw.get("moves_from"),
+                "workload": 0.0 if is_cache_share else share,
+                "cached_share": share if is_cache_share else 0.0,
+                "cached_queries": int(sw.get("query_count") or 0) if is_cache_share else 0,
+            }
         )
-        if no_move:
-            only_cache = all(e["engine"] in cache for e in no_move)
-            waves.append(
-                {
-                    "engines": no_move,
-                    "accent": BLUE,
-                    "note": (
-                        # The cache fronts the current source database first (#296)
-                        "Cache-aside in front of the current source database: no data "
-                        "migration, reversible. It keeps serving the same reads as their "
-                        "owners move in later waves; invalidation follows the engine that "
-                        "owns each cached table."
-                        if only_cache
-                        else "No data migration — source-compatible or additive, so the "
-                        "source database stays authoritative and the step is reversible."
-                        + (" The cache fronts the current source database." if cache else "")
-                    ),
-                }
-            )
-        confident = [e for e in targets if conf.get(e["engine"], 0) >= CONFIDENCE_FLOOR]
-        unsure = [e for e in targets if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
-        for group, accent in ((confident, YELLOW), (unsure, ORANGE)):
-            if not group:
-                continue
-            lo_eng = min(group, key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"]
-            lo = conf_text(lo_eng)
-            n_t = sum(e["migrates"] for e in group)
-            tables_word = plural_noun(n_t, "table")
-            note = (
-                f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "
-                f"· confidence from {lo}"
-                if group is confident
-                else f"{n_t} source {tables_word} · confidence {lo} — re-scope after the gate"
-            )
-            waves.append({"engines": group, "accent": accent, "note": note})
-        # A search read model indexes data synced from the engines that own its
-        # tables, so it comes after every owner's wave; it never moves data (#296/#303).
-        read_models = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
-        if read_models:
-            waves.append(
-                {
-                    "engines": read_models,
-                    "accent": GREEN,
-                    "note": (
-                        "Search read model, built after the engines that own its tables: it "
-                        "indexes data synced from them, so no system-of-record data moves "
-                        "to it."
-                    ),
-                }
-            )
     for w in waves:
-        w["names"] = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in w["engines"])
-        w["workload"] = sum(
-            workload.get(e["engine"], 0) for e in w["engines"] if e["engine"] not in cache
-        )
-        w["cached_queries"] = sum(
-            cache[e["engine"]][0] for e in w["engines"] if e["engine"] in cache
-        )
-        w["cached_share"] = sum(cache[e["engine"]][1] for e in w["engines"] if e["engine"] in cache)
-        w["high"] = sum(high_by_engine.get(e["engine"], 0) for e in w["engines"])
+        w["names"] = " + ".join(ENGINE_LABEL.get(e, e) for e in w["engines"])
+        w["high"] = sum(high_by_engine.get(e, 0) for e in w["engines"])
         w["conf_text"] = conf_text(
-            min(w["engines"], key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"],
+            min(w["engines"], key=lambda e: (conf.get(e, 0), e)),
             short=True,
         )
 
@@ -1727,6 +1685,11 @@ def slide_sequencing(prs, f):
     set_title(s, "Migration Sequencing")
     first_pct = waves[0]["workload"] if waves else 0.0
     first_cache = waves[0].get("cached_share", 0.0) if waves else 0.0
+    # Review finding 9: "no data migration" is only ever true of the resolved
+    # wave 1 itself (the cache, or — without one — whatever is retained); when
+    # wave 1 is a real migration target (e.g. DynamoDB with no cache overlay),
+    # say so instead of repeating the no-migration claim unconditionally.
+    first_no_migration = bool(waves[0].get("no_migration")) if waves else False
     if first_cache and not first_pct:
         n_c = waves[0]["cached_queries"]
         subtitle = (
@@ -1739,14 +1702,27 @@ def slide_sequencing(prs, f):
             f"Wave 1 covers {first_pct:.1f}% of the workload, plus the cache layer for "
             f"{fmt_num(first_cache, 1)}% of calls, with no data migration"
         )
-    else:
+    elif first_no_migration:
         subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload with no data migration"
+    else:
+        subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload, the first data migration"
     set_subtitle(s, subtitle)
 
-    y = BODY_TOP - 0.02
+    # Review finding 9: up to 6 waves (cache, KV, other, search, document,
+    # retained) must still fit above the constraints card on one slide. 4 waves
+    # keep the original, unshrunk sizing; more waves shrink the step so the
+    # constraints card never runs off the 7.5" slide.
+    n = len(waves) or 1
+    constraints_block = 1.06  # constraints card height (0.98) + its own margin (0.08)
+    bottom_margin = 0.18
+    y0 = BODY_TOP - 0.02
+    step = 1.00 if n <= 4 else max(0.62, (7.50 - y0 - constraints_block - bottom_margin) / n)
+    card_h = min(0.92, step - 0.08)
+
+    y = y0
     for i, w in enumerate(waves):
         accent = w["accent"]
-        card(s, 0.67, y, 11.43, 0.92, accent)
+        card(s, 0.67, y, 11.43, card_h, accent)
         tf = textbox(s, 0.92, y + 0.06, 1.3, 0.35)
         para(tf, f"WAVE {i + 1}", size=13.0, bold=True, color=accent, first=True, font=FONT_HEAD)
         tf = textbox(s, 2.25, y + 0.05, 4.4, 0.35)
@@ -1764,26 +1740,13 @@ def slide_sequencing(prs, f):
         for j, val in enumerate(stats):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)
             para(tf, val, size=11.5, bold=(j == 1), color=PAPER if j != 1 else accent, first=True)
-        tf = textbox(s, 2.25, y + 0.44, 9.6, 0.4)
-        para(tf, w["note"], size=10.0, color=MUTED, first=True)
-        y += 1.00
-        if i == 0:
-            gate = s.shapes.add_shape(
-                MSO_SHAPE.ROUNDED_RECTANGLE,
-                Inches(3.55),
-                Inches(y - 0.02),
-                Inches(5.6),
-                Inches(0.36),
-            )
-            gate.fill.solid()
-            gate.fill.fore_color.rgb = PINK
-            gate.line.fill.background()
-            gate.shadow.inherit = False
-            gate.text_frame.text = "VALIDATION GATE  —  load test at production scale"
-            p = gate.text_frame.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER
-            _style(p.runs[0], 11.0, bold=True, color=RGBColor(0x16, 0x1D, 0x26))
-            y += 0.46
+        # Review finding 9: every wave shows its own real gate (not one fixed
+        # "load test at production scale" banner drawn only after wave 1).
+        tf = textbox(s, 2.25, y + 0.44, 9.6, card_h - 0.44)
+        para(tf, w["note"], size=10.0, color=MUTED, first=True, space_after=1)
+        if w.get("gate"):
+            para(tf, f"Gate: {clip(w['gate'], 150)}", size=9.0, bold=True, color=PINK)
+        y += step
 
     card(s, 0.67, y + 0.08, 11.43, 0.98, GREEN)
     tf = textbox(s, 0.90, y + 0.17, 11.0, 0.85)

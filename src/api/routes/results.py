@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from src.api.services.s3_artifacts import S3ArtifactsService
 from src.api.services.step_functions import StepFunctionsService
+from src.report.renderers import resolve_migration_waves
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
@@ -32,6 +33,13 @@ async def get_results(job_id: str):
     synthesis = s3_service.read_synthesis(db_name, job_id)
     if not synthesis:
         raise HTTPException(status_code=404, detail="Results not available yet")
+
+    # One wave source (#225 review finding 10): the UI and the HTML exports it
+    # feeds (ReportHtmlExport.js, ExportReport.js) read this same payload, so a
+    # report written before #225 must show the same fallback roadmap the
+    # decision report and engineering report already derive, not an empty one.
+    if not synthesis.get("migration_waves"):
+        synthesis["migration_waves"] = resolve_migration_waves(synthesis) or None
 
     triage = s3_service.read_triage(db_name, job_id)
 

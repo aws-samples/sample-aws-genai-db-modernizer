@@ -172,6 +172,54 @@ describe('buildReportHtml (ReportResults export)', () => {
     expect(doc.body.textContent).not.toContain('Migration Roadmap');
   });
 
+  it('shows the engine display name on the wave badge, not the raw key (#315 finding 14)', () => {
+    const resultsData = {
+      synthesis: {
+        database_name: 'x',
+        migration_waves: [{
+          wave: 1,
+          title: 'Move key-value and point-lookup queries to DynamoDB',
+          engines: ['dynamodb'],
+          tables: [],
+          table_count: 0,
+          query_count: 1,
+          workload_share_percent: 10,
+          share_basis: 'queries',
+          rationale: 'r',
+          gate: 'g',
+        }],
+      },
+    };
+    const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));
+    expect(doc.body.textContent).toContain('DynamoDB');
+    expect(doc.body.textContent).not.toMatch(/badge-grey">\s*dynamodb/);
+  });
+
+  it('caps a long table list with "+N more" instead of listing every table (#315 finding 14)', () => {
+    const tables = Array.from({ length: 25 }, (_, i) => `t${i}`);
+    const resultsData = {
+      synthesis: {
+        database_name: 'x',
+        migration_waves: [{
+          wave: 1,
+          title: 'w',
+          engines: ['dynamodb'],
+          tables,
+          table_count: tables.length,
+          query_count: 1,
+          workload_share_percent: 10,
+          share_basis: 'queries',
+          rationale: 'r',
+          gate: 'g',
+        }],
+      },
+    };
+    const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));
+    expect(doc.body.textContent).toContain('t19');
+    expect(doc.body.textContent).not.toContain('t20');
+    expect(doc.body.textContent).toContain('(+5 more)');
+  });
+
   it('still renders an ordinary report', () => {
     const resultsData = {
       synthesis: {

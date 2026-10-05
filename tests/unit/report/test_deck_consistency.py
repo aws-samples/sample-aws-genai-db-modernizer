@@ -143,7 +143,7 @@ class TestSequencingRule:
         rep, exp = _report(), _export(WORDPRESS_SIGNALS)
         f = pptx_report.derive(rep, exp)
         # Wave 1 is the no-migration step, even though it is under the floor ...
-        assert [e["engine"] for e in f["waves"][0]["engines"]] == ["elasticache"]
+        assert f["waves"][0]["engines"] == ["elasticache"]
         assert f["conf"]["elasticache"] < pptx_report.CONFIDENCE_FLOOR
         # ... and the stated rule says exactly that.
         text = " ".join(_deck_text(rep, exp).split())
@@ -157,7 +157,7 @@ class TestSequencingRule:
         rep = _report()
         rep["ranking"][2]["confidence_score"] = 40  # aurora_mysql below the floor
         f = pptx_report.derive(rep, _export(WORDPRESS_SIGNALS))
-        assert [e["engine"] for e in f["waves"][-1]["engines"]] == ["aurora_mysql"]
+        assert f["waves"][-1]["engines"] == ["aurora_mysql"]
 
     def test_no_parenthetical_when_no_migration_step_is_confident(self) -> None:
         rep = _report()
@@ -317,7 +317,7 @@ def test_a_non_relational_engine_without_a_design_is_never_retained() -> None:
     f = pptx_report.derive(rep, _export([]))
     role = next(e["role"] for e in f["engines"] if e["engine"] == "documentdb")
     assert role == "Migration target"
-    assert "documentdb" not in [e["engine"] for e in f["waves"][0]["engines"]]
+    assert "documentdb" not in f["waves"][0]["engines"]
 
 
 class TestSeveralNoMigrationEngines:

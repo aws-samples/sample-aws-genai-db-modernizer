@@ -359,9 +359,14 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
     def test_has_effective_architecture(self):
         assert "effective_architecture" in prepare_synthesis_llm_input(self._det())
 
-    def test_exactly_eight_keys(self):
+    def test_has_migration_waves(self):
+        # Review finding 12: the LLM gets the waves as read-only facts, so an
+        # executive-summary narrative can't silently assume a different sequence.
+        assert "migration_waves" in prepare_synthesis_llm_input(self._det())
+
+    def test_exactly_nine_keys(self):
         payload = prepare_synthesis_llm_input(self._det())
-        assert len(payload) == 8
+        assert len(payload) == 9
 
     def test_deterministic_summary_matches_result(self):
         det = self._det()

@@ -136,9 +136,10 @@ class TestDeck:
     def test_cache_layer_is_the_no_migration_wave_without_a_workload_share(self):
         f = pptx_report.derive(_report(), {})
         wave1 = f["waves"][0]
-        assert [e["engine"] for e in wave1["engines"]] == ["elasticache"]
+        assert wave1["engines"] == ["elasticache"]
         assert wave1["workload"] == 0
         assert (wave1["cached_queries"], wave1["cached_share"]) == (20, 83.4)
+        assert wave1["no_migration"] is True
         start = next(d for d in f["decisions"] if d["question"].startswith("Start"))
         assert start["badge"] == "83% of calls cached"
 
@@ -148,8 +149,8 @@ class TestDeck:
             "Wave 1 puts the cache layer for 20 hot reads (83.4% of calls) in front of the "
             "current source database, with no data migration"
         ) in text
-        assert "Cache-aside in front of the current source database" in text
-        assert "invalidation follows the engine that owns each cached table" in text
+        assert "cache-aside in front of the current source database (MySQL/PostgreSQL)" in text
+        assert "Cache hit rate and invalidation verified against the source database" in text
         assert "ElastiCache caches 20 hot reads (83.4% of calls) and owns none of the workload" in (
             text
         )
@@ -274,11 +275,20 @@ class TestSearchReadModel:
 
     def test_wave_plan_puts_it_after_its_owners_never_in_the_no_migration_wave(self):
         f = pptx_report.derive(_discourse_shape(), {})
-        waves = [[e["engine"] for e in w["engines"]] for w in f["waves"]]
+        waves = [w["engines"] for w in f["waves"]]
         assert waves[0] == ["elasticache"]
-        assert waves[-1] == ["opensearch"]
-        assert all("opensearch" not in w for w in waves[:-1])
-        assert "synced" in f["waves"][-1]["note"]
+        # #225's deterministic rule always finishes on the retained engine
+        # (aurora_postgresql); the search read model comes right before it --
+        # after the engines that own its tables, never in the no-migration wave.
+        assert waves[-1] == ["aurora_postgresql"]
+        opensearch_wave = next(w for w in f["waves"] if w["engines"] == ["opensearch"])
+        assert opensearch_wave is not f["waves"][0]
+        assert all("opensearch" not in w for w in waves[:1])
+        # This fixture has no table_mappings, so the indexed tables cannot be
+        # resolved -- review finding 2's fallback: say so, and fall back to the
+        # retained engine as the owner of record rather than showing no owner.
+        assert "could not be resolved" in opensearch_wave["note"]
+        assert "Aurora PostgreSQL" in opensearch_wave["note"]
         start = next(d for d in f["decisions"] if d["question"].startswith("Start"))
         assert "OpenSearch" not in start["against"]
 

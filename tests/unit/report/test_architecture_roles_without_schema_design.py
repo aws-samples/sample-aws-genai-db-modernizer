@@ -52,7 +52,7 @@ def _roles(report: dict) -> dict[str, str]:
 
 def _wave_engines(report: dict) -> list[list[str]]:
     waves = pptx_report.derive(report, {})["waves"]
-    return [[e["engine"] for e in w["engines"]] for w in waves]
+    return [w["engines"] for w in waves]
 
 
 def test_mixed_run_keeps_the_retained_engine_retained_in_wave_1() -> None:
@@ -76,8 +76,12 @@ def test_mixed_run_keeps_the_retained_engine_retained_in_wave_1() -> None:
         "aurora_mysql": "Retained",
     }
     waves = _wave_engines(report)
-    assert "aurora_mysql" in waves[0]
-    assert all("aurora_mysql" not in w for w in waves[1:])
+    # #225's deterministic rule keeps the cache (wave 1) and the retained engine
+    # (always last) as separate waves -- never merged into one "no migration"
+    # wave the way the deck's old, since-deleted on-the-fly algorithm did.
+    assert waves[0] == ["elasticache"]
+    assert waves[-1] == ["aurora_mysql"]
+    assert all("aurora_mysql" not in w for w in waves[:-1])
     assert "Schema design was not run" not in report["recommended_architecture"]["rationale"]
 
 

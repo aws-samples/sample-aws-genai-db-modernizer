@@ -10,6 +10,17 @@
 import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
 import { analysisConfidence, confidenceText, hasRoutedConfidence } from './rankingConfidence';
+import { displayEngine } from './engineNames';
+
+// A wave with more tables than this shows "+N more" rather than every name
+// inline (PR #315 review finding 14 -- discourse wave 4 lists 226 tables).
+const MAX_INLINE_TABLES = 20;
+
+const tablesSummary = (tables) => {
+  const shown = tables.slice(0, MAX_INLINE_TABLES).join(', ');
+  const more = tables.length > MAX_INLINE_TABLES ? ` (+${tables.length - MAX_INLINE_TABLES} more)` : '';
+  return shown + more;
+};
 
 // Normalize a trade-off (structured object or legacy string) into a consistent shape.
 export const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
@@ -186,7 +197,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
 
   <div class="section-separator">
     <h2>Database Ranking</h2>
-    <div class="desc">${t('report-results.ranking.description', { defaultValue: 'AWS database services ranked by share of the workload; confidence is the fit of the queries routed to each engine' })}</div>
+    <div class="desc">${t('report-results.ranking.description', { defaultValue: 'AWS database services ranked by share of query patterns; confidence is the fit of the queries routed to each engine' })}</div>
   </div>
 
   <div class="container">
@@ -365,7 +376,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
     ${migrationWaves.map(wave => html`
       <div class="roadmap-phase" style="margin-bottom: 15px;">
         <span class="badge badge-blue">Wave ${wave.wave}</span>
-        ${asArray(wave.engines).map(engine => html` <span class="badge badge-grey">${engine}</span>`)}
+        ${asArray(wave.engines).map(engine => html` <span class="badge badge-grey">${displayEngine(engine)}</span>`)}
         <h3>${wave.title}</h3>
         <div style="font-size: 13px; color: #666; margin: 8px 0;">
           ${wave.query_count || 0} queries ·
@@ -377,7 +388,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         <p>${wave.rationale}</p>
         ${asArray(wave.tables).length > 0 ? html`
           <div style="font-size: 13px; color: #666;">
-            <strong>Tables:</strong> ${asArray(wave.tables).join(', ')}
+            <strong>Tables:</strong> ${tablesSummary(asArray(wave.tables))}
           </div>
         ` : ''}
         ${wave.gate ? html`<div class="timeline">Gate before the next wave: ${wave.gate}</div>` : ''}

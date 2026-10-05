@@ -162,13 +162,16 @@ class TestMigrationWave:
             engines=["dynamodb"],
             tables=["db.users", "db.sessions"],
             table_count=2,
-            table_groups=[{"tables": ["db.users"], "query_count": 10}],
+            table_groups=[{"tables": ["db.users"], "query_count": 10, "kind": "independent"}],
             query_count=10,
             workload_share_percent=50.0,
             rationale="x",
             gate="x",
         )
-        assert w.table_groups == [{"tables": ["db.users"], "query_count": 10}]
+        # table_groups is typed list[TableGroup] (review finding 15), not raw dicts.
+        assert [g.model_dump() for g in w.table_groups] == [
+            {"tables": ["db.users"], "query_count": 10, "kind": "independent"}
+        ]
 
 
 class TestTCOAnalysis:
@@ -331,7 +334,7 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        assert output.contract_version == "1.4"
+        assert output.contract_version == "1.5"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

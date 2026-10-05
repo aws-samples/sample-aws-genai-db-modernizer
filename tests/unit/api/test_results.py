@@ -62,6 +62,34 @@ class TestGetResults:
         response = client.get("/api/v1/assessments/nonexistent/results")
         assert response.status_code == 404
 
+    def test_backfills_migration_waves_for_a_report_written_before_225(self, mock_services):
+        # PR #315 review finding 10: the UI (and the HTML exports, which read this
+        # same payload) must show the same fallback roadmap the decision report
+        # and engineering report already derive via resolve_migration_waves,
+        # not an empty roadmap just because this report predates #225.
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [
+                {"target": "dynamodb", "workload_percent": 60.0, "assigned_queries": 60},
+                {"target": "aurora_mysql", "workload_percent": 40.0, "assigned_queries": 40},
+            ],
+            "needs_deeper_analysis": False,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        response = client.get("/api/v1/assessments/job-1/results")
+        assert response.status_code == 200
+        waves = response.json()["synthesis"]["migration_waves"]
+        assert [w["engines"] for w in waves] == [["dynamodb"], ["aurora_mysql"]]
+
+    def test_keeps_the_stored_waves_when_present(self, mock_services):
+        stored = [{"wave": 1, "engines": ["elasticache"], "moves_from": [], "serves_from": []}]
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [],
+            "migration_waves": stored,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        response = client.get("/api/v1/assessments/job-1/results")
+        assert response.json()["synthesis"]["migration_waves"] == stored
+
 
 class TestGetCollectorOutput:
     """Tests for GET /api/v1/assessments/{job_id}/collector."""

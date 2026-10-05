@@ -122,15 +122,21 @@ class TestWaves:
         # analysis says under the floor, routed says well above it
         _by_target(rep, "dynamodb")["confidence_score"] = 40
         waves = pptx_report.derive(rep, {})["waves"]
-        owner_wave = next(w for w in waves if any(e["engine"] == "dynamodb" for e in w["engines"]))
-        assert {e["engine"] for e in owner_wave["engines"]} == {"aurora_postgresql", "dynamodb"}
-        assert "confidence from 91%" in owner_wave["note"]
+        # #225's deterministic rule never merges DynamoDB (wave 2) and the
+        # retained engine (always last) into one wave, whatever the confidence;
+        # the wave's own confidence stat still reads the routed figure (91%),
+        # not the low analysis-average confidence_score (40%) that was set.
+        owner_wave = next(w for w in waves if w["engines"] == ["dynamodb"])
+        assert owner_wave["conf_text"] == "91%"
 
-    def test_low_routed_fit_is_sequenced_last(self) -> None:
+    def test_sequence_is_deterministic_regardless_of_routed_fit(self) -> None:
+        # #225's rule sequences by role (cache, KV, ..., retained), never by
+        # confidence: DynamoDB (wave 2) stays before Aurora PostgreSQL (always
+        # last) even when its routed fit drops well below the floor.
         rep = _report()
         _by_target(rep, "dynamodb")["routed_confidence"] = 45
         names = [w["names"] for w in pptx_report.derive(rep, {})["waves"]]
-        assert names.index("DynamoDB") > names.index("Aurora PostgreSQL")
+        assert names.index("DynamoDB") < names.index("Aurora PostgreSQL")
 
 
 class TestRuleText:
@@ -199,7 +205,9 @@ class TestSignalOnlyEvidence:
         f = pptx_report.derive(rep, {})
         assert f["conf_text"]["dynamodb"] == "91% (partly signal-based)"
         owner_wave = next(w for w in f["waves"] if "DynamoDB" in w["names"])
-        assert "confidence from 91%" in owner_wave["note"]  # Aurora (93) is not the minimum
+        # DynamoDB is its own wave now (#225), so its own conf_text carries the
+        # label -- no "confidence from 91%, not the minimum" note text needed.
+        assert owner_wave["conf_text"] == "91% (partly signal-based)"
         _by_target(rep, "dynamodb")["routed_queries_without_table_evidence"] = 17
         assert pptx_report.derive(rep, {})["conf_text"]["dynamodb"] == "91%"
 
@@ -211,7 +219,7 @@ class TestSignalOnlyEvidence:
         owner_wave = next(
             w for w in pptx_report.derive(rep, {})["waves"] if "DynamoDB" in w["names"]
         )
-        assert "confidence from 55% (signal only — no table-level evidence)" in owner_wave["note"]
+        assert owner_wave["conf_text"] == "55% (signal only)"
 
     def test_the_deck_renders_the_labels(self) -> None:
         from pptx import Presentation  # noqa: PLC0415 - only this test needs it

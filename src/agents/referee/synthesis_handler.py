@@ -18,7 +18,7 @@ LLM seam functions (for Skill Sync / external LLM integration):
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import source_database_engine
-from src.agents.referee.migration_waves import build_migration_waves
+from src.agents.referee.migration_waves import PSEUDO_TABLES, build_migration_waves
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -136,14 +136,31 @@ def run_synthesis_deterministic(
     print("[synthesis] Building migration waves...")
     cache_overlay = build_cache_overlay(data)
     assignment = data.assignment or {}
+    raw_table_assignments = assignment.get("table_assignments") or []
     migration_waves = build_migration_waves(
         ranking=ranking,
-        table_assignments=assignment.get("table_assignments") or [],
+        table_assignments=raw_table_assignments,
         query_assignments=assignment.get("query_assignments") or [],
         co_dependency_groups=assignment.get("co_dependency_groups") or [],
         cache_overlay=cache_overlay,
         source_engine=source_database_engine(data.collector),
+        # #225 review finding 5: scope waves to tables/views the collector actually
+        # saw, so a parser artifact (CTE alias, keyword, system catalog name) never
+        # reaches a wave. The upstream noise in table_assignments itself is #316.
+        known_tables=known_tables,
     )
+    # Review finding 5: record (not fix — that is #316) how many table_assignments
+    # names were dropped as noise, for transparency.
+    _unresolved = sorted(
+        {
+            str(t["table_id"])
+            for t in raw_table_assignments
+            if t.get("table_id")
+            and str(t["table_id"]) not in PSEUDO_TABLES
+            and str(t["table_id"]) not in known_tables
+        }
+    )
+    unresolved_names = {"count": len(_unresolved), "names": _unresolved}
 
     assignment_summary = None
     if data.assignment:
@@ -202,6 +219,7 @@ def run_synthesis_deterministic(
         "eliminated_engines": eliminated,
         "cache_overlay": cache_overlay,
         "migration_waves": migration_waves,
+        "unresolved_names": unresolved_names,
         "known_tables": known_tables,
         "engine_tables": engine_tables,
         "effective_architecture": build_effective_architecture(
@@ -224,11 +242,17 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
 
     Keys returned:
         effective_architecture, deterministic_summary, ranking, query_groups,
-        tco_analysis, risk_assessment, table_mappings, trade_offs
+        tco_analysis, risk_assessment, table_mappings, trade_offs, migration_waves
 
     ``effective_architecture`` comes first: the compact per-engine table list, top
     query groups and capabilities, plus the eliminated engines, together with the
     rule that every engine/table claim must match it (#205).
+
+    ``migration_waves`` (#225 review finding 12) is passed in as read-only facts:
+    the sequence is one deterministic rule, never a model's choice, but a
+    narrative that silently assumes a different sequence than the one synthesis
+    already computed would be ungrounded. The LLM may explain a wave; it does
+    not get to invent one.
     """
     return {
         "effective_architecture": deterministic_result["effective_architecture"],
@@ -239,6 +263,7 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
         "risk_assessment": deterministic_result["risk_assessment"],
         "table_mappings": deterministic_result["table_mappings"],
         "trade_offs": deterministic_result["trade_offs"],
+        "migration_waves": deterministic_result.get("migration_waves"),
     }
 
 
@@ -327,6 +352,9 @@ def _write_synthesis_report(
         "assignment_summary": result["assignment_summary"],
         "cache_overlay": result.get("cache_overlay"),
         "migration_waves": result.get("migration_waves"),
+        # Extra field (SynthesisOutputContract allows extras): #225 review finding 5,
+        # how many table_assignments names the waves dropped as parser noise.
+        "unresolved_names": result.get("unresolved_names"),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
