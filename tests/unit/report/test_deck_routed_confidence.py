@@ -130,13 +130,14 @@ class TestWaves:
         assert owner_wave["conf_text"] == "91%"
 
     def test_sequence_is_deterministic_regardless_of_routed_fit(self) -> None:
-        # #225's rule sequences by role (cache, KV, ..., retained), never by
-        # confidence: DynamoDB (wave 2) stays before Aurora PostgreSQL (always
-        # last) even when its routed fit drops well below the floor.
+        # #321's rule sequences by role (Aurora, cache, KV, ...), never by
+        # confidence: Aurora PostgreSQL (wave 1, the relational move) stays
+        # before DynamoDB even when DynamoDB's routed fit drops well below
+        # the floor.
         rep = _report()
         _by_target(rep, "dynamodb")["routed_confidence"] = 45
         names = [w["names"] for w in pptx_report.derive(rep, {})["waves"]]
-        assert names.index("DynamoDB") < names.index("Aurora PostgreSQL")
+        assert names.index("Aurora PostgreSQL") < names.index("DynamoDB")
 
 
 class TestRuleText:

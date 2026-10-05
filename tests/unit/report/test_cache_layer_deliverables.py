@@ -140,7 +140,7 @@ class TestDeck:
         assert wave1["workload"] == 0
         assert (wave1["cached_queries"], wave1["cached_share"]) == (20, 83.4)
         assert wave1["no_migration"] is True
-        start = next(d for d in f["decisions"] if d["question"].startswith("Start"))
+        start = next(d for d in f["decisions"] if d["question"].startswith("Add"))
         assert start["badge"] == "83% of calls cached"
 
     def test_deck_text(self):
@@ -279,20 +279,21 @@ class TestSearchReadModel:
     def test_wave_plan_puts_it_after_its_owners_never_in_the_no_migration_wave(self):
         f = pptx_report.derive(_discourse_shape(), {})
         waves = [w["engines"] for w in f["waves"]]
-        assert waves[0] == ["elasticache"]
-        # #225's deterministic rule always finishes on the retained engine
-        # (aurora_postgresql); the search read model comes right before it --
-        # after the engines that own its tables, never in the no-migration wave.
-        assert waves[-1] == ["aurora_postgresql"]
+        # #321: the relational move (aurora_postgresql) comes first now; the
+        # search read model still comes last among the rest, after the
+        # engines that own its tables, never in the no-migration (cache) wave.
+        assert waves[0] == ["aurora_postgresql"]
+        assert waves[1] == ["elasticache"]
+        assert waves[-1] == ["opensearch"]
         opensearch_wave = next(w for w in f["waves"] if w["engines"] == ["opensearch"])
-        assert opensearch_wave is not f["waves"][0]
-        assert all("opensearch" not in w for w in waves[:1])
+        assert opensearch_wave is f["waves"][-1]
+        assert all("opensearch" not in w for w in waves[:-1])
         # This fixture has no table_mappings, so the indexed tables cannot be
         # resolved -- #225's fallback: say so, and fall back to the
         # retained engine as the owner of record rather than showing no owner.
         assert "could not be resolved" in opensearch_wave["note"]
         assert "Aurora PostgreSQL" in opensearch_wave["note"]
-        start = next(d for d in f["decisions"] if d["question"].startswith("Start"))
+        start = next(d for d in f["decisions"] if d["question"].startswith("Add"))
         assert "OpenSearch" not in start["against"]
 
     def test_retained_is_only_the_source_compatible_relational_engine(self):
@@ -303,7 +304,9 @@ class TestSearchReadModel:
         assert rows["aurora_postgresql"] == "Retained"
         assert rows["opensearch"] == "Search read model"
 
-    def test_decision_report_cache_note_says_it_fronts_the_current_source(self):
+    def test_decision_report_cache_note_fronts_aurora_once_retained_exists(self):
+        # #321: the generic "Recommended architecture" cache note now names
+        # the retained Aurora engine it fronts, not the legacy source.
         html = render_decision_report_html(_discourse_shape())
-        assert "in front of the current source database, with no data migration" in html
+        assert "It fronts Aurora PostgreSQL with no data migration of its own" in html
         assert "invalidation follows the engine that owns each cached table" in html

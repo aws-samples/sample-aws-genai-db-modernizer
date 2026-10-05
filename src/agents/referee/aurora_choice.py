@@ -22,6 +22,18 @@ def source_database_engine(collector_output: Mapping) -> str:
     return str((metadata.get("source_database") or {}).get("engine") or "").lower()
 
 
+def source_database_version(collector_output: Mapping) -> str | None:
+    """The collector's source database version (e.g. ``"8.0.45"``), or ``None`` (#321).
+
+    Used only to state what the migration-waves builder checked for the
+    Aurora wave's homogeneity note -- never to infer a feature or extension
+    gap the collector itself did not report.
+    """
+    metadata = collector_output.get("metadata") or {}
+    version = (metadata.get("source_database") or {}).get("version")
+    return str(version) if version else None
+
+
 def pick_aurora_engine(
     candidates: Iterable[str],
     source_engine: str | None = None,

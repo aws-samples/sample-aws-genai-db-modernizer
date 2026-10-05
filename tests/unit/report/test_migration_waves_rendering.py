@@ -127,6 +127,62 @@ def _legacy_report() -> dict[str, Any]:
     return rep
 
 
+AURORA_FIRST_WAVES = [
+    {
+        "wave": 1,
+        "title": "Move to Aurora MySQL",
+        "engines": ["aurora_mysql"],
+        "moves_from": ["mysql"],
+        "serves_from": [],
+        "fronts": None,
+        "tables": [f"wordpress.wp_t{i}" for i in range(50)],
+        "table_count": 50,
+        "table_groups": None,
+        "homogeneity": "homogeneous",
+        "query_count": 5,
+        "cutover_query_count": 107,
+        "workload_share_percent": 4.7,
+        "share_basis": "queries",
+        "rationale": "moves to Aurora MySQL first, schema carried over 1:1",
+        "gate": "parity validated",
+    },
+    {
+        "wave": 2,
+        "title": "Move key-value and point-lookup queries to DynamoDB",
+        "engines": ["dynamodb"],
+        "moves_from": ["aurora_mysql"],
+        "serves_from": [],
+        "tables": [f"wordpress.wp_t{i}" for i in range(19)],
+        "table_count": 19,
+        "table_groups": None,
+        "query_count": 98,
+        "workload_share_percent": 91.6,
+        "share_basis": "queries",
+        "rationale": "key-value queries to DynamoDB",
+        "gate": "parity confirmed",
+    },
+]
+
+
+def _report_aurora_first_no_schema_design() -> dict[str, Any]:
+    """A #321-shaped report with no schema design, so the "migrated" table
+    count can only come from the wave-derived fallback (#257/#258's
+    schema-design figure is the primary source and would otherwise mask the
+    fallback's own double-counting bug)."""
+    return {
+        "database_name": "wordpress",
+        "job_id": "job-1",
+        "timestamp": "2026-10-04T00:00:00Z",
+        "ranking": [
+            {"target": "dynamodb", "confidence_score": 90, "workload_percent": 91.6},
+            {"target": "aurora_mysql", "confidence_score": 87, "workload_percent": 4.7},
+        ],
+        "recommended_architecture": {"databases": []},
+        "schema_designs": {},
+        "migration_waves": AURORA_FIRST_WAVES,
+    }
+
+
 class TestResolveMigrationWaves:
     def test_returns_stored_waves_verbatim(self):
         waves = resolve_migration_waves(_report_with_waves())
@@ -135,11 +191,14 @@ class TestResolveMigrationWaves:
     def test_empty_report_has_no_waves(self):
         assert resolve_migration_waves({}) == []
 
-    def test_legacy_fallback_derives_a_cache_wave_first(self):
+    def test_legacy_fallback_derives_an_aurora_wave_first(self):
+        # #321: the relational move comes first, even in the legacy fallback.
         waves = resolve_migration_waves(_legacy_report())
-        assert waves[0]["engines"] == ["elasticache"]
-        assert waves[0]["share_basis"] == "calls"
-        assert waves[0]["query_count"] == 20
+        assert waves[0]["engines"] == ["aurora_mysql"]
+        assert waves[0]["homogeneity"] == "homogeneous"
+        assert waves[1]["engines"] == ["elasticache"]
+        assert waves[1]["share_basis"] == "calls"
+        assert waves[1]["query_count"] == 20
 
     def test_legacy_fallback_puts_dynamodb_and_aurora_in_separate_waves(self):
         waves = resolve_migration_waves(_legacy_report())
@@ -148,7 +207,7 @@ class TestResolveMigrationWaves:
         assert ["aurora_mysql"] in engine_lists
         dynamo_i = engine_lists.index(["dynamodb"])
         aurora_i = engine_lists.index(["aurora_mysql"])
-        assert dynamo_i < aurora_i  # DynamoDB migrates before the retained engine
+        assert aurora_i < dynamo_i  # #321: the retained engine migrates first
 
     def test_legacy_fallback_numbers_waves_consecutively(self):
         waves = resolve_migration_waves(_legacy_report())
@@ -165,6 +224,19 @@ class TestDecisionReportRoadmap:
         assert "Gate: Cache hit rate and invalidation verified" in html
         assert "91.6% of the workload" in html
         assert "83.4% of calls" in html
+
+    def test_migrated_table_count_excludes_wave_1_aurora(self):
+        # #324 review (finding 4): wave 1 (Aurora) carries the whole schema
+        # (50 tables); wave 2 (DynamoDB) moves a 19-table subset of it, not
+        # 19 additional tables. "N tables migrate" keeps its pre-#321 meaning
+        # -- tables moving to a purpose-built engine -- so it reports 19
+        # (DynamoDB's own count), never 50 + 19 = 69 (double-counted) and
+        # never 50 (which would wrongly call the whole-schema Aurora move a
+        # "purpose-built engine" migration).
+        html = render_decision_report_html(_report_aurora_first_no_schema_design())
+        assert "<td>19 tables migrate</td>" in html
+        assert "69 tables" not in html
+        assert "50 tables migrate" not in html
 
     def test_no_section_without_any_wave(self):
         rep = _report_with_waves()
@@ -185,6 +257,18 @@ class TestEngineeringReportRoadmap:
         assert "Moves from: the source MySQL database" in md
         assert "### Wave 3: Keep the rest on Aurora MySQL" in md
         assert "Gate before the next wave: End state" in md
+
+    def test_moves_from_names_aurora_directly_not_as_the_source(self):
+        # #321: a wave moving from the retained Aurora engine (not the legacy
+        # source) shows "Aurora MySQL" directly -- "the source Aurora MySQL
+        # database" would wrongly call Aurora the original source.
+        rep = _report_with_waves()
+        rep["migration_waves"][1]["moves_from"] = ["aurora_mysql"]
+        rep["migration_waves"][1]["fronts"] = "aurora_mysql"
+        md = render_engineering_report_md(rep)
+        assert "Moves from: Aurora MySQL" in md
+        assert "Fronts: Aurora MySQL" in md
+        assert "the source Aurora MySQL database" not in md
 
     def test_search_wave_shows_synced_from(self):
         rep = _report_with_waves()
@@ -240,24 +324,132 @@ class TestEngineeringReportRoadmap:
         assert "are not shown in any wave" not in md
 
 
+class TestReviewFindings324:
+    """Fixes from the independent review of PR #321's merge."""
+
+    def test_decision_report_states_wave_1_share_as_the_end_state(self):
+        # Finding 2: wave 1's headline says the whole workload runs on
+        # Aurora at cutover, and names the end-state remainder explicitly --
+        # not just "5 queries (4.7%)", which reads as if only 5 queries ever
+        # touch Aurora.
+        html = render_decision_report_html(_report_aurora_first_no_schema_design())
+        assert "all 107 queries at cutover" in html
+        assert "5 (4.7%) remain on Aurora MySQL at the end" in html
+
+    def test_decision_report_says_tables_and_views_for_wave_1(self):
+        # Finding 4: wave 1's table count includes views; say so.
+        html = render_decision_report_html(_report_aurora_first_no_schema_design())
+        assert "50 source tables and views" in html
+
+    def test_engineering_md_states_wave_1_share_as_the_end_state(self):
+        md = render_engineering_report_md(_report_aurora_first_no_schema_design())
+        assert "all 107 queries at cutover" in md
+        assert "remain on Aurora MySQL at the end" in md
+
+    def test_engineering_md_table_list_says_tables_and_views_for_wave_1(self):
+        md = render_engineering_report_md(_report_aurora_first_no_schema_design())
+        assert "source tables and views:" in md
+
+    def test_engineering_md_pointer_falls_back_without_completed_designs(self):
+        # Finding 5: "Target schemas by engine" is only written when a
+        # design completed; the pointer must not promise a section that
+        # isn't there.
+        rep = _report_aurora_first_no_schema_design()
+        md = render_engineering_report_md(rep)
+        assert "Target schemas by engine" not in md
+        assert "the target architecture in the Target engines table above" in md
+
+    def test_engineering_md_pointer_names_target_schemas_when_present(self):
+        rep = _report_aurora_first_no_schema_design()
+        rep["schema_designs"] = {
+            "dynamodb": {"status": "completed", "tables": [{"table_name": "t"}]}
+        }
+        md = render_engineering_report_md(rep)
+        assert "## Target schemas by engine" in md
+        assert 'the target schemas in "Target schemas by engine" below' in md
+
+    def test_suggested_path_note_uses_an_em_dash_not_ascii_double_hyphen(self):
+        # Finding 9.
+        html = render_decision_report_html(_report_aurora_first_no_schema_design())
+        md = render_engineering_report_md(_report_aurora_first_no_schema_design())
+        assert "One suggested adoption path, not the only one — to modernize" in html
+        assert "One suggested adoption path, not the only one — to modernize" in md
+        note_html = html.split("Migration roadmap</h2>")[1].split("</p>")[0]
+        note_md = md.split("## Migration roadmap")[1].split("\n\n")[1]
+        assert "--" not in note_html
+        assert "--" not in note_md
+
+    def test_cache_note_fronts_the_resolved_cache_waves_engine(self):
+        # Finding 6: the "Recommended architecture" cache note must agree
+        # with the roadmap's own cache wave, not re-derive the fronted
+        # engine from architecture roles -- which disagreed with a 1.4-shaped
+        # report (cache-first, stored waves predate #321 and still front the
+        # legacy source, not Aurora). ``_report_with_waves()``'s stored cache
+        # wave fronts "mysql" (the legacy source, per STORED_WAVES above).
+        html = render_decision_report_html(_report_with_waves())
+        assert "It fronts the source MySQL database" in html
+        assert "It fronts Aurora MySQL" not in html
+
+    def test_cache_note_fronts_aurora_when_the_cache_wave_says_so(self):
+        rep = _report_with_waves()
+        rep["migration_waves"][0]["fronts"] = "aurora_mysql"
+        html = render_decision_report_html(rep)
+        assert "It fronts Aurora MySQL" in html
+        assert "It fronts the source MySQL database" not in html
+
+
 class TestDeckUsesStoredWaves:
+    def test_migrated_tile_excludes_wave_1_aurora(self):
+        # #324 review (finding 4): same fix as the decision report's "N
+        # tables migrate" row -- the deck tile keeps its pre-#321 meaning
+        # (19, DynamoDB's own count), not 50 (wave 1's whole-schema count,
+        # which isn't a "purpose-built engine" migration) and not 69
+        # (the double count).
+        f = pptx_report.derive(_report_aurora_first_no_schema_design(), {})
+        assert f["migrated"] == 19
+
+    def test_wave_1_tile_shows_cutover_not_the_end_state_share(self):
+        # Finding 2: the wave 1 tile's stat cell showed "4.7% query
+        # patterns", which reads as if only 4.7% of the workload ever
+        # touches Aurora -- say "100% at cutover" instead; the rationale
+        # states the end-state 4.7% remainder.
+        f = pptx_report.derive(_report_aurora_first_no_schema_design(), {})
+        aurora_wave = next(w for w in f["waves"] if w["engines"] == ["aurora_mysql"])
+        assert aurora_wave["cutover_query_count"] == 107
+
+    def test_deck_subtitle_states_cutover_and_fits_without_the_path_suffix(self):
+        # Findings 2 and 9: the subtitle says the cutover figure, not just
+        # the end-state share, and no longer carries the long "one
+        # suggested path" suffix that risked pushing it past one line.
+        prs = pptx_report.open_deck()
+        f = pptx_report.derive(_report_aurora_first_no_schema_design(), {})
+        pptx_report.slide_sequencing(prs, f)
+        subtitle_text = " ".join(
+            shape.text_frame.text
+            for shape in prs.slides[-1].shapes
+            if shape.has_text_frame and "cutover" in shape.text_frame.text
+        )
+        assert "Wave 1 moves all 107 queries to Aurora at cutover" in subtitle_text
+        assert "4.7% remain there at the end" in subtitle_text
+        assert "one suggested path" not in subtitle_text
+
     def test_dynamodb_and_aurora_are_separate_waves_when_stored(self):
         f = pptx_report.derive(_report_with_waves(), {})
         engine_lists = [w["engines"] for w in f["waves"]]
         assert engine_lists == [["elasticache"], ["dynamodb"], ["aurora_mysql"]]
 
     def test_deck_matches_resolve_migration_waves_without_a_stored_roadmap(self):
-        # #225: the deck's old on-the-fly algorithm is gone -- it
+        # #225/#321: the deck's old on-the-fly algorithm is gone -- it
         # now always matches resolve_migration_waves, the same fallback the
-        # decision report and engineering report use (4 waves: cache, DynamoDB
-        # and Aurora separate, not merged the way the deleted algorithm did).
+        # decision report and engineering report use (Aurora, cache, DynamoDB
+        # separate waves, not merged the way the deleted algorithm did).
         from src.report.renderers import resolve_migration_waves
 
         rep = _legacy_report()
         f = pptx_report.derive(rep, {})
         engine_lists = [w["engines"] for w in f["waves"]]
         assert engine_lists == [w["engines"] for w in resolve_migration_waves(rep)]
-        assert engine_lists[0] == ["elasticache"]
+        assert engine_lists[0] == ["aurora_mysql"]
 
     def test_last_wave_is_retained_when_stored(self):
         f = pptx_report.derive(_report_with_waves(), {})

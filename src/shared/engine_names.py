@@ -59,6 +59,9 @@ SOURCE_ENGINE_DISPLAY_NAMES: dict[str, str] = {
     "mariadb": "MariaDB",
     "postgresql": "PostgreSQL",
     "postgres": "PostgreSQL",
+    "sqlserver": "SQL Server",
+    "oracle": "Oracle",
+    "db2": "Db2",
 }
 
 

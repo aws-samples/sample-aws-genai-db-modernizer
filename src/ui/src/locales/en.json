@@ -895,7 +895,7 @@
   "report-results.tco.projected-monthly-cost": "Projected Monthly Cost",
   "report-results.tco.savings": "Savings",
   "report-results.roadmap.title": "Migration Roadmap",
-  "report-results.roadmap.description": "The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine",
+  "report-results.roadmap.description": "The incremental migration waves computed from this assessment. One suggested adoption path, not the only one — to modernize in one step instead, adopt {{pointer}} directly.",
   "report-results.roadmap.wave-label": "Wave {{number}}",
   "report-results.roadmap.query-count_one": "{{count}} query",
   "report-results.roadmap.query-count_other": "{{count}} queries",

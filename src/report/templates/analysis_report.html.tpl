@@ -56,7 +56,7 @@ __BANNER__
 
     <div class="section">
       <div class="section-header">Migration Roadmap</div>
-      <p class="section-desc">The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine.</p>
+      <p class="section-desc">The incremental migration waves computed from this assessment. One suggested adoption path, not the only one — to modernize in one step instead, adopt the target architecture in Executive Summary above directly.</p>
       <div id="migration-roadmap-container"></div>
     </div>
 

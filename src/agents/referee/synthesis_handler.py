@@ -17,7 +17,7 @@ LLM seam functions (for Skill Sync / external LLM integration):
 
 from datetime import UTC, datetime
 
-from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
@@ -159,6 +159,9 @@ def run_synthesis_deterministic(
         # artifact (CTE alias, keyword, system catalog name) never reaches a wave.
         # The upstream noise in table_assignments itself is #316.
         known_tables=wave_known_tables,
+        # #321: named in wave 1's homogeneity statement when the collector
+        # reported it; never invented when it didn't.
+        source_version=source_database_version(data.collector),
     )
     # #316: an assignment produced by this fix already resolved source_tables
     # noise against the collector's canonical schema (CTE aliases, system

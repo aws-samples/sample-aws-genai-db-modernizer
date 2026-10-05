@@ -142,28 +142,34 @@ class TestSequencingRule:
     def test_rule_matches_the_computed_waves(self) -> None:
         rep, exp = _report(), _export(WORDPRESS_SIGNALS)
         f = pptx_report.derive(rep, exp)
-        # Wave 1 is the no-migration step, even though it is under the floor ...
-        assert f["waves"][0]["engines"] == ["elasticache"]
+        # #321: wave 1 is the relational move (Aurora), regardless of its own
+        # confidence; the no-migration cache step is wave 2, also under the
+        # floor ...
+        assert f["waves"][0]["engines"] == ["aurora_mysql"]
+        assert f["waves"][1]["engines"] == ["elasticache"]
         assert f["conf"]["elasticache"] < pptx_report.CONFIDENCE_FLOOR
-        # ... and the stated rule says exactly that.
+        # ... and the stated rule says exactly that about the no-migration step.
         text = " ".join(_deck_text(rep, exp).split())
         assert (
-            "Steps that need no data migration (ElastiCache at 48%) go first at any confidence"
+            "Steps that need no data migration (ElastiCache at 48%) are reversible at any confidence"
             in text
         )
         assert "Migration targets under 50% are sequenced last" in text
 
-    def test_low_confidence_migration_target_is_sequenced_last(self) -> None:
+    def test_low_confidence_relational_move_still_sequences_first(self) -> None:
+        # #321: the relational move is wave 1 by rule, never re-ordered by
+        # confidence (same invariant the pre-#321 version of this test checked
+        # about the retained engine always being last).
         rep = _report()
         rep["ranking"][2]["confidence_score"] = 40  # aurora_mysql below the floor
         f = pptx_report.derive(rep, _export(WORDPRESS_SIGNALS))
-        assert f["waves"][-1]["engines"] == ["aurora_mysql"]
+        assert f["waves"][0]["engines"] == ["aurora_mysql"]
 
     def test_no_parenthetical_when_no_migration_step_is_confident(self) -> None:
         rep = _report()
         rep["ranking"][0]["confidence_score"] = 70
         text = " ".join(_deck_text(rep, _export(WORDPRESS_SIGNALS)).split())
-        assert "Steps that need no data migration go first" in text
+        assert "Steps that need no data migration are reversible" in text
         assert "ElastiCache at 70%" not in text
 
 
@@ -324,20 +330,20 @@ class TestSeveralNoMigrationEngines:
     def test_every_no_migration_engine_under_the_floor_is_named(self) -> None:
         text = " ".join(_deck_text(_with_retained_documentdb(44), _export([])).split())
         assert (
-            "Steps that need no data migration (ElastiCache at 48%, Aurora PostgreSQL at 44%) go "
-            "first" in text
+            "Steps that need no data migration (ElastiCache at 48%, Aurora PostgreSQL at 44%) are "
+            "reversible" in text
         )
 
     def test_only_the_ones_under_the_floor_are_named(self) -> None:
         text = " ".join(_deck_text(_with_retained_documentdb(80), _export([])).split())
-        assert "(ElastiCache at 48%) go first" in text
+        assert "(ElastiCache at 48%) are reversible" in text
         assert "Aurora PostgreSQL at" not in text
 
     def test_none_under_the_floor(self) -> None:
         rep = _with_retained_documentdb(80)
         rep["ranking"][0]["confidence_score"] = 70
         text = " ".join(_deck_text(rep, _export([])).split())
-        assert "Steps that need no data migration go first at any confidence" in text
+        assert "Steps that need no data migration are reversible at any confidence" in text
 
     def test_three_kept_engines_join(self) -> None:
         rep = _with_retained_documentdb(44)
@@ -352,7 +358,7 @@ class TestNoMigrationTargets:
         engines: list[dict[str, Any]] = [{"engine": "elasticache", "role": "Cache layer"}]
         text = pptx_report._sequencing_rule_text(engines, {"elasticache": 48.0})
         assert "Migration targets under" not in text
-        assert text.endswith("so they are reversible.")
+        assert text.endswith("so there is nothing to roll back.")
 
 
 class TestJoinNames:

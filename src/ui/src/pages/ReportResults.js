@@ -470,12 +470,21 @@ const ReportResultsPage = memo(() => {
   const tradeoffs = synthesis?.trade_offs || [];
   const tcoAnalysis = synthesis?.tco_analysis || {};
   const schemaDesigns = synthesis?.schema_designs || {};
-  // #225: the incremental migration roadmap, written by synthesis to report.json
-  // (cache, then key-value/point lookups, then search/analytics read models and
-  // document data, then whatever is retained on the source-compatible relational
-  // engine). A report synthesized before #225 has none; the section is omitted
+  // #225/#321: the incremental migration roadmap, written by synthesis to
+  // report.json -- one deterministic sequencing rule (currently relational
+  // move first, then cache, then key-value/document data, then any other
+  // target, then search/analytics read models; #321 review finding 6: never
+  // described by a specific order here, since a report synthesized before
+  // #321 keeps whatever order its own stored waves used). A report
+  // synthesized before #225 has no waves at all; the section is omitted
   // rather than showing a roadmap not derived from this report's own data.
   const migrationWaves = synthesis?.migration_waves || [];
+  // #321 review (finding 9): point at "Schema Designs" (above) only when it
+  // actually has something to show; otherwise fall back to "Executive
+  // Summary", which always does.
+  const roadmapPointer = Object.values(schemaDesigns).some((d) => d?.status === 'completed')
+    ? 'the target schema in Schema Designs above'
+    : 'the target architecture in Executive Summary above';
 
   // Process risks from API - extract engine from description if available
   const processRisks = (apiRisks) => {
@@ -1595,7 +1604,7 @@ const ReportResultsPage = memo(() => {
                   header={
                     <SectionSeparator
                       title={t('report-results.roadmap.title')}
-                      description={t('report-results.roadmap.description')}
+                      description={t('report-results.roadmap.description', { pointer: roadmapPointer })}
                       onTopClick={() => scrollToSection('report-contents')}
                     />
                   }

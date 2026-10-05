@@ -132,19 +132,29 @@ class TestMigrationWaves:
         waves = result["migration_waves"]
         assert waves is not None
         engine_lists = [w["engines"] for w in waves]
-        assert engine_lists == [["elasticache"], ["dynamodb"], ["aurora_mysql"]]
+        # #321: Aurora moves first; cache fronts it; DynamoDB moves last.
+        assert engine_lists == [["aurora_mysql"], ["elasticache"], ["dynamodb"]]
         assert [w["wave"] for w in waves] == [1, 2, 3]
 
-    def test_cache_wave_is_first_and_reversible(self, store):
+    def test_aurora_wave_is_first_and_carries_the_whole_schema(self, store):
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
-        cache = result["migration_waves"][0]
+        aurora = result["migration_waves"][0]
+        assert aurora["engines"] == ["aurora_mysql"]
+        assert sorted(aurora["tables"]) == ["orders", "sessions", "users"]
+        assert aurora["homogeneity"] == "homogeneous"
+        assert "moves 1:1 to Aurora MySQL" in aurora["rationale"]
+
+    def test_cache_wave_fronts_aurora_and_is_reversible(self, store):
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        cache = result["migration_waves"][1]
         assert cache["query_count"] == 1
         assert cache["share_basis"] == "calls"
+        assert cache["fronts"] == "aurora_mysql"
         assert "reversible" in cache["rationale"]
 
     def test_dynamodb_wave_respects_co_dependency_groups(self, store):
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
-        dynamo = result["migration_waves"][1]
+        dynamo = result["migration_waves"][2]
         assert sorted(dynamo["tables"]) == ["sessions", "users"]
         # All 3 DynamoDB-assigned queries touch the group's tables: kv1 and kv2
         # are the group's own members, and hot1 -- not a member, but it reads
@@ -156,13 +166,8 @@ class TestMigrationWaves:
         assert dynamo["table_groups"] == [
             {"tables": ["sessions", "users"], "query_count": 3, "kind": "co_dependency"}
         ]
-
-    def test_retained_wave_is_last_and_carried_over_1_to_1(self, store):
-        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
-        retained = result["migration_waves"][-1]
-        assert retained["engines"] == ["aurora_mysql"]
-        assert retained["tables"] == ["orders"]
-        assert "carried over 1:1" in retained["rationale"]
+        # #321: moves from the retained Aurora engine, not the legacy source.
+        assert dynamo["moves_from"] == ["aurora_mysql"]
 
     def test_written_report_round_trips_through_the_contract(self, store):
         from src.agents.referee.synthesis_handler import _write_synthesis_report
@@ -170,6 +175,6 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        assert report["contract_version"] == "1.4"
+        assert report["contract_version"] == "1.5"
         assert len(report["migration_waves"]) == 3
-        assert report["migration_waves"][1]["engines"] == ["dynamodb"]
+        assert report["migration_waves"][2]["engines"] == ["dynamodb"]

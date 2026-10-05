@@ -47,6 +47,36 @@ Version History:
   here is ``None``/empty for a report synthesized before this field existed;
   every deliverable falls back to deriving the same roadmap shape itself.
   Backward compatible.
+- 1.5 (2026-10-05, revised after independent review of #321): Reordered the
+  migration-waves sequence so the relational move comes first (#321): wave 1
+  is now the whole source database moving to the source-compatible Aurora
+  engine (schema carried over 1:1), skipped only when the source is already
+  Aurora. Added optional ``homogeneity`` to ``MigrationWave`` (wave 1 only:
+  ``"homogeneous"`` when the source maps to a compatible Aurora engine,
+  ``"heterogeneous"`` when it does not). A heterogeneous wave 1 still runs
+  -- it is not skipped -- it just names no Aurora engine (``engines`` is
+  empty, the title says what the source moves *off* instead of *to*, and
+  the gate flags it as a risk); only a missing source engine, or a source
+  that is already Aurora, skips wave 1 outright. Added optional
+  ``cutover_query_count`` to ``MigrationWave`` (wave 1, homogeneous only):
+  every in-scope query, since the whole workload runs on Aurora the moment
+  wave 1 finishes, before any later wave has moved its own share away;
+  ``query_count``/``workload_share_percent`` stay the end-state share still
+  on Aurora once every later wave has moved its own. ``moves_from`` and
+  ``fronts`` now name the retained Aurora engine for every wave after wave 1
+  (data has already reached Aurora by then), not the legacy source engine;
+  wave 1 itself, and the cache wave whenever there is no retained engine to
+  front instead (a heterogeneous source, or no source engine at all), still
+  name the legacy source engine. ``table_count`` for wave 1 is the whole
+  collected schema (tables and views); every later wave's is a subset of
+  it, not an addition. DynamoDB and DocumentDB share one wave when both are
+  routed (the product plan is "cache + DynamoDB or cache + DocumentDB", not
+  a separate wave each), each keeping its own rationale and gate text
+  inside the shared wave. Routing itself (owner distribution, shares, owned
+  queries, the cache overlay) is unchanged -- only the wave order, fields
+  and wording. Backward compatible: ``homogeneity``/``cutover_query_count``
+  default to ``None`` for a wave written before they existed, and
+  ``resolve_migration_waves``'s legacy fallback applies the same reorder.
 """
 
 from datetime import datetime
@@ -236,27 +266,40 @@ class TableOwner(BaseModel):
 
 
 class MigrationWave(BaseModel):
-    """One step of the incremental migration roadmap (#225).
+    """One step of the incremental migration roadmap (#225; relational-first
+    reorder by #321).
 
     The sequence is one deterministic rule computed from the assignment, never
-    a model's choice: cache (no data migration, reversible), then key-value and
-    point-lookup queries to DynamoDB (table group by table group), then any
-    other direct migration target, then search/analytics read models
-    (OpenSearch, synced, never system of record) and document-shaped data
-    (DocumentDB), then whatever is retained on the source-compatible
-    relational engine (Aurora MySQL/PostgreSQL), carried over 1:1. A wave with
-    nothing to move is omitted; the rest are numbered consecutively from 1.
+    a model's choice: the whole source database to the source-compatible
+    Aurora engine first (schema carried over 1:1, #321), then cache (no data
+    migration, reversible, fronting Aurora), then key-value and point-lookup
+    queries to DynamoDB and/or document-shaped data to DocumentDB (one wave
+    for both when both are routed), then any other direct migration target,
+    then search/analytics read models (OpenSearch, synced, never system of
+    record). A wave with nothing to move is omitted; the rest are numbered
+    consecutively from 1. Every deliverable presents this as one suggested
+    path, not the only one, alongside the direct "modernize in one step"
+    option (the fully decomposed target architecture shown elsewhere in the
+    same report).
     """
 
     wave: int = Field(..., ge=1, description="1-based position in the roadmap")
     title: str = Field(..., description="Short, human-readable name for the wave")
-    engines: list[str] = Field(..., description="The wave's target engine(s)")
+    engines: list[str] = Field(
+        ...,
+        description=(
+            "The wave's target engine(s); two for the shared DynamoDB/DocumentDB wave "
+            "when both are routed; empty for wave 1 when the source has no "
+            "source-compatible Aurora engine (heterogeneous, #321)"
+        ),
+    )
     moves_from: list[str] = Field(
         default_factory=list,
         description=(
-            "The source engine(s) (e.g. 'mysql') this wave's tables/queries move away "
-            "from, if any -- always the current source database, never an end-state "
-            "engine an earlier wave has not reached yet (#225)"
+            "The engine(s) this wave's tables/queries move away from, if any (#321): "
+            "the legacy source engine (e.g. 'mysql') for wave 1 itself, and for every "
+            "later wave the retained Aurora engine once wave 1 has reached it -- never "
+            "an end-state engine a later wave has not reached yet"
         ),
     )
     serves_from: list[str] = Field(
@@ -270,16 +313,37 @@ class MigrationWave(BaseModel):
     fronts: str | None = Field(
         None,
         description=(
-            "Cache wave only: the source engine (e.g. 'mysql') it fronts. The cache "
-            "always moves no data (moves_from is empty); this is the fronted engine "
-            "(#225)"
+            "Cache wave only: the engine it fronts (#321) -- the retained Aurora engine "
+            "once wave 1 has reached it, else the legacy source engine (e.g. 'mysql') "
+            "when there is no retained engine to front instead (a heterogeneous source, "
+            "or no source engine at all). The cache always moves no data (moves_from is "
+            "empty); this is the fronted engine"
+        ),
+    )
+    homogeneity: Literal["homogeneous", "heterogeneous"] | None = Field(
+        None,
+        description=(
+            "Wave 1 (Aurora) only (#321): 'homogeneous' when the source maps to a "
+            "source-compatible Aurora engine, 'heterogeneous' when it does not. A "
+            "heterogeneous wave 1 still runs -- it is not skipped -- it just names no "
+            "Aurora engine (engines is then empty, the title says what the source moves "
+            "off instead of to, and the gate flags it as a risk). None for every other "
+            "wave, and for a wave written before this field existed"
         ),
     )
     tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
-    table_count: int = Field(..., ge=0, description="Number of source tables this wave covers")
+    table_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Number of source tables and views this wave covers. Wave 1 (Aurora) covers "
+            "the whole collected schema (#321); every later wave's count is a subset of "
+            "wave 1's tables that moves on from Aurora, not an addition to it"
+        ),
+    )
     table_groups: list[TableGroup] | None = Field(
         None,
-        description="DynamoDB wave only: tables grouped table group by table group (#225)",
+        description="DynamoDB's own tables, grouped table group by table group (#225)",
     )
     table_owners: list[TableOwner] | None = Field(
         None,
@@ -289,6 +353,17 @@ class MigrationWave(BaseModel):
         ),
     )
     query_count: int = Field(..., ge=0, description="Number of queries this wave covers")
+    cutover_query_count: int | None = Field(
+        None,
+        description=(
+            "Wave 1 (Aurora), homogeneous only (#321 review): every in-scope query, since "
+            "the whole workload runs on Aurora the moment this wave finishes, before any "
+            "later wave has moved its own share away. query_count/workload_share_percent "
+            "stay the end-state share still on Aurora once every later wave has moved its "
+            "own. None for every other wave, a heterogeneous wave 1, and a wave written "
+            "before this field existed"
+        ),
+    )
     workload_share_percent: float = Field(
         ..., ge=0, le=100, description="Share of the workload, or of calls for the cache wave"
     )
@@ -313,7 +388,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.4",
+        default="1.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

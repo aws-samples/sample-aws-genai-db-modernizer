@@ -369,7 +369,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   ${migrationWaves.length > 0 ? html`
   <div class="section-separator">
     <h2>Migration Roadmap</h2>
-    <div class="desc">The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine</div>
+    <div class="desc">The incremental migration waves computed from this assessment. One suggested adoption path, not the only one — to modernize in one step instead, adopt the target architecture in Executive Summary above directly.</div>
   </div>
 
   <div class="container">

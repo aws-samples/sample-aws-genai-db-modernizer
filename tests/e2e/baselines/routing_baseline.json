@@ -2,14 +2,16 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "PR #315 re-review fixes (#225): the retained wave now also carries the collector's views with no observed query, so discourse's retained-wave table count grows (210 -> 213) and its unresolved-name count drops by 1 (badge_posts resolves); DynamoDB table-group query counts now cover every DynamoDB-assigned query that touches an owned table, not just a co-dependency group's own members, so group totals change on both samples without changing the wave's own query_count. Owner shares, owned queries and the cache overlay are unchanged.",
+  "reason": "#324 independent review of #321: wave text/field corrections only (dual-read 'until wave N' only when N is later; wave 1 states the end-state share and cutover count explicitly; DynamoDB+DocumentDB share one wave; heterogeneous-source wording; shorter homogeneity wording; cache-note/roadmap-description order independence); wave structure (engines, shares, table counts) is unchanged from the prior baseline",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
     "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average.",
     "#225: migration waves are now written to report.json by synthesis and read from there (cache fronts the source first, then DynamoDB key-value/point lookups, then search read models, then whatever is retained on the source-compatible relational engine, always last); routing (owner distribution) is unchanged, only the wave plan and its table counts are added/regrouped.",
     "#225: retained wave now carries every collected table with no observed query, so wave table_count grows; OpenSearch tables get a durable owner and unresolved tables fall back to the retained engine; moves_from is the source engine, not the end-state engine; DynamoDB table-group query counts are distinct DynamoDB-assigned query IDs. Owner shares, owner queries and the cache overlay are unchanged.",
-    "PR #315 re-review fixes (#225): the retained wave now also carries the collector's views with no observed query, so discourse's retained-wave table count grows (210 -> 213) and its unresolved-name count drops by 1 (badge_posts resolves); DynamoDB table-group query counts now cover every DynamoDB-assigned query that touches an owned table, not just a co-dependency group's own members, so group totals change on both samples without changing the wave's own query_count. Owner shares, owned queries and the cache overlay are unchanged."
+    "PR #315 re-review fixes (#225): the retained wave now also carries the collector's views with no observed query, so discourse's retained-wave table count grows (210 -> 213) and its unresolved-name count drops by 1 (badge_posts resolves); DynamoDB table-group query counts now cover every DynamoDB-assigned query that touches an owned table, not just a co-dependency group's own members, so group totals change on both samples without changing the wave's own query_count. Owner shares, owned queries and the cache overlay are unchanged.",
+    "#321: reorder migration waves relational-first (Aurora wave 1, cache wave 2 fronting Aurora, DynamoDB wave 3 moving from Aurora, OpenSearch wave 4); owner shares, owned queries and the cache overlay are unchanged -- only the wave order and the wave-1 table_count (now the whole collected schema per sample) changed",
+    "#324 independent review of #321: wave text/field corrections only (dual-read 'until wave N' only when N is later; wave 1 states the end-state share and cutover count explicitly; DynamoDB+DocumentDB share one wave; heterogeneous-source wording; shorter homogeneity wording; cache-note/roadmap-description order independence); wave structure (engines, shares, table counts) is unchanged from the prior baseline"
   ],
   "samples": {
     "wordpress": {
@@ -36,6 +38,14 @@
       "waves": [
         {
           "engines": [
+            "aurora_mysql"
+          ],
+          "workload_percent": 4.7,
+          "cached_call_share_percent": 0.0,
+          "table_count": 50
+        },
+        {
+          "engines": [
             "elasticache"
           ],
           "workload_percent": 0.0,
@@ -57,14 +67,6 @@
           "workload_percent": 3.7,
           "cached_call_share_percent": 0.0,
           "table_count": 4
-        },
-        {
-          "engines": [
-            "aurora_mysql"
-          ],
-          "workload_percent": 4.7,
-          "cached_call_share_percent": 0.0,
-          "table_count": 31
         }
       ]
     },
@@ -92,6 +94,14 @@
       "waves": [
         {
           "engines": [
+            "aurora_postgresql"
+          ],
+          "workload_percent": 76.5,
+          "cached_call_share_percent": 0.0,
+          "table_count": 314
+        },
+        {
+          "engines": [
             "elasticache"
           ],
           "workload_percent": 0.0,
@@ -113,14 +123,6 @@
           "workload_percent": 0.2,
           "cached_call_share_percent": 0.0,
           "table_count": 0
-        },
-        {
-          "engines": [
-            "aurora_postgresql"
-          ],
-          "workload_percent": 76.5,
-          "cached_call_share_percent": 0.0,
-          "table_count": 213
         }
       ]
     }

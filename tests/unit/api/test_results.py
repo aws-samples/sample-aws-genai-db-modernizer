@@ -78,7 +78,8 @@ class TestGetResults:
         response = client.get("/api/v1/assessments/job-1/results")
         assert response.status_code == 200
         waves = response.json()["synthesis"]["migration_waves"]
-        assert [w["engines"] for w in waves] == [["dynamodb"], ["aurora_mysql"]]
+        # #321: the relational move comes first, even in the legacy fallback.
+        assert [w["engines"] for w in waves] == [["aurora_mysql"], ["dynamodb"]]
 
     def test_keeps_the_stored_waves_when_present(self, mock_services):
         stored = [{"wave": 1, "engines": ["elasticache"], "moves_from": [], "serves_from": []}]

@@ -818,8 +818,9 @@ def _sequencing_rule_text(
             else ""
         )
         text += (
-            f"Steps that need no data migration{named} go first at any confidence: "
-            f"the source database stays authoritative, so they are reversible."
+            f"Steps that need no data migration{named} are reversible at any confidence: "
+            "the engine already serving the data keeps serving it, so there is nothing to "
+            "roll back."
         )
     if has_targets:
         text += (
@@ -863,11 +864,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # clearly moves real tables, when no schema design exists yet to drive the
     # per-engine ``migrates`` count below. Prefer that richer, schema-design-based
     # figure when it has one (keeps every other count label, #257/#258,
-    # unchanged); fall back to summing the tables a wave actually migrates
-    # (moves_from non-empty — never the cache, which moves nothing, or the
-    # search/retained waves, which don't move data either) only when it is 0.
+    # unchanged); fall back to a wave-derived count only when it is 0.
+    #
+    # #321 review (finding 4): wave 1 (Aurora) now also carries ``moves_from``,
+    # but its ``table_count`` is the *whole* collected schema, not a
+    # purpose-built-engine migration -- summing it in here would both double
+    # count against the later waves it's a superset of, and relabel "the
+    # whole schema moves to Aurora" as "tables migrate to a purpose-built
+    # engine" (the exact wording slide 2's footer uses this figure for). This
+    # figure keeps its pre-#321 meaning instead: tables that leave Aurora for
+    # a purpose-built engine, so wave 1 is excluded from the sum.
     migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
-        w.get("table_count", 0) for w in stored_waves if w.get("moves_from")
+        w.get("table_count", 0)
+        for w in stored_waves
+        if w.get("moves_from") and w.get("homogeneity") is None
     )
     # The cache layer owns no query (#296): it is shown by the reads it fronts and
     # their share of calls, never by a share of the workload.
@@ -1056,14 +1066,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         )
         decisions.append(
             {
-                "question": "Start with the no-migration step?",
+                # #324 review (finding 3): no longer "Start with" -- #321 puts the
+                # relational move (a real migration) first; this step just has no
+                # migration of its own, wherever it falls in the roadmap.
+                "question": "Add the no-migration step?",
                 "badge": badge,
                 "accent": BLUE,
                 "against": (
                     f"{names} · no data migration · "
                     f"{no_move_high} HIGH {plural_noun(no_move_high, 'risk')}"
                 ),
-                "action": "Source database remains authoritative; step is reversible.",
+                "action": (
+                    "No data migration: the engine already serving these reads keeps "
+                    "the data, so the step is reversible."
+                ),
             }
         )
 
@@ -1105,6 +1121,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "workload": 0.0 if is_cache_share else share,
                 "cached_share": share if is_cache_share else 0.0,
                 "cached_queries": int(sw.get("query_count") or 0) if is_cache_share else 0,
+                # #321 review (finding 2): wave 1's share is the end state,
+                # not the whole workload it carries at cutover -- carried
+                # through so the subtitle and the wave tile can both say so.
+                "cutover_query_count": sw.get("cutover_query_count"),
             }
         )
     for w in waves:
@@ -1734,7 +1754,17 @@ def slide_sequencing(prs, f):
     # wave 1 is a real migration target (e.g. DynamoDB with no cache overlay),
     # say so instead of repeating the no-migration claim unconditionally.
     first_no_migration = bool(waves[0].get("no_migration")) if waves else False
-    if first_cache and not first_pct:
+    first_cutover = waves[0].get("cutover_query_count") if waves else None
+    # #321 review (finding 2): wave 1 (Aurora) moves the whole workload at
+    # cutover; first_pct is the end-state share still on Aurora once later
+    # waves move their own share away, not what wave 1 itself covers -- say
+    # both, rather than implying only first_pct ever touches Aurora.
+    if first_cutover:
+        subtitle = (
+            f"Wave 1 moves all {first_cutover} {plural_noun(first_cutover, 'query', 'queries')} "
+            f"to Aurora at cutover; {first_pct:.1f}% remain there at the end"
+        )
+    elif first_cache and not first_pct:
         n_c = waves[0]["cached_queries"]
         subtitle = (
             f"Wave 1 puts the cache layer for {n_c} hot {plural_noun(n_c, 'read')} "
@@ -1750,6 +1780,10 @@ def slide_sequencing(prs, f):
         subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload with no data migration"
     else:
         subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload, the first data migration"
+    # #321 review (finding 9): "one suggested path" lives in the constraints
+    # card below, not here -- appending it to the subtitle pushed it past
+    # one line in the title box (worst case: a cache-first 1.4 report, whose
+    # subtitle is already its own full sentence).
     set_subtitle(s, subtitle)
 
     # #225: up to 6 waves (cache, KV, other, search, document,
@@ -1775,7 +1809,14 @@ def slide_sequencing(prs, f):
             (
                 f"{fmt_num(w['cached_share'], 1)}% calls cached"
                 if w.get("cached_share") and not w["workload"]
-                else f"{w['workload']:.1f}% query patterns"
+                # #321 review (finding 2): wave 1 (Aurora) moves 100% of the
+                # workload at cutover; "4.7% query patterns" is the end-state
+                # share that stays on Aurora, not what this wave itself moves.
+                else (
+                    "100% at cutover"
+                    if w.get("cutover_query_count")
+                    else f"{w['workload']:.1f}% query patterns"
+                )
             ),
             # A labelled figure ("60% (signal only)") fills the cell on its own
             w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} confidence",
@@ -1808,7 +1849,9 @@ def slide_sequencing(prs, f):
         f"{plural_verb(co_dep, 'constrains', 'constrain')} wave boundaries; "
         f"{n_tradeoffs} {plural_noun(n_tradeoffs, 'trade-off')} "
         f"{plural_verb(n_tradeoffs, 'is', 'are')} documented in the Engineering "
-        f"Report. Later waves are re-scoped from wave 1's measurements.",
+        f"Report. Later waves are re-scoped from wave 1's measurements. One suggested "
+        "adoption path, not the only one — to modernize in one step instead, adopt the "
+        "target architecture directly.",
         size=11.5,
         color=WHITE,
     )

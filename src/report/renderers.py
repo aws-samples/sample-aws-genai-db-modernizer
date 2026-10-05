@@ -424,11 +424,19 @@ def cache_layer_counts(report: dict[str, Any], engine: str) -> tuple[int, float]
     return int(n or 0), float(share or 0.0)
 
 
-CACHE_WAVE_NOTE = (
-    "It goes first in front of the current source database, with no data migration, and "
-    "keeps serving the same reads as their owners move in later waves: invalidation "
-    "follows the engine that owns each cached table."
-)
+def cache_wave_note(front: str) -> str:
+    """The cache's role in the migration-waves roadmap (#296, reworded by #321).
+
+    ``front`` is the display name of the engine the cache fronts: the
+    retained Aurora engine once wave 1 has reached it, or "the current source
+    database" when there is no Aurora wave to front instead (#321 -- the
+    cache no longer unconditionally "goes first": wave 1 may now precede it).
+    """
+    return (
+        f"It fronts {front} with no data migration of its own, and keeps serving the same "
+        "reads as their owners move in later waves: invalidation follows the engine that "
+        "owns each cached table."
+    )
 
 
 def cache_layer_text(n: int, share: float) -> str:
@@ -788,8 +796,19 @@ def render_decision_report_html(
     # when it has one; fall back to the wave-table count (resolve_migration_waves,
     # the same fallback the deck tile uses) only when that figure is 0, so this
     # sentence can't disagree with the roadmap just below it on the same page.
+    #
+    # #321 review (finding 4): wave 1 (Aurora) now also carries ``moves_from``,
+    # but its ``table_count`` is the *whole* collected schema, not a
+    # purpose-built-engine migration -- summing it in here would both double
+    # count against the later waves it's a superset of, and relabel "the
+    # whole schema moves to Aurora" as "tables migrate to a purpose-built
+    # engine". This figure keeps its pre-#321 meaning: tables that leave
+    # Aurora for a purpose-built engine, so wave 1 is excluded from the sum
+    # (see ``pptx_report.derive``'s identical fix for the deck tile).
     migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
-        w.get("table_count", 0) for w in resolve_migration_waves(report) if w.get("moves_from")
+        w.get("table_count", 0)
+        for w in resolve_migration_waves(report)
+        if w.get("moves_from") and w.get("homogeneity") is None
     )
     risk_level = risk.get("overall_risk_level", "not assessed")
 
@@ -894,7 +913,7 @@ def render_decision_report_html(
                 "data, and is built after its owners."
             )
         if caches:
-            note_bits.append(_cache_note(engines))
+            note_bits.append(_cache_note(engines, report))
         if migr:
             note_bits.append(
                 f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned to "
@@ -1063,12 +1082,33 @@ def _workload_cell(e: dict[str, Any]) -> str:
     return esc(fmt_num(wl, 1) + "%") if isinstance(wl, (int, float)) else "-"
 
 
-def _cache_note(engines: list[dict[str, Any]]) -> str:
-    """The recommendation note for the cache layer (#296)."""
+def _cache_note(engines: list[dict[str, Any]], report: dict[str, Any]) -> str:
+    """The recommendation note for the cache layer (#296).
+
+    #321 review (finding 6): names the engine the cache *actually* fronts,
+    taken from the resolved roadmap's own cache wave (``fronts``, via
+    ``_moves_from_label``) -- not re-derived from the architecture's engine
+    roles. The architecture-role version answered "is there an Aurora engine
+    in this report" rather than "what does the cache wave say it fronts",
+    which silently disagreed with a report whose stored waves predate #321
+    (cache still fronting the legacy source, not Aurora) or are otherwise
+    out of the usual order. Falls back to "the current source database"
+    only when there is no cache wave to ask (no cache overlay at all).
+    """
     esc = escaping.html_text
     caches = [e for e in engines if e["role"] == "Cache layer"]
     names = ", ".join(esc(e["engine"]) for e in caches)
     counted = [e for e in caches if e.get("cached_queries") is not None]
+    cache_wave = next(
+        (
+            w
+            for w in resolve_migration_waves(report)
+            if w.get("engines") and w["engines"][0] in _WAVE_CACHE_ENGINES
+        ),
+        None,
+    )
+    fronted = cache_wave.get("fronts") if cache_wave else None
+    front = esc(_moves_from_label(fronted)) if fronted else "the current source database"
     if not counted:
         return f"<b>{names}</b> is an additive cache layer."
     n = sum(e["cached_queries"] for e in counted)
@@ -1077,7 +1117,7 @@ def _cache_note(engines: list[dict[str, Any]]) -> str:
         f"<b>{names}</b> is an additive cache layer: it fronts {n} hot "
         f"{plural_noun(n, 'read')} ({esc(fmt_num(share, 1))}% of calls) cache-aside and owns "
         "none of the workload: the engines listed above still own every cached read. "
-        + CACHE_WAVE_NOTE
+        + cache_wave_note(front)
     )
 
 
@@ -1118,6 +1158,23 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
 # retained Aurora engine implies, best-effort: report.json has no source_engine
 # field of its own, only the Aurora target it was mapped to.
 _RELATIONAL_TO_SOURCE_ENGINE = {"aurora_mysql": "mysql", "aurora_postgresql": "postgresql"}
+
+
+def _moves_from_label(engine: str) -> str:
+    """Label for a wave's ``moves_from``/``fronts`` engine (#321).
+
+    ``display_source_database`` phrases a raw legacy source key as "the
+    source MySQL database" -- correct for wave 1, which really does move
+    away from the legacy source. Every later wave's ``moves_from``/
+    ``fronts`` instead names the *retained Aurora engine* once wave 1 has
+    reached it; wrapping that in the same "the source ... database" phrasing
+    would read as "the source Aurora MySQL database", calling Aurora the
+    original source. A relational engine is shown by its own display name
+    instead; anything else keeps the legacy phrasing.
+    """
+    if engine in _RELATIONAL_ENGINES:
+        return display_engine(engine)
+    return display_source_database(engine)
 
 
 def resolve_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1166,11 +1223,67 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     # Best-effort raw source-engine key, for `fronts`/`moves_from` (#225):
     # report.json has no source_engine field, only the Aurora target it mapped to.
     source_engine = _RELATIONAL_TO_SOURCE_ENGINE.get(retained_engine or "")
+    # #321: later waves move from the retained Aurora engine (wave 1 has
+    # already reached it), falling back to the legacy source only when there
+    # is no retained engine to resolve (no Aurora wave was possible either).
+    moves_from_engine = retained_engine or source_engine
+    # The cache fronts Aurora once wave 1 exists; otherwise it still fronts
+    # the legacy source database directly, same as before #321.
+    front_engine = retained_engine or source_engine
     front_label = (
-        display_source_database(source_engine) if source_engine else "the current source database"
+        display_engine(retained_engine)
+        if retained_engine
+        else (
+            display_source_database(source_engine)
+            if source_engine
+            else "the current source database"
+        )
     )
 
     waves: list[dict[str, Any]] = []
+
+    # Wave 1 (#321): the whole source database to the retained Aurora engine
+    # first, schema carried over 1:1. A legacy report's retained_engine is
+    # only ever resolved from `_WAVE_RELATIONAL_ENGINES`, i.e. always a
+    # source-compatible mapping -- the legacy fallback never has enough data
+    # to detect a heterogeneous source, so this wave is always "homogeneous"
+    # when present at all.
+    if retained_engine:
+        all_tables = sorted({str(m.get("source_table")) for m in mappings if m.get("source_table")})
+        n_retained = int(by_engine.get(retained_engine, {}).get("assigned_queries") or 0)
+        share_retained = round(
+            float(by_engine.get(retained_engine, {}).get("workload_percent") or 0.0), 1
+        )
+        waves.append(
+            {
+                "title": f"Move to {display_engine(retained_engine)}",
+                "engines": [retained_engine],
+                "moves_from": [source_engine] if source_engine else [],
+                "serves_from": [],
+                "fronts": None,
+                "tables": all_tables,
+                "table_count": len(all_tables),
+                "table_groups": None,
+                "homogeneity": "homogeneous",
+                "query_count": n_retained,
+                "workload_share_percent": share_retained,
+                "share_basis": "queries",
+                "rationale": (
+                    f"The whole source database moves to {display_engine(retained_engine)} "
+                    "first, schema carried over 1:1 (every collected table and view): a "
+                    "homogeneous migration (same engine family). "
+                    f"{n_retained} {plural_noun(n_retained, 'query', 'queries')} "
+                    f"({fmt_num(share_retained, 1)}% of query patterns) are still assigned to "
+                    f"{display_engine(retained_engine)} once every later wave in this roadmap "
+                    "has moved its own share away; every later wave's table count is a subset "
+                    "of this wave's tables, never an addition to them."
+                ),
+                "gate": (
+                    "Schema and data parity validated against the source database before "
+                    "cutover; decommission the legacy source once replication lag is zero."
+                ),
+            }
+        )
 
     overlay = report.get("cache_overlay") or {}
     cache_engine = overlay.get("engine")
@@ -1207,7 +1320,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "engines": [cache_engine],
                 "moves_from": [],
                 "serves_from": [],
-                "fronts": source_engine,
+                "fronts": front_engine,
                 "tables": [],
                 "table_count": 0,
                 "table_groups": None,
@@ -1234,7 +1347,9 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         return {
             "title": title,
             "engines": [engine],
-            "moves_from": [source_engine] if source_engine else [],
+            # #321: moves from the retained Aurora engine once wave 1 has reached
+            # it, else the legacy source (no wave 1 was possible).
+            "moves_from": [moves_from_engine] if moves_from_engine else [],
             "serves_from": [],
             "tables": tables,
             "table_count": len(tables),
@@ -1253,6 +1368,11 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         wave = migration_wave(
             engine, f"Move key-value and point-lookup queries to {display_engine(engine)}"
         )
+        if wave:
+            waves.append(wave)
+
+    for engine in sorted(_WAVE_DOCUMENT_ENGINES & set(by_engine)):
+        wave = migration_wave(engine, f"Move document-shaped data to {display_engine(engine)}")
         if wave:
             waves.append(wave)
 
@@ -1310,63 +1430,82 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
-    for engine in sorted(_WAVE_DOCUMENT_ENGINES & set(by_engine)):
-        wave = migration_wave(engine, f"Move document-shaped data to {display_engine(engine)}")
-        if wave:
-            waves.append(wave)
-
-    if retained_engine:
-        tables = tables_for(retained_engine)
-        n = int(by_engine.get(retained_engine, {}).get("assigned_queries") or 0)
-        share = round(float(by_engine.get(retained_engine, {}).get("workload_percent") or 0.0), 1)
-        if n or tables or share:
-            waves.append(
-                {
-                    "title": f"Keep the rest on {display_engine(retained_engine)}",
-                    "engines": [retained_engine],
-                    "moves_from": [],
-                    "serves_from": [],
-                    "tables": tables,
-                    "table_count": len(tables),
-                    "table_groups": None,
-                    "query_count": n,
-                    "workload_share_percent": share,
-                    "share_basis": "queries",
-                    "rationale": (
-                        f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of "
-                        f"query patterns) stay on {display_engine(retained_engine)}: a "
-                        "homogeneous migration, schema carried over 1:1."
-                    ),
-                    "gate": "End state: every earlier wave's gate has passed.",
-                }
-            )
-
     for i, wave in enumerate(waves, start=1):
         wave["wave"] = i
     return waves
 
 
+def _wave_headline_stats(w: dict[str, Any]) -> tuple[str, str]:
+    """(count-and-share phrase, table-count phrase) for one wave's headline.
+
+    #321 review (finding 2): wave 1 (Aurora, homogeneous -- it has a
+    ``cutover_query_count``) states its share as the end state explicitly
+    ("all N queries at cutover; M (X%) remain on <engine> at the end")
+    rather than just "M queries (X%)", which reads as if only M queries ever
+    touch Aurora, when the whole workload does at cutover.
+
+    #321 review (finding 4): wave 1's table count is tables *and* views
+    (wave 1 carries the whole collected schema, views included), stated
+    once here rather than at each place the figure is repeated.
+    """
+    n = int(w.get("query_count") or 0)
+    basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
+    share = fmt_num(w.get("workload_share_percent", 0), 1)
+    tables = w.get("table_count") or 0
+    cutover = w.get("cutover_query_count")
+    engines = w.get("engines") or []
+    if cutover is not None and engines:
+        target_name = display_engine(engines[0])
+        count_phrase = (
+            f"all {cutover} {plural_noun(cutover, 'query', 'queries')} at cutover; "
+            f"{n} ({share}%) remain on {target_name} at the end"
+        )
+        table_phrase = (
+            f", {tables} source {plural_noun(tables, 'table')} and views" if tables else ""
+        )
+    else:
+        count_phrase = f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis})"
+        table_phrase = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
+    return count_phrase, table_phrase
+
+
+# #321 review (finding 9): the "one suggested path" wording, with one real
+# em dash, never an ASCII "--", kept identical everywhere it appears so the
+# deliverables read as one voice. ``{pointer}`` names the direct, single-step
+# alternative already shown in the same deliverable.
+_SUGGESTED_PATH_NOTE = (
+    "One suggested adoption path, not the only one — to modernize in one step "
+    "instead, adopt {pointer} directly."
+)
+
+
 def _roadmap_html(report: dict[str, Any]) -> list[str]:
-    """Decision Report "Migration roadmap" section (#225): one short card per wave."""
+    """Decision Report "Migration roadmap" section (#225): one short card per wave.
+
+    #321: the roadmap is one suggested adoption path, not the only one -- the
+    section says so, and points at the direct, single-step alternative (the
+    target architecture already shown above).
+    """
     esc = escaping.html_text
     waves = resolve_migration_waves(report)
     if not waves:
         return []
-    out = ["<h2 class=section-title>Migration roadmap</h2>", "<div class=card><div class=card-b>"]
+    pointer = "the target architecture in Recommended architecture above"
+    out = [
+        "<h2 class=section-title>Migration roadmap</h2>",
+        f"<p class=note>{_SUGGESTED_PATH_NOTE.format(pointer=pointer)}</p>",
+        "<div class=card><div class=card-b>",
+    ]
     for w in waves:
         names = ", ".join(esc(display_engine(e)) for e in w.get("engines") or [])
-        n = int(w.get("query_count") or 0)
-        basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
-        share = fmt_num(w.get("workload_share_percent", 0), 1)
-        tables = w.get("table_count") or 0
-        table_bit = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
+        count_phrase, table_bit = _wave_headline_stats(w)
         # `names` is already escaped; escaping it again (via `esc(title or names)`) would
         # double-escape it when the title is missing (#225).
         title_html = esc(w["title"]) if w.get("title") else names
         wave_no = esc(str(w.get("wave") or ""))
         out.append(
             f"<p><b>Wave {wave_no}: {title_html}</b> — "
-            f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis}){table_bit}. "
+            f"{esc(count_phrase)}{esc(table_bit)}. "
             f"{esc(w.get('rationale') or '')}</p>"
         )
         if w.get("gate"):
@@ -1381,11 +1520,29 @@ _GROUP_KIND_LABELS = {"co_dependency": "co-dependency", "independent": "independ
 
 
 def _roadmap_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Migration roadmap" section (#225): tables and queries per wave."""
+    """Engineering Report "Migration roadmap" section (#225): tables and queries per wave.
+
+    #321: one suggested adoption path, not the only one -- points at the
+    direct, single-step alternative. #321 review (finding 5): the pointer is
+    conditional on "Target schemas by engine" actually being written below
+    (only when a schema design completed, same condition
+    ``render_engineering_report_md`` itself uses) -- it falls back to "the
+    Target engines table above", which is always present whenever a wave is.
+    """
     waves = resolve_migration_waves(report)
     if not waves:
         return []
-    out = [f"## Migration roadmap ({len(waves)} {plural_noun(len(waves), 'wave')})", ""]
+    pointer = (
+        'the target schemas in "Target schemas by engine" below'
+        if _completed_designs(report)
+        else "the target architecture in the Target engines table above"
+    )
+    out = [
+        f"## Migration roadmap ({len(waves)} {plural_noun(len(waves), 'wave')})",
+        "",
+        f"*{_SUGGESTED_PATH_NOTE.format(pointer=pointer)}*",
+        "",
+    ]
     unresolved = report.get("unresolved_names") or {}
     if unresolved.get("count"):
         out.append(
@@ -1398,20 +1555,25 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         out.append("")
     for w in waves:
         names = ", ".join(display_engine(e) for e in w.get("engines") or [])
-        n = int(w.get("query_count") or 0)
-        basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
-        share = fmt_num(w.get("workload_share_percent", 0), 1)
+        count_phrase, _ = _wave_headline_stats(w)
         out += [
             f"### Wave {w.get('wave')}: {escaping.md_text(w.get('title') or names)}",
             "",
             f"- Engines: {escaping.md_text(names)}",
-            f"- {n} {plural_noun(n, 'query', 'queries')} ({share}% {basis})",
+            f"- {escaping.md_text(count_phrase)}",
         ]
         tables = w.get("tables") or []
         if tables:
+            # #321 review (finding 4): wave 1 carries the whole collected
+            # schema, views included, so its count says "tables and views".
+            table_noun = (
+                "tables and views"
+                if w.get("cutover_query_count") is not None
+                else f"{plural_noun(len(tables), 'table')}"
+            )
             shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:20])
             more = f" (+{len(tables) - 20} more)" if len(tables) > 20 else ""
-            out.append(f"- {len(tables)} source {plural_noun(len(tables), 'table')}: {shown}{more}")
+            out.append(f"- {len(tables)} source {table_noun}: {shown}{more}")
         groups = w.get("table_groups") or []
         if groups:
             out.append(f"- {len(groups)} table {plural_noun(len(groups), 'group')}:")
@@ -1428,10 +1590,10 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         if w.get("moves_from"):
             out.append(
                 "- Moves from: "
-                + ", ".join(escaping.md_text(display_source_database(e)) for e in w["moves_from"])
+                + ", ".join(escaping.md_text(_moves_from_label(e)) for e in w["moves_from"])
             )
         if w.get("fronts"):
-            out.append(f"- Fronts: {escaping.md_text(display_source_database(w['fronts']))}")
+            out.append(f"- Fronts: {escaping.md_text(_moves_from_label(w['fronts']))}")
         if w.get("serves_from"):
             out.append(
                 "- Synced from (durable owner): "
@@ -1477,12 +1639,29 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             for p, c in sorted(patterns.items())
             if p
         )
+        # #321 review (finding 6): the fronted engine comes from the resolved
+        # cache wave itself, not re-derived from architecture roles -- see
+        # ``_cache_note``'s docstring for why that disagreed with the roadmap.
+        cache_wave = next(
+            (
+                w
+                for w in resolve_migration_waves(report)
+                if w.get("engines") and w["engines"][0] in _WAVE_CACHE_ENGINES
+            ),
+            None,
+        )
+        fronted = cache_wave.get("fronts") if cache_wave else None
+        front = (
+            escaping.md_text(_moves_from_label(fronted))
+            if fronted
+            else ("the current source database")
+        )
         out += [
             f"{escaping.md_text(engine)} fronts {n} hot {plural_noun(n, 'read')} "
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
             f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
             "none of the workload: each cached read stays with its owner engine, which "
-            "serves every miss and every write. " + CACHE_WAVE_NOTE,
+            "serves every miss and every write. " + cache_wave_note(front),
             "",
             f"- Owner engines: {owned or '-'}",
             f"- Read shapes: {shapes or '-'}",
