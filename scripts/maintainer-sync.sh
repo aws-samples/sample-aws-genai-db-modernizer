@@ -132,8 +132,11 @@ done
 
 echo "==> Syncing files from source to target..."
 
+# --checksum: compare by content. rsync's default size+mtime check skips an
+# edit that keeps the file size (e.g. "1.4" -> "1.5"), so the target drifts.
 RSYNC_ARGS=(
   -av
+  --checksum
   --delete
   --exclude=".git/"
   --exclude=".git"
