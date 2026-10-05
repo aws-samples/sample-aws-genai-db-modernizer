@@ -24,7 +24,7 @@ DB, JOB = "shop", "job-1"
 def _query(qid: str, table: str, qtype: str = "SELECT", cps: float = 1.0) -> dict:
     return {
         "query_id": qid,
-        "query_text": f"SELECT * FROM {table} WHERE id = $1",
+        "query_text": f"SELECT * FROM {table} WHERE id = $1",  # nosec B608 -- SQL text is test fixture data, never executed
         "query_type": qtype,
         "frequency_per_hour": cps * 3600,
         "calls_per_second": cps,

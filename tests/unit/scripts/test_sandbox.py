@@ -54,7 +54,7 @@ def test_missing_and_none_attributes_are_ignored() -> None:
     [
         ("file", "/etc/passwd"),
         ("file", "../outside.json"),
-        ("artifact_root", "/tmp"),
+        ("artifact_root", "/"),
         ("artifact_root", "./artifacts/../../elsewhere"),
     ],
 )
@@ -104,7 +104,7 @@ def test_extra_name_args_are_checked() -> None:
     )
 
 
-def test_run_triage_rejects_escape_with_its_normal_json_error() -> None:
+def test_run_triage_rejects_escape_with_its_normal_json_error(tmp_path: Path) -> None:
     proc = subprocess.run(  # nosec B603 -- fixed argv
         [
             sys.executable,
@@ -114,7 +114,7 @@ def test_run_triage_rejects_escape_with_its_normal_json_error() -> None:
             "--db",
             "wordpress",
             "--artifact-root",
-            "/tmp",
+            str(tmp_path),
         ],
         cwd=REPO_ROOT,
         env={**_sandbox_env(), **ON},

@@ -12,8 +12,8 @@ messages, `permission_denials` entries, nested `usage` fields).
 from __future__ import annotations
 
 import json
-import subprocess
-import xml.etree.ElementTree as ET
+import subprocess  # nosec B404 -- runs this repo's own scripts/binaries with fixed argv
+import xml.etree.ElementTree as ET  # nosec B405 -- builds/writes synthetic JUnit fixtures; defusedxml.ElementTree has no builder/writer API, only parsing, and ci/llm/run.py (the code under test) already parses with defusedxml
 from pathlib import Path
 
 import pytest
@@ -360,7 +360,15 @@ def _write_summary(path: Path, **overrides: object) -> None:
 
 
 def _write_passing_judge(path: Path) -> None:
-    path.write_text(json.dumps({"scores": {"grounded": 5}, "mean": 5.0, "pass": True}))
+    path.write_text(
+        json.dumps(
+            {
+                "scores": {"grounded": 5},
+                "mean": 5.0,
+                "pass": True,  # nosec B105 -- "pass" is the judge's pass/fail field, not a password
+            }
+        )
+    )
 
 
 def test_results_all_green_passes(tmp_path: Path) -> None:
@@ -617,7 +625,15 @@ def test_results_judge_failing_score_fails(tmp_path: Path) -> None:
         ],
     )
     judge = tmp_path / "judge.json"
-    judge.write_text(json.dumps({"scores": {"grounded": 1}, "mean": 1.0, "pass": False}))
+    judge.write_text(
+        json.dumps(
+            {
+                "scores": {"grounded": 1},
+                "mean": 1.0,
+                "pass": False,  # nosec B105 -- "pass" is the judge's pass/fail field, not a password
+            }
+        )
+    )
 
     row = run.build_results_row(
         mode="chat",
@@ -1079,7 +1095,7 @@ def test_e2e_llm_rejects_artifact_root_override_outside_dry_run(tmp_path: Path) 
     results = json.loads((tmp_path / "llm-chat-wordpress" / "results.json").read_text())
     assert results == {
         "schema_version": 1,
-        "pass": False,
+        "pass": False,  # nosec B105 -- "pass" is the run's pass/fail field, not a password
         "error": "artifact-root-check failed before the run",
     }
 

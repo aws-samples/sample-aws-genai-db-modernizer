@@ -23,7 +23,7 @@ def schema_output_search() -> dict[str, Any]:
     return {
         "_opensearch_endpoint": "search-test.us-east-1.es.amazonaws.com",
         "_opensearch_master_user": "loadtest_admin",
-        "_opensearch_master_password": "TestPass123!",  # pragma: allowlist secret
+        "_opensearch_master_password": "TestPass123!",  # pragma: allowlist secret  # nosec B105 -- fake test fixture value, not a real secret
         "index_designs": [
             {
                 "index_name": "products",
@@ -70,7 +70,7 @@ def schema_output_timeseries() -> dict[str, Any]:
     return {
         "_opensearch_endpoint": "search-test.us-east-1.es.amazonaws.com",
         "_opensearch_master_user": "loadtest_admin",
-        "_opensearch_master_password": "TestPass123!",  # pragma: allowlist secret
+        "_opensearch_master_password": "TestPass123!",  # pragma: allowlist secret  # nosec B105 -- fake test fixture value, not a real secret
         "index_designs": [],
         "data_stream_designs": [
             {

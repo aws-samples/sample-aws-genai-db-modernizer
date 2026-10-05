@@ -139,7 +139,10 @@ class TestDynamoDBUnsupportedPatterns:
         )
 
     def test_long_sql_is_clipped_to_one_line(self) -> None:
-        long_sql = "SELECT a,\n  b FROM t WHERE " + " AND ".join(f"c{i} = ?" for i in range(40))
+        long_sql = (
+            "SELECT a,\n  b FROM t WHERE "  # nosec B608 -- SQL text is test fixture data, never executed
+            + " AND ".join(f"c{i} = ?" for i in range(40))
+        )
         out = build_risk_assessment(
             _data(
                 {"dynamodb": {"unsupported_patterns": _DYNAMODB_UNSUPPORTED[:1]}},

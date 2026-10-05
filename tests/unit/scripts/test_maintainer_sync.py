@@ -3,7 +3,7 @@
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- runs the system rsync binary with fixed argv
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "maintainer-sync.sh"
@@ -35,5 +35,7 @@ def test_sync_compares_file_contents(tmp_path):
         for a in _rsync_args_block().split()
         if a.startswith("-") and not a.startswith("--exclude")
     ]
-    subprocess.run(["rsync", *args, f"{src}/", f"{dst}/"], check=True, capture_output=True)
+    subprocess.run(  # nosec B603 B607 -- fixed argv, rsync resolved from PATH like the script it tests
+        ["rsync", *args, f"{src}/", f"{dst}/"], check=True, capture_output=True
+    )
     assert (dst / "f.txt").read_text() == 'version = "1.5"\n'

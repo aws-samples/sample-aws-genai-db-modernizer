@@ -14,7 +14,7 @@ from __future__ import annotations
 import io
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- runs this repo's own run_assessment.py script with fixed argv
 import sys
 import zipfile
 from pathlib import Path

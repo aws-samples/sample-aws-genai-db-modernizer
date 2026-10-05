@@ -149,7 +149,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     must refuse cleanly (no merged output yet) instead of crashing (#197).
     """
     import shutil
-    import subprocess
+    import subprocess  # nosec B404 -- runs this repo's own scripts/run_schema_design.py with fixed argv
     import sys
 
     from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
@@ -161,7 +161,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     common += ["--artifact-root", str(root)]
 
     def script(*extra: str) -> tuple[int, dict]:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
             [sys.executable, "scripts/run_schema_design.py", *common, *extra],
             cwd=REPO,
             capture_output=True,

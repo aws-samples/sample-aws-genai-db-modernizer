@@ -241,7 +241,7 @@ class TestTeardown:
                         "domain_name": domain_name,
                         "endpoint": "search-example.us-east-1.es.amazonaws.com",
                         "master_user": "loadtest_admin",
-                        "master_password": "test123",  # pragma: allowlist secret
+                        "master_password": "test123",  # pragma: allowlist secret  # nosec B105 -- fake test fixture value, not a real secret
                     },
                 )
             ],

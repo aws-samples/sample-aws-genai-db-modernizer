@@ -163,7 +163,10 @@ class TestRunLoadTest:
         )
         mock_runner.extract_scenario_latency.return_value = MagicMock(p50=5.0)
         mock_runner.extract_scenario_iterations.return_value = 1000
-        mock_creds.return_value = {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"}
+        mock_creds.return_value = {
+            "AWS_ACCESS_KEY_ID": "test",
+            "AWS_SECRET_ACCESS_KEY": "test",  # pragma: allowlist secret  # nosec B105 -- fake mocked credential, not a real secret
+        }
 
         store = MagicMock()
         store.read_json.side_effect = [

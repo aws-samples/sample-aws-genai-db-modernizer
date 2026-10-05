@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- runs a fixed, module-level -c script, never external input
 import sys
 import textwrap
 from pathlib import Path
@@ -111,7 +111,7 @@ _CHILD_SCRIPT = textwrap.dedent("""
 def _run_child(hashseed: str) -> list[str]:
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = hashseed
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter plus a fixed, module-level -c script
         [sys.executable, "-c", _CHILD_SCRIPT],
         cwd=REPO,
         env=env,
@@ -221,7 +221,7 @@ class TestAssignmentResolutionIsHashSeedIndependent:
         outputs = set()
         for seed in ("0", "1", "2", "3", "4", "5"):
             env = dict(os.environ, PYTHONHASHSEED=seed)
-            proc = subprocess.run(
+            proc = subprocess.run(  # nosec B603 -- fixed interpreter plus a fixed, module-level -c script
                 [sys.executable, "-c", _ASSIGNMENT_CHILD],
                 cwd=REPO,
                 env=env,

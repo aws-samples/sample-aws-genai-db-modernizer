@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- runs this repo's own scripts/ entry points with fixed argv
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -55,7 +55,7 @@ def _env() -> dict[str, str]:
 
 
 def _run(step: str, args: list[str], result: PipelineResult) -> dict:
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
         [sys.executable, *args], cwd=REPO, capture_output=True, text=True, env=_env(), timeout=600
     )
     lines = [ln for ln in proc.stdout.strip().splitlines() if ln.strip()]

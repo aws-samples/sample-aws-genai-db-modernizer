@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- runs this repo's own scripts/ entry points with fixed argv
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -29,7 +29,7 @@ JOB = "hashseed"
 
 def _step(args: list[str], seed: str) -> dict:
     env = {**_env(), "PYTHONHASHSEED": seed}
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
         [sys.executable, *args], cwd=REPO, capture_output=True, text=True, env=env, timeout=600
     )
     assert proc.returncode == 0, f"{args[0]} failed (seed {seed}):\n{proc.stderr[-2000:]}"

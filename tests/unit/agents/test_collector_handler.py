@@ -12,7 +12,7 @@ ENV_VARS = {
     "ENGINE": "mysql",
     "CLUSTER_ENDPOINT": "mydb.abc123.us-east-1.rds.amazonaws.com",
     "PORT": "3306",
-    "SECRET_ARN": "arn:aws:secretsmanager:us-east-1:123:secret:mydb",
+    "SECRET_ARN": "arn:aws:secretsmanager:us-east-1:123:secret:mydb",  # nosec B105 -- an ARN, not a secret value; fake test fixture
     "AUTOMATION_INSTANCE_ID": "i-0abc123",
     "AWS_REGION": "us-east-1",
     "DB_INSTANCE_IDENTIFIER": "mydb",

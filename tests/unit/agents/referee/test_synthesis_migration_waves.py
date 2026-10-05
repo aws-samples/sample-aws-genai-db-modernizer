@@ -19,7 +19,7 @@ JOB = "job-waves"
 def _query(qid: str, cps: float, table: str) -> dict:
     return {
         "query_id": qid,
-        "query_text": f"SELECT * FROM {table} WHERE id = ?",
+        "query_text": f"SELECT * FROM {table} WHERE id = ?",  # nosec B608 -- SQL text is test fixture data, never executed
         "query_type": "SELECT",
         "calls_per_second": cps,
         "rows_returned_avg": 1,

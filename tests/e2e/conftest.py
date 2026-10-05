@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import socket
-import subprocess
+import subprocess  # nosec B404 -- launches this repo's own API/UI servers with fixed argv
 import sys
 import tempfile
 import time
@@ -249,7 +249,7 @@ def api(all_runs: list[PipelineResult]) -> Iterator[str]:
     env["ARTIFACT_DIR"] = str(all_runs[0].artifact_root)
     log_path = _log_path("api.log")
     log_file = log_path.open("w")
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603 -- fixed argv, this repo's own API server
         [sys.executable, "-m", "uvicorn", "src.api.main:app", "--port", "8000"],
         cwd=REPO,
         env=env,
@@ -275,7 +275,7 @@ def ui(api: str) -> Iterator[str]:
     _ensure_port_free(3000)
     log_path = _log_path("serve.log")
     log_file = log_path.open("w")
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603 -- fixed argv, the repo's own pinned `serve` binary
         # Launched directly (not via `npx serve`): npx re-resolves and may
         # re-install the package on every invocation, which is slower and,
         # offline, can fail outright. The pinned dependency's own binary

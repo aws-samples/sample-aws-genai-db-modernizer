@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import subprocess  # nosec B404 -- runs this repo's own run_collect.py script with fixed argv
 import sys
 import zipfile
 from pathlib import Path
@@ -21,7 +21,7 @@ def _unzip(name: str, dest: Path) -> Path:
 def test_discourse_is_collected_as_postgresql(tmp_path: Path) -> None:
     src = _unzip("discourse", tmp_path / "in")
     root = tmp_path / "artifacts"
-    out = subprocess.run(
+    out = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
         [
             sys.executable,
             "scripts/run_collect.py",

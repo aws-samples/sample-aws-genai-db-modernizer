@@ -232,7 +232,11 @@ def test_render_puts_one_record_per_line() -> None:
 def test_long_query_text_is_also_given_in_short_lines() -> None:
     collector = get_ecommerce_collector_output()
     q = collector["queries"]["query_patterns"][0]
-    q["query_text"] = "SELECT " + ", ".join(f"col_{i}" for i in range(400)) + " FROM products"
+    q["query_text"] = (
+        "SELECT "  # nosec B608 -- SQL text is test fixture data, never executed
+        + ", ".join(f"col_{i}" for i in range(400))
+        + " FROM products"
+    )
     q["tables_accessed"] = [PRODUCTS]
     data = _products_group(collector, _analysis(collector))
     slim = next(
@@ -251,7 +255,9 @@ def test_long_query_text_is_also_given_in_short_lines() -> None:
 
 def test_query_text_lines_hard_wrap_long_words() -> None:
     word = "x" * (QUERY_TEXT_LINE * 2 + 7)
-    lines = _split_text(f"SELECT {word} FROM t")
+    lines = _split_text(
+        f"SELECT {word} FROM t"  # nosec B608 -- SQL text is test fixture data, never executed
+    )
     assert max(len(ln) for ln in lines) <= QUERY_TEXT_LINE
     assert "".join(lines).replace(" ", "") == f"SELECT{word}FROMt"
 

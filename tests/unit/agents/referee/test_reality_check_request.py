@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 -- runs this repo's own run_assessment.py script with fixed argv
 import sys
 import zipfile
 from pathlib import Path
@@ -65,7 +65,7 @@ def _last_phase(stdout: str) -> dict:
 
 
 def _run(args: list[str], cwd: Path) -> dict:
-    proc = subprocess.run(
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
         [sys.executable, str(SCRIPT), *args],
         cwd=cwd,
         capture_output=True,

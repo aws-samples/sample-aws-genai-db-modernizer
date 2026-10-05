@@ -380,7 +380,7 @@ def _build_input(mode: CollectionMode = CollectionMode.live) -> CollectorInput:
     }
     if mode == CollectionMode.live:
         data["live_config"] = {
-            "secret_arn": "arn:aws:secretsmanager:us-east-1:123:secret:test-AAAAAA",  # pragma: allowlist secret
+            "secret_arn": "arn:aws:secretsmanager:us-east-1:123:secret:test-AAAAAA",  # pragma: allowlist secret  # nosec B105 -- an ARN, not a secret value; fake test fixture
             "automation_instance_id": "i-0abc123",
         }
     elif mode == CollectionMode.ddl:
