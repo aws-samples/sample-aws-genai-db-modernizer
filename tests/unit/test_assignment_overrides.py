@@ -225,6 +225,7 @@ class TestRecomputesDerivedViews:
         *,
         stale_codep: list[list[str]],
         engines: list[str],
+        source_engine: str | None = None,
     ) -> None:
         assignment = Assignment(
             job_id=JOB,
@@ -240,13 +241,13 @@ class TestRecomputesDerivedViews:
         store.write_json(
             f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
         )
-        store.write_json(
-            f"{DB}/{JOB}/collector/output.json",
-            {
-                "queries": {"query_patterns": query_patterns},
-                "database_schema": {"tables": []},
-            },
-        )
+        collector: dict = {
+            "queries": {"query_patterns": query_patterns},
+            "database_schema": {"tables": []},
+        }
+        if source_engine:
+            collector["metadata"] = {"source_database": {"engine": source_engine}}
+        store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
         for engine in engines:
             store.write_json(
                 f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
@@ -301,6 +302,10 @@ class TestRecomputesDerivedViews:
         assert ["q1", "q2"] in groups
 
     def test_table_assignments_reflect_new_routing(self) -> None:
+        # #317: t.posts ends up with every query on OpenSearch, a read model
+        # that never durably owns a table, so the recomputed primary_engine
+        # must fall back to the retained source-compatible engine (here
+        # aurora_mysql for a MySQL source) rather than stay on opensearch.
         store = _MemStore()
         self._seed(
             store,
@@ -311,13 +316,14 @@ class TestRecomputesDerivedViews:
             ],
             stale_codep=[],
             engines=["dynamodb", "opensearch"],
+            source_engine="mysql",
         )
         result = apply_assignment_overrides(
             store, DB, JOB, [QueryOverrideInput("q2", assigned_engine="opensearch")]
         )
         by_table = {ta.table_id: ta for ta in result.assignment.table_assignments}
         assert by_table["t.users"].primary_engine == "dynamodb"
-        assert by_table["t.posts"].primary_engine == "opensearch"
+        assert by_table["t.posts"].primary_engine == "aurora_mysql"
 
 
 class TestRefreshConsolidatedAssignment:
@@ -325,11 +331,14 @@ class TestRefreshConsolidatedAssignment:
     re-validates, and prunes per-query warnings that name an eliminated engine."""
 
     @staticmethod
-    def _collector(query_patterns: list[dict]) -> dict:
-        return {
+    def _collector(query_patterns: list[dict], source_engine: str | None = None) -> dict:
+        collector: dict = {
             "queries": {"query_patterns": query_patterns},
             "database_schema": {"tables": []},
         }
+        if source_engine:
+            collector["metadata"] = {"source_database": {"engine": source_engine}}
+        return collector
 
     def test_recomputes_views_and_prunes_dead_engine_warnings(self) -> None:
         raw = {
@@ -399,6 +408,29 @@ class TestRefreshConsolidatedAssignment:
         out = refresh_consolidated_assignment(raw, collector, {"dynamodb": {}})
         assert "table_assignments" in out
         assert out["co_dependency_groups"] == []
+
+    def test_opensearch_only_table_falls_back_to_retained_engine(self) -> None:
+        # #317 finding 1: every in-scope query on this table went to OpenSearch
+        # (a read model), so the recomputed primary_engine must fall back to
+        # the retained source-compatible engine, never stay on opensearch.
+        raw = {
+            "version": 2,
+            "query_assignments": [
+                {
+                    "query_id": "q1",
+                    "assigned_engine": "opensearch",
+                    "confidence": 80,
+                    "source_tables": ["t.search_log"],
+                    "assignment_reason": "signal override: text_search -> opensearch",
+                },
+            ],
+        }
+        collector = self._collector(
+            [{"query_id": "q1", "tables_accessed": ["t.search_log"]}], source_engine="postgresql"
+        )
+        out = refresh_consolidated_assignment(raw, collector, {"opensearch": {}})
+        by_table = {ta["table_id"]: ta for ta in out["table_assignments"]}
+        assert by_table["t.search_log"]["primary_engine"] == "aurora_postgresql"
 
 
 class TestCoDependencyPropagation:

@@ -31,11 +31,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
-from src.agents.referee.cache_overlay import (
-    apply_cache_overlay,
-    can_own,
-    overlay_summary,
-)
+from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.assignment_models import (
@@ -46,6 +42,7 @@ from src.contracts.assignment_models import (
     QueryAssignment,
     TableAssignment,
 )
+from src.shared.migration_wave_engines import NON_OWNER_ENGINES
 
 # Triage signals that strongly indicate an engine is the RIGHT fit for a query.
 # When a signal maps query→engine and that engine was selected by triage,
@@ -294,8 +291,13 @@ class AssignmentResolver:
                 )
             )
 
-        # Step 9: Derive table assignments
-        table_assignments = derive_table_assignments(query_assignments)
+        # Step 9: Derive table assignments. A table's primary_engine must always
+        # be a durable owner (#317), so pass the retained source-compatible
+        # engine as the fallback for tables with no owner engine among their
+        # assigned engines.
+        table_assignments = derive_table_assignments(
+            query_assignments, retained_engine=retained_engine_for(collector_output)
+        )
 
         # Flatten co-dep groups to list of lists of query_ids
         co_dep_lists = [list(g) for g in co_dep_groups]
@@ -603,14 +605,41 @@ def build_co_dependency_groups(
 # ---------------------------------------------------------------------------
 
 
+def retained_engine_for(collector_output: Mapping) -> str | None:
+    """The retained source-compatible Aurora engine for ``collector_output`` (#317).
+
+    The Aurora engine matching the source database's dialect (``aurora_mysql``
+    for a MySQL source, ``aurora_postgresql`` for Postgres) — never a member of
+    ``NON_OWNER_ENGINES``. ``None`` when the source engine is missing or
+    unrecognized. Every caller that recomputes ``table_assignments`` from a
+    ``collector_output`` should pass this through so a table with no durable
+    owner among its own engines never keeps a cache or search engine as
+    ``primary_engine``.
+    """
+    return SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
+
+
 def derive_table_assignments(
     query_assignments: list[QueryAssignment],
+    retained_engine: str | None = None,
 ) -> list[TableAssignment]:
     """Derive table-level assignments from query assignments.
 
     For each table:
     - Find all engines with assigned queries referencing it
-    - Set primary_engine to engine with most assigned queries for that table
+    - Set primary_engine to the owner engine with most assigned queries for
+      that table — never a cache or search/read-model engine (#317): among a
+      table's engines, ElastiCache and OpenSearch (``NON_OWNER_ENGINES``) are
+      skipped, and the durable owner engine (Aurora, DynamoDB or DocumentDB)
+      with the most queries wins. An exact tie goes to ``retained_engine``
+      (the least migration), then to the engine name, so the pick never
+      depends on dict insertion order. If the table has no owner engine at
+      all (every assigned query went to a cache or search engine),
+      ``primary_engine`` falls back to ``retained_engine``, then to an Aurora
+      engine used anywhere in ``query_assignments``, then to the busiest
+      owner engine used anywhere in ``query_assignments`` — never a member of
+      ``NON_OWNER_ENGINES``, even with no ``retained_engine`` and no owner
+      engine on the table itself.
     - Set multi_engine_reason when engines list has 2+ entries
 
     Requirements: 2.6, 11.1, 11.2
@@ -625,11 +654,36 @@ def derive_table_assignments(
             table_engine_counts[table_id][qa.assigned_engine] += 1
             table_query_counts[table_id] += 1
 
+    # Global, assignment-wide fallback (#317 finding 3): used only when a table
+    # has no owner engine among its own engines *and* no retained_engine was
+    # given. Prefers an Aurora engine used anywhere in the assignment (the
+    # retained relational core), then the busiest owner engine used anywhere,
+    # so the result is never a cache or search engine even in that corner case.
+    global_counts = Counter(qa.assigned_engine for qa in query_assignments if qa.assigned_engine)
+    global_owner_counts = {e: c for e, c in global_counts.items() if e not in NON_OWNER_ENGINES}
+    global_fallback = (
+        pick_aurora_engine(global_owner_counts, query_counts=global_owner_counts)
+        or (
+            min(global_owner_counts, key=lambda e: (-global_owner_counts[e], e))
+            if global_owner_counts
+            else None
+        )
+        or "aurora"
+    )
+
     result: list[TableAssignment] = []
     for table_id in sorted(table_engine_counts.keys()):
         engine_counts = table_engine_counts[table_id]
         engines = sorted(engine_counts.keys())
-        primary_engine = max(engine_counts, key=lambda k: engine_counts[k])
+        owner_counts = {e: c for e, c in engine_counts.items() if e not in NON_OWNER_ENGINES}
+        if owner_counts:
+            primary_engine = min(
+                owner_counts, key=lambda e: (-owner_counts[e], e != retained_engine, e)
+            )
+        elif retained_engine:
+            primary_engine = retained_engine
+        else:
+            primary_engine = global_fallback
 
         multi_engine_reason = None
         if len(engines) >= 2:

@@ -35,3 +35,11 @@ RELATIONAL_ENGINES: frozenset[str] = frozenset({"aurora_mysql", "aurora_postgres
 NAMED_ENGINES: frozenset[str] = (
     CACHE_ENGINES | KV_ENGINES | SEARCH_ENGINES | DOCUMENT_ENGINES | RELATIONAL_ENGINES
 )
+
+# Engines that never durably own a table (#317): a cache fronts hot reads only
+# (``CACHE_ENGINES``) and a search/read-model engine indexes data synced from a
+# real owner (``SEARCH_ENGINES``, #303). A table's ``primary_engine`` must
+# always be a system-of-record owner. Single source of truth for the resolver
+# (``assignment_resolver.derive_table_assignments``) and the wave builder's own
+# ``migration_waves._durable_owner``.
+NON_OWNER_ENGINES: frozenset[str] = CACHE_ENGINES | SEARCH_ENGINES

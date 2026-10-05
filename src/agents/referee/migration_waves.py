@@ -93,6 +93,19 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
     failing that the source-compatible retained engine (#225): OpenSearch is
     a read model only, so every table it serves must resolve to a real
     owner, never itself.
+
+    Follow-up considered after #317 fixed this at the source
+    (``assignment_resolver.derive_table_assignments`` now never picks a
+    read-model or cache engine as ``primary_engine``): reducing this function
+    to just ``return str(table.get("primary_engine") or retained_engine or
+    "unresolved")`` would be simpler, but ``table_assignments`` here is a
+    plain ``dict`` this builder does not require to come from that resolver
+    (a stored artifact predating #317, a hand-built fixture, a future
+    caller), and the explicit regression tests for exactly this shape
+    (``test_migration_waves.py::TestSearchReadModelWave``) exist for that
+    reason. Keeping the search-engine skip here is defense in depth, not a
+    live bug; simplifying it is a follow-up for whoever next touches this
+    function, not required by #317.
     """
     primary = table.get("primary_engine")
     engines = table.get("engines") or ([primary] if primary else [])

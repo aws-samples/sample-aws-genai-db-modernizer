@@ -17,6 +17,7 @@ from typing import Protocol
 from src.agents.referee.assignment_resolver import (
     build_co_dependency_groups,
     derive_table_assignments,
+    retained_engine_for,
 )
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.aurora_choice import source_database_engine
@@ -145,7 +146,10 @@ def load_assignment_for_edit(
     ):
         qas = [QueryAssignment.model_validate(qa) for qa in raw["query_assignments"]]
         raw["table_assignments"] = [
-            ta.model_dump(mode="json") for ta in derive_table_assignments(qas)
+            ta.model_dump(mode="json")
+            for ta in derive_table_assignments(
+                qas, retained_engine=retained_engine_for(collector_output)
+            )
         ]
     return raw, collector_output, analysis_outputs
 
@@ -447,7 +451,9 @@ def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> 
     Both are derived views that must reflect the routing rather than be carried
     forward from a previous version (ADR-029 Layer B).
     """
-    assignment.table_assignments = derive_table_assignments(assignment.query_assignments)
+    assignment.table_assignments = derive_table_assignments(
+        assignment.query_assignments, retained_engine=retained_engine_for(collector_output)
+    )
     assignment.co_dependency_groups = build_co_dependency_groups(
         collector_output.get("queries", {}).get("query_patterns", []),
         collector_output.get("database_schema", {}).get("tables", []),
@@ -489,7 +495,9 @@ def refresh_consolidated_assignment(
         for qa in qa_dicts
     ]
 
-    table_assignments = derive_table_assignments(qas)
+    table_assignments = derive_table_assignments(
+        qas, retained_engine=retained_engine_for(collector_output)
+    )
     co_dependency_groups = build_co_dependency_groups(
         collector_output.get("queries", {}).get("query_patterns", []),
         collector_output.get("database_schema", {}).get("tables", []),

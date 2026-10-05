@@ -1,6 +1,7 @@
 """Unit tests for assignment resolver signal overrides and anti-pattern penalties."""
 
-from src.agents.referee.assignment_resolver import AssignmentResolver
+from src.agents.referee.assignment_resolver import AssignmentResolver, derive_table_assignments
+from src.contracts.assignment_models import QueryAssignment
 
 
 def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> dict:
@@ -328,3 +329,162 @@ class TestAssignmentReasons:
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert "highest confidence" in q1.assignment_reason
+
+
+def _qa(query_id: str, engine: str, tables: list[str], confidence: int = 50) -> QueryAssignment:
+    return QueryAssignment(
+        query_id=query_id,
+        assigned_engine=engine,
+        confidence=confidence,
+        source_tables=tables,
+        assignment_reason="test",
+    )
+
+
+class TestTableAssignmentPrimaryEngine:
+    """#317: a table's primary_engine must never be a read-model/cache engine."""
+
+    def test_primary_engine_skips_opensearch_for_a_durable_owner(self):
+        # opensearch has the most queries, but aurora_mysql also owns one —
+        # aurora_mysql must win, not the engine with the raw highest count.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.users"]),
+            _qa("q2", "opensearch", ["db.users"]),
+            _qa("q3", "opensearch", ["db.users"]),
+            _qa("q4", "aurora_mysql", ["db.users"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.users")
+        assert table.primary_engine == "aurora_mysql"
+        assert table.engines == ["aurora_mysql", "opensearch"]
+
+    def test_primary_engine_skips_elasticache_for_a_durable_owner(self):
+        query_assignments = [
+            _qa("q1", "elasticache", ["db.sessions"]),
+            _qa("q2", "elasticache", ["db.sessions"]),
+            _qa("q3", "dynamodb", ["db.sessions"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.sessions")
+        assert table.primary_engine == "dynamodb"
+
+    def test_primary_engine_falls_back_to_retained_engine_when_no_owner(self):
+        # Every query on this table went to opensearch: no durable owner among
+        # the table's engines, so primary_engine falls back to the retained
+        # source-compatible engine rather than staying on opensearch.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+            _qa("q2", "opensearch", ["db.search_log"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_postgresql")
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "aurora_postgresql"
+        assert table.engines == ["opensearch"]
+
+    def test_primary_engine_without_retained_engine_never_falls_back_to_non_owner(self):
+        # #317 finding 3: no retained_engine (e.g. enforce_exclusions_on_overrides,
+        # or an unrecognized source engine) and no durable owner anywhere in the
+        # whole assignment either: the generic "aurora" placeholder wins, never
+        # opensearch — OpenSearch is a read model only.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+        ]
+        tables = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "aurora"
+
+    def test_primary_engine_without_retained_engine_falls_back_to_global_busiest_owner(self):
+        # No retained_engine, but another table in the same assignment is
+        # owned by dynamodb: that busiest owner engine wins over the generic
+        # "aurora" placeholder, and still never opensearch.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+            _qa("q2", "dynamodb", ["db.orders"]),
+            _qa("q3", "dynamodb", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "dynamodb"
+
+    def test_primary_engine_without_retained_engine_prefers_global_aurora_engine(self):
+        # No retained_engine, but an Aurora engine was used elsewhere in the
+        # assignment: it wins over a busier non-Aurora owner, since Aurora is
+        # the retained relational core.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+            _qa("q2", "dynamodb", ["db.orders"]),
+            _qa("q3", "dynamodb", ["db.orders"]),
+            _qa("q4", "aurora_mysql", ["db.accounts"]),
+        ]
+        tables = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "aurora_mysql"
+
+    def test_primary_engine_unaffected_when_already_a_durable_owner(self):
+        # A table already correctly owned by a durable engine keeps the same
+        # primary_engine the old highest-count logic would have picked.
+        query_assignments = [
+            _qa("q1", "dynamodb", ["db.orders"]),
+            _qa("q2", "dynamodb", ["db.orders"]),
+            _qa("q3", "aurora_mysql", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "dynamodb"
+
+
+class TestPrimaryEngineTieBreak:
+    """#317 finding 2: an exact tie between owner engines must not depend on
+    dict/insertion order — it goes to the retained engine, then engine name."""
+
+    def test_tie_goes_to_retained_engine_regardless_of_insertion_order(self):
+        # dynamodb and aurora_mysql are tied at one query each; aurora_mysql
+        # is the retained engine, so it must win even though dynamodb's query
+        # was inserted first.
+        query_assignments = [
+            _qa("q1", "dynamodb", ["db.orders"]),
+            _qa("q2", "aurora_mysql", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "aurora_mysql"
+
+    def test_tie_goes_to_retained_engine_with_reversed_insertion_order(self):
+        # Same tie, opposite insertion order: the result must not flip.
+        query_assignments = [
+            _qa("q1", "aurora_mysql", ["db.orders"]),
+            _qa("q2", "dynamodb", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "aurora_mysql"
+
+    def test_tie_with_no_retained_engine_breaks_by_name(self):
+        # No retained_engine: the tie-break falls through to alphabetical
+        # order, so the result is deterministic either way.
+        query_assignments = [
+            _qa("q1", "dynamodb", ["db.orders"]),
+            _qa("q2", "documentdb", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "documentdb"  # "documentdb" < "dynamodb"
+
+    def test_tie_with_no_retained_engine_breaks_by_name_reversed_insertion(self):
+        query_assignments = [
+            _qa("q1", "documentdb", ["db.orders"]),
+            _qa("q2", "dynamodb", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "documentdb"
+
+    def test_three_way_tie_prefers_retained_then_name(self):
+        query_assignments = [
+            _qa("q1", "dynamodb", ["db.orders"]),
+            _qa("q2", "documentdb", ["db.orders"]),
+            _qa("q3", "aurora_mysql", ["db.orders"]),
+        ]
+        tables = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.orders")
+        assert table.primary_engine == "aurora_mysql"
