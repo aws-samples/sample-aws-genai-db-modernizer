@@ -12,7 +12,7 @@ Modernizing off a monolithic relational database is hard. Which queries belong i
 **Database Modernizer Assessment answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections.
 
 **Supported sources:** PostgreSQL, MySQL, MariaDB
-**Target engines:** DynamoDB, DocumentDB, ElastiCache/Redis, OpenSearch, Aurora PostgreSQL, Aurora MySQL
+**Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
 ## Who is this for?
 
@@ -45,6 +45,15 @@ Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --
 | **Synthesis**     | Produces the final migration assessment report with TCO, risk analysis, and recommendations                |
 
 The core pipeline through Reality Check is **fully deterministic**. Pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (Schema Design, Synthesis executive summaries) but the analysis and recommendations are reproducible and auditable every time.
+
+### What the Deliverables Show
+
+- One `report.json` feeds every deliverable — the decision report, the engineering report, the executive deck/PDF, and the UI — so a fact that changes in one changes in all of them.
+- Query-to-engine assignment is deterministic; a model may explain a decision, never make it.
+- Each engine's confidence score is the mean fit of the queries actually routed to it, not every table it analyzed. A score with no table-level evidence behind it is labelled "signal only".
+- ElastiCache is a cache-aside layer recommended only for genuinely hot reads — it never owns a query or holds a system of record.
+- OpenSearch is a read model only: every table it serves keeps a durable owner in Aurora, DynamoDB, or DocumentDB, and OpenSearch stays in sync rather than holding the only copy.
+- The deliverables lay out migration waves: a suggested incremental path from the source database to the recommended architecture, not the only one. The fully decomposed target schema is offered as the direct, single-step alternative.
 
 ---
 
@@ -240,24 +249,32 @@ All agent I/O flows through Pydantic contracts (`src/contracts/`). This enables:
 # Install with dev dependencies
 uv sync --extra dev
 
-# Run all tests (unit, contract, property, graph; no integration or e2e)
-make test        # or: ./ci/test.sh --cov=src --cov-report=term
+# Code quality: ruff, black, isort, mypy, markdownlint, the command validator
+make lint         # or: uv run pre-commit run --all-files
 
-# Run specific suites
-uv run pytest tests/unit/ -v
-uv run pytest tests/contract/ -v
-uv run pytest tests/integration/ -v
+# Unit, contract, property and graph tests (no network, no integration/e2e)
+make test         # or: ./ci/test.sh --cov=src --cov-report=term
 
-# Deterministic end-to-end (needs the `e2e` extra, Node 22, Playwright browsers,
-# and a built UI -- see ci/e2e.sh, which installs/builds all of that for you)
+# Deterministic end-to-end: full pipeline, rendered HTML/PDF, UI smoke test
+# (needs the `e2e` extra, Node 22, and Playwright browsers -- ci/e2e.sh
+# installs/builds all of that for you)
 make e2e          # or: ./ci/e2e.sh
 
-# Code quality
-make lint         # or: uv run pre-commit run --all-files
+# Headless /modernize --auto run against a real model (chat, ui or both
+# mode, on the wordpress or discourse sample), checked with the same
+# deliverable checks plus a rubric-based quality judge -- needs model
+# access and costs real tokens
+make e2e-llm      # or: ./ci/e2e-llm.sh chat wordpress
 
 # Full dev setup (pre-commit hooks, cfn-nag, etc.)
 ./scripts/setup_dev.sh
 ```
+
+[AGENTS.md](AGENTS.md) is the working guide for coding agents (and a fast
+map for everyone else): the full repo map, the test-tier table, and the
+headless `/modernize --auto` rules. What each CI script runs and why is in
+[ci/README.md](ci/README.md). Every change is also checked by an internal
+validation pipeline before it merges.
 
 ### Running Individual Phases
 
@@ -292,21 +309,9 @@ The local API only answers requests addressed to `localhost`, `127.0.0.1` or `::
 
 Then open `http://localhost:3000` to browse your modernization results.
 
-### Cloud Deployment (AWS)
+### Hosted Deployment (Retired)
 
-Deploy the full platform on AWS with ECS Fargate, Step Functions orchestration, and Cognito authentication:
-
-```bash
-cp .env.example .env       # Edit with your domain and region
-make deploy-dns            # Deploy Route 53 + ACM certificate (one-time)
-# Add NS records to your parent domain, wait for cert validation
-make deploy-infra          # Deploy VPC, ECR, KMS
-make build                 # Build and push Docker images (requires Docker Desktop)
-make deploy-services       # Deploy ECS, ALB, Cognito, S3, Step Functions
-make create-test-user      # Create a Cognito login
-```
-
-See [Deployment Guide](docs/guides/deployment-guide.md) for full details and troubleshooting.
+The hosted platform — ECS Fargate, Step Functions orchestration, Cognito authentication, and the per-environment CloudFormation stacks — is retired. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The remaining hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) is still in the repo but is being removed; track progress in #175.
 
 ---
 
@@ -316,13 +321,13 @@ See [Deployment Guide](docs/guides/deployment-guide.md) for full details and tro
 src/
   agents/           # Pipeline agents (collector, analysis, referee, schema_design)
   contracts/        # Pydantic I/O contracts between phases
-  orchestrator/     # Local and Step Functions orchestrators
+  orchestrator/     # Local phase orchestrator (the Step Functions path is retired, #175)
   storage/          # Artifact store (S3 or local filesystem)
   tools/            # Analysis tools, scoring, pattern catalogs
   api/              # FastAPI backend
   ui/               # React frontend
 scripts/            # CLI entry points and collection scripts
-infrastructure/     # CloudFormation templates for AWS deployment
+infrastructure/     # CloudFormation templates for the retired hosted deployment (being removed, #175)
 docs/               # Architecture docs, contracts, guides
 tests/              # Unit, contract, and integration tests
 ```
