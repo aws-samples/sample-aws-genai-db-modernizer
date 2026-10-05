@@ -429,6 +429,35 @@
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
+    function buildMigrationRoadmap() {
+      const container = document.getElementById('migration-roadmap-container');
+      if (!container) return;
+      const waves = DATA.results?.synthesis?.migration_waves || [];
+      if (waves.length === 0) { container.innerHTML = '<p>No migration roadmap available.</p>'; return; }
+      let html = '';
+      waves.forEach(wave => {
+        html += '<div class="item-card">';
+        html += '<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">';
+        html += '<span class="badge">Wave ' + escapeHtml(wave.wave) + '</span>';
+        (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });
+        html += '</div>';
+        html += '<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">' + escapeHtml(wave.title) + '</div>';
+        const basis = wave.share_basis === 'calls' ? '% of calls' : '% of the workload';
+        let stats = (wave.query_count || 0) + ' queries · ' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;
+        if (wave.table_count) stats += ' · ' + wave.table_count + ' source tables';
+        html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
+        html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(wave.rationale) + '</div>';
+        if ((wave.tables || []).length > 0) {
+          html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> ' + escapeHtml(wave.tables.join(', ')) + '</div>';
+        }
+        if (wave.gate) {
+          html += '<div style="font-size: 12px; color: var(--color-blue); margin-top: 6px;">Gate before the next wave: ' + escapeHtml(wave.gate) + '</div>';
+        }
+        html += '</div>';
+      });
+      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
     function switchEngineTab(btnClass, contentClass, showId) {
       document.querySelectorAll('.' + btnClass).forEach(btn => { btn.style.color = 'var(--color-text-secondary)'; btn.style.borderBottomColor = 'transparent'; });
       event.target.style.color = 'var(--color-blue)';
@@ -723,6 +752,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       allPatterns = extractPatterns();
+      buildMigrationRoadmap();
       buildCostBreakdown();
       buildQueryFlow();
       buildTable();

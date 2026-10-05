@@ -894,6 +894,8 @@ def render_decision_report_html(
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
+    out += _roadmap_html(report)
+
     risks = filtered_risks(report)
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
     if risks or strategies:
@@ -1093,6 +1095,258 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
     return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
 
 
+# Mirrors src.agents.referee.migration_waves's engine buckets (#225): kept in
+# sync by hand because src/report never imports src/agents (clean layering).
+_KV_ENGINES = frozenset({"dynamodb"})
+_DOCUMENT_ENGINES = frozenset({"documentdb"})
+
+
+def resolve_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """The incremental migration roadmap (#225): ``report['migration_waves']``
+    when synthesis wrote one, else derived the same way from what report.json
+    still has (``ranking``, ``cache_overlay``, ``table_mappings``).
+
+    Every deliverable (deck, decision report, engineering report, UI) calls
+    this one function, so a report synthesized before this field existed still
+    shows the same roadmap shape as a new one — just with less table detail,
+    since the legacy path has no assignment-level table groups.
+    """
+    waves = report.get("migration_waves")
+    if waves:
+        return [w for w in waves if isinstance(w, dict)]
+    return _legacy_migration_waves(report)
+
+
+def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
+    ranking = [r for r in (report.get("ranking") or []) if isinstance(r, dict)]
+    by_engine = {str(r.get("target")): r for r in ranking if r.get("target")}
+    mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
+
+    def tables_for(engine: str) -> list[str]:
+        return sorted(
+            {
+                str(m.get("source_table"))
+                for m in mappings
+                if m.get("recommended_database") == engine and m.get("source_table")
+            }
+        )
+
+    retained_engine = next(
+        (
+            e
+            for e in sorted(_RELATIONAL_ENGINES)
+            if e in by_engine and (by_engine[e].get("assigned_queries") or tables_for(e))
+        ),
+        None,
+    )
+
+    waves: list[dict[str, Any]] = []
+
+    overlay = report.get("cache_overlay") or {}
+    cache_engine = overlay.get("engine")
+    n_cached = int(overlay.get("query_count") or 0)
+    if cache_engine in _CACHE_ENGINES and n_cached:
+        share = round(float(overlay.get("call_share_percent") or 0.0), 1)
+        owners = sorted(overlay.get("owners") or {})
+        owner_names = ", ".join(display_engine(o) for o in owners) or "its owner engine"
+        waves.append(
+            {
+                "title": f"Cache hot reads with {display_engine(cache_engine)}",
+                "engines": [cache_engine],
+                "moves_from": [retained_engine] if retained_engine else [],
+                "serves_from": [],
+                "tables": [],
+                "table_count": 0,
+                "table_groups": None,
+                "query_count": n_cached,
+                "workload_share_percent": share,
+                "share_basis": "calls",
+                "rationale": (
+                    f"{n_cached} hot {plural_noun(n_cached, 'read')} ({fmt_num(share, 1)}% of "
+                    f"calls), cache-aside in front of {owner_names}: no data migration, fully "
+                    "reversible."
+                ),
+                "gate": "Cache hit rate and invalidation verified against the source database.",
+            }
+        )
+
+    def migration_wave(engine: str, title: str) -> dict[str, Any] | None:
+        tables = tables_for(engine)
+        n = int(by_engine.get(engine, {}).get("assigned_queries") or 0)
+        if not n and not tables:
+            return None
+        share = round(float(by_engine[engine].get("workload_percent") or 0.0), 1)
+        return {
+            "title": title,
+            "engines": [engine],
+            "moves_from": [retained_engine] if retained_engine else [],
+            "serves_from": [],
+            "tables": tables,
+            "table_count": len(tables),
+            "table_groups": None,
+            "query_count": n,
+            "workload_share_percent": share,
+            "share_basis": "queries",
+            "rationale": (
+                f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of the "
+                f"workload) to {display_engine(engine)}."
+            ),
+            "gate": "Query parity confirmed before the next wave.",
+        }
+
+    for engine in sorted(_KV_ENGINES & set(by_engine)):
+        wave = migration_wave(
+            engine, f"Move key-value and point-lookup queries to {display_engine(engine)}"
+        )
+        if wave:
+            waves.append(wave)
+
+    named = _CACHE_ENGINES | _KV_ENGINES | _SEARCH_ENGINES | _DOCUMENT_ENGINES | _RELATIONAL_ENGINES
+    others = sorted(
+        (e for e in by_engine if e not in named),
+        key=lambda e: (-float(by_engine[e].get("workload_percent") or 0.0), e),
+    )
+    for engine in others:
+        wave = migration_wave(engine, f"Move the remaining workload to {display_engine(engine)}")
+        if wave:
+            waves.append(wave)
+
+    for engine in sorted(_SEARCH_ENGINES & set(by_engine)):
+        n = int(by_engine.get(engine, {}).get("assigned_queries") or 0)
+        tables = tables_for(engine)
+        if not n and not tables:
+            continue
+        share = round(float(by_engine[engine].get("workload_percent") or 0.0), 1)
+        waves.append(
+            {
+                "title": f"Sync search and analytics read models to {display_engine(engine)}",
+                "engines": [engine],
+                "moves_from": [],
+                "serves_from": [],
+                "tables": tables,
+                "table_count": len(tables),
+                "table_groups": None,
+                "query_count": n,
+                "workload_share_percent": share,
+                "share_basis": "queries",
+                "rationale": (
+                    f"{n} search/analytics {plural_noun(n, 'query', 'queries')} "
+                    f"({fmt_num(share, 1)}% of the workload) build a read model in "
+                    f"{display_engine(engine)}, synced from the engines that own its tables: "
+                    f"{display_engine(engine)} never becomes the system of record, and "
+                    "recovery is always by re-indexing."
+                ),
+                "gate": "Sync lag inside SLA and every served table still has a durable owner.",
+            }
+        )
+
+    for engine in sorted(_DOCUMENT_ENGINES & set(by_engine)):
+        wave = migration_wave(engine, f"Move document-shaped data to {display_engine(engine)}")
+        if wave:
+            waves.append(wave)
+
+    if retained_engine:
+        tables = tables_for(retained_engine)
+        n = int(by_engine.get(retained_engine, {}).get("assigned_queries") or 0)
+        if n or tables:
+            share = round(float(by_engine[retained_engine].get("workload_percent") or 0.0), 1)
+            waves.append(
+                {
+                    "title": f"Keep the rest on {display_engine(retained_engine)}",
+                    "engines": [retained_engine],
+                    "moves_from": [],
+                    "serves_from": [],
+                    "tables": tables,
+                    "table_count": len(tables),
+                    "table_groups": None,
+                    "query_count": n,
+                    "workload_share_percent": share,
+                    "share_basis": "queries",
+                    "rationale": (
+                        f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of "
+                        f"the workload) stay on {display_engine(retained_engine)}, carried "
+                        "over 1:1 with no migration."
+                    ),
+                    "gate": "End state: every earlier wave's gate has passed.",
+                }
+            )
+
+    for i, wave in enumerate(waves, start=1):
+        wave["wave"] = i
+    return waves
+
+
+def _roadmap_html(report: dict[str, Any]) -> list[str]:
+    """Decision Report "Migration roadmap" section (#225): one short card per wave."""
+    esc = escaping.html_text
+    waves = resolve_migration_waves(report)
+    if not waves:
+        return []
+    out = ["<h2 class=section-title>Migration roadmap</h2>", "<div class=card><div class=card-b>"]
+    for w in waves:
+        names = ", ".join(esc(display_engine(e)) for e in w.get("engines") or [])
+        n = int(w.get("query_count") or 0)
+        basis = "of calls" if w.get("share_basis") == "calls" else "of the workload"
+        share = fmt_num(w.get("workload_share_percent", 0), 1)
+        tables = w.get("table_count") or 0
+        table_bit = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
+        out.append(
+            f"<p><b>Wave {w.get('wave')}: {esc(w.get('title') or names)}</b> — "
+            f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis}){table_bit}. "
+            f"{esc(w.get('rationale') or '')}</p>"
+        )
+        if w.get("gate"):
+            out.append(f"<p class=note>Gate: {esc(w['gate'])}</p>")
+    out.append("</div></div>")
+    return out
+
+
+def _roadmap_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report "Migration roadmap" section (#225): tables and queries per wave."""
+    waves = resolve_migration_waves(report)
+    if not waves:
+        return []
+    out = [f"## Migration roadmap ({len(waves)} {plural_noun(len(waves), 'wave')})", ""]
+    for w in waves:
+        names = ", ".join(display_engine(e) for e in w.get("engines") or [])
+        n = int(w.get("query_count") or 0)
+        basis = "of calls" if w.get("share_basis") == "calls" else "of the workload"
+        share = fmt_num(w.get("workload_share_percent", 0), 1)
+        out += [
+            f"### Wave {w.get('wave')}: {escaping.md_text(w.get('title') or names)}",
+            "",
+            f"- Engines: {escaping.md_text(names)}",
+            f"- {n} {plural_noun(n, 'query', 'queries')} ({share}% {basis})",
+        ]
+        tables = w.get("tables") or []
+        if tables:
+            shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:20])
+            more = f" (+{len(tables) - 20} more)" if len(tables) > 20 else ""
+            out.append(f"- {len(tables)} source {plural_noun(len(tables), 'table')}: {shown}{more}")
+        groups = w.get("table_groups") or []
+        if groups:
+            out.append(f"- {len(groups)} table {plural_noun(len(groups), 'group')}:")
+            for g in groups:
+                g_tables = ", ".join(
+                    f"`{escaping.md_code(t)}`" for t in (g.get("tables") or [])[:10]
+                )
+                out.append(f"  - {g.get('query_count', 0)} queries: {g_tables}")
+        if w.get("moves_from"):
+            out.append(
+                "- Moves from: "
+                + ", ".join(escaping.md_text(display_engine(e)) for e in w["moves_from"])
+            )
+        if w.get("serves_from"):
+            out.append(
+                "- Synced from (durable owner): "
+                + ", ".join(escaping.md_text(display_engine(e)) for e in w["serves_from"])
+            )
+        out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
+        out.append(f"- Gate before the next wave: {escaping.md_text(w.get('gate') or '-')}")
+        out.append("")
+    return out
+
+
 def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report section for the cache layer (#296); empty without one.
 
@@ -1206,6 +1460,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out.append("")
 
     out += _cache_layer_md(report)
+    out += _roadmap_md(report)
 
     designs = _completed_designs(report)
     if designs:

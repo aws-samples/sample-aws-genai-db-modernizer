@@ -610,6 +610,35 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
+  script += '    function buildMigrationRoadmap() {\n';
+  script += '      const container = document.getElementById(\'migration-roadmap-container\');\n';
+  script += '      if (!container) return;\n';
+  script += '      const waves = DATA.results?.synthesis?.migration_waves || [];\n';
+  script += '      if (waves.length === 0) { container.innerHTML = \'<p>No migration roadmap available.</p>\'; return; }\n';
+  script += '      let html = \'\';\n';
+  script += '      waves.forEach(wave => {\n';
+  script += '        html += \'<div class="item-card">\';\n';
+  script += '        html += \'<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">\';\n';
+  script += '        html += \'<span class="badge">Wave \' + escapeHtml(wave.wave) + \'</span>\';\n';
+  script += '        (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });\n';
+  script += '        html += \'</div>\';\n';
+  script += '        html += \'<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">\' + escapeHtml(wave.title) + \'</div>\';\n';
+  script += '        const basis = wave.share_basis === \'calls\' ? \'% of calls\' : \'% of the workload\';\n';
+  script += '        let stats = (wave.query_count || 0) + \' queries · \' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;\n';
+  script += '        if (wave.table_count) stats += \' · \' + wave.table_count + \' source tables\';\n';
+  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';
+  script += '        html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(wave.rationale) + \'</div>\';\n';
+  script += '        if ((wave.tables || []).length > 0) {\n';
+  script += '          html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 6px;"><b>Tables:</b> \' + escapeHtml(wave.tables.join(\', \')) + \'</div>\';\n';
+  script += '        }\n';
+  script += '        if (wave.gate) {\n';
+  script += '          html += \'<div style="font-size: 12px; color: var(--color-blue); margin-top: 6px;">Gate before the next wave: \' + escapeHtml(wave.gate) + \'</div>\';\n';
+  script += '        }\n';
+  script += '        html += \'</div>\';\n';
+  script += '      });\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
   script += '    function switchEngineTab(btnClass, contentClass, showId) {\n';
   script += '      document.querySelectorAll(\'.\' + btnClass).forEach(btn => { btn.style.color = \'var(--color-text-secondary)\'; btn.style.borderBottomColor = \'transparent\'; });\n';
   script += '      event.target.style.color = \'var(--color-blue)\';\n';
@@ -913,6 +942,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '\n';
   script += '    document.addEventListener(\'DOMContentLoaded\', () => {\n';
   script += '      allPatterns = extractPatterns();\n';
+  script += '      buildMigrationRoadmap();\n';
   script += '      buildCostBreakdown();\n';
   script += '      buildQueryFlow();\n';
   script += '      buildTable();\n';
@@ -1014,6 +1044,12 @@ export const generateHTMLReport = (data) => {
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div></div>
         ${cacheLayerStat}
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Migration Roadmap</div>
+      <p class="section-desc">The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine.</p>
+      <div id="migration-roadmap-container"></div>
     </div>
 
     <div class="section">

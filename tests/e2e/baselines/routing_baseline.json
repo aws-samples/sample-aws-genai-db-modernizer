@@ -2,11 +2,12 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average.",
+  "reason": "#225: migration waves are now written to report.json by synthesis and read from there (cache fronts the source first, then DynamoDB key-value/point lookups, then search read models, then whatever is retained on the source-compatible relational engine, always last); routing (owner distribution) is unchanged, only the wave plan and its table counts are added/regrouped.",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
-    "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average."
+    "#152 routed confidence: wave membership, owner shares and cache overlay unchanged; within wordpress Wave 2 the engines are now listed by routed confidence (DynamoDB 90% before Aurora MySQL 87%) instead of alphabetically at the old tied 50% analysis average.",
+    "#225: migration waves are now written to report.json by synthesis and read from there (cache fronts the source first, then DynamoDB key-value/point lookups, then search read models, then whatever is retained on the source-compatible relational engine, always last); routing (owner distribution) is unchanged, only the wave plan and its table counts are added/regrouped."
   ],
   "samples": {
     "wordpress": {
@@ -36,22 +37,32 @@
             "elasticache"
           ],
           "workload_percent": 0.0,
-          "cached_call_share_percent": 83.4
+          "cached_call_share_percent": 83.4,
+          "table_count": 0
         },
         {
           "engines": [
-            "dynamodb",
-            "aurora_mysql"
+            "dynamodb"
           ],
-          "workload_percent": 96.3,
-          "cached_call_share_percent": 0.0
+          "workload_percent": 91.6,
+          "cached_call_share_percent": 0.0,
+          "table_count": 19
         },
         {
           "engines": [
             "opensearch"
           ],
           "workload_percent": 3.7,
-          "cached_call_share_percent": 0.0
+          "cached_call_share_percent": 0.0,
+          "table_count": 4
+        },
+        {
+          "engines": [
+            "aurora_mysql"
+          ],
+          "workload_percent": 4.7,
+          "cached_call_share_percent": 0.0,
+          "table_count": 2
         }
       ]
     },
@@ -82,22 +93,32 @@
             "elasticache"
           ],
           "workload_percent": 0.0,
-          "cached_call_share_percent": 25.1
+          "cached_call_share_percent": 25.1,
+          "table_count": 0
         },
         {
           "engines": [
-            "aurora_postgresql",
             "dynamodb"
           ],
-          "workload_percent": 99.8,
-          "cached_call_share_percent": 0.0
+          "workload_percent": 23.3,
+          "cached_call_share_percent": 0.0,
+          "table_count": 113
         },
         {
           "engines": [
             "opensearch"
           ],
           "workload_percent": 0.2,
-          "cached_call_share_percent": 0.0
+          "cached_call_share_percent": 0.0,
+          "table_count": 0
+        },
+        {
+          "engines": [
+            "aurora_postgresql"
+          ],
+          "workload_percent": 76.5,
+          "cached_call_share_percent": 0.0,
+          "table_count": 226
         }
       ]
     }

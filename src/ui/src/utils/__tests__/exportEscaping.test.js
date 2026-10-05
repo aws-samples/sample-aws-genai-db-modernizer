@@ -116,6 +116,19 @@ const hostileResults = () => ({
       source_queries: [1],
       access_patterns: [{ pattern_id: IMG, operation: BREAKOUT, table_name: ATTR, design_rps: 1, description: END_SCRIPT }],
     }],
+    migration_waves: [{
+      wave: 1,
+      title: IMG,
+      engines: [BREAKOUT, ATTR],
+      tables: [JS_URL],
+      table_count: 1,
+      table_groups: [{ tables: [SQUOTE], query_count: 2 }],
+      query_count: 5,
+      workload_share_percent: 50,
+      share_basis: 'queries',
+      rationale: END_SCRIPT,
+      gate: ATTR,
+    }],
   },
   triage_summary: { database_name: IMG, source_database_type: JS_URL },
 });
@@ -144,6 +157,19 @@ describe('buildReportHtml (ReportResults export)', () => {
       '<meta charset="UTF-8">',
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
     ]);
+  });
+
+  it('renders the migration roadmap wave with hostile text escaped (#225)', () => {
+    const doc = parse(buildReportHtml({ resultsData: hostileResults(), jobId: 'job', t }));
+    expect(doc.body.textContent).toContain('Wave 1');
+    expect(doc.body.textContent).toContain('5 queries');
+    expect(doc.querySelectorAll(ACTIVE_TAGS.replace(', meta[http-equiv]', ''))).toHaveLength(0);
+  });
+
+  it('omits the migration roadmap section without any wave', () => {
+    const resultsData = { synthesis: { database_name: 'x', migration_waves: [] } };
+    const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));
+    expect(doc.body.textContent).not.toContain('Migration Roadmap');
   });
 
   it('still renders an ordinary report', () => {

@@ -465,6 +465,12 @@ const ReportResultsPage = memo(() => {
   const tradeoffs = synthesis?.trade_offs || [];
   const tcoAnalysis = synthesis?.tco_analysis || {};
   const schemaDesigns = synthesis?.schema_designs || {};
+  // #225: the incremental migration roadmap, written by synthesis to report.json
+  // (cache, then key-value/point lookups, then search/analytics read models and
+  // document data, then whatever is retained on the source-compatible relational
+  // engine). A report synthesized before #225 has none; the section is omitted
+  // rather than showing a roadmap not derived from this report's own data.
+  const migrationWaves = synthesis?.migration_waves || [];
 
   // Process risks from API - extract engine from description if available
   const processRisks = (apiRisks) => {
@@ -1575,7 +1581,10 @@ const ReportResultsPage = memo(() => {
                     </Container>
                 )}
 
-                {/* Migration Roadmap */}
+                {/* Migration Roadmap (#225): synthesis's own incremental wave plan,
+                    read verbatim from report.json's migration_waves. Omitted (not a
+                    guessed placeholder) when the report has none. */}
+                {migrationWaves.length > 0 && (
                 <Container
                   id="migration-roadmap"
                   header={
@@ -1586,64 +1595,59 @@ const ReportResultsPage = memo(() => {
                     />
                   }
                 >
-                  <ColumnLayout columns={4} variant="text-grid">
-                    <Box>
-                      <Badge color="green">{t('report-results.roadmap.phase-1-label')}</Badge>
-                      <Box variant="h4" padding={{ top: 's' }}>{t('report-results.roadmap.phase-1-title')}</Box>
-                      <Box padding={{ top: 's' }} fontSize="body-s">
-                        <ul>
-                          <li>{t('report-results.roadmap.phase-1-item-1')}</li>
-                          <li>{t('report-results.roadmap.phase-1-item-2')}</li>
-                          <li>{t('report-results.roadmap.phase-1-item-3')}</li>
-                          <li>{t('report-results.roadmap.phase-1-item-4')}</li>
-                        </ul>
+                  <SpaceBetween size="l">
+                    {migrationWaves.map((wave, index) => (
+                      <Box key={index} padding="l" style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                        <SpaceBetween size="s">
+                          <SpaceBetween direction="horizontal" size="s" alignItems="center">
+                            <Badge color="blue">{t('report-results.roadmap.wave-label', { number: wave.wave })}</Badge>
+                            {(wave.engines || []).map((engine) => (
+                              <Badge key={engine} color={ENGINE_COLORS[engine] || 'grey'}>{engine}</Badge>
+                            ))}
+                          </SpaceBetween>
+                          <Box variant="h4">{wave.title}</Box>
+                          <Box fontSize="body-s" color="text-body-secondary">
+                            {t('report-results.roadmap.query-count', { count: wave.query_count || 0 })}
+                            {' · '}
+                            {wave.share_basis === 'calls'
+                              ? t('report-results.roadmap.calls-share', { percent: wave.workload_share_percent })
+                              : t('report-results.roadmap.workload-share', { percent: wave.workload_share_percent })}
+                            {wave.table_count > 0 && (
+                              <> · {t('report-results.roadmap.table-count', { count: wave.table_count })}</>
+                            )}
+                          </Box>
+                          <Box fontSize="body-s">{wave.rationale}</Box>
+                          {(wave.tables || []).length > 0 && (
+                            <ExpandableSection
+                              headerText={t('report-results.roadmap.tables-header', { count: wave.tables.length })}
+                              variant="footer"
+                              defaultExpanded={false}
+                            >
+                              {(wave.table_groups || []).length > 0 ? (
+                                <SpaceBetween size="xs">
+                                  {wave.table_groups.map((group, gIdx) => (
+                                    <Box key={gIdx} fontSize="body-s" color="text-status-inactive">
+                                      {t('report-results.roadmap.table-group', { count: group.query_count || 0 })}
+                                      {': '}{(group.tables || []).join(', ')}
+                                    </Box>
+                                  ))}
+                                </SpaceBetween>
+                              ) : (
+                                <Box fontSize="body-s" color="text-status-inactive">{wave.tables.join(', ')}</Box>
+                              )}
+                            </ExpandableSection>
+                          )}
+                          {wave.gate && (
+                            <Box fontSize="body-s" color="text-status-info">
+                              {t('report-results.roadmap.gate-label')}{wave.gate}
+                            </Box>
+                          )}
+                        </SpaceBetween>
                       </Box>
-                      <Box variant="small" color="text-status-success">{t('report-results.roadmap.phase-1-timeline')}</Box>
-                    </Box>
-
-                    <Box>
-                      <Badge color="blue">{t('report-results.roadmap.phase-2-label')}</Badge>
-                      <Box variant="h4" padding={{ top: 's' }}>{t('report-results.roadmap.phase-2-title')}</Box>
-                      <Box padding={{ top: 's' }} fontSize="body-s">
-                        <ul>
-                          <li>{t('report-results.roadmap.phase-2-item-1')}</li>
-                          <li>{t('report-results.roadmap.phase-2-item-2')}</li>
-                          <li>{t('report-results.roadmap.phase-2-item-3')}</li>
-                          <li>{t('report-results.roadmap.phase-2-item-4')}</li>
-                        </ul>
-                      </Box>
-                      <Box variant="small" color="text-status-info">{t('report-results.roadmap.phase-2-timeline')}</Box>
-                    </Box>
-
-                    <Box>
-                      <Badge>{t('report-results.roadmap.phase-3-label')}</Badge>
-                      <Box variant="h4" padding={{ top: 's' }}>{t('report-results.roadmap.phase-3-title')}</Box>
-                      <Box padding={{ top: 's' }} fontSize="body-s">
-                        <ul>
-                          <li>{t('report-results.roadmap.phase-3-item-1')}</li>
-                          <li>{t('report-results.roadmap.phase-3-item-2')}</li>
-                          <li>{t('report-results.roadmap.phase-3-item-3')}</li>
-                          <li>{t('report-results.roadmap.phase-3-item-4')}</li>
-                        </ul>
-                      </Box>
-                      <Box variant="small">{t('report-results.roadmap.phase-3-timeline')}</Box>
-                    </Box>
-
-                    <Box>
-                      <Badge color="green">{t('report-results.roadmap.phase-4-label')}</Badge>
-                      <Box variant="h4" padding={{ top: 's' }}>{t('report-results.roadmap.phase-4-title')}</Box>
-                      <Box padding={{ top: 's' }} fontSize="body-s">
-                        <ul>
-                          <li>{t('report-results.roadmap.phase-4-item-1')}</li>
-                          <li>{t('report-results.roadmap.phase-4-item-2')}</li>
-                          <li>{t('report-results.roadmap.phase-4-item-3')}</li>
-                          <li>{t('report-results.roadmap.phase-4-item-4')}</li>
-                        </ul>
-                      </Box>
-                      <Box variant="small" color="text-status-success">{t('report-results.roadmap.phase-4-timeline')}</Box>
-                    </Box>
-                  </ColumnLayout>
+                    ))}
+                  </SpaceBetween>
                 </Container>
+                )}
 
                 {/* Query Classification */}
                 {queryGroups.length > 0 && (

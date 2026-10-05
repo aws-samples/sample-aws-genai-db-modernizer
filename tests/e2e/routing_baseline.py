@@ -9,7 +9,8 @@ facts that would show a drift toward decomposition:
   Aurora PostgreSQL for PostgreSQL),
 - the number of owner engines and the queries each owns,
 - the cache overlay (queries, share of calls), which is never an owner share,
-- the deck's wave plan (``pptx_report.derive``): engines and workload per wave.
+- the migration wave plan (``report.json``'s ``migration_waves``, #225): engines,
+  workload (or cache share) and table count per wave, every deliverable's source.
 
 ``tests/e2e/test_routing_baseline.py`` compares a run against
 ``tests/e2e/baselines/routing_baseline.json``. Update the baseline deliberately,
@@ -58,7 +59,7 @@ def _latest(job_dir: Path, sub: str, name: str) -> Path:
 def measure(job_dir: Path) -> dict[str, Any]:
     """The routing shape of one job (see module docstring)."""
     from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-    from src.report import pptx_report
+    from src.report.renderers import resolve_migration_waves
 
     report = json.loads(_latest(job_dir, "synthesis", "report.json").read_text())
     version = (report.get("assignment_summary") or {}).get("version")
@@ -79,14 +80,22 @@ def measure(job_dir: Path) -> dict[str, Any]:
     total = len(in_scope) or 1
     overlay = assignment.get("cache_overlay") or {}
 
-    f = pptx_report.derive(report, {})
     waves = [
         {
-            "engines": [e["engine"] for e in w["engines"]],
-            "workload_percent": round(float(w["workload"]), 1),
-            "cached_call_share_percent": round(float(w.get("cached_share") or 0), 1),
+            "engines": list(w.get("engines") or []),
+            "workload_percent": (
+                round(float(w.get("workload_share_percent") or 0), 1)
+                if w.get("share_basis") != "calls"
+                else 0.0
+            ),
+            "cached_call_share_percent": (
+                round(float(w.get("workload_share_percent") or 0), 1)
+                if w.get("share_basis") == "calls"
+                else 0.0
+            ),
+            "table_count": int(w.get("table_count") or 0),
         }
-        for w in f["waves"]
+        for w in resolve_migration_waves(report)
     ]
     return {
         "source_engine": source,
@@ -148,6 +157,12 @@ def compare(
                     problems.append(
                         f"wave {i + 1} {key}: {bwave[key]} -> {awave[key]} (tolerance {tol} pp)"
                     )
+            b_tc, a_tc = bwave.get("table_count", 0), awave.get("table_count", 0)
+            if abs(a_tc - b_tc) > query_tolerance(b_tc):
+                problems.append(
+                    f"wave {i + 1} table_count: {b_tc} -> {a_tc} (tolerance "
+                    f"{query_tolerance(b_tc)})"
+                )
     return problems
 
 

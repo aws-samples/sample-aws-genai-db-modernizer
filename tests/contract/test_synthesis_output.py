@@ -9,6 +9,7 @@ from src.contracts.synthesis_output import (
     AssignmentSummary,
     CostBreakdown,
     EngineRanking,
+    MigrationWave,
     Risk,
     RiskAssessment,
     SynthesisOutputContract,
@@ -105,6 +106,69 @@ class TestTableMapping:
             alternatives=[{"database": "documentdb", "score": 60}],
         )
         assert len(m.alternatives) == 1
+
+
+class TestMigrationWave:
+    """#225: one step of the incremental migration roadmap."""
+
+    def test_valid_wave(self):
+        w = MigrationWave(
+            wave=1,
+            title="Cache hot reads with ElastiCache",
+            engines=["elasticache"],
+            table_count=0,
+            query_count=20,
+            workload_share_percent=83.4,
+            share_basis="calls",
+            rationale="no data migration, fully reversible",
+            gate="cache hit rate verified",
+        )
+        assert w.wave == 1
+        assert w.tables == []  # defaults to empty, not required
+        assert w.moves_from == []
+        assert w.table_groups is None
+
+    def test_share_basis_rejects_an_unknown_value(self):
+        with pytest.raises(ValidationError):
+            MigrationWave(
+                wave=1,
+                title="x",
+                engines=["dynamodb"],
+                table_count=0,
+                query_count=1,
+                workload_share_percent=1.0,
+                share_basis="rows",
+                rationale="x",
+                gate="x",
+            )
+
+    def test_wave_must_be_at_least_one(self):
+        with pytest.raises(ValidationError):
+            MigrationWave(
+                wave=0,
+                title="x",
+                engines=["dynamodb"],
+                table_count=0,
+                query_count=1,
+                workload_share_percent=1.0,
+                rationale="x",
+                gate="x",
+            )
+
+    def test_table_groups_for_the_dynamodb_wave(self):
+        w = MigrationWave(
+            wave=2,
+            title="Move key-value and point-lookup queries to DynamoDB",
+            engines=["dynamodb"],
+            tables=["db.users", "db.sessions"],
+            table_count=2,
+            table_groups=[{"tables": ["db.users"], "query_count": 10}],
+            query_count=10,
+            workload_share_percent=50.0,
+            rationale="x",
+            gate="x",
+        )
+        assert w.table_groups == [{"tables": ["db.users"], "query_count": 10}]
 
 
 class TestTCOAnalysis:
@@ -267,7 +331,7 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        assert output.contract_version == "1.3"
+        assert output.contract_version == "1.4"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]
@@ -333,6 +397,47 @@ class TestSynthesisOutputContract:
         valid_synthesis_data["ranking"] = []
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
         assert output.ranking == []
+
+    def test_migration_waves_defaults_to_none(self, valid_synthesis_data):
+        """1.4 (#225): absent on a report synthesized before the roadmap existed."""
+        output = SynthesisOutputContract.model_validate(valid_synthesis_data)
+        assert output.migration_waves is None
+
+    def test_with_migration_waves(self, valid_synthesis_data):
+        valid_synthesis_data["migration_waves"] = [
+            {
+                "wave": 1,
+                "title": "Cache hot reads with ElastiCache",
+                "engines": ["elasticache"],
+                "tables": [],
+                "table_count": 0,
+                "query_count": 20,
+                "workload_share_percent": 83.4,
+                "share_basis": "calls",
+                "rationale": "no data migration, fully reversible",
+                "gate": "cache hit rate verified",
+            },
+            {
+                "wave": 2,
+                "title": "Move key-value and point-lookup queries to DynamoDB",
+                "engines": ["dynamodb"],
+                "tables": ["db.users"],
+                "table_count": 1,
+                "query_count": 60,
+                "workload_share_percent": 60.0,
+                "share_basis": "queries",
+                "rationale": "pattern DynamoDB fits best",
+                "gate": "query parity confirmed",
+            },
+        ]
+        output = SynthesisOutputContract.model_validate(valid_synthesis_data)
+        assert output.migration_waves is not None
+        assert [w.wave for w in output.migration_waves] == [1, 2]
+        assert output.migration_waves[0].share_basis == "calls"
+        assert output.migration_waves[1].engines == ["dynamodb"]
+        dumped = output.model_dump(mode="json")
+        roundtrip = SynthesisOutputContract.model_validate(dumped)
+        assert len(roundtrip.migration_waves) == 2
 
     def test_status_defaults(self, valid_synthesis_data):
         del valid_synthesis_data["status"]

@@ -26,6 +26,16 @@ Version History:
   ``analysis_confidence`` (= ``confidence_score``, the average over every analyzed
   table) and ``weight`` are declared as audit fields. The ranking is ordered by
   workload share. Backward compatible — every new field defaults to ``None``.
+- 1.4 (2026-10-04): Added optional ``migration_waves`` (#225): the incremental
+  roadmap synthesis computes deterministically from the assignment (one
+  sequencing rule — cache, then key-value/point lookups, then search/analytics
+  read models and document data, then whatever is retained on the
+  source-compatible relational engine). Each wave carries its engines, the
+  tables and queries it moves (and from/to which engine), its share of the
+  workload or of calls, the ordering rationale and the gate before the next
+  wave. ``None`` for a report synthesized before this field existed; every
+  deliverable falls back to deriving the same shape itself. Backward
+  compatible — defaults to ``None``.
 """
 
 from datetime import datetime
@@ -172,6 +182,55 @@ class AssignmentSummary(BaseModel):
     co_dependency_groups: int = Field(default=0, ge=0)
 
 
+class MigrationWave(BaseModel):
+    """One step of the incremental migration roadmap (#225).
+
+    The sequence is one deterministic rule computed from the assignment, never
+    a model's choice: cache (no data migration, reversible), then key-value and
+    point-lookup queries to DynamoDB (table group by table group), then any
+    other direct migration target, then search/analytics read models
+    (OpenSearch, synced, never system of record) and document-shaped data
+    (DocumentDB), then whatever is retained on the source-compatible
+    relational engine (Aurora MySQL/PostgreSQL), carried over 1:1. A wave with
+    nothing to move is omitted; the rest are numbered consecutively from 1.
+    """
+
+    wave: int = Field(..., ge=1, description="1-based position in the roadmap")
+    title: str = Field(..., description="Short, human-readable name for the wave")
+    engines: list[str] = Field(..., description="The wave's target engine(s)")
+    moves_from: list[str] = Field(
+        default_factory=list,
+        description="Engine(s) this wave's tables/queries move away from, if any",
+    )
+    serves_from: list[str] = Field(
+        default_factory=list,
+        description=(
+            "For a read-model wave only: the owner engine(s) it syncs from and never "
+            "replaces as the system of record"
+        ),
+    )
+    tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
+    table_count: int = Field(..., ge=0)
+    table_groups: list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "DynamoDB wave only: tables grouped table group by table group, respecting "
+            "co-dependency groups, each as {tables, query_count}"
+        ),
+    )
+    query_count: int = Field(..., ge=0)
+    workload_share_percent: float = Field(
+        ..., ge=0, le=100, description="Share of the workload, or of calls for the cache wave"
+    )
+    share_basis: Literal["queries", "calls"] = Field(
+        "queries", description="What workload_share_percent is a share of"
+    )
+    rationale: str = Field(..., description="Why this wave is sequenced where it is")
+    gate: str = Field(..., description="What must be true before the next wave starts")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class SynthesisOutputContract(BaseModel):
     """Output contract for the synthesis agent.
 
@@ -184,7 +243,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.3",
+        default="1.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -237,6 +296,14 @@ class SynthesisOutputContract(BaseModel):
             "Cache layer view (#296): engine, query_count, calls_per_second, "
             "call_share_percent, owners, patterns, dropped_query_ids and notes. The cache "
             "owns no query, so it is never part of the owner workload share."
+        ),
+    )
+    migration_waves: list[MigrationWave] | None = Field(
+        None,
+        description=(
+            "Incremental migration roadmap (#225), computed deterministically from the "
+            "assignment. None for a report synthesized before this field existed; every "
+            "deliverable then falls back to deriving the same shape itself."
         ),
     )
 

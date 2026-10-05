@@ -95,6 +95,9 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   const tradeoffs = asArray(synthesis.trade_offs);
   const tcoAnalysis = synthesis.tco_analysis || {};
   const queryGroups = asArray(synthesis.query_groups);
+  // #225: the incremental migration roadmap synthesis writes to report.json.
+  // Omitted (not a guessed placeholder) when the report has none.
+  const migrationWaves = asArray(synthesis.migration_waves);
   const overallRisk = riskAssessment.overall_risk_level || 'MEDIUM';
   const alertClass = overallRisk === 'HIGH' ? 'error' : overallRisk === 'LOW' ? 'info' : 'warning';
 
@@ -352,62 +355,36 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
   ` : ''}
 
+  ${migrationWaves.length > 0 ? html`
   <div class="section-separator">
     <h2>Migration Roadmap</h2>
-    <div class="desc">Four-phase migration strategy from quick wins to full production deployment with timeline estimates</div>
+    <div class="desc">The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine</div>
   </div>
 
   <div class="container">
-    <div class="roadmap-grid">
-      <div class="roadmap-phase">
-        <span class="badge badge-green">Phase 1</span>
-        <h3>Quick Wins</h3>
-        <ul>
-          <li>Deploy caching layer</li>
-          <li>Optimize indexes</li>
-          <li>Add monitoring</li>
-          <li>Connection pooling</li>
-        </ul>
-        <div class="timeline">Weeks 1-4</div>
+    ${migrationWaves.map(wave => html`
+      <div class="roadmap-phase" style="margin-bottom: 15px;">
+        <span class="badge badge-blue">Wave ${wave.wave}</span>
+        ${asArray(wave.engines).map(engine => html` <span class="badge badge-grey">${engine}</span>`)}
+        <h3>${wave.title}</h3>
+        <div style="font-size: 13px; color: #666; margin: 8px 0;">
+          ${wave.query_count || 0} queries ·
+          ${wave.share_basis === 'calls'
+            ? html`${fixed(wave.workload_share_percent, 1, '0')}% of calls`
+            : html`${fixed(wave.workload_share_percent, 1, '0')}% of the workload`}
+          ${wave.table_count > 0 ? html` · ${wave.table_count} source tables` : ''}
+        </div>
+        <p>${wave.rationale}</p>
+        ${asArray(wave.tables).length > 0 ? html`
+          <div style="font-size: 13px; color: #666;">
+            <strong>Tables:</strong> ${asArray(wave.tables).join(', ')}
+          </div>
+        ` : ''}
+        ${wave.gate ? html`<div class="timeline">Gate before the next wave: ${wave.gate}</div>` : ''}
       </div>
-
-      <div class="roadmap-phase">
-        <span class="badge badge-blue">Phase 2</span>
-        <h3>POCs</h3>
-        <ul>
-          <li>Build prototypes</li>
-          <li>Load testing</li>
-          <li>Validate patterns</li>
-          <li>CDC pipeline</li>
-        </ul>
-        <div class="timeline">Weeks 5-8</div>
-      </div>
-
-      <div class="roadmap-phase">
-        <span class="badge badge-grey">Phase 3</span>
-        <h3>Migration</h3>
-        <ul>
-          <li>Dual-write setup</li>
-          <li>Data backfill</li>
-          <li>Gradual cutover</li>
-          <li>Monitoring</li>
-        </ul>
-        <div class="timeline">Weeks 9-16</div>
-      </div>
-
-      <div class="roadmap-phase">
-        <span class="badge badge-green">Phase 4</span>
-        <h3>Validation</h3>
-        <ul>
-          <li>Load testing</li>
-          <li>Validate SLAs</li>
-          <li>Documentation</li>
-          <li>Decommission</li>
-        </ul>
-        <div class="timeline">Weeks 17-20</div>
-      </div>
-    </div>
+    `)}
   </div>
+  ` : ''}
 
   ${queryGroups.length > 0 ? html`
   <div class="section-separator">

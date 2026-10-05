@@ -55,6 +55,12 @@ __BANNER__
     </div>
 
     <div class="section">
+      <div class="section-header">Migration Roadmap</div>
+      <p class="section-desc">The incremental migration waves computed from this assessment: cache, then key-value and point lookups, then search/analytics read models and document data, then whatever is retained on the source-compatible relational engine.</p>
+      <div id="migration-roadmap-container"></div>
+    </div>
+
+    <div class="section">
       <div class="section-header">Cost Breakdown</div>
       <p class="section-desc">Estimated monthly cost of running each recommended engine at your current workload volume.</p>
       <div id="cost-breakdown-container"></div>

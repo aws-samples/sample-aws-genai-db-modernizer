@@ -145,6 +145,12 @@ CONFIDENCE_FLOOR = 50
 # any confidence; CONFIDENCE_FLOOR orders only the migration targets.
 NO_MIGRATION_ROLES = ("Retained", "Cache layer")
 
+# Accent lookup for a stored ``migration_waves`` entry (#225): the source-compatible
+# relational engine, carried over 1:1, gets the same "no further migration" blue as
+# the cache; a search read model is green; everything else is a migration target.
+_WAVE_RETAINED_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
+_WAVE_SEARCH_ENGINES = frozenset({"opensearch"})
+
 LAYOUT_HERO = "Default 32"  # aurora full-bleed background + 48pt title
 LAYOUT_CONTENT = "Default 5"  # title + subtitle, plain dark background
 
@@ -1028,63 +1034,95 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    # ---- waves, by rule -----------------------------------------------------
-    # Wave 1 is whatever needs no data migration. The migration targets then
-    # split on CONFIDENCE_FLOOR: the ones the assessment is confident in go
-    # before the ones it is not.
-    targets = sorted(
-        (e for e in engines if e["role"] == "Migration target"),
-        key=lambda e: (-conf.get(e["engine"], 0), e["engine"]),
-    )
+    # ---- waves ----------------------------------------------------------------
+    # Synthesis writes the incremental roadmap deterministically from the
+    # assignment (#225) -- one sequencing rule: cache, then key-value/point
+    # lookups, then any other direct target, then search/analytics read models
+    # and document data, then whatever is retained on the source-compatible
+    # relational engine. The deck only maps each stored wave onto its own slide
+    # fields (accent colour; HIGH-risk count and confidence come from the
+    # per-engine figures already computed above). A report synthesized before
+    # #225 has no ``migration_waves`` and falls back to the on-the-fly
+    # confidence-floor split this module always used, unchanged.
+    stored_waves = rep.get("migration_waves")
     waves: list[dict[str, Any]] = []
-    if no_move:
-        only_cache = all(e["engine"] in cache for e in no_move)
-        waves.append(
-            {
-                "engines": no_move,
-                "accent": BLUE,
-                "note": (
-                    # The cache fronts the current source database first (#296)
-                    "Cache-aside in front of the current source database: no data migration, "
-                    "reversible. It keeps serving the same reads as their owners move in later "
-                    "waves; invalidation follows the engine that owns each cached table."
-                    if only_cache
-                    else "No data migration — source-compatible or additive, so the source "
-                    "database stays authoritative and the step is reversible."
-                    + (" The cache fronts the current source database." if cache else "")
-                ),
-            }
+    if stored_waves:
+        engines_by_key = {e["engine"]: e for e in engines}
+        for sw in stored_waves:
+            wave_engines = [
+                engines_by_key[e] for e in sw.get("engines") or [] if e in engines_by_key
+            ]
+            if not wave_engines:
+                continue
+            keys = set(sw.get("engines") or [])
+            if sw.get("share_basis") == "calls" or keys & _WAVE_RETAINED_ENGINES:
+                accent = BLUE
+            elif keys & _WAVE_SEARCH_ENGINES:
+                accent = GREEN
+            else:
+                accent = YELLOW
+            waves.append(
+                {"engines": wave_engines, "accent": accent, "note": sw.get("rationale", "")}
+            )
+    else:
+        # Legacy fallback: no stored roadmap, so derive one wave 1 is whatever
+        # needs no data migration. The migration targets then split on
+        # CONFIDENCE_FLOOR: the ones the assessment is confident in go before
+        # the ones it is not.
+        targets = sorted(
+            (e for e in engines if e["role"] == "Migration target"),
+            key=lambda e: (-conf.get(e["engine"], 0), e["engine"]),
         )
-    confident = [e for e in targets if conf.get(e["engine"], 0) >= CONFIDENCE_FLOOR]
-    unsure = [e for e in targets if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
-    for group, accent in ((confident, YELLOW), (unsure, ORANGE)):
-        if not group:
-            continue
-        lo_eng = min(group, key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"]
-        lo = conf_text(lo_eng)
-        n_t = sum(e["migrates"] for e in group)
-        tables_word = plural_noun(n_t, "table")
-        note = (
-            f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "
-            f"· confidence from {lo}"
-            if group is confident
-            else f"{n_t} source {tables_word} · confidence {lo} — re-scope after the gate"
-        )
-        waves.append({"engines": group, "accent": accent, "note": note})
-    # A search read model indexes data synced from the engines that own its
-    # tables, so it comes after every owner's wave; it never moves data (#296/#303).
-    read_models = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
-    if read_models:
-        waves.append(
-            {
-                "engines": read_models,
-                "accent": GREEN,
-                "note": (
-                    "Search read model, built after the engines that own its tables: it "
-                    "indexes data synced from them, so no system-of-record data moves to it."
-                ),
-            }
-        )
+        if no_move:
+            only_cache = all(e["engine"] in cache for e in no_move)
+            waves.append(
+                {
+                    "engines": no_move,
+                    "accent": BLUE,
+                    "note": (
+                        # The cache fronts the current source database first (#296)
+                        "Cache-aside in front of the current source database: no data "
+                        "migration, reversible. It keeps serving the same reads as their "
+                        "owners move in later waves; invalidation follows the engine that "
+                        "owns each cached table."
+                        if only_cache
+                        else "No data migration — source-compatible or additive, so the "
+                        "source database stays authoritative and the step is reversible."
+                        + (" The cache fronts the current source database." if cache else "")
+                    ),
+                }
+            )
+        confident = [e for e in targets if conf.get(e["engine"], 0) >= CONFIDENCE_FLOOR]
+        unsure = [e for e in targets if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
+        for group, accent in ((confident, YELLOW), (unsure, ORANGE)):
+            if not group:
+                continue
+            lo_eng = min(group, key=lambda e: (conf.get(e["engine"], 0), e["engine"]))["engine"]
+            lo = conf_text(lo_eng)
+            n_t = sum(e["migrates"] for e in group)
+            tables_word = plural_noun(n_t, "table")
+            note = (
+                f"{n_t} source {tables_word} {plural_verb(n_t, 'migrates', 'migrate')} "
+                f"· confidence from {lo}"
+                if group is confident
+                else f"{n_t} source {tables_word} · confidence {lo} — re-scope after the gate"
+            )
+            waves.append({"engines": group, "accent": accent, "note": note})
+        # A search read model indexes data synced from the engines that own its
+        # tables, so it comes after every owner's wave; it never moves data (#296/#303).
+        read_models = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
+        if read_models:
+            waves.append(
+                {
+                    "engines": read_models,
+                    "accent": GREEN,
+                    "note": (
+                        "Search read model, built after the engines that own its tables: it "
+                        "indexes data synced from them, so no system-of-record data moves "
+                        "to it."
+                    ),
+                }
+            )
     for w in waves:
         w["names"] = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in w["engines"])
         w["workload"] = sum(

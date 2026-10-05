@@ -17,6 +17,8 @@ LLM seam functions (for Skill Sync / external LLM integration):
 
 from datetime import UTC, datetime
 
+from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -62,6 +64,7 @@ def run_synthesis_deterministic(
         job_id, database_name, timestamp, needs_deeper_analysis,
         ranking, table_mappings, query_groups, tco_analysis, risk_assessment,
         architecture, trade_offs, assignment_summary, reality_check_summary,
+        cache_overlay, migration_waves (the incremental roadmap, #225),
         summary (deterministic), executive_summary (deterministic fallback),
         data (internal SynthesisData — for use by apply_synthesis_llm_output)
     """
@@ -130,6 +133,18 @@ def run_synthesis_deterministic(
     )
     trade_offs = _collect_trade_offs(data)
 
+    print("[synthesis] Building migration waves...")
+    cache_overlay = build_cache_overlay(data)
+    assignment = data.assignment or {}
+    migration_waves = build_migration_waves(
+        ranking=ranking,
+        table_assignments=assignment.get("table_assignments") or [],
+        query_assignments=assignment.get("query_assignments") or [],
+        co_dependency_groups=assignment.get("co_dependency_groups") or [],
+        cache_overlay=cache_overlay,
+        source_engine=source_database_engine(data.collector),
+    )
+
     assignment_summary = None
     if data.assignment:
         assignment_summary = {
@@ -185,7 +200,8 @@ def run_synthesis_deterministic(
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
         "eliminated_engines": eliminated,
-        "cache_overlay": build_cache_overlay(data),
+        "cache_overlay": cache_overlay,
+        "migration_waves": migration_waves,
         "known_tables": known_tables,
         "engine_tables": engine_tables,
         "effective_architecture": build_effective_architecture(
@@ -310,6 +326,7 @@ def _write_synthesis_report(
         "trade_offs": result["trade_offs"],
         "assignment_summary": result["assignment_summary"],
         "cache_overlay": result.get("cache_overlay"),
+        "migration_waves": result.get("migration_waves"),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
