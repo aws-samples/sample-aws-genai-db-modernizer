@@ -260,11 +260,11 @@ make test         # or: ./ci/test.sh --cov=src --cov-report=term
 # installs/builds all of that for you)
 make e2e          # or: ./ci/e2e.sh
 
-# Headless /modernize --auto run against a real model (chat, ui or both
-# mode, on the wordpress or discourse sample), checked with the same
-# deliverable checks plus a rubric-based quality judge -- needs model
-# access and costs real tokens
-make e2e-llm      # or: ./ci/e2e-llm.sh chat wordpress
+# Headless /modernize --auto run against a real model (both mode by
+# default, chat or ui also work, on the wordpress or discourse sample),
+# checked with the same deliverable checks plus a rubric-based quality
+# judge -- needs model access and costs real tokens
+make e2e-llm      # or: ./ci/e2e-llm.sh both wordpress
 
 # Full dev setup (pre-commit hooks, cfn-nag, etc.)
 ./scripts/setup_dev.sh

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Start (or stop) the local API + UI servers for a `/modernize --mode ui|both` run.
+"""Start (or stop) the local API + UI servers for a `/modernize` run with the UI
+(the default `both` mode, or `--mode ui`).
 
 Headless `claude -p` runs execute Bash commands through a fixed permission
 allowlist that matches each *subcommand* of a compound shell line. The old
@@ -265,8 +266,33 @@ def kill_pids(pids: dict[str, int]) -> dict[str, int]:
     return killed
 
 
+def _recorded_servers_match_markers() -> dict[str, int] | None:
+    """The previous run's recorded pids, if every one of them is still alive
+    and its command line still looks like the server recorded under that name
+    (see PROCESS_MARKERS). None if the record is missing, incomplete, or no
+    longer belongs to this script's servers -- callers must not reuse pids
+    in that case."""
+    pids = read_pids()
+    if set(pids) != set(PROCESS_MARKERS):
+        return None
+    for name, pid in pids.items():
+        command = process_command(pid)
+        if command is None or PROCESS_MARKERS[name] not in command:
+            return None
+    return pids
+
+
 def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[str, Any], int]:
     log_dir = local_ui_dir()
+
+    # `/modernize` never stops these servers at the end of a run (the user
+    # keeps browsing), so the next default run finds both ports already
+    # taken by last time's servers. Reuse them instead of treating that as
+    # an unrelated process holding the port (#346).
+    if not rebuild:
+        recorded = _recorded_servers_match_markers()
+        if recorded is not None and wait_for_ready(timeout):
+            return {"status": "ready", "api": API_URL, "ui": UI_URL, "pids": recorded}, 0
 
     for port in (API_PORT, UI_PORT):
         if not check_port_available(port):

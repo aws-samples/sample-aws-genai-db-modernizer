@@ -121,9 +121,9 @@ produced, plus a rubric-based quality judge (`ci/llm/judge.py` /
 into one `results.json` row by `ci/llm/run.py results`.
 
 ```
-make e2e-llm                                        # chat / wordpress (defaults)
+make e2e-llm                                        # both / wordpress (defaults)
 make e2e-llm E2E_LLM_MODE=ui E2E_LLM_FIXTURE=discourse
-./ci/e2e-llm.sh both wordpress                       # or invoke the script directly
+./ci/e2e-llm.sh chat wordpress                       # or invoke the script directly
 ```
 
 **What it checks**: the transcript's final `type == "result"` line

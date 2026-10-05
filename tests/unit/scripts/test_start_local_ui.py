@@ -62,6 +62,88 @@ def test_ready_when_both_servers_come_up(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert written == {"api": 111, "serve": 222}
 
 
+def test_ready_reuses_already_running_servers_from_a_previous_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _isolated_state_dir: Path
+) -> None:
+    # Issue #346: /modernize never stops these servers, so the next default
+    # run must recognize its own still-healthy servers and reuse them rather
+    # than failing with "port already in use" or restarting them.
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    _all_processes_match(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+
+    def _must_not_be_called(name: str) -> Any:
+        def _fail(*a: Any, **k: Any) -> None:
+            pytest.fail(f"{name} should not be called")
+
+        return _fail
+
+    for name in ("check_port_available", "build_ui", "start_api", "start_serve", "write_pids"):
+        monkeypatch.setattr(start_local_ui, name, _must_not_be_called(name))
+
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+
+    assert code == 0
+    assert result == {
+        "status": "ready",
+        "api": start_local_ui.API_URL,
+        "ui": start_local_ui.UI_URL,
+        "pids": {"api": 111, "serve": 222},
+    }
+
+
+def test_rebuild_flag_skips_reuse_and_starts_fresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _isolated_state_dir: Path
+) -> None:
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    _all_processes_match(monkeypatch)
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "start_api", lambda root, log_dir: FakeProc(333))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(444))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    monkeypatch.setattr(start_local_ui, "write_pids", lambda pids: None)
+
+    result, code = start_local_ui.run_start(tmp_path, rebuild=True, timeout=30)
+
+    assert code == 0
+    assert result["pids"] == {"api": 333, "serve": 444}
+
+
+def test_recorded_pid_belonging_to_something_else_is_not_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _isolated_state_dir: Path
+) -> None:
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    monkeypatch.setattr(start_local_ui, "process_command", lambda pid: "/usr/sbin/sshd -D")
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "start_api", lambda root, log_dir: FakeProc(333))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(444))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    monkeypatch.setattr(start_local_ui, "write_pids", lambda pids: None)
+
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+
+    assert code == 0
+    assert result["pids"] == {"api": 333, "serve": 444}
+
+
+def test_recorded_servers_alive_but_unhealthy_do_not_short_circuit_the_port_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _isolated_state_dir: Path
+) -> None:
+    _isolated_state_dir.mkdir(parents=True)
+    (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
+    _all_processes_match(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: False)
+    _patch_common(monkeypatch, port_available=False)
+
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+
+    assert code == 1
+    assert "already in use" in result["reason"]
+
+
 def test_timeout_kills_the_children_it_started(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

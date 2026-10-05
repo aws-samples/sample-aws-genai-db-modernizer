@@ -341,7 +341,7 @@ make e2e                               # or: ./ci/e2e.sh
 
 # Headless /modernize against a real model, same deliverable checks + a
 # rubric-based quality judge (needs model access -- see ci/README.md)
-make e2e-llm                           # or: ./ci/e2e-llm.sh chat wordpress
+make e2e-llm                           # or: ./ci/e2e-llm.sh both wordpress
 
 # Run only contract tests
 uv run pytest tests/contract/ -v

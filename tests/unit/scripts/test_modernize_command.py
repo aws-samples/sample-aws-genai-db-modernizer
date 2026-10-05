@@ -88,10 +88,23 @@ def test_documents_mode_argument() -> None:
     assert "chat" in text and "ui" in text and "both" in text
 
 
-def test_step_0_contains_skip_rule() -> None:
+def test_step_0_asks_no_mode_question() -> None:
+    # Issue #346: "both" (chat + UI) is the default experience, so Step 0 no
+    # longer asks the user to pick a mode -- it just resolves {experience_mode}.
     text = _modernize_text()
     step_0 = text.split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
-    assert "skip this question" in step_0.lower()
+    assert "Never ask the user which mode they want" in step_0
+    assert "how would you like to follow" not in step_0.lower()
+    assert "pick 1, 2, or 3" not in step_0.lower()
+    assert QUESTION_PATTERN.search(step_0) is None
+
+
+def test_default_experience_mode_is_both() -> None:
+    text = _modernize_text()
+    assert "Default is `both`" in text
+    step_0 = text.split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "`--mode` if given, else `both`" in step_0
+    assert "`--auto` without `--mode` also means `both`" in text
 
 
 def test_modernize_result_line_documents_both_outcomes() -> None:
@@ -115,11 +128,75 @@ def test_modernize_md_paragraphs_with_user_prompts_are_auto_exempt() -> None:
             )
 
 
-def test_setup_failure_also_ends_with_modernize_result_failed() -> None:
-    # The local-UI setup step (scripts/start_local_ui.py "error") must end a
-    # headless run the same way any other phase failure does.
+def test_setup_failure_falls_back_to_chat_instead_of_failing() -> None:
+    # Issue #346: with "both" the default (no longer a deliberate user
+    # choice), a UI that can't start must not take the whole run down with
+    # it. Step 0 falls back to chat and keeps going, with or without --auto.
     step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
-    assert "MODERNIZE_RESULT: failed phase=setup" in step_0
+    assert "MODERNIZE_RESULT: failed phase=setup" not in step_0
+    assert "Set `{experience_mode}` to `chat`" in step_0
+    assert "never fail the run over this" in step_0
+
+
+def test_setup_treats_missing_or_bad_output_as_error_too() -> None:
+    # PR #348 review: a missing/unparseable JSON line or a non-zero exit
+    # from start_local_ui.py must trigger the same chat fallback as an
+    # explicit {"status": "error", ...} line.
+    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "missing or unparseable JSON line, or a non-zero exit" in step_0
+    assert "counts the same as" in step_0
+
+
+def test_step_0_uses_a_long_bash_timeout() -> None:
+    # PR #348 review: a fresh clone builds the UI from scratch, which can
+    # take several minutes -- the default 120000 ms Bash timeout isn't
+    # enough, so Step 0 must call out the longer one explicitly.
+    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "600000 ms" in step_0
+
+
+def test_step_0_never_waits_for_the_user_to_confirm_the_ui() -> None:
+    # PR #348 review: "ready" already means the health and deep-link checks
+    # passed, so Step 0 must not wait for a human to confirm the UI loaded
+    # (that contradicts the Waiting Rule, and would hang a headless run).
+    step_0 = _modernize_text().split("## Step 0", 1)[1].split("## CRITICAL", 1)[0]
+    assert "confirm" not in step_0.lower()
+    assert "continue immediately" in step_0
+
+
+def test_result_line_mode_reflects_the_experience_mode_actually_used() -> None:
+    # PR #348 review: mode=<mode> must be {experience_mode} (which is "chat"
+    # after a fallback), not the --mode flag the user originally passed.
+    text = _modernize_text()
+    completion = text.split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
+    assert "where `<mode>` is `{experience_mode}`" in completion
+    assert "chat` if the UI never started or fell back" in completion
+
+
+def test_ui_mode_is_not_called_a_single_channel() -> None:
+    # PR #348 review: --mode ui is UI-first (chat still runs, scoped to
+    # approval-gate numbers, UI pointers and the result line), not a single
+    # channel the way --mode chat is.
+    text = _modernize_text()
+    assert "picks a single channel" not in text
+    assert "UI-first" in text
+    arguments = text.split("## Arguments", 1)[1].split("## Step 0", 1)[0]
+    assert "no phase summaries" in arguments
+
+
+def test_ui_mode_suppresses_phase_summaries_but_keeps_approval_gate_numbers() -> None:
+    # PR #348 review: in ui mode, chat gives only the approval-gate numbers,
+    # UI pointers and the result line -- no reality-check/schema-design/
+    # completion phase summaries.
+    text = _modernize_text()
+    assert "Unless `{experience_mode}` is `ui`, present a brief summary" in text
+    assert "Unless `{experience_mode}` is `ui`, tell the user schema design is complete" in text
+    completion = text.split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
+    assert "Unless `{experience_mode}` is `ui`, show the final report summary" in completion
+    decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1].split(
+        "### Phase 6", 1
+    )[0]
+    assert "including `ui`" in decision_gate
 
 
 def test_dispatched_subcommands_have_no_unexempted_user_prompts() -> None:

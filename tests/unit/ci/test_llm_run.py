@@ -174,6 +174,21 @@ def test_mode_mismatch_fails() -> None:
         run.check_transcript(FIXTURES / "synthetic-success-chat.jsonl", "both")
 
 
+def test_fallback_to_chat_reports_the_ui_start_failure_reason() -> None:
+    """Issue #346: a `both`-mode run whose UI couldn't start falls back to
+    chat (MODERNIZE_RESULT ... mode=chat). Asserting --mode both against it
+    must still fail (that mode's UI path was never exercised), but with the
+    specific UI-start reason rather than the generic mode-mismatch message."""
+    with pytest.raises(
+        run.TranscriptError,
+        match=(
+            r"UI start failed, run fell back to chat: port 3000 is already in use "
+            r"by something this script didn't start"
+        ),
+    ):
+        run.check_transcript(FIXTURES / "synthetic-fallback-both-to-chat.jsonl", "both")
+
+
 def test_subagent_decoy_complete_cannot_override_orchestrator_failed(tmp_path: Path) -> None:
     """A subagent's assistant text (``parent_tool_use_id`` set -- the real
     fixture confirms this is how a dispatched subagent's own turns are

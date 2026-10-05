@@ -10,22 +10,14 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 ## Arguments
 
 - `<collector_file>` — path to collector output JSON (required)
-- `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve) and the UI confirmation wait; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
-- `--mode chat|ui|both` — experience mode. With `--mode`, Step 0 is skipped. `--auto` without `--mode` means `chat`.
+- `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve); on a phase failure, abort (see Error Handling). Equivalent to `-y`.
+- `--mode chat|ui|both` — experience mode. Default is `both`: results appear in chat while the local UI runs alongside. `--mode chat` is chat only, with no UI, for environments with no browser or people who want pure chat. `--mode ui` is UI-first: the UI carries the detail, and chat is limited to the approval-gate numbers, UI pointers, and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
 
-## Step 0: Experience Mode (ASK FIRST)
+## Step 0: Experience Mode
 
-**If `--mode` was given (or `--auto`), use it and skip this question.** Otherwise, before anything else, ask the user:
+Never ask the user which mode they want. Resolve `{experience_mode}`: `--mode` if given, else `both`.
 
-> How would you like to follow the modernization?
->
-> 1. **Chat only** — all results shown here in the terminal
-> 2. **UI only** — I'll start the local API and frontend, check results at <http://localhost:3000>
-> 3. **Both** — results in chat AND the UI running alongside
->
-> (Pick 1, 2, or 3)
-
-**If user picks 2 or 3**, start the local API and UI with one allowlisted command:
+**Unless `{experience_mode}` is `chat`**, start the local API and UI with one allowlisted command. Run it with a Bash timeout of 600000 ms: a fresh clone builds the UI from scratch, which can take several minutes, and the default 120000 ms Bash timeout is not enough.
 
 ```bash
 uv run python scripts/start_local_ui.py
@@ -33,17 +25,12 @@ uv run python scripts/start_local_ui.py
 
 `npm run serve` (which this script runs for you, only when the UI isn't already built) uses the `serve` dev dependency pinned in `src/ui/package.json`, in single-page-app mode, so deep links load on refresh. Do not swap in another static server, because one without SPA fallback returns 404 on every deep link.
 
-The script does the build (if needed), starts both servers in the background, polls API health and the UI (including a deep link) for up to 180s, and prints exactly one JSON line to stdout. Read that line:
+The script does the build (if needed), starts both servers in the background — reusing them without rebuilding if a previous `/modernize` run already left them up and healthy — polls API health and the UI (including a deep link) for up to 180s, and prints exactly one JSON line to stdout. A missing or unparseable JSON line, or a non-zero exit, counts the same as `"status": "error"` below. Read that line:
 
-- **`"status": "ready"`** — tell the user:
-  - API running at <http://localhost:8000>
-  - Frontend running at <http://localhost:3000>
-  - Unless `--auto`, wait for the user to confirm the UI is loaded before proceeding. With `--auto`, continue immediately — `"ready"` already means the health and deep-link checks passed, so there is nothing left to wait for.
-- **`"status": "error"`** — report the `reason` field to the user (e.g. the npm registry token expired, a port was already taken, or the servers never became healthy in time).
-  - With `--auto`, do not ask anything: stop the pipeline and end the run with `MODERNIZE_RESULT: failed phase=setup reason=<reason>`.
-  - Without `--auto`, ask the user whether to continue in chat mode instead, or abort.
+- **`"status": "ready"`** — tell the user, in one sentence, that the UI is at <http://localhost:3000> and that the chat will walk them through what it shows, and continue immediately: `"ready"` already means the health and deep-link checks passed, so there is nothing left to wait for.
+- **`"status": "error"`** (or a missing/unparseable JSON line, or a non-zero exit) — tell the user the `reason` field if there is one (e.g. the npm registry token expired, a port was already taken by something else, or the servers never became healthy in time), that the UI will not be available this run, and that you are continuing in chat only. Set `{experience_mode}` to `chat` for the rest of the run and carry on: never fail the run over this, with or without `--auto`, and never ask whether to continue — chat always works on its own, so there is nothing to decide.
 
-Record the choice by passing it as `--mode {experience_mode}` (`chat`, `ui` or `both`) to `scripts/run_assessment.py` in Phases 1-5. That command creates `.modernizer-state.json` and stores `"experience_mode"` in it, so do not write the state file for this step. Do not create any other file for it (no notes, placeholders or sidecar files next to `.modernizer-state.json`).
+Record `{experience_mode}` by passing it as `--mode {experience_mode}` to `scripts/run_assessment.py` in Phases 1-5. That command creates `.modernizer-state.json` and stores `"experience_mode"` in it, so do not write the state file for this step. Do not create any other file for it (no notes, placeholders or sidecar files next to `.modernizer-state.json`).
 
 Stop the servers later with `uv run python scripts/start_local_ui.py --stop`. `/modernize` itself never stops them at the end of a `ui`/`both` run — the user keeps browsing the results after the pipeline finishes; only CI's own cleanup stops them.
 
@@ -109,22 +96,20 @@ Its stdout is short and is the whole tool result: one JSON status line per phase
 
 **DO NOT read the LLM input file yourself. DO NOT produce the consolidation response yourself. The subagent handles this with a clean context following the /reality-check skill.**
 
-**After resume-reality-check completes**, present a brief summary:
+**After resume-reality-check completes:**
 
-- Selected engines and why
-- Query distribution across engines
-- Reality check consolidations and any reversals
-- Architecture patterns detected
-
-**If UI mode:** Tell user "Assessment complete — check the UI for full results."
+- Unless `{experience_mode}` is `ui`, present a brief summary: selected engines and why, query distribution across engines, reality check consolidations and any reversals, architecture patterns detected.
+- Unless `{experience_mode}` is `chat`, add: the Sankey/assignment page in the UI has the full query-to-engine breakdown.
 
 ### Decision Gate: Assignment Approval
 
-After reality check, present the final assignment to the user:
+After reality check, present the final assignment to the user — this is the approval gate, so these numbers appear in every mode, including `ui`:
 
 - Which engines survived consolidation
 - Query distribution across engines
 - Any queries that were redirected by the LLM validator
+
+Unless `{experience_mode}` is `chat`, point the user at the Sankey/assignment page in the UI for the full breakdown before they decide — do not repeat the full table in chat, just the numbers above.
 
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
 Only proceed to schema design after user approval (unless `--auto`).
@@ -191,7 +176,7 @@ Any other output or a non-zero exit is a phase failure for `schema_design_dynamo
 
 Do not run `--finalize` for DynamoDB; `--merge` is its final step.
 
-**If UI mode:** Tell user "Schema designs ready — browse table definitions, access patterns, and GSIs in the UI."
+Unless `{experience_mode}` is `ui`, tell the user schema design is complete. Unless `{experience_mode}` is `chat`, add: table definitions, access patterns and GSIs are in the UI.
 
 ### Phase 7: Synthesis
 
@@ -203,20 +188,11 @@ Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask t
 
 ### Completion
 
-**If chat or both:**
+Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO) and the deliverables printed by the synthesize step's render command: decision report (HTML), interactive analysis report (HTML), engineering report (Markdown), and `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
 
-- Show final report summary (engines, architecture recommendation, TCO)
-- Show the deliverables printed by the synthesize step's render command: decision report
-  (HTML), interactive analysis report (HTML), engineering report (Markdown), and
-  `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
+Unless `{experience_mode}` is `chat`, add: the full interactive report is in the UI.
 
-**If UI mode:**
-
-- Show the deliverables printed by the synthesize step's render command: decision report
-  (HTML), interactive analysis report (HTML), engineering report (Markdown), and
-  `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
-
-End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`). Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line: `complete` as above, or `failed phase=<phase> reason=<one line>`.
+End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`), where `<mode>` is `{experience_mode}` — `chat` if the UI never started or fell back. Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line: `complete` as above, or `failed phase=<phase> reason=<one line>`.
 
 ## Waiting Rule
 

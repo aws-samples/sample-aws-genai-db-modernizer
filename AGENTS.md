@@ -87,7 +87,7 @@ and `ci/e2e-llm.sh` build it for you.
 | Lint | `make lint` (all pre-commit hooks) or `./ci/lint.sh` (ruff, black, isort, mypy, `validate_skills.py`) | style, types, markdownlint, secrets, command references | free: `ci/lint.sh` seconds, `make lint` about 2 minutes |
 | Unit/contract | `make test` (or `./ci/test.sh -q`) | unit, contract, property, graph; `--fail-on-skip`, no network | free, about 2 minutes |
 | Deterministic e2e | `make e2e` (or `./ci/e2e.sh`) | full pipeline on both samples with no model, HTML in Chromium + WebKit, PDF, UI smoke | free, minutes (UI build + browsers) |
-| Headless LLM e2e | `make e2e-llm E2E_LLM_MODE=chat E2E_LLM_FIXTURE=wordpress` | real `/modernize --auto` run, the same deliverable checks, a rubric judge | real tokens: wordpress about $3.50-4 and 5 min; discourse about 7 min |
+| Headless LLM e2e | `make e2e-llm` (both mode by default, `E2E_LLM_FIXTURE=wordpress` by default) | real `/modernize --auto` run, the same deliverable checks, a rubric judge | real tokens, both mode: wordpress about $4 and roughly 6 minutes; discourse about $11 |
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 
 - Python change in `src/` or `scripts/`: `make lint` and `make test`.
@@ -109,8 +109,13 @@ and `ci/e2e-llm.sh` build it for you.
 `ci/e2e-llm.sh` runs `claude -p "/modernize <collection.json> --auto --mode <chat|ui|both>"`
 with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
 
-- `--auto` never asks the user anything; `--mode` skips the experience-mode
-  question (`--auto` alone means `chat`).
+- `--auto` never asks the user anything; `/modernize` never asks an
+  experience-mode question at all. Default (and `--auto` alone) means `both`
+  (chat + local UI); `--mode chat` is chat only, `--mode ui` is UI-first
+  (chat gives only the approval-gate numbers, UI pointers, and the result
+  line -- no phase summaries).
+  If the UI can't start, it falls back to chat and keeps going rather than
+  failing the run.
 - The run ends with exactly one line
   `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` or
   `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.

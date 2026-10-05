@@ -257,6 +257,32 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
     return True, None
 
 
+def _ui_start_error_reason(records: list[dict[str, Any]]) -> str | None:
+    """The ``reason`` from a ``scripts/start_local_ui.py`` tool_result whose
+    JSON reported ``"status": "error"`` -- the UI failed to start and
+    ``/modernize`` fell back to chat (#346). None if no such tool_use/
+    tool_result pair is found, e.g. the run never tried to start the UI."""
+    events = iter_tool_events(records)
+    start_idx: int | None = None
+    for i, (kind, _name, text) in enumerate(events):
+        if kind == "tool_use" and "scripts/start_local_ui.py" in text and "--stop" not in text:
+            start_idx = i
+            break
+    if start_idx is None:
+        return None
+    for kind, _name, text in events[start_idx + 1 :]:
+        if kind != "tool_result":
+            continue
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("status") == "error":
+            reason = parsed.get("reason")
+            return reason if isinstance(reason, str) else text
+    return None
+
+
 def tool_result_permission_errors(records: list[dict[str, Any]]) -> list[str]:
     """Texts of ``tool_result`` blocks flagged ``is_error`` that mention
     "permission" -- a denied tool call as the model saw it, which may not
@@ -530,6 +556,9 @@ def check_transcript(
                 "(must match [A-Za-z0-9_.-]+ and not be '.' or '..')"
             )
     if result_mode != mode:
+        ui_error = _ui_start_error_reason(records) if result_mode == "chat" else None
+        if ui_error is not None:
+            raise fail(f"UI start failed, run fell back to chat: {ui_error}")
         raise fail(
             f"MODERNIZE_RESULT reported mode={result_mode!r}, which does not match --mode {mode!r}"
         )

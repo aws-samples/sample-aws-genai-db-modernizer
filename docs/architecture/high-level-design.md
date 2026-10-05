@@ -165,7 +165,9 @@ roles for the AWS Transform integration (§2.4).
 ### 2.1 Primary Mode: Claude Code
 
 - `/modernize` drives the full pipeline from a Claude Code session, with
-  per-phase approval gates and a choice of chat, UI, or both experience modes
+  per-phase approval gates; the default experience is chat and the local UI
+  together, `--mode chat` is chat only, and `--mode ui` is UI-first (chat
+  stays to the approval-gate numbers, UI pointers, and the result line)
 - No infrastructure to deploy — Claude Code runs the deterministic scripts and
   reasons over their output directly on the user's machine
 

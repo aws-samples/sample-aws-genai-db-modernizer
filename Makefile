@@ -54,7 +54,7 @@ lint: ## Run all linters
 e2e: ## Deterministic end-to-end run (pipeline, HTML/PDF checks, UI smoke)
 	./ci/e2e.sh
 
-E2E_LLM_MODE     ?= chat
+E2E_LLM_MODE     ?= both
 E2E_LLM_FIXTURE  ?= wordpress
 
 e2e-llm: ## Headless /modernize run + deliverable checks + quality judge (needs model access; see ci/README.md)
