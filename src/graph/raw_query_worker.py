@@ -103,17 +103,30 @@ def run_raw_query(
 # --- child side ---------------------------------------------------------------
 
 
-def _peak_rss_bytes() -> int:
-    import resource
+_STATM = "/proc/self/statm"
 
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # ru_maxrss is bytes on macOS and kilobytes on Linux.
-    return int(peak if sys.platform == "darwin" else peak * 1024)
+
+def _rss_bytes() -> int:
+    """Resident memory of this process.
+
+    Linux carries the parent's peak RSS into a forked and exec'd child, so
+    ``ru_maxrss`` there can start above the limit; read the current RSS from
+    /proc instead. macOS has no /proc; its ``ru_maxrss`` (bytes) starts fresh.
+    """
+    try:
+        with open(_STATM) as f:
+            resident_pages = int(f.read().split()[1])
+        return resident_pages * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, IndexError):
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(peak if sys.platform == "darwin" else peak * 1024)
 
 
 def _watch_memory(limit: int, parent_pid: int) -> None:
     while True:
-        if _peak_rss_bytes() > limit:
+        if _rss_bytes() > limit:
             os._exit(_MEMORY_EXIT_CODE)
         # The server that started us is gone: nobody will read the result.
         if os.getppid() != parent_pid:

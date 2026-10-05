@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import json
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -476,9 +477,36 @@ def test_raw_query_child_exits_when_its_parent_is_gone(monkeypatch):
         exits.append(code)
         raise _Exited
 
-    monkeypatch.setattr(worker, "_peak_rss_bytes", lambda: 0)
+    monkeypatch.setattr(worker, "_rss_bytes", lambda: 0)
     monkeypatch.setattr(worker.os, "getppid", lambda: 1)
     monkeypatch.setattr(worker.os, "_exit", fake_exit)
     with pytest.raises(_Exited):
         worker._watch_memory(worker.MEMORY_LIMIT_BYTES, parent_pid=4242)
     assert exits == [worker._ORPHAN_EXIT_CODE]
+
+
+def test_worker_memory_reads_current_rss_not_inherited_peak(tmp_path, monkeypatch):
+    """On Linux the child inherits its parent's peak RSS, so the watchdog reads current RSS."""
+    import os
+
+    from src.graph import raw_query_worker as worker
+
+    statm = tmp_path / "statm"
+    statm.write_text("5000 1000 300 10 0 900 0\n")
+    monkeypatch.setattr(worker, "_STATM", str(statm))
+    assert worker._rss_bytes() == 1000 * os.sysconf("SC_PAGE_SIZE")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux RSS inheritance")
+def test_raw_query_works_when_the_server_process_is_large(raw_client, monkeypatch):
+    """A server already above the worker's memory cap can still run small raw queries."""
+    from src.graph import raw_query_worker as worker
+
+    client, _ = raw_client
+    monkeypatch.setenv(graph_routes.RAW_QUERY_ENV_FLAG, "1")
+    ballast = b"x" * (worker.MEMORY_LIMIT_BYTES + 64 * 1024 * 1024)
+    try:
+        resp = _post(client, "MATCH (f:Foo) RETURN f.id AS id LIMIT 3")
+    finally:
+        del ballast
+    assert resp.status_code == 200, resp.text
