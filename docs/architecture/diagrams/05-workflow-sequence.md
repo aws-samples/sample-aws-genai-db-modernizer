@@ -1,6 +1,17 @@
 # Workflow Sequence
 
-Job submission to completion using Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md).
+> **⚠️ Superseded.** This sequence diagram describes the retired hosted
+> deployment: a Step Functions state machine storing task tokens in
+> DynamoDB, with EventBridge/WebSocket progress deferred to "Phase 1" (it
+> was never built). None of that exists today. The current
+> `LocalOrchestrator` calls each phase directly and in-process; the two
+> human gates are resumed through the local API/UI, the deterministic CLI,
+> or a Claude Code command — there is no task-token callback to a workflow
+> service. See
+> [High-Level Design §3.3](../high-level-design.md#33-orchestration-pattern).
+> Retained for historical context.
+
+Job submission to completion, originally built around Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
 
 ```mermaid
 sequenceDiagram

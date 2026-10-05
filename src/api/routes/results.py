@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.services.s3_artifacts import S3ArtifactsService
-from src.api.services.step_functions import StepFunctionsService
+from src.api.services.local_execution import LocalExecutionService
+from src.api.services.local_s3 import LocalS3Service
 from src.report.renderers import resolve_migration_waves
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
-sfn_service: StepFunctionsService | None = None
-s3_service: S3ArtifactsService | None = None
+sfn_service: LocalExecutionService | None = None
+s3_service: LocalS3Service | None = None
 
 
 def _get_database_name(job_id: str) -> str:

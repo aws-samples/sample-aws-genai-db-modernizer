@@ -115,11 +115,31 @@ jobs:
         uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
           config: p/python p/security-audit
+      - name: cfn-lint
+        # Scoped to the CloudFormation templates that still exist after #175:
+        # the one remaining hosted-path template (automation.yaml, kept per
+        # maintainer decision — see #342), the CI-runner IAM sample, and the
+        # AWS Transform integration's IAM roles template. W3037 is cfn-lint's
+        # IAM-action-prefix check; its bundled service list doesn't yet know
+        # about bedrock-runtime or transform-agents, both real AWS actions.
+        run: |
+          uv run cfn-lint infrastructure/cloudformation/automation.yaml \
+            infrastructure/cloudformation/example-ci-runner-iam.yaml \
+            pipeline/iam-roles.yaml \
+            --ignore-checks W3037
       - name: Checkov (CloudFormation)
         run: |
           pip install checkov
-          checkov -d infrastructure/cloudformation/ --framework cloudformation --quiet \
+          checkov -f infrastructure/cloudformation/automation.yaml \
+            -f infrastructure/cloudformation/example-ci-runner-iam.yaml \
+            -f pipeline/iam-roles.yaml \
+            --framework cloudformation --quiet --compact \
             --skip-check CKV_AWS_46,CKV_AWS_111,CKV2_AWS_71
+      - name: Checkov (Dockerfiles)
+        run: |
+          checkov -f src/atx_orchestrator/Dockerfile.atx \
+            -f infrastructure/docker/agent-load-test/Dockerfile \
+            --framework dockerfile --quiet --compact
 
   validate-contracts:
     runs-on: ubuntu-latest
@@ -159,15 +179,3 @@ jobs:
         working-directory: src/ui
         env:
           CI: false
-
-  cfn-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
-        with:
-          python-version: '3.12'
-      - name: Install cfn-lint
-        run: pip install cfn-lint
-      - name: Lint CloudFormation templates
-        run: cfn-lint infrastructure/cloudformation/*.yaml

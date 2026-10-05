@@ -243,13 +243,9 @@ def api(all_runs: list[PipelineResult]) -> Iterator[str]:
     # Reuse pipeline._env() so the API subprocess is stripped of AWS_PROFILE /
     # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN the same way
     # the deterministic pipeline steps are -- same proof: this suite needs no
-    # AWS credentials. S3_BUCKET / STATE_MACHINE_ARN are removed on top of that
-    # (not something _env() strips, since the pipeline scripts never set them)
-    # so src.api.main picks its local-mode services instead of the real
-    # S3/Step-Functions ones.
+    # AWS credentials. src.api.main always uses the local filesystem services
+    # (hosted Step Functions/S3 services removed, #175).
     env = _env()
-    env.pop("S3_BUCKET", None)
-    env.pop("STATE_MACHINE_ARN", None)
     env["ARTIFACT_DIR"] = str(all_runs[0].artifact_root)
     log_path = _log_path("api.log")
     log_file = log_path.open("w")

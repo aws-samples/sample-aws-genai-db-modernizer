@@ -23,6 +23,7 @@ from src.api.models.graph_responses import (
     RiskHotspotsResponse,
     TableImpactResponse,
 )
+from src.api.services.local_execution import LocalExecutionService
 from src.graph import GraphStoreCache
 from src.graph import queries as graph_queries
 from src.graph.cypher_guard import DisallowedStatementError, bound_result_rows
@@ -40,7 +41,7 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["graph"])
 artifact_store: ArtifactStore | None = None
 graph_cache: GraphStoreCache | None = None
 graph_persistence: GraphPersistence | None = None
-sfn_service = None
+sfn_service: LocalExecutionService | None = None
 
 # POST /graph/query and POST /graph/rebuild are off unless this is set to "1";
 # the curated GET endpoints are always available.
@@ -67,7 +68,8 @@ def _get_database_name(job_id: str) -> str:
     execution = sfn_service.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
-    return execution.get("input", {}).get("database_name", "")
+    db_name: str = execution.get("input", {}).get("database_name", "")
+    return db_name
 
 
 def _resolve_db_name(job_id: str) -> str:

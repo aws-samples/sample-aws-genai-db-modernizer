@@ -1,41 +1,41 @@
 # Data Flow
 
-Source databases → Collector → Triage → Human Gate 1 → Analysis Map → Assignment Resolution → Reality Check → Human Gate 2 → Schema Design Map → Load Test Map → Synthesis → Reports. Step Functions orchestrates; EventBridge carries progress events. The Collector supports two input modes: live (direct database connection) and offline (pre-collected JSON from S3). Query journey files are progressively enriched at each stage.
+Source databases → Collector → Triage → Human Gate 1 → Analysis (concurrent) → Assignment Resolution → Reality Check → Human Gate 2 → Schema Design → Load Test (sequential) → Synthesis → Reports. `LocalOrchestrator` runs each phase as a direct function call — there is no workflow service or event bus. The Collector supports two input modes: live (SQL run via SSM Run Command on a per-VPC automation instance — opt-in, gated, not fully wired; see [High-Level Design §7.1](../high-level-design.md#71-security-overview)) and offline (pre-collected JSON). Query journey detail is served from the context graph read-model, with a fallback to progressive per-stage files for jobs that predate it.
 
 ```mermaid
 graph LR
     subgraph "Sources"
         RDS[(Customer RDS)] & REDIS[(Customer Redis)]
         CW[CloudWatch] & PI[Perf Insights]
-        S3_UPLOAD[S3 Upload<br/>offline JSON]
+        UPLOAD[Local Upload<br/>offline JSON]
     end
 
-    subgraph "Pipeline (Step Functions)"
-        COLLECTOR[Collector] -->|JSON| S3_1[S3]
-        S3_1 --> TRIAGE[Referee-Triage]
-        TRIAGE --> GATE1{Human Gate 1<br/>⏸ waitForTaskToken}
-        GATE1 -.->|UI: POST /resume| ANALYSIS_MAP
-        subgraph ANALYSIS_MAP[RunAnalysisPipelines Map]
-            ANALYSIS[Analysis Agent] -->|JSON| S3_2[S3]
+    subgraph "Pipeline (LocalOrchestrator — direct function calls)"
+        COLLECTOR[Collector] -->|JSON| STORE_1[ArtifactStore]
+        STORE_1 --> TRIAGE[Referee-Triage]
+        TRIAGE --> GATE1{Human Gate 1<br/>assignment review}
+        GATE1 -.->|UI/API/CLI: resume| ANALYSIS_MAP
+        subgraph ANALYSIS_MAP["Per-engine analysis (concurrent)"]
+            ANALYSIS[Analysis Agent] -->|JSON| STORE_2[ArtifactStore]
         end
         ANALYSIS_MAP --> AR[Assignment Resolution]
         AR --> RC[Reality Check]
-        RC --> GATE2{Human Gate 2<br/>⏸ waitForTaskToken}
-        GATE2 -.->|UI: POST /resume| SCHEMA_MAP
-        subgraph SCHEMA_MAP[RunSchemaDesignPipelines Map]
-            SCHEMA[Schema Design + PE review] -->|JSON/SQL| S3_3a[S3]
+        RC --> GATE2{Human Gate 2<br/>schema design approval}
+        GATE2 -.->|UI/API/CLI: resume| SCHEMA_MAP
+        subgraph SCHEMA_MAP["Per-engine schema design (concurrent)"]
+            SCHEMA[Schema Design + PE review] -->|JSON/SQL| STORE_3a[ArtifactStore]
         end
         SCHEMA_MAP --> LOAD_MAP
-        subgraph LOAD_MAP[RunLoadTestPipelines Map]
-            LOADTEST[Load Test<br/>k6 on ECS] -->|JSON + scripts| S3_LT[S3]
+        subgraph LOAD_MAP["Per-engine load test (sequential)"]
+            LOADTEST[Load Test<br/>k6, local or agent-load-test image] -->|JSON + scripts| STORE_LT[ArtifactStore]
         end
         LOAD_MAP --> SYNTH[Referee-Synthesis]
-        SYNTH -->|JSON| S3_3[S3]
+        SYNTH -->|JSON| STORE_3[ArtifactStore]
         SYNTH -.->|deeper analysis?| SCHEMA_MAP
     end
 
-    subgraph "Query Journeys (progressive enrichment)"
-        QJ[query-journeys/query_id.json]
+    subgraph "Query Journeys (context graph read-model)"
+        QJ[Context graph<br/>fallback: query-journeys/query_id.json]
         COLLECTOR -.->|source| QJ
         AR -.->|assignment| QJ
         SCHEMA -.->|design| QJ
@@ -47,8 +47,8 @@ graph LR
     end
 
     RDS & REDIS & CW & PI --> COLLECTOR
-    S3_UPLOAD -.->|offline mode| COLLECTOR
-    S3_3 --> REPORT --> S3_5[S3]
+    UPLOAD -.->|offline mode| COLLECTOR
+    STORE_3 --> REPORT --> STORE_5[ArtifactStore]
 
     style COLLECTOR fill:#9cf,stroke:#333,stroke-width:2px
     style TRIAGE fill:#fc9,stroke:#333,stroke-width:2px
@@ -62,12 +62,16 @@ graph LR
     style QJ fill:#efe,stroke:#393,stroke-width:1px
 ```
 
-## S3 Structure
+## Artifact Structure
 
-Per [API specification](../api-specification.md), `job_id` is a UUID. `{database-name}` must exactly match the real database name — in live mode this comes from `connection.database`; in offline mode from `metadata.source_database.database_name` in the collected JSON. A mismatch causes table ID mismatches across collector, assignment resolver, and schema design agents.
+`job_id` is a UUID — the API uses a full `uuid.uuid4()`; the local scripts and skills truncate it to 8 hex characters. `{database-name}` must exactly match the real database name — in live mode this comes from `connection.database`; in offline mode from `metadata.source_database.database_name` in the collected JSON. A mismatch causes table ID mismatches across collector, assignment resolver, and schema design agents.
+
+Default path is the local filesystem (`LocalArtifactStore`, `./artifacts/` by
+default); the AWS Transform integration uses the same layout in S3
+(`S3ArtifactStore`):
 
 ```
-s3://{bucket}/{database-name}/{job-id}/
+{artifact-root}/{database-name}/{job-id}/
 ├── collector/output.json
 ├── referee-triage/triage.json
 ├── analysis-{engine}/analysis.json          (one per selected engine)
@@ -87,7 +91,7 @@ s3://{bucket}/{database-name}/{job-id}/
 │       ├── summary.json
 │       └── {query_id}.json                  (per-pattern latency + cost)
 ├── query-journeys/
-│   └── {query_id}.json                      (progressive: source → assignment → design → load_test)
+│   └── {query_id}.json                      (progressive: source → assignment → design → load_test; legacy fallback)
 ├── uploads/                                 (offline mode only)
 │   └── collector-output.json
 ├── referee-synthesis/report.json
@@ -95,8 +99,14 @@ s3://{bucket}/{database-name}/{job-id}/
 └── report.html
 ```
 
-DynamoDB tracks job metadata (job_id, status, timestamps), phase progression (`collect_triage → analysis → assignment → reality_check → assignment_review → schema_design → load_test → synthesis`), and the Step Functions task tokens for both human gates. All data formats: JSON (Pydantic validated), PDF, HTML, PNG, SQL, JavaScript (k6 scripts).
+Job metadata (status, timestamps) and phase progression
+(`collect_triage → analysis → assignment → reality_check → assignment_review → schema_design → load_test → synthesis`)
+live in a local progression file next to the job's artifacts — there is no
+DynamoDB table and no Step Functions task token; the two human gates are
+resumed through the local API/UI, the deterministic CLI, or a Claude Code
+command. All data formats: JSON (Pydantic validated), PDF, HTML, PNG, SQL,
+JavaScript (k6 scripts).
 
 ---
 
-**Related:** [Storage Architecture](07-storage-architecture.md) | [Workflow Sequence](05-workflow-sequence.md) | [ADR-019](../decisions/ADR-019-query-journey-materialization.md) | [ADR-020](../decisions/ADR-020-load-testing-stage.md)
+**Related:** [Storage Architecture](07-storage-architecture.md) | [Workflow Sequence](05-workflow-sequence.md) (superseded — see banner) | [ADR-019](../decisions/ADR-019-query-journey-materialization.md) | [ADR-020](../decisions/ADR-020-load-testing-stage.md)

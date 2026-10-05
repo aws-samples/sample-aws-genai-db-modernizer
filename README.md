@@ -311,7 +311,7 @@ Then open `http://localhost:3000` to browse your modernization results.
 
 ### Hosted Deployment (Retired)
 
-The hosted platform — ECS Fargate, Step Functions orchestration, Cognito authentication, and the per-environment CloudFormation stacks — is retired. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The remaining hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) is still in the repo but is being removed; track progress in #175.
+The hosted platform — ECS Fargate, Step Functions orchestration, Cognito authentication, and the per-environment CloudFormation stacks — is retired. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) was removed in #175.
 
 ---
 
@@ -321,13 +321,14 @@ The hosted platform — ECS Fargate, Step Functions orchestration, Cognito authe
 src/
   agents/           # Pipeline agents (collector, analysis, referee, schema_design)
   contracts/        # Pydantic I/O contracts between phases
-  orchestrator/     # Local phase orchestrator (the Step Functions path is retired, #175)
-  storage/          # Artifact store (S3 or local filesystem)
+  orchestrator/     # Local phase orchestrator (the Step Functions path was removed, #175)
+  storage/          # Artifact store (S3 — AWS Transform integration only — or local filesystem)
   tools/            # Analysis tools, scoring, pattern catalogs
-  api/              # FastAPI backend
+  api/              # FastAPI backend (local-only)
   ui/               # React frontend
+  atx_orchestrator/ # AWS Transform integration (separate from the local API/UI)
 scripts/            # CLI entry points and collection scripts
-infrastructure/     # CloudFormation templates for the retired hosted deployment (being removed, #175)
+infrastructure/     # agent-load-test Docker image; example-ci-runner-iam.yaml and automation.yaml (opt-in live-collection bastion, #342) remain; the hosted deployment templates were removed, #175
 docs/               # Architecture docs, contracts, guides
 tests/              # Unit, contract, and integration tests
 ```
@@ -340,7 +341,6 @@ tests/              # Unit, contract, and integration tests
 | --------------------------------------------------- | --------------------------------- |
 | [Architecture](docs/architecture/high-level-design.md) | System architecture and decisions |
 | [Agent Contracts](docs/contracts/README.md)         | Pydantic I/O specifications       |
-| [API Guide](docs/API_GUIDE.md)                      | REST API reference                |
 | [Implementation Guides](docs/guides/README.md)      | Development patterns              |
 
 ---

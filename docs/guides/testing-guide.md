@@ -315,34 +315,31 @@ async def test_collector_to_analysis_integration(mock_dynamodb, mock_collector):
     assert analysis_result.job_id == collector_result.job_id
 ```
 
-### 5.2 Test Step Functions Orchestration
+### 5.2 Test Local Execution Service
 
 ```python
 @pytest.mark.asyncio
-@patch("boto3.client")
-async def test_step_functions_start_execution(mock_boto):
-    """Test that API correctly starts Step Functions execution."""
-    mock_sfn = Mock()
-    mock_sfn.start_execution.return_value = {
-        "executionArn": "arn:aws:states:us-east-1:123:execution:modernizer:test-job",
-        "startDate": "2026-02-18T00:00:00Z",
+async def test_create_assessment_starts_local_execution(mock_services):
+    """Test that the API correctly records a new job via LocalExecutionService."""
+    mock_services["sfn"].start_execution.return_value = {
+        "execution_arn": "local://test-job",
+        "start_date": "2026-02-18T00:00:00Z",
     }
-    mock_boto.return_value = mock_sfn
 
-    from app.main import create_analysis, AnalysisRequest
+    response = client.post("/api/v1/assessments", json={
+        "source_database_type": "mysql",
+        "database_name": "test-db",
+        "connection": {"host": "localhost", "port": 3306, "database": "test"},
+    })
 
-    request = AnalysisRequest(
-        source_database_type="mysql",
-        database_name="test-db",
-        connection={"host": "localhost", "port": 3306},
-    )
-
-    # Verify start_execution is called with correct input
-    response = await create_analysis(request)
-    mock_sfn.start_execution.assert_called_once()
-    call_args = mock_sfn.start_execution.call_args
-    assert "database_name" in call_args.kwargs.get("input", call_args[1].get("input", ""))
+    assert response.status_code == 202
+    mock_services["sfn"].start_execution.assert_called_once()
 ```
+
+(See `tests/unit/api/test_assessments.py` for the full set of route tests —
+`sfn_service`/`s3_service` are mocked `LocalExecutionService`/`LocalS3Service`
+instances, not real AWS clients. The hosted Step Functions path this section
+used to describe was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).)
 
 ### 5.3 Test Triage → Synthesis Flow
 
@@ -443,8 +440,7 @@ def test_full_workflow_mysql_to_dynamodb():
     Prerequisites:
     1. Real RDS MySQL instance running
     2. AWS credentials configured
-    3. Step Functions state machine deployed
-    4. S3 bucket for data
+    3. Local API running (`uv run uvicorn src.api.main:app`)
     """
     from api.client import ModernizerClient
 
@@ -464,7 +460,7 @@ def test_full_workflow_mysql_to_dynamodb():
 
     job_id = job["job_id"]
 
-    # Wait for Step Functions execution to complete (up to 1 hour)
+    # Wait for the local job to complete (up to 1 hour)
     report = client.wait_for_completion(job_id, timeout=3600)
 
     assert report["status"] == "COMPLETED"
@@ -594,8 +590,7 @@ tests/
 │   └── test_modernization_report.py
 ├── integration/           # Layer 4: Integration tests
 │   ├── test_collector_to_analysis.py
-│   ├── test_triage_to_synthesis.py
-│   └── test_step_functions.py
+│   └── test_triage_to_synthesis.py
 ├── performance/           # Layer 5: Performance tests
 │   ├── test_collector_performance.py
 │   └── test_parallel_execution.py

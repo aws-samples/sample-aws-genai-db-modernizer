@@ -1,7 +1,7 @@
 """Orchestrator abstraction — base class and shared types.
 
 Defines the Orchestrator ABC, PhaseScope dataclass, and PhasePrerequisiteError
-exception used by both LocalOrchestrator and StepFunctionsOrchestrator.
+exception used by LocalOrchestrator.
 
 Requirements: 1.1
 """
@@ -36,9 +36,8 @@ class TaskTokenNotFoundError(Exception):
 class Orchestrator(ABC):
     """Abstract orchestrator for job lifecycle and phase dispatch.
 
-    Concrete implementations:
-    - StepFunctionsOrchestrator (cloud): delegates to SFN + DynamoDB
-    - LocalOrchestrator (local dev): direct function calls with same ordering rules
+    Concrete implementation: ``LocalOrchestrator`` (direct function calls,
+    local artifact store).
     """
 
     @abstractmethod

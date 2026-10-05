@@ -27,14 +27,12 @@ class ArtifactStore(ABC):
 
 ## Backends
 
-| Deployment | Storage | Artifact Path |
-|------------|---------|---------------|
-| Local (dev) | Filesystem `./artifacts/` | `{db}/{job}/{agent}/artifact.json` |
-| AWS (prod) | S3 | `s3://{bucket}/{db}/{job}/{agent}/artifact.json` |
+| Path | Storage | Artifact Path |
+|------|---------|---------------|
+| Local API/UI/CLI (default) | Filesystem `./artifacts/` | `{db}/{job}/{agent}/artifact.json` |
+| AWS Transform integration (`src/atx_orchestrator/`) | S3 | `s3://{bucket}/{db}/{job}/{agent}/artifact.json` |
 
 ## File Structure
-
-Per [API specification](../api-specification.md):
 
 ```
 uploads/{database-name}/                    ← presigned upload area (offline mode)

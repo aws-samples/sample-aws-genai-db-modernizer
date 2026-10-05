@@ -4,13 +4,19 @@ Complete implementation guides for building Database Modernizer Assessment compo
 
 ## Architecture Overview
 
-Database Modernizer Assessment uses a three-layer architecture (ADR-016):
+Database Modernizer Assessment runs locally. The orchestration ADR-016
+originally specified (Step Functions + EventBridge + ECS) described the
+hosted deployment retired in [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175);
+the current architecture is:
 
-1. **Job Orchestration (Step Functions):** Collector → Referee-Triage → Map(selected analyses) → Referee-Synthesis → Schema Design
-2. **Notifications:** Phase 0 uses polling (`GET /api/v1/assessments/{job_id}`); EventBridge → WebSocket push is [PLANNED] for Phase 1
-3. **Intra-Agent (Strands SDK + sub-processes):** Each agent runs in one ECS Fargate task, spawns sub-processes internally, reports status at mini-step boundaries
+1. **Job Orchestration (`LocalOrchestrator`):** Collector → Referee-Triage → (selected analyses, concurrent) → Referee-Synthesis → Schema Design — all direct function calls over the local artifact store
+2. **Progress:** polling (`GET /api/v1/assessments/{job_id}`), derived from artifact presence — no event bus or push channel
+3. **Intra-Agent (Strands SDK + sub-processes):** each agent spawns sub-processes internally, reports status at mini-step boundaries
 
-See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md) for full rationale.
+See [High-Level Design §3.3](../architecture/high-level-design.md#33-orchestration-pattern)
+for the current orchestration pattern, and
+[ADR-016](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+for the original (now superseded) rationale.
 
 ## Core Guides
 
@@ -21,9 +27,7 @@ See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-
 | [new-analysis-agent-guide.md](new-analysis-agent-guide.md) | Analysis agent implementation for target databases | Developers, AI assistants |
 | [referee-agent-guide.md](referee-agent-guide.md) | Referee-Triage and Referee-Synthesis agents | Developers, AI assistants |
 | [testing-guide.md](testing-guide.md) | Testing strategies for all agent types | Developers, QA |
-| [deployment-guide.md](deployment-guide.md) | Deployment for ECS Fargate, Docker Compose | DevOps |
 | [storage-architecture-guide.md](storage-architecture-guide.md) | Storage abstraction layer patterns | Developers |
-| [api-development-guide.md](api-development-guide.md) | FastAPI REST API and WebSocket | Developers |
 | [context-graph-query-cookbook.md](context-graph-query-cookbook.md) | Ready-to-run Cypher queries for the context graph | Developers, Solutions Architects |
 | [aws-transform-integration.md](aws-transform-integration.md) | Running the pipeline on AWS Transform (subagents + A2A) | Developers, Solutions Architects |
 

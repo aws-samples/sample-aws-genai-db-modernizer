@@ -47,9 +47,10 @@ orchestrator  (AGENT_TYPE=orchestrator)
 `<engine>` is one of `dynamodb`, `documentdb`, `elasticache`, `opensearch`,
 `aurora-pg`, `aurora-mysql`. Every agent reads and writes through the
 `ArtifactStore` abstraction: a local directory (`ARTIFACT_DIR`) for testing, or an
-S3 bucket (`S3_BUCKET`) in the cloud. A job started by either the Step Functions
-pipeline or the AWS Transform path is readable by the other because they share the
-same artifact layout.
+S3 bucket (`S3_BUCKET`) in the cloud. A job started by either `LocalOrchestrator`
+or the AWS Transform path is readable by the other because they share the
+same artifact layout. (A prior hosted Step Functions pipeline shared this layout
+too; it was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).)
 
 `AGENT_TYPE` values match the artifact key prefix an operator sees in storage
 (for example `analysis-dynamodb`), which keeps them unambiguous. Two of them map

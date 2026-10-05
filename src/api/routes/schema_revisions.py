@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["schema-revisions"])
 
 # Injected by main.py at startup
 artifact_store: ArtifactStore | None = None
-orchestrator: object | None = None  # LocalOrchestrator or StepFunctionsOrchestrator
+orchestrator: object | None = None  # LocalOrchestrator
 
 
 def _require_store() -> ArtifactStore:

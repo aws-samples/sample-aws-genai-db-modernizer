@@ -81,18 +81,6 @@ class AgentStatus(BaseModel):
     artifact_summary: dict | None = None
 
 
-class LogEntry(BaseModel):
-    timestamp: str
-    agent: str | None = None
-    level: str | None = None
-    message: str
-
-
-class LogsResponse(BaseModel):
-    logs: list[LogEntry]
-    next_token: str | None = None
-
-
 class DashboardStats(BaseModel):
     total_assessments: int
     active_jobs: int

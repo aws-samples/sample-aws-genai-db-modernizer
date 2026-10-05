@@ -78,7 +78,7 @@ import boto3
 try:
     from moto import mock_aws
 except ImportError:
-    fail("moto not installed — run: uv pip install 'moto[s3,stepfunctions,logs]>=5.2.2'")
+    fail("moto not installed — run: uv pip install 'moto>=5.2.2'")
 
 BUCKET = "atx-test-bucket"
 OFFLINE_KEY = "uploads/collector-output.json"

@@ -1,6 +1,6 @@
 """Unit tests for assessment routes."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,14 +43,11 @@ MOCK_HISTORY = [
 def mock_services():
     sfn = MagicMock()
     s3 = MagicMock()
-    cw = MagicMock()
     assessments.sfn_service = sfn
     assessments.s3_service = s3
-    assessments.cw_service = cw
-    yield {"sfn": sfn, "s3": s3, "cw": cw}
+    yield {"sfn": sfn, "s3": s3}
     assessments.sfn_service = None
     assessments.s3_service = None
-    assessments.cw_service = None
 
 
 # === POST /api/v1/assessments ===
@@ -74,7 +71,7 @@ class TestCreateAssessment:
         assert data["status"] == "PENDING"
         assert "execution_arn" in data
 
-    def test_calls_step_functions(self, mock_services):
+    def test_calls_local_execution_service(self, mock_services):
         mock_services["sfn"].start_execution.return_value = {
             "execution_arn": "arn:test",
             "start_date": "2026-02-23T14:00:00Z",
@@ -134,6 +131,48 @@ class TestCreateAssessment:
         }
         data = client.post("/api/v1/assessments", json=request).json()
         assert data["job_id"] == "pre-created-id-123"
+
+    def test_cluster_id_automation_path_is_gated_off_by_default(self, mock_services, monkeypatch):
+        """The SSM automation-instance path provisions billable AWS resources
+        (#175, #342) -- it must never run without an explicit opt-in."""
+        monkeypatch.delenv("MODERNIZER_ENABLE_AUTOMATION", raising=False)
+        request = {**VALID_REQUEST, "cluster_id": "my-cluster-id"}
+        resp = client.post("/api/v1/assessments", json=request)
+        assert resp.status_code == 501
+        assert "MODERNIZER_ENABLE_AUTOMATION" in resp.json()["detail"]
+        mock_services["sfn"].start_execution.assert_not_called()
+
+    def test_cluster_id_automation_path_runs_when_opted_in(self, mock_services, monkeypatch):
+        monkeypatch.setenv("MODERNIZER_ENABLE_AUTOMATION", "1")
+        mock_services["sfn"].start_execution.return_value = {
+            "execution_arn": "arn:test",
+            "start_date": "2026-02-23T14:00:00Z",
+        }
+        request = {**VALID_REQUEST, "cluster_id": "my-cluster-id"}
+        with (
+            patch("src.tools.aws.automation.discover_cluster") as mock_discover,
+            patch("src.tools.aws.automation.ensure_automation_machine") as mock_ensure,
+            patch("src.tools.aws.automation.add_ingress_rule") as mock_ingress,
+        ):
+            mock_discover.return_value = {
+                "vpc_id": "vpc-1",
+                "subnet_id": "subnet-1",
+                "subnet_id_2": "",
+                "vpc_cidr": "10.0.0.0/16",
+                "route_table_id": "rtb-1",
+                "rds_security_group_id": "sg-rds",
+                "port": 5432,
+                "engine": "postgres",
+                "endpoint": "db.example.com",
+                "db_instance_identifier": "my-cluster-id",
+            }
+            mock_ensure.return_value = {"instance_id": "i-abc", "security_group_id": "sg-auto"}
+            resp = client.post("/api/v1/assessments", json=request)
+        assert resp.status_code == 202
+        mock_discover.assert_called_once_with("my-cluster-id")
+        mock_ensure.assert_called_once()
+        mock_ingress.assert_called_once()
+        mock_services["sfn"].start_execution.assert_called_once()
 
 
 # === POST /api/v1/assessments/prepare ===
@@ -361,34 +400,6 @@ class TestGetAgentStatuses:
     def test_404_when_not_found(self, mock_services):
         mock_services["sfn"].describe_execution.return_value = None
         assert client.get("/api/v1/assessments/nope/agents").status_code == 404
-
-
-# === GET /api/v1/assessments/{job_id}/logs ===
-
-
-class TestGetLogs:
-    def test_returns_logs(self, mock_services):
-        mock_services["cw"].get_logs.return_value = {
-            "logs": [
-                {"timestamp": 1708700595000, "message": "Starting", "log_stream": "collector/abc"}
-            ],
-            "next_token": None,
-        }
-        data = client.get("/api/v1/assessments/job-1/logs").json()
-        assert len(data["logs"]) == 1
-        assert data["logs"][0]["agent"] == "collector"
-
-    def test_filters_by_agent(self, mock_services):
-        mock_services["cw"].get_logs.return_value = {"logs": [], "next_token": None}
-        client.get("/api/v1/assessments/job-1/logs?agent=collector")
-        assert mock_services["cw"].get_logs.call_args[1]["stream_prefix"] == "collector"
-
-    def test_returns_next_token(self, mock_services):
-        mock_services["cw"].get_logs.return_value = {
-            "logs": [{"timestamp": 1, "message": "x", "log_stream": "a/b"}],
-            "next_token": "tok123",
-        }
-        assert client.get("/api/v1/assessments/job-1/logs").json()["next_token"] == "tok123"
 
 
 class TestSynthesisStatusSummary:

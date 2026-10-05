@@ -1,21 +1,22 @@
 """
 Agent entrypoint — dispatches to the correct agent based on AGENT_TYPE env var.
 
-Step Functions launches ECS tasks with environment variables:
+Still used today as the `agent-load-test` container's CMD (see
+infrastructure/docker/agent-load-test/Dockerfile); the hosted Step
+Functions/ECS deployment that originally launched this entrypoint per-agent
+was retired (#175). Launchers set:
   - AGENT_TYPE: which agent to run (collector, referee-triage, dynamodb, etc.)
-  - JOB_ID: unique job identifier (KSUID)
+  - JOB_ID: unique job identifier (a UUID — see "Job IDs" in
+    docs/architecture/high-level-design.md §4.2, not a KSUID)
   - DATABASE_NAME: source database name (used in artifact path)
   - S3_BUCKET: storage bucket (when set → S3ArtifactStore, else LocalArtifactStore)
-  - EVENT_BUS_NAME: EventBridge bus for progress notifications
-  - ENVIRONMENT: deployment environment (dev, prod)
-  - PROJECT_NAME: project identifier
   - ASSIGNMENT_VERSION: (optional) assignment version for phased mode
   - SCOPE_ENGINES: (optional) comma-separated engines for scoped execution
 
 Exit code contract:
-  - Exit 0 = success → Step Functions moves to next state
-  - Exit 1 = failure → Step Functions retries or catches
-  - Exit 2 = needs input → Step Functions Catch routes to SetAgentAwaitingInput
+  - Exit 0 = success
+  - Exit 1 = failure
+  - Exit 2 = needs input
   - Never run a long-lived server — this must be run-to-completion
 """
 

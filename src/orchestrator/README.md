@@ -1,6 +1,13 @@
 # Orchestrator
 
-Step Functions state machine that coordinates the Database Modernizer Assessment job workflow. All agents run as ECS Fargate tasks; Step Functions manages sequencing, parallelism, retries, and the deeper-analysis loop.
+`LocalOrchestrator` (`src/orchestrator/local_orchestrator.py`) coordinates the
+Database Modernizer Assessment job workflow as direct, in-process function
+calls over the local artifact store. A prior version of this project ran the
+same workflow as a Step Functions state machine with each agent as an ECS
+Fargate task; that hosted deployment was retired in
+[#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).
+`base.py` still defines the `Orchestrator` ABC so a different backend could
+implement it again, but `LocalOrchestrator` is the only implementation today.
 
 ## Workflow
 
@@ -9,12 +16,13 @@ RunCollector
     ↓
 RunRefereeTriage          ← reads collector output, selects target engines
     ↓
-RunEnginePipelines        ← Map state (MaxConcurrency=7), one iteration per engine:
+RunEnginePipelines        ← one call per engine, run concurrently:
   ├─ RunAnalysis           (AGENT_TYPE = engine name, e.g. "dynamodb")
   └─ RunSchemaDesign       (AGENT_TYPE = "schema-design", TARGET_TYPE = engine name)
        └─ internal PE review loop (designer + PE reviewer, up to 3 iterations)
     ↓
-RunLoadTestPipelines      ← Map state (MaxConcurrency=3), per-engine load test
+RunLoadTestPipelines      ← per-engine load test, run sequentially (`_run_load_test`
+    │                        is a plain loop, unlike the analysis/schema ThreadPoolExecutor):
   └─ RunLoadTest           (AGENT_TYPE = "load-test", TARGET_TYPE = engine name)
        └─ provision → seed → k6 run → parse → teardown (15 min default)
     ↓
@@ -26,9 +34,11 @@ CheckDeeperAnalysis       ← if synthesis requests deeper analysis (max 2 itera
 JobComplete
 ```
 
-## S3 Artifact Paths
+## Artifact Paths
 
-All artifacts live under `{database_name}/{job_id}/`:
+All artifacts live under `{database_name}/{job_id}/` in the local artifact
+store (`./artifacts/` by default) — or in S3, for jobs run through the
+separate AWS Transform integration (`src/atx_orchestrator/`):
 
 | Agent | Path | Key Files |
 |-------|------|-----------|
@@ -39,24 +49,14 @@ All artifacts live under `{database_name}/{job_id}/`:
 | Load Test | `load-test/v{N}/` | `results/summary.json`, `results/comparison.json`, `scripts/` |
 | Referee Synthesis | `referee-synthesis/` | `report.json` |
 
-## ECS Task Definitions
-
-| Task Definition | vCPU | Memory | Image |
-|----------------|------|--------|-------|
-| Collector | 4 | 8 GB | agent |
-| Analysis | 2 | 4 GB | agent |
-| Schema Design | 2 | 4 GB | agent |
-| Referee Triage | 2 | 4 GB | agent |
-| Referee Synthesis | 2 | 4 GB | agent |
-| Load Test | 4 | 8 GB | agent-load-test (includes k6) |
-
-## EventBridge
-
-EventBridge is used only for progress notifications (agent started, completed, errors). It does not coordinate the workflow — Step Functions handles all sequencing.
-
 ## Agent Dispatch
 
-All ECS tasks share a single container image except load test (which has k6 installed). The entrypoint (`src/agents/entrypoint.py`) routes based on `AGENT_TYPE`:
+Agents share a single container image (`agent-load-test`, which bundles the
+k6 binary) for load testing; the other agent types run as local Python
+function calls, not containers. The entrypoint (`src/agents/entrypoint.py`)
+still routes based on `AGENT_TYPE` for anything that does run containerized
+(the load-test image, and the AWS Transform integration's own
+`atx_entrypoint.py` sibling):
 
 - `collector` → `src/agents/collector/handler.py`
 - `referee-triage` → `src/agents/referee/triage_handler.py`
@@ -65,7 +65,9 @@ All ECS tasks share a single container image except load test (which has k6 inst
 - `load-test` (+ `TARGET_TYPE`) → `src/agents/load_test/handler.py`
 - `referee-synthesis` → `src/agents/referee/synthesis_handler.py`
 
-Exit code 0 = success (Step Functions advances). Non-zero = failure (retries or catches).
+Exit code 0 = success. Non-zero = failure — `LocalOrchestrator` does not
+retry automatically; the user re-runs the command or resumes the phase
+(restart-from-scratch, see the high-level design §3.4/§8).
 
 ## Local Execution
 

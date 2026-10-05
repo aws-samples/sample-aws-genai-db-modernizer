@@ -28,7 +28,6 @@ dependencies = [
 
     # Configuration & Logging
     "pyyaml>=6.0.1",
-    "python-dotenv>=1.0.0",
     "structlog>=23.2.0",
 
     # AWS SDK
@@ -72,7 +71,7 @@ dev = [
     "pre-commit>=3.0.0",
     "detect-secrets>=1.4.0",
     "cfn-lint>=0.83.0",
-    "moto[s3,stepfunctions,logs]>=5.2.2",
+    "moto>=5.2.2",
     "defusedxml>=0.7",
 ]
 e2e = [

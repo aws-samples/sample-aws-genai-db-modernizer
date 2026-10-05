@@ -1,6 +1,18 @@
 # Agent Framework
 
-Multi-agent architecture using Strands SDK with Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md).
+> **⚠️ Partially superseded.** The agent categories, human gates and
+> Strands SDK model below are still accurate. The orchestration mechanism
+> is not: this diagram shows the retired hosted deployment's Step
+> Functions state machine (`ORCH`, the `Map` states, `WaitForTriageApproval`
+> / `WaitForAssignmentApproval`). The current `LocalOrchestrator` runs the
+> same sequence as direct, in-process function calls — concurrent
+> (`ThreadPoolExecutor`) for per-engine analysis and schema design,
+> sequential for load testing. See
+> [High-Level Design §3](../high-level-design.md#3-agent-framework-design).
+> Retained for the agent taxonomy; don't read the orchestration mechanism
+> as current.
+
+Multi-agent architecture using Strands SDK, originally designed around Step Functions orchestration per [ADR-016](../decisions/ADR-016-compute-and-orchestration-strategy.md) (superseded — see banner above).
 
 ```mermaid
 graph TB

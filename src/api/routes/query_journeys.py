@@ -4,13 +4,13 @@ import math
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.services.step_functions import StepFunctionsService
+from src.api.services.local_execution import LocalExecutionService
 from src.storage.artifact_store import ArtifactStore
 from src.storage.parallel import map_parallel
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["query-journeys"])
 
-sfn_service: StepFunctionsService | None = None
+sfn_service: LocalExecutionService | None = None
 artifact_store: ArtifactStore | None = None
 
 _MAX_PAGE_SIZE = 200

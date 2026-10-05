@@ -241,19 +241,21 @@ if target_engine != "dynamodb":
     ...
 ```
 
-### Step 7: Add IAM Permissions
+### Step 7: AWS Permissions
 
-Update `infrastructure/cloudformation/orchestration.yaml` to add permissions for your engine's resources to the `LoadTestTaskRole`. Follow the DynamoDB pattern — scope permissions to `LoadTest_*` resources:
+Load tests run locally (`scripts/run_load_test.py`) or inside the
+`agent-load-test` container, using whichever AWS credentials are active —
+there is no hosted IAM role to update (the IAM role template this step used
+to point at was retired with the hosted deployment, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)).
+Make sure the active credentials can create and delete your engine's
+`LoadTest_*`-prefixed resources, e.g. for OpenSearch:
 
-```yaml
-- Effect: Allow
-  Action:
-    - es:CreateDomain
-    - es:DeleteDomain
-    - es:ESHttpPost
-    - es:ESHttpGet
-    - es:ESHttpPut
-  Resource: !Sub "arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/loadtest-*"
+```json
+{
+  "Effect": "Allow",
+  "Action": ["es:CreateDomain", "es:DeleteDomain", "es:ESHttpPost", "es:ESHttpGet", "es:ESHttpPut"],
+  "Resource": "arn:aws:es:*:*:domain/loadtest-*"
+}
 ```
 
 ### Step 8: Write Tests

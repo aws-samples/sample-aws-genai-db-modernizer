@@ -1,5 +1,6 @@
 """Assessment routes — job lifecycle and monitoring."""
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -15,24 +16,20 @@ from src.api.models.responses import (
     AssessmentProgress,
     AssessmentSummary,
     ErrorDetail,
-    LogEntry,
-    LogsResponse,
     StageProgress,
 )
-from src.api.services.cloudwatch import CloudWatchLogsService
-from src.api.services.s3_artifacts import S3ArtifactsService
-from src.api.services.step_functions import StepFunctionsService
+from src.api.services.local_execution import LocalExecutionService
+from src.api.services.local_s3 import LocalS3Service
 from src.shared.ranking import engine_confidence, main_engine
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
 
 # Services injected by main.py at startup
-sfn_service: StepFunctionsService | None = None
-s3_service: S3ArtifactsService | None = None
-cw_service: CloudWatchLogsService | None = None
+sfn_service: LocalExecutionService | None = None
+s3_service: LocalS3Service | None = None
 
 
-def _require_services() -> tuple[StepFunctionsService, S3ArtifactsService]:
+def _require_services() -> tuple[LocalExecutionService, LocalS3Service]:
     """Raise 503 if services aren't configured; returns narrowed types."""
     if not sfn_service or not s3_service:
         raise HTTPException(status_code=503, detail="Services not configured")
@@ -143,8 +140,6 @@ async def delete_upload(job_id: str, database_name: str, filename: str):
     try:
         # Check if file exists first
         s3_svc.client.head_object(Bucket=s3_svc.bucket, Key=key)
-    except s3_svc.client.exceptions.NoSuchKey as e:
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}") from e
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}") from e
 
@@ -179,8 +174,24 @@ async def create_assessment(request: AssessmentRequest):
         "db_instance_identifier": "",
     }
 
-    # For live mode with cluster_id: discover RDS, provision automation machine, add SG ingress
+    # For live mode with cluster_id: discover RDS, provision automation machine, add SG ingress.
+    # This path deploys billable AWS resources (an EC2 instance, VPC interface
+    # endpoints, a security-group ingress rule) on the caller's behalf, so it
+    # is opt-in only -- set MODERNIZER_ENABLE_AUTOMATION=1 to allow it. It is
+    # also not fully wired yet: the discovered automation_instance_id is
+    # never read back out to run the collector through it. See #342.
     if request.collection_mode == "live" and request.cluster_id:
+        if os.environ.get("MODERNIZER_ENABLE_AUTOMATION") != "1":
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Live collection via the SSM automation instance is not yet wired up "
+                    "(see #342). Set MODERNIZER_ENABLE_AUTOMATION=1 to opt in to the "
+                    "automation-provisioning path anyway, or omit cluster_id and run the "
+                    "collector scripts directly."
+                ),
+            )
+
         from src.tools.aws.automation import (
             add_ingress_rule,
             discover_cluster,
@@ -414,37 +425,6 @@ async def get_execution_history(job_id: str):
     }
 
 
-@router.get("/{job_id}/logs", response_model=LogsResponse)
-async def get_logs(
-    job_id: str,
-    agent: str | None = None,
-    limit: int = 100,
-    next_token: str | None = None,
-):
-    """Get execution logs, optionally filtered by agent."""
-    _require_services()  # validates services exist
-    if not cw_service:
-        raise HTTPException(status_code=503, detail="CloudWatch logs not configured")
-
-    stream_prefix = agent if agent else None
-    result = cw_service.get_logs(
-        stream_prefix=stream_prefix,
-        limit=limit,
-        next_token=next_token,
-    )
-
-    logs = [
-        LogEntry(
-            timestamp=str(entry["timestamp"]),
-            message=entry["message"],
-            agent=_stream_to_agent(entry.get("log_stream", "")),
-        )
-        for entry in result["logs"]
-    ]
-
-    return LogsResponse(logs=logs, next_token=result.get("next_token"))
-
-
 def _summarize_artifact(summary: dict | None) -> str | None:
     """Build a short human-readable detail string from an artifact summary."""
     if not summary:
@@ -599,11 +579,3 @@ def _agent_filename(agent_name: str) -> str | None:
         "referee-synthesis": "report.json",
     }
     return mapping.get(agent_name, "analysis.json")
-
-
-def _stream_to_agent(log_stream: str) -> str | None:
-    """Extract agent name from CloudWatch log stream name."""
-    # Stream format: <prefix>/<task-id>
-    if "/" in log_stream:
-        return log_stream.split("/")[0]
-    return None

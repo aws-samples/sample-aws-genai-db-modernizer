@@ -50,7 +50,8 @@ export const SideNavigationConfigurations = {
 
 /**
  * API Configuration
- * Uses relative URLs since UI and API share the same ALB.
+ * REACT_APP_API_URL points at the local FastAPI server (default
+ * http://localhost:8000/api/v1/); unset, it falls back to a relative URL.
  */
 export const ApiConfigurations = {
   baseUrl: process.env.REACT_APP_API_URL || '/api/v1/',

@@ -1,4 +1,5 @@
-"""Local S3 artifacts service — replaces S3ArtifactsService for local development."""
+"""Local S3 artifacts service — the API's only artifact-read backend (hosted
+S3 artifacts service retired, #175)."""
 
 from __future__ import annotations
 
@@ -106,10 +107,7 @@ class _FakeClientError(Exception):
 
 
 class LocalS3Service:
-    """Filesystem-backed artifact service for local development.
-
-    Implements the same interface as S3ArtifactsService.
-    """
+    """Filesystem-backed artifact service used by the API."""
 
     def __init__(self, artifact_store) -> None:
         self._store = artifact_store
@@ -162,7 +160,7 @@ class LocalS3Service:
         ]
 
     # ------------------------------------------------------------------
-    # Named convenience readers — mirrors S3ArtifactsService
+    # Named convenience readers
     # ------------------------------------------------------------------
 
     def read_collector(self, database_name: str, job_id: str) -> dict | None:

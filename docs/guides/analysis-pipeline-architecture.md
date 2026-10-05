@@ -14,12 +14,17 @@
 
 Analysis agents evaluate database workloads and provide migration recommendations for specific AWS database services. Each agent specializes in one target database.
 
-Key points (ADR-016):
+Key points:
 
 - Analysis agents are a **category**, not a single agent (ADR-006)
 - **Not all 7 agents run** — Referee-Triage selects relevant agents based on workload patterns
-- Step Functions Map state runs selected agents in parallel (each as a separate ECS Fargate task)
-- Each agent reads collector output from S3 using env vars, writes analysis output to S3
+- `LocalOrchestrator` runs selected agents concurrently in-process, via a
+  `ThreadPoolExecutor` (no Step Functions, no per-agent ECS task — that
+  hosted mechanism was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175);
+  see [ADR-016](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md), now superseded)
+- Each agent reads collector output from the local artifact store (or S3,
+  for AWS Transform-orchestrated jobs) using env vars, and writes its
+  analysis output back the same way
 - Agents use Strands SDK; output validated with Pydantic models
 
 ---
@@ -32,7 +37,7 @@ Key points (ADR-016):
    - 3.4 Shared Scoring Layer
 4. Contract Validation
 5. Testing Strategy
-6. Parallel Execution via Step Functions
+6. Parallel Execution via LocalOrchestrator
 
 ---
 
@@ -40,22 +45,28 @@ Key points (ADR-016):
 
 ### Triage-Driven Execution
 
-Not all 7 agents run for every job. Referee-Triage reads the collector output and selects which agents are relevant. Step Functions then runs only those agents via a Map state:
+Not all 7 agents run for every job. Referee-Triage reads the collector output and selects which agents are relevant. `LocalOrchestrator` then runs only those agents concurrently, via a `ThreadPoolExecutor`:
 
 ```
 Referee-Triage
     ↓ triage.json (selected_agents[])
-Step Functions Map State (MaxConcurrency: 7)
-    ├── analysis-dynamodb    (ECS task)
-    ├── analysis-elasticache (ECS task)
-    └── analysis-documentdb  (ECS task)
+LocalOrchestrator ThreadPoolExecutor (max_workers = len(selected_agents))
+    ├── analysis-dynamodb    (in-process call)
+    ├── analysis-elasticache (in-process call)
+    └── analysis-documentdb  (in-process call)
     ↓
 Referee-Synthesis
 ```
 
-Each analysis agent runs in its own ECS Fargate task. The agent reads collector output from S3, performs analysis, and writes results back to S3.
+Each analysis agent runs as a plain function call in the same process pool
+— not a container, not an ECS task. The agent reads collector output from
+the local artifact store, performs analysis, and writes results back the
+same way (or to S3, for jobs run through the AWS Transform integration).
 
 See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+(superseded — describes the retired hosted mechanism) and
+[High-Level Design §3.3](../architecture/high-level-design.md#33-orchestration-pattern)
+for the current one.
 
 ---
 
@@ -75,7 +86,7 @@ See [ADR-016: Compute and Orchestration Strategy](../architecture/decisions/ADR-
 
 ### 2.2 Extensibility
 
-New agents can be added without modifying existing agents. Register the new agent type in the Step Functions Map state input and the triage agent's available agents list:
+New agents can be added without modifying existing agents. Register the new agent type in `ANALYSIS_AGENTS` (`src/agents/entrypoint.py`) and the triage agent's available agents list:
 
 ```python
 ANALYSIS_AGENTS = {
@@ -405,46 +416,37 @@ See [ADR-009: Testing Infrastructure](../architecture/decisions/ADR-009-testing-
 
 ---
 
-## 6. Parallel Execution via Step Functions
+## 6. Parallel Execution via LocalOrchestrator
 
-Analysis agents run in parallel via a Step Functions Map state. The Map state iterates over the `selected_agents` array from triage output, launching one ECS Fargate task per agent.
+Analysis agents run in parallel via a `ThreadPoolExecutor` in
+`LocalOrchestrator._run_analysis` (`src/orchestrator/local_orchestrator.py`)
+— no Step Functions Map state, no per-agent ECS task; that hosted mechanism
+was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).
 
-```json
-{
-  "AnalysisMap": {
-    "Type": "Map",
-    "ItemsPath": "$.triage.selected_agents",
-    "MaxConcurrency": 7,
-    "Iterator": {
-      "StartAt": "RunAnalysisAgent",
-      "States": {
-        "RunAnalysisAgent": {
-          "Type": "Task",
-          "Resource": "arn:aws:states:::ecs:runTask.sync",
-          "Parameters": {
-            "LaunchType": "FARGATE",
-            "Cluster": "${EcsClusterArn}",
-            "TaskDefinition": "${AnalysisTaskDef}",
-            "Overrides": {
-              "ContainerOverrides": [{
-                "Name": "agent",
-                "Environment": [
-                  {"Name": "AGENT_TYPE", "Value.$": "States.Format('analysis-{}', $.agent_type)"},
-                  {"Name": "JOB_ID", "Value.$": "$$.Execution.Input.job_id"},
-                  {"Name": "DATABASE_NAME", "Value.$": "$$.Execution.Input.database_name"}
-                ]
-              }]
-            }
-          },
-          "End": true
-        }
-      }
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from src.agents.analysis.handler import run_analysis
+
+engines = self._get_selected_engines(job_id, database_name)  # from triage output
+
+with ThreadPoolExecutor(max_workers=len(engines)) as pool:
+    futures = {
+        pool.submit(
+            run_analysis, job_id, database_name, engine, self.store, llm_mode=self.llm_mode
+        ): engine
+        for engine in engines
     }
-  }
-}
+    for future in as_completed(futures):
+        future.result()  # raises if the engine's analysis failed
 ```
 
-Each agent is independent — no shared state between parallel tasks. All coordination happens through S3 artifacts.
+Each agent is independent — no shared state between parallel calls (threads,
+not processes or containers). All coordination happens through artifacts in
+the `ArtifactStore` (local filesystem, or S3 for AWS Transform-orchestrated
+jobs). Schema design uses the same pattern
+(`LocalOrchestrator._run_schema_design`); load testing does not — see
+[High-Level Design §3.3](../architecture/high-level-design.md#33-orchestration-pattern).
 
 ---
 

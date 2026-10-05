@@ -3,11 +3,11 @@
 from fastapi import APIRouter, HTTPException
 
 from src.api.models.responses import DashboardStats
-from src.api.services.step_functions import StepFunctionsService
+from src.api.services.local_execution import LocalExecutionService
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
-sfn_service: StepFunctionsService | None = None
+sfn_service: LocalExecutionService | None = None
 
 
 @router.get("/stats", response_model=DashboardStats)

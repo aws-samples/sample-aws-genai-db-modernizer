@@ -1,4 +1,5 @@
-"""Local execution service — replaces StepFunctionsService for local development."""
+"""Local execution service — the API's only execution backend (hosted Step Functions
+service retired, #175)."""
 
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ _ENGINES = (
 class LocalExecutionService:
     """Filesystem-backed execution service for local development.
 
-    Implements the same interface as StepFunctionsService but derives all state
-    from the artifact directory layout produced by LocalArtifactStore / LocalOrchestrator.
+    Derives all state from the artifact directory layout produced by
+    LocalArtifactStore / LocalOrchestrator.
     """
 
     def __init__(self, artifact_store) -> None:
@@ -254,7 +255,6 @@ class LocalExecutionService:
             return []
 
         stages = self.get_execution_history(job_id)
-        # Wrap in the same shape StepFunctionsService returns
         return [
             {
                 "name": s["name"],

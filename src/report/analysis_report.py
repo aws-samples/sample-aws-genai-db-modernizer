@@ -3,13 +3,13 @@
 The React exporter (``src/ui/src/utils/ExportReport.js``) builds its report from
 four REST endpoints. Neither endpoint set is reachable for an ATX job:
 
-  * ``S3ArtifactsService.read_synthesis`` only looks at
+  * ``LocalS3Service.read_synthesis`` only looks at
     ``{db}/{job}/referee-synthesis/report.json``, but the orchestrated flow always
     passes ``assignment_version=1`` and therefore always writes
     ``{db}/{job}/synthesis/v1/report.json``.
   * every route resolves ``database_name`` through
-    ``StepFunctionsService.describe_execution``, and an ATX job has no Step
-    Functions execution at all -- it is orchestrated over A2A.
+    ``LocalExecutionService.describe_execution``, and an ATX job has no local
+    execution record at all -- it is orchestrated over A2A.
 
 So this module reads the artifacts straight from the ``ArtifactStore``, assembles
 the same ``DATA`` object the exporter would have received, and substitutes it into
@@ -156,7 +156,7 @@ def synthesis_report_key(
 def _read_schema_designs(store: Any, database_name: str, job_id: str) -> list[dict]:
     """Return ``[{target_type, artifact_path, content}]``, latest version per engine.
 
-    Reproduces ``S3ArtifactsService.read_all_schema_designs``. The synthesis report's
+    Reproduces ``LocalS3Service.read_all_schema_designs``. The synthesis report's
     own ``schema_designs`` field cannot substitute for this: it is a dict of
     per-engine summaries (``status``, ``validation_passed``, ``tables``) with no
     ``access_patterns``, no ``unsupported_patterns`` and no per-engine

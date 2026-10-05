@@ -50,7 +50,7 @@ When filing an issue, please check existing open, or recently closed, issues to 
 - Git
 - uv (Python package manager)
 - Node.js 18+ (for UI development)
-- AWS CLI configured with credentials (for cloud deployment)
+- AWS CLI configured with credentials (for Bedrock, live-mode collection, or the AWS Transform integration)
 
 ### Quick Setup
 
@@ -310,7 +310,7 @@ src/
 ├── agents/          # Pipeline agents (collector, referee, schema_design, load_test)
 ├── api/             # FastAPI application and routes
 ├── contracts/       # Pydantic models for agent I/O
-├── orchestrator/    # Pipeline orchestration (local + Step Functions)
+├── orchestrator/    # Pipeline orchestration (LocalOrchestrator)
 ├── skills/          # Markdown prompts for LLM behavior
 ├── storage/         # Artifact storage abstraction
 ├── tools/           # Deterministic tools
