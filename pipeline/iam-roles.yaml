@@ -10,6 +10,14 @@ Parameters:
     Description: >
       Name of the S3 bucket holding offline collection inputs and pipeline
       artifacts. The AgentCoreExecutionRole is granted read/write on this bucket.
+  EcrRepositoryName:
+    Type: String
+    Default: modernizer-dev-atx
+    Description: >
+      Name of the ECR repository holding the ATX agent image. Matches the
+      default of ATX_ECR_REPO in pipeline/atx_deploy.py (line 74); override to
+      match your deployment if you set that environment variable to something
+      else. The AgentCoreExecutionRole is granted pull access on this repository.
 
 Resources:
 
@@ -21,7 +29,31 @@ Resources:
   # -----------------------------------------------------------------------
   AgentCoreExecutionRole:
     Type: AWS::IAM::Role
-    # checkov:skip=CKV_AWS_111: Bedrock model invocation is scoped to model/inference-profile ARNs above. The remaining wildcards are actions with no resource-level support: xray:Put* (trace ingestion), logs:Create*/PutLogEvents (AgentCore creates its own /aws/bedrock-agentcore/* log groups), ecr auth token, and the AWS Transform Agentic API (transform-agents).
+    # checkov:skip=CKV_AWS_111: Bedrock model invocation is scoped to model/inference-profile ARNs above, and ECR/CloudWatch Logs are scoped to this repo/log-group prefix below. The remaining wildcards are actions with no resource-level IAM support at all: xray:Put* (trace ingestion), ecr:GetAuthorizationToken, and the transform-agents actions.
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: >-
+              xray:PutTraceSegments/PutTelemetryRecords, ecr:GetAuthorizationToken,
+              and the transform-agents actions below have no resource-level
+              permissions in IAM at all (for transform-agents, the AWS
+              Transform Agentic API is a job/task control-plane service
+              addressed by request body fields such as jobId and workspaceId,
+              not by ARN). ecr:BatchCheckLayerAvailability/GetDownloadUrlForLayer/
+              BatchGetImage and logs:CreateLogGroup/CreateLogStream/PutLogEvents
+              do support resource-level permissions and are scoped to the ATX
+              repository and the /aws/bedrock-agentcore/* log-group prefix
+              below, not left on "*".
+          - id: W28
+            reason: >-
+              Not a platform lookup: pipeline/atx_deploy.py (lines 76-77) uses
+              "AgentCoreExecutionRole" only as its own default for the
+              ATX_EXECUTION_ROLE environment variable, then builds this
+              role's ARN from that name to pass as the AgentCore runtime's
+              roleArn (line 588). Overriding ATX_EXECUTION_ROLE lets this
+              role have any name; RoleName is fixed here only so the default
+              matches without also setting that variable.
     Properties:
       RoleName: AgentCoreExecutionRole
       AssumeRolePolicyDocument:
@@ -41,8 +73,13 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
-                  - bedrock-runtime:Converse
-                  - bedrock-runtime:InvokeModel
+                # bedrock-runtime:Converse and bedrock-runtime:InvokeModel were
+                # removed: neither is a real IAM action (Bedrock runtime calls
+                # are authorized under the bedrock: prefix, confirmed by
+                # cfn-lint's W3037 on both). bedrock:InvokeModel also covers
+                # Converse/ConverseStream — AWS authorizes those two APIs under
+                # InvokeModel/InvokeModelWithResponseStream, not a separate
+                # action — so no action was added back for them.
                 # Scoped to foundation models and cross-region inference profiles
                 # (the agents invoke inference-profile IDs such as
                 # us.anthropic.claude-sonnet-4-6). Mirrors the proven pattern in
@@ -54,16 +91,72 @@ Resources:
               - Sid: TransformAgentsApiPolicy
                 Effect: Allow
                 Action:
-                  - transform-agents:*
+                  # Enumerated from every agentic-framework client call the
+                  # orchestrator and its subagents make (src/atx_orchestrator/):
+                  # artifacts (hitl.py, artifacts.py, core.py, atx_store.py),
+                  # job plan (job_plan.py), job status (runtime/job_status.py
+                  # via the SDK's JobManager), agent instances and messaging
+                  # (a2a.py, startup.py, subagents/base.py), HITL tasks
+                  # (hitl.py), and the SDK's own background token refresh
+                  # (agent_builder_sdk/_auth_token_refresher.py, started by
+                  # AgentRuntimeServer — src/atx_orchestrator/app.py,
+                  # atx_entrypoint.py — for every agent in the fleet).
+                  - transform-agents:RefreshAuthToken
+                  - transform-agents:CreateArtifactUploadUrl
+                  - transform-agents:CreateArtifactDownloadUrl
+                  - transform-agents:GetArtifactMetadata
+                  - transform-agents:CompleteArtifactUpload
+                  - transform-agents:CopyArtifact
+                  - transform-agents:ListArtifacts
+                  - transform-agents:PutJobPlan
+                  - transform-agents:UpdateJobPlanStep
+                  - transform-agents:ListJobPlanSteps
+                  - transform-agents:GetJob
+                  - transform-agents:UpdateJobStatus
+                  - transform-agents:ListAgentInstances
+                  - transform-agents:GetAgentInstance
+                  - transform-agents:UpdateAgentInstance
+                  - transform-agents:InvokeAgent
+                  - transform-agents:SendMessage
+                  - transform-agents:CreateHitlTask
+                  - transform-agents:StartHitlTask
+                  - transform-agents:GetHitlTask
+                  # StopAgent: the SDK registers this on every agent by
+                  # default. AgentRuntimeServer handles both the direct stop
+                  # request (agent_runtime_server.py:566) and the
+                  # orchestrator-stop event (notification/processors.py:115);
+                  # both paths call shutdown_subagent_instance, which calls
+                  # client.stop_agent (agent_lifecycle.py:142).
+                  - transform-agents:StopAgent
+                  # The rest are tools the agentic MCP server
+                  # (agent-builder-agentic-mcp, started inside the container —
+                  # see Dockerfile.atx) exposes to the LLM under this role's
+                  # credentials (app.py:34, subagents/base.py:293 hand the
+                  # same boto3 client to the orchestrator and every subagent).
+                  # The orchestrator excludes no tools; subagents exclude only
+                  # invoke_agent, put_job_plan, update_job_status and
+                  # delete_job_plan_step. These six are reachable and not
+                  # covered by a call site above:
+                  - transform-agents:CreateWorklog
+                  - transform-agents:ListWorklogs
+                  - transform-agents:CloseHitlTask
+                  - transform-agents:ListHitlTasks
+                  - transform-agents:DeleteJobPlanStep
+                  - transform-agents:RetrieveFromKnowledgeBase
+                Resource: "*"
+              - Sid: ECRAuthToken
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
                 Resource: "*"
               - Sid: ECRImageAccess
                 Effect: Allow
                 Action:
-                  - ecr:GetAuthorizationToken
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
-                Resource: "*"
+                Resource:
+                  - !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
               - Sid: S3ArtifactAccess
                 Effect: Allow
                 Action:
@@ -73,13 +166,19 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:s3:::${ArtifactBucketName}"
                   - !Sub "arn:aws:s3:::${ArtifactBucketName}/*"
-              - Sid: CloudWatchLogs
+              - Sid: CloudWatchLogGroup
                 Effect: Allow
                 Action:
                   - logs:CreateLogGroup
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/*"
+              - Sid: CloudWatchLogStreams
+                Effect: Allow
+                Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: "*"
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/*:*"
               - Sid: XRayTracing
                 Effect: Allow
                 Action:
@@ -95,6 +194,26 @@ Resources:
   # -----------------------------------------------------------------------
   AWSTransformAgentInvokeRole:
     Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: >-
+              Only the three List* actions (ListAgentRuntimeEndpoints,
+              ListAgentRuntimeVersions, ListAgentRuntimes) have no
+              resource-level IAM support and are kept on "*" below.
+              GetAgentRuntime, GetAgentRuntimeEndpoint, InvokeAgentRuntime and
+              StopRuntimeSession all support a runtime (or runtime-endpoint)
+              ARN and are scoped to one in a separate statement.
+          - id: W28
+            reason: >-
+              Not a platform lookup: pipeline/atx_deploy.py (lines 76-77)
+              uses "AWSTransformAgentInvokeRole" only as its own default for
+              the ATX_INVOKE_ROLE environment variable, then builds this
+              role's ARN from that name to register as atxAccessRoleArn
+              (line 518). Overriding ATX_INVOKE_ROLE lets this role have any
+              name; RoleName is fixed here only so the default matches
+              without also setting that variable.
     Properties:
       RoleName: AWSTransformAgentInvokeRole
       AssumeRolePolicyDocument:
@@ -110,22 +229,27 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: ATXAgentCoreRuntimePermissions
+              - Sid: ATXAgentCoreRuntimeByArn
                 Effect: Allow
                 Action:
                   - bedrock-agentcore:GetAgentRuntime
                   - bedrock-agentcore:GetAgentRuntimeEndpoint
                   - bedrock-agentcore:InvokeAgentRuntime
+                  - bedrock-agentcore:StopRuntimeSession
+                Resource:
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*"
+              - Sid: ATXAgentCoreRuntimeList
+                Effect: Allow
+                Action:
                   - bedrock-agentcore:ListAgentRuntimeEndpoints
                   - bedrock-agentcore:ListAgentRuntimeVersions
                   - bedrock-agentcore:ListAgentRuntimes
-                  - bedrock-agentcore:StopRuntimeSession
                 Resource: "*"
-              - Sid: TransformAgentsAPI
-                Effect: Allow
-                Action:
-                  - transform-agents:*
-                Resource: "*"
+              # transform-agents:* removed: every transform-agents operation
+              # is documented as called "by agents" (i.e. from code running
+              # under AgentCoreExecutionRole, not this role), and nothing in
+              # this repository calls one from here. See the PR for the
+              # evidence and the pre-apply validation this needs.
 
 Outputs:
   AgentCoreExecutionRoleArn:
