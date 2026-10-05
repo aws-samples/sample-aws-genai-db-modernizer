@@ -225,10 +225,19 @@ class TestEngineeringReportRoadmap:
             {"table": "wordpress.wp_comments", "owner": "dynamodb", "sync": "OpenSearch Ingestion"}
         ]
         md = render_engineering_report_md(rep)
-        assert "2 table names in the assignment could not be resolved" in md
+        assert "2 table names in the assignment did not resolve to a table or view" in md
         assert "co-dependency" in md
         assert "co_dependency" not in md
         assert "1 table owner: `wordpress.wp_comments` -> DynamoDB (OpenSearch Ingestion)" in md
+
+    def test_unresolved_names_note_agrees_in_number_when_singular(self):
+        # Grammar: "1 table name ... is not shown", not "... are not shown".
+        rep = _report_with_waves()
+        rep["unresolved_names"] = {"count": 1, "names": ["cte_alias"]}
+        md = render_engineering_report_md(rep)
+        assert "1 table name in the assignment did not resolve to a table or view" in md
+        assert "is not shown in any wave" in md
+        assert "are not shown in any wave" not in md
 
 
 class TestDeckUsesStoredWaves:

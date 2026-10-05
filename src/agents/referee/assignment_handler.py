@@ -67,7 +67,8 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     print(
         f"[assignment] Resolved: {len(assignment.query_assignments)} queries, "
         f"{len(assignment.table_assignments)} tables, "
-        f"{len(assignment.co_dependency_groups)} co-dep groups"
+        f"{len(assignment.co_dependency_groups)} co-dep groups, "
+        f"{assignment.unresolved_table_names.count} unresolved table name(s) dropped"
     )
 
     # --- Validate assignment ---

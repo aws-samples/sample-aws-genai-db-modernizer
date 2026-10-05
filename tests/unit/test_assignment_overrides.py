@@ -226,6 +226,7 @@ class TestRecomputesDerivedViews:
         stale_codep: list[list[str]],
         engines: list[str],
         source_engine: str | None = None,
+        known_tables: list[str] | None = None,
     ) -> None:
         assignment = Assignment(
             job_id=JOB,
@@ -243,7 +244,7 @@ class TestRecomputesDerivedViews:
         )
         collector: dict = {
             "queries": {"query_patterns": query_patterns},
-            "database_schema": {"tables": []},
+            "database_schema": {"tables": [{"table_id": t} for t in known_tables or []]},
         }
         if source_engine:
             collector["metadata"] = {"source_database": {"engine": source_engine}}
@@ -325,16 +326,40 @@ class TestRecomputesDerivedViews:
         assert by_table["t.users"].primary_engine == "dynamodb"
         assert by_table["t.posts"].primary_engine == "aurora_mysql"
 
+    def test_table_assignments_drop_noise_and_record_unresolved_table_names(self) -> None:
+        # #316: a name the SQL parser put in source_tables that is not in the
+        # collector's schema (a CTE alias here) must not become a table row,
+        # and the drop is recorded on the recomputed assignment.
+        store = _MemStore()
+        self._seed(
+            store,
+            [_qa("q1", "dynamodb", ["t.users", "cte_alias"])],
+            [{"query_id": "q1", "tables_accessed": ["t.users", "cte_alias"]}],
+            stale_codep=[],
+            engines=["dynamodb", "opensearch"],
+            known_tables=["t.users"],
+        )
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+        )
+        assert [ta.table_id for ta in result.assignment.table_assignments] == ["t.users"]
+        assert result.assignment.unresolved_table_names.names == ["cte_alias"]
+        assert result.assignment.unresolved_table_names.count == 1
+
 
 class TestRefreshConsolidatedAssignment:
     """ADR-029 Layers B+E: reality-check consolidation refreshes derived views,
     re-validates, and prunes per-query warnings that name an eliminated engine."""
 
     @staticmethod
-    def _collector(query_patterns: list[dict], source_engine: str | None = None) -> dict:
+    def _collector(
+        query_patterns: list[dict],
+        source_engine: str | None = None,
+        known_tables: list[dict] | None = None,
+    ) -> dict:
         collector: dict = {
             "queries": {"query_patterns": query_patterns},
-            "database_schema": {"tables": []},
+            "database_schema": {"tables": known_tables or []},
         }
         if source_engine:
             collector["metadata"] = {"source_database": {"engine": source_engine}}
@@ -408,6 +433,29 @@ class TestRefreshConsolidatedAssignment:
         out = refresh_consolidated_assignment(raw, collector, {"dynamodb": {}})
         assert "table_assignments" in out
         assert out["co_dependency_groups"] == []
+
+    def test_drops_noise_and_resolves_canonical_names(self) -> None:
+        # #316: a bare name must resolve against the collector's qualified
+        # table_id, and parser noise (a CTE alias) must not become a table.
+        raw = {
+            "version": 2,
+            "query_assignments": [
+                {
+                    "query_id": "q1",
+                    "assigned_engine": "dynamodb",
+                    "confidence": 80,
+                    "source_tables": ["wp_posts", "cte_alias"],
+                    "assignment_reason": "consolidated",
+                },
+            ],
+        }
+        collector = self._collector(
+            [{"query_id": "q1", "tables_accessed": ["wp_posts", "cte_alias"]}],
+            known_tables=[{"table_id": "wordpress.wp_posts", "table_name": "wp_posts"}],
+        )
+        out = refresh_consolidated_assignment(raw, collector, {"dynamodb": {}})
+        assert [ta["table_id"] for ta in out["table_assignments"]] == ["wordpress.wp_posts"]
+        assert out["unresolved_table_names"] == {"count": 1, "names": ["cte_alias"]}
 
     def test_opensearch_only_table_falls_back_to_retained_engine(self) -> None:
         # #317 finding 1: every in-scope query on this table went to OpenSearch

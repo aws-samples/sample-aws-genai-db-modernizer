@@ -40,17 +40,21 @@ Version History:
   ``table_groups`` is typed ``list[TableGroup]`` (``tables``, ``query_count``
   as distinct DynamoDB-assigned query IDs, ``kind``: ``co_dependency`` or
   ``independent``), not untyped dicts. Also added optional
-  ``unresolved_names`` (#316): the count and names of ``table_assignments``
-  rows a wave dropped as parser noise (not in the collected schema).
-  Everything here is ``None``/empty for a report synthesized before this
-  field existed; every deliverable falls back to deriving the same roadmap
-  shape itself. Backward compatible.
+  ``unresolved_names`` (#316): a copy of the assignment's own
+  ``unresolved_table_names`` -- the count and names of ``source_tables``
+  entries that are not a table or view the collector saw (parser noise: a
+  CTE alias, a system catalog, a sequence, a keyword, a column). Everything
+  here is ``None``/empty for a report synthesized before this field existed;
+  every deliverable falls back to deriving the same roadmap shape itself.
+  Backward compatible.
 """
 
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.contracts.assignment_models import UnresolvedNames  # re-exported, see docstring below
 
 from .schema_design_output import TradeOff
 
@@ -231,15 +235,6 @@ class TableOwner(BaseModel):
     )
 
 
-class UnresolvedNames(BaseModel):
-    """``table_assignments`` rows the migration-waves builder dropped as parser
-    noise -- not in the collected schema's tables or views (#225). The parser
-    issue that produces this noise is tracked separately (#316)."""
-
-    count: int = Field(..., ge=0, description="Number of dropped names")
-    names: list[str] = Field(default_factory=list, description="The dropped names, sorted")
-
-
 class MigrationWave(BaseModel):
     """One step of the incremental migration roadmap (#225).
 
@@ -384,9 +379,11 @@ class SynthesisOutputContract(BaseModel):
     unresolved_names: UnresolvedNames | None = Field(
         None,
         description=(
-            "Count and names of table_assignments rows the migration-waves builder "
-            "dropped as parser noise -- not in the collected schema's tables/views "
-            "(#225). The parser issue itself is tracked separately (#316)."
+            "Count and names of source_tables entries that did not resolve to a table "
+            "or view the collector saw -- a CTE alias, a system catalog, a sequence, a "
+            "keyword, a column the SQL parser mistook for a table (#316). Copied "
+            "unchanged from the assignment's own unresolved_table_names; None for a "
+            "report synthesized before this field existed."
         ),
     )
 

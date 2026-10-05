@@ -355,3 +355,99 @@ def test_synthesis_filters_resolved_risks():
     # The full-scan anti-pattern should be filtered out since AP-1 covers q-scan
     scan_risks = [r for r in risks if "Full table scans" in r.get("description", "")]
     assert len(scan_risks) == 0, f"Expected resolved risk to be filtered, got: {scan_risks}"
+
+
+def test_synthesis_copies_unresolved_table_names_from_assignment():
+    # #316 finding 3: synthesis must copy the assignment's own
+    # unresolved_table_names rather than recompute a second, looser version.
+    artifacts = dict(_standard_artifacts())
+    artifacts["assignment/v1/assignment.json"] = {
+        "version": 1,
+        "status": "auto_generated",
+        "query_assignments": [],
+        "table_assignments": [],
+        "co_dependency_groups": [],
+        "unresolved_table_names": {"count": 2, "names": ["CURRENT_TIMESTAMP", "cte_alias"]},
+    }
+    artifacts["schema-dynamodb/v1/schema_output.json"] = MOCK_SCHEMA_DESIGN
+    store = _mock_store(artifacts)
+
+    from src.agents.referee.synthesis_handler import run_synthesis
+
+    run_synthesis("job-001", "mydb", store, assignment_version=1)
+
+    body = store._written["mydb/job-001/synthesis/v1/report.json"]
+    assert body["unresolved_names"] == {
+        "count": 2,
+        "names": ["CURRENT_TIMESTAMP", "cte_alias"],
+    }
+
+
+def test_synthesis_unresolved_table_names_defaults_empty_with_no_assignment():
+    store = _mock_store(_standard_artifacts())
+
+    from src.agents.referee.synthesis_handler import run_synthesis
+
+    run_synthesis("job-001", "mydb", store)
+
+    body = store._written["mydb/job-001/referee-synthesis/report.json"]
+    assert body["unresolved_names"] == {"count": 0, "names": []}
+
+
+def test_synthesis_computes_unresolved_table_names_for_a_legacy_assignment():
+    # #316 regression: an assignment made before this fix has no
+    # unresolved_table_names field at all -- it is absent, not an empty
+    # default -- so synthesis must recompute the count via the canonical
+    # resolver (scoped to wave_known_tables, same as build_migration_waves
+    # above it) rather than silently report zero for every job that
+    # predates this fix. This is the discourse-like shape: real tables mixed
+    # with parser noise (a keyword, a CTE alias) that must still be flagged.
+    artifacts = dict(_standard_artifacts())
+    artifacts["assignment/v1/assignment.json"] = {
+        "version": 1,
+        "status": "auto_generated",
+        "query_assignments": [
+            {
+                "query_id": "q1",
+                "assigned_engine": "dynamodb",
+                "confidence": 80,
+                "source_tables": ["mydb.users"],
+                "assignment_reason": "x",
+            },
+        ],
+        "table_assignments": [
+            {
+                "table_id": "mydb.users",
+                "primary_engine": "dynamodb",
+                "engines": ["dynamodb"],
+                "query_count": 1,
+            },
+            {
+                "table_id": "CURRENT_TIMESTAMP",
+                "primary_engine": "dynamodb",
+                "engines": ["dynamodb"],
+                "query_count": 1,
+            },
+            {
+                "table_id": "cte_alias",
+                "primary_engine": "dynamodb",
+                "engines": ["dynamodb"],
+                "query_count": 1,
+            },
+        ],
+        "co_dependency_groups": [],
+        # Deliberately no "unresolved_table_names" key.
+    }
+    artifacts["schema-dynamodb/v1/schema_output.json"] = MOCK_SCHEMA_DESIGN
+    store = _mock_store(artifacts)
+
+    from src.agents.referee.synthesis_handler import run_synthesis
+
+    run_synthesis("job-001", "mydb", store, assignment_version=1)
+
+    body = store._written["mydb/job-001/synthesis/v1/report.json"]
+    assert "unresolved_table_names" not in artifacts["assignment/v1/assignment.json"]
+    assert body["unresolved_names"] == {
+        "count": 2,
+        "names": ["CURRENT_TIMESTAMP", "cte_alias"],
+    }

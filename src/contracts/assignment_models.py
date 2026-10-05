@@ -31,6 +31,13 @@ Version History:
   decisions (safety-net drops, legacy ElastiCache owners moved to their
   system-of-record engine on load). All default to ``None``/False/empty, so
   artifacts written before 1.4 still load.
+- 1.5 (2026-10-05): Added ``Assignment.unresolved_table_names`` (#316). A
+  query's ``source_tables`` can hold names the SQL parser mistook for tables
+  (CTE aliases, system catalogs, sequences, keywords, qualified columns);
+  ``derive_table_assignments`` now drops those before building
+  ``table_assignments`` rather than treating them as tables, and records the
+  dropped names here. Defaults to an empty ``UnresolvedNames``, so artifacts
+  written before 1.5 still load.
 """
 
 from datetime import datetime
@@ -39,6 +46,24 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from src.contracts.feasibility_models import FeasibilityFinding
+
+
+class UnresolvedNames(BaseModel):
+    """A count and the sorted names behind it, for names that did not resolve
+    to a known table or view.
+
+    Produced by ``derive_table_assignments`` (#316): a name from a query's
+    ``source_tables`` that is not a table or view the collector saw (a CTE
+    alias, a system catalog, a sequence, a keyword, a column the SQL parser
+    mistook for a table) is dropped before building ``table_assignments``
+    and counted here instead. Synthesis copies this value onto its own
+    report rather than recomputing it (#225, #316): the migration-waves
+    builder's own ``known_tables`` scoping is a separate, defensive check on
+    the same table_assignments, not the source of this count.
+    """
+
+    count: int = Field(..., ge=0, description="Number of unresolved names")
+    names: list[str] = Field(default_factory=list, description="The unresolved names, sorted")
 
 
 class AssignmentStatus(str, Enum):
@@ -247,6 +272,17 @@ class Assignment(BaseModel):
         description=(
             "Cache layer summary (#296): queries the cache fronts and their share of "
             "calls. None when no query qualifies or no cache engine was analyzed."
+        ),
+    )
+    unresolved_table_names: UnresolvedNames = Field(
+        default_factory=lambda: UnresolvedNames(count=0, names=[]),
+        description=(
+            "Names from query_assignments[].source_tables that are not a table or view "
+            "in the collected schema (#316): CTE aliases, system catalogs, sequences, "
+            "keywords or columns the SQL parser mistook for tables. Dropped before "
+            "deriving table_assignments rather than counted as tables. Empty when the "
+            "collector schema was unavailable (every name is kept, legacy behavior) or "
+            "every name resolved."
         ),
     )
 

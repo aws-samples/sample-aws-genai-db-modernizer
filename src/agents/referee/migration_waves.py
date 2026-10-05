@@ -59,6 +59,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.migration_wave_engines import (
@@ -66,15 +67,10 @@ from src.shared.migration_wave_engines import (
     DOCUMENT_ENGINES,
     KV_ENGINES,
     NAMED_ENGINES,
+    NON_OWNER_ENGINES,
     RELATIONAL_ENGINES,
     SEARCH_ENGINES,
 )
-
-# Pseudo "tables" a parser or the dialect itself introduces (MySQL's dummy
-# ``DUAL`` target, a column a parser mistook for a table). They are not source
-# tables, so a wave never claims to move them. Public: synthesis reuses this to
-# record ``unresolved_names`` (#225) without re-deriving it.
-PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
 
 
 def _plural(n: int, noun: str) -> str:
@@ -86,13 +82,15 @@ def _table_ids(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
-    """The engine that durably owns ``table`` — never a read-model engine.
+    """The engine that durably owns ``table`` — never a cache or read-model engine.
 
-    ``primary_engine`` is used unless it is a read-model (search) engine, in
-    which case the first non-search engine in ``engines`` takes over, and
-    failing that the source-compatible retained engine (#225): OpenSearch is
-    a read model only, so every table it serves must resolve to a real
-    owner, never itself.
+    ``primary_engine`` is used unless it is a non-owner engine
+    (``NON_OWNER_ENGINES``: a cache, which fronts hot reads but owns nothing,
+    or a read-model/search engine, which indexes data synced from a real
+    owner), in which case the first owner engine in ``engines`` takes over,
+    and failing that the source-compatible retained engine (#225, #317):
+    every table a non-owner engine serves must resolve to a real owner,
+    never the non-owner engine itself.
 
     Follow-up considered after #317 fixed this at the source
     (``assignment_resolver.derive_table_assignments`` now never picks a
@@ -103,16 +101,16 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
     (a stored artifact predating #317, a hand-built fixture, a future
     caller), and the explicit regression tests for exactly this shape
     (``test_migration_waves.py::TestSearchReadModelWave``) exist for that
-    reason. Keeping the search-engine skip here is defense in depth, not a
+    reason. Keeping the non-owner skip here is defense in depth, not a
     live bug; simplifying it is a follow-up for whoever next touches this
     function, not required by #317.
     """
     primary = table.get("primary_engine")
     engines = table.get("engines") or ([primary] if primary else [])
-    if primary and primary not in SEARCH_ENGINES:
+    if primary and primary not in NON_OWNER_ENGINES:
         return str(primary)
     for engine in engines:
-        if engine and engine not in SEARCH_ENGINES:
+        if engine and engine not in NON_OWNER_ENGINES:
             return str(engine)
     return retained_engine or "unresolved"
 
@@ -619,13 +617,17 @@ def build_migration_waves(
 
     ``known_tables``, when given, is the caller's set of tables and views the
     collector actually saw (#225): a ``table_assignments`` row whose
-    ``table_id`` is not in it (a parser artifact — a CTE alias, a keyword, a
-    system catalog name; tracked separately, #316) never reaches a wave. The
-    retained wave then also carries every table in ``known_tables`` that has
-    no row at all here (no observed query), so wave table counts add up to
-    the collected schema. ``None`` skips both: no filtering, no
-    unreferenced-table accounting (back-compat for a caller that cannot
-    supply the collected schema).
+    ``table_id`` does not resolve to one of them (a parser artifact — a CTE
+    alias, a keyword, a system catalog name; or a spelling mismatch between
+    the parser and the collector's own naming, #316) never reaches a wave. A
+    row that resolves under a different spelling than its own ``table_id``
+    (e.g. a bare name the collector recorded schema-qualified) is carried
+    under the canonical id, so it is not double-counted against
+    ``known_tables``. The retained wave then also carries every table in
+    ``known_tables`` that has no row at all here (no observed query), so wave
+    table counts add up to the collected schema. ``None`` skips both: no
+    filtering, no unreferenced-table accounting (back-compat for a caller
+    that cannot supply the collected schema).
     """
     if not ranking:
         return None
@@ -634,13 +636,22 @@ def build_migration_waves(
     retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine)
 
     known: set[str] | None = None if known_tables is None else {str(t) for t in known_tables}
+    resolver = None if known is None else TableNameResolver.from_known_ids(known)
 
-    def _in_scope(table_id: Any) -> bool:
+    def _canonical_in_scope(table_id: Any) -> Any | None:
         if not table_id or table_id in PSEUDO_TABLES:
-            return False
-        return known is None or table_id in known
+            return None
+        if resolver is None:
+            return table_id
+        return resolver.resolve(str(table_id))
 
-    table_assignments = [t for t in table_assignments if _in_scope(t.get("table_id"))]
+    canonical_assignments = []
+    for t in table_assignments:
+        cid = _canonical_in_scope(t.get("table_id"))
+        if cid is None:
+            continue
+        canonical_assignments.append({**t, "table_id": cid} if cid != t.get("table_id") else t)
+    table_assignments = canonical_assignments
 
     waves: list[dict[str, Any]] = []
 

@@ -1390,9 +1390,10 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
     if unresolved.get("count"):
         out.append(
             f"*{unresolved['count']} table "
-            f"{plural_noun(unresolved['count'], 'name')} in the assignment could not be "
-            "resolved to the collected schema and are not shown in any wave (tracked "
-            "separately, #316).*"
+            f"{plural_noun(unresolved['count'], 'name')} in the assignment did not resolve "
+            "to a table or view in the collected schema (a CTE alias, a system catalog, a "
+            "sequence, a keyword, or a column the SQL parser mistook for a table) and "
+            f"{plural_noun(unresolved['count'], 'is', 'are')} not shown in any wave.*"
         )
         out.append("")
     for w in waves:

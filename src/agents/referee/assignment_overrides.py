@@ -32,6 +32,7 @@ from src.agents.referee.cache_overlay import (
     refresh_cache_overlay,
     write_heavy_tables,
 )
+from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
@@ -145,12 +146,13 @@ def load_assignment_for_edit(
         source_database_engine(collector_output),
     ):
         qas = [QueryAssignment.model_validate(qa) for qa in raw["query_assignments"]]
-        raw["table_assignments"] = [
-            ta.model_dump(mode="json")
-            for ta in derive_table_assignments(
-                qas, retained_engine=retained_engine_for(collector_output)
-            )
-        ]
+        table_assignments, unresolved_table_names = derive_table_assignments(
+            qas,
+            known_tables=TableNameResolver.from_collector(collector_output),
+            retained_engine=retained_engine_for(collector_output),
+        )
+        raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
+        raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
     return raw, collector_output, analysis_outputs
 
 
@@ -451,9 +453,13 @@ def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> 
     Both are derived views that must reflect the routing rather than be carried
     forward from a previous version (ADR-029 Layer B).
     """
-    assignment.table_assignments = derive_table_assignments(
-        assignment.query_assignments, retained_engine=retained_engine_for(collector_output)
+    table_assignments, unresolved_table_names = derive_table_assignments(
+        assignment.query_assignments,
+        known_tables=TableNameResolver.from_collector(collector_output),
+        retained_engine=retained_engine_for(collector_output),
     )
+    assignment.table_assignments = table_assignments
+    assignment.unresolved_table_names = unresolved_table_names
     assignment.co_dependency_groups = build_co_dependency_groups(
         collector_output.get("queries", {}).get("query_patterns", []),
         collector_output.get("database_schema", {}).get("tables", []),
@@ -495,8 +501,10 @@ def refresh_consolidated_assignment(
         for qa in qa_dicts
     ]
 
-    table_assignments = derive_table_assignments(
-        qas, retained_engine=retained_engine_for(collector_output)
+    table_assignments, unresolved_table_names = derive_table_assignments(
+        qas,
+        known_tables=TableNameResolver.from_collector(collector_output),
+        retained_engine=retained_engine_for(collector_output),
     )
     co_dependency_groups = build_co_dependency_groups(
         collector_output.get("queries", {}).get("query_patterns", []),
@@ -511,6 +519,7 @@ def refresh_consolidated_assignment(
         table_assignments=table_assignments,
         co_dependency_groups=co_dependency_groups,
         validation_warnings=[],
+        unresolved_table_names=unresolved_table_names,
     )
     validation = AssignmentValidator().validate(probe, collector_output, analysis_outputs)
 
@@ -518,6 +527,7 @@ def refresh_consolidated_assignment(
     out["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
     out["co_dependency_groups"] = co_dependency_groups
     out["validation_warnings"] = validation.warnings
+    out["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
     # Re-evaluate the cache overlay against the consolidated routing (#296): an
     # overlay survives its owner's consolidation, and the summary follows scope.
     refresh_cache_overlay(

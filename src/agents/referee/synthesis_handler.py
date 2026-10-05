@@ -18,7 +18,7 @@ LLM seam functions (for Skill Sync / external LLM integration):
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import source_database_engine
-from src.agents.referee.migration_waves import PSEUDO_TABLES, build_migration_waves
+from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -41,6 +41,7 @@ from src.agents.referee.synthesis_report import (
     generate_executive_summary,
     schema_table_defs,
 )
+from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.storage.artifact_store import ArtifactStore
 
@@ -159,19 +160,32 @@ def run_synthesis_deterministic(
         # The upstream noise in table_assignments itself is #316.
         known_tables=wave_known_tables,
     )
-    # #225: record (not fix -- that is #316) how many table_assignments names were
-    # dropped as noise, for transparency. Diffed against the same wave_known_tables
-    # the builder used, so a view does not get double-counted as "unresolved".
-    _unresolved = sorted(
-        {
-            str(t["table_id"])
-            for t in raw_table_assignments
-            if t.get("table_id")
-            and str(t["table_id"]) not in PSEUDO_TABLES
-            and str(t["table_id"]) not in wave_known_tables
-        }
-    )
-    unresolved_names = {"count": len(_unresolved), "names": _unresolved}
+    # #316: an assignment produced by this fix already resolved source_tables
+    # noise against the collector's canonical schema (CTE aliases, system
+    # catalogs, sequences, keywords, columns the SQL parser mistook for
+    # tables -- and spelling mismatches between the parser and the collector,
+    # via the same canonical resolver the migration-waves builder above
+    # uses) and recorded the drop in unresolved_table_names. Copy it
+    # unchanged rather than recompute a second, looser version here. An
+    # assignment written before this fix has no such field at all -- it is
+    # absent, not an empty default -- so it is recomputed the same way, with
+    # the same canonical resolver, scoped to wave_known_tables (the same set
+    # build_migration_waves above was given), rather than silently reporting
+    # zero for every job that predates this fix.
+    if "unresolved_table_names" in assignment:
+        unresolved_names = assignment.get("unresolved_table_names") or {"count": 0, "names": []}
+    else:
+        legacy_resolver = TableNameResolver.from_known_ids(wave_known_tables)
+        _unresolved = sorted(
+            {
+                str(t["table_id"])
+                for t in raw_table_assignments
+                if t.get("table_id")
+                and str(t["table_id"]) not in PSEUDO_TABLES
+                and (legacy_resolver is None or legacy_resolver.resolve(str(t["table_id"])) is None)
+            }
+        )
+        unresolved_names = {"count": len(_unresolved), "names": _unresolved}
 
     assignment_summary = None
     if data.assignment:

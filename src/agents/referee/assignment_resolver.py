@@ -10,7 +10,8 @@ Implements the assignment resolution algorithm:
   6. Assign remaining queries individually (highest adjusted score wins)
   7. Fallback to aurora for queries with no scores
   8. Mark the cache overlay (hot reads ElastiCache can front, #296)
-  9. Derive table assignments
+  9. Derive table assignments, dropping source_tables noise the SQL parser
+     introduced that is not a table or view the collector saw (#316)
 
 Only system-of-record engines own queries (#296): ElastiCache is a cache layer
 (``cache_overlay.CACHE_OVERLAY_ENGINES``) and never owns one, and an engine that
@@ -26,6 +27,7 @@ general suitability.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -33,6 +35,7 @@ from datetime import UTC, datetime
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
+from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.assignment_models import (
     Assignment,
@@ -41,8 +44,11 @@ from src.contracts.assignment_models import (
     CacheOverlaySummary,
     QueryAssignment,
     TableAssignment,
+    UnresolvedNames,
 )
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES
+
+logger = logging.getLogger(__name__)
 
 # Triage signals that strongly indicate an engine is the RIGHT fit for a query.
 # When a signal maps query→engine and that engine was selected by triage,
@@ -291,12 +297,17 @@ class AssignmentResolver:
                 )
             )
 
-        # Step 9: Derive table assignments. A table's primary_engine must always
-        # be a durable owner (#317), so pass the retained source-compatible
-        # engine as the fallback for tables with no owner engine among their
+        # Step 9: Derive table assignments. Noise the SQL parser can put in
+        # source_tables (CTE aliases, catalogs, sequences, keywords, columns)
+        # is dropped first (#316), scoped to the tables and views the
+        # collector actually saw. A table's primary_engine must always be a
+        # durable owner (#317), so pass the retained source-compatible engine
+        # as the fallback for tables with no owner engine among their
         # assigned engines.
-        table_assignments = derive_table_assignments(
-            query_assignments, retained_engine=retained_engine_for(collector_output)
+        table_assignments, unresolved_table_names = derive_table_assignments(
+            query_assignments,
+            known_tables=TableNameResolver.from_collector(collector_output),
+            retained_engine=retained_engine_for(collector_output),
         )
 
         # Flatten co-dep groups to list of lists of query_ids
@@ -313,6 +324,7 @@ class AssignmentResolver:
             co_dependency_groups=co_dep_lists,
             validation_warnings=[],
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
+            unresolved_table_names=unresolved_table_names,
         )
 
     def _build_signal_overrides(
@@ -621,8 +633,10 @@ def retained_engine_for(collector_output: Mapping) -> str | None:
 
 def derive_table_assignments(
     query_assignments: list[QueryAssignment],
+    *,
+    known_tables: TableNameResolver | None = None,
     retained_engine: str | None = None,
-) -> list[TableAssignment]:
+) -> tuple[list[TableAssignment], UnresolvedNames]:
     """Derive table-level assignments from query assignments.
 
     For each table:
@@ -642,17 +656,41 @@ def derive_table_assignments(
       engine on the table itself.
     - Set multi_engine_reason when engines list has 2+ entries
 
+    ``known_tables`` (:class:`.table_resolution.TableNameResolver`, built via
+    ``TableNameResolver.from_collector``), when given, resolves each
+    ``source_tables`` entry to the collector's canonical ``table_id``/
+    ``view_id``. An entry that does not resolve is not a table at all -- a
+    CTE alias, a system catalog, a sequence, a keyword or a column the SQL
+    parser mistook for a table (#316) -- and is dropped before building
+    ``table_assignments`` rather than counted as one; the second return value
+    records what was dropped (minus ``PSEUDO_TABLES``, a parser or dialect
+    artifact, never a real table, so never worth reporting as unresolved).
+    ``known_tables=None`` (no collector schema available) keeps every name,
+    the behavior before #316.
+
+    A name that resolves canonically but is spelled differently across
+    queries (``wp_posts`` in one, ``wordpress.wp_posts`` in another) is
+    merged into a single row under the canonical ``table_id`` — never split
+    into two tables.
+
     Requirements: 2.6, 11.1, 11.2
     """
     # table_id → engine → count of queries
     table_engine_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     # table_id → total query count
     table_query_counts: dict[str, int] = defaultdict(int)
+    unresolved: set[str] = set()
 
     for qa in query_assignments:
         for table_id in qa.source_tables:
-            table_engine_counts[table_id][qa.assigned_engine] += 1
-            table_query_counts[table_id] += 1
+            if table_id in PSEUDO_TABLES:
+                continue
+            resolved = table_id if known_tables is None else known_tables.resolve(table_id)
+            if resolved is None:
+                unresolved.add(table_id)
+                continue
+            table_engine_counts[resolved][qa.assigned_engine] += 1
+            table_query_counts[resolved] += 1
 
     # Global, assignment-wide fallback (#317 finding 3): used only when a table
     # has no owner engine among its own engines *and* no retained_engine was
@@ -661,15 +699,18 @@ def derive_table_assignments(
     # so the result is never a cache or search engine even in that corner case.
     global_counts = Counter(qa.assigned_engine for qa in query_assignments if qa.assigned_engine)
     global_owner_counts = {e: c for e, c in global_counts.items() if e not in NON_OWNER_ENGINES}
-    global_fallback = (
-        pick_aurora_engine(global_owner_counts, query_counts=global_owner_counts)
-        or (
-            min(global_owner_counts, key=lambda e: (-global_owner_counts[e], e))
-            if global_owner_counts
-            else None
-        )
-        or "aurora"
+    global_fallback = pick_aurora_engine(global_owner_counts, query_counts=global_owner_counts) or (
+        min(global_owner_counts, key=lambda e: (-global_owner_counts[e], e))
+        if global_owner_counts
+        else None
     )
+    if global_fallback is None:
+        logger.warning(
+            "derive_table_assignments: no retained engine, and no owner engine anywhere in "
+            "the assignment; falling back to the generic 'aurora' placeholder as primary_engine "
+            "for a table with no owner engine of its own."
+        )
+        global_fallback = "aurora"
 
     result: list[TableAssignment] = []
     for table_id in sorted(table_engine_counts.keys()):
@@ -701,7 +742,8 @@ def derive_table_assignments(
             )
         )
 
-    return result
+    sorted_unresolved = sorted(unresolved)
+    return result, UnresolvedNames(count=len(sorted_unresolved), names=sorted_unresolved)
 
 
 # ---------------------------------------------------------------------------
@@ -776,8 +818,11 @@ def enforce_exclusions_on_overrides(
     if reassignment_count == 0:
         return assignment
 
-    # Recompute table assignments
-    table_assignments = derive_table_assignments(updated_assignments)
+    # Recompute table assignments. No collector schema is available here, so
+    # no filtering happens (#316): unresolved_table_names is carried over from
+    # ``assignment`` unchanged, since source_tables itself does not change in
+    # this reassignment pass.
+    table_assignments, _ = derive_table_assignments(updated_assignments)
 
     return assignment.model_copy(
         update={

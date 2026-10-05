@@ -92,3 +92,39 @@ class TestAcceptedFeasibilityFindings:
         dumped = a.model_dump(mode="json")
         assert dumped["accepted_feasibility_findings"][0]["kind"] == "read_write_split"
         assert Assignment.model_validate(dumped) == a
+
+
+class TestUnresolvedTableNames:
+    """#316: unresolved_table_names is optional and backward compatible --
+    a pre-1.5 artifact (the field absent entirely) still loads and
+    round-trips, defaulting to an empty UnresolvedNames."""
+
+    def test_defaults_to_empty_on_a_pre_1_5_artifact(self) -> None:
+        # _assignment() has no unresolved_table_names key at all, simulating
+        # an artifact written before #316.
+        a = Assignment.model_validate(_assignment())
+        assert a.unresolved_table_names.count == 0
+        assert a.unresolved_table_names.names == []
+
+    def test_round_trips_with_unresolved_names(self) -> None:
+        a = Assignment.model_validate(
+            _assignment(unresolved_table_names={"count": 2, "names": ["cte_alias", "pg_proc"]})
+        )
+        assert a.unresolved_table_names.count == 2
+        assert a.unresolved_table_names.names == ["cte_alias", "pg_proc"]
+        dumped = a.model_dump(mode="json")
+        assert dumped["unresolved_table_names"] == {
+            "count": 2,
+            "names": ["cte_alias", "pg_proc"],
+        }
+        assert Assignment.model_validate(dumped) == a
+
+    def test_pre_1_5_artifact_round_trips_through_dump_and_reload(self) -> None:
+        # The full pre-#316 artifact shape (no unresolved_table_names key)
+        # survives a validate -> dump -> re-validate round trip unchanged.
+        pre_1_5 = _assignment()
+        assert "unresolved_table_names" not in pre_1_5
+        a = Assignment.model_validate(pre_1_5)
+        reloaded = Assignment.model_validate(a.model_dump(mode="json"))
+        assert reloaded == a
+        assert reloaded.unresolved_table_names.count == 0

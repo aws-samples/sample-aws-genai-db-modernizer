@@ -18,7 +18,7 @@ overlap note.
 
 from __future__ import annotations
 
-from src.agents.referee.migration_waves import build_migration_waves
+from src.agents.referee.migration_waves import _durable_owner, build_migration_waves
 
 RANKING = [
     {"target": "dynamodb", "assigned_queries": 98, "workload_percent": 91.6},
@@ -353,6 +353,28 @@ class TestSearchReadModelWave:
         owner = next(o for o in search["table_owners"] if o["table"] == "wp_usermeta")
         assert owner["owner"] == "aurora_mysql"
         assert owner["sync"] == "zero-ETL"
+
+    def test_durable_owner_skips_an_elasticache_primary_engine(self):
+        # #318 review: _durable_owner was generalized from skipping only
+        # SEARCH_ENGINES to skipping NON_OWNER_ENGINES, so a cache engine as
+        # primary_engine (never legitimate, but defense in depth) is also
+        # passed over for the first real owner in `engines`.
+        table = {
+            "table_id": "wp_sessions",
+            "primary_engine": "elasticache",
+            "engines": ["elasticache", "dynamodb"],
+            "query_count": 10,
+        }
+        assert _durable_owner(table, retained_engine="aurora_mysql") == "dynamodb"
+
+    def test_durable_owner_falls_back_to_retained_when_only_elasticache(self):
+        table = {
+            "table_id": "wp_sessions",
+            "primary_engine": "elasticache",
+            "engines": ["elasticache"],
+            "query_count": 10,
+        }
+        assert _durable_owner(table, retained_engine="aurora_mysql") == "aurora_mysql"
 
     def test_unresolved_indexed_tables_fall_back_to_the_retained_engine(self):
         # Finding 2: discourse-like case — every query's source_tables is
