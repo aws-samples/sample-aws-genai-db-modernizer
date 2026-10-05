@@ -208,6 +208,28 @@ class TestEngineeringReportRoadmap:
         md = render_engineering_report_md(rep)
         assert "Synced from (durable owner): DynamoDB" in md
 
+    def test_shows_table_owners_and_the_readable_group_kind(self):
+        # #225 re-check item 7/8: table_owners (owner + sync per table) and the
+        # unresolved-name count surface in the Markdown at least; a group's
+        # "kind" renders readably ("co-dependency"), not the raw enum value.
+        rep = _report_with_waves()
+        rep["unresolved_names"] = {"count": 2, "names": ["CURRENT_TIMESTAMP", "the"]}
+        rep["migration_waves"][1]["table_groups"] = [
+            {
+                "tables": ["wordpress.wp_postmeta", "wordpress.wp_posts"],
+                "query_count": 98,
+                "kind": "co_dependency",
+            }
+        ]
+        rep["migration_waves"][1]["table_owners"] = [
+            {"table": "wordpress.wp_comments", "owner": "dynamodb", "sync": "OpenSearch Ingestion"}
+        ]
+        md = render_engineering_report_md(rep)
+        assert "2 table names in the assignment could not be resolved" in md
+        assert "co-dependency" in md
+        assert "co_dependency" not in md
+        assert "1 table owner: `wordpress.wp_comments` -> DynamoDB (OpenSearch Ingestion)" in md
+
 
 class TestDeckUsesStoredWaves:
     def test_dynamodb_and_aurora_are_separate_waves_when_stored(self):
@@ -260,13 +282,38 @@ class TestDeckUsesStoredWaves:
         f = pptx_report.derive(rep, {})
         assert f["waves"][0]["no_migration"] is False
 
-    def test_six_waves_fit_above_the_constraints_card(self):
-        # Review finding 9: the sizing must not blow past the slide for up to
-        # 6 waves (cache, KV, other, search, document, retained).
-        from pptx import Presentation
+    # A realistic long rationale/gate, matching the length the review measured
+    # on the real wordpress/discourse decks (270-370 and up to several hundred
+    # characters respectively, once the #225 re-check item 1/2 gate text is
+    # included) -- not the single-character "r"/"g" a shape-bounds test alone
+    # would miss overflowing text with (#225 re-check item 3).
+    _LONG_RATIONALE = (
+        "98 key-value and point-lookup queries (91.6% of query patterns) across 2 table "
+        "groups, respecting co-dependent tables where possible: the pattern DynamoDB fits "
+        "best, and the smallest-blast-radius data migration available once Wave 1's cache "
+        "has absorbed the read pressure."
+    )
+    _LONG_GATE = (
+        "Dual-write/backfill validated and query parity confirmed per table group. 7 tables "
+        "(wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups, "
+        "wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, "
+        "wordpress.wp_terms, wordpress.wp_users) stay dual-read by Aurora MySQL queries "
+        "until wave 4; keep them in sync via CDC until then. 2 queries read 2 tables "
+        "(wordpress.wp_options, wordpress.wp_postmeta) Aurora MySQL owns (wave 4); keep a "
+        "copy in sync via CDC until then. 3 queries could not be resolved to a table in "
+        "either wave and are not counted in any table group."
+    )
 
-        rep = _report_with_waves()
-        rep["migration_waves"] = [
+    def _waves_with_long_text(self, n: int) -> list[dict[str, Any]]:
+        engines = [
+            "elasticache",
+            "dynamodb",
+            "aurora_mysql",
+            "opensearch",
+            "documentdb",
+            "aurora_mysql",
+        ]
+        return [
             {
                 "wave": i + 1,
                 "title": f"Wave {i + 1}",
@@ -279,20 +326,20 @@ class TestDeckUsesStoredWaves:
                 "query_count": 1,
                 "workload_share_percent": 10.0,
                 "share_basis": "calls" if eng == "elasticache" else "queries",
-                "rationale": "r",
-                "gate": "g",
+                "rationale": self._LONG_RATIONALE,
+                "gate": self._LONG_GATE,
             }
-            for i, eng in enumerate(
-                [
-                    "elasticache",
-                    "dynamodb",
-                    "aurora_mysql",
-                    "opensearch",
-                    "documentdb",
-                    "aurora_mysql",
-                ]
-            )
+            for i, eng in enumerate(engines[:n])
         ]
+
+    def test_six_waves_fit_above_the_constraints_card(self):
+        # #225 re-check item 3: the sizing must not blow past the slide for up
+        # to 6 waves (cache, KV, other, search, document, retained), with
+        # realistic long rationale/gate text in every card.
+        from pptx import Presentation
+
+        rep = _report_with_waves()
+        rep["migration_waves"] = self._waves_with_long_text(6)
         f = pptx_report.derive(rep, {})
         assert len(f["waves"]) == 6
         prs = pptx_report.open_deck()
@@ -300,6 +347,30 @@ class TestDeckUsesStoredWaves:
         # Every shape must stay within the 7.5" slide height.
         max_bottom = max(shape.top + shape.height for shape in s.shapes)
         assert max_bottom <= Presentation(str(pptx_report.TEMPLATE)).slide_height
+
+    def test_long_rationale_and_gate_text_fit_the_card_at_4_and_6_waves(self):
+        # #225 re-check item 3: a shape-bounds check alone can't tell whether
+        # the *text inside* a card overflows it -- estimate the text height
+        # against the card's text box directly, for both wave counts the
+        # review flagged (4: unshrunk cards; 6: shrunk cards).
+        from src.report.pptx_report import _estimated_text_height_in, _wave_card_text
+
+        for n in (4, 6):
+            rep = _report_with_waves()
+            rep["migration_waves"] = self._waves_with_long_text(n)
+            f = pptx_report.derive(rep, {})
+            step = 1.00 if n <= 4 else max(0.62, (7.50 - 1.90 - 1.06 - 0.18) / n)
+            card_h = min(0.92, step - 0.08)
+            box_w, box_h = 9.6, card_h - 0.44
+            for w in f["waves"]:
+                rationale_text, gate_text = _wave_card_text(w["note"], w["gate"], box_w, box_h)
+                total_h = _estimated_text_height_in(
+                    rationale_text, 10.0, box_w
+                ) + _estimated_text_height_in(gate_text, 9.0, box_w)
+                assert total_h <= box_h + 1e-9, (
+                    f"n={n} wave {w['names']}: estimated text height {total_h:.3f} exceeds "
+                    f"the card's text box {box_h:.3f}"
+                )
 
 
 class TestJudgeFactsPassthrough:

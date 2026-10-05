@@ -146,12 +146,15 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         dynamo = result["migration_waves"][1]
         assert sorted(dynamo["tables"]) == ["sessions", "users"]
-        # 2 distinct DynamoDB-assigned query IDs (kv1, kv2) touch the group's
-        # tables -- not TableAssignment.query_count's 3, which also counts hot1
-        # (#296 review finding 8: that field sums every engine's queries and
-        # double-counts a multi-table query).
+        # All 3 DynamoDB-assigned queries touch the group's tables: kv1 and kv2
+        # are the group's own members, and hot1 -- not a member, but it reads
+        # "users", one of the group's tables -- is still counted in it (#225:
+        # every DynamoDB-assigned query touching an owned table goes to the
+        # first group whose tables it touches, not just a group's own members).
+        # Not TableAssignment.query_count's 3-per-table sum either, which would
+        # double-count a multi-table query and count every engine's queries.
         assert dynamo["table_groups"] == [
-            {"tables": ["sessions", "users"], "query_count": 2, "kind": "co_dependency"}
+            {"tables": ["sessions", "users"], "query_count": 3, "kind": "co_dependency"}
         ]
 
     def test_retained_wave_is_last_and_carried_over_1_to_1(self, store):
@@ -167,6 +170,6 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        assert report["contract_version"] == "1.5"
+        assert report["contract_version"] == "1.4"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][1]["engines"] == ["dynamodb"]

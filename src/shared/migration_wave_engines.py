@@ -6,7 +6,7 @@ relational). Before this module existed, ``src.agents.referee.migration_waves``
 (the builder), ``src.report.renderers`` (the legacy on-the-fly fallback for
 reports written before #225) and ``src.report.pptx_report`` (deck accents)
 each kept their own hand-written copy of these sets, and nothing enforced
-that the copies stayed in sync -- see PR #315 review finding 12. Importing
+that the copies stayed in sync (#225). Importing
 from here instead means a new engine added to the rule only has to be added
 once.
 

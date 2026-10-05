@@ -39,6 +39,7 @@ from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.storage.parallel import map_parallel
 
 from . import escaping
+from .renderers import resolve_migration_waves
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +431,13 @@ def build_export_data(
 
     if "reality_check" not in report:
         report = {**report, "reality_check": _derive_reality_check(report)}
+    # One wave source (#225): the interactive report reads
+    # synthesis.migration_waves directly, so a report written before #225
+    # must get the same fallback roadmap resolve_migration_waves already
+    # gives the decision report, the engineering report, the deck and the
+    # /results API, not an empty one.
+    if not report.get("migration_waves"):
+        report = {**report, "migration_waves": resolve_migration_waves(report) or None}
 
     triage: dict | None = None
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"

@@ -63,7 +63,7 @@ class TestGetResults:
         assert response.status_code == 404
 
     def test_backfills_migration_waves_for_a_report_written_before_225(self, mock_services):
-        # PR #315 review finding 10: the UI (and the HTML exports, which read this
+        # #225: the UI (and the HTML exports, which read this
         # same payload) must show the same fallback roadmap the decision report
         # and engineering report already derive via resolve_migration_waves,
         # not an empty roadmap just because this report predates #225.

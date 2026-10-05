@@ -784,7 +784,13 @@ def render_decision_report_html(
     risk = report.get("risk_assessment") or {}
     tco = report.get("tco_analysis") or {}
     engines = _architecture_engines(report)
-    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target")
+    # #225 re-check item 5: prefer the schema-design-based figure (#257/#258)
+    # when it has one; fall back to the wave-table count (resolve_migration_waves,
+    # the same fallback the deck tile uses) only when that figure is 0, so this
+    # sentence can't disagree with the roadmap just below it on the same page.
+    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
+        w.get("table_count", 0) for w in resolve_migration_waves(report) if w.get("moves_from")
+    )
     risk_level = risk.get("overall_risk_level", "not assessed")
 
     out = [
@@ -876,12 +882,12 @@ def render_decision_report_html(
         note_bits = []
         if retained:
             note_bits.append(
-                f"<b>{', '.join(esc(x) for x in retained)}</b> is retained as the relational "
-                "core (source-compatible, no migration)."
+                f"<b>{', '.join(esc(display_engine(x)) for x in retained)}</b> is retained as "
+                "the relational core (source-compatible, no migration)."
             )
         search = [e for e in engines if e["role"] == SEARCH_READ_MODEL]
         if search:
-            names = ", ".join(esc(e["engine"]) for e in search)
+            names = ", ".join(esc(display_engine(e["engine"])) for e in search)
             note_bits.append(
                 f"<b>{names}</b> is a search read model: it serves its queries from data "
                 "synced from the engines that own those tables, holds no system-of-record "
@@ -892,8 +898,8 @@ def render_decision_report_html(
         if migr:
             note_bits.append(
                 f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned to "
-                f"{', '.join(esc(x) for x in migr)}; the per-engine costs above reconcile to the "
-                "projected total."
+                f"{', '.join(esc(display_engine(x)) for x in migr)}; the per-engine costs above "
+                "reconcile to the projected total."
             )
         if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in engines):
             note_bits.append(SHARED_TABLES_NOTE)
@@ -1102,7 +1108,7 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
 
 
 # The wave-specific engine buckets come from src/shared/migration_wave_engines.py
-# (PR #315 review finding 12), the same ones src.agents.referee.migration_waves
+# (#225), the same ones src.agents.referee.migration_waves
 # uses -- not the broader _CACHE_ENGINES/_RELATIONAL_ENGINES above (which also
 # recognize memorydb and generic aurora for whole-report role classification):
 # src/report never imports src/agents (clean layering), so both modules import
@@ -1157,9 +1163,12 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         ),
         None,
     )
-    # Best-effort raw source-engine key, for `fronts`/`moves_from` (findings 3/4):
+    # Best-effort raw source-engine key, for `fronts`/`moves_from` (#225):
     # report.json has no source_engine field, only the Aurora target it mapped to.
     source_engine = _RELATIONAL_TO_SOURCE_ENGINE.get(retained_engine or "")
+    front_label = (
+        display_source_database(source_engine) if source_engine else "the current source database"
+    )
 
     waves: list[dict[str, Any]] = []
 
@@ -1207,9 +1216,8 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "share_basis": share_basis,
                 "rationale": (
                     f"{n_cached} hot {plural_noun(n_cached, 'read')} "
-                    f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'the workload'}), "
-                    "cache-aside in front of the current source database "
-                    "(MySQL/PostgreSQL): no data migration, fully reversible."
+                    f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'query patterns'}), "
+                    f"cache-aside in front of {front_label}: no data migration, fully reversible."
                 ),
                 "gate": "Cache hit rate and invalidation verified against the source database.",
             }
@@ -1235,8 +1243,8 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
             "workload_share_percent": share,
             "share_basis": "queries",
             "rationale": (
-                f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of the "
-                f"workload) to {display_engine(engine)}."
+                f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of query "
+                f"patterns) to {display_engine(engine)}."
             ),
             "gate": "Query parity confirmed before the next wave.",
         }
@@ -1266,7 +1274,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         fallback_owner = retained_engine or source_engine
         lead_in = (
             f"{n} search/analytics {plural_noun(n, 'query', 'queries')} "
-            f"({fmt_num(share, 1)}% of the workload) build a read model in "
+            f"({fmt_num(share, 1)}% of query patterns) build a read model in "
             f"{display_engine(engine)}"
         )
         if tables:
@@ -1326,7 +1334,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                     "share_basis": "queries",
                     "rationale": (
                         f"{n} {plural_noun(n, 'query', 'queries')} ({fmt_num(share, 1)}% of "
-                        f"the workload) stay on {display_engine(retained_engine)}: a "
+                        f"query patterns) stay on {display_engine(retained_engine)}: a "
                         "homogeneous migration, schema carried over 1:1."
                     ),
                     "gate": "End state: every earlier wave's gate has passed.",
@@ -1348,12 +1356,12 @@ def _roadmap_html(report: dict[str, Any]) -> list[str]:
     for w in waves:
         names = ", ".join(esc(display_engine(e)) for e in w.get("engines") or [])
         n = int(w.get("query_count") or 0)
-        basis = "of calls" if w.get("share_basis") == "calls" else "of the workload"
+        basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
         share = fmt_num(w.get("workload_share_percent", 0), 1)
         tables = w.get("table_count") or 0
         table_bit = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
         # `names` is already escaped; escaping it again (via `esc(title or names)`) would
-        # double-escape it when the title is missing (review finding 13).
+        # double-escape it when the title is missing (#225).
         title_html = esc(w["title"]) if w.get("title") else names
         wave_no = esc(str(w.get("wave") or ""))
         out.append(
@@ -1367,16 +1375,30 @@ def _roadmap_html(report: dict[str, Any]) -> list[str]:
     return out
 
 
+# Readable labels for a TableGroup's "kind" (#225): the raw contract value is
+# snake_case for machine consumers, never shown verbatim to a reader.
+_GROUP_KIND_LABELS = {"co_dependency": "co-dependency", "independent": "independent"}
+
+
 def _roadmap_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Migration roadmap" section (#225): tables and queries per wave."""
     waves = resolve_migration_waves(report)
     if not waves:
         return []
     out = [f"## Migration roadmap ({len(waves)} {plural_noun(len(waves), 'wave')})", ""]
+    unresolved = report.get("unresolved_names") or {}
+    if unresolved.get("count"):
+        out.append(
+            f"*{unresolved['count']} table "
+            f"{plural_noun(unresolved['count'], 'name')} in the assignment could not be "
+            "resolved to the collected schema and are not shown in any wave (tracked "
+            "separately, #316).*"
+        )
+        out.append("")
     for w in waves:
         names = ", ".join(display_engine(e) for e in w.get("engines") or [])
         n = int(w.get("query_count") or 0)
-        basis = "of calls" if w.get("share_basis") == "calls" else "of the workload"
+        basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
         share = fmt_num(w.get("workload_share_percent", 0), 1)
         out += [
             f"### Wave {w.get('wave')}: {escaping.md_text(w.get('title') or names)}",
@@ -1397,7 +1419,8 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
                 g_tables = ", ".join(f"`{escaping.md_code(t)}`" for t in g_table_ids[:10])
                 more = f" (+{len(g_table_ids) - 10} more)" if len(g_table_ids) > 10 else ""
                 g_n = g.get("query_count", 0)
-                kind = f", {g['kind']}" if g.get("kind") else ""
+                kind_raw = _GROUP_KIND_LABELS.get(g.get("kind") or "", g.get("kind") or "")
+                kind = f", {escaping.md_text(kind_raw)}" if kind_raw else ""
                 out.append(
                     f"  - {g_n} {plural_noun(g_n, 'query', 'queries')}{kind}: {g_tables}{more}"
                 )
@@ -1412,6 +1435,17 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             out.append(
                 "- Synced from (durable owner): "
                 + ", ".join(escaping.md_text(display_engine(e)) for e in w["serves_from"])
+            )
+        owners = w.get("table_owners") or []
+        if owners:
+            shown_owners = ", ".join(
+                f"`{escaping.md_code(o['table'])}` -> {escaping.md_text(display_engine(o['owner']))} "
+                f"({escaping.md_text(o.get('sync', ''))})"
+                for o in owners[:15]
+            )
+            more = f" (+{len(owners) - 15} more)" if len(owners) > 15 else ""
+            out.append(
+                f"- {len(owners)} table {plural_noun(len(owners), 'owner')}: {shown_owners}{more}"
             )
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
         out.append(f"- Gate before the next wave: {escaping.md_text(w.get('gate') or '-')}")

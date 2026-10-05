@@ -112,7 +112,7 @@ describe('buildReportHtml ranking (#152)', () => {
     expect(cards[1]).toContain('60%');
     expect(cards[1]).toContain('Fit of routed queries');
     expect(cards[1]).toContain('Analysis average 2%');
-    // PR #315 review finding 11: owner shares are of query patterns, a
+    // #225: owner shares are of query patterns, a
     // different basis than the cache's share of calls -- label it as such.
     expect(doc.body.textContent).toContain('ranked by share of query patterns');
   });

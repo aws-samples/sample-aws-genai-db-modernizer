@@ -13,7 +13,7 @@ import { analysisConfidence, confidenceText, hasRoutedConfidence } from './ranki
 import { displayEngine } from './engineNames';
 
 // A wave with more tables than this shows "+N more" rather than every name
-// inline (PR #315 review finding 14 -- discourse wave 4 lists 226 tables).
+// inline (#225 -- discourse wave 4 lists 226 tables).
 const MAX_INLINE_TABLES = 20;
 
 const tablesSummary = (tables) => {
@@ -382,7 +382,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
           ${wave.query_count || 0} queries ·
           ${wave.share_basis === 'calls'
             ? html`${fixed(wave.workload_share_percent, 1, '0')}% of calls`
-            : html`${fixed(wave.workload_share_percent, 1, '0')}% of the workload`}
+            : html`${fixed(wave.workload_share_percent, 1, '0')}% of query patterns`}
           ${wave.table_count > 0 ? html` · ${wave.table_count} source tables` : ''}
         </div>
         <p>${wave.rationale}</p>

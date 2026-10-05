@@ -7,11 +7,13 @@ never system of record) -> document-shaped data (DocumentDB) -> whatever stays o
 the source-compatible relational engine, carried over 1:1, always last. Waves
 with nothing to move are skipped and the rest are numbered consecutively.
 
-PR #315 review findings covered here: 1 (OpenSearch durable ownership), 2
-(unresolved OpenSearch tables), 3 (cache fronts the source database), 4
-(moves_from is the source engine), 5 (known_tables filters parser noise), 6
-(retained wave carries unreferenced tables), 7 (cross-wave co-dependency gate),
-8 (distinct DynamoDB query-id counts per group), 11 (cache/owner share overlap).
+Covers #225: OpenSearch durable ownership, unresolved OpenSearch tables, the
+cache fronting the source database, moves_from being the source engine,
+known_tables filtering parser noise, the retained wave carrying unreferenced
+tables, cross-wave co-dependency gates (both directions), distinct
+DynamoDB-assigned query-id counts per group (every query counted in exactly
+one group, or in neither if it owns no table), and the cache/owner share
+overlap note.
 """
 
 from __future__ import annotations
@@ -139,11 +141,21 @@ class TestCacheWave:
         assert wave["moves_from"] == []
         assert wave["fronts"] == "mysql"
         assert wave["table_count"] == 0  # the cache owns no table, only hot reads
-        assert "in front of the current source database (MySQL/PostgreSQL)" in wave["rationale"]
+        # The actual source database is named (not the generic "(MySQL/PostgreSQL)").
+        assert "in front of the current source database (MySQL)" in wave["rationale"]
         front_sentence = wave["rationale"].split("no data migration")[0]
         assert "DynamoDB" not in front_sentence
         assert "no data migration" in wave["rationale"]
         assert "reversible" in wave["rationale"]
+
+    def test_cache_wave_names_postgresql_too(self):
+        wave = _build(source_engine="postgresql")[0]
+        assert "in front of the current source database (PostgreSQL)" in wave["rationale"]
+
+    def test_falls_back_to_generic_phrasing_without_a_known_source_engine(self):
+        wave = _build(source_engine="")[0]
+        assert "in front of the current source database" in wave["rationale"]
+        assert "(" not in wave["rationale"].split("in front of")[1].split(":")[0]
 
     def test_cache_overlap_note_names_the_owner_wave(self):
         # Finding 11: the cache share (of calls) and the owner shares (of query
@@ -203,6 +215,84 @@ class TestDynamoDbWave:
         wave = _build(query_assignments=query_assignments)[1]
         assert "wp_posts" in wave["gate"]
         assert "Aurora MySQL queries until wave 4" in wave["gate"]
+        assert "CDC" in wave["gate"]
+
+    def test_a_non_member_query_touching_group_tables_is_still_counted_in_it(self):
+        # #225: q6 is not a member of the co-dependency group [q1, q2], but it
+        # reads one of the group's tables (wp_posts) -- it must be counted in
+        # that group, not left out of every group's count.
+        query_assignments = [
+            *QUERY_ASSIGNMENTS,
+            {"query_id": "q6", "assigned_engine": "dynamodb", "source_tables": ["wp_posts"]},
+        ]
+        wave = _build(query_assignments=query_assignments)[1]
+        co_dep = next(g for g in wave["table_groups"] if g["kind"] == "co_dependency")
+        assert co_dep["query_count"] == 3  # q1, q2, q6
+
+    def test_a_query_touching_several_groups_goes_to_the_first_one(self):
+        # q7 touches both the co-dependency group's table (wp_posts) and the
+        # independent table (wp_comments): it is counted once, in the first
+        # bucket (by order) whose tables it touches -- never twice.
+        query_assignments = [
+            *QUERY_ASSIGNMENTS,
+            {
+                "query_id": "q7",
+                "assigned_engine": "dynamodb",
+                "source_tables": ["wp_posts", "wp_comments"],
+            },
+        ]
+        wave = _build(query_assignments=query_assignments)[1]
+        groups = wave["table_groups"]
+        co_dep = next(g for g in groups if g["kind"] == "co_dependency")
+        independent = next(g for g in groups if g["kind"] == "independent")
+        assert co_dep["query_count"] == 3  # q1, q2, q7
+        assert independent["query_count"] == 0
+        assert sum(g["query_count"] for g in groups) == 3
+
+    def test_group_counts_plus_queries_with_no_owned_table_equal_wave_query_count(self):
+        # #225: the group counts and the wave's own query_count must reconcile
+        # for a reader -- the gap is exactly the DynamoDB-assigned queries that
+        # touch none of DynamoDB's owned tables (resolvable elsewhere, or not
+        # resolvable at all).
+        query_assignments = [
+            *QUERY_ASSIGNMENTS,
+            # Reads only an Aurora-owned table: not in any DynamoDB group.
+            {"query_id": "q8", "assigned_engine": "dynamodb", "source_tables": ["wp_options"]},
+            # No resolvable table at all.
+            {"query_id": "q9", "assigned_engine": "dynamodb", "source_tables": ["unknown"]},
+        ]
+        ranking = [
+            {**r, "assigned_queries": 4} if r["target"] == "dynamodb" else r for r in RANKING
+        ]
+        wave = _build(ranking=ranking, query_assignments=query_assignments)[1]
+        owned = set(wave["tables"])
+        dynamo_qids_touching_owned = {
+            qa["query_id"]
+            for qa in query_assignments
+            if qa.get("assigned_engine") == "dynamodb"
+            and set(qa.get("source_tables") or []) & owned
+        }
+        no_owned_table = sum(
+            1 for qa in query_assignments if qa.get("assigned_engine") == "dynamodb"
+        ) - len(dynamo_qids_touching_owned)
+        assert (
+            sum(g["query_count"] for g in wave["table_groups"]) + no_owned_table
+            == wave["query_count"]
+        )
+        # And both halves of the gap are named in the gate, not just implied.
+        assert "wp_options" in wave["gate"]  # reverse: Aurora owns it, DynamoDB still reads it
+        assert "Aurora MySQL" in wave["gate"]
+        assert "1 query could not be resolved" in wave["gate"]
+
+    def test_reverse_dual_read_names_the_owner_and_its_wave(self):
+        # #225: the reverse of the existing forward case -- a table a LATER
+        # wave owns that a DynamoDB-assigned query still reads.
+        query_assignments = [
+            *QUERY_ASSIGNMENTS,
+            {"query_id": "q8", "assigned_engine": "dynamodb", "source_tables": ["wp_options"]},
+        ]
+        wave = _build(query_assignments=query_assignments)[1]
+        assert "1 query read 1 table (wp_options) Aurora MySQL owns (wave 4)" in wave["gate"]
         assert "CDC" in wave["gate"]
 
 

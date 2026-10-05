@@ -442,7 +442,7 @@
         (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });
         html += '</div>';
         html += '<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">' + escapeHtml(wave.title) + '</div>';
-        const basis = wave.share_basis === 'calls' ? '% of calls' : '% of the workload';
+        const basis = wave.share_basis === 'calls' ? '% of calls' : '% of query patterns';
         let stats = (wave.query_count || 0) + ' queries · ' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;
         if (wave.table_count) stats += ' · ' + wave.table_count + ' source tables';
         html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';

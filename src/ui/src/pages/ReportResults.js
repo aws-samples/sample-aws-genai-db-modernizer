@@ -35,7 +35,7 @@ import { analysisConfidence, confidenceAlertText, confidenceText, hasRoutedConfi
 import { displayEngine } from "../utils/engineNames";
 
 // A wave with more tables than this shows "+N more" rather than every name
-// (PR #315 review finding 14 -- discourse wave 4 lists 226 tables).
+// (#225 -- discourse wave 4 lists 226 tables).
 const MAX_INLINE_ROADMAP_TABLES = 20;
 
 

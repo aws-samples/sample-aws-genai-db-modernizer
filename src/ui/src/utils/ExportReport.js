@@ -623,7 +623,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });\n';
   script += '        html += \'</div>\';\n';
   script += '        html += \'<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">\' + escapeHtml(wave.title) + \'</div>\';\n';
-  script += '        const basis = wave.share_basis === \'calls\' ? \'% of calls\' : \'% of the workload\';\n';
+  script += '        const basis = wave.share_basis === \'calls\' ? \'% of calls\' : \'% of query patterns\';\n';
   script += '        let stats = (wave.query_count || 0) + \' queries · \' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;\n';
   script += '        if (wave.table_count) stats += \' · \' + wave.table_count + \' source tables\';\n';
   script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';

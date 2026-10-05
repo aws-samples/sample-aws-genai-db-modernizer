@@ -34,7 +34,7 @@ async def get_results(job_id: str):
     if not synthesis:
         raise HTTPException(status_code=404, detail="Results not available yet")
 
-    # One wave source (#225 review finding 10): the UI and the HTML exports it
+    # One wave source (#225): the UI and the HTML exports it
     # feeds (ReportHtmlExport.js, ExportReport.js) read this same payload, so a
     # report written before #225 must show the same fallback roadmap the
     # decision report and engineering report already derive, not an empty one.

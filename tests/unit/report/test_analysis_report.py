@@ -248,6 +248,30 @@ def test_existing_reality_check_is_left_alone():
 
 
 # ---------------------------------------------------------------------------
+# migration_waves backfill (#225 re-check item 4): a report synthesized
+# before #225 has no migration_waves at all, so the interactive report must
+# fall back to the same roadmap the decision report, engineering report, deck
+# and /results API already derive via resolve_migration_waves -- not render
+# no roadmap at all, which broke the "deliverables agree" invariant.
+# ---------------------------------------------------------------------------
+
+
+def test_migration_waves_is_backfilled_when_absent():
+    data = ar.build_export_data(FakeStore(_objects()), JOB, DB)
+    waves = data["results"]["synthesis"]["migration_waves"]
+    assert waves
+    assert [w["engines"] for w in waves] == [["elasticache"], ["dynamodb"]]
+
+
+def test_existing_migration_waves_is_left_alone():
+    stored = [{"wave": 1, "engines": ["elasticache"], "moves_from": [], "serves_from": []}]
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(migration_waves=stored)
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    assert data["results"]["synthesis"]["migration_waves"] == stored
+
+
+# ---------------------------------------------------------------------------
 # Journeys, projection, budget — Defects 4 and 5
 # ---------------------------------------------------------------------------
 

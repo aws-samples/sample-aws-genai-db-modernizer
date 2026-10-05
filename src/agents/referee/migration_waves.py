@@ -15,9 +15,14 @@ model may explain a wave, it never decides the sequence:
    respecting co-dependency groups (queries sharing a significant JOIN,
    ``assignment.co_dependency_groups``): a group that touches a DynamoDB table
    moves as one group, so co-dependent tables never split across groups where
-   that is possible. A table a co-dependency group could not keep whole (an
-   Aurora-routed query elsewhere still reads it) says so in this wave's gate,
-   naming the dual-read requirement and the wave the group finishes in.
+   that is possible. Every DynamoDB-assigned query that touches an owned table
+   is counted in exactly one group (the first whose tables it touches); a
+   query touching none of DynamoDB's own tables is not in any group. A table
+   this wave's queries still share with another wave, in either direction
+   (another engine's query still reading a table DynamoDB owns, or a
+   DynamoDB-assigned query still reading a table another wave owns), says so
+   in this wave's gate, naming the dual-read requirement and the wave it
+   resolves in.
 3. **Any other direct migration target** this rule does not otherwise name
    (forward compatible with an engine added later), ordered by workload share.
 4. **Search / analytics read models -> OpenSearch.** OpenSearch never owns a
@@ -55,7 +60,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.migration_wave_engines import (
     CACHE_ENGINES,
     DOCUMENT_ENGINES,
@@ -68,7 +73,7 @@ from src.shared.migration_wave_engines import (
 # Pseudo "tables" a parser or the dialect itself introduces (MySQL's dummy
 # ``DUAL`` target, a column a parser mistook for a table). They are not source
 # tables, so a wave never claims to move them. Public: synthesis reuses this to
-# record ``unresolved_names`` (#225 review finding 5) without re-deriving it.
+# record ``unresolved_names`` (#225) without re-deriving it.
 PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
 
 
@@ -85,9 +90,9 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
 
     ``primary_engine`` is used unless it is a read-model (search) engine, in
     which case the first non-search engine in ``engines`` takes over, and
-    failing that the source-compatible retained engine (review finding 1):
-    OpenSearch is a read model only, so every table it serves must resolve to
-    a real owner, never itself.
+    failing that the source-compatible retained engine (#225): OpenSearch is
+    a read model only, so every table it serves must resolve to a real
+    owner, never itself.
     """
     primary = table.get("primary_engine")
     engines = table.get("engines") or ([primary] if primary else [])
@@ -102,7 +107,7 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
 def _owned_tables(
     engine: str, table_assignments: list[dict[str, Any]], retained_engine: str | None
 ) -> list[dict[str, Any]]:
-    """Tables ``engine`` durably owns (the corrected ``primary_engine``, finding 1)."""
+    """Tables ``engine`` durably owns (the corrected ``primary_engine``, #225)."""
     return [t for t in table_assignments if _durable_owner(t, retained_engine) == engine]
 
 
@@ -130,21 +135,25 @@ def _dynamodb_table_groups(
 ) -> list[dict[str, Any]]:
     """DynamoDB's tables, table group by table group, respecting co-dependency groups.
 
-    A co-dependency group (queries sharing a significant JOIN) that touches at
-    least one DynamoDB-assigned query against one of DynamoDB's tables becomes
-    one group (``kind: "co_dependency"``), named by its tables, with the count
-    of *distinct DynamoDB-assigned query IDs* that touch it (review finding 8
-    — not ``TableAssignment.query_count``, which double-counts a multi-table
-    query and counts every engine's queries, not just DynamoDB's). Every
-    DynamoDB table that is not part of any co-dependency group forms one final
-    group of independent tables (``kind: "independent"``, finding 7).
-    Deterministic: groups are visited in the order ``co_dependency_groups``
-    lists them, tables within a group are sorted.
+    Two phases, both deterministic. First, a co-dependency group's *member*
+    queries decide its table membership: a co-dependency group (queries
+    sharing a significant JOIN) that has a DynamoDB-assigned member query
+    touching one of DynamoDB's tables becomes one group (``kind:
+    "co_dependency"``), named by its tables. Every DynamoDB table left over
+    forms one final group of independent tables (``kind: "independent"``).
+    Second, every DynamoDB-assigned query that touches an owned table — not
+    just a group's member queries — is counted in exactly one group: the
+    first one (in this order) whose tables it touches (#225). A query
+    touching none of DynamoDB's own tables is counted in no group; the
+    caller surfaces that count separately (``_table_group_coverage_note``),
+    so ``sum(group query_count) + that count == the wave's query_count``.
+    Groups are visited in the order ``co_dependency_groups`` lists them;
+    tables within a group are sorted.
     """
     dynamo_tables = {str(t["table_id"]) for t in rows if t.get("table_id")}
     if not dynamo_tables:
         return []
-    by_qid = {qa.get("query_id"): qa for qa in query_assignments}
+    by_qid = {str(qa.get("query_id")): qa for qa in query_assignments}
     dynamo_qids = {
         qid
         for qid, qa in by_qid.items()
@@ -152,7 +161,10 @@ def _dynamodb_table_groups(
         and set(qa.get("source_tables") or []) & dynamo_tables
     }
 
-    groups: list[dict[str, Any]] = []
+    # Phase 1: a co-dependency group's table membership, from its own member
+    # queries only -- the group's "shape" does not depend on which other,
+    # non-member queries happen to touch the same tables.
+    bucket_tables: list[set[str]] = []
     grouped_tables: set[str] = set()
     for group in co_dependency_groups:
         qids = set(group) & dynamo_qids
@@ -163,63 +175,127 @@ def _dynamodb_table_groups(
             tables |= set(by_qid[qid].get("source_tables") or []) & dynamo_tables
         if not tables:
             continue
+        bucket_tables.append(tables)
         grouped_tables |= tables
-        groups.append({"tables": sorted(tables), "query_count": len(qids), "kind": "co_dependency"})
 
+    kinds = ["co_dependency"] * len(bucket_tables)
     remaining = dynamo_tables - grouped_tables
     if remaining:
-        remaining_qids = {
-            qid for qid in dynamo_qids if set(by_qid[qid].get("source_tables") or []) & remaining
-        }
-        groups.append(
-            {"tables": sorted(remaining), "query_count": len(remaining_qids), "kind": "independent"}
-        )
-    return groups
+        bucket_tables.append(remaining)
+        kinds.append("independent")
+
+    # Phase 2: every DynamoDB-assigned query that touches an owned table goes
+    # to the first bucket (in this order) whose tables it touches -- not just
+    # a co-dependency group's own members (#225: this was the counting bug).
+    bucket_qids: list[set[str]] = [set() for _ in bucket_tables]
+    for qid in dynamo_qids:
+        q_tables = set(by_qid[qid].get("source_tables") or []) & dynamo_tables
+        for i, tables in enumerate(bucket_tables):
+            if q_tables & tables:
+                bucket_qids[i].add(qid)
+                break
+
+    return [
+        {"tables": sorted(tables), "query_count": len(qids), "kind": kind}
+        for tables, qids, kind in zip(bucket_tables, bucket_qids, kinds, strict=True)
+    ]
 
 
-def _cross_wave_note(
+def _table_group_coverage_note(
     dynamo_tables: set[str],
+    table_assignments: list[dict[str, Any]],
     query_assignments: list[dict[str, Any]],
     dynamo_engine: str,
+    retained_engine: str | None,
     engine_wave_number: dict[str, int],
 ) -> str:
-    """Gate addendum when a DynamoDB table is still read by another wave's queries.
+    """Gate addendum for both directions of cross-wave co-dependency, plus the
+    count of DynamoDB-assigned queries whose table groups don't cover them.
 
-    Detects a co-dependency the DynamoDB wave could not keep whole (review
-    finding 7): a table it owns that a query assigned to a *different* engine
-    still reads. Returns the empty string when every DynamoDB table is read
-    only by DynamoDB-assigned queries.
+    Forward: a table DynamoDB owns that another wave's queries still read.
+    Reverse: a table another wave owns that a DynamoDB-assigned query still
+    reads (#225 — the previous version only covered the forward direction).
+    Also counts DynamoDB-assigned queries that touch none of DynamoDB's own
+    tables, so a reader can reconcile the table groups' total against the
+    wave's ``query_count`` instead of being left with an unexplained gap.
     """
-    tables_by_engine: dict[str, set[str]] = {}
+    by_table = {str(t["table_id"]): t for t in table_assignments if t.get("table_id")}
+
+    # Forward: DynamoDB's own tables, still read by a non-DynamoDB query.
+    forward: dict[str, set[str]] = {}
     for qa in query_assignments:
         other = qa.get("assigned_engine")
         if not other or other == dynamo_engine:
             continue
         hit = set(qa.get("source_tables") or []) & dynamo_tables
         if hit:
-            tables_by_engine.setdefault(other, set()).update(hit)
-    if not tables_by_engine:
-        return ""
+            forward.setdefault(other, set()).update(hit)
 
-    all_tables: set[str] = set()
+    # Reverse: a DynamoDB-assigned query that reads a table some other engine
+    # durably owns, and the count of queries resolving to no owner at all.
+    reverse_tables: dict[str, set[str]] = {}
+    reverse_queries: dict[str, set[str]] = {}
+    no_owned_table = 0
+    for qa in query_assignments:
+        if qa.get("assigned_engine") != dynamo_engine:
+            continue
+        tables = set(qa.get("source_tables") or [])
+        if tables & dynamo_tables:
+            continue  # already counted in a table group
+        other_tables = [by_table[t] for t in tables if t in by_table]
+        if not other_tables:
+            no_owned_table += 1
+            continue
+        matched = False
+        for t_row in other_tables:
+            owner = _durable_owner(t_row, retained_engine)
+            if owner and owner != dynamo_engine:
+                reverse_tables.setdefault(owner, set()).add(str(t_row["table_id"]))
+                reverse_queries.setdefault(owner, set()).add(str(qa.get("query_id")))
+                matched = True
+        if not matched:
+            no_owned_table += 1
+
     clauses: list[str] = []
-    for other in sorted(tables_by_engine, key=lambda e: (-len(tables_by_engine[e]), e)):
-        tables = tables_by_engine[other]
-        all_tables |= tables
-        wave_no = engine_wave_number.get(other)
-        wave_text = f"wave {wave_no}" if wave_no else "a later wave"
-        clauses.append(f"{display_engine(other)} queries until {wave_text}")
-    n = len(all_tables)
-    tables_list = ", ".join(sorted(all_tables))
-    return (
-        f" {n} {_plural(n, 'table')} ({tables_list}) stay dual-read by "
-        + "; and by ".join(clauses)
-        + "; keep them in sync via CDC until then."
-    )
+    if forward:
+        all_tables: set[str] = set()
+        parts = []
+        for other in sorted(forward, key=lambda e: (engine_wave_number.get(e) or 999, e)):
+            tables = forward[other]
+            all_tables |= tables
+            wave_no = engine_wave_number.get(other)
+            wave_text = f"wave {wave_no}" if wave_no else "a later wave"
+            parts.append(f"{display_engine(other)} queries until {wave_text}")
+        n = len(all_tables)
+        tables_list = ", ".join(sorted(all_tables))
+        clauses.append(
+            f"{n} {_plural(n, 'table')} ({tables_list}) stay dual-read by "
+            + ", ".join(parts)
+            + "; keep them in sync via CDC until then."
+        )
+    if reverse_tables:
+        for other in sorted(reverse_tables, key=lambda e: (engine_wave_number.get(e) or 999, e)):
+            owned_table_list = sorted(reverse_tables[other])
+            n_t = len(owned_table_list)
+            n_q = len(reverse_queries.get(other, set()))
+            wave_no = engine_wave_number.get(other)
+            wave_text = f"wave {wave_no}" if wave_no else "a later wave"
+            clauses.append(
+                f"{n_q} {_plural(n_q, 'query').replace('querys', 'queries')} read {n_t} "
+                f"{_plural(n_t, 'table')} ({', '.join(owned_table_list)}) {display_engine(other)} "
+                f"owns ({wave_text}); keep a copy in sync via CDC until then."
+            )
+    if no_owned_table:
+        clauses.append(
+            f"{no_owned_table} {_plural(no_owned_table, 'query').replace('querys', 'queries')} "
+            "could not be resolved to a table in either wave and are not counted in any "
+            "table group."
+        )
+    return (" " + " ".join(clauses)) if clauses else ""
 
 
 def _cache_overlap_note(cache_overlay: dict[str, Any], engine_wave_number: dict[str, int]) -> str:
-    """Says which wave(s) the cache's owner engines move in (review finding 11).
+    """Says which wave(s) the cache's owner engines move in (#225).
 
     The cache's share is of calls, the owner shares are of query patterns; a
     reader seeing both needs to know they measure different things and that
@@ -249,6 +325,14 @@ def _cache_wave(cache_overlay: dict[str, Any] | None, source_engine: str) -> dic
     engine = cache_overlay["engine"]
     share = round(float(cache_overlay.get("call_share_percent") or 0.0), 1)
     read = _plural(n, "read")
+    # Name the actual source database when it is known; only a report with no
+    # recognized source engine falls back to the generic phrasing (#225).
+    source_name = SOURCE_ENGINE_DISPLAY_NAMES.get(source_engine)
+    front = (
+        f"the current source database ({source_name})"
+        if source_name
+        else "the current source database"
+    )
     return {
         "title": f"Cache hot reads with {display_engine(engine)}",
         "engines": [engine],
@@ -262,10 +346,9 @@ def _cache_wave(cache_overlay: dict[str, Any] | None, source_engine: str) -> dic
         "workload_share_percent": share,
         "share_basis": "calls",
         "rationale": (
-            f"{n} hot {read} ({share:.1f}% of calls), cache-aside in front of the current "
-            "source database (MySQL/PostgreSQL): no data migration, fully reversible. It "
-            "takes the read pressure off the source database first, de-risking the data "
-            "migrations that follow."
+            f"{n} hot {read} ({share:.1f}% of calls), cache-aside in front of {front}: no "
+            "data migration, fully reversible. It takes the read pressure off the source "
+            "database first, de-risking the data migrations that follow."
         ),
         "gate": (
             "Cache hit rate and invalidation verified against the source database; the source "
@@ -304,7 +387,7 @@ def _kv_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} key-value and point-lookup {query} ({share:.1f}% of the workload) across "
+            f"{n} key-value and point-lookup {query} ({share:.1f}% of query patterns) across "
             f"{n_groups} table {group}, respecting co-dependent tables where possible: the "
             f"pattern {display_engine(engine)} fits best, and the smallest-blast-radius data "
             "migration available once Wave 1's cache has absorbed the read pressure."
@@ -338,7 +421,7 @@ def _other_target_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} {query} ({share:.1f}% of the workload) to {display_engine(engine)}, the "
+            f"{n} {query} ({share:.1f}% of query patterns) to {display_engine(engine)}, the "
             "migration target the earlier waves do not already cover."
         ),
         "gate": "Query parity confirmed before the next wave.",
@@ -370,7 +453,7 @@ def _document_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} document-shaped {query} ({share:.1f}% of the workload) to "
+            f"{n} document-shaped {query} ({share:.1f}% of query patterns) to "
             f"{display_engine(engine)}, kept as an owner engine for its nested, variable-shape "
             "tables."
         ),
@@ -411,7 +494,7 @@ def _search_wave(
             "workload_share_percent": share,
             "share_basis": "queries",
             "rationale": (
-                f"{n} search/analytics {query} ({share:.1f}% of the workload) build a read "
+                f"{n} search/analytics {query} ({share:.1f}% of query patterns) build a read "
                 f"model in {display_engine(engine)}. The indexed tables could not be resolved "
                 "from the SQL, so until the OpenSearch index/mapping definitions are audited "
                 f"directly, {owner_label} is treated as the owner of record."
@@ -445,7 +528,7 @@ def _search_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} search/analytics {query} ({share:.1f}% of the workload) build a read model "
+            f"{n} search/analytics {query} ({share:.1f}% of query patterns) build a read model "
             f"in {display_engine(engine)}, kept in sync (zero-ETL, OpenSearch Ingestion or CDC "
             f"per table) from {owner_names}, which keep durable ownership: every table it "
             f"serves still has an owner. {display_engine(engine)} never becomes the system of "
@@ -473,8 +556,8 @@ def _retained_wave(
     query = _plural(n, "query").replace("querys", "queries")
     tables = sorted(set(_table_ids(rows)) | set(uncovered))
     extra = (
-        f" plus {len(uncovered)} collected {_plural(len(uncovered), 'table')} with no observed "
-        "query, carried over 1:1, no observed queries"
+        f" Plus {len(uncovered)} collected {_plural(len(uncovered), 'table')} with no observed "
+        "query — carried over 1:1 as part of the same migration."
         if uncovered
         else ""
     )
@@ -490,10 +573,10 @@ def _retained_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} {query} ({share:.1f}% of the workload) stay on {display_engine(engine)}: a "
+            f"{n} {query} ({share:.1f}% of query patterns) stay on {display_engine(engine)}: a "
             "homogeneous migration, schema carried over 1:1 (snapshot or replication) — it is "
             "already source-compatible, so it is the lowest-risk engine to finish the roadmap "
-            f"on{extra}."
+            f"on.{extra}"
         ),
         "gate": (
             "End state: every earlier wave's gate has passed; decommission the legacy source "
@@ -520,15 +603,15 @@ def build_migration_waves(
     no model call, so the same inputs always produce the same waves. See the
     module docstring for the sequencing rule.
 
-    ``known_tables``, when given, is synthesis's own set of tables and views
-    the collector actually saw (review finding 5): a ``table_assignments`` row
-    whose ``table_id`` is not in it (a parser artifact — a CTE alias, a
-    keyword, a system catalog name; tracked separately, #316) never reaches a
-    wave. The retained wave then also carries every table in ``known_tables``
-    that has no row at all here (no observed query) — review finding 6 — so
-    wave table counts add up to the collected schema. ``None`` skips both: no
-    filtering, no unreferenced-table accounting (back-compat for a caller that
-    cannot supply the collected schema).
+    ``known_tables``, when given, is the caller's set of tables and views the
+    collector actually saw (#225): a ``table_assignments`` row whose
+    ``table_id`` is not in it (a parser artifact — a CTE alias, a keyword, a
+    system catalog name; tracked separately, #316) never reaches a wave. The
+    retained wave then also carries every table in ``known_tables`` that has
+    no row at all here (no observed query), so wave table counts add up to
+    the collected schema. ``None`` skips both: no filtering, no
+    unreferenced-table accounting (back-compat for a caller that cannot
+    supply the collected schema).
     """
     if not ranking:
         return None
@@ -610,8 +693,13 @@ def build_migration_waves(
 
     for w in waves:
         if w["engines"] and w["engines"][0] in KV_ENGINES and w.get("table_groups"):
-            note = _cross_wave_note(
-                set(w["tables"]), query_assignments, w["engines"][0], engine_wave_number
+            note = _table_group_coverage_note(
+                set(w["tables"]),
+                table_assignments,
+                query_assignments,
+                w["engines"][0],
+                retained_engine,
+                engine_wave_number,
             )
             if note:
                 w["gate"] = w["gate"] + note

@@ -53,7 +53,7 @@ def display_engine(engine: str) -> str:
 # The collector's raw source-engine key (``source_database_engine``), lower-cased --
 # distinct from ENGINE_DISPLAY_NAMES, which only names synthesis's target engines.
 # A plain ``display_engine("mysql")`` fallback would title-case to "Mysql", so these
-# get their own, correctly-cased names (PR #315 review finding 4).
+# get their own, correctly-cased names (#225).
 SOURCE_ENGINE_DISPLAY_NAMES: dict[str, str] = {
     "mysql": "MySQL",
     "mariadb": "MariaDB",
@@ -67,7 +67,7 @@ def display_source_database(engine: str) -> str:
 
     Used wherever a migration wave's ``moves_from`` is rendered: data always
     moves from the current source database, never from the end-state Aurora
-    engine it has not reached yet (PR #315 review finding 4).
+    engine it has not reached yet (#225).
     """
     name = SOURCE_ENGINE_DISPLAY_NAMES.get(engine, display_engine(engine))
     return f"the source {name} database"

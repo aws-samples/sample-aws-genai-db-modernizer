@@ -137,6 +137,16 @@ def run_synthesis_deterministic(
     cache_overlay = build_cache_overlay(data)
     assignment = data.assignment or {}
     raw_table_assignments = assignment.get("table_assignments") or []
+    # #225: a wave is scoped to tables *and views* the collector saw. ``known_tables``
+    # itself stays table-only (unchanged) so the summary grounding check (#205) and
+    # engine_table_scope above are unaffected -- views are a wave-only concern, added
+    # to a copy used only here.
+    view_ids = {
+        str(v["view_id"])
+        for v in (data.collector.get("database_schema", {}) or {}).get("views") or []
+        if v.get("view_id")
+    }
+    wave_known_tables = set(known_tables) | view_ids
     migration_waves = build_migration_waves(
         ranking=ranking,
         table_assignments=raw_table_assignments,
@@ -144,20 +154,21 @@ def run_synthesis_deterministic(
         co_dependency_groups=assignment.get("co_dependency_groups") or [],
         cache_overlay=cache_overlay,
         source_engine=source_database_engine(data.collector),
-        # #225 review finding 5: scope waves to tables/views the collector actually
-        # saw, so a parser artifact (CTE alias, keyword, system catalog name) never
-        # reaches a wave. The upstream noise in table_assignments itself is #316.
-        known_tables=known_tables,
+        # #225: scope waves to tables/views the collector actually saw, so a parser
+        # artifact (CTE alias, keyword, system catalog name) never reaches a wave.
+        # The upstream noise in table_assignments itself is #316.
+        known_tables=wave_known_tables,
     )
-    # Review finding 5: record (not fix — that is #316) how many table_assignments
-    # names were dropped as noise, for transparency.
+    # #225: record (not fix -- that is #316) how many table_assignments names were
+    # dropped as noise, for transparency. Diffed against the same wave_known_tables
+    # the builder used, so a view does not get double-counted as "unresolved".
     _unresolved = sorted(
         {
             str(t["table_id"])
             for t in raw_table_assignments
             if t.get("table_id")
             and str(t["table_id"]) not in PSEUDO_TABLES
-            and str(t["table_id"]) not in known_tables
+            and str(t["table_id"]) not in wave_known_tables
         }
     )
     unresolved_names = {"count": len(_unresolved), "names": _unresolved}
@@ -248,7 +259,7 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     query groups and capabilities, plus the eliminated engines, together with the
     rule that every engine/table claim must match it (#205).
 
-    ``migration_waves`` (#225 review finding 12) is passed in as read-only facts:
+    ``migration_waves`` (#225) is passed in as read-only facts:
     the sequence is one deterministic rule, never a model's choice, but a
     narrative that silently assumes a different sequence than the one synthesis
     already computed would be ungrounded. The LLM may explain a wave; it does
@@ -352,8 +363,7 @@ def _write_synthesis_report(
         "assignment_summary": result["assignment_summary"],
         "cache_overlay": result.get("cache_overlay"),
         "migration_waves": result.get("migration_waves"),
-        # Extra field (SynthesisOutputContract allows extras): #225 review finding 5,
-        # how many table_assignments names the waves dropped as parser noise.
+        # #225: how many table_assignments names the waves dropped as parser noise.
         "unresolved_names": result.get("unresolved_names"),
     }
     if result.get("reality_check_summary"):

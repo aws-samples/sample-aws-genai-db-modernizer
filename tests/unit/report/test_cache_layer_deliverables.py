@@ -149,7 +149,10 @@ class TestDeck:
             "Wave 1 puts the cache layer for 20 hot reads (83.4% of calls) in front of the "
             "current source database, with no data migration"
         ) in text
-        assert "cache-aside in front of the current source database (MySQL/PostgreSQL)" in text
+        # This fixture has no relational engine in ranking, so the source engine
+        # can't be inferred and the sentence falls back to the generic phrasing
+        # rather than naming a database (#225 re-check item 8).
+        assert "cache-aside in front of the current source database" in text
         assert "Cache hit rate and invalidation verified against the source database" in text
         assert "ElastiCache caches 20 hot reads (83.4% of calls) and owns none of the workload" in (
             text
@@ -270,7 +273,7 @@ class TestSearchReadModel:
     def test_decision_report_never_calls_it_the_relational_core(self):
         html = render_decision_report_html(_discourse_shape())
         assert "retained as the relational core" not in html
-        assert "<b>opensearch</b> is a search read model" in html
+        assert "<b>OpenSearch</b> is a search read model" in html
         assert "source schema retained" not in html
 
     def test_wave_plan_puts_it_after_its_owners_never_in_the_no_migration_wave(self):
@@ -285,7 +288,7 @@ class TestSearchReadModel:
         assert opensearch_wave is not f["waves"][0]
         assert all("opensearch" not in w for w in waves[:1])
         # This fixture has no table_mappings, so the indexed tables cannot be
-        # resolved -- review finding 2's fallback: say so, and fall back to the
+        # resolved -- #225's fallback: say so, and fall back to the
         # retained engine as the owner of record rather than showing no owner.
         assert "could not be resolved" in opensearch_wave["note"]
         assert "Aurora PostgreSQL" in opensearch_wave["note"]

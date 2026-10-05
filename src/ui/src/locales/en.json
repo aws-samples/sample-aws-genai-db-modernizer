@@ -899,7 +899,7 @@
   "report-results.roadmap.wave-label": "Wave {{number}}",
   "report-results.roadmap.query-count_one": "{{count}} query",
   "report-results.roadmap.query-count_other": "{{count}} queries",
-  "report-results.roadmap.workload-share": "{{percent}}% of the workload",
+  "report-results.roadmap.workload-share": "{{percent}}% of query patterns",
   "report-results.roadmap.calls-share": "{{percent}}% of calls",
   "report-results.roadmap.table-count_one": "{{count}} source table",
   "report-results.roadmap.table-count_other": "{{count}} source tables",

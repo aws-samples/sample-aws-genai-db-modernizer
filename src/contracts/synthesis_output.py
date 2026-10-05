@@ -33,18 +33,18 @@ Version History:
   source-compatible relational engine). Each wave carries its engines, the
   tables and queries it moves (and from/to which engine), its share of the
   workload or of calls, the ordering rationale and the gate before the next
-  wave. ``None`` for a report synthesized before this field existed; every
-  deliverable falls back to deriving the same shape itself. Backward
-  compatible — defaults to ``None``.
-- 1.5 (2026-10-04): PR #315 review fixes. ``MigrationWave`` gained ``fronts``
-  (the cache wave's fronted source engine; ``moves_from`` is now always empty
-  for the cache, and the source engine rather than the end-state engine for
-  every other wave) and ``table_owners`` (a search/analytics read-model
-  wave's per-table durable owner and sync pattern). ``table_groups`` is now
-  typed ``list[TableGroup]`` (``tables``, ``query_count`` as distinct
-  DynamoDB-assigned query IDs, ``kind``: ``co_dependency`` or
-  ``independent``) instead of untyped dicts. All new fields are optional and
-  default to ``None``/empty, so an older ``migration_waves`` still loads.
+  wave; the cache wave's fronted source engine (``fronts``, ``moves_from``
+  always empty for the cache, the source engine rather than the end-state
+  engine for every other wave); and a search/analytics read-model wave's
+  per-table durable owner and sync pattern (``table_owners``).
+  ``table_groups`` is typed ``list[TableGroup]`` (``tables``, ``query_count``
+  as distinct DynamoDB-assigned query IDs, ``kind``: ``co_dependency`` or
+  ``independent``), not untyped dicts. Also added optional
+  ``unresolved_names`` (#316): the count and names of ``table_assignments``
+  rows a wave dropped as parser noise (not in the collected schema).
+  Everything here is ``None``/empty for a report synthesized before this
+  field existed; every deliverable falls back to deriving the same roadmap
+  shape itself. Backward compatible.
 """
 
 from datetime import datetime
@@ -192,12 +192,12 @@ class AssignmentSummary(BaseModel):
 
 
 class TableGroup(BaseModel):
-    """One DynamoDB table group within a wave (#225 review finding 15).
+    """One DynamoDB table group within a wave (#225).
 
     Either a co-dependency group (queries sharing a significant JOIN,
     ``assignment.co_dependency_groups``) that touches at least one of this
     wave's tables, or the remainder of tables that belong to no such group
-    (``kind: "independent"``, review finding 7).
+    (``kind: "independent"``).
     """
 
     tables: list[str] = Field(..., description="Tables in this group")
@@ -206,8 +206,8 @@ class TableGroup(BaseModel):
         ge=0,
         description=(
             "Distinct DynamoDB-assigned query IDs touching this group's tables "
-            "(review finding 8 — not every engine's query count, and not double-"
-            "counted for a multi-table query)"
+            "(#225 — not every engine's query count, and not double-counted "
+            "for a multi-table query)"
         ),
     )
     kind: Literal["co_dependency", "independent"] | None = Field(
@@ -231,6 +231,15 @@ class TableOwner(BaseModel):
     )
 
 
+class UnresolvedNames(BaseModel):
+    """``table_assignments`` rows the migration-waves builder dropped as parser
+    noise -- not in the collected schema's tables or views (#225). The parser
+    issue that produces this noise is tracked separately (#316)."""
+
+    count: int = Field(..., ge=0, description="Number of dropped names")
+    names: list[str] = Field(default_factory=list, description="The dropped names, sorted")
+
+
 class MigrationWave(BaseModel):
     """One step of the incremental migration roadmap (#225).
 
@@ -252,7 +261,7 @@ class MigrationWave(BaseModel):
         description=(
             "The source engine(s) (e.g. 'mysql') this wave's tables/queries move away "
             "from, if any -- always the current source database, never an end-state "
-            "engine an earlier wave has not reached yet (review finding 4)"
+            "engine an earlier wave has not reached yet (#225)"
         ),
     )
     serves_from: list[str] = Field(
@@ -260,7 +269,7 @@ class MigrationWave(BaseModel):
         description=(
             "For a read-model wave only: the owner engine(s) it syncs from and never "
             "replaces as the system of record. Falls back to the retained/source engine "
-            "when the indexed tables could not be resolved from the SQL (review finding 2)"
+            "when the indexed tables could not be resolved from the SQL (#225)"
         ),
     )
     fronts: str | None = Field(
@@ -268,20 +277,20 @@ class MigrationWave(BaseModel):
         description=(
             "Cache wave only: the source engine (e.g. 'mysql') it fronts. The cache "
             "always moves no data (moves_from is empty); this is the fronted engine "
-            "(review finding 3)"
+            "(#225)"
         ),
     )
     tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
     table_count: int = Field(..., ge=0, description="Number of source tables this wave covers")
     table_groups: list[TableGroup] | None = Field(
         None,
-        description="DynamoDB wave only: tables grouped table group by table group (review finding 15)",
+        description="DynamoDB wave only: tables grouped table group by table group (#225)",
     )
     table_owners: list[TableOwner] | None = Field(
         None,
         description=(
             "Search/analytics read-model wave only: each served table's durable owner "
-            "and sync pattern (review finding 1)"
+            "and sync pattern (#225)"
         ),
     )
     query_count: int = Field(..., ge=0, description="Number of queries this wave covers")
@@ -309,7 +318,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.5",
+        default="1.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -370,6 +379,14 @@ class SynthesisOutputContract(BaseModel):
             "Incremental migration roadmap (#225), computed deterministically from the "
             "assignment. None for a report synthesized before this field existed; every "
             "deliverable then falls back to deriving the same shape itself."
+        ),
+    )
+    unresolved_names: UnresolvedNames | None = Field(
+        None,
+        description=(
+            "Count and names of table_assignments rows the migration-waves builder "
+            "dropped as parser noise -- not in the collected schema's tables/views "
+            "(#225). The parser issue itself is tracked separately (#316)."
         ),
     )
 

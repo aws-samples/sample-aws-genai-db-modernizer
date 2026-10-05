@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -149,7 +150,7 @@ NO_MIGRATION_ROLES = ("Retained", "Cache layer")
 # Accent lookup for a resolved ``migration_waves`` entry (#225): the source-compatible
 # relational engine, carried over 1:1, gets the same "no further migration" blue as
 # the cache; a search read model is green; everything else is a migration target.
-# Imported from src/shared (review finding 12) so this can't drift from the builder.
+# Imported from src/shared (#225) so this can't drift from the builder.
 _WAVE_RETAINED_ENGINES = RELATIONAL_ENGINES
 _WAVE_SEARCH_ENGINES = SEARCH_ENGINES
 
@@ -318,6 +319,24 @@ def _text_em(text: str) -> float:
         else:
             total += 0.57
     return total
+
+
+def _estimated_text_height_in(
+    text: str, size_pt: float, width_in: float, line_height: float = 1.22
+) -> float:
+    """Rough estimate of the rendered height of ``text`` word-wrapped to
+    ``width_in`` at ``size_pt``, reusing ``_text_em``'s advance-width table.
+
+    Not exact (PowerPoint's own layout differs slightly by font), but good
+    enough to catch a card whose body text clearly will not fit (#225): the
+    Migration Sequencing slide's rationale/gate text is long enough, at real
+    wordpress/discourse scale, to run past a fixed-height card otherwise.
+    """
+    if not text:
+        return 0.0
+    width_in_at_size = _text_em(text) * (size_pt / 72.0)
+    lines = max(1, math.ceil(width_in_at_size / width_in))
+    return lines * (size_pt * line_height / 72.0)
 
 
 def title_size(text: str) -> float:
@@ -837,10 +856,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
 
     # ---- architecture, exactly as the HTML Decision Report computes it -------
     engines = _architecture_engines(rep)
-    # The one wave source (#225 review finding 10): every deliverable, including
+    # The one wave source (#225): every deliverable, including
     # this deck, calls resolve_migration_waves -- never a second, on-the-fly split.
     stored_waves = resolve_migration_waves(rep)
-    # Review finding 9: "0 source tables migrate" could contradict a wave that
+    # #225: "0 source tables migrate" could contradict a wave that
     # clearly moves real tables, when no schema design exists yet to drive the
     # per-engine ``migrates`` count below. Prefer that richer, schema-design-based
     # figure when it has one (keeps every other count label, #257/#258,
@@ -1679,13 +1698,38 @@ def slide_risk(prs, f):
     return s
 
 
+def _wave_card_text(rationale: str, gate: str, box_w: float, box_h: float) -> tuple[str, str]:
+    """The rationale/gate text that fits a Migration Sequencing card's text box.
+
+    Clips the rationale to about one sentence and the gate to about one line
+    (#225); if both together still estimate taller than ``box_h``, drops the
+    rationale and keeps only the gate (the alternative the review offered),
+    shrinking the gate further as a last resort. ``_estimated_text_height_in``
+    is an approximation, not exact PowerPoint layout, but catches the case
+    that actually happened: real wordpress/discourse rationale/gate text
+    (270-370 characters) overflowing a fixed-height card.
+    """
+    rationale_text = clip(rationale, 110) if rationale else ""
+    gate_text = f"Gate: {clip(gate, 90)}" if gate else ""
+    r_h = _estimated_text_height_in(rationale_text, 10.0, box_w)
+    g_h = _estimated_text_height_in(gate_text, 9.0, box_w)
+    if rationale_text and gate_text and r_h + g_h > box_h:
+        rationale_text = ""
+    if gate_text:
+        budget = 90
+        while _estimated_text_height_in(gate_text, 9.0, box_w) > box_h and budget > 20:
+            budget -= 20
+            gate_text = f"Gate: {clip(gate, budget)}"
+    return rationale_text, gate_text
+
+
 def slide_sequencing(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
     waves = f["waves"]
     set_title(s, "Migration Sequencing")
     first_pct = waves[0]["workload"] if waves else 0.0
     first_cache = waves[0].get("cached_share", 0.0) if waves else 0.0
-    # Review finding 9: "no data migration" is only ever true of the resolved
+    # #225: "no data migration" is only ever true of the resolved
     # wave 1 itself (the cache, or — without one — whatever is retained); when
     # wave 1 is a real migration target (e.g. DynamoDB with no cache overlay),
     # say so instead of repeating the no-migration claim unconditionally.
@@ -1708,7 +1752,7 @@ def slide_sequencing(prs, f):
         subtitle = f"Wave 1 covers {first_pct:.1f}% of the workload, the first data migration"
     set_subtitle(s, subtitle)
 
-    # Review finding 9: up to 6 waves (cache, KV, other, search, document,
+    # #225: up to 6 waves (cache, KV, other, search, document,
     # retained) must still fit above the constraints card on one slide. 4 waves
     # keep the original, unshrunk sizing; more waves shrink the step so the
     # constraints card never runs off the 7.5" slide.
@@ -1740,12 +1784,16 @@ def slide_sequencing(prs, f):
         for j, val in enumerate(stats):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)
             para(tf, val, size=11.5, bold=(j == 1), color=PAPER if j != 1 else accent, first=True)
-        # Review finding 9: every wave shows its own real gate (not one fixed
-        # "load test at production scale" banner drawn only after wave 1).
-        tf = textbox(s, 2.25, y + 0.44, 9.6, card_h - 0.44)
-        para(tf, w["note"], size=10.0, color=MUTED, first=True, space_after=1)
-        if w.get("gate"):
-            para(tf, f"Gate: {clip(w['gate'], 150)}", size=9.0, bold=True, color=PINK)
+        # #225: every wave shows its own real gate (not one fixed "load test at
+        # production scale" banner drawn only after wave 1), and the text is
+        # clipped (or the rationale dropped) to fit the card (#225 re-check item 3).
+        box_w, box_h = 9.6, card_h - 0.44
+        rationale_text, gate_text = _wave_card_text(w["note"], w.get("gate", ""), box_w, box_h)
+        tf = textbox(s, 2.25, y + 0.44, box_w, max(box_h, 0.01))
+        if rationale_text:
+            para(tf, rationale_text, size=10.0, color=MUTED, first=True, space_after=1)
+        if gate_text:
+            para(tf, gate_text, size=9.0, bold=True, color=PINK, first=not rationale_text)
         y += step
 
     card(s, 0.67, y + 0.08, 11.43, 0.98, GREEN)
