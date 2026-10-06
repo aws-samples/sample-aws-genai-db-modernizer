@@ -1,563 +1,250 @@
 # Referee Agent Implementation Guide
 
-## Document Information
-
-**Version:** 2.0.0
-**Date:** February 18, 2026
-**Status:** Draft
-**Owner:** Database Modernizer Assessment Engineering Team
-**Audience:** Backend Engineers implementing the Referee Agents
+**Document Type:** Implementation Guide
+**Status:** Current
 
 ---
 
 ## Overview
 
-The referee is split into two agents (ADR-016):
+"The referee" is three agents, run in this order by `LocalOrchestrator`:
 
-- **Referee-Triage:** Reads collector output from S3, selects which analysis agents are relevant, writes `triage.json` to S3
-- **Referee-Synthesis:** Reads analysis outputs from S3, produces weighted ranking with confidence scores, may request deeper analysis (max 2 iterations)
+- **Referee-Triage** (`src/agents/referee/triage.py`) — reads collector output,
+  detects workload signals, and selects which analysis agents run. Pure
+  Python, deterministic, no LLM.
+- **Referee-Reality-Check** (`src/agents/referee/reality_check.py` +
+  `reality_check_handler.py`) — a deterministic CTO-level consolidation pass
+  over the initial query-to-engine assignment, with an LLM validation step
+  (`--llm-mode bedrock`/`external`) that can be skipped (`--llm-mode none`).
+- **Referee-Synthesis** (`src/agents/referee/synthesis_handler.py`) — reads
+  all analysis, schema design and load test outputs, produces the weighted
+  ranking, TCO, risk assessment and executive summary.
 
-Step Functions orchestrates the workflow between them. EventBridge is for progress notifications only.
-
----
-
-## Table of Contents
-
-1. Architecture Overview
-2. Referee-Triage Agent
-3. Referee-Synthesis Agent
-4. Shared Tools (TCO, Risk Assessment)
-5. Testing Strategy
-
----
-
-## 1. Architecture Overview
-
-### Step Functions Workflow
-
-```
-Collector
-    ↓
-Referee-Triage  →  writes triage.json (selected_agents, skipped_agents, confidence)
-    ↓
-Step Functions Map State  →  runs only triage-selected analysis agents in parallel
-    ↓
-Referee-Synthesis  →  reads all analysis outputs, produces weighted ranking
-    ↓ (optional, max 2x)
-Deeper Analysis Loop  →  synthesis requests additional analysis if needed
-    ↓
-Schema Design
-```
-
-### S3 Data Plane
-
-Both referee agents use env vars to locate data:
-
-```python
-import os
-
-DATABASE_NAME = os.environ["DATABASE_NAME"]
-JOB_ID = os.environ["JOB_ID"]
-AGENT_TYPE = os.environ["AGENT_TYPE"]  # "referee-triage" or "referee-synthesis"
-BUCKET = os.environ["S3_BUCKET"]
-```
-
-Path convention: `<database-name>/<job_id>/<agent-name>/artifact.json`
+All three run as direct Python function calls under `LocalOrchestrator`, over
+the local `ArtifactStore` — there is no Step Functions state machine and no
+per-agent ECS task. That hosted mechanism was retired in
+[#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).
+See [the orchestrator README](../../src/orchestrator/README.md) for the full
+pipeline diagram.
 
 ---
 
-## 2. Referee-Triage Agent
+## 1. Referee-Triage
 
 ### Purpose
 
-Read collector output, classify the workload, and select which analysis agents should run. Not all 7 agents run for every workload — a key-value PostgreSQL database doesn't need Neptune or OpenSearch analysis.
+Read collector output, classify the workload, and select which analysis
+agents should run. Not every engine runs for every workload — a key-value
+PostgreSQL workload doesn't need an OpenSearch analysis pass.
 
-### Entrypoint
+### How it actually works
 
-```python
-import os
-import json
-import boto3
-from strands import Agent
-
-def main():
-    database_name = os.environ["DATABASE_NAME"]
-    job_id = os.environ["JOB_ID"]
-    bucket = os.environ["S3_BUCKET"]
-
-    s3 = boto3.client("s3")
-
-    # Read collector output from S3
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    response = s3.get_object(Bucket=bucket, Key=collector_key)
-    collector_output = json.loads(response["Body"].read())
-
-    # Run triage
-    agent = create_triage_agent()
-    triage_result = agent(json.dumps(collector_output))
-
-    # Write triage.json to S3
-    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
-    s3.put_object(
-        Bucket=bucket,
-        Key=triage_key,
-        Body=json.dumps(triage_result, indent=2),
-        ContentType="application/json",
-    )
-
-
-if __name__ == "__main__":
-    main()
-```
-
-### Triage Agent Definition
+Triage is pure pattern detection — regex and structural checks over the
+collector's schema and query patterns, with **no LLM call at all**. It
+matches ten query-pattern groups (key-value lookups, range queries,
+status filters, writes, complex joins, aggregations, large scans,
+time-series, session store, metadata/config) and five schema-level signals
+(JSON columns, junction tables, high FK density, self-referential FKs, EAV
+pattern), each mapping to one or more candidate target engines:
 
 ```python
-from strands import Agent, Tool
+# src/agents/referee/triage.py (real code, trimmed)
+def triage(collector_output: dict) -> TriageResult:
+    """Analyze collector output and decide which analysis agents to run."""
+    signals = _detect_schema_signals(collector_output)
+    signals.extend(_detect_query_signals(collector_output))
 
-def create_triage_agent() -> Agent:
-    return Agent(
-        system_prompt=TRIAGE_SYSTEM_PROMPT,
-        tools=[classify_workload, analyze_access_patterns, select_agents],
-    )
+    # Determine which Aurora agent matches the source engine
+    source_engine = (
+        collector_output.get("metadata", {}).get("source_database", {}).get("engine", "")
+    ).lower()
+    aurora_agent = SOURCE_ENGINE_TO_AURORA.get(source_engine)
 
-TRIAGE_SYSTEM_PROMPT = """
-You are a database workload triage expert.
+    result = _select_agents(signals, aurora_agent=aurora_agent)
 
-Given collector output (schema, query patterns, metrics), determine which
-analysis agents are relevant for this workload.
+    # Detect hard capability requirements per query
+    result.query_capabilities = _detect_query_capabilities(collector_output, signals)
 
-Available agents: dynamodb, documentdb, aurora, elasticache, opensearch, neptune, keyspaces
-
-Rules:
-- Select agents whose target database matches the workload's access patterns
-- Skip agents that are clearly irrelevant (e.g., no graph traversals → skip neptune)
-- Provide a reason for each selection and each skip
-- Output a confidence score (0.0-1.0) for the overall triage decision
-- If confidence < 0.7, the orchestrator will fall back to running all agents
-
-Output format: JSON with selected_agents, skipped_agents, confidence
-"""
+    return result
 ```
 
-### Triage Tools
+Aurora (the engine matching the source database — `aurora_mysql` or
+`aurora_postgresql`) is always selected as the relational baseline; it
+competes alongside the NoSQL/search/cache candidates for every query rather
+than being an automatic default. `keyspaces` and `neptune` are tracked as
+`deferred` signals for the synthesis report but are not dispatched as
+analysis agents today (Phase 1 scope).
 
-```python
-def classify_workload(collector_output: dict) -> dict:
-    """Classify the workload based on access patterns."""
-    patterns = collector_output.get("query_patterns", {})
-    schema = collector_output.get("database_schema", {})
+### Output (`triage.json`, `TriageOutputContract` in `src/contracts/triage_output.py`)
 
-    has_key_value = patterns.get("key_value_lookups", 0) > 0
-    has_joins = patterns.get("joins", 0) > 0
-    has_full_text = patterns.get("full_text_searches", 0) > 0
-    has_graph = patterns.get("graph_traversals", 0) > 0
-    has_time_series = patterns.get("time_series_queries", 0) > 0
+`triage()` itself returns an internal `TriageResult` dataclass (`selected`,
+`skipped`, `baseline`, `deferred`, `signals`, `query_capabilities` — plain
+dicts keyed by engine name). `triage_handler.py` converts that into the
+contract actually written to `triage.json`, which has different field
+names and list-of-object shapes:
 
-    return {
-        "has_key_value": has_key_value,
-        "has_joins": has_joins,
-        "has_full_text": has_full_text,
-        "has_graph": has_graph,
-        "has_time_series": has_time_series,
-        "table_count": len(schema),
-    }
+- `selected_agents` — list of `{agent_type, reasons}`. `LocalOrchestrator`
+  dispatches exactly these engines (plus the Aurora baseline) to the
+  analysis phase.
+- `skipped_agents` — list of `{agent_type, reason}`.
+- `baseline` — dict of the Aurora signals accumulated for
+  Referee-Synthesis (this one keeps the same shape as the internal result).
+- `deferred_agents` — list of `{agent_type, reasons}` for Phase 1 signals
+  (`keyspaces`, `neptune`), reporting only.
+- `signals` — every detected `TriageSignalRecord` (signal, targets,
+  evidence, query IDs, table IDs, query count), for the decision trace.
+- `query_capabilities` — per-query hard-capability requirements (detected via
+  `src/agents/referee/capability_registry.py`), used later to catch an engine
+  that cannot actually serve a query it was assigned.
+- `confidence_score` — 0-100, computed from signal and selection counts (see
+  `_compute_triage_confidence` in `triage_handler.py`).
+- `job_id`, `database_name`, `contract_version`, `agent_type`, `timestamp` —
+  envelope fields.
 
-
-def select_agents(classification: dict) -> dict:
-    """Select analysis agents based on workload classification."""
-    selected = []
-    skipped = []
-
-    agent_criteria = {
-        "dynamodb": lambda c: c["has_key_value"],
-        "documentdb": lambda c: not c["has_joins"] or c.get("has_nested_json", False),
-        "aurora": lambda c: c["has_joins"],
-        "elasticache": lambda c: c.get("has_hot_keys", False),
-        "opensearch": lambda c: c["has_full_text"],
-        "neptune": lambda c: c["has_graph"],
-        "keyspaces": lambda c: c.get("has_wide_column", False),
-    }
-
-    for agent_type, criterion in agent_criteria.items():
-        if criterion(classification):
-            selected.append(agent_type)
-        else:
-            skipped.append(agent_type)
-
-    return {"selected": selected, "skipped": skipped}
-```
-
-### Triage Output Format (Step Functions Contract)
-
-The triage output is read by Step Functions via S3 GetObject. The `selected_agents` array drives the Map state — each item MUST have an `agent_type` field. Changing this format breaks the orchestration.
-
-Required fields:
-
-- `selected_agents` — array of objects, each with `agent_type` (string). Step Functions iterates this.
-- `skipped_agents` — array of objects, each with `agent_type` and `reason`. For logging/UI only.
-- `confidence` — float 0.0-1.0. Step Functions reads this for safeguard checks.
-
-```json
-{
-  "selected_agents": [
-    {"agent_type": "dynamodb", "reason": "95% key-value access patterns"},
-    {"agent_type": "elasticache", "reason": "Hot key patterns, TTL usage"},
-    {"agent_type": "documentdb", "reason": "Nested JSON columns"}
-  ],
-  "skipped_agents": [
-    {"agent_type": "neptune", "reason": "No graph traversal patterns"},
-    {"agent_type": "opensearch", "reason": "No full-text search queries"},
-    {"agent_type": "keyspaces", "reason": "No wide-column access patterns"},
-    {"agent_type": "aurora", "reason": "Source is PostgreSQL — lateral move"}
-  ],
-  "confidence": 0.87
-}
-```
-
-### Triage Safeguards
-
-1. **Full analysis override** — users can bypass triage and run all 7 agents
-2. **Minimum 2 agents** — if triage selects fewer, fall back to full analysis
-3. **Confidence threshold** — if triage confidence < 0.7, fall back to full analysis
-4. **Triage logging** — all decisions persisted to S3, visible in UI
+There is no confidence-threshold fallback to "run everything" — triage
+always selects at least the matching Aurora engine, and any workload signal
+adds its target engines deterministically.
 
 ---
 
-## 3. Referee-Synthesis Agent
+## 2. Referee-Reality-Check
 
 ### Purpose
 
-Read all analysis outputs from S3, produce a weighted ranking with confidence scores, and generate the final modernization report. May request deeper analysis (capped at 2 iterations).
+Run after the initial assignment, before schema design. Default posture: at
+most 2 committed engines; a third must provide a genuinely unique capability
+no other committed engine can serve. Five deterministic passes
+(`src/agents/referee/reality_check.py`):
 
-### Entrypoint
+0. **Unique value assessment** — per engine, which assigned queries does it
+   serve meaningfully better than the next-best alternative (`unique`) vs.
+   nearly-as-well (`redundant`)?
+1. **Aurora absorption** — pull orphan queries from low-count engines into
+   an already-committed Aurora engine when it can serve them.
+2. **Consolidation** — absorb a redundant engine's queries into a committed
+   engine (duplicate/already-assigned/can't-serve checks).
+3. **Architectural pattern detection** — CQRS, materialized views, event
+   sourcing.
+4. **Integration topology** — specific sync mechanisms between the
+   surviving engines.
 
-```python
-import os
-import json
-import boto3
-from strands import Agent
+The deterministic pass writes a **new assignment version**
+(`src/storage/assignment_versioning.py` — reality check and customer edits
+always write a new version, never overwrite one) plus a
+`RealityCheckOutputContract` (`reality-check/output.json`).
 
-def main():
-    database_name = os.environ["DATABASE_NAME"]
-    job_id = os.environ["JOB_ID"]
-    bucket = os.environ["S3_BUCKET"]
+The LLM seam (`run_reality_check_deterministic` /
+`prepare_reality_check_llm_input` / `apply_reality_check_llm_output`, in
+`reality_check_handler.py`) writes the executive summary. In `bedrock` mode it
+also runs `validate_consolidations` from
+`src/agents/referee/consolidation_validator.py` — an LLM validation pass
+over pass 2's consolidation decisions ("can the target engine actually
+serve these query patterns, or will this fail during schema design?",
+avoiding a flip-flop where schema design later fails on a query
+consolidation moved). This is not a pure rubber stamp: `apply_corrections`
+can redirect a query a consolidation moved to Aurora or back to its
+original engine when the model flags it as unserviceable —
+`corrections_for_moved_queries` restricts this to exactly the queries
+pass 2 touched, so the model can undo or redirect a consolidation's move
+but cannot make a fresh ownership decision outside of it. In `--llm-mode
+none`, reality check keeps its deterministic result and skips this
+validation pass entirely (no corrections possible).
 
-    s3 = boto3.client("s3")
-
-    # Read triage output to know which agents ran
-    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
-    triage = json.loads(s3.get_object(Bucket=bucket, Key=triage_key)["Body"].read())
-
-    # Read analysis outputs for each selected agent
-    analysis_outputs = {}
-    for agent_info in triage["selected_agents"]:
-        agent_type = agent_info["agent_type"]
-        key = f"{database_name}/{job_id}/analysis-{agent_type}/analysis.json"
-        data = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
-        analysis_outputs[agent_type] = data
-
-    # Read collector output for context
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = json.loads(
-        s3.get_object(Bucket=bucket, Key=collector_key)["Body"].read()
-    )
-
-    # Run synthesis
-    agent = create_synthesis_agent()
-    report = agent(json.dumps({
-        "collector_output": collector_output,
-        "analysis_outputs": analysis_outputs,
-        "triage": triage,
-    }))
-
-    # Write report to S3
-    report_key = f"{database_name}/{job_id}/referee-synthesis/report.json"
-    s3.put_object(
-        Bucket=bucket,
-        Key=report_key,
-        Body=json.dumps(report, indent=2),
-        ContentType="application/json",
-    )
-
-
-if __name__ == "__main__":
-    main()
-```
-
-### Synthesis Agent Definition
+In `external` mode Claude Code answers through `prepare_reality_check_llm_input`
+and `apply_reality_check_llm_output` instead. In every mode, the handler then runs
+`sanity_sweep` (also from `consolidation_validator.py`) as a deterministic final
+step over the consolidations.
 
 ```python
-from strands import Agent
-
-def create_synthesis_agent() -> Agent:
-    return Agent(
-        system_prompt=SYNTHESIS_SYSTEM_PROMPT,
-        tools=[
-            prioritize_recommendations,
-            calculate_tco,
-            assess_risk,
-            request_deeper_analysis,
-        ],
-    )
-
-SYNTHESIS_SYSTEM_PROMPT = """
-You are a database modernization synthesis expert.
-
-Given analysis outputs from multiple agents, produce a weighted ranking
-of migration recommendations with confidence scores.
-
-Your task:
-1. Review all analysis agent outputs
-2. Produce a weighted ranking (each recommendation gets a weight and confidence)
-3. Identify quick wins (high impact, low effort)
-4. Identify strategic initiatives (high impact, medium effort)
-5. Identify long-term projects (transformational, high effort)
-6. Calculate total cost of ownership (TCO)
-7. Assess migration risks and mitigations
-8. If analysis quality is insufficient, request deeper analysis (max 2 iterations)
-
-Output format: ModernizationReport with weighted rankings and confidence scores
+# src/agents/referee/reality_check.py (docstring, real code)
+"""
+Reality Check — CTO-level optimization of query-to-engine assignments.
+...
+Default posture: 2 engines max. A third engine must provide genuinely unique
+capabilities that no other committed engine can serve.
 """
 ```
 
-### Synthesis Output Format (Step Functions Contract)
+---
 
-The synthesis output is read by Step Functions via S3 GetObject. These fields drive the Choice and Map states downstream — changing them breaks the orchestration.
+## 3. Referee-Synthesis
 
-Required fields:
+### Purpose
 
-- `needs_deeper_analysis` — boolean. Step Functions Choice state reads this to decide if re-analysis is needed.
-- `recommended_schema_designs` — array of strings (e.g., `["dynamodb"]`). Step Functions Map state iterates this for schema design agents. If absent, schema design is skipped.
-- `ranking` — array of objects with target, confidence, weight. For reporting/UI.
-
-### Deeper Analysis Loop
-
-Synthesis can request deeper analysis if the initial results are insufficient. This is capped at 2 iterations to prevent runaway loops. The Step Functions workflow handles this via a Choice state that checks the synthesis output.
+Read every analysis, schema design and load test artifact for the job and
+produce the final report: a weighted ranking per engine, the recommended
+architecture, table mappings, query groups, TCO analysis, risk assessment,
+the migration wave plan, and (via the LLM seam) the executive summary.
 
 ```python
-def request_deeper_analysis(
-    current_analyses: dict, gaps: list[str]
-) -> dict:
-    """Request deeper analysis for specific agents.
+# src/agents/referee/synthesis_handler.py (real docstring)
+"""Referee-Synthesis agent handler — produces the modernization report.
 
-    Returns a signal that Step Functions uses to re-run selected agents
-    with additional parameters. Max 2 iterations enforced by Step Functions.
-    """
-    return {
-        "action": "deeper_analysis_requested",
-        "agents": gaps,
-        "reason": "Insufficient confidence in initial analysis",
-        "iteration": current_analyses.get("iteration", 0) + 1,
-    }
+Reads all pipeline artifacts (triage, collector, analysis, schema design)
+via ArtifactStore, builds a comprehensive report with architecture
+recommendations, table mappings, query groups, TCO analysis, and risk
+assessment.
+
+LLM seam functions (for Skill Sync / external LLM integration):
+- run_synthesis_deterministic — full report without any LLM call
+- prepare_synthesis_llm_input — formats the LLM request payload
+- apply_synthesis_llm_output  — merges LLM output into deterministic result
+"""
 ```
+
+Everything except the executive summary narrative is deterministic:
+`src/agents/referee/synthesis_report.py` builds the ranking, TCO analysis,
+risk assessment, table mappings, query groups and cache-overlay accounting;
+`src/agents/referee/migration_waves.py` derives the incremental wave plan
+from the assignment; `src/agents/referee/synthesis_grounding.py` checks that
+any LLM-written summary text is actually grounded in those deterministic
+numbers before accepting it (falling back to a deterministic summary if
+not). With `--llm-mode none`, synthesis keeps the deterministic executive
+summary.
+
+The output carries a `needs_deeper_analysis` flag (left over from the
+retired Step Functions flow — the `synthesis_handler.py` module docstring
+still lists it as feeding "Step Functions ... for the analysis loop").
+Nothing in `LocalOrchestrator` or anywhere else in the local pipeline reads
+it today; the deterministic builder sets it, and that is where it stops.
+
+### Output (`SynthesisOutputContract`)
+
+Written to `{database_name}/{job_id}/synthesis/v{assignment_version}/report.json`
+for the normal case (any job that went through assignment/reality check, so
+`assignment_version > 0` — this is what `/modernize` always produces). Falls
+back to `{database_name}/{job_id}/referee-synthesis/report.json` only when
+`assignment_version` is 0.
+
+Key fields: `ranking` (per-engine, ordered by workload share, with
+`routed_confidence` — the mean fit of the queries actually routed to that
+engine, labelled `signal_only` when no rated source table backs it),
+`architecture_recommendation`, `table_mappings`, `query_groups`,
+`tco_analysis`, `risk_assessment`, `migration_waves`, and the optional
+`cache_overlay` (the cache layer's queries and share of calls, which the
+owner distribution never counts — see `src/agents/referee/cache_overlay.py`
+and `build_cache_overlay` in `synthesis_report.py`).
 
 ---
 
-## 4. Shared Tools (TCO, Risk Assessment)
+## Testing
 
-### TCO Calculation
-
-```python
-def calculate_tco(analysis_outputs: dict) -> dict:
-    """Calculate total cost of ownership across all recommended targets."""
-    target_costs = []
-    for agent_type, output in analysis_outputs.items():
-        cost = output.get("estimated_monthly_cost", 0)
-        target_costs.append({"service": agent_type, "monthly_cost": cost})
-
-    total_target = sum(c["monthly_cost"] for c in target_costs)
-    current_cost = analysis_outputs.get("current_monthly_cost", 0)
-    monthly_savings = current_cost - total_target
-    annual_savings = monthly_savings * 12
-
-    migration_cost = 50000  # Estimate
-    roi_months = (
-        int(migration_cost / monthly_savings) if monthly_savings > 0 else float("inf")
-    )
-
-    return {
-        "current_monthly_cost": current_cost,
-        "target_monthly_cost": total_target,
-        "monthly_savings": monthly_savings,
-        "annual_savings": annual_savings,
-        "roi_months": roi_months,
-        "breakdown": target_costs,
-    }
-```
-
-### Risk Assessment
-
-```python
-def assess_risk(collector_output: dict, analysis_outputs: dict) -> dict:
-    """Assess migration risk based on workload characteristics."""
-    table_count = collector_output.get("table_count", 0)
-    has_stored_procedures = len(collector_output.get("stored_procedures", [])) > 0
-    has_triggers = len(collector_output.get("triggers", [])) > 0
-
-    if table_count > 500 or has_stored_procedures or has_triggers:
-        complexity = "high"
-    elif table_count > 100:
-        complexity = "medium"
-    else:
-        complexity = "low"
-
-    risks = []
-    if has_stored_procedures:
-        risks.append("Stored procedures require refactoring")
-    if has_triggers:
-        risks.append("Triggers require alternative implementation")
-    if table_count > 1000:
-        risks.append("Large database requires phased migration")
-
-    return {
-        "complexity": complexity,
-        "key_risks": risks,
-        "recommended_approach": "phased" if complexity == "high" else "big_bang",
-    }
-```
-
-### Prioritization
-
-```python
-def prioritize_recommendations(recommendations: list[dict]) -> dict:
-    """Categorize recommendations by priority."""
-    quick_wins = []
-    strategic = []
-    long_term = []
-
-    for rec in recommendations:
-        impact = rec.get("estimated_impact", "medium")
-        effort = rec.get("effort", "medium")
-
-        if impact == "high" and effort == "low":
-            quick_wins.append(rec)
-        elif impact == "high" and effort == "medium":
-            strategic.append(rec)
-        elif impact == "high" and effort == "high":
-            long_term.append(rec)
-        else:
-            strategic.append(rec)
-
-    return {
-        "quick_wins": quick_wins,
-        "strategic": strategic,
-        "long_term": long_term,
-    }
-```
-
----
-
-## 5. Testing Strategy
-
-### Triage Unit Tests
-
-```python
-import pytest
-
-def test_triage_selects_dynamodb_for_key_value():
-    """Triage selects DynamoDB when key-value patterns dominate."""
-    collector_output = {
-        "query_patterns": {"key_value_lookups": 500, "joins": 2},
-        "database_schema": {"users": {}, "sessions": {}},
-    }
-
-    classification = classify_workload(collector_output)
-    selection = select_agents(classification)
-
-    assert "dynamodb" in selection["selected"]
-
-
-def test_triage_skips_neptune_without_graph():
-    """Triage skips Neptune when no graph patterns exist."""
-    collector_output = {
-        "query_patterns": {"key_value_lookups": 100, "graph_traversals": 0},
-        "database_schema": {"users": {}},
-    }
-
-    classification = classify_workload(collector_output)
-    selection = select_agents(classification)
-
-    assert "neptune" in selection["skipped"]
-
-
-def test_triage_fallback_on_low_confidence():
-    """If confidence < 0.7, safeguard triggers full analysis."""
-    triage_output = {
-        "selected_agents": [{"agent_type": "dynamodb", "reason": "maybe"}],
-        "skipped_agents": [],
-        "confidence": 0.5,
-    }
-
-    # Step Functions Choice state checks this
-    assert triage_output["confidence"] < 0.7
-```
-
-### Synthesis Unit Tests
-
-```python
-def test_synthesis_produces_weighted_ranking():
-    """Synthesis produces ranked recommendations with weights."""
-    analysis_outputs = {
-        "dynamodb": {"confidence": 0.85, "estimated_monthly_cost": 200},
-        "elasticache": {"confidence": 0.70, "estimated_monthly_cost": 100},
-    }
-
-    tco = calculate_tco(analysis_outputs)
-    assert tco["target_monthly_cost"] == 300
-
-
-def test_deeper_analysis_capped_at_2():
-    """Deeper analysis requests are capped at 2 iterations."""
-    result = request_deeper_analysis(
-        {"iteration": 2}, ["opensearch"]
-    )
-    assert result["iteration"] == 3  # Step Functions enforces max 2
-```
-
-### Integration Tests
-
-```python
-@pytest.mark.asyncio
-async def test_triage_to_synthesis_flow():
-    """Test triage output feeds correctly into synthesis."""
-    # Mock triage output
-    triage = {
-        "selected_agents": [
-            {"agent_type": "dynamodb", "reason": "key-value patterns"},
-            {"agent_type": "documentdb", "reason": "nested JSON"},
-        ],
-        "skipped_agents": [
-            {"agent_type": "neptune", "reason": "no graph patterns"},
-        ],
-        "confidence": 0.87,
-    }
-
-    # Mock analysis outputs (only for selected agents)
-    analysis_outputs = {
-        "dynamodb": {"confidence": 0.85, "estimated_monthly_cost": 200},
-        "documentdb": {"confidence": 0.70, "estimated_monthly_cost": 300},
-    }
-
-    tco = calculate_tco(analysis_outputs)
-    risk = assess_risk({"table_count": 50}, analysis_outputs)
-
-    assert tco["target_monthly_cost"] == 500
-    assert risk["complexity"] == "low"
-```
-
-See [ADR-009: Testing Infrastructure](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-009-testing-infrastructure.md)
+See [testing-guide.md](testing-guide.md). The core triage logic is tested
+in `tests/unit/agents/test_triage_handler.py`, and the core reality-check
+consolidation logic in `tests/unit/test_reality_check.py`. Most of the
+synthesis and reality-check *handler* behavior — the LLM seam, grounding,
+versioning, cache overlay, migration waves — lives under
+`tests/unit/agents/referee/` (for example `test_synthesis_llm_seam.py`,
+`test_reality_check_llm_seam.py`, `test_reality_check_determinism.py`).
+Every deterministic builder is tested with no model call; the LLM seam
+functions are tested by patching the model entry point and feeding a
+canned `llm_output.json`.
 
 ---
 
 ## Related Documentation
 
-- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [ADR-007: Referee Orchestration](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-007-referee-orchestration.md) (superseded by ADR-016 triage/synthesis split)
-- [Analysis Agent Guide](analysis-agent-guide.md)
-- [Storage Architecture Guide](storage-architecture-guide.md)
-
----
-
-**Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Assessment Engineering Team
+- [Orchestrator README](../../src/orchestrator/README.md)
+- [Strands Agent Development Guide](strands-agent-development-guide.md) — the LLM seam pattern in detail
+- [Contract Specifications](../contracts/agent-contracts-spec.md)
+- `AGENTS.md` — "Key invariants" (assignment, deliverable consistency, untrusted text)

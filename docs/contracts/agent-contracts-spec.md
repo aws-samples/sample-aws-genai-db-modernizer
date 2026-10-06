@@ -54,52 +54,34 @@ This document defines the formal contracts (interfaces) for all agents in the Da
 
 ### 1.1 Agent Communication Flow
 
+`LocalOrchestrator` calls each agent's handler function directly, in-process,
+over the local `ArtifactStore` -- there is no Step Functions state machine and
+no per-agent ECS task. That hosted mechanism was retired in
+[#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).
+See [the orchestrator README](../../src/orchestrator/README.md) for the full
+workflow.
+
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                     Job Initiation                               │
-│  API Server → Step Functions Orchestrator                        │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                  COLLECTOR AGENT                                 │
-│  Input:  CollectorInputContract v1.0.0                           │
-│  Output: CollectorOutputContract v1.0.0                          │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│              ANALYSIS AGENTS (Parallel Execution)                │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  DynamoDB Analysis Agent                                   │  │
-│  │  Input:  AnalysisInputContract v1.0.0                      │  │
-│  │  Output: AnalysisOutputContract v1.0.0                     │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  DocumentDB Analysis Agent                                 │  │
-│  │  Input:  AnalysisInputContract v1.0.0                      │  │
-│  │  Output: AnalysisOutputContract v1.0.0                     │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-│  ... (5 more analysis agents with same contracts)                │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    REFEREE AGENT                                 │
-│  Input:  RefereeInputContract v1.0.0                             │
-│  Output: RefereeOutputContract v1.0.0                            │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              SCHEMA DESIGN AGENTS (Conditional)                 │
-│  Input:  SchemaDesignInputContract v1.0.0                       │
-│  Output: SchemaDesignOutputContract v1.0.0                      │
-└─────────────────────────────────────────────────────────────────┘
+Claude Code (/modernize), the CLI (run_assessment.py), or the local API/UI
+  --> LocalOrchestrator
+        --> Collector agent              (Input: CollectorInput, Output: CollectorOutputContract)
+        --> Referee-Triage               (deterministic, no LLM -- selects which analysis agents run)
+        --> Analysis agents (concurrent) (only triage-selected engines + the Aurora baseline;
+                                           Input: AnalysisInput, Output: AnalysisOutputContract)
+        --> Assignment --> Reality Check (query-to-engine assignment, then CTO-level consolidation)
+        --> Schema Design agents         (per assigned engine; Input: SchemaDesignInput,
+                                           Output: SchemaDesignOutputContract -- DynamoDB always
+                                           splits into groups, designed independently then merged)
+        --> (Load Test, optional)
+        --> Referee-Synthesis             (reads analysis + schema design + load test outputs;
+                                           Output: SynthesisOutputContract, the modernization report)
 ```
+
+The real order is the `Phase` enum in `src/contracts/phase_models.py`:
+`COLLECT_TRIAGE`, `ANALYSIS`, `ASSIGNMENT`, `REALITY_CHECK`,
+`ASSIGNMENT_REVIEW`, `SCHEMA_DESIGN`, `LOAD_TEST`, `SYNTHESIS` -- synthesis
+runs last because it reads the schema design (and load test) outputs, not
+before them.
 
 ### 1.2 Contract Storage Location
 
@@ -108,13 +90,14 @@ All contracts are stored in the repository at:
 ```
 src/contracts/               # Pydantic models (source of truth)
 ├── __init__.py
-├── collector_output.py
-├── analysis_output.py
-├── referee_triage_output.py
-├── referee_synthesis_output.py
-├── assignment_output.py
-├── schema_design_output.py
-└── load_test_output.py
+├── collector_input.py / collector_output.py
+├── analysis_input.py / analysis_output.py
+├── triage_output.py
+├── reality_check_output.py
+├── assignment_models.py
+├── synthesis_output.py       # the Referee-Synthesis output (the modernization report)
+├── schema_design_input.py / schema_design_output.py
+└── load_test_models.py
 
 docs/contracts/
 ├── agent-contracts-spec.md  (this document)
@@ -217,7 +200,7 @@ class CollectorOutput(BaseModel):
 
 ### 3.1 Collector Input Contract
 
-**Pydantic Model:** `models/collector_input.py` (to be created)
+**Pydantic Model:** `src/contracts/collector_input.py`
 
 **Purpose:** Configuration for database collection
 
@@ -239,7 +222,7 @@ class CollectorInput(BaseModel):
 
 ### 3.2 Collector Output Contract
 
-**Pydantic Model:** `models/collector_output.py`
+**Pydantic Model:** `src/contracts/collector_output.py`
 
 **Purpose:** Standardized database metadata and schema
 
@@ -281,20 +264,20 @@ class CollectorOutput(BaseModel):
 - RDS-specific metadata (instance class, storage type, Multi-AZ, Performance Insights)
 - CloudWatch metrics
 
-### 3.3 Using with Strands SDK
+### 3.3 Collection Is Deterministic — No LLM
+
+Unlike schema design and synthesis, collector agents never call a model.
+Each engine collector (`src/agents/collector/mysql_collector.py` and its
+siblings) builds `CollectorOutputContract` directly with `model_validate` /
+`model_dump`, over three deterministic modes (`offline`, `ddl`, `live`). See
+[strands-collector-guide.md](../guides/strands-collector-guide.md) for the
+checkpointing and dispatch details.
 
 ```python
-from strands import Agent
-from contracts.models.collector_output import CollectorOutput
-
-collector = Agent(
-    system_prompt="You are a MySQL collector agent...",
-    tools=[connect_mysql, collect_schema],
-    response_format=CollectorOutput  # Pydantic model
-)
-
-# Agent automatically validates output
-output: CollectorOutput = collector(input_contract)
+# Real pattern, not Strands:
+result = CollectorOutputContract.model_validate(ckpt.load("output"))
+# ...or, after collection:
+store.write_json(key, json.loads(result.model_dump_json()))
 ```
 
 ---
@@ -303,7 +286,7 @@ output: CollectorOutput = collector(input_contract)
 
 ### 4.1 Analysis Input Contract
 
-**Pydantic Model:** `models/analysis_input.py` (to be created)
+**Pydantic Model:** `src/contracts/analysis_input.py`
 
 **Purpose:** Configuration for analysis agents
 
@@ -319,7 +302,7 @@ class AnalysisInput(BaseModel):
 
 ### 4.2 Analysis Output Contract
 
-**Pydantic Model:** `models/analysis_output.py`
+**Pydantic Model:** `src/contracts/analysis_output.py`
 
 **Purpose:** Results from all analysis agents
 
@@ -361,7 +344,7 @@ class AnalysisOutput(BaseModel):
 
 ### 5.1 Referee Input Contract
 
-**Pydantic Model:** `models/referee_input.py` (to be created)
+**Pydantic Model:** `src/contracts/referee_input.py` (triage/reality-check/synthesis each read artifacts directly via `ArtifactStore` rather than a single combined input model)
 
 **Purpose:** Aggregated analysis results for final recommendations
 
@@ -371,13 +354,19 @@ class AnalysisOutput(BaseModel):
 class RefereeInput(BaseModel):
     job_id: str
     collector_output: CollectorOutput
-    analysis_outputs: List[AnalysisOutput]  # 1-7 analysis agents
+    analysis_outputs: List[AnalysisOutput]  # only the engines Referee-Triage selected,
+                                             # plus the Aurora baseline matching the source engine
     current_costs: Optional[float] = None  # For TCO comparison
 ```
 
+(Illustrative — in the current implementation, Referee-Reality-Check and
+Referee-Synthesis each read their inputs directly from `ArtifactStore` rather
+than being handed one combined `RefereeInput` object. See
+[referee-agent-guide.md](../guides/referee-agent-guide.md).)
+
 ### 5.2 Referee Output Contract (Modernization Report)
 
-**Pydantic Model:** `models/modernization_report.py`
+**Pydantic Model:** `src/contracts/synthesis_output.py` (`SynthesisOutputContract`) -- produced by Referee-Synthesis, the final report consumed by every deliverable renderer
 
 **Purpose:** Final modernization recommendations
 
@@ -439,7 +428,7 @@ class ModernizationReport(BaseModel):
 
 ### 6.1 Schema Design Input Contract
 
-**Pydantic Model:** `models/schema_design_input.py` (to be created)
+**Pydantic Model:** `src/contracts/schema_design_input.py`
 
 **Purpose:** Configuration for schema design agents
 
@@ -457,33 +446,40 @@ class SchemaDesignInput(BaseModel):
 
 ### 6.2 Schema Design Output Contract
 
-**Pydantic Model:** `models/schema_design_output.py` (to be created)
+**Pydantic Model:** `src/contracts/schema_design_output.py`
 
 **Purpose:** Generated schema designs and migration artifacts
 
 **Key Fields:**
 
 ```python
-class SchemaDesignOutput(BaseModel):
-    contract_version: str = Field(default="1.0")
+# src/contracts/schema_design_output.py (real base class, every engine-specific
+# contract extends this with its own structural models — tables, GSIs, access
+# patterns, index mappings, etc.)
+class SchemaDesignOutputBase(BaseModel):
+    contract_version: str = Field(..., pattern=r"^\d+\.\d+$")
     job_id: str
-    target_database: str
-    schema_designs: Dict[str, SchemaDesign]  # Keyed by table name
-    iac_templates: Optional[Dict[str, str]] = None  # CloudFormation templates
-    sdk_samples: Optional[Dict[str, str]] = None  # Code samples
-    migration_scripts: Optional[List[str]] = None
+    source_database: str
+    target_engine: str
 
-    class Config:
-        extra = "ignore"
+    trade_offs: list[TradeOff] = Field(..., min_length=1)
+    validation_passed: bool
+    validation_failures: list[str] = Field(default_factory=list)
 ```
 
 **Key Features:**
 
-- Schema designs with transformations
-- Access patterns
-- Infrastructure-as-code (CloudFormation templates)
-- SDK samples in multiple languages
-- Documentation URLs
+- Engine-specific structural design (DynamoDB tables + GSIs, DocumentDB
+  collections, OpenSearch index mappings, ElastiCache key patterns, Aurora
+  DDL — see each engine's extension of `SchemaDesignOutputBase`)
+- `trade_offs`: structured, CTO-readable trade-offs linked to the specific
+  source tables, target tables and query IDs they affect
+- `validation_passed` / `validation_failures`: the deterministic validator's
+  verdict (see `src/tools/validation/`), independent of the PE-reviewer loop
+  that produced the design
+- DynamoDB splits into groups (~20 queries each), designed independently and
+  merged by `src/agents/schema_design/dynamodb_merge.py` — this is mandatory
+  for DynamoDB, not a large-workload fallback
 
 ---
 

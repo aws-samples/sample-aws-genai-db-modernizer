@@ -1,335 +1,195 @@
 # Storage Architecture Implementation Guide
 
 **Document Type:** Implementation Guide
-**Last Updated:** February 18, 2026
-**Status:** Draft
+**Status:** Current
 
 ---
 
 ## Overview
 
-This guide provides implementation patterns for the storage abstraction layer that supports multiple storage backends (local filesystem, S3). All agent artifacts follow the S3 path convention from ADR-016:
+This guide covers the `ArtifactStore` abstraction (`src/storage/`) that every
+agent reads and writes through. All agent artifacts follow a shared path
+convention:
 
 ```
-<database-name>/<job_id>/<agent-name>/artifact.json
+<database-name>/<job_id>/<agent-name>/<filename>
 ```
 
-There is no intra-step checkpointing. If a step fails, it restarts from scratch (ADR-016).
+There is no intra-step checkpointing above the collector (see
+[strands-collector-guide.md](strands-collector-guide.md) for the collector's
+own checkpoint stages). If a non-collector step fails, the user re-runs the
+command or resumes the phase — `LocalOrchestrator` does not retry
+automatically. See [the orchestrator README](../../src/orchestrator/README.md).
 
 ---
 
-## Storage Abstraction Layer
-
-### Purpose
-
-Support multiple storage backends without changing agent code:
-
-- Local filesystem (Docker Compose)
-- S3 + DynamoDB (AWS deployment)
-
-### Architecture Pattern
+## The `ArtifactStore` Abstraction
 
 ```python
-from abc import ABC, abstractmethod
-from typing import Any, Dict
-import json
-import os
-from datetime import datetime
-
-class StorageBackend(ABC):
-    """Abstract storage backend"""
+# src/storage/artifact_store.py (real code)
+class ArtifactStore(ABC):
+    """Storage-agnostic artifact read/write interface."""
 
     @abstractmethod
-    def save_result(self, database_name: str, job_id: str, agent_name: str, filename: str, data: dict):
-        """Save agent result"""
-        pass
+    def read_json(self, path: str) -> dict:
+        """Read a JSON artifact and return it as a dict."""
+        ...
 
     @abstractmethod
-    def load_result(self, database_name: str, job_id: str, agent_name: str, filename: str) -> dict:
-        """Load agent result"""
-        pass
+    def write_json(self, path: str, data: dict) -> None:
+        """Write a dict as a JSON artifact."""
+        ...
 
     @abstractmethod
-    def list_jobs(self, database_name: str) -> list:
-        """List all jobs for a database"""
-        pass
+    def read_bytes(self, path: str) -> bytes:
+        """Read a binary artifact and return its raw bytes."""
+        ...
 
     @abstractmethod
-    def update_job_status(self, job_id: str, status: str, **kwargs):
-        """Update job status"""
-        pass
+    def write_bytes(self, path: str, data: bytes) -> None:
+        """Write raw bytes as a binary artifact."""
+        ...
+
+    @abstractmethod
+    def exists(self, path: str) -> bool:
+        """Return True if the artifact at *path* exists."""
+        ...
+
+    @abstractmethod
+    def list_prefix(self, prefix: str) -> list[str]:
+        """Return all artifact keys under *prefix*."""
+        ...
 ```
 
----
-
-## Local Filesystem Storage
-
-### Implementation
+Two implementations, selected by a factory — no DynamoDB, no separate
+metadata table:
 
 ```python
-class LocalFilesystemStorage(StorageBackend):
-    """Local filesystem storage backend (Docker Compose dev)"""
+# src/storage/__init__.py (real code)
+def create_artifact_store() -> ArtifactStore:
+    """Factory: S3_BUCKET env var set → S3ArtifactStore, else LocalArtifactStore.
 
-    def __init__(self, base_dir: str = "/data"):
-        self.base_dir = base_dir
-        os.makedirs(base_dir, exist_ok=True)
+    Uses ARTIFACT_DIR env var for local store base directory (default: ./artifacts).
+    """
+    bucket = os.environ.get("S3_BUCKET")
+    if bucket:
+        from src.storage.s3_store import S3ArtifactStore
 
-    def save_result(self, database_name: str, job_id: str, agent_name: str, filename: str, data: dict):
-        agent_dir = os.path.join(self.base_dir, database_name, job_id, agent_name)
-        os.makedirs(agent_dir, exist_ok=True)
+        return S3ArtifactStore(bucket)
 
-        output_file = os.path.join(agent_dir, filename)
-        with open(output_file, "w") as f:
-            json.dump(data, f, indent=2)
+    from src.storage.local_store import LocalArtifactStore
 
-    def load_result(self, database_name: str, job_id: str, agent_name: str, filename: str) -> dict:
-        output_file = os.path.join(self.base_dir, database_name, job_id, agent_name, filename)
-        with open(output_file, "r") as f:
-            return json.load(f)
-
-    def list_jobs(self, database_name: str) -> list:
-        db_dir = os.path.join(self.base_dir, database_name)
-        if not os.path.exists(db_dir):
-            return []
-        return [
-            d for d in os.listdir(db_dir)
-            if os.path.isdir(os.path.join(db_dir, d))
-        ]
-
-    def update_job_status(self, job_id: str, status: str, **kwargs):
-        # For local dev, write status to a known location
-        # In AWS, this goes to DynamoDB (see S3Storage)
-        status_dir = os.path.join(self.base_dir, "_status")
-        os.makedirs(status_dir, exist_ok=True)
-
-        status_file = os.path.join(status_dir, f"{job_id}.json")
-
-        if os.path.exists(status_file):
-            with open(status_file, "r") as f:
-                status_data = json.load(f)
-        else:
-            status_data = {"job_id": job_id}
-
-        status_data["status"] = status
-        status_data["updated_at"] = datetime.now().isoformat()
-        status_data.update(kwargs)
-
-        with open(status_file, "w") as f:
-            json.dump(status_data, f, indent=2)
+    return LocalArtifactStore(os.environ.get("ARTIFACT_DIR", "./artifacts"))
 ```
 
-### File Structure
+### `LocalArtifactStore` (`src/storage/local_store.py`)
 
-Mirrors the S3 path convention locally:
+The default for every local run — the CLI, Claude Code, and the local
+API/UI. A thin wrapper over `pathlib.Path`: `read_json`/`write_json` do
+`json.loads`/`json.dumps` against files under `ARTIFACT_DIR` (default
+`./artifacts`), `list_prefix` globs `*.json` under a prefix directory.
 
-```
-/data/
-├── <database-name>/
-│   └── <job_id>/
-│       ├── collector/
-│       │   └── output.json
-│       ├── referee-triage/
-│       │   └── triage.json
-│       ├── analysis-dynamodb/
-│       │   └── analysis.json
-│       ├── analysis-documentdb/
-│       │   └── analysis.json
-│       ├── analysis-elasticache/
-│       │   └── analysis.json
-│       ├── referee-synthesis/
-│       │   └── report.json
-│       └── schema-design-dynamodb/
-│           └── schema.json
-├── _status/
-│   └── <job_id>.json
-├── config/
-│   └── application.yaml
-└── logs/
-    └── agents/
-        └── <agent-name>/
-            └── <job_id>.log
-```
+### `S3ArtifactStore` (`src/storage/s3_store.py`)
 
----
-
-## S3 Storage
-
-### Implementation
+Any process with `S3_BUCKET` set gets this instead of the local store — in
+practice that's the separate AWS Transform integration
+(`src/atx_orchestrator/`), which sets it so jobs started there read and
+write the exact same artifact layout in an S3 bucket, and a job can be
+inspected the same way regardless of which path produced it. `exists()`
+treats a `404` from `head_object` as "does not exist" and re-raises
+everything else.
 
 ```python
-class S3Storage(StorageBackend):
-    """S3 storage backend for AWS deployments"""
-
-    def __init__(self, bucket: str):
-        import boto3
-        self.s3 = boto3.client("s3")
+# src/storage/s3_store.py (real code, trimmed)
+class S3ArtifactStore(ArtifactStore):
+    def __init__(self, bucket: str, s3_client=None):
         self.bucket = bucket
+        self.s3 = s3_client or boto3.client("s3")
 
-    def save_result(self, database_name: str, job_id: str, agent_name: str, filename: str, data: dict):
-        key = f"{database_name}/{job_id}/{agent_name}/{filename}"
-        self.s3.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=json.dumps(data, indent=2),
-            ContentType="application/json",
-        )
-
-    def load_result(self, database_name: str, job_id: str, agent_name: str, filename: str) -> dict:
-        key = f"{database_name}/{job_id}/{agent_name}/{filename}"
-        response = self.s3.get_object(Bucket=self.bucket, Key=key)
+    def read_json(self, path: str) -> dict:
+        response = self.s3.get_object(Bucket=self.bucket, Key=path)
         return json.loads(response["Body"].read())
 
-    def list_jobs(self, database_name: str) -> list:
-        prefix = f"{database_name}/"
-        response = self.s3.list_objects_v2(
-            Bucket=self.bucket,
-            Prefix=prefix,
-            Delimiter="/",
-        )
-
-        jobs = []
-        for common_prefix in response.get("CommonPrefixes", []):
-            job_id = common_prefix["Prefix"].rstrip("/").split("/")[-1]
-            jobs.append(job_id)
-
-        return jobs
-
-    def update_job_status(self, job_id: str, status: str, **kwargs):
-        import boto3
-        dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table("modernizer-jobs")
-
-        update_expr = "SET #status = :status, updated_at = :updated_at"
-        expr_names = {"#status": "status"}
-        expr_values = {
-            ":status": status,
-            ":updated_at": datetime.now().isoformat(),
-        }
-
-        for k, v in kwargs.items():
-            update_expr += f", {k} = :{k}"
-            expr_values[f":{k}"] = v
-
-        table.update_item(
-            Key={"job_id": job_id},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames=expr_names,
-            ExpressionAttributeValues=expr_values,
+    def write_json(self, path: str, data: dict) -> None:
+        self.s3.put_object(
+            Bucket=self.bucket, Key=path,
+            Body=json.dumps(data, indent=2, default=str),
+            ContentType="application/json",
         )
 ```
 
-### S3 Structure
-
-```
-s3://<bucket>/
-├── <database-name>/
-│   └── <job_id (KSUID)>/
-│       ├── collector/
-│       │   └── output.json
-│       ├── referee-triage/
-│       │   └── triage.json
-│       ├── analysis-dynamodb/
-│       │   └── analysis.json
-│       ├── analysis-documentdb/
-│       │   └── analysis.json
-│       ├── referee-synthesis/
-│       │   └── report.json
-│       └── schema-design-dynamodb/
-│           └── schema.json
-```
-
-Examples:
-
-```
-s3://modernizer-dev-data/myapp-postgres/2GxZLsnP00Y2BwR0000000001/collector/output.json
-s3://modernizer-dev-data/myapp-postgres/2GxZLsnP00Y2BwR0000000001/referee-triage/triage.json
-s3://modernizer-dev-data/myapp-postgres/2GxZLsnP00Y2BwR0000000001/analysis-dynamodb/analysis.json
-s3://modernizer-dev-data/myapp-postgres/2GxZLsnP00Y2BwR0000000001/referee-synthesis/report.json
-```
-
-KSUID provides time-ordered, globally unique job IDs without coordination. The `<database-name>` prefix enables easy browsing and lifecycle policies per source database.
+Neither implementation uses DynamoDB. There is no hosted metadata table —
+that was part of the retired hosted deployment
+([#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)).
 
 ---
 
-## Storage Factory
+## Job Status, Without a Metadata Table
 
-### Implementation
-
-```python
-class StorageFactory:
-    """Factory for creating storage backends"""
-
-    @staticmethod
-    def create(backend_type: str, **kwargs) -> StorageBackend:
-        if backend_type == "local":
-            return LocalFilesystemStorage(**kwargs)
-        elif backend_type == "s3":
-            return S3Storage(**kwargs)
-        else:
-            raise ValueError(f"Unknown storage backend: {backend_type}")
-```
-
-### Usage
+The local API's `LocalExecutionService`
+(`src/api/services/local_execution.py`) derives job status entirely from the
+artifact directory layout `LocalArtifactStore` already produces — it does
+not maintain a separate status table:
 
 ```python
-import os
+# src/api/services/local_execution.py (real docstring)
+"""Local execution service — the API's only execution backend (hosted Step
+Functions service retired, #175)."""
 
-storage = StorageFactory.create(
-    os.getenv("STORAGE_BACKEND", "local"),
-    base_dir="/data",       # for local
-    # bucket="my-bucket",   # for s3
-)
+class LocalExecutionService:
+    """Filesystem-backed execution service for local development.
 
-# Save result (follows path convention)
-storage.save_result("myapp-postgres", job_id, "collector", "output.json", collector_output)
-
-# Load result
-collector_output = storage.load_result("myapp-postgres", job_id, "collector", "output.json")
-
-# Update status
-storage.update_job_status(job_id, "COMPLETED")
+    Derives all state from the artifact directory layout produced by
+    LocalArtifactStore / LocalOrchestrator.
+    """
 ```
+
+`start_execution` writes a small `_meta.json` (job id, database name,
+started-at timestamp) for jobs the local API itself starts; `describe_execution`
+reconstructs status by looking at which artifact directories exist under the
+job. Jobs run directly through the CLI scripts or Claude Code skills have no
+`_meta.json` — `_read_source_engine` falls back to reading the collector
+output for the source engine in that case (`local_execution.py`). `GET
+/api/v1/assessments/{job_id}` polls this derived state — there is no event
+bus or push channel.
 
 ---
 
-## Metadata Storage
-
-### DynamoDB (AWS Deployment)
+## File Structure (Local)
 
 ```
-Table: modernizer-jobs
-Primary Key: job_id (String)
-Attributes:
-  - status (String)
-  - database_name (String)
-  - source_database_type (String)
-  - execution_arn (String)          # Step Functions execution ARN
-  - created_at (String - ISO 8601)
-  - updated_at (String - ISO 8601)
-  - completed_at (String - ISO 8601)
-  - error_message (String)
-  - metadata (Map)
-
-GSI: status-created_at-index
-  - Partition Key: status
-  - Sort Key: created_at
+./artifacts/
+└── <database-name>/
+    └── <job_id>/
+        ├── _meta.json      # only for jobs the local API started
+        ├── collector/
+        │   └── output.json
+        ├── referee-triage/
+        │   └── triage.json
+        ├── analysis-<engine>/
+        │   ├── analysis.json
+        │   ├── decision-trace.json
+        │   └── er-diagram.mmd
+        ├── assignment/
+        │   └── v<N>/assignment.json
+        ├── reality-check/
+        │   ├── llm_input.json
+        │   └── output.json
+        ├── schema-<engine>/
+        │   └── v<N>/schema_output.json
+        ├── load-test/
+        │   └── v<N>/results/summary.json
+        └── synthesis/
+            └── v<N>/report.json   # or referee-synthesis/report.json when assignment_version is 0
 ```
 
-### Restart Strategy
-
-Per ADR-016, there is no intra-step checkpointing. If a step fails, it restarts from scratch. Each agent declares its mini-steps (restart points). Restarting a previous mini-step invalidates all subsequent mini-steps and downstream agents.
-
-This keeps agent code simple — no partial state recovery logic. The cost of re-running a step is acceptable given the <6 hour total job target.
+Job IDs are UUIDs, truncated to 8 hex characters by the local scripts — not
+KSUIDs, despite what older drafts of this guide (and some ADRs) said.
 
 ---
 
 ## Related Documentation
 
-- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [High-Level Design](../architecture/high-level-design.md)
+- [Orchestrator README](../../src/orchestrator/README.md) — the full artifact path table per agent
+- [Strands Collector Guide](strands-collector-guide.md) — the collector's own S3-backed checkpoint stages
 - [Storage Architecture Diagram](../architecture/diagrams/07-storage-architecture.md)
-
----
-
-**Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Assessment Engineering Team

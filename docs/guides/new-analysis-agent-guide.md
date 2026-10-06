@@ -310,8 +310,8 @@ def _apply_<target>_adjustments(scores, profile):
 **Required.** Every analysis agent must produce a `decision-trace.json` as a separate S3 artifact alongside `analysis.json`.
 
 ```
-<database-name>/<ksuid>/analysis-<target>/analysis.json        ← contract output (agent-to-agent)
-<database-name>/<ksuid>/analysis-<target>/decision-trace.json  ← feedback artifact (human review)
+<database-name>/<job_id>/analysis-<target>/analysis.json        ← contract output (agent-to-agent)
+<database-name>/<job_id>/analysis-<target>/decision-trace.json  ← feedback artifact (human review)
 ```
 
 The agent writes both. Referee-Synthesis only reads `analysis.json`. Specialists read `decision-trace.json` for calibration. No contract change needed.
@@ -493,7 +493,7 @@ After your agent is working:
 
 1. Add the target to the `ANALYSIS_AGENTS` set in `src/agents/entrypoint.py`
 2. Add the agent type to the Referee-Triage selection logic
-3. The Step Functions Map state already handles dynamic agent lists — no orchestration changes needed
+3. `LocalOrchestrator`'s `ThreadPoolExecutor` already sizes itself to the triage-selected agent list — no orchestration changes needed
 
 ---
 

@@ -1,685 +1,240 @@
 # Strands Agent Development Guide
 
 **Document Type:** Implementation Guide
-**Last Updated:** February 6, 2026
-**Status:** Draft
+**Status:** Current
 
 ---
 
 ## Overview
 
-This guide provides detailed implementation patterns for building agents using the Strands SDK framework.
+This guide covers two things that apply across the pipeline:
+
+1. The **agent entrypoint pattern** — how `AGENT_TYPE` dispatch and the
+   artifact store work for every agent, with or without an LLM.
+2. The **Strands SDK pattern** — how the subset of agents that call a model
+   (schema design, the analysis LLM advisor, synthesis, reality check) build
+   and invoke a `strands.Agent` against Amazon Bedrock.
+
+Everything here describes the local pipeline (`LocalOrchestrator`, direct
+Python function calls, the local `ArtifactStore`). The hosted deployment
+(Step Functions driving per-agent ECS tasks, EventBridge progress events) was
+retired in [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175);
+`src/agents/entrypoint.py` still dispatches on `AGENT_TYPE` because it serves
+the `agent-load-test` container image, a run-to-completion batch dispatch.
+The AWS Transform integration does **not** route through this file — it has
+its own sibling, `src/atx_orchestrator/atx_entrypoint.py`, which also
+dispatches on an `AGENT_TYPE` env var but with its own vocabulary, and uses
+it to launch long-running A2A/AgentCore servers rather than run-to-completion
+agents. Neither entrypoint talks to Step Functions or ECS anymore.
 
 ---
 
-## Strands SDK Overview
+## Agent Entrypoint Pattern
 
-**Strands SDK** is an open-source agentic framework that provides:
+`src/agents/entrypoint.py` reads a handful of environment variables and
+dispatches to the matching handler:
 
-- Agent orchestration
-- Tool management
-- LLM integration
-- Built-in hooks for progress tracking
-
-**Why Strands SDK?**
-
-- Simplified agent creation without inheritance hierarchies
-- Reusable tools across different agents
-- Clear separation between behavior (prompts) and capabilities (tools)
-- Built-in LLM orchestration
-- Independently testable components
-
----
-
-## Agent Entrypoint Pattern (ADR-016)
-
-Step Functions launches ECS tasks with environment variables for routing. The agent container reads these to determine what to run and where to find its input.
-
-### Environment Variables (set by Step Functions)
-
-| Variable | Source | Example |
-|----------|--------|---------|
-| `AGENT_TYPE` | State machine definition or triage output | `collector`, `dynamodb`, `referee-triage` |
-| `JOB_ID` | Execution input | `2GxZLsnP00Y2BwR0000000001` |
-| `DATABASE_NAME` | Execution input | `myapp-postgres` |
-| `EVENT_BUS_NAME` | Task definition | `modernizer-dev-notifications` |
-| `ENVIRONMENT` | Task definition | `dev` |
-| `PROJECT_NAME` | Task definition | `modernizer` |
-| `TARGET_TYPE` | Schema design only | `dynamodb` |
-
-### Entrypoint Dispatcher
-
-Step Functions uses `ecs:runTask.sync` — it launches the ECS task and waits for the container to exit. The agent does NOT need to call any Step Functions API. The exit code is the signal:
-
-- **Exit 0** (normal completion) → Step Functions sees `TaskSucceeded`, moves to next state
-- **Exit non-zero** (error) → Step Functions sees `TaskFailed`, triggers Retry or Catch
-- **Never exits** (e.g., running a web server) → execution hangs forever
-
-The agent must be a run-to-completion process, not a long-running server. Do your work, write output to S3, exit.
+| Variable | Purpose |
+|----------|---------|
+| `AGENT_TYPE` | Which agent to run: `collector`, `referee-triage`, an engine name (`dynamodb`, `aurora_mysql`, ...), `referee-synthesis`, `assignment-resolver`, `reality-check`, `schema-design`, `schema-split`, `schema-merge`, `load-test` |
+| `JOB_ID` | A UUID (truncated to 8 hex characters by the local scripts) — not a KSUID |
+| `TARGET_TYPE` | Required alongside `AGENT_TYPE` for `schema-design`, `schema-split`, `schema-merge` and `load-test` — the engine name the agent designs/tests for |
+| `DATABASE_NAME` | Source database name; forms the artifact path prefix |
+| `S3_BUCKET` | If set, `create_artifact_store()` returns an `S3ArtifactStore`; otherwise a `LocalArtifactStore` rooted at `ARTIFACT_DIR` (default `./artifacts`) |
+| `ASSIGNMENT_VERSION`, `SCOPE_ENGINES` | Optional, used for re-running a subset of engines against a specific assignment version |
 
 ```python
-# entrypoint.py — container CMD
-import os
-import sys
-import traceback
-
-AGENT_TYPE = os.environ["AGENT_TYPE"]
-JOB_ID = os.environ["JOB_ID"]
-DATABASE_NAME = os.environ["DATABASE_NAME"]
-
-ANALYSIS_AGENTS = {
-    "dynamodb", "documentdb", "elasticache",
-    "opensearch", "neptune", "keyspaces", "aurora"
-}
-
-def main():
+# src/agents/entrypoint.py (actual dispatch, trimmed)
+def _dispatch_agent():
     if AGENT_TYPE == "collector":
-        from agents.collector import run_collector
-        run_collector(JOB_ID, DATABASE_NAME)
+        from src.agents.collector.handler import run_collector
+        run_collector(JOB_ID, DATABASE_NAME, store)
     elif AGENT_TYPE == "referee-triage":
-        from agents.referee_triage import run_triage
-        run_triage(JOB_ID, DATABASE_NAME)
+        from src.agents.referee.triage_handler import run_triage
+        run_triage(JOB_ID, DATABASE_NAME, store)
     elif AGENT_TYPE in ANALYSIS_AGENTS:
-        from agents.analysis import run_analysis
-        run_analysis(JOB_ID, DATABASE_NAME, AGENT_TYPE)
+        from src.agents.analysis.handler import run_analysis
+        run_analysis(JOB_ID, DATABASE_NAME, AGENT_TYPE, store)
     elif AGENT_TYPE == "referee-synthesis":
-        from agents.referee_synthesis import run_synthesis
-        run_synthesis(JOB_ID, DATABASE_NAME)
-    elif AGENT_TYPE == "schema-design":
-        from agents.schema_design import run_schema_design
-        run_schema_design(JOB_ID, DATABASE_NAME, os.environ["TARGET_TYPE"])
-    else:
-        print(f"Unknown AGENT_TYPE: {AGENT_TYPE}", file=sys.stderr)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    try:
-        main()
-        # Exit 0 = success → Step Functions moves to next state
-    except Exception as e:
-        traceback.print_exc()
-        sys.exit(1)  # Exit non-zero = failure → Step Functions retries or catches
+        from src.agents.referee.synthesis_handler import run_synthesis
+        run_synthesis(JOB_ID, DATABASE_NAME, store, assignment_version=...)
+    # ...and so on for assignment-resolver, reality-check, schema-design, load-test
 ```
 
-### Data Flow: S3 as Data Plane
+Exit code contract (what a container launcher sees — `LocalOrchestrator`
+itself calls handler functions directly for most of the pipeline and checks
+no exit code; this matters for the `agent-load-test` image and the AWS
+Transform integration, which do launch separate processes):
 
-Step Functions passes small routing info (env vars). Rich data lives in S3.
+- **0** — success
+- **1** — failure (an error artifact is written before re-raising)
+- **2** — the agent needs human/LLM input and is waiting (`AgentNeedsInputError`)
 
-```
-Step Functions (control plane)
-  → env vars: JOB_ID, DATABASE_NAME, AGENT_TYPE
-    → Agent constructs S3 path: s3://bucket/{DATABASE_NAME}/{JOB_ID}/{agent}/
-      → Reads input from upstream agent's S3 output
-        → Runs Strands agent logic
-          → Writes output to own S3 path
-            → Container exits 0
-              → Step Functions moves to next state
-```
+The entrypoint is a run-to-completion script, never a server: it does its
+work, writes to the artifact store, and exits. `LocalOrchestrator` calls agent
+*handler functions* directly for everything except the load-test container
+and the AWS Transform path — there is no process boundary to cross for most
+of the pipeline.
 
-Each agent reads its input from the previous agent's S3 output:
-
-| Agent | Reads from | Writes to |
-|-------|-----------|-----------|
-| Collector | RDS/CloudWatch/PI (direct) | `{db}/{job}/collector/output.json` |
-| Referee-Triage | `{db}/{job}/collector/output.json` | `{db}/{job}/referee-triage/triage.json` |
-| Analysis (e.g., dynamodb) | `{db}/{job}/collector/output.json` | `{db}/{job}/analysis-dynamodb/analysis.json` |
-| Referee-Synthesis | `{db}/{job}/analysis-*/analysis.json` (all) | `{db}/{job}/referee-synthesis/report.json` |
-| Schema Design | `{db}/{job}/referee-synthesis/report.json` | `{db}/{job}/schema-dynamodb/schema.json` |
-
-### S3 Path Helper
-
-```python
-# storage.py
-import os
-
-BUCKET = f"{os.environ['PROJECT_NAME']}-{os.environ['ENVIRONMENT']}-storage-bucket"
-
-def s3_path(database_name: str, job_id: str, agent_name: str, filename: str) -> str:
-    return f"{database_name}/{job_id}/{agent_name}/{filename}"
-
-def read_agent_output(s3_client, database_name: str, job_id: str, agent_name: str) -> dict:
-    import json
-    key = s3_path(database_name, job_id, agent_name, "output.json")
-    response = s3_client.get_object(Bucket=BUCKET, Key=key)
-    return json.loads(response["Body"].read())
-
-def write_agent_output(s3_client, database_name: str, job_id: str, agent_name: str, data: dict):
-    import json
-    key = s3_path(database_name, job_id, agent_name, "output.json")
-    s3_client.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(data))
-```
+See [the orchestrator README](../../src/orchestrator/README.md) for the full
+workflow diagram and artifact path table, and
+[storage-architecture-guide.md](storage-architecture-guide.md) for the
+`ArtifactStore` abstraction.
 
 ---
 
-## Creating Custom Tools
+## The LLM Seam Pattern
 
-### Tool Structure
+Every phase that can use a model (schema design, synthesis, reality check,
+the analysis LLM advisor) splits into three pieces so the same code serves
+Bedrock, Claude Code and fully deterministic runs. See `AGENTS.md` for the
+canonical description; the short version:
+
+1. `run_*_deterministic(...)` — the complete result with no model call.
+2. `prepare_*_llm_input(det)` — the payload a model reasons over.
+3. `apply_*_llm_output(det, llm_output)` — merges and validates the model's
+   answer on top of the deterministic result.
+
+`--llm-mode` controls who plays the model's part: `external` (Claude Code
+writes `llm_input.json` and the command supplies the response), `bedrock`
+(the functions below call a Strands agent directly), or `none` (the seam is
+skipped — see AGENTS.md for what each phase falls back to).
+
+---
+
+## Strands SDK: the Bedrock Agents
+
+Strands (`strands-agents` on PyPI) is only in the picture for `--llm-mode
+bedrock`. These places build a `strands.Agent` with a `BedrockModel`:
+
+- `src/tools/analysis/llm_advisor_base.py` (`LlmAdvisorBase._get_agent`) — the analysis LLM advisor; builds a fresh agent per call and imports `strands` lazily
+- the six `src/tools/schema/*_schema_agent.py` modules (Aurora MySQL, Aurora PostgreSQL, DocumentDB, DynamoDB, ElastiCache, OpenSearch) — each builds a designer agent and a PE-reviewer agent, importing `strands` at module level, and hands them to `SchemaDesignRunner` (`src/tools/schema/base_schema_agent.py`), which runs the designer/reviewer loop but does not build agents itself
+- the `src/tools/schema/*_schema_designer.py` classes (DocumentDB, DynamoDB, ElastiCache)
+- `src/agents/referee/reality_check_handler.py` — the reality-check executive summary
+- `src/agents/referee/consolidation_validator.py` — the LLM validation step for consolidation decisions
+- `src/agents/referee/synthesis_report.py` — the synthesis executive summary
+
+The analysis advisor and the three referee modules import `strands` lazily; the
+referee modules wrap that import in `try`/`except ImportError`, log a warning and
+fall back to the deterministic result if Strands isn't installed.
+
+Most of these are one prompt in, one structured object out, with no tool
+wiring. The DynamoDB and OpenSearch schema designers are the exception: both
+register `@tool`-decorated functions (for example `load_agent_input` and
+`compute_performances_and_costs` in `dynamodb_schema_agent.py`,
+`load_agent_input` in `opensearch_schema_agent.py`) that the designer agent
+calls during its run, rather than taking everything as plain prompt text.
+
+### Pattern 1: `LlmAdvisorBase` (analysis agents)
+
+`src/tools/analysis/llm_advisor_base.py` is the base class every
+engine-specific analysis LLM advisor extends. It handles retries, large-
+workload group splitting, and schema filtering so subclasses only implement
+`_build_prompt`, `_parse_result`, `_merge_results` and `_output_model`.
 
 ```python
-from strands import Tool
-import mysql.connector
-from typing import Dict, Any
+# src/tools/analysis/llm_advisor_base.py (real code)
+def _get_agent(self):
+    """Create a FRESH Strands Agent per call.
 
-def connect_to_mysql(config: Dict[str, Any]) -> Dict[str, Any]:
+    We deliberately do NOT cache the Agent instance. Strands Agents
+    maintain conversation history internally — reusing the same Agent
+    across N groups of a large workload causes the accumulated context
+    to overflow the model's context window (observed 2026-07-11:
+    DynamoDB analysis on Discourse workload with 56 groups hit Opus
+    4.8's context limit at group 11 with error `bedrock threw context
+    window overflow error`, killing the container). Creating a fresh
+    Agent per group ensures each call is stateless.
     """
-    Connect to MySQL database and return connection metadata.
+    from strands import Agent
+    from strands.models.bedrock import BedrockModel
 
-    Args:
-        config: Database connection configuration
-            {
-                'endpoint': 'db.example.com',
-                'port': 3306,
-                'database_name': 'mydb',
-                'username': 'user',
-                'password': '<PASSWORD>'
-            }
+    model_id = os.environ.get("ANALYSIS_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    model = BedrockModel(model_id=model_id)
+    return Agent(
+        model=model,
+        system_prompt=self.system_prompt,
+        tools=[],
+        structured_output_model=self._output_model(),
+        callback_handler=None,
+    )
+```
 
-    Returns:
-        Dict with connection status and metadata
-    """
-    try:
-        connection = mysql.connector.connect(
-            host=config['endpoint'],
-            port=config['port'],
-            database=config['database_name'],
-            user=config['username'],
-            password=config['password'],
-            connect_timeout=30
-        )
+When a workload has more than `MAX_LLM_QUERIES` (30 by default) queries, the
+advisor splits them into groups, filters the schema down to only the tables
+each group's queries reference, calls the LLM per group with exponential
+backoff retry, and merges the per-group results.
 
-        # Get database version
-        cursor = connection.cursor()
-        cursor.execute("SELECT VERSION()")
-        version = cursor.fetchone()[0]
-        cursor.close()
+### Pattern 2: `SchemaDesignRunner` (schema design)
 
-        return {
-            'status': 'connected',
-            'database_type': 'mysql',
-            'version': version,
-            'connection': connection
-        }
+`src/tools/schema/base_schema_agent.py` runs the designer/PE-reviewer loop
+shared by DynamoDB, DocumentDB, both Aurora engines, and ElastiCache (not
+OpenSearch, which has its own designer loop): the designer produces a draft, a
+PE-reviewer agent critiques it, and the loop repeats (capped at
+`MAX_PE_ITERATIONS = 2`) until the reviewer approves or the cap is hit. It
+also tracks a separate, larger retry budget for Bedrock throttling (`429`,
+`503`, `ThrottlingException`, ...) than for genuine designer failures, since
+every engine's schema design groups run concurrently and share the same
+model quota.
 
-    except Exception as e:
-        return {
-            'status': 'error',
-            'error': str(e)
-        }
+```python
+# src/tools/schema/base_schema_agent.py (usage, real code)
+from src.tools.schema.base_schema_agent import SchemaDesignRunner
 
-# Create Strands Tool from function
-connect_mysql = Tool(
-    name="connect_mysql",
-    description="Connect to MySQL database. Returns connection status and metadata.",
-    function=connect_to_mysql
+runner = SchemaDesignRunner(
+    target_type="documentdb",
+    output_model=DocumentDBModelOutputContract,
+    model=bedrock_model,
+    designer_agent=agent,
+    pe_skill_path="src/skills/documentdb-pe-review.md",
+    pe_reviewer_fn=_invoke_pe_reviewer,
+    format_pe_feedback_fn=_format_pe_feedback,
 )
+output, trace = runner.run(designer_prompt, input_summary)
 ```
 
-### Schema Collection Tool
+**DynamoDB specifically always splits into groups** (roughly 20 queries each)
+that are designed independently and then merged by
+`src/agents/schema_design/dynamodb_merge.py` — this is mandatory, not a
+large-workload fallback like the analysis advisor's group splitting.
 
-```python
-def collect_mysql_schema(connection: Any) -> Dict[str, Any]:
-    """
-    Collect comprehensive schema from MySQL database.
+### What a system prompt looks like
 
-    Returns:
-        Dict with schema information (tables, columns, indexes, etc.)
-    """
-    cursor = connection.cursor(dictionary=True)
-
-    # Collect tables with metadata
-    cursor.execute("""
-        SELECT
-            table_name,
-            table_rows as row_count,
-            data_length as data_size_bytes,
-            index_length as index_size_bytes
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_type = 'BASE TABLE'
-    """)
-    tables = cursor.fetchall()
-
-    schema_data = {'tables': []}
-
-    # For each table, collect columns and indexes
-    for table in tables:
-        table_name = table['table_name']
-
-        # Get columns
-        cursor.execute(f"""
-            SELECT
-                column_name,
-                data_type,
-                is_nullable,
-                column_key
-            FROM information_schema.columns
-            WHERE table_schema = DATABASE()
-            AND table_name = '{table_name}'
-            ORDER BY ordinal_position
-        """)
-        columns = cursor.fetchall()
-
-        schema_data['tables'].append({
-            'table_name': table_name,
-            'row_count': table['row_count'],
-            'data_size_mb': table['data_size_bytes'] / 1024 / 1024,
-            'columns': columns
-        })
-
-    cursor.close()
-    return schema_data
-
-collect_schema = Tool(
-    name="collect_schema",
-    description="Collect complete schema from MySQL database including tables, columns, indexes",
-    function=collect_mysql_schema
-)
-```
+Each designer/advisor loads its system prompt from a Markdown file under
+`src/skills/` (for example `src/skills/documentdb-pe-review.md`), framed with
+`frame_untrusted` (`src/agents/prompt_framing.py`) wherever customer or
+collector text is interpolated into the prompt — see "Untrusted text is
+data" in `AGENTS.md`.
 
 ---
 
-## Building Collector Agents
+## Error Handling
 
-### MySQL Collector Example
-
-```python
-from strands import Agent
-from tools.database.mysql_tools import (
-    connect_mysql,
-    collect_schema,
-    collect_query_patterns
-)
-from tools.validation.contract_validation import validate_output
-from typing import Dict, Any
-
-class MySQLCollectorAgent:
-    """
-    MySQL Collector Agent using Strands SDK.
-
-    This wrapper provides a clean interface for ECS Fargate orchestrator
-    while using Strands Agent internally.
-    """
-
-    def __init__(self, input_contract: Dict[str, Any]):
-        self.input_contract = input_contract
-        self.job_id = input_contract['job_id']
-        self.database_config = input_contract['source_database']
-
-        # Create Strands Agent with system prompt and tools
-        self.agent = Agent(
-            system_prompt=self._create_system_prompt(),
-            callback_handler=None,  # Optional progress tracking
-            tools=[
-                connect_mysql,
-                collect_schema,
-                collect_query_patterns,
-                validate_output
-            ]
-        )
-
-    def _create_system_prompt(self) -> str:
-        """
-        System prompt defines agent behavior.
-
-        Instructs the agent on:
-        1. Role and responsibilities
-        2. How to use tools
-        3. Output format requirements
-        4. Error handling
-        """
-        return f"""You are a MySQL Database Collector Agent.
-
-Your mission: Collect comprehensive metadata, schema, and query patterns from MySQL.
-
-**Your Tools:**
-1. connect_mysql - Establish database connection
-2. collect_schema - Gather table structures, columns, indexes
-3. collect_query_patterns - Analyze query performance from performance_schema
-4. validate_output - Validate final output against contract
-
-**Execution Steps:**
-1. Connect to database using provided configuration
-2. If connection fails, return error with partial results
-3. Collect database metadata (version, size, table count)
-4. Collect comprehensive schema
-5. Collect query patterns from performance_schema
-6. Validate output against CollectorOutputContract
-7. Return structured JSON output
-
-**Output Format:**
-{{
-    "job_id": "{self.job_id}",
-    "collector_version": "2.0.0-strands",
-    "collection_timestamp": "ISO 8601 timestamp",
-    "database_metadata": {{}},
-    "schema": {{}},
-    "query_patterns": []
-}}
-
-**Error Handling:**
-- Connection fails: Return error with empty data
-- Schema collection fails: Return partial results with warning
-- Always validate output before returning
-
-Begin collection when you receive the database configuration."""
-
-    def collect(self) -> Dict[str, Any]:
-        """
-        Execute collection workflow using Strands Agent.
-
-        Returns:
-            Dict containing collector output matching CollectorOutputContract
-        """
-        # Format input for agent
-        agent_input = f"""Collect data from this MySQL database:
-
-Job ID: {self.job_id}
-
-Database Configuration:
-- Endpoint: {self.database_config['endpoint']}
-- Port: {self.database_config['port']}
-- Database: {self.database_config['database_name']}
-
-Execute the collection workflow using your tools."""
-
-        # Execute Strands Agent
-        response = self.agent(agent_input)
-
-        # Parse response (Strands returns string by default)
-        import json
-        output = json.loads(str(response))
-
-        return output
-
-# Factory function
-def create_mysql_collector(input_contract: Dict[str, Any]) -> MySQLCollectorAgent:
-    """Factory function to create MySQL Collector Agent."""
-    return MySQLCollectorAgent(input_contract)
-```
+- The deterministic builders raise on malformed input; handlers catch model
+  exceptions, log them, and either retry (schema design, the analysis
+  advisor) or fall back to the deterministic result (synthesis executive
+  summary, reality check).
+- `AgentNeedsInputError` (`src/agents/interaction.py`) is raised by any phase
+  that is genuinely waiting on human/LLM input in `external` mode; the
+  entrypoint maps it to exit code 2 rather than treating it as a failure.
 
 ---
 
-## Contract Validation Pattern
+## Testing
 
-### Validation Tools
-
-```python
-from strands import Tool
-import jsonschema
-import json
-
-def validate_input_contract(input_data: dict) -> dict:
-    """
-    Validate input against CollectorInputContract schema
-
-    Args:
-        input_data: Input JSON to validate
-
-    Returns:
-        {'status': 'valid'} or {'status': 'invalid', 'errors': [...]}
-    """
-    with open('contracts/schemas/collector-input.json') as f:
-        schema = json.load(f)
-
-    try:
-        jsonschema.validate(instance=input_data, schema=schema)
-        return {'status': 'valid'}
-    except jsonschema.ValidationError as e:
-        return {
-            'status': 'invalid',
-            'errors': [e.message],
-            'path': list(e.path)
-        }
-
-validate_input = Tool(
-    name="validate_input_contract",
-    description="Validate input JSON against CollectorInputContract schema",
-    function=validate_input_contract
-)
-
-def validate_output_contract(output_data: dict) -> dict:
-    """
-    Validate output against CollectorOutputContract schema
-
-    Args:
-        output_data: Output JSON to validate
-
-    Returns:
-        {'status': 'valid'} or {'status': 'invalid', 'errors': [...]}
-    """
-    with open('contracts/schemas/collector-output.json') as f:
-        schema = json.load(f)
-
-    try:
-        jsonschema.validate(instance=output_data, schema=schema)
-        return {'status': 'valid'}
-    except jsonschema.ValidationError as e:
-        return {
-            'status': 'invalid',
-            'errors': [e.message],
-            'path': list(e.path)
-        }
-
-validate_output = Tool(
-    name="validate_output_contract",
-    description="Validate output JSON against CollectorOutputContract schema",
-    function=validate_output_contract
-)
-```
-
----
-
-## Error Handling Pattern
-
-### Standard Error Handler
-
-```python
-def handle_collection_error(error: Exception, context: dict) -> dict:
-    """
-    Standard error handling for all collectors
-
-    Args:
-        error: The exception that occurred
-        context: Context information (job_id, table_name, etc.)
-
-    Returns:
-        Error details dict
-    """
-    return {
-        'error_type': type(error).__name__,
-        'error_message': str(error),
-        'context': context,
-        'timestamp': datetime.now().isoformat(),
-        'recoverable': is_transient_error(error)
-    }
-
-def is_transient_error(error: Exception) -> bool:
-    """Determine if error is transient (should retry)"""
-    transient_errors = [
-        'ConnectionError',
-        'TimeoutError',
-        'OperationalError',
-        'ThrottlingException'
-    ]
-    return type(error).__name__ in transient_errors
-```
-
----
-
-## Progress Reporting (ADR-016)
-
-Agents report progress at each mini-step boundary via EventBridge. The API server (FastAPI) subscribes to these events and pushes them to connected WebSocket clients.
-
-### Flow
-
-```
-Agent mini-step → EventBridge (PutEvents) → EventBridge Rule
-  → Lambda → API Gateway WebSocket / FastAPI WebSocket → Browser
-```
-
-### EventBridge Event Format
-
-```python
-{
-    "Source": "modernizer.agent",
-    "DetailType": "AgentProgress",
-    "EventBusName": os.environ["EVENT_BUS_NAME"],
-    "Detail": json.dumps({
-        "job_id": "2GxZLsnP00Y...",
-        "agent_name": "collector",
-        "mini_step": "collect_schema",
-        "status": "completed",       # started | completed | failed
-        "timestamp": "2026-02-18T...",
-        "metadata": {
-            "tables_processed": 150,
-            "total_tables": 300,
-            "percent_complete": 50
-        }
-    })
-}
-```
-
-### ProgressReporter (used by all agents)
-
-```python
-import boto3
-import json
-import os
-from datetime import datetime, timezone
-
-class ProgressReporter:
-    """Publishes mini-step progress to EventBridge."""
-
-    def __init__(self, job_id: str, agent_name: str):
-        self.job_id = job_id
-        self.agent_name = agent_name
-        self.event_bus = os.environ["EVENT_BUS_NAME"]
-        self.client = boto3.client("events")
-
-    def report(self, mini_step: str, status: str, **metadata):
-        self.client.put_events(Entries=[{
-            "Source": "modernizer.agent",
-            "DetailType": "AgentProgress",
-            "EventBusName": self.event_bus,
-            "Detail": json.dumps({
-                "job_id": self.job_id,
-                "agent_name": self.agent_name,
-                "mini_step": mini_step,
-                "status": status,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "metadata": metadata
-            })
-        }])
-```
-
-### Usage in Agent Code
-
-```python
-def run_collector(job_id: str, database_name: str):
-    progress = ProgressReporter(job_id, "collector")
-
-    progress.report("connect", "started")
-    connection = connect_to_rds(database_name)
-    progress.report("connect", "completed")
-
-    progress.report("collect_schema", "started")
-    schema = collect_schema(connection)
-    progress.report("collect_schema", "completed", tables_processed=len(schema))
-
-    progress.report("collect_metrics", "started")
-    metrics = collect_cloudwatch_metrics(database_name)
-    progress.report("collect_metrics", "completed")
-
-    # ... write output to S3
-    progress.report("save_output", "completed")
-```
-
-### Strands Hook Integration
-
-For agents using Strands SDK conversation loop, register hooks to auto-report:
-
-```python
-from strands.hooks import HookEvent
-
-def register_progress_hooks(agent, progress: ProgressReporter, step_name: str):
-    @agent.hooks.register(HookEvent.AGENT_START)
-    def on_start(context):
-        progress.report(step_name, "started")
-
-    @agent.hooks.register(HookEvent.AGENT_END)
-    def on_complete(context):
-        progress.report(step_name, "completed")
-```
-
-### Restart Points
-
-Each agent declares its mini-steps. These are the restart points per ADR-016. Restarting a mini-step cascades to all subsequent mini-steps and downstream agents.
-
-```python
-# Collector restart points
-COLLECTOR_MINI_STEPS = ["connect", "collect_schema", "collect_metrics",
-                        "collect_samples", "collect_pi", "save_output"]
-
-# Analysis restart points
-ANALYSIS_MINI_STEPS = ["load_input", "analyze", "score", "save_output"]
-
-# Referee-Triage restart points
-TRIAGE_MINI_STEPS = ["load_collector", "evaluate_patterns", "select_agents", "save_triage"]
-```
-
----
-
-## Standard Execution Flow
-
-All collector agents follow this pattern:
-
-```
-1. validate_input_contract(input)
-   ├─ Valid → Continue
-   └─ Invalid → Return error
-
-2. connect_to_rds(connection_config)
-   ├─ Success → Continue
-   └─ Failure → Return error with partial results
-
-3. collect_rds_metadata(rds_api)
-   ├─ Success → Continue
-   └─ Failure → Log warning, continue
-
-4. collect_cloudwatch_metrics(cloudwatch_api)
-   ├─ Success → Continue
-   └─ Failure → Log warning, continue
-
-5. collect_performance_insights(pi_api)
-   ├─ Success → Continue
-   └─ Failure → Log warning, continue
-
-6. collect_schema(database_connection)
-   ├─ Success → Continue
-   └─ Failure → Return error (schema is required)
-
-7. collect_sample_data(database_connection)
-   ├─ Success → Continue
-   └─ Failure → Log warning, continue (optional)
-
-8. validate_output_contract(output)
-   ├─ Valid → Return output
-   └─ Invalid → Fix and retry, or return error
-```
+See [testing-guide.md](testing-guide.md) for the full test tiers. For
+Strands-backed code specifically: unit tests patch `strands.Agent` /
+`BedrockModel` at the model entry point (never call a real model — see
+AGENTS.md "Tests never call a real model") and assert on the deterministic
+builders directly wherever the LLM seam allows it.
 
 ---
 
 ## Related Documentation
 
-- [High-Level Design](../architecture/high-level-design.md)
-- [ADR-016: Compute and Orchestration Strategy](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
-- [Agent Framework Diagram](../architecture/architecture-diagrams/04-agent-framework.md)
-- [Orchestration Architecture](../architecture/architecture-diagrams/11-orchestration-architecture.md)
-- [Progress Reporting Diagram](../architecture/architecture-diagrams/10-progress-reporting.md)
-- [Strands Collector Guide](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/strands-collector-guide.md)
-- [Contract Specifications](../../contracts/README.md)
-
----
-
-**Last Updated:** February 18, 2026
-**Maintained By:** Database Modernizer Assessment Engineering Team
+- [Orchestrator README](../../src/orchestrator/README.md) — workflow, artifact paths, agent dispatch
+- [Referee Agent Guide](referee-agent-guide.md) — triage, reality check, synthesis
+- [Strands Collector Guide](strands-collector-guide.md)
+- [Storage Architecture Guide](storage-architecture-guide.md)
+- [Contract Specifications](../contracts/agent-contracts-spec.md)
+- `AGENTS.md` — the LLM seam pattern and the three `--llm-mode` values

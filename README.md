@@ -24,6 +24,8 @@ Modernizing off a monolithic relational database is hard. Which queries belong i
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 **Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
+> **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it moved to a Claude Code–first local tool to keep the open-source release simple to adopt. See [Hosted Deployment (Retired)](https://github.com/aws-samples/sample-aws-genai-db-modernizer#hosted-deployment-retired) for details.
+
 ## Who is this for?
 
 This tool is for teams that have **decided to refactor their application** to use purpose-built databases. It helps you figure out which queries go where and what the target schemas should look like.
