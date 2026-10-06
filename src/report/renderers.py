@@ -690,7 +690,7 @@ body { font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,Roboto,
   background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.25); margin:.6rem .5rem 0 0; }
 .pill b { color:#7CFFB0; }
 .tiles { display:flex; flex-wrap:wrap; gap:1rem; margin:1.5rem 0; }
-.tile { flex:1 1 150px; border-radius:12px; padding:1.2rem; color:#fff; text-align:center; }
+.tile { flex:1 1 150px; border-radius:12px; padding:1.2rem; color:#fff; text-align:center; display:flex; flex-direction:column-reverse; justify-content:flex-end; }
 .tile h3 { font-size:1.7rem; font-weight:700; margin:0 0 .2rem; }
 .tile p { margin:0; font-size:.85rem; opacity:.92; }
 .tile.green { background:linear-gradient(135deg,#00d563,#00a84f); }
@@ -878,12 +878,12 @@ def render_decision_report_html(
     ]
     current_cost_text, savings_text = _cost_baseline_text(tco)
     out += [
-        f'<div class="tile slate"><h3>{esc(current_cost_text)}</h3><p>Current monthly</p></div>',
-        f'<div class="tile green"><h3>{_fmt_usd(tco.get("projected_monthly_cost"))}</h3><p>Projected monthly</p></div>',
-        f'<div class="tile green"><h3>{esc(savings_text)}</h3><p>Savings</p></div>',
-        f'<div class="tile blue"><h3>{len(engines)}</h3><p>Engines</p></div>',
-        f'<div class="tile slate"><h3>{migrated}</h3><p>Tables migrate</p></div>',
-        f'<div class="tile {_risk_tile_class(risk_level)}"><h3>{esc(risk_level)}</h3><p>Overall risk</p></div>',
+        f'<div class="tile slate"><p>Current monthly</p><h3>{esc(current_cost_text)}</h3></div>',
+        f'<div class="tile green"><p>Projected monthly</p><h3>{_fmt_usd(tco.get("projected_monthly_cost"))}</h3></div>',
+        f'<div class="tile green"><p>Savings</p><h3>{esc(savings_text)}</h3></div>',
+        f'<div class="tile blue"><p>Engines</p><h3>{len(engines)}</h3></div>',
+        f'<div class="tile slate"><p>Tables migrate</p><h3>{migrated}</h3></div>',
+        f'<div class="tile {_risk_tile_class(risk_level)}"><p>Overall risk</p><h3>{esc(risk_level)}</h3></div>',
         "</div>",
     ]
     eliminated_cost_text = _eliminated_engine_costs_text(tco)

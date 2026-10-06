@@ -38,10 +38,10 @@ class TestDecisionReportCostBaseline:
             "cost_breakdown": [],
         }
         html = render_decision_report_html(_report(tco))
-        assert "<h3>source cost not provided</h3><p>Current monthly</p>" in html
-        assert "<h3>not available</h3><p>Savings</p>" in html
-        assert "<h3>$0.00</h3><p>Current monthly</p>" not in html
-        assert "<h3>0%</h3><p>Savings</p>" not in html
+        assert "<p>Current monthly</p><h3>source cost not provided</h3>" in html
+        assert "<p>Savings</p><h3>not available</h3>" in html
+        assert "<p>Current monthly</p><h3>$0.00</h3>" not in html
+        assert "<p>Savings</p><h3>0%</h3>" not in html
 
     def test_known_baseline_shows_the_real_figures(self) -> None:
         tco = {
@@ -134,3 +134,26 @@ class TestEngineeringReportCostBaseline:
         }
         md = render_engineering_report_md(_report(tco))
         assert "$271.80/mo" in md
+
+
+class TestDecisionReportTileTextOrder:
+    """A text reader (the quality judge, a screen reader) must see each tile's
+    label before its value, or "source cost not provided" reads as the label of
+    the next tile's figure (Discourse validation run on 7aa6ec1)."""
+
+    def test_each_tile_label_comes_right_before_its_value(self) -> None:
+        from ci.llm.judge import html_to_text
+
+        tco = {
+            "current_monthly_cost": 0.0,
+            "current_cost_known": False,
+            "projected_monthly_cost": 301.36,
+            "savings_percent": 0,
+            "cost_breakdown": [],
+        }
+        lines = html_to_text(render_decision_report_html(_report(tco))).splitlines()
+        pairs = {lines[i]: lines[i + 1] for i in range(len(lines) - 1)}
+        assert pairs["Current monthly"] == "source cost not provided"
+        assert pairs["Projected monthly"] == "$301.36"
+        assert pairs["Savings"] == "not available"
+        assert pairs["Engines"] == "1"

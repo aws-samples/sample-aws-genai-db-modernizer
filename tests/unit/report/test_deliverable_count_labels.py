@@ -227,7 +227,7 @@ class TestSharedSourceTables:
         html = renderers.render_decision_report_html(_shared_tables_report())
         assert "19 source tables (21 incl. shared)" in html
         assert "21 tables migrate" in html
-        assert "<h3>21</h3><p>Tables migrate</p>" in html
+        assert "<p>Tables migrate</p><h3>21</h3>" in html
         assert "1921" not in html
 
     def test_deck_totals_still_sum_mapped_tables(self) -> None:
