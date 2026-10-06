@@ -8,11 +8,15 @@ every in-app link now points to) was removed (see #185 — it crashed with React
 current contract, directly as JSX children). `/analysis/results/:jobId` is now a
 redirect to `/analysis/results-v2/:jobId`, covered by
 `test_legacy_results_route_redirects_to_results_v2` below, so old bookmarks still
-work. `/analysis/monitor/*` is excluded for the same reason as before
-(it is for in-flight jobs, not completed ones). `/analysis/patterns/:jobId` is
-exercised only with its required `?target=` query param, since every real link to
-that route supplies one (src/ui/src/pages/PatternAnalysis.js reads `target` from
-`useSearchParams` with no default; a bare visit fetches `.../analysis/null` and 404s).
+work. The legacy `/analysis/report/:jobId` page (the earlier, orange-styled report)
+was removed the same way (see #356); `/analysis/report/:jobId` is now a redirect to
+`/analysis/results-v2/:jobId` too, covered by
+`test_legacy_report_route_redirects_to_results_v2` below. `/analysis/monitor/*` is
+excluded for the same reason as before (it is for in-flight jobs, not completed
+ones). `/analysis/patterns/:jobId` is exercised only with its required `?target=`
+query param, since every real link to that route supplies one
+(src/ui/src/pages/PatternAnalysis.js reads `target` from `useSearchParams` with no
+default; a bare visit fetches `.../analysis/null` and 404s).
 """
 
 from __future__ import annotations
@@ -156,17 +160,28 @@ def test_assignments_page_recommends_the_ranked_engines(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
-def test_report_page_renders_the_full_report(
+def test_legacy_report_route_redirects_to_results_v2(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
+    """Old bookmarks/links to the retired `/analysis/report/:jobId` page (#356,
+    the earlier, orange-styled report) must land on the `/analysis/results-v2/:jobId`
+    content instead of the now-removed page."""
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/report/{r.job_id}")
         page.wait_for_load_state("networkidle")
+        assert page.url.rstrip("/").endswith(f"/analysis/results-v2/{r.job_id}"), (
+            r.db,
+            page.url,
+        )
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
-        assert r.job_id in text and r.db in text, (r.db, "job id / database name missing")
-        assert "open migration risk" in text, (r.db, "executive summary missing")
+        assert r.db in text, (r.db, "source database name missing")
+        assert _top_engine_label(r) in text, (
+            r.db,
+            "top-ranked engine missing",
+            _top_engine_label(r),
+        )
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 

@@ -1,6 +1,6 @@
 /**
- * Output escaping for the HTML files the UI exports (ReportResults "Export to HTML"
- * and the interactive report built by ExportReport.js).
+ * Output escaping for the HTML files the UI exports (the static report built by
+ * ReportHtmlExport.js and the interactive report built by ExportReport.js).
  *
  * Everything those exporters interpolate comes from report.json: risk prose,
  * trade-offs and summaries an LLM wrote, and table/column names and SQL taken from

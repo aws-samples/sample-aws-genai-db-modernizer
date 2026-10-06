@@ -88,7 +88,7 @@ describe('jsonForScript', () => {
 });
 
 // --------------------------------------------------------------------------------
-// ReportResults "Export to HTML" (static document, no scripts at all)
+// buildReportHtml / ReportHtmlExport.js (static document, no scripts at all)
 // --------------------------------------------------------------------------------
 
 const hostileResults = () => ({
@@ -133,7 +133,7 @@ const hostileResults = () => ({
   triage_summary: { database_name: IMG, source_database_type: JS_URL },
 });
 
-describe('buildReportHtml (ReportResults export)', () => {
+describe('buildReportHtml (ReportHtmlExport.js)', () => {
   // A translation can carry interpolated data too; prove its output is escaped.
   const t = (key) => (key.endsWith('resolved-export-description') ? IMG : key);
   const parse = (text) => new DOMParser().parseFromString(text, 'text/html');

@@ -1,11 +1,15 @@
 /**
- * Builds the standalone HTML file behind ReportResults' "Export to HTML" button.
+ * Builds a standalone, fully self-contained HTML report from report.json: a static
+ * document with no scripts (unlike the interactive report in ExportReport.js).
  *
- * Kept out of the page component so it is a pure function of report.json and can be
- * unit-tested without rendering the page. Every value from report.json -- risk prose,
- * mitigations, reasons, trade-offs, summaries (LLM-written) and table/pattern names
- * (customer-derived) -- is untrusted, so the document is assembled with the `html`
- * tag from ./escapeHtml, which HTML-escapes every interpolation by default (#242).
+ * Originally powered the legacy ReportResults page's "Export to HTML" button, which
+ * was removed with that page (#356). Kept here, with its tests, as a plain function
+ * of report.json with no page to render it from today -- it is a pure function and
+ * fully covered independently of any page, so there is nothing page-specific to lose
+ * by keeping it. Every value from report.json -- risk prose, mitigations, reasons,
+ * trade-offs, summaries (LLM-written) and table/pattern names (customer-derived) --
+ * is untrusted, so the document is assembled with the `html` tag from ./escapeHtml,
+ * which HTML-escapes every interpolation by default (#242).
  */
 import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
@@ -93,7 +97,6 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   const riskAssessment = synthesis.risk_assessment || {};
   const risks = asArray(riskAssessment.risks).filter(risk => riskHasContent(risk.description));
   // Analysis risks the effective assignment resolved (risk_assessment.resolved_risks).
-  // Mirrors the "Resolved" tab on the page (see resolvedRisks in ReportResults.js).
   const resolvedRisks = asArray(riskAssessment.resolved_risks)
     .filter(risk => riskHasContent(risk.description))
     .map(risk => ({

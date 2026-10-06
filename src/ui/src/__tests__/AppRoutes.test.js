@@ -21,7 +21,6 @@ jest.mock('../pages/CreateAnalysis', () => mockPage('CreateAnalysis'));
 jest.mock('../pages/JobMonitoring', () => mockPage('JobMonitoring'));
 jest.mock('../pages/JobMonitoringSummary', () => mockPage('JobMonitoringSummary'));
 jest.mock('../pages/PatternAnalysis', () => mockPage('PatternAnalysis'));
-jest.mock('../pages/ReportResults', () => mockPage('ReportResults'));
 jest.mock('../pages/Settings', () => mockPage('Settings'));
 jest.mock('../pages/Debug', () => mockPage('Debug'));
 jest.mock('../pages/LocalAnalysis', () => mockPage('LocalAnalysis'));
@@ -88,6 +87,16 @@ test('legacy /analysis/results/:jobId redirects to results-v2, keeping the job i
   expect(renderAt('/analysis/results/job-42')).toEqual({
     page: 'AnalysisResultsV2', jobId: 'job-42', pathname: '/analysis/results-v2/job-42',
   });
+});
+
+test('legacy /analysis/report/:jobId redirects to results-v2, keeping the job id (#356)', () => {
+  expect(renderAt('/analysis/report/job-42')).toEqual({
+    page: 'AnalysisResultsV2', jobId: 'job-42', pathname: '/analysis/results-v2/job-42',
+  });
+});
+
+test('the retired ReportResults page module is gone (#356)', () => {
+  expect(() => jest.requireActual('../pages/ReportResults')).toThrow();
 });
 
 test('unknown paths fall through * to / and then the dashboard', () => {
