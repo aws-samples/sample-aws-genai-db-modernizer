@@ -23,6 +23,9 @@ read-only) lists the groups, which group drafts exist and whether ``--merge`` is
 still pending, so an orchestrator can decide its next step without listing or
 reading artifacts.
 
+Aurora engines use single-pass schema design. ``--split`` rejects them; omit
+that flag to prepare their external request or run them with Bedrock.
+
 The assignment version defaults to the effective one (ADR-028): v2 when Reality
 Check consolidated, else v1. Every status line reports it as
 ``assignment_version`` so callers build ``schema-<engine>/v<N>/`` paths from it.
@@ -200,6 +203,9 @@ def _scope_fields(report, output_path: str | None = None) -> dict:
 
 def run_split(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Split schema design input into per-group files (DynamoDB split/merge flow)."""
+    if engine in _AURORA_ENGINES:
+        _error(f"{engine} uses single-pass schema design; omit --split")
+
     from src.agents.schema_design.handler import run_schema_split
 
     run_schema_split(
@@ -589,7 +595,7 @@ def main() -> None:
     parser.add_argument(
         "--split",
         action="store_true",
-        help="Split schema design input into per-group files (DynamoDB)",
+        help="Split schema design input into per-group files (not supported for Aurora engines)",
     )
     parser.add_argument(
         "--merge",
