@@ -39,7 +39,11 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown } from "../utils/cacheLayer";
+// #358: engine display names come from the shared mapping (kept in sync with
+// src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
+// rather than this page's own hand-kept copy.
+import { ENGINE_LABELS } from "../utils/engineNames";
 
 
 // ============================================
@@ -64,18 +68,6 @@ const ENGINE_HEX = {
   neptune: '#7d2105',
   keyspaces: '#8b6ccb',
   aurora: '#ec7211',
-};
-
-const ENGINE_LABELS = {
-  dynamodb: 'DynamoDB',
-  documentdb: 'DocumentDB',
-  opensearch: 'OpenSearch',
-  elasticache: 'ElastiCache',
-  neptune: 'Neptune',
-  keyspaces: 'Keyspaces',
-  aurora: 'Aurora',
-  aurora_mysql: 'Aurora MySQL',
-  aurora_postgresql: 'Aurora PostgreSQL',
 };
 
 const OP_CATEGORY = {
@@ -228,6 +220,14 @@ const AnalysisResultsPage = memo(() => {
   const afterDist = ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay);
   const cacheLayerLine = formatCacheLayerLine(cacheOverlay, { t });
 
+  // #358: "Target engines" must list the cache layer too (labeled distinctly,
+  // e.g. "ElastiCache (cache layer)") -- it owns no queries, so afterDist
+  // alone would leave it out entirely.
+  const targetEngines = useMemo(
+    () => targetEngineEntries(afterDist, cacheOverlay),
+    [afterDist, cacheOverlay]
+  );
+
   // Filter schema designs to only engines with actual content
   const activeDesigns = useMemo(() => {
     return schemaDesigns.filter(d => {
@@ -239,15 +239,14 @@ const AnalysisResultsPage = memo(() => {
     });
   }, [schemaDesigns]);
 
-  // Projected cost: sum only surviving engines
-  const costBreakdown = useMemo(() => {
-    const all = synthesis?.tco_analysis?.cost_breakdown || [];
-    return all.filter(cb => afterDist[cb.database] != null);
-  }, [synthesis, afterDist]);
-
-  const projectedCost = useMemo(() => {
-    return costBreakdown.reduce((sum, cb) => sum + (cb.monthly_cost_usd || 0), 0);
-  }, [costBreakdown]);
+  // #358: cost breakdown keeps the cache layer's own cost card even though it
+  // owns no workload share, and the projected total is the report's own
+  // tco_analysis.projected_monthly_cost -- not a sum recomputed from a
+  // filtered subset -- so it matches the decision report and chat.
+  const { items: costBreakdown, total: projectedCost } = useMemo(
+    () => resolveCostBreakdown(synthesis?.tco_analysis, afterDist, cacheOverlay),
+    [synthesis, afterDist, cacheOverlay]
+  );
 
   // Build Sankey from after_distribution
   const sankeyData = useMemo(() => {
@@ -1587,14 +1586,20 @@ const AnalysisResultsPage = memo(() => {
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.target-engines')}</Box>
                     <Box fontSize="heading-m">
                       <SpaceBetween direction="horizontal" size="xxs">
-                        {Object.keys(afterDist).map(engine => (
-                          <Badge key={engine} color={ENGINE_BADGE_COLORS[engine] || 'grey'}>{ENGINE_LABELS[engine] || engine}</Badge>
+                        {/* #358: the cache layer is listed here too (labeled
+                            distinctly, e.g. "ElastiCache (cache layer)") -- it
+                            owns no queries, but it is still a target engine
+                            the deliverables name and price. */}
+                        {targetEngines.map(({ engine, isCacheLayer }) => (
+                          <Badge key={engine} color={ENGINE_BADGE_COLORS[engine] || 'grey'}>
+                            {ENGINE_LABELS[engine] || engine}
+                            {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
+                          </Badge>
                         ))}
                       </SpaceBetween>
                     </Box>
-                    {/* #296: ElastiCache is a cache layer, not a target engine --
-                        it never contributes a workload share, so it gets its own
-                        note instead of a badge in the list above. */}
+                    {/* #296: additional cache-layer stats (reads fronted, %
+                        of calls) shown as a note below the badges above. */}
                     {cacheLayerLine && (
                       <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
                         {cacheLayerLine}
@@ -1637,15 +1642,24 @@ const AnalysisResultsPage = memo(() => {
               <Container header={<Header variant="h2" description={t('analysis-results-v2.cost-breakdown.description')}>{t('analysis-results-v2.cost-breakdown.title')}</Header>}>
                 <SpaceBetween size="m">
                   <ColumnLayout columns={costBreakdown.length} variant="text-grid">
-                    {costBreakdown.map((cb, idx) => (
-                      <Box key={idx} textAlign="center">
-                        <Badge color={ENGINE_BADGE_COLORS[cb.database] || 'grey'}>{ENGINE_LABELS[cb.database] || cb.database}</Badge>
-                        <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
-                          ${cb.monthly_cost_usd?.toFixed(2)}
+                    {costBreakdown.map((cb, idx) => {
+                      // #358: the cache layer's card is labeled the same way
+                      // as its "Target engines" badge, so the two sections
+                      // agree on what ElastiCache is here.
+                      const isCacheLayer = cb.database === cacheOverlay?.engine;
+                      return (
+                        <Box key={idx} textAlign="center">
+                          <Badge color={ENGINE_BADGE_COLORS[cb.database] || 'grey'}>
+                            {ENGINE_LABELS[cb.database] || cb.database}
+                            {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
+                          </Badge>
+                          <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
+                            ${cb.monthly_cost_usd?.toFixed(2)}
+                          </Box>
+                          <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
                         </Box>
-                        <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
-                      </Box>
-                    ))}
+                      );
+                    })}
                   </ColumnLayout>
                   {synthesis?.tco_analysis?.assumptions?.length > 0 && (
                     <Box fontSize="body-s" color="text-body-secondary">

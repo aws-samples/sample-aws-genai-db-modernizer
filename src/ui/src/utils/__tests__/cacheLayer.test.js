@@ -12,6 +12,9 @@ import {
   getQueryCacheInfo,
   formatCacheLayerLine,
   formatCachedByLine,
+  targetEngineEntries,
+  resolveCostBreakdown,
+  isKeptCostEngine,
 } from '../cacheLayer';
 import en from '../../locales/en.json';
 
@@ -168,5 +171,171 @@ describe('buildOverrideList (#296 cache toggle)', () => {
 
   test('nothing pending, nothing sent', () => {
     expect(buildOverrideList({}, {})).toEqual([]);
+  });
+});
+
+// #358: Results page fixture shaped like a real synthesis report.json
+// (wordpress job e6a0127b) -- after_distribution has three owners, the cache
+// overlay fronts a slice of their reads, and tco_analysis.cost_breakdown has
+// a fourth, elasticache, entry plus a projected_monthly_cost that already
+// includes it.
+const REPORT_FIXTURE = {
+  reality_check: {
+    after_distribution: { dynamodb: 82, aurora_mysql: 21, opensearch: 4 },
+  },
+  cache_overlay: {
+    engine: 'elasticache',
+    query_count: 14,
+    calls_per_second: 158.85,
+    call_share_percent: 71.5,
+  },
+  tco_analysis: {
+    projected_monthly_cost: 823.72,
+    cost_breakdown: [
+      { database: 'dynamodb', monthly_cost_usd: 98.41, pricing_mode: 'on-demand' },
+      { database: 'elasticache', monthly_cost_usd: 165.55, pricing_mode: 'on-demand' },
+      { database: 'opensearch', monthly_cost_usd: 240.96, pricing_mode: 'on-demand' },
+      { database: 'aurora_mysql', monthly_cost_usd: 318.8, pricing_mode: 'on-demand' },
+    ],
+  },
+};
+
+describe('targetEngineEntries (#358 Results page "Target engines")', () => {
+  test('lists the owners from after_distribution, then the cache layer last, flagged distinctly', () => {
+    const afterDist = ownerDistribution(
+      REPORT_FIXTURE.reality_check.after_distribution,
+      !!getCacheOverlay(REPORT_FIXTURE)
+    );
+    expect(targetEngineEntries(afterDist, getCacheOverlay(REPORT_FIXTURE))).toEqual([
+      { engine: 'dynamodb', isCacheLayer: false },
+      { engine: 'aurora_mysql', isCacheLayer: false },
+      { engine: 'opensearch', isCacheLayer: false },
+      { engine: 'elasticache', isCacheLayer: true },
+    ]);
+  });
+
+  test('no cache overlay: owners only, nothing flagged as a cache layer', () => {
+    const afterDist = { dynamodb: 82, aurora_mysql: 21 };
+    expect(targetEngineEntries(afterDist, null)).toEqual([
+      { engine: 'dynamodb', isCacheLayer: false },
+      { engine: 'aurora_mysql', isCacheLayer: false },
+    ]);
+  });
+
+  test('legacy artifact where elasticache is still a real owner: not duplicated as a cache layer', () => {
+    const afterDist = { dynamodb: 69, elasticache: 34 };
+    expect(targetEngineEntries(afterDist, null)).toEqual([
+      { engine: 'dynamodb', isCacheLayer: false },
+      { engine: 'elasticache', isCacheLayer: false },
+    ]);
+  });
+
+  test('handles a missing/undefined distribution', () => {
+    expect(targetEngineEntries(undefined, null)).toEqual([]);
+    expect(targetEngineEntries(undefined, { engine: 'elasticache' })).toEqual([
+      { engine: 'elasticache', isCacheLayer: true },
+    ]);
+  });
+});
+
+describe('isKeptCostEngine (#358, shared with the standalone export\'s mirrored predicate)', () => {
+  test('an owner engine is kept', () => {
+    expect(isKeptCostEngine('dynamodb', { dynamodb: 82 }, 'elasticache')).toBe(true);
+  });
+
+  test('the cache engine is kept even though it owns nothing', () => {
+    expect(isKeptCostEngine('elasticache', { dynamodb: 82 }, 'elasticache')).toBe(true);
+  });
+
+  test('neither an owner nor the cache engine is dropped', () => {
+    expect(isKeptCostEngine('documentdb', { dynamodb: 82 }, 'elasticache')).toBe(false);
+  });
+
+  test('no cache engine (null): only owners are kept', () => {
+    expect(isKeptCostEngine('elasticache', { dynamodb: 82 }, null)).toBe(false);
+  });
+});
+
+describe('resolveCostBreakdown (#358 Results page "Cost breakdown" + "Projected cost")', () => {
+  test('keeps the cache layer cost card even though it owns no workload share', () => {
+    const afterDist = { dynamodb: 82, aurora_mysql: 21, opensearch: 4 };
+    const { items } = resolveCostBreakdown(
+      REPORT_FIXTURE.tco_analysis,
+      afterDist,
+      REPORT_FIXTURE.cache_overlay
+    );
+    expect(items.map(cb => cb.database).sort()).toEqual(
+      ['aurora_mysql', 'dynamodb', 'elasticache', 'opensearch']
+    );
+  });
+
+  test('the total is the report\'s own projected_monthly_cost, not a sum recomputed from a filtered subset', () => {
+    const afterDist = { dynamodb: 82, aurora_mysql: 21, opensearch: 4 };
+    const { total } = resolveCostBreakdown(
+      REPORT_FIXTURE.tco_analysis,
+      afterDist,
+      REPORT_FIXTURE.cache_overlay
+    );
+    expect(total).toBe(823.72);
+    // Matches the decision report / chat total: DynamoDB + Aurora MySQL + OpenSearch + ElastiCache.
+    expect(total).toBeCloseTo(98.41 + 318.8 + 240.96 + 165.55, 2);
+  });
+
+  test('cache engine in cache_overlay but absent from cost_breakdown: no card, total is still the report\'s', () => {
+    const tco = {
+      projected_monthly_cost: 823.72,
+      cost_breakdown: [
+        { database: 'dynamodb', monthly_cost_usd: 98.41 },
+        { database: 'aurora_mysql', monthly_cost_usd: 318.8 },
+        { database: 'opensearch', monthly_cost_usd: 240.96 },
+        // no elasticache entry here, even though cache_overlay names it.
+      ],
+    };
+    const afterDist = { dynamodb: 82, aurora_mysql: 21, opensearch: 4 };
+    const { items, total } = resolveCostBreakdown(tco, afterDist, { engine: 'elasticache' });
+    expect(items.map(cb => cb.database)).toEqual(['dynamodb', 'aurora_mysql', 'opensearch']);
+    expect(total).toBe(823.72);
+  });
+
+  test('drops cost cards for engines that are neither an owner nor the cache layer', () => {
+    const tco = {
+      projected_monthly_cost: 100,
+      cost_breakdown: [
+        { database: 'dynamodb', monthly_cost_usd: 60 },
+        { database: 'documentdb', monthly_cost_usd: 40 },
+      ],
+    };
+    const { items } = resolveCostBreakdown(tco, { dynamodb: 10 }, null);
+    expect(items.map(cb => cb.database)).toEqual(['dynamodb']);
+  });
+
+  test('falls back to summing the kept items when projected_monthly_cost is missing (legacy artifact)', () => {
+    const tco = {
+      cost_breakdown: [
+        { database: 'dynamodb', monthly_cost_usd: 60 },
+        { database: 'aurora_mysql', monthly_cost_usd: 40 },
+      ],
+    };
+    const { total } = resolveCostBreakdown(tco, { dynamodb: 10, aurora_mysql: 5 }, null);
+    expect(total).toBe(100);
+  });
+
+  test('the fallback sum only counts finite numbers (PR #244 review): a string/NaN cost never turns it into string concatenation', () => {
+    const tco = {
+      cost_breakdown: [
+        { database: 'dynamodb', monthly_cost_usd: 2.5 },
+        { database: 'x', monthly_cost_usd: '5' },
+        { database: 'y', monthly_cost_usd: '<img src=x onerror=alert(1)>' },
+        { database: 'z', monthly_cost_usd: Number.NaN },
+        { database: 'w', monthly_cost_usd: 1.25 },
+      ],
+    };
+    const afterDist = { dynamodb: 1, x: 1, y: 1, z: 1, w: 1 };
+    const { total } = resolveCostBreakdown(tco, afterDist, null);
+    expect(total).toBe(3.75);
+  });
+
+  test('handles a missing/undefined tco_analysis', () => {
+    expect(resolveCostBreakdown(undefined, {}, null)).toEqual({ items: [], total: 0 });
   });
 });

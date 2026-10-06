@@ -67,6 +67,70 @@ export function splitRankingByRole(ranking) {
 }
 
 /**
+ * Target-engine entries for the Results page header (#358): the owners from a
+ * (post-`ownerDistribution`) distribution, in order, followed by the cache
+ * layer -- if a `cache_overlay` is present and its engine isn't already an
+ * owner -- flagged with `isCacheLayer: true` so the caller can render it
+ * distinctly (e.g. "ElastiCache (cache layer)") instead of silently leaving
+ * it out of "Target engines" the way a plain owner-only list would.
+ *
+ * Legacy artifacts with no cache_overlay (elasticache still a real owner)
+ * pass straight through: `cacheOverlay` is null, so nothing is appended, and
+ * the distribution it came from was never stripped in the first place.
+ */
+export function targetEngineEntries(afterDist, cacheOverlay) {
+  const entries = Object.keys(afterDist || {}).map((engine) => ({ engine, isCacheLayer: false }));
+  const cacheEngine = cacheOverlay?.engine;
+  if (cacheEngine && !entries.some((e) => e.engine === cacheEngine)) {
+    entries.push({ engine: cacheEngine, isCacheLayer: true });
+  }
+  return entries;
+}
+
+/**
+ * Whether a `tco_analysis.cost_breakdown` entry's database should keep a cost
+ * card: it's either a workload owner (present in `afterDist`) or the
+ * cache_overlay's engine. Pulled out of `resolveCostBreakdown` (#358) so the
+ * standalone "Export to HTML" script -- which has no bundler at run time and
+ * so can't import this module -- can mirror the exact same expression inline
+ * (see `src/ui/src/utils/ExportReport.js`'s `KEEP_COST_CARD_EXPR`) and a test
+ * can assert the two agree.
+ */
+export function isKeptCostEngine(database, afterDist, cacheEngine) {
+  return afterDist?.[database] != null || database === cacheEngine;
+}
+
+/**
+ * Cost breakdown + projected total for the Results page (#358). Filtering
+ * `tco_analysis.cost_breakdown` down to "engines that own workload share"
+ * (the same filter the Sankey/target-engine list uses) silently drops the
+ * cache layer's own cost card and, worse, understates the headline total --
+ * the cache engine's cost is real infrastructure spend even though it owns
+ * no queries.
+ *
+ * This keeps a cost card for every owner plus the cache_overlay engine (if
+ * any), and always reports the artifact's own `projected_monthly_cost` as the
+ * total -- never a sum recomputed from a filtered subset -- so the figure
+ * matches the decision report and chat (one source of truth in report.json).
+ * Falls back to summing the kept items only when `projected_monthly_cost` is
+ * missing (older artifacts predating that field) -- summing only finite
+ * numbers, so a non-numeric `monthly_cost_usd` (a string, NaN, hostile text)
+ * can't turn the fallback sum into string concatenation (PR #244's shell
+ * guard, applied here too since this helper now owns the sum).
+ */
+export function resolveCostBreakdown(tcoAnalysis, afterDist, cacheOverlay) {
+  const all = tcoAnalysis?.cost_breakdown || [];
+  const cacheEngine = cacheOverlay?.engine;
+  const items = all.filter((cb) => isKeptCostEngine(cb.database, afterDist, cacheEngine));
+  const reported = tcoAnalysis?.projected_monthly_cost;
+  const finiteCost = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const total = typeof reported === 'number' && Number.isFinite(reported)
+    ? reported
+    : items.reduce((sum, cb) => sum + finiteCost(cb.monthly_cost_usd), 0);
+  return { items, total };
+}
+
+/**
  * Per-query cache badge info for the Assignment Gate's query list: null when the
  * query isn't cached, otherwise the cache engine, pattern and reason to show as
  * a small "cached by <engine>" indicator next to the query's owner engine.

@@ -628,6 +628,7 @@
   "cache-layer.cached-reads_other": "{{count}} cached reads",
   "cache-layer.call-share-percent": "{{percent}}% of calls",
   "cache-layer.cache-fit": "{{percent}}% cache fit",
+  "cache-layer.engine-badge-suffix": " (cache layer)",
   "engine-analysis.breadcrumb.engine-analysis": "Engine analysis",
   "engine-analysis.states.loading": "Loading analysis data for job {{jobId}}...",
   "engine-analysis.states.error": "Failed to load: {{error}}",

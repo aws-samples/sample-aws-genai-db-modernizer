@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.parallel import map_parallel
 
 from . import escaping
@@ -525,11 +525,31 @@ def _data_keys_used_by_template() -> set[str]:
     return set(re.findall(r"\bDATA\s*\??\.\s*([A-Za-z_$][A-Za-z0-9_$]*)", js))
 
 
-def _engine_badges(after_distribution: dict) -> str:
+# #358: same suffix as the hand-kept JS copy's CACHE_LAYER_SUFFIX
+# (src/ui/src/utils/ExportReport.js) and cacheLayer.js's formatCacheLayerLine
+# default, so the cache engine reads "ElastiCache (cache layer)" the same way
+# in the WebApp's Results page, the "Export to HTML" button and this
+# server-rendered ATX report.
+CACHE_LAYER_BADGE_SUFFIX = " (cache layer)"
+
+
+def _engine_badges(after_distribution: dict, cache_overlay: dict | None = None) -> str:
+    """Target-engine badges: every owner, then the cache layer (#358) if any.
+
+    ``after_distribution`` never carries the cache engine -- it owns no
+    workload share (#296) -- so without ``cache_overlay`` it would be
+    silently missing from "Target Engines" even though its own cost card and
+    the executive summary both name it. Labeled distinctly rather than as a
+    plain owner badge.
+    """
+    engines = list(after_distribution)
+    cache_engine = (cache_overlay or {}).get("engine")
+    if cache_engine and cache_engine not in engines:
+        engines.append(cache_engine)
     return "".join(
         f'<span class="badge" data-engine="{escaping.html_attr(engine)}">'  # nosemgrep: string-concat-in-list -- intentional multi-line string
-        f"{escaping.html_text(ENGINE_LABELS.get(engine, str(engine)))}</span>"
-        for engine in after_distribution
+        f"{escaping.html_text(display_engine(engine) + (CACHE_LAYER_BADGE_SUFFIX if engine == cache_engine else ''))}</span>"
+        for engine in engines
     )
 
 
@@ -632,12 +652,29 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
     generated = export_data.get("exportDate") or datetime.now(UTC).isoformat()
 
     after = (synthesis.get("reality_check") or {}).get("after_distribution") or {}
-    cost_rows = (synthesis.get("tco_analysis") or {}).get("cost_breakdown") or []
-    projected = sum(
-        r.get("monthly_cost_usd") or 0
-        for r in cost_rows
-        if isinstance(r.get("monthly_cost_usd"), (int, float))
-    )
+    tco = synthesis.get("tco_analysis") or {}
+    cost_rows = tco.get("cost_breakdown") or []
+    cache_overlay = synthesis.get("cache_overlay") or {}
+    cache_engine = cache_overlay.get("engine")
+
+    def _finite_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    # #358: the headline total is the report's own tco_analysis.projected_monthly_cost
+    # -- one source of truth, matching the decision report and chat -- never a sum
+    # recomputed from cost_breakdown (which can disagree, e.g. an eliminated engine
+    # still listed there). Falls back to summing only the kept rows (owners + the
+    # cache layer) when that field is missing (older artifacts predating it).
+    reported_total = tco.get("projected_monthly_cost")
+    if isinstance(reported_total, (int, float)) and not isinstance(reported_total, bool):
+        projected = float(reported_total)
+    else:
+        kept = set(after) | ({cache_engine} if cache_engine else set())
+        projected = sum(
+            r.get("monthly_cost_usd")
+            for r in cost_rows
+            if r.get("database") in kept and _finite_number(r.get("monthly_cost_usd"))
+        )
     total_patterns = sum(
         len((d.get("content") or {}).get("access_patterns") or [])
         for d in export_data.get("schemaDesigns") or []
@@ -699,7 +736,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__EXPORT_DATE__": escaping.html_text(exported_human),
         "__DATABASE_NAME__": escaping.html_text(str(database_name)),
         "__SUMMARY__": escaping.html_text(synthesis.get("summary") or "No summary available."),
-        "__ENGINE_BADGES__": _engine_badges(after),
+        "__ENGINE_BADGES__": _engine_badges(after, cache_overlay),
         "__PROJECTED_COST__": f"{projected:,.2f}",
         "__TOTAL_PATTERNS__": str(total_patterns),
         "__CACHE_LAYER_STAT__": _cache_layer_stat(synthesis),

@@ -349,6 +349,11 @@ describe('generateHTMLReport (interactive export)', () => {
       { database: 'z', monthly_cost_usd: Number.NaN },
       { database: 'w', monthly_cost_usd: 1.25 },
     ];
+    // #358: with no tco_analysis.projected_monthly_cost, the shell falls back
+    // to summing only the "kept" cards (owners + cache layer) -- so every
+    // database above must be an owner here, or this test would stop
+    // exercising the finite-number coercion it's actually about.
+    data.results.synthesis.reality_check.after_distribution = { dynamodb: 1, x: 1, y: 1, z: 1, w: 1 };
     let markup;
     expect(() => { markup = generateHTMLReport(data); }).not.toThrow();
     const doc = new DOMParser().parseFromString(markup, 'text/html');

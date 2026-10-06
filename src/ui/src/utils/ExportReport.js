@@ -20,7 +20,31 @@
 // HTML escaping for the shell below; the embedded client script carries its own copy
 // (the exported file is standalone). Both escape & < > " ' -- see ./escapeHtml.js.
 import { escapeHtml, jsonForScript } from './escapeHtml';
-import { getCacheOverlay, formatCacheLayerLine } from './cacheLayer';
+import { getCacheOverlay, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown } from './cacheLayer';
+
+// #358: this file is English-only (i18n-exempt, see header), so this is the
+// one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
+// default -- shared between the shell's "Target Engines" badges and cost
+// cards (built directly in generateHTMLReport, below) and the embedded
+// client script's own cost cards (buildCostBreakdown, generated further
+// down): all three label the cache engine "<Name> (cache layer)" instead of
+// a plain owner badge. The embedded script can't reference this constant
+// directly (scripts/sync_report_template.py requires every `script += '...'`
+// line to be its own single-quoted literal, so the suffix is hardcoded there
+// too) -- exported so ExportReport.cacheLayer.test.js can assert the
+// generated script's literal still matches this one.
+export const CACHE_LAYER_SUFFIX = ' (cache layer)';
+
+// #358: the embedded client script runs standalone in the exported HTML --
+// no bundler, so it can't `import` resolveCostBreakdown/isKeptCostEngine from
+// cacheLayer.js -- so buildCostBreakdown (generated below) mirrors this exact
+// expression inline instead, as a hardcoded literal (same reason as
+// CACHE_LAYER_SUFFIX above). Kept as a string constant with the same text, so
+// ExportReport.cacheLayer.test.js can both `new Function(...)` it to assert
+// it behaves like cacheLayer.js's isKeptCostEngine, and assert the generated
+// script's literal still matches it -- rather than letting the two copies
+// silently drift.
+export const KEEP_COST_CARD_EXPR = 'afterDist[cb.database] != null || cb.database === cacheEngine';
 
 // Engine, operation and chart colours are NOT declared here. The palette lives in
 // exactly one place -- the :root block of REPORT_CSS below -- and both the badges
@@ -455,12 +479,24 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      const container = document.getElementById(\'cost-breakdown-container\');\n';
   script += '      const costs = DATA.results?.synthesis?.tco_analysis?.cost_breakdown || [];\n';
   script += '      const afterDist = DATA.results?.synthesis?.reality_check?.after_distribution || {};\n';
-  script += '      const active = costs.filter(cb => afterDist[cb.database]);\n';
+  // #358: the cache engine (if any) keeps its own cost card even though it
+  // owns no workload share -- mirrors cacheLayer.js's isKeptCostEngine and
+  // resolveCostBreakdown's cache-engine labeling, duplicated here (as a
+  // literal, not a runtime concatenation -- scripts/sync_report_template.py
+  // mechanically lifts this function's `script += '...';` lines verbatim and
+  // requires each to be its own single-quoted string literal) because this
+  // script runs standalone in the browser with no bundler and so can't
+  // import that module. KEEP_COST_CARD_EXPR/CACHE_LAYER_SUFFIX (above) hold
+  // the same text for ExportReport.cacheLayer.test.js to assert the two
+  // haven't drifted apart.
+  script += '      const cacheEngine = DATA.results?.synthesis?.cache_overlay?.engine || null;\n';
+  script += '      const active = costs.filter(cb => afterDist[cb.database] != null || cb.database === cacheEngine);\n';
   script += '      if (active.length === 0) { container.innerHTML = \'<p>No cost data available.</p>\'; return; }\n';
   script += '      let html = \'<div class="grid grid-auto">\';';
   script += '      active.forEach(cb => {\n';
+  script += '        const isCacheLayer = cb.database === cacheEngine;\n';
   script += '        html += \'<div class="stat-card" style="text-align: center;">\';\n';
-  script += '        html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);\n';
+  script += '        html += engineBadge(cb.database, (ENGINE_LABELS[cb.database] || cb.database) + (isCacheLayer ? " (cache layer)" : \'\'));\n';
   script += '        html += \'<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$\' + (typeof cb.monthly_cost_usd === \'number\' && isFinite(cb.monthly_cost_usd) ? cb.monthly_cost_usd.toFixed(2) : \'0.00\') + \'</div>\';\n';
   script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary);">month · \' + escapeHtml(cb.pricing_mode) + \'</div>\';\n';
   script += '        html += \'</div>\';\n';
@@ -962,18 +998,24 @@ export const generateHTMLReport = (data) => {
   const { results, schemaDesigns, collector, jobId, exportDate, queryJourneys } = data;
   const afterDist = results?.synthesis?.reality_check?.after_distribution || {};
 
-  // Generate engine badges using DOM methods to avoid Semgrep warnings
-  // This approach eliminates template string interpolation in HTML context
-  const engineBadges = Object.keys(afterDist)
-    .map(engine => '<span class="badge" data-engine="' + escapeHtml(engine) + '">' + escapeHtml(engine) + '</span>')
-    .join('');
-
   // #296 cache overlay: synthesis.cache_overlay (same shape as the synthesis
   // report's top-level field) describes ElastiCache as a cache layer, never a
-  // workload share -- shown as its own stat, not folded into Target Engines.
-  // This export is i18n-exempt (standalone, English-only), so the English
-  // default text from formatCacheLayerLine is used directly.
+  // workload share. This export is i18n-exempt (standalone, English-only), so
+  // the English default text from formatCacheLayerLine is used directly.
   const cacheOverlay = getCacheOverlay(results?.synthesis);
+
+  // #358: "Target Engines" still names the cache layer -- it owns no
+  // queries, so afterDist alone would leave it out entirely -- labeled
+  // "<Name> (cache layer)" instead of a plain owner badge. Generated with DOM
+  // methods (not template-string interpolation) to avoid Semgrep warnings.
+  const engineBadges = targetEngineEntries(afterDist, cacheOverlay)
+    .map(({ engine, isCacheLayer }) =>
+      '<span class="badge" data-engine="' + escapeHtml(engine) + '">'
+      + escapeHtml((ENGINE_LABELS[engine] || engine) + (isCacheLayer ? CACHE_LAYER_SUFFIX : ''))
+      + '</span>')
+    .join('');
+
+  // Shown as its own stat below the Target Engines badges, not folded into them.
   const cacheLayerStat = cacheOverlay
     ? '<div class="stat-card"><div class="stat-label">Cache Layer</div>'
       + '<div class="stat-value" style="font-size: 14px;">' + escapeHtml(formatCacheLayerLine(cacheOverlay)) + '</div></div>'
@@ -987,14 +1029,19 @@ export const generateHTMLReport = (data) => {
   const safeSummary = escapeHtml(results?.synthesis?.summary || 'No summary available.');
   const safeExportDate = escapeHtml(new Date(exportDate).toLocaleString());
 
-  const costBreakdown = results?.synthesis?.tco_analysis?.cost_breakdown || [];
   // Only finite numbers are summed/counted: a string monthly_cost_usd would turn the
   // sum into string concatenation (and .toFixed into a TypeError that aborts the
   // export), and a non-array access_patterns with a hostile "length" would land in
   // the markup. Matches the Python renderer's numeric filtering.
   const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const projectedCost = escapeHtml(
-    (Array.isArray(costBreakdown) ? costBreakdown : []).reduce((sum, cb) => sum + finite(cb?.monthly_cost_usd), 0).toFixed(2));
+  // #358: the headline total is the report's own tco_analysis.projected_monthly_cost
+  // -- one source of truth, matching the decision report and chat -- never a sum
+  // recomputed from a filtered subset. Falls back to summing the kept cards
+  // (owners + cache layer) only when that field is missing (older artifacts).
+  const { total: projectedCostValue } = resolveCostBreakdown(
+    results?.synthesis?.tco_analysis, afterDist, cacheOverlay
+  );
+  const projectedCost = escapeHtml(finite(projectedCostValue).toFixed(2));
   const totalPatterns = escapeHtml((Array.isArray(schemaDesigns) ? schemaDesigns : []).reduce(
     (sum, d) => sum + (Array.isArray(d?.content?.access_patterns) ? d.content.access_patterns.length : 0), 0));
 

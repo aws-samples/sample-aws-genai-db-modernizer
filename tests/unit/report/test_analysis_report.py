@@ -555,7 +555,13 @@ def _embedded_data(html_text: str) -> str:
 def test_render_fills_the_header_and_stat_cards(rendered):
     assert JOB in rendered
     assert "Discourse splits cleanly across four engines." in rendered
-    assert "436.90" in rendered  # 271.8 + 165.1
+    # #358: this fixture's tco_analysis has no projected_monthly_cost, so the total
+    # falls back to summing only the kept rows (ranking's owners -- elasticache and
+    # dynamodb here -- plus the cache layer, which this legacy fixture has none of).
+    # documentdb's cost_breakdown row has no matching ranking entry at all -- an
+    # orphaned/eliminated-engine row -- so it is correctly excluded: 165.1, not
+    # 271.8 + 165.1.
+    assert "165.10" in rendered
     # Engine badges carry the engine as data, not a colour class: the palette lives
     # only in the CSS, so this side never names a colour.
     assert 'class="badge" data-engine="elasticache">ElastiCache</span>' in rendered

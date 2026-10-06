@@ -202,6 +202,110 @@ class TestAnalysisReport:
         assert _cache_layer_stat({}) == ""
         assert {"cache_engine", "cache_reason"} <= set(_ASSIGNMENT_FIELDS)
 
+    def test_engine_badges_names_the_cache_layer(self):
+        # #358: render_analysis_report_html's "Target Engines" badges
+        # (built from after_distribution, which never carries the cache
+        # engine -- it owns no workload share, #296) must still name it,
+        # the same way the WebApp's Results page and "Export to HTML"
+        # button do.
+        from src.report.analysis_report import _engine_badges
+
+        after = {"dynamodb": 82.0, "aurora_mysql": 21.0, "opensearch": 4.0}
+        badges = _engine_badges(after, {"engine": "elasticache"})
+        assert 'data-engine="dynamodb">DynamoDB</span>' in badges
+        assert 'data-engine="aurora_mysql">Aurora MySQL</span>' in badges
+        assert 'data-engine="opensearch">OpenSearch</span>' in badges
+        assert 'data-engine="elasticache">ElastiCache (cache layer)</span>' in badges
+
+    def test_engine_badges_no_overlay_no_suffix(self):
+        from src.report.analysis_report import _engine_badges
+
+        badges = _engine_badges({"elasticache": 29.4, "dynamodb": 24.1}, None)
+        assert 'data-engine="elasticache">ElastiCache</span>' in badges
+        assert "cache layer" not in badges
+
+    def test_rendered_report_names_the_cache_layer_and_sums_the_kept_rows(self):
+        # Shaped like the real wordpress job e6a0127b's report.json (#358): three
+        # owners (dynamodb, aurora_mysql, opensearch) plus elasticache fronting
+        # them as a cache layer, no projected_monthly_cost field, so the total
+        # falls back to summing the kept cost_breakdown rows.
+        from src.report.analysis_report import render_analysis_report_html
+
+        html = render_analysis_report_html(_export_data(_wordpress_shape()))
+        assert 'data-engine="dynamodb">DynamoDB</span>' in html
+        assert 'data-engine="aurora_mysql">Aurora MySQL</span>' in html
+        assert 'data-engine="opensearch">OpenSearch</span>' in html
+        assert 'data-engine="elasticache">ElastiCache (cache layer)</span>' in html
+        # 98.41 + 318.80 + 240.96 + 165.55 (dynamodb + aurora_mysql + opensearch + elasticache)
+        assert "823.72" in html
+
+    def test_rendered_report_uses_the_reports_own_total_even_when_cost_breakdown_disagrees(self):
+        # The report's own tco_analysis.projected_monthly_cost is the one source of
+        # truth (matches the decision report and chat) -- never a sum recomputed
+        # from cost_breakdown, which here is deliberately set to NOT add up to it.
+        from src.report.analysis_report import render_analysis_report_html
+
+        html = render_analysis_report_html(
+            _export_data(_wordpress_shape(projected_monthly_cost=900.0))
+        )
+        assert "900.00" in html
+        assert "823.72" not in html
+
+
+def _wordpress_shape(projected_monthly_cost: float | None = None) -> dict[str, Any]:
+    """Shaped like the real wordpress job e6a0127b's report.json (#358)."""
+    report: dict[str, Any] = {
+        "database_name": "wordpress",
+        "job_id": "e6a0127b",
+        "summary": "wordpress splits across three owners plus a cache layer.",
+        "reality_check": {
+            "after_distribution": {"dynamodb": 82.0, "aurora_mysql": 21.0, "opensearch": 4.0}
+        },
+        "cache_overlay": {
+            "engine": "elasticache",
+            "query_count": 14,
+            "calls_per_second": 158.85,
+            "call_share_percent": 71.5,
+        },
+        "tco_analysis": {
+            "cost_breakdown": [
+                {"database": "dynamodb", "monthly_cost_usd": 98.41, "pricing_mode": "on-demand"},
+                {
+                    "database": "elasticache",
+                    "monthly_cost_usd": 165.55,
+                    "pricing_mode": "on-demand",
+                },
+                {
+                    "database": "opensearch",
+                    "monthly_cost_usd": 240.96,
+                    "pricing_mode": "on-demand",
+                },
+                {
+                    "database": "aurora_mysql",
+                    "monthly_cost_usd": 318.80,
+                    "pricing_mode": "on-demand",
+                },
+            ]
+        },
+        "schema_designs": {},
+        "recommended_architecture": {"databases": []},
+    }
+    if projected_monthly_cost is not None:
+        report["tco_analysis"]["projected_monthly_cost"] = projected_monthly_cost
+    return report
+
+
+def _export_data(report: dict[str, Any]) -> dict[str, Any]:
+    """The ``DATA`` shape ``render_analysis_report_html`` expects (#358)."""
+    return {
+        "results": {"job_id": report["job_id"], "status": "COMPLETED", "synthesis": report},
+        "schemaDesigns": [],
+        "collector": {},
+        "jobId": report["job_id"],
+        "exportDate": "2026-10-06T00:00:00Z",
+        "queryJourneys": {"items": []},
+    }
+
 
 def _discourse_shape() -> dict[str, Any]:
     """The PR #304 discourse run: OpenSearch owns 3 text-search queries, has no tables

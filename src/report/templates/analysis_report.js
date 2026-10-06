@@ -284,11 +284,13 @@
       const container = document.getElementById('cost-breakdown-container');
       const costs = DATA.results?.synthesis?.tco_analysis?.cost_breakdown || [];
       const afterDist = DATA.results?.synthesis?.reality_check?.after_distribution || {};
-      const active = costs.filter(cb => afterDist[cb.database]);
+      const cacheEngine = DATA.results?.synthesis?.cache_overlay?.engine || null;
+      const active = costs.filter(cb => afterDist[cb.database] != null || cb.database === cacheEngine);
       if (active.length === 0) { container.innerHTML = '<p>No cost data available.</p>'; return; }
       let html = '<div class="grid grid-auto">';      active.forEach(cb => {
+        const isCacheLayer = cb.database === cacheEngine;
         html += '<div class="stat-card" style="text-align: center;">';
-        html += engineBadge(cb.database, ENGINE_LABELS[cb.database] || cb.database);
+        html += engineBadge(cb.database, (ENGINE_LABELS[cb.database] || cb.database) + (isCacheLayer ? " (cache layer)" : ''));
         html += '<div style="font-size: 36px; font-weight: 700; margin: 8px 0 0; line-height: 1.15;">$' + (typeof cb.monthly_cost_usd === 'number' && isFinite(cb.monthly_cost_usd) ? cb.monthly_cost_usd.toFixed(2) : '0.00') + '</div>';
         html += '<div style="font-size: 13px; color: var(--color-text-secondary);">month · ' + escapeHtml(cb.pricing_mode) + '</div>';
         html += '</div>';
