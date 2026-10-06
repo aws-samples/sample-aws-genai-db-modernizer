@@ -255,3 +255,34 @@ class TestMergeQueryVariants:
             _transform_queries(raw, "db", set())
         assert any("merged" in record.message for record in caplog.records)
         assert any("2" in record.message for record in caplog.records)
+
+
+class TestUpsertTableExtraction:
+    """ON DUPLICATE KEY UPDATE / DO UPDATE must not be treated as table refs."""
+
+    def test_duplicate_key_update_column_is_not_a_table(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = (
+            "INSERT INTO `wp_options` (`option_name`, `option_value`) VALUES (...)"
+            " ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)"
+        )
+        result = _transform_queries([{"query_text": sql}], "wordpress", {"wp_options"})
+        assert result[0]["tables_accessed"] == ["wordpress.wp_options"]
+
+    def test_real_update_still_extracts_table(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "UPDATE `wp_options` SET `option_value` = 'x' WHERE `option_name` = 'siteurl'"
+        result = _transform_queries([{"query_text": sql}], "wordpress", {"wp_options"})
+        assert result[0]["tables_accessed"] == ["wordpress.wp_options"]
+
+    def test_conflict_do_update_does_not_capture_set(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = (
+            'INSERT INTO "posts" ("id", "title") VALUES (1, \'a\')'
+            ' ON CONFLICT ("id") DO UPDATE SET "title" = EXCLUDED."title"'
+        )
+        result = _transform_queries([{"query_text": sql}], "blog", {"posts"})
+        assert result[0]["tables_accessed"] == ["blog.posts"]

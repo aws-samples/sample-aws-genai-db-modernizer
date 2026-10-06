@@ -289,8 +289,15 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
             r'[`"\[]?(?P<table>\w+)[`"\]]?',
             re.I,
         )
+        # Upsert clauses use UPDATE for a column assignment, not a table reference.
+        scanned_query = re.sub(
+            r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
+            " ",
+            query_text,
+            flags=re.I,
+        )
         raw_tables: list[str] = []
-        for m_raw in table_re.finditer(query_text):
+        for m_raw in table_re.finditer(scanned_query):
             schema = m_raw.group("schema")
             table = m_raw.group("table")
             if not table:

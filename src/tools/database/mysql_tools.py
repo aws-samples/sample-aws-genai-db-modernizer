@@ -378,7 +378,15 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    return list(dict.fromkeys(_TABLE_RE.findall(sql))) or ["unknown"]
+    # ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE name a column, not a table.
+    # Mask those clauses so the following identifier is not captured as a table.
+    scanned = re.sub(
+        r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
+        " ",
+        sql,
+        flags=re.I,
+    )
+    return list(dict.fromkeys(_TABLE_RE.findall(scanned))) or ["unknown"]
 
 
 def _estimate_rows_p95(avg_rows: float, avg_ms: float, p95_ms: float) -> float | None:

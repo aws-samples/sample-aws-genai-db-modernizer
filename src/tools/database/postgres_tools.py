@@ -381,7 +381,10 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    return list(dict.fromkeys(_TABLE_RE.findall(sql))) or ["unknown"]
+    # ON CONFLICT DO UPDATE names a column, not a table. Mask it so SET/column
+    # tokens are not captured by the UPDATE alternative in _TABLE_RE.
+    scanned = re.sub(r"\bDO\s+UPDATE\b", " ", sql, flags=re.I)
+    return list(dict.fromkeys(_TABLE_RE.findall(scanned))) or ["unknown"]
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:
