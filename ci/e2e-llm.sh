@@ -329,10 +329,13 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   }
   step install-browsers run_install_browsers
 
+  # test_docs_site.py checks the help site, not this run's deliverables; ci/e2e.sh
+  # builds the site and runs it (Chromium only).
   run_report_tests() {
     E2E_ARTIFACT_ROOT="$ARTIFACT_ROOT" E2E_DB="$DB" E2E_JOB="$JOB" E2E_OUTPUT="$OUT" \
       uv run pytest tests/e2e -m "e2e and not deterministic" -p no:xdist --fail-on-skip \
-      --ignore=tests/e2e/test_ui.py --browser chromium --browser webkit \
+      --ignore=tests/e2e/test_ui.py --ignore=tests/e2e/test_docs_site.py \
+      --browser chromium --browser webkit \
       --output="$OUT/pw-reports" --junitxml="$OUT/reports-junit.xml" -q
   }
   step report-tests run_report_tests
