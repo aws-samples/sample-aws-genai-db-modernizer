@@ -364,9 +364,19 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
         # executive-summary narrative can't silently assume a different sequence.
         assert "migration_waves" in prepare_synthesis_llm_input(self._det())
 
-    def test_exactly_nine_keys(self):
+    def test_has_schema_design_status(self):
+        # #132 review, 370-2: the external (Claude Code) path needs the same
+        # designed/not-designed split the Bedrock prompt uses, or it narrates
+        # a design for an engine that never got one.
+        assert "schema_design_status" in prepare_synthesis_llm_input(self._det())
+
+    def test_schema_design_status_has_designed_and_not_designed(self):
+        status = prepare_synthesis_llm_input(self._det())["schema_design_status"]
+        assert set(status) == {"designed", "not_designed"}
+
+    def test_exactly_ten_keys(self):
         payload = prepare_synthesis_llm_input(self._det())
-        assert len(payload) == 9
+        assert len(payload) == 10
 
     def test_deterministic_summary_matches_result(self):
         det = self._det()

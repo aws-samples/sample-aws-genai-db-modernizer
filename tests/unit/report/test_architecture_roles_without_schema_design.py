@@ -87,6 +87,34 @@ def test_mixed_run_keeps_the_retained_engine_retained_in_wave_1() -> None:
     assert "Schema design was not run" not in report["recommended_architecture"]["rationale"]
 
 
+def test_unversioned_run_with_a_design_does_not_claim_schema_design_was_skipped() -> None:
+    """#370 recheck: an unversioned run (no assignment) never adds
+    assigned_queries to a ranking entry. designed_and_not_designed_engines()
+    used to gate every entry on workload regardless, so an engine with a
+    real design (schema_design_available=True) was wrongly treated as
+    undesigned here too, and the rationale appended the false "Schema
+    design was not run, so no tables are allocated yet." even though a
+    design exists.
+    """
+    ranking = [
+        {
+            "target": "dynamodb",
+            "confidence_score": 90,
+            "schema_design_available": True,
+            "target_tables": 12,
+            "tables_analyzed": 50,
+            "patterns_detected": 0,
+            "monthly_cost_usd": 0,
+        },
+    ]
+    mappings = [{"source_table": "wp.t1", "recommended_database": "dynamodb"}]
+    data = SynthesisData(job_id="job-1", database_name="wordpress")
+
+    arch = build_architecture_recommendation(data, ranking, mappings)
+
+    assert "Schema design was not run" not in arch["rationale"]
+
+
 def test_no_schema_design_lists_workload_engines_as_targets() -> None:
     # The wordpress --llm-mode none shape: no engine designed, no table mappings.
     ranking = [

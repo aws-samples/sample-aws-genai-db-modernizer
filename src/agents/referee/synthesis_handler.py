@@ -38,6 +38,7 @@ from src.agents.referee.synthesis_report import (
     build_summary,
     build_table_mappings,
     build_tco_analysis,
+    designed_and_not_designed_engines,
     generate_executive_summary,
     schema_table_defs,
 )
@@ -270,7 +271,8 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
 
     Keys returned:
         effective_architecture, deterministic_summary, ranking, query_groups,
-        tco_analysis, risk_assessment, table_mappings, trade_offs, migration_waves
+        tco_analysis, risk_assessment, table_mappings, trade_offs, migration_waves,
+        schema_design_status
 
     ``effective_architecture`` comes first: the compact per-engine table list, top
     query groups and capabilities, plus the eliminated engines, together with the
@@ -281,7 +283,15 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     narrative that silently assumes a different sequence than the one synthesis
     already computed would be ungrounded. The LLM may explain a wave; it does
     not get to invent one.
+
+    ``schema_design_status`` (#132 review, 370-2) names which engines have a
+    schema design and which don't (``designed_and_not_designed_engines``, the
+    same split ``generate_executive_summary`` uses for the Bedrock path): the
+    external (Claude Code) path builds its own prompt from this payload, so it
+    needs the same signal, or it narrates a design for an engine that never
+    got one exactly the way the Bedrock prompt used to (#132).
     """
+    designed, not_designed = designed_and_not_designed_engines(deterministic_result["ranking"])
     return {
         "effective_architecture": deterministic_result["effective_architecture"],
         "deterministic_summary": deterministic_result["summary"],
@@ -292,6 +302,7 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
         "table_mappings": deterministic_result["table_mappings"],
         "trade_offs": deterministic_result["trade_offs"],
         "migration_waves": deterministic_result.get("migration_waves"),
+        "schema_design_status": {"designed": designed, "not_designed": not_designed},
     }
 
 

@@ -1330,6 +1330,46 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
     return strategies
 
 
+def designed_and_not_designed_engines(ranking: list[dict]) -> tuple[list[str], list[str]]:
+    """Engines in the effective architecture, split by whether a schema design
+    exists for them (#132 review, 370-1/370-2).
+
+    A *versioned* entry (an assignment ran, so ``assigned_queries`` is present,
+    even if ``0``) is limited to engines with workload (``assigned_queries``)
+    or a cache overlay (``cache_overlay_queries``): an engine with neither was
+    not part of the effective assignment at all (eliminated, or never routed
+    anything), so it belongs in neither list -- there is nothing to say about
+    it either way.
+
+    An *unversioned* entry (no assignment artifact at all, so
+    ``assigned_queries`` was never added) has no workload signal to gate on in
+    the first place, so it is classified by ``schema_design_available`` alone
+    (#370 recheck): gating it the same way an assignment-aware entry is gated
+    treated "no assignment yet" the same as "assignment ran and routed
+    nothing here", which emptied both lists even when an engine clearly had a
+    design and made the executive-summary prompt fall back to the fully
+    assertive branch with nothing to back it.
+
+    The single source of truth for "has a design" everywhere this question is
+    asked: the architecture rationale, the deterministic summary, and both the
+    Bedrock and Claude Code (external) executive-summary prompts
+    (``prepare_synthesis_llm_input``'s ``schema_design_status``), so they
+    can't drift out of step (370-4).
+    """
+    designed: list[str] = []
+    not_designed: list[str] = []
+    for r in ranking:
+        if "assigned_queries" in r:
+            has_workload = r.get("assigned_queries", 0) > 0 or r.get("cache_overlay_queries", 0) > 0
+            if not has_workload:
+                continue
+        if r.get("schema_design_available"):
+            designed.append(r["target"])
+        else:
+            not_designed.append(r["target"])
+    return designed, not_designed
+
+
 def build_architecture_recommendation(
     data: SynthesisData,
     ranking: list[dict],
@@ -1365,7 +1405,8 @@ def build_architecture_recommendation(
     # where some engine was designed, an engine with workload but no design is
     # the retained engine: it stays out of databases, so the report renderers
     # call it "Retained" and the deck puts it in the no-migration Wave 1.
-    no_schema_design = not any(r.get("schema_design_available") for r in ranking)
+    designed_engines, _not_designed_engines = designed_and_not_designed_engines(ranking)
+    no_schema_design = not designed_engines
     databases = []
     for r in ranking:
         engine = r["target"]
@@ -1629,7 +1670,8 @@ def build_summary(
                 f"{'read' if n == 1 else 'reads'} ({r.get('cache_call_share_percent', 0)}% of "
                 "calls) cache-aside and owns no queries."
             )
-        designed = [r for r in with_workload + cache if r.get("schema_design_available")]
+        designed_engines, _ = designed_and_not_designed_engines(ranking)
+        designed = [r for r in with_workload + cache if r["target"] in designed_engines]
         if designed:
             engines = {r["target"] for r in designed}
             groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
@@ -1721,6 +1763,123 @@ def build_summary(
     return " ".join(parts)
 
 
+def _executive_summary_prompt_fragments(
+    designed: list[str], not_designed: list[str]
+) -> dict[str, str]:
+    """Prompt text for :func:`generate_executive_summary`, keyed by whether
+    every, some, or no in-scope engine has a schema design (#132 review,
+    370-1/370-3).
+
+    All designed (``designed`` non-empty, ``not_designed`` empty): the
+    original, fully assertive text. Some designed, some not: the premise,
+    capability-gaps bullet and table/index-count instruction name only the
+    designed engines, and separately tell the model schema design has not
+    run for the rest -- never that it has. None designed (including the
+    degenerate case where both lists are empty, #370 recheck: an empty
+    ``not_designed`` is NOT by itself proof everything is designed): the
+    routing-only premise, with no table/index count or "built" framing at
+    all. ``tone_line`` and ``authority_claim`` (370-3) are conditional on the
+    same flag, so they never sit next to "schema design has not run" while
+    still claiming "here is what we built".
+    """
+    if designed and not not_designed:
+        return {
+            "premise": (
+                "You just completed a full database modernization assessment. You "
+                "designed the target schemas, mapped every access pattern, and "
+                "validated everything. "
+            ),
+            "capability_gaps_bullet": (
+                "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
+                "recursive queries) are SOLVED by the schema design you produced. You "
+                "already designed the access patterns that replace them. Present the "
+                "solution, not the gap.\n"
+            ),
+            "sentence_1_2_detail": (
+                "- Which engines, how many target tables/indexes were designed, and "
+                "what role each engine plays in the workload.\n"
+            ),
+            "tone_line": (
+                "- Your tone is: 'We analyzed this, here is what we built, here is "
+                "how it works.' Not: 'There are concerns, risks, and unknowns.'\n\n"
+            ),
+            "authority_claim": (
+                "you have already done the work: analyzed every query, designed "
+                "every target schema, and mapped every access pattern. "
+            ),
+        }
+
+    not_designed_names = ", ".join(display_name(e) for e in not_designed)
+    not_designed_it = "it" if len(not_designed) == 1 else "them"
+
+    if designed:
+        designed_names = ", ".join(display_name(e) for e in designed)
+        premise = (
+            "You just completed a database modernization assessment. You designed "
+            f"the target schema for {designed_names} and mapped the access patterns "
+            f"it serves. Schema design has not run yet for {not_designed_names}: "
+            f"there is no target schema for {not_designed_it} to report. Say that "
+            f"plainly for {not_designed_it}; never describe a schema for "
+            f"{not_designed_it} that does not exist. "
+        )
+        capability_gaps_bullet = (
+            "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
+            f"recursive queries) are SOLVED by the schema design for {designed_names}. "
+            f"For {not_designed_names}, say schema design has not run and is what "
+            "will address them; never say it already has.\n"
+        )
+        sentence_1_2_detail = (
+            f"- Which engines the workload is routed to. Name a designed target "
+            f"table/index count only for {designed_names}. For {not_designed_names}, "
+            "say schema design is the next step: do not state a target table or "
+            "index count for it, and do not imply one exists.\n"
+        )
+        authority_claim = (
+            "you have already done the work: analyzed every query and routed it to "
+            f"the engine that fits it, and designed the target schema for "
+            f"{designed_names}. Schema design has not run yet for "
+            f"{not_designed_names}, and you say so plainly rather than describing a "
+            "designed schema for it that does not exist. "
+        )
+    else:
+        premise = (
+            "You just completed the routing phase of a database modernization "
+            "assessment: every query was analyzed and routed to the engine that "
+            "fits it. Schema design has not run yet, so there is no target schema, "
+            "table count, or access pattern to report. Say that plainly; never "
+            "describe design work that has not happened. "
+        )
+        capability_gaps_bullet = (
+            "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
+            "recursive queries) are resolved by the schema design still to come. "
+            "Say that schema design, which has not run yet, is what addresses "
+            "them; never say it already has.\n"
+        )
+        sentence_1_2_detail = (
+            "- Which engines the workload was routed to and what role each will "
+            "play. Schema design is the next step, since none has run: do not "
+            "state a target table or index count, and do not imply one exists.\n"
+        )
+        authority_claim = (
+            "you have already done the work: analyzed every query and routed it "
+            "to the engine that fits it. Schema design has not run yet, and you "
+            "say so plainly rather than describing designed schemas that do not "
+            "exist. "
+        )
+
+    return {
+        "premise": premise,
+        "capability_gaps_bullet": capability_gaps_bullet,
+        "sentence_1_2_detail": sentence_1_2_detail,
+        "tone_line": (
+            "- Your tone is: 'We analyzed this, here is how the workload is "
+            "routed, here is what happens next.' Not: 'There are concerns, risks, "
+            "and unknowns.'\n\n"
+        ),
+        "authority_claim": authority_claim,
+    }
+
+
 def generate_executive_summary(
     deterministic_summary: str,
     ranking: list[dict],
@@ -1745,6 +1904,13 @@ def generate_executive_summary(
     except ImportError:
         logger.warning("Strands not available — using deterministic summary")
         return deterministic_summary
+
+    # Which in-scope engines have a schema design and which don't (#116, #132,
+    # 370-1/370-2). An engine with a design is narrated as designed; one
+    # without must never be, even when some other engine in the same run was
+    # designed (the partial case the #132 review found still uncaught).
+    designed_engines, not_designed_engines = designed_and_not_designed_engines(ranking)
+    fragments = _executive_summary_prompt_fragments(designed_engines, not_designed_engines)
 
     # Build focused context — only what a CTO needs to see
     engine_workload = []
@@ -1794,10 +1960,13 @@ def generate_executive_summary(
         ],
     }
 
+    premise = fragments["premise"]
+    capability_gaps_bullet = fragments["capability_gaps_bullet"]
+    sentence_1_2_detail = fragments["sentence_1_2_detail"]
+    tone_line = fragments["tone_line"]
+
     prompt = (
-        "You just completed a full database modernization assessment. You designed "
-        "the target schemas, mapped every access pattern, and validated everything. "
-        "Now you are writing the final executive summary the CTO reads before "
+        premise + "Now you are writing the final executive summary the CTO reads before "
         "deciding to proceed.\n\n"
         "Write 3-4 SHORT sentences. You are a trusted advisor having a conversation "
         "with the CTO, not writing a report. Be warm but authoritative, like a "
@@ -1816,18 +1985,13 @@ def generate_executive_summary(
         "- If multiple databases are needed, present that as a STRENGTH of the "
         "architecture (purpose-built databases for each workload pattern), not as "
         "a complication.\n"
-        "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
-        "recursive queries) are SOLVED by the schema design you produced. You "
-        "already designed the access patterns that replace them. Present the "
-        "solution, not the gap.\n"
-        "- Your tone is: 'We analyzed this, here is what we built, here is how "
-        "it works.' Not: 'There are concerns, risks, and unknowns.'\n\n"
-        "GROUNDING (a summary that breaks this is rejected):\n"
+        + capability_gaps_bullet
+        + tone_line
+        + "GROUNDING (a summary that breaks this is rejected):\n"
         f"- {SUMMARY_GROUNDING_RULE}\n\n"
         "SENTENCE 1-2: The architecture.\n"
-        "- Which engines, how many target tables/indexes were designed, and what "
-        "role each engine plays in the workload.\n"
-        "- If multiple engines are involved, explain how data flows between them "
+        + sentence_1_2_detail
+        + "- If multiple engines are involved, explain how data flows between them "
         "using the specific AWS managed service (see AWS INTEGRATIONS below). "
         "This is what makes it a real architecture, not just a list of databases.\n\n"
         "SENTENCE 3-4: What changes for them.\n"
@@ -1882,8 +2046,8 @@ def generate_executive_summary(
             system_prompt=(
                 "You are a senior database architect who just completed a thorough "
                 "modernization assessment. You speak with absolute authority because "
-                "you have already done the work: analyzed every query, designed every "
-                "target schema, and mapped every access pattern. You are presenting "
+                f"{fragments['authority_claim']}"
+                "You are presenting "
                 "the result, not deliberating. You NEVER express doubt, recommend "
                 "going back for more data, or suggest the team is not ready. "
                 "Complexity is your job and you have handled it. Short, direct, "

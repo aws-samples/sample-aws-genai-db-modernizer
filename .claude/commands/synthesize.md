@@ -9,7 +9,10 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 ## Prerequisites
 
-- Schema design phase complete for all engines
+- Schema design phase run for in-scope engines. Not every engine necessarily
+  has a design: a model-based designer can be skipped (`--llm-mode none`),
+  fail, or never be dispatched. The LLM request's `schema_design_status`
+  says which engines ended up designed and which didn't.
 
 ## Steps
 
@@ -27,6 +30,12 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 3. **If status is `awaiting_llm`:**
    a. Read the LLM request at the `llm_request` path the script printed (under `./artifacts/`)
    b. Write a 3-4 sentence executive summary for a CTO audience. Rules:
+      - Name a schema design (table/index counts, access patterns, "SOLVED" capability
+        gaps) only for an engine listed in `schema_design_status.designed`. For an
+        engine in `schema_design_status.not_designed`, say plainly that schema design
+        has not run for it; never describe a schema, table count, or access pattern
+        for it, and never imply one exists. If `not_designed` is non-empty, do not use
+        "here is what we built" framing; prefer "here is how the workload is routed".
       - Ground every engine and table claim in `effective_architecture`: name a table
         under an engine only if it is in that engine's `tables` list (the tables its
         in-scope queries touch). A table may be listed under several engines.

@@ -18,6 +18,8 @@ loose in the instruction portion of the prompt.
 
 from __future__ import annotations
 
+import pytest
+
 from src.agents import prompt_framing as pf
 
 # A payload that reads as an instruction to the model.
@@ -122,7 +124,27 @@ class _CapturingAgent:
         return "A concise executive summary that is long enough to pass the length gate."
 
 
-def test_synthesis_prompt_frames_injected_query_group_name() -> None:
+@pytest.mark.parametrize(
+    "ranking",
+    [
+        # No engine has a schema design (#132's "none designed" branch).
+        [{"target": "dynamodb", "confidence_score": 90, "assigned_queries": 10}],
+        # The one engine does (#132's "all designed" branch) -- 370-5: framing
+        # must hold in both, not just the one the ranking happened to hit.
+        [
+            {
+                "target": "dynamodb",
+                "confidence_score": 90,
+                "assigned_queries": 10,
+                "schema_design_available": True,
+                "target_tables": 3,
+                "access_patterns": 5,
+            }
+        ],
+    ],
+    ids=["no_schema_design", "schema_design_available"],
+)
+def test_synthesis_prompt_frames_injected_query_group_name(ranking: list[dict]) -> None:
     from src.agents.referee import synthesis_report
 
     _CapturingAgent.last_prompt = ""
@@ -132,7 +154,7 @@ def test_synthesis_prompt_frames_injected_query_group_name() -> None:
     ):
         synthesis_report.generate_executive_summary(
             deterministic_summary="fallback",
-            ranking=[{"target": "dynamodb", "confidence_score": 90, "assigned_queries": 10}],
+            ranking=ranking,
             query_groups=[
                 {
                     "group_name": f"grp {INJECT}",
