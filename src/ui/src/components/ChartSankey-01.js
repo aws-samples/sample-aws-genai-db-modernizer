@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { sankey, sankeyCenter, sankeyLinkHorizontal } from 'd3-sankey';
+import { displayEngine } from '../utils/engineNames';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
@@ -64,7 +65,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
   const allNodes = useMemo(() => {
     return nodes.map((node) => {
       const nodeValue = nodeValues[node.id] || 0;
-      const label = `${node.id} (${nodeValue})`;
+      const label = `${displayEngine(node.id)} (${nodeValue})`;
       const isSource = node.x0 < width / 2;
       const isClickable = onNodeClick && !isSource;
       const nodeColor = NODE_COLORS[node.id] || '#0972D3';
