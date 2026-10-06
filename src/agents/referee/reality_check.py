@@ -21,9 +21,11 @@ that feed into synthesis.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import Any
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.cache_overlay import can_own
@@ -31,6 +33,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
 # ---------------------------------------------------------------------------
 # Engine capability matrix — what each engine CAN do (even if not optimal)
@@ -130,6 +133,43 @@ ENGINE_BASE_COST: dict[str, float] = {
 EXTRA_ENGINE_BURDEN_MONTHLY = 300  # $/mo equivalent per extra engine
 
 # ---------------------------------------------------------------------------
+# Cost-per-query floor for a mandatory engine (#167)
+#
+# A signal override makes an engine "mandatory" (Pass 0 never asks whether it
+# has unique value), but that protection should not be permanent: if the
+# engine's fixed monthly cost is high and the share of the workload it serves
+# is tiny, it has not earned its place either, unless a capability (#338) or
+# a dedicated justification (#326, OpenSearch's own floor) says otherwise.
+# ---------------------------------------------------------------------------
+
+# An engine's fixed monthly cost (ENGINE_BASE_COST) must be at least this much
+# to be worth questioning at all -- DynamoDB ($0) and ElastiCache ($50) are
+# cheap enough that a small share is not disproportionate.
+MANDATORY_ENGINE_COST_FLOOR = 100
+
+# Share of in-scope queries (0-1) below which a mandatory engine's fixed cost
+# counts as disproportionate to the workload it serves.
+MANDATORY_ENGINE_MAX_QUERY_SHARE = 0.05
+
+
+def _mandatory_cost_share_reason(engine: str, qas: list[dict], total_queries: int) -> str | None:
+    """None if ``engine``'s fixed cost is proportionate to its workload share (#167).
+
+    Otherwise, the reason a mandatory signal override does not excuse it from
+    the operational-burden review.
+    """
+    cost = ENGINE_BASE_COST.get(engine, 100)
+    share = len(qas) / total_queries if total_queries else 0.0
+    if cost >= MANDATORY_ENGINE_COST_FLOOR and share < MANDATORY_ENGINE_MAX_QUERY_SHARE:
+        return (
+            f"{display_engine(engine)} serves {len(qas)} of {total_queries} queries "
+            f"({share:.1%}) at a fixed ${cost:.0f}/mo — disproportionate to the workload "
+            "share it serves"
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Aurora Absorption Pass (Pass 1)
 # ---------------------------------------------------------------------------
 
@@ -148,6 +188,11 @@ TINY_MANDATORY_QUERY_THRESHOLD = 5
 
 # Set of Aurora engine identifiers
 AURORA_ENGINES = {"aurora_postgresql", "aurora_mysql"}
+
+
+def _query_has_join(query: dict) -> bool:
+    """Whether ``query`` joins two or more tables (``has_joins``/``join_count``)."""
+    return bool(query.get("has_joins")) or (query.get("join_count") or 0) >= 1
 
 
 @dataclass
@@ -208,6 +253,198 @@ SPECIALIST_ABSORB_SIGNALS: dict[str, frozenset[str]] = {
 SPECIALIST_ABSORB_CAPABILITIES: dict[str, frozenset[str]] = {
     "opensearch": frozenset({"inverted_index"}),
 }
+
+# ---------------------------------------------------------------------------
+# OpenSearch justification floor (#326)
+#
+# A text_search signal override alone keeps OpenSearch "mandatory" everywhere
+# else in this module, which is exactly how 4 LIKE/prefix admin-search queries
+# at under 1 call/s kept a $150+/mo standing domain in a maintainer's run: the
+# signal made the engine mandatory, so Pass 0 never asked whether it earns its
+# fixed cost. This floor runs before Pass 0 so a signal override is never
+# enough on its own -- OpenSearch also needs real search depth and either
+# traffic to justify its cost, or a search pattern the source engine's own
+# text_search_basic cannot already serve. Mirrors the ElastiCache hot-read
+# floor (#304, cache_overlay.HOT_READ_MIN_CALLS_PER_SECOND).
+# ---------------------------------------------------------------------------
+
+# Minimum combined traffic (calls/s) across every query OpenSearch would own,
+# before its fixed monthly cost (ENGINE_BASE_COST["opensearch"]) is worth a
+# standing domain. 1.0 is the ElastiCache hot-read floor's own value
+# (cache_overlay.HOT_READ_MIN_CALLS_PER_SECOND): below one call/s, a cached
+# entry (or a search index) is read a few times before the next miss pays the
+# same cost as never having it, so one call/s is the lowest traffic worth a
+# dedicated store at all. On the wordpress reference sample, the 4 queries
+# OpenSearch was recommended for totalled well under 1 call/s combined.
+OPENSEARCH_MIN_CALLS_PER_SECOND = 1.0
+
+# Source database engines whose own text search (MySQL FULLTEXT via
+# MATCH...AGAINST, Postgres tsvector/pg_trgm) already covers these patterns
+# for free -- ENGINE_CAPABILITIES["aurora_mysql"/"aurora_postgresql"]'s
+# text_search_basic. A dedicated OpenSearch domain must clear a higher
+# traffic bar than OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway.
+NATIVE_TEXT_SEARCH_SOURCE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "postgres"})
+
+# The traffic floor a native-text-search source engine's queries must clear
+# before OpenSearch is justified despite the source already covering the
+# pattern. 10x the base floor: the source engine's own index is free (already
+# paid for by the primary cluster), so a second, dedicated search engine only
+# earns its $150+/mo on top of that if the traffic is an order of magnitude
+# higher, not merely above the floor that justifies a search engine starting
+# from nothing.
+OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND = 10.0
+
+# A query returning this many rows on average, even below the traffic floor,
+# signals a corpus large enough that a dedicated index can still earn its
+# cost (e.g. a low-traffic but very large full-text search over millions of
+# rows). This is a result-size proxy, not a corpus-size one: the collector
+# gives no table-level document-count stat, only rows_returned_avg (how much
+# a query's own result set averages), which is the only per-query signal
+# available -- a query that returns a small page from a huge corpus looks
+# the same as one that returns everything from a small one.
+OPENSEARCH_MIN_CORPUS_ROWS_AVG = 1000.0
+
+# A string literal ('...' or "...") is replaced with a single placeholder
+# before any pattern below runs, so a literal's own characters are never
+# mistaken for a SQL operator -- a review of #375 found a leading-wildcard
+# LIKE pattern (LIKE 'abc%') being read as the pg_trgm similarity operator
+# because the '%' inside the literal matched the same way `title % $1` does.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+
+
+def _strip_string_literals(text: str) -> str:
+    return _STRING_LITERAL_RE.sub("?", text)
+
+
+# A search predicate: the query actually filters on a text-search pattern,
+# not just an ordinary equality/range WHERE clause. Required before ranking,
+# fuzzy matching or facets are even considered -- a bare GROUP BY, or a
+# to_tsvector() call with no @@ match, is not a search at all (see below).
+_SEARCH_PREDICATE_RE = re.compile(
+    r"\b(like|ilike)\b|match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|"
+    r"plainto_tsquery\s*\(|@@|similarity\s*\(|word_similarity\s*\(",
+    re.IGNORECASE,
+)
+
+# Relevance ranking: an actual full-text match operation. to_tsvector() alone
+# (document construction, e.g. CREATE EXTENSION's companion index build, or a
+# plain SELECT to_tsvector(...) with no @@) does not count -- only a real
+# match (the @@ operator, or constructing the query side with to_tsquery/
+# plainto_tsquery) does.
+_RELEVANCE_RANKING_RE = re.compile(
+    r"match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|plainto_tsquery\s*\(|@@",
+    re.IGNORECASE,
+)
+
+# Fuzzy matching: an actual similarity computation -- the similarity()/
+# word_similarity() functions, the pg_trgm distance/threshold operators
+# ("<%", "%>", word-similarity thresholds), or the real pg_trgm "%" operator
+# (an identifier or closing paren, then "%", then a parameter placeholder,
+# "$N" or "?", not immediately followed by a comparison or arithmetic
+# operator). Checked against literal-stripped text only: a leading-wildcard
+# LIKE pattern like 'abc%' has no "%" left once its literal is stripped, so
+# it never matches this on its own (a review of #375 found the previous
+# regex doing exactly that -- matching a LIKE pattern's own wildcard as the
+# trigram operator). The negative lookahead after the parameter excludes
+# plain modulo arithmetic against a parameter, e.g. "id % $2 = 0" or
+# "id % $2 + 1" -- a real trigram "%" is used as a boolean predicate on its
+# own, never followed immediately by another comparison or arithmetic
+# operator (a second review of #375 found "id % $2 = 0" misread as fuzzy
+# matching).
+_FUZZY_MATCH_RE = re.compile(
+    r"\bsimilarity\s*\(|\bword_similarity\s*\(|<%|%>|"
+    r"[\w)]\s*%\s*(?:\$\d+|\?)(?!\s*(?:=|<>|!=|<=|>=|<|>|[+\-*/%]))",
+    re.IGNORECASE,
+)
+
+# A facet: a search predicate combined with GROUP BY in the SAME query. A
+# bare GROUP BY on an unrelated report query is not a facet.
+_GROUP_BY_RE = re.compile(r"\bgroup\s+by\b", re.IGNORECASE)
+
+
+def _query_has_search_depth(query_text: str | None) -> bool:
+    """Real search depth in one query (#326 finding 4): a search predicate
+    plus relevance ranking, fuzzy matching, or a facet (GROUP BY alongside
+    the same predicate) -- never a bare GROUP BY, a plain LIKE/prefix filter,
+    a plain join, or to_tsvector()/pg_trgm document/extension setup with no
+    match operator.
+    """
+    text = _strip_string_literals(query_text or "")
+    if _RELEVANCE_RANKING_RE.search(text) or _FUZZY_MATCH_RE.search(text):
+        return True
+    return bool(_SEARCH_PREDICATE_RE.search(text) and _GROUP_BY_RE.search(text))
+
+
+def opensearch_justification(
+    qas: list[dict], query_map: dict[str, dict], source_engine: str | None
+) -> dict[str, tuple[bool, str]]:
+    """Per-query verdict on whether OpenSearch earns its place for each query
+    it owns (#326, review of #375 finding B1).
+
+    A query with no real search depth never earns a place on its own,
+    regardless of traffic -- it is judged, and reported, independently of
+    whatever else OpenSearch owns (finding 4: one shallow query must not
+    sink a real search sitting next to it, and the reverse: one deep query
+    must not shield a shallow one). The traffic/corpus floor is then judged
+    only across the queries that *do* show real depth, so a key lookup
+    alongside a genuine `@@ plainto_tsquery` search at real traffic no
+    longer drags that search's own floor down (or the lookup's lack of
+    traffic up).
+
+    Returns ``{query_id: (justified, reason)}``; ``reason`` always explains
+    the decision so the deliverables can state why.
+    """
+    texts = {qa["query_id"]: query_map.get(qa["query_id"], {}).get("query_text") for qa in qas}
+    deep_qids = {qid for qid, t in texts.items() if _query_has_search_depth(t)}
+
+    shallow_reason = (
+        "no search predicate with relevance ranking, fuzzy matching or a facet in this query"
+    )
+    verdicts: dict[str, tuple[bool, str]] = {
+        qa["query_id"]: (False, shallow_reason) for qa in qas if qa["query_id"] not in deep_qids
+    }
+    if not deep_qids:
+        return verdicts
+
+    deep_rows = {qid: query_map.get(qid, {}) for qid in deep_qids}
+    total_cps = sum(float(q.get("calls_per_second") or 0) for q in deep_rows.values())
+    total_rows_avg = sum(float(q.get("rows_returned_avg") or 0) for q in deep_rows.values())
+    native = (source_engine or "").lower() in NATIVE_TEXT_SEARCH_SOURCE_ENGINES
+    floor = (
+        OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND
+        if native
+        else OPENSEARCH_MIN_CALLS_PER_SECOND
+    )
+
+    if total_cps < floor and total_rows_avg < OPENSEARCH_MIN_CORPUS_ROWS_AVG:
+        source_name = SOURCE_ENGINE_DISPLAY_NAMES.get(
+            (source_engine or "").lower(), source_engine or ""
+        )
+        native_note = (
+            f"{source_name} already supports this search pattern natively "
+            "(text_search_basic), so "
+            if native
+            else ""
+        )
+        reason = (
+            f"{native_note}combined traffic {total_cps:.2f} calls/s across "
+            f"{len(deep_qids)} queries with real search depth is below the {floor:g} calls/s "
+            f"floor (and the {total_rows_avg:.0f}-row average result size is below the "
+            f"{OPENSEARCH_MIN_CORPUS_ROWS_AVG:g}-row floor) for a "
+            f"${ENGINE_BASE_COST.get('opensearch', 0):.0f}/mo standing domain"
+        )
+        for qid in deep_qids:
+            verdicts[qid] = (False, reason)
+        return verdicts
+
+    reason = (
+        f"{len(deep_qids)} queries need relevance ranking/fuzzy matching/facets at "
+        f"{total_cps:.2f} calls/s (average result size {total_rows_avg:.0f} rows), clearing "
+        f"the {floor:g} calls/s floor or the {OPENSEARCH_MIN_CORPUS_ROWS_AVG:g}-row floor"
+    )
+    for qid in deep_qids:
+        verdicts[qid] = (True, reason)
+    return verdicts
 
 
 def may_absorb(
@@ -341,6 +578,9 @@ def run_reality_check(
         query_capabilities = triage.get("query_capabilities", {})
 
     query_signals = _build_query_signals(signals)
+    resolved_source_engine = (
+        source_database_engine(collector_output) if source_engine is None else source_engine
+    )
 
     # Build engine query counts
     engine_queries: dict[str, list[dict]] = defaultdict(list)
@@ -496,9 +736,7 @@ def run_reality_check(
         query_map=query_map,
         analysis_outputs=analysis_outputs,
         query_capabilities=query_capabilities or {},
-        source_engine=(
-            source_database_engine(collector_output) if source_engine is None else source_engine
-        ),
+        source_engine=resolved_source_engine,
     )
 
     # Apply absorption: mark eliminated engines for consolidation
@@ -524,7 +762,7 @@ def run_reality_check(
         e for e in engine_queries if e not in engines_to_consolidate and engine_queries[e]
     }
 
-    consolidations = []
+    consolidations: list[dict[str, Any]] = []
 
     lightweight_recommendations = []
 
@@ -699,6 +937,153 @@ def run_reality_check(
             assessment["consolidation_blocked"] = (
                 "Some queries could not be placed in any committed engine"
             )
+
+    # -------------------------------------------------------------------
+    # Mandatory-engine justification floor (#326, #167)
+    #
+    # A signal override makes an engine "mandatory" through Pass 0-2 above,
+    # which protects queries Aurora absorption (#165) could not place either
+    # -- that is how a $150+/mo OpenSearch domain kept 4 LIKE/prefix admin
+    # queries at under 1 call/s in a maintainer's run. This is the last gate:
+    # a mandatory engine that still owns only its mandatory queries, and does
+    # not meet its justification floor, is not exempt forever. OpenSearch
+    # gets the dedicated floor from #326 (traffic, search depth, native
+    # source support); any other mandatory engine is judged on cost share
+    # alone (#167).
+    # -------------------------------------------------------------------
+    for engine in sorted(mandatory_committed_engines & committed_engines):
+        current_qas = [qa for qa in revised if qa["assigned_engine"] == engine]
+        if not current_qas:
+            continue
+
+        # verdicts: per-query (justified, reason) for opensearch (finding B1 --
+        # one deep query must not be sunk by a shallow one sitting next to it,
+        # and vice versa); a single engine-wide (justified, reason) for any
+        # other mandatory engine, applied to every one of its queries.
+        if engine == "opensearch":
+            verdicts = opensearch_justification(current_qas, query_map, resolved_source_engine)
+            issue_tag = "#326"
+        else:
+            cost_reason = _mandatory_cost_share_reason(engine, current_qas, len(query_assignments))
+            verdicts = {
+                qa["query_id"]: (cost_reason is None, cost_reason or "") for qa in current_qas
+            }
+            issue_tag = "#167"
+        to_move_qas = [qa for qa in current_qas if not verdicts[qa["query_id"]][0]]
+        if not to_move_qas:
+            continue
+
+        floor_candidates = {e for e in committed_engines if e != engine}
+        if not floor_candidates:
+            continue  # nowhere to send them (#335): leave the engine as owner
+
+        floor_placement: dict[str, list[tuple[dict, str]]] = defaultdict(list)
+        floor_unplaced: list[dict] = []
+        for qa in to_move_qas:
+            absorber = _find_best_absorber_for_query(
+                qa,
+                floor_candidates,
+                engine,
+                query_signals,
+                query_map,
+                analysis_outputs,
+                engine_queries,
+                set(),
+                "",
+                query_capabilities,
+            )
+            if absorber is None:
+                floor_unplaced.append(qa)
+                continue
+            floor_placement[absorber["target_engine"]].append((qa, absorber["reason"]))
+
+        moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _ in placed}
+        if not moved_ids:
+            continue
+
+        for target_engine, placed in floor_placement.items():
+            for qa, fit_reason in placed:
+                _, this_reason = verdicts[qa["query_id"]]
+                for rqa in revised:
+                    if rqa["query_id"] == qa["query_id"]:
+                        rqa["assigned_engine"] = target_engine
+                        rqa["assignment_reason"] = (
+                            f"reality check: consolidated from {display_engine(engine)} → "
+                            f"{display_engine(target_engine)} (justification floor {issue_tag} "
+                            f"— {this_reason}; {fit_reason})"
+                        )
+                        rqa.pop("signal_override", None)
+
+        is_full = len(moved_ids) == len(current_qas)
+        # One combined reason for the consolidation record: the distinct
+        # per-query reasons among the queries this pass actually moved, not
+        # every reason seen across the whole (possibly larger, partly kept)
+        # engine -- a query that stayed never contributes text here.
+        moved_reasons = sorted(
+            {verdicts[qa["query_id"]][1] for qa in to_move_qas if qa["query_id"] in moved_ids}
+        )
+        floor_reason = "; ".join(moved_reasons)
+        floor_entry_reason = (
+            f"{display_engine(engine)} does not meet its justification floor "
+            f"({issue_tag}) — {floor_reason}"
+        )
+        for i, (target_engine, placed) in enumerate(floor_placement.items()):
+            # moved_queries() (reality_check_request.py) recomputes membership
+            # from (from_engine, to_engine) alone, so two consolidation records
+            # for the same pair would double-count the same queries. Merge into
+            # an existing record for this pair instead of adding a second one
+            # -- but only append this pass's own reason, scoped to the queries
+            # it actually moved, never re-describing a record (or a share of
+            # one) this pass had no part in (review of #375, finding 5).
+            existing = next(
+                (
+                    c
+                    for c in consolidations
+                    if c["from_engine"] == engine and c["to_engine"] == target_engine
+                ),
+                None,
+            )
+            if existing is not None:
+                existing["query_count"] += len(placed)
+                existing["reason"] = (
+                    f"{existing['reason']} | {_queries(len(placed))} of these also move "
+                    f"because {floor_entry_reason}"
+                )
+                if is_full and i == 0:
+                    existing["saved_cost_estimate"] = existing.get("saved_cost_estimate", 0) + (
+                        ENGINE_BASE_COST.get(engine, 0) + EXTRA_ENGINE_BURDEN_MONTHLY
+                    )
+                continue
+            consolidations.append(
+                {
+                    "from_engine": engine,
+                    "to_engine": target_engine,
+                    "query_count": len(placed),
+                    "reason": floor_entry_reason,
+                    "saved_cost_estimate": (
+                        (ENGINE_BASE_COST.get(engine, 0) + EXTRA_ENGINE_BURDEN_MONTHLY)
+                        if is_full and i == 0
+                        else 0
+                    ),
+                    "action": "full" if is_full else "partial",
+                    "queries_retained": (
+                        [qa["query_id"] for qa in floor_unplaced] if floor_unplaced else []
+                    ),
+                    "retention_reason": (
+                        "Queries require capabilities no other committed engine provides"
+                        if floor_unplaced
+                        else None
+                    ),
+                }
+            )
+        assessment = unique_value_assessment.setdefault(engine, {})
+        assessment["cost_justification"] = floor_reason
+        assessment["cost_justification_query_ids"] = sorted(moved_ids)
+        if is_full:
+            committed_engines.discard(engine)
+            engine_queries[engine] = [
+                qa for qa in engine_queries.get(engine, []) if qa["query_id"] not in moved_ids
+            ]
 
     # Pass 3: Detect architectural patterns
     patterns = _detect_architectural_patterns(revised, committed_engines, engine_queries)
@@ -1174,6 +1559,20 @@ def _find_best_absorber_for_query(
         if required_caps and not can_engine_serve_capability(target_engine, required_caps):
             continue
 
+        # Review of #375, finding B2: a join consolidated away from a
+        # non-Aurora engine (DocumentDB, OpenSearch) never lands on DynamoDB,
+        # unless a denormalised design is explicitly proposed for it -- no
+        # such proposal mechanism exists yet, so this is unconditional for
+        # now. A join that was already on DynamoDB, or arrived there from
+        # Aurora (a key-scoped 2-table join a v1 fit score chose on its own
+        # merits), is unaffected; this only blocks a *consolidation* onto it.
+        if (
+            target_engine == "dynamodb"
+            and source_engine not in AURORA_ENGINES
+            and _query_has_join(query_map.get(qid, {}))
+        ):
+            continue
+
         fit = _engine_fit_score(target_engine, qa, query_signals, query_map, analysis_outputs)
 
         # Even low-fit engines can absorb if they have basic capabilities
@@ -1372,6 +1771,7 @@ def reconcile_consolidations(
     before_assignments: list[dict],
     after_assignments: list[dict],
     consolidations: list[dict],
+    unique_value_assessment: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Make the consolidation records describe the net per-query moves (#218).
 
@@ -1389,6 +1789,18 @@ def reconcile_consolidations(
     - a record whose count, action or retained queries changed gets a reason that
       states the final move.
 
+    ``unique_value_assessment`` (optional) carries each engine's
+    ``cost_justification`` (#326, #167) and ``cost_justification_query_ids``:
+    the justification-floor reason, and exactly which queries the floor
+    itself moved, which this pass would otherwise discard whenever it
+    rewrites a reason to describe the final move. The reason is appended
+    only to a (src, dst) record whose own net-moved queries overlap that id
+    set -- a record for a different move the floor never touched (a
+    different target engine, or queries that moved for an unrelated reason)
+    does not get the floor's text (a review of #375 found exactly this: the
+    floor's reason attached to a 119-query record and to a 29-query record
+    neither of which the floor had any part in).
+
     Record order is kept; new records follow. Inputs are not mutated.
     """
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
@@ -1400,11 +1812,13 @@ def reconcile_consolidations(
             remaining[qa["assigned_engine"]] += 1
 
     moves: dict[tuple[str, str], int] = {}
+    moved_qids: dict[tuple[str, str], set[str]] = defaultdict(set)
     for qa in after_assignments:
         src = before.get(qa["query_id"])
         dst = qa["assigned_engine"]
         if src and src != dst:
             moves[(src, dst)] = moves.get((src, dst), 0) + 1
+            moved_qids[(src, dst)].add(qa["query_id"])
 
     recorded_saving: dict[str, float] = {}
     first_record: dict[tuple[str, str], dict] = {}
@@ -1440,6 +1854,25 @@ def reconcile_consolidations(
             else:
                 record["reason"] = (
                     f"Partial consolidation: {moved}; {src} stays for {_queries(remaining[src])}"
+                )
+            engine_assessment = (unique_value_assessment or {}).get(src, {})
+            justification = engine_assessment.get("cost_justification")
+            justification_qids = engine_assessment.get("cost_justification_query_ids")
+            floor_overlap = (
+                moved_qids[(src, dst)]
+                if justification_qids is None
+                else moved_qids[(src, dst)] & set(justification_qids)
+            )
+            if justification and floor_overlap:
+                # Say how many of this record's own queries the floor actually
+                # moved, not just the floor's reason text on its own -- a review
+                # of #375 found the wording reading as if the floor's reason
+                # applied to every query in the record (e.g. "119 ... moved to
+                # aurora_postgresql ... (no search predicate ...)"), when the
+                # floor itself only moved a handful of those 119.
+                record["reason"] = (
+                    f"{record['reason']} ({_queries(len(floor_overlap))} of these, "
+                    f"moved by the justification floor: {justification})"
                 )
         saved = 0.0
         if full and src not in savings_claimed:
@@ -1503,9 +1936,18 @@ def _build_recommendations(
                 "from the architecture."
             )
         elif saved:
+            # This is ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY, a flat
+            # operational-overhead placeholder (team expertise, monitoring,
+            # backups, failover -- not infrastructure spend), not the real
+            # infrastructure cost drop tco_analysis.cost_breakdown shows for
+            # removing this engine. A review of #375 found the two numbers
+            # read as if they should match (e.g. ~$450 here vs OpenSearch's
+            # real $240.96/mo infrastructure cost) -- they do not, and are
+            # not meant to; label the figure so that is clear.
             outcome = (
-                f"Saves ~${saved}/mo in operational overhead by avoiding a dedicated "
-                f"{source} cluster."
+                f"Saves ~${saved}/mo in estimated operational overhead (team expertise, "
+                "monitoring, backups and failover -- not the infrastructure cost; see "
+                f"tco_analysis for that) by avoiding a dedicated {source} cluster."
             )
         else:
             outcome = f"{source} leaves the architecture."

@@ -10,6 +10,11 @@ Version History:
   the check findings are kept in executive_summary_llm / _validation_warnings (#236)
 - 1.4 (2026-10-04): validation_incomplete lists consolidation validation batches that
   got no LLM verdict (#285)
+- 1.5 (2026-10-06): UniqueValueAssessment.cost_justification records why a mandatory
+  engine's fixed cost was judged proportionate (or not) to its workload share --
+  without this field Pydantic silently dropped it, so the OpenSearch justification
+  floor's reasoning (#326) and the generalized cost-share floor (#167) never reached
+  the deliverables (review of #375, finding 5)
 """
 
 from pydantic import BaseModel, Field
@@ -42,6 +47,15 @@ class UniqueValueAssessment(BaseModel):
     )
     consolidation_blocked: str | None = Field(
         None, description="Reason consolidation was blocked (if applicable)"
+    )
+    cost_justification: str | None = Field(
+        None,
+        description=(
+            "Why this engine's fixed monthly cost was judged proportionate, or not, to its "
+            "workload share -- set when a mandatory signal override alone did not excuse it "
+            "from the operational-burden review (#326 for opensearch, #167 for any other "
+            "mandatory engine)"
+        ),
     )
 
 
@@ -96,7 +110,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.4", description="Contract version")
+    contract_version: str = Field(default="1.5", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )

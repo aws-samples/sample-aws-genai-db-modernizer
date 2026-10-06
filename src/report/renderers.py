@@ -925,6 +925,7 @@ def render_decision_report_html(
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
+    out += _why_engines_were_dropped_html(report)
     out += _roadmap_html(report)
 
     risks = filtered_risks(report)
@@ -1477,6 +1478,48 @@ _SUGGESTED_PATH_NOTE = (
     "One suggested adoption path, not the only one — to modernize in one step "
     "instead, adopt {pointer} directly."
 )
+
+
+# A "Consolidated N queries from <engine> -> <absorber>: ... no in-scope
+# <engine> query remains ..." trade-off line (built by
+# reality_check._build_recommendations / reconcile_consolidations) is a full
+# elimination -- the "no in-scope ... remains" clause is reconcile_consolidations'
+# own marker for it (reality_check.py's "full" action), so it is matched
+# directly rather than re-deriving "eliminated" from the assignment here.
+_FULLY_ELIMINATED_RE = re.compile(r"no in-scope (\w+) query remains")
+_CONSOLIDATED_FROM_TO_RE = re.compile(r"^Consolidated \d+ quer(?:y|ies) from (\w+) → (\w+)")
+
+
+def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
+    """Decision Report "Engines not used" note (#326, #167): state why.
+
+    A purpose-built engine must justify its place with traffic, data,
+    capability and cost (#340); when it does not, the deliverables must say
+    why it was dropped, not just show the final architecture without it. The
+    trade-off line for a fully eliminated engine already carries the
+    OpenSearch justification floor's reason (#326) or the generalized
+    cost-share floor's reason (#167), appended by ``reconcile_consolidations``.
+    """
+    items: list[str] = []
+    seen: set[str] = set()
+    for t in report.get("trade_offs") or []:
+        desc = str((t or {}).get("description") or "")
+        elim = _FULLY_ELIMINATED_RE.search(desc)
+        if not elim or elim.group(1) in seen:
+            continue
+        seen.add(elim.group(1))
+        name = escaping.html_text(display_engine(elim.group(1)))
+        m = _CONSOLIDATED_FROM_TO_RE.match(desc)
+        arrow = f" → {escaping.html_text(display_engine(m.group(2)))}" if m else ""
+        items.append(f"<li><b>{name}</b>{arrow}: {escaping.html_text(desc)}</li>")
+    if not items:
+        return []
+    return [
+        "<h2 class=section-title>Engines not used</h2>",
+        "<div class=card><div class=card-b><ul>",
+        *items,
+        "</ul></div></div>",
+    ]
 
 
 def _roadmap_html(report: dict[str, Any]) -> list[str]:

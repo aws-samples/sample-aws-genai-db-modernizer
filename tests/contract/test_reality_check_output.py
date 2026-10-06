@@ -53,6 +53,34 @@ class TestUniqueValueAssessment:
         )
         assert uva.consolidation_blocked is not None
 
+    def test_cost_justification_defaults_to_none(self):
+        """Additive in 1.5 (#375 review finding 5): earlier outputs still validate."""
+        uva = UniqueValueAssessment(
+            total_queries=4,
+            unique_queries=[],
+            redundant_queries=[],
+            unique_ratio=0.0,
+            avg_delta=0.0,
+            is_primary=False,
+            is_mandatory=True,
+        )
+        assert uva.cost_justification is None
+
+    def test_cost_justification_roundtrips(self):
+        """The OpenSearch justification floor's reason (#326) and the generalized
+        cost-share floor's reason (#167) must survive Pydantic validation."""
+        uva = UniqueValueAssessment(
+            total_queries=4,
+            unique_queries=[],
+            redundant_queries=[],
+            unique_ratio=0.0,
+            avg_delta=0.0,
+            is_primary=False,
+            is_mandatory=True,
+            cost_justification="4 queries use LIKE/prefix matching, not relevance ranking",
+        )
+        assert "LIKE/prefix" in uva.cost_justification
+
 
 class TestConsolidation:
     """Test consolidation record model."""
@@ -132,6 +160,9 @@ class TestRealityCheckOutputContract:
                     "avg_delta": 12.0,
                     "is_primary": False,
                     "is_mandatory": True,
+                    "cost_justification": (
+                        "4 queries use LIKE/prefix matching, not relevance ranking"
+                    ),
                 },
             },
             "consolidations": [],
@@ -160,9 +191,17 @@ class TestRealityCheckOutputContract:
         assert len(output.unique_value_assessment) == 2
         assert len(output.architectural_patterns) == 1
 
+    def test_cost_justification_survives_full_contract_round_trip(self, valid_reality_check_data):
+        """Reproduces review finding 5: Pydantic was silently dropping this key
+        when the dict came straight from reality_check.py's unique_value_assessment."""
+        output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
+        assert output.unique_value_assessment["opensearch"].cost_justification is not None
+        assert "LIKE/prefix" in output.unique_value_assessment["opensearch"].cost_justification
+        assert output.unique_value_assessment["dynamodb"].cost_justification is None
+
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.4"
+        assert output.contract_version == "1.5"
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.

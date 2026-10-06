@@ -37,19 +37,30 @@ def _make_triage(signals: list[dict] | None = None) -> dict:
     }
 
 
-def _make_collector(query_ids: list[str]) -> dict:
-    return {
-        "queries": {
-            "query_patterns": [
-                {
-                    "query_id": qid,
-                    "tables_accessed": ["db.users"],
-                    "query_type": "SELECT",
-                }
-                for qid in query_ids
-            ]
+def _make_collector(query_ids: list[str], extra: dict[str, dict] | None = None) -> dict:
+    extra = extra or {}
+    patterns = []
+    for qid in query_ids:
+        pattern = {
+            "query_id": qid,
+            "tables_accessed": ["db.users"],
+            "query_type": "SELECT",
         }
-    }
+        pattern.update(extra.get(qid, {}))
+        patterns.append(pattern)
+    return {"queries": {"query_patterns": patterns}}
+
+
+# A query_text/calls_per_second pair that clears the OpenSearch justification
+# floor (#326): real search depth (MATCH...AGAINST) at traffic above
+# OPENSEARCH_MIN_CALLS_PER_SECOND, with no source engine metadata (so the
+# native-source-engine override does not apply). Tests that assert OpenSearch
+# keeps a mandatory query use this so they test mandatory protection itself,
+# not the justification floor (covered separately below).
+_REAL_SEARCH_DEPTH_QUERY = {
+    "query_text": "SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)",
+    "calls_per_second": 5.0,
+}
 
 
 def _make_engine_queries(engine_query_map: dict[str, list[str]]) -> dict[str, list[dict]]:
@@ -170,7 +181,7 @@ class TestRunRealityCheck:
                 }
             ]
         )
-        collector = _make_collector(["q1", "q2", "q3"])
+        collector = _make_collector(["q1", "q2", "q3"], extra={"q3": _REAL_SEARCH_DEPTH_QUERY})
         analysis = {
             "dynamodb": {
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
@@ -261,7 +272,7 @@ class TestRunRealityCheck:
                 }
             ]
         )
-        collector = _make_collector(["q1", "q2", "q3"])
+        collector = _make_collector(["q1", "q2", "q3"], extra={"q3": _REAL_SEARCH_DEPTH_QUERY})
         analysis = {
             "dynamodb": {
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
@@ -299,7 +310,7 @@ class TestRunRealityCheck:
                 }
             ]
         )
-        collector = _make_collector(["q1", "q2", "q3"])
+        collector = _make_collector(["q1", "q2", "q3"], extra={"q3": _REAL_SEARCH_DEPTH_QUERY})
         # DynamoDB has high confidence on the same table — but can't do text search
         analysis = {
             "dynamodb": {
@@ -340,7 +351,7 @@ class TestRunRealityCheck:
                 }
             ]
         )
-        collector = _make_collector(["q1", "q2"])
+        collector = _make_collector(["q1", "q2"], extra={"q2": _REAL_SEARCH_DEPTH_QUERY})
 
         result = run_reality_check(assignment, triage, {}, collector)
         # q2 should still be in opensearch (mandatory)
@@ -363,7 +374,7 @@ class TestRunRealityCheck:
                 },
             ],
         }
-        collector = _make_collector(["q1", "q2"])
+        collector = _make_collector(["q1", "q2"], extra={"q2": _REAL_SEARCH_DEPTH_QUERY})
 
         result = run_reality_check(assignment, _make_triage(), {}, collector)
 
@@ -1106,3 +1117,486 @@ def test_tiny_opensearch_absorbed_end_to_end():
     assert from_os[0]["action"] == "full"
     assert from_os[0]["query_count"] == 3
     assert "text_search_basic" in from_os[0]["reason"]
+
+
+class TestOpenSearchJustificationFloor:
+    """OpenSearch is only kept as a standing engine when it earns its place (#326)."""
+
+    def _run(self, os_query_text: str, os_cps: float, source_engine: str | None = None):
+        assignment = {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": f"dq{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                for i in range(20)
+            ]
+            + [
+                {
+                    "query_id": "search",
+                    "assigned_engine": "opensearch",
+                    "assignment_reason": "signal override: text_search → opensearch",
+                    "signal_override": "text_search",
+                }
+            ],
+        }
+        triage = {
+            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "opensearch"}],
+            "signals": [
+                {"signal": "text_search", "targets": ["opensearch"], "query_ids": ["search"]}
+            ],
+        }
+        collector: dict = {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": f"dq{i}", "tables_accessed": ["db.posts"], "query_type": "SELECT"}
+                    for i in range(20)
+                ]
+                + [
+                    {
+                        "query_id": "search",
+                        "tables_accessed": ["db.users"],
+                        "query_type": "SELECT",
+                        "query_text": os_query_text,
+                        "calls_per_second": os_cps,
+                    }
+                ]
+            }
+        }
+        if source_engine:
+            collector["metadata"] = {"source_database": {"engine": source_engine}}
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 80}]
+            },
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
+            },
+        }
+        return run_reality_check(assignment, triage, analysis, collector)
+
+    def test_like_prefix_query_at_low_traffic_is_dropped(self):
+        """The wordpress shape: LIKE admin search, 4 queries at well under 1 call/s."""
+        result = self._run("SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?", 0.07)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "dynamodb"
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert len(from_os) == 1
+        assert "justification floor" in from_os[0]["reason"] or "326" in from_os[0]["reason"]
+
+    def test_plain_join_with_no_search_predicate_is_dropped(self):
+        """The Action Scheduler shape: a join with no text predicate at all."""
+        result = self._run(
+            "SELECT a.action_id FROM actions a LEFT JOIN groups g ON g.id = a.group_id", 0.45
+        )
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "dynamodb"
+
+    def test_real_depth_at_sufficient_traffic_is_kept(self):
+        """MATCH...AGAINST at traffic above the floor, with no native source engine, is justified."""
+        result = self._run("SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)", 5.0)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "opensearch"
+        assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])
+
+    def test_native_postgres_tsvector_at_low_traffic_prefers_aurora(self):
+        """discourse shape: to_tsvector construction, native to Postgres, at tiny traffic."""
+        result = self._run("SELECT to_tsvector($1, $2)", 0.03, source_engine="postgresql")
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "dynamodb"
+
+    def test_real_depth_insufficient_traffic_for_native_source_is_dropped(self):
+        """A tsvector/MATCH query from a native source needs much higher traffic to justify
+        OpenSearch over the source engine's own text_search_basic."""
+        result = self._run(
+            "SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)", 5.0, source_engine="mysql"
+        )
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "dynamodb"
+
+
+class TestOpenSearchJustificationFunction:
+    """Direct tests of opensearch_justification() (#326). It now returns a
+    per-query {query_id: (justified, reason)} dict (review finding B1)."""
+
+    def test_no_depth_fails(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE name LIKE ?", "calls_per_second": 10.0}
+        }
+        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+        assert "no search predicate" in reason
+
+    def test_depth_but_low_traffic_fails(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 0.01,
+            }
+        }
+        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+        assert "calls/s" in reason
+
+    def test_depth_and_traffic_passes(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+
+class TestOpenSearchPerQueryDepth:
+    """Search depth is decided per query, not for the whole domain by one
+    deep query (review finding 4, and finding B1: a shallow query must not
+    sink a deep one, and the floor is judged only across the deep ones)."""
+
+    def test_one_deep_query_does_not_unlock_a_shallow_one(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "deep"}, {"query_id": "shallow"}]
+        query_map = {
+            "deep": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 5.0,
+            },
+            "shallow": {
+                "query_text": "SELECT * FROM t WHERE name LIKE ?",
+                "calls_per_second": 5.0,
+            },
+        }
+        verdicts = opensearch_justification(qas, query_map, None)
+        assert verdicts["shallow"][0] is False
+        assert verdicts["deep"][0] is True
+
+    def test_shallow_key_lookup_does_not_sink_a_real_search_at_high_traffic(self):
+        """Review finding B1: a key lookup sitting next to a real `@@ plainto_tsquery`
+        search at 50 calls/s must not drop the search too -- only the lookup moves."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "search"}, {"query_id": "lookup"}]
+        query_map = {
+            "search": {
+                "query_text": "SELECT * FROM posts WHERE body_tsv @@ plainto_tsquery($1)",
+                "calls_per_second": 50.0,
+            },
+            "lookup": {
+                "query_text": "SELECT * FROM posts WHERE id = $1",
+                "calls_per_second": 0.5,
+            },
+        }
+        verdicts = opensearch_justification(qas, query_map, None)
+        assert verdicts["lookup"][0] is False
+        assert verdicts["search"][0] is True
+
+    def test_bare_group_by_is_not_a_facet(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT status, COUNT(*) FROM orders GROUP BY status",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+    def test_search_predicate_with_group_by_in_same_query_is_a_facet(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": (
+                    "SELECT category, COUNT(*) FROM products WHERE name LIKE ? "
+                    "AND to_tsvector(name) @@ to_tsquery(?) GROUP BY category"
+                ),
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_create_extension_is_not_search(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+    def test_tsvector_document_construction_is_not_search(self):
+        """A plain to_tsvector() call with no @@ match is building a document, not searching."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {"q1": {"query_text": "SELECT to_tsvector($1, $2)", "calls_per_second": 20.0}}
+        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+        assert "no search predicate" in reason
+
+    def test_large_corpus_justifies_below_the_traffic_floor(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 0.1,
+                "rows_returned_avg": 5000,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_small_corpus_and_low_traffic_fails(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 0.1,
+                "rows_returned_avg": 10,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+
+class TestOpenSearchFuzzyMatchRegex:
+    """Review finding B1: _FUZZY_MATCH_RE was inverted -- it matched a LIKE
+    pattern's own wildcard and missed the real pg_trgm "%" operator."""
+
+    def test_like_prefix_wildcard_is_not_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE name LIKE 'abc%'", "calls_per_second": 50.0}
+        }
+        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+        assert "no search predicate" in reason
+
+    def test_like_both_sided_wildcard_is_not_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE name LIKE '%abc%'",
+                "calls_per_second": 50.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+    def test_modulo_on_a_parameter_is_not_fuzzy_matching_inside_a_literal(self):
+        """id % $2 used to match the old regex purely because of the literal check
+        order; confirm a literal containing a percent sign is not mistaken for it."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE tag = 'sale%'", "calls_per_second": 50.0}
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+    def test_real_trigram_operator_is_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE title % $1", "calls_per_second": 5.0}
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_real_trigram_operator_against_a_literal_is_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE title % 'search term'",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_similarity_function_is_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE similarity(title, $1) > 0.3",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_word_similarity_function_is_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {
+                "query_text": "SELECT * FROM t WHERE word_similarity(title, $1) > 0.3",
+                "calls_per_second": 5.0,
+            }
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_modulo_against_a_parameter_followed_by_a_comparison_is_not_fuzzy_matching(self):
+        """A second review of #375: `id % $2 = 0` is modulo arithmetic, not the
+        pg_trgm similarity operator -- the real operator is a boolean predicate
+        on its own, never immediately followed by a comparison operator."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE id % $2 = 0", "calls_per_second": 50.0}
+        }
+        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+        assert "no search predicate" in reason
+
+    def test_modulo_against_a_parameter_followed_by_arithmetic_is_not_fuzzy_matching(self):
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE id % $2 + 1 = 0", "calls_per_second": 50.0}
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is False
+
+    def test_pg_trgm_word_similarity_right_threshold_operator_is_fuzzy_matching(self):
+        """The pg_trgm `%>` ("right word is similar enough") operator."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE title %> $1", "calls_per_second": 5.0}
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+    def test_pg_trgm_word_similarity_left_threshold_operator_is_fuzzy_matching(self):
+        """The pg_trgm `<%` ("left word is similar enough") operator."""
+        from src.agents.referee.reality_check import opensearch_justification
+
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE $1 <% title", "calls_per_second": 5.0}
+        }
+        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        assert justified is True
+
+
+class TestUtilityStatementsSurviveRealityCheck:
+    """The #327 utility pin must survive the reality check, not just the
+    assignment resolver (review finding 1): without "sql_admin", Aurora looked
+    redundant by fit score and every utility statement moved to DynamoDB in v2."""
+
+    def test_utility_statements_stay_on_aurora_even_when_aurora_looks_redundant(self):
+        assignment = {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": f"dq{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                for i in range(20)
+            ]
+            + [
+                {"query_id": f"aq{i}", "assigned_engine": "aurora_mysql", "assignment_reason": "t"}
+                for i in range(3)
+            ]
+            + [
+                {
+                    "query_id": "show1",
+                    "assigned_engine": "aurora_mysql",
+                    "assignment_reason": "utility/metadata statement",
+                },
+                {
+                    "query_id": "set1",
+                    "assigned_engine": "aurora_mysql",
+                    "assignment_reason": "utility/metadata statement",
+                },
+            ],
+        }
+        triage = {
+            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "aurora_mysql"}],
+            "signals": [],
+            "query_capabilities": {"show1": ["sql_admin"], "set1": ["sql_admin"]},
+        }
+        collector = {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": f"dq{i}", "tables_accessed": ["db.users"], "query_type": "SELECT"}
+                    for i in range(20)
+                ]
+                + [
+                    {"query_id": f"aq{i}", "tables_accessed": ["db.users"], "query_type": "SELECT"}
+                    for i in range(3)
+                ]
+                + [
+                    {
+                        "query_id": "show1",
+                        "tables_accessed": ["db.options"],
+                        "query_type": "OTHER",
+                        "query_text": "SHOW FULL FIELDS FROM wp_options",
+                    },
+                    {
+                        "query_id": "set1",
+                        "tables_accessed": ["db.options"],
+                        "query_type": "OTHER",
+                        "query_text": "SET SESSION SQL_BIG_SELECTS = ?",
+                    },
+                ]
+            }
+        }
+        # aurora_mysql scores identically to dynamodb on db.users (redundant by
+        # fit score, no hard capability involved) but much worse on db.options
+        # -- the utility queries' table -- so without the sql_admin gate the
+        # reality check would judge aurora_mysql fully redundant.
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.users", "confidence_score": 80},
+                    {"table_id": "db.options", "confidence_score": 80},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.users", "confidence_score": 80},
+                    {"table_id": "db.options", "confidence_score": 10},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["show1"] == "aurora_mysql"
+        assert engine_of["set1"] == "aurora_mysql"

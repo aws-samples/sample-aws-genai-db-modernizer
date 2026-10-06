@@ -139,12 +139,13 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     arch = json.loads(report_path.read_text())["recommended_architecture"]
     assert arch["architecture_type"] == "HYBRID_WITH_CACHE"
     # #296: Reality Check keeps the source-compatible Aurora MySQL (OpenSearch no longer
-    # absorbs its plain lookups) and ElastiCache is listed as the cache layer
+    # absorbs its plain lookups) and ElastiCache is listed as the cache layer. #326: OpenSearch
+    # no longer appears -- its 4 LIKE/prefix admin-search queries fail the justification floor
+    # (no real search depth, well under the traffic floor) and consolidate back to Aurora MySQL.
     assert {d["service"] for d in arch["databases"]} == {
         "aurora_mysql",
         "dynamodb",
         "elasticache",
-        "opensearch",
     }
     assert all(d["table_count"] == 0 for d in arch["databases"])
     assert arch["rationale"] == (

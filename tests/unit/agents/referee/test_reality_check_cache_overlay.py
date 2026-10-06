@@ -40,6 +40,13 @@ def _collector(qids: list[str], **fields) -> dict:
     }
 
 
+def _patch_to_real_search(collector: dict, query_id: str) -> None:
+    """Give ``query_id`` real search depth + traffic (#326's justification floor)."""
+    q = next(p for p in collector["queries"]["query_patterns"] if p["query_id"] == query_id)
+    q["query_text"] = "SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)"
+    q["calls_per_second"] = 5.0
+
+
 def _triage(signals: list[dict] | None = None) -> dict:
     return {
         "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "opensearch"}],
@@ -70,9 +77,12 @@ class TestMandatoryProtectsOnlyItsQueries:
         triage = _triage(
             [{"signal": "text_search", "targets": ["opensearch"], "query_ids": ["search"]}]
         )
-        result = run_reality_check(
-            assignment, triage, {}, _collector(["d1", "d2", "search", *others])
-        )
+        collector = _collector(["d1", "d2", "search", *others])
+        # Real search depth + traffic above the OpenSearch justification floor
+        # (#326): this fixture tests mandatory-protection mechanics (#296), not
+        # the justification floor itself.
+        _patch_to_real_search(collector, "search")
+        result = run_reality_check(assignment, triage, {}, collector)
         return result, others
 
     def test_non_mandatory_queries_are_consolidated(self):
@@ -104,7 +114,9 @@ class TestMandatoryProtectsOnlyItsQueries:
                 },
             ],
         }
-        result = run_reality_check(assignment, _triage(), {}, _collector(["d1", "search"]))
+        collector = _collector(["d1", "search"])
+        _patch_to_real_search(collector, "search")
+        result = run_reality_check(assignment, _triage(), {}, collector)
         engine = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert engine == {"d1": "dynamodb", "search": "opensearch"}
 

@@ -256,6 +256,86 @@ class TestReconcile:
         assert "1 aurora_mysql query moved to dynamodb" in ddb["reason"]
         assert "aurora_mysql stays for 2 queries" in ddb["reason"]
 
+    def test_cost_justification_survives_the_reconciler(self) -> None:
+        """Review finding 5: the justification-floor reason (#326, #167) must survive
+        reconcile_consolidations, which otherwise overwrites the reason with a generic
+        "N queries moved; no in-scope query remains" when anything else moved too."""
+        before = [_qa(q, "opensearch") for q in ("a", "b", "c")]
+        after = [_qa(q, "aurora_mysql") for q in ("a", "b", "c")]
+        unique_value_assessment = {
+            "opensearch": {
+                "cost_justification": ("3 queries use LIKE/prefix matching, not relevance ranking")
+            }
+        }
+        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        record = next(c for c in final if c["from_engine"] == "opensearch")
+        assert "LIKE/prefix" in record["reason"]
+
+    def test_no_unique_value_assessment_is_fine(self) -> None:
+        """The parameter is optional -- existing callers that don't pass it keep working."""
+        before = [_qa("a", "opensearch")]
+        after = [_qa("a", "aurora_mysql")]
+        final = reconcile_consolidations(before, after, [])
+        assert final[0]["from_engine"] == "opensearch"
+
+    def test_cost_justification_only_attaches_to_the_floors_own_pair(self) -> None:
+        """Review of #375, finding 5's wording problem: a review found the floor's
+        reason attached to a 119-query opensearch->aurora_postgresql record and to a
+        separate 29-query opensearch->dynamodb record the floor had no part in. Only
+        a record whose own net-moved queries overlap cost_justification_query_ids
+        gets the floor's text."""
+        before = [_qa(q, "opensearch") for q in ("a", "b", "c", "d")]
+        # a, b, c moved by ordinary consolidation (unrelated to the floor); d is the
+        # floor's own move, to a *different* target engine.
+        after = [_qa(q, "aurora_postgresql") for q in ("a", "b", "c")] + [_qa("d", "dynamodb")]
+        unique_value_assessment = {
+            "opensearch": {
+                "cost_justification": "1 of 1 queries have no search predicate",
+                "cost_justification_query_ids": ["d"],
+            }
+        }
+        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        to_aurora = next(c for c in final if c["to_engine"] == "aurora_postgresql")
+        to_dynamodb = next(c for c in final if c["to_engine"] == "dynamodb")
+        assert "no search predicate" not in to_aurora["reason"]
+        assert "no search predicate" in to_dynamodb["reason"]
+
+    def test_cost_justification_attaches_when_the_pair_matches(self) -> None:
+        before = [_qa(q, "opensearch") for q in ("a", "b")]
+        after = [_qa(q, "aurora_mysql") for q in ("a", "b")]
+        unique_value_assessment = {
+            "opensearch": {
+                "cost_justification": "2 of 2 queries have no search predicate",
+                "cost_justification_query_ids": ["a", "b"],
+            }
+        }
+        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        record = next(c for c in final if c["from_engine"] == "opensearch")
+        assert "no search predicate" in record["reason"]
+
+    def test_cost_justification_states_how_many_of_the_record_it_covers(self) -> None:
+        """A second review of #375: the floor's text used to read as if it applied
+        to every query in the record (e.g. a 119-query record saying "no search
+        predicate" with no hint that the floor itself only moved a handful of
+        those 119). The reason must say how many of the record's own queries the
+        floor actually moved."""
+        before = [_qa(q, "opensearch") for q in ("a", "b", "c", "d", "e")]
+        # a..d all move opensearch -> aurora_postgresql; only c and d are the
+        # floor's own moves (the other two moved for an unrelated reason).
+        after = [_qa(q, "aurora_postgresql") for q in ("a", "b", "c", "d")] + [
+            _qa("e", "opensearch")
+        ]
+        unique_value_assessment = {
+            "opensearch": {
+                "cost_justification": "2 of 2 queries have no search predicate",
+                "cost_justification_query_ids": ["c", "d"],
+            }
+        }
+        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        record = next(c for c in final if c["from_engine"] == "opensearch")
+        assert "2 queries of these, moved by the justification floor" in record["reason"]
+        assert "no search predicate" in record["reason"]
+
     def test_counts_of_one_are_singular(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
         after = [_qa("a", "dynamodb"), _qa("b", "dynamodb"), _qa("c", "aurora_mysql")]

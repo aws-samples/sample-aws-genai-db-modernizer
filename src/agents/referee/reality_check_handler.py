@@ -566,6 +566,7 @@ def _settle_records(result: dict) -> None:
         result["assignment"].get("query_assignments", []),
         result["revised_assignments"],
         result["consolidations"],
+        result.get("unique_value_assessment"),
     )
     refresh_patterns_and_recommendations(result)
 
