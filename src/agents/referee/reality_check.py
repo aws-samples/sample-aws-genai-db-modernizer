@@ -1094,6 +1094,7 @@ def run_reality_check(
         consolidations,
         patterns,
         engine_queries,
+        _engine_infra_cost(analysis_outputs),
     )
 
     consolidations = absorption_consolidations + consolidations
@@ -1753,7 +1754,11 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
     patterns = patterns_for_assignment(result["revised_assignments"])
     result["architectural_patterns"] = patterns
     result["recommendations"] = _build_recommendations(
-        result["revised_assignments"], result["consolidations"], patterns, {}
+        result["revised_assignments"],
+        result["consolidations"],
+        patterns,
+        {},
+        _engine_infra_cost(result.get("analysis_outputs")),
     )
 
 
@@ -1916,14 +1921,52 @@ def format_pattern_recommendation(p: dict) -> str:
     return f"Recommended pattern: {p['name']}. {p['description']}"
 
 
+def _engine_infra_cost(analysis_outputs: dict[str, dict] | None) -> dict[str, float]:
+    """Each engine's own analysed ``cost_estimate.monthly_cost_usd`` (#375 review).
+
+    This is the same real, per-engine infrastructure figure ``tco_analysis``
+    builds its ``cost_breakdown`` from (``build_tco_analysis`` in
+    synthesis_report.py reads the identical field) -- not
+    ``ENGINE_BASE_COST``/``EXTRA_ENGINE_BURDEN_MONTHLY``, which is an internal
+    operational-overhead heuristic used only to decide *whether* an engine is
+    worth questioning (the mandatory-engine cost-share floor), never a real
+    dollar figure to show a customer. An engine missing a cost estimate (or
+    missing from ``analysis_outputs`` entirely) is simply absent from the
+    returned dict; callers must handle that, not assume every engine has one.
+    """
+    costs: dict[str, float] = {}
+    for engine, artifacts in (analysis_outputs or {}).items():
+        monthly = ((artifacts or {}).get("cost_estimate") or {}).get("monthly_cost_usd")
+        if isinstance(monthly, (int, float)):
+            costs[engine] = float(monthly)
+    return costs
+
+
 def _build_recommendations(
     assignments: list[dict],
     consolidations: list[dict],
     patterns: list[dict],
     original_engine_queries: dict[str, list[dict]],
+    engine_infra_cost: dict[str, float] | None = None,
 ) -> list[str]:
-    """Build human-readable recommendations."""
+    """Build human-readable recommendations.
+
+    ``engine_infra_cost`` (``_engine_infra_cost``'s output) grounds the
+    infrastructure-cost figure for a fully-eliminated engine in that engine's
+    own analysed cost estimate -- the same figure ``tco_analysis`` is built
+    from -- rather than a heuristic never meant to be shown to a customer. A
+    review of #375 found a flat ``ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY``
+    placeholder shown as "Saves ~$450/mo", with no entry anywhere in the
+    deliverables' own facts to trace it to (OpenSearch's real infrastructure
+    cost on that same sample is $240.96/mo, not $450); clearly labeling the
+    placeholder as "not the infrastructure cost" in an earlier revision still
+    read as ungrounded, since the number itself still appeared nowhere in
+    facts. The real figure, when available, replaces it; when an engine has
+    no analysed cost estimate, the sentence stays purely qualitative with no
+    dollar figure at all, rather than fall back to the placeholder.
+    """
     recs = []
+    engine_infra_cost = engine_infra_cost or {}
 
     # Consolidation recommendations
     for c in consolidations:
@@ -1936,19 +1979,22 @@ def _build_recommendations(
                 "from the architecture."
             )
         elif saved:
-            # This is ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY, a flat
-            # operational-overhead placeholder (team expertise, monitoring,
-            # backups, failover -- not infrastructure spend), not the real
-            # infrastructure cost drop tco_analysis.cost_breakdown shows for
-            # removing this engine. A review of #375 found the two numbers
-            # read as if they should match (e.g. ~$450 here vs OpenSearch's
-            # real $240.96/mo infrastructure cost) -- they do not, and are
-            # not meant to; label the figure so that is clear.
-            outcome = (
-                f"Saves ~${saved}/mo in estimated operational overhead (team expertise, "
-                "monitoring, backups and failover -- not the infrastructure cost; see "
-                f"tco_analysis for that) by avoiding a dedicated {source} cluster."
-            )
+            real_cost = engine_infra_cost.get(source)
+            if real_cost:
+                outcome = (
+                    f"Removes ${real_cost:,.2f}/mo of infrastructure cost (see tco_analysis's "
+                    f"cost_breakdown for {source}'s own figure before removal), plus a "
+                    "qualitative reduction in operational overhead -- one fewer engine's worth "
+                    "of team expertise, monitoring, backups and failover to maintain -- by "
+                    f"avoiding a dedicated {source} cluster."
+                )
+            else:
+                outcome = (
+                    f"Avoids running a dedicated {source} cluster: one fewer engine's worth of "
+                    "team expertise, monitoring, backups and failover to maintain. No specific "
+                    f"infrastructure-cost figure is claimed here; see tco_analysis for {source}'s "
+                    "cost before removal, when available."
+                )
         else:
             outcome = f"{source} leaves the architecture."
         recs.append(

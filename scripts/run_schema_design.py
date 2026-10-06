@@ -529,8 +529,19 @@ def run_check_costs(
 
     One draft keeps today's shape: ``{"status": "complete", "draft": ...,
     "passed": ..., "results": [...], ...}`` at the top level. More than one
-    draft prints ``{"status": "complete", "groups": [<that same shape per
-    draft>, ...], "passed": <all of them passed>}``.
+    draft prints ``{"status": "complete", "groups": [<that same shape minus
+    "results", ...], "passed": <all of them passed>}`` -- "results" (the
+    full validated entry per access pattern) is dropped per group because it
+    is the one field that scales with entry count on every group at once,
+    and a headless session's stdout must stay compact (AGENTS.md): on a
+    sample with several thousand access patterns across many groups, printing
+    every group's full "results" made --check-costs-all's own output large
+    enough that the harness persisted it to a file outside the repo, which no
+    allowed tool in a headless session can then read back (#375's second
+    e2e-llm run found exactly this). "per_table" and "hot_partition_findings"
+    already summarise everything "results" would otherwise be needed for; a
+    single draft's own --check-costs call still prints "results" in full,
+    since one group's own entries are the shape its own merge-fix pass reads.
     """
     if engine != "dynamodb":
         _error("--check-costs is only available for --engine dynamodb")
@@ -554,10 +565,13 @@ def run_check_costs(
         _output({"status": "complete", **group_results[0]})
         return
 
+    compact_groups = [
+        {k: v for k, v in result.items() if k != "results"} for result in group_results
+    ]
     _output(
         {
             "status": "complete",
-            "groups": group_results,
+            "groups": compact_groups,
             "passed": all(result["passed"] for result in group_results),
         }
     )

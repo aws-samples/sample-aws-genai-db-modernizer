@@ -226,6 +226,47 @@ def test_check_costs_all_checks_every_group_draft_of_the_version(monkeypatch, ca
     ]
 
 
+def test_check_costs_all_drops_results_but_keeps_the_summary_fields(monkeypatch, capsys, tmp_path):
+    """Review of #375: on a sample with many groups and access patterns, printing
+    every group's full "results" (the validated entry per access pattern, the one
+    field that scales with entry count) made --check-costs-all's own stdout large
+    enough that the harness persisted it to a file outside the repo -- no allowed
+    tool in a headless session could then read it back to check the per-group
+    "passed" flags the merge-fix task actually needed. "results" is dropped from
+    each group here; "per_table" and "hot_partition_findings" already summarise
+    everything a caller needs from it, so they stay."""
+    _write_draft(
+        tmp_path, {"hot_partition_analysis": HOT_PARTITIONS}, rel="v1/schema_draft_group_0.json"
+    )
+    _write_draft(
+        tmp_path, {"hot_partition_analysis": HOT_PARTITIONS}, rel="v1/schema_draft_group_1.json"
+    )
+
+    code, status = _run(
+        monkeypatch, capsys, tmp_path, "--check-costs-all", "--assignment-version", "1"
+    )
+
+    assert code == 0
+    for group in status["groups"]:
+        assert "results" not in group
+        assert "per_table" in group
+        assert "hot_partition_findings" in group
+        assert "passed" in group
+        assert "entry_count" in group
+
+
+def test_check_costs_single_draft_still_prints_results_in_full(monkeypatch, capsys, tmp_path):
+    """The single-draft shape is unchanged: a merge-fix pass reading one group's
+    own draft still gets "results" in full."""
+    path = _write_draft(tmp_path, {"hot_partition_analysis": HOT_PARTITIONS})
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--check-costs", str(path))
+
+    assert code == 0
+    assert "results" in status
+    assert len(status["results"]) == 1
+
+
 def test_check_costs_all_is_dynamodb_only(monkeypatch, capsys, tmp_path):
     _write_draft(tmp_path, {"hot_partition_analysis": HOT_PARTITIONS})
 

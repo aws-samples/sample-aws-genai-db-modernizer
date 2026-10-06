@@ -102,6 +102,7 @@ from src.shared.migration_wave_engines import (
     NON_OWNER_ENGINES,
     RELATIONAL_ENGINES,
     SEARCH_ENGINES,
+    cache_front_description,
 )
 
 # A source engine value that is already an Aurora engine: wave 1 has nothing
@@ -567,7 +568,12 @@ def _cache_wave(cache_overlay: dict[str, Any] | None, front_engine: str) -> dict
     read = _plural(n, "read")
     fronts_aurora = front_engine in RELATIONAL_ENGINES
     if fronts_aurora:
-        front = display_engine(front_engine)
+        # Review of #375: say both stages when the cache's final owner (the
+        # engine the cached queries actually end up on, after every wave)
+        # differs from the relational engine wave 2 fronts it with here --
+        # the same shared helper every other deliverable's cache-fronting
+        # sentence calls, so none of them can disagree about it.
+        front = cache_front_description(front_engine, cache_overlay.get("owners"))
         authority = display_engine(front_engine)
     else:
         source_name = SOURCE_ENGINE_DISPLAY_NAMES.get(front_engine)

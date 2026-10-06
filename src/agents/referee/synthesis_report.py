@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,7 @@ from src.agents.referee.synthesis_grounding import (
     recommends_engine,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.shared.migration_wave_engines import cache_front_description
 from src.shared.ranking import (
     PARTIAL_NOTE,
     SIGNAL_ONLY_NOTE,
@@ -350,6 +352,12 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             entry["cache_overlay_queries"] = overlay.get("query_count", 0)
             entry["cache_call_share_percent"] = overlay.get("call_share_percent", 0.0)
             entry["cache_overlay_owners"] = overlay.get("owners", {})
+            # The overlay's own eligibility floor (#304/#296) and the combined
+            # traffic that cleared it, carried through so the "Why" cell can
+            # justify the cache's cost from these facts (#375 review) rather
+            # than stating a dollar figure with no explanation beside it.
+            entry["cache_calls_per_second"] = overlay.get("calls_per_second", 0.0)
+            entry["cache_min_calls_per_second"] = overlay.get("min_calls_per_second", 0.0)
 
         ranking.append(entry)
 
@@ -649,6 +657,15 @@ def build_risk_assessment(
         for qa in (data.assignment or {}).get("query_assignments", [])
         if qa.get("in_scope", True) and qa.get("assigned_engine") and qa.get("query_id")
     }
+    # Every in-scope query's own assignment_reason (#375 review): the capability
+    # gate and the utility pin already explain a hard-pinned query there, reused
+    # by _capability_pin_reason so a DynamoDB-alternative risk on the same table
+    # can name the reason instead of contradicting the routing outright.
+    assignment_reason = {
+        qa["query_id"]: qa.get("assignment_reason", "")
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("in_scope", True) and qa.get("query_id")
+    }
     assignment_ids = {
         qa.get("query_id") for qa in (data.assignment or {}).get("query_assignments", [])
     }
@@ -696,6 +713,19 @@ def build_risk_assessment(
             continue
         analysis = artifacts.analysis or {}
         schema = artifacts.schema_design or {}
+
+        # Every table's in-scope queries on THIS engine (#375 review): a
+        # DynamoDB-alternative anti-pattern's own flagged queries can be simple
+        # key-value reads with no capability need of their own, while a
+        # *different* query on the same table is why the table stays here --
+        # _capability_pin_reason below looks at every one of them, not just
+        # the flagged queries, to find that reason.
+        table_to_qids: dict[str, set[str]] = {}
+        for qid, qid_engine in query_engine.items():
+            if qid_engine != engine:
+                continue
+            for table in normalise(query_tables.get(qid) or assigned_tables.get(qid) or []):
+                table_to_qids.setdefault(table, set()).add(qid)
 
         # Anti-patterns from analysis — only include if NOT resolved by schema design
         # Source database anti-patterns (full scans, slow queries) are migration
@@ -767,6 +797,35 @@ def build_risk_assessment(
                             f" ({pct_covered}% of queries resolved by schema design, "
                             f"{len(uncovered)} remaining)"
                         )
+                    mitigation = ap.get("recommendation")
+                    if ap_type in _DYNAMODB_ALTERNATIVE_ANTI_PATTERNS:
+                        sibling_qids: set[str] = set()
+                        for t in tables:
+                            sibling_qids |= table_to_qids.get(t, set())
+                        pin_reason = _capability_pin_reason(
+                            assignment_reason.get(q, "") for q in sibling_qids
+                        )
+                        if pin_reason:
+                            # Review of #375: this anti-pattern's own flagged
+                            # queries look like simple key-value access, but a
+                            # different query on the same table is why it
+                            # stays on this engine -- say so, and offer the
+                            # alternative as a later-wave opportunity for the
+                            # flagged queries, not a blanket contradiction of
+                            # the architecture.
+                            engine_name = display_name(engine)
+                            text += (
+                                f" This table also serves other in-scope queries that need "
+                                f"{pin_reason}, which only {engine_name} can run in this "
+                                "architecture today -- keeping the table there is deliberate, "
+                                "not an oversight."
+                            )
+                            mitigation = (
+                                f"No action needed now: the table stays on {engine_name} "
+                                f"because of {pin_reason} elsewhere on it. If those other "
+                                "queries are retired or move too, revisit DynamoDB for this "
+                                "table's simple key-value reads in a later wave."
+                            )
                     risk_id += 1
                     risks.append(
                         {
@@ -775,7 +834,7 @@ def build_risk_assessment(
                             "severity": severity,
                             "description": f"[{engine}] {text}",
                             "affected_tables": tables,
-                            "mitigation": ap.get("recommendation"),
+                            "mitigation": mitigation,
                             "query_ids": sorted(ids),
                         }
                     )
@@ -1410,6 +1469,60 @@ def _coverage_gap_risk(
     }
 
 
+# aurora-anti-05 ("no-relational-need") and aurora-anti-06
+# ("single-access-pattern-table"), aurora_common_pattern_catalog.py: both
+# recommend DynamoDB for a table whose OWN flagged queries look like simple
+# key-value access. That table can still have *other* in-scope queries that
+# need a hard capability only Aurora offers (#338's capability gate) or are a
+# utility/DDL statement (#327) -- the table then stays on Aurora for those
+# other queries' sake, not because the flagged ones need it. A review of
+# #375 found the risk reading as a flat contradiction of the routing in that
+# case ("Consider DynamoDB" right next to an architecture that keeps the
+# table on Aurora, with no reason given); it must instead name the reason
+# the table stays, and offer DynamoDB as a later-wave opportunity for the
+# flagged queries specifically, not a blanket recommendation.
+_DYNAMODB_ALTERNATIVE_ANTI_PATTERNS = frozenset(
+    {"no-relational-need", "single-access-pattern-table"}
+)
+
+# The capability gate (assignment_resolver.py, reality_check.py) and the
+# utility pin (#327) already explain themselves in a query's own
+# assignment_reason text ("[capability] dynamodb lacks required capability:
+# aggregation, complex_joins", "utility/metadata statement -- kept on
+# source-compatible relational engine") -- reused here rather than
+# re-deriving the same decision from the query text a second time.
+_CAPABILITY_PIN_RE = re.compile(r"\[capability\]\s+\S+\s+lacks required capability:\s*([^;]+)")
+_UTILITY_PIN_RE = re.compile(r"utility/metadata statement")
+_CAPABILITY_PIN_DISPLAY = {
+    "aggregation": "aggregation",
+    "complex_joins": "multi-table joins",
+    "computed_join": "a join on a computed expression",
+    "sql_admin": "a utility or DDL statement",
+}
+
+
+def _capability_pin_reason(reasons: Iterable[str]) -> str | None:
+    """The named reason (joins, aggregation, a utility statement, ...) that some
+    query sharing ``reasons``' table is pinned to its engine by a hard
+    capability, or ``None`` when none of ``reasons`` names one.
+    """
+    found: set[str] = set()
+    for reason in reasons:
+        reason = reason or ""
+        if _UTILITY_PIN_RE.search(reason):
+            found.add(_CAPABILITY_PIN_DISPLAY["sql_admin"])
+        match = _CAPABILITY_PIN_RE.search(reason)
+        if match:
+            for cap in match.group(1).split(","):
+                cap = cap.strip()
+                if cap:
+                    found.add(_CAPABILITY_PIN_DISPLAY.get(cap, cap))
+    if not found:
+        return None
+    names = sorted(found)
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def _tables_for(
     query_ids: set[str], ap_tables: list[str], query_tables: dict[str, set[str]]
 ) -> list[str]:
@@ -1758,10 +1871,14 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     keeps that average, since nothing is routed yet.
 
     Access patterns are counted in scope, as in the summary (#255). The cache layer
-    is described by the reads it fronts, not by an owner share (#296).
+    is described by the reads it fronts, not by an owner share (#296) -- via
+    ``cache_front_description``, the one place every deliverable's
+    cache-fronting sentence is built (#375 review), so this "Why" cell and the
+    roadmap's own wave 2 card cannot name different engines.
     """
     if is_cache_layer(r):
-        owners = ", ".join(sorted(r.get("cache_overlay_owners") or {})) or "their owner engines"
+        retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
+        owners = cache_front_description(retained_engine, r.get("cache_overlay_owners"))
         n = r.get("cache_overlay_queries", 0)
         lead = r.get("routed_lead")
         shape = f", mostly {PATTERN_LABELS.get(lead, lead.replace('_', ' '))}s" if lead else ""
@@ -1778,7 +1895,21 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
                 + _in_scope_phrase(*_access_pattern_scope(data, r))
             )
         if r["monthly_cost_usd"] > 0:
-            parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month")
+            cps = r.get("cache_calls_per_second", 0.0)
+            floor = r.get("cache_min_calls_per_second", 0.0)
+            # Review of #375: a bare dollar figure for a cache serving only a
+            # handful of reads reads as an unjustified cost -- state the
+            # overlay's own eligibility floor (#304/#296) and the combined
+            # traffic that cleared it, so the figure is grounded in the same
+            # facts the cache_overlay section already carries, not asserted
+            # on its own.
+            justification = (
+                f" ({cps:g} calls/s combined across these reads clears the {floor:g} "
+                "calls/s hot-read floor)"
+                if floor
+                else ""
+            )
+            parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month{justification}")
         return ". ".join(parts) + "."
     if r.get("routed_confidence") is not None:
         n = int(r.get("routed_queries") or 0)

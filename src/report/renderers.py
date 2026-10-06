@@ -17,6 +17,7 @@ from src.shared.migration_wave_engines import KV_ENGINES as _WAVE_KV_ENGINES
 from src.shared.migration_wave_engines import NAMED_ENGINES as _WAVE_NAMED_ENGINES
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES as _WAVE_RELATIONAL_ENGINES
 from src.shared.migration_wave_engines import SEARCH_ENGINES as _WAVE_SEARCH_ENGINES
+from src.shared.migration_wave_engines import cache_front_description
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -1109,7 +1110,17 @@ def _cache_note(engines: list[dict[str, Any]], report: dict[str, Any]) -> str:
         None,
     )
     fronted = cache_wave.get("fronts") if cache_wave else None
-    front = esc(_moves_from_label(fronted)) if fronted else "the current source database"
+    if fronted in _WAVE_RELATIONAL_ENGINES:
+        # Review of #375: say both stages when the cache's final owner
+        # differs from the relational engine wave 2 fronts it with here --
+        # the same shared helper every other deliverable's cache-fronting
+        # sentence calls, so none of them can disagree about it.
+        cache_overlay = report.get("cache_overlay") or {}
+        front = esc(cache_front_description(fronted, cache_overlay.get("owners")))
+    elif fronted:
+        front = esc(_moves_from_label(fronted))
+    else:
+        front = "the current source database"
     if not counted:
         return f"<b>{names}</b> is an additive cache layer."
     n = sum(e["cached_queries"] for e in counted)
@@ -1331,7 +1342,9 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "rationale": (
                     f"{n_cached} hot {plural_noun(n_cached, 'read')} "
                     f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'query patterns'}), "
-                    f"cache-aside in front of {front_label}: no data migration, fully reversible."
+                    "cache-aside in front of "
+                    f"{cache_front_description(retained_engine, overlay.get('owners')) if retained_engine else front_label}"
+                    ": no data migration, fully reversible."
                 ),
                 "gate": "Cache hit rate and invalidation verified against the source database.",
             }

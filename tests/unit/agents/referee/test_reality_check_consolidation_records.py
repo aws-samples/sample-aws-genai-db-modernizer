@@ -18,7 +18,11 @@ from __future__ import annotations
 from collections import Counter
 
 from src.agents.referee.consolidation_validator import apply_corrections
-from src.agents.referee.reality_check import _build_recommendations, reconcile_consolidations
+from src.agents.referee.reality_check import (
+    _build_recommendations,
+    _engine_infra_cost,
+    reconcile_consolidations,
+)
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.report import renderers
 from src.storage.local_store import LocalArtifactStore
@@ -349,6 +353,26 @@ class TestReconcile:
         assert "1 queries" not in text
 
 
+class TestEngineInfraCost:
+    """Review of #375: the real per-engine cost tco_analysis's own cost_breakdown
+    is built from (``build_tco_analysis`` in synthesis_report.py reads the same
+    ``cost_estimate.monthly_cost_usd`` field)."""
+
+    def test_reads_monthly_cost_usd_per_engine(self) -> None:
+        analysis_outputs = {
+            "opensearch": {"cost_estimate": {"monthly_cost_usd": 240.96}},
+            "dynamodb": {"cost_estimate": {"monthly_cost_usd": 15.2}},
+        }
+        assert _engine_infra_cost(analysis_outputs) == {"opensearch": 240.96, "dynamodb": 15.2}
+
+    def test_engine_with_no_cost_estimate_is_absent(self) -> None:
+        assert _engine_infra_cost({"documentdb": {}}) == {}
+
+    def test_none_or_empty_input_is_fine(self) -> None:
+        assert _engine_infra_cost(None) == {}
+        assert _engine_infra_cost({}) == {}
+
+
 class TestRecommendations:
     def test_partial_consolidation_claims_no_avoided_cluster(self) -> None:
         rec = _build_recommendations(
@@ -358,11 +382,32 @@ class TestRecommendations:
         assert "Saves" not in rec
         assert "does not remove aurora_mysql" in rec
 
-    def test_full_consolidation_keeps_its_savings_line(self) -> None:
+    def test_full_consolidation_with_no_real_cost_estimate_stays_qualitative(self) -> None:
+        """Review of #375: with no analysed cost estimate for the removed engine,
+        the sentence must not fall back to the ENGINE_BASE_COST heuristic -- no
+        dollar figure is claimed at all, only the qualitative overhead reduction."""
         rec = _build_recommendations([], [_record("documentdb", "dynamodb", 6, saved=500)], [], {})[
             0
         ]
-        assert "Saves ~$500" in rec
+        assert "Saves" not in rec
+        assert "$" not in rec
+        assert "Avoids running a dedicated documentdb cluster" in rec
+
+    def test_full_consolidation_grounds_its_cost_in_the_real_analysed_estimate(self) -> None:
+        """Review of #375: when the removed engine's own analysed cost estimate
+        is available, the sentence states that real figure (traceable to
+        tco_analysis's cost_breakdown), not the ENGINE_BASE_COST +
+        EXTRA_ENGINE_BURDEN_MONTHLY operational-overhead heuristic."""
+        rec = _build_recommendations(
+            [],
+            [_record("opensearch", "aurora_postgresql", 119, saved=450)],
+            [],
+            {},
+            {"opensearch": 240.96},
+        )[0]
+        assert "$240.96" in rec
+        assert "$450" not in rec
+        assert "Saves ~$" not in rec
 
 
 class TestWrittenOutput:
