@@ -9,4 +9,4 @@
 
     then open `site/sample/index.html`.
 
-When built, this page links to every rendered deliverable: the decision report, the engineering report, the interactive analysis report, and the executive summary PDF/deck — all produced from the same `wordpress` sample used throughout [Get started](get-started.md).
+When built, this page links to every rendered deliverable: the decision report, the engineering report, the interactive analysis report, and the executive summary PDF and deck. All of them come from the same `wordpress` sample used throughout [Get started](get-started.md).

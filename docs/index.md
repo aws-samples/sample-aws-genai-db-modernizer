@@ -7,13 +7,13 @@ hide:
 
 # Run a full database modernization assessment with Claude Code
 
-Point this tool at a monolithic relational database and it tells you which queries belong on which AWS purpose-built engine, with validated, ready-to-implement schema designs.
+Give this tool the schema and queries of a monolithic relational database. It tells you which queries belong on which AWS purpose-built engine and designs the target schemas.
 
 ```
 /modernize docs/examples/wordpress/wordpress-collection.json
 ```
 
-Run that one command inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with this repository open, and it narrates every phase in the chat while opening a local UI next to it by default — the UI shows the assignment Sankey diagram, the schema designs, and the full report as they're produced.
+Run this command in [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with the repository open. The chat reports each phase, and by default a local UI opens next to it with the assignment Sankey diagram, the schema designs and the full report as each one is ready.
 
 [Get started with Claude Code](get-started.md){ .md-button .md-button--primary }
 [See a sample report](sample.md){ .md-button }
@@ -26,9 +26,9 @@ Run that one command inside [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 ## What it answers
 
-- **Which queries go where.** Every query pattern is scored against each candidate engine; the assignment is deterministic, not an LLM guess.
-- **What the target schemas look like.** DynamoDB tables, DocumentDB collections, OpenSearch mappings, and the relational schema that stays — all generated from the actual workload, not a generic template.
-- **What it costs and what the risks are.** TCO projections and a risk analysis come out of the same pipeline run, with migration waves showing one suggested incremental path next to the fully decomposed target.
+- **Which queries go where.** Every query pattern is scored against each candidate engine. The assignment is deterministic: the scores decide it, not a model.
+- **What the target schemas look like.** DynamoDB tables, DocumentDB collections, OpenSearch mappings and the relational schema that stays, all designed from your workload.
+- **What it costs and what the risks are.** The same run produces TCO projections and a risk analysis. Migration waves show a suggested step-by-step path next to the fully decomposed target.
 
 See [Understand the results](understand-the-results.md) for how to read every deliverable.
 

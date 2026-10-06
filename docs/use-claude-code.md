@@ -1,6 +1,6 @@
 # Use Claude Code
 
-`/modernize` is the main entry point, but each phase is also its own command, for running one step at a time or re-running a step after making a change.
+`/modernize` is the main entry point. Each phase is also its own command, so you can run one step at a time or re-run a step after a change.
 
 ## How `/modernize` works
 
@@ -14,7 +14,7 @@ graph LR
     F --> G[Synthesis]
 ```
 
-`/modernize` resolves an experience mode — `chat`, `ui`, or `both` (the default) — and, unless the mode is `chat`, starts the local API and UI before running the pipeline. The chat always keeps the key numbers for each phase, so a chat-only user can still follow and decide; in `both` mode it also points at the matching UI view (the Sankey/assignment page at the Reality Check approval gate, the schema designs after phase 6, the full report at the end). If the UI can't start — port busy, build failure, Node missing — the run falls back to chat and keeps going rather than failing.
+`/modernize` runs in one of three modes: `chat`, `ui` or `both` (the default). In `ui` and `both` it starts the local API and UI before the pipeline. The chat always shows the key numbers for each phase, so you can follow the run and decide from the chat alone. In `both` mode it also points to the matching UI view: the Sankey and assignment page at the Reality Check approval, the schema designs after phase 6, and the full report at the end. If the UI can't start (a busy port, a failed build, or no Node), the run switches to chat and continues.
 
 Use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat` for a terminal-only run: no browser, no Node required, works in headless environments.
 
@@ -44,8 +44,8 @@ psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql >
 mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
 ```
 
-The scripts only `SELECT` from `information_schema`, `pg_stat_statements`, or `performance_schema` — they never modify your database. Then run `/modernize` (or `/collect`) and point it at the generated file instead of the sample.
+The scripts only run `SELECT` on `information_schema`, `pg_stat_statements` or `performance_schema`. They never change your database. Then run `/modernize` (or `/collect`) and point it at the generated file instead of the sample.
 
 ## Headless runs
 
-`claude -p "/modernize <collection.json> --auto --mode <chat|ui|both>"` runs the whole pipeline with no interactive prompts — `/modernize` never asks which experience mode to use (it resolves `--mode` if given, else `both`), and `--auto` never asks anything else either. This is how CI exercises the pipeline against a real model (see `ci/e2e-llm.sh` and [AGENTS.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/AGENTS.md#headless-rules-modernize---auto) for the full rules); it is not something most users need to run directly.
+`claude -p "/modernize <collection.json> --auto --mode <chat|ui|both>"` runs the whole pipeline without prompts. `/modernize` uses `--mode` when given and `both` otherwise, and `--auto` approves the one decision for you. CI uses this to test the pipeline against a real model; see `ci/e2e-llm.sh` and [AGENTS.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/AGENTS.md#headless-rules-modernize---auto) for the full rules. Most users don't need it.

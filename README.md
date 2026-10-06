@@ -8,23 +8,21 @@
 
 > **Disclaimer:** This is a sample project intended for educational and evaluation purposes. It requires proper review, testing, and modification before use in production environments. Use at your own risk.
 
-**The full help site, with the same quick start plus everything else (other ways to run it, how to read the results, a sample report, FAQ, and how to contribute), is at
-[aws-samples.github.io/sample-aws-genai-db-modernizer](https://aws-samples.github.io/sample-aws-genai-db-modernizer/).**
-This README stays the canonical source for the overview and quick start below — the site includes these sections rather than copying them.
+**The help site is at [aws-samples.github.io/sample-aws-genai-db-modernizer](https://aws-samples.github.io/sample-aws-genai-db-modernizer/).** It has the same quick start plus other ways to run the tool, how to read the results, a sample report, an FAQ and how to contribute. The overview and quick start below are the source for those pages on the site.
 
 ![A full /modernize run on the WordPress sample in Claude Code, time-lapsed, followed by the local UI](docs/assets/modernizer-demo.gif)
 
 *A full `/modernize` run on the WordPress sample (47 minutes, time-lapsed), then the local UI: the executive summary, the query flow, the cost per engine and the access pattern explorer.*
 
 <!-- --8<-- [start:overview] -->
-Modernizing off a monolithic relational database is hard. Which queries belong in DynamoDB? Which need a document store? What stays relational? Getting it wrong means failed modernizations, re-architecture mid-project, and wasted months.
+Moving off a monolithic relational database raises hard questions. Which queries belong in DynamoDB? Which need a document store? What stays relational? A wrong answer can force a redesign in the middle of the project.
 
-**Database Modernizer Assessment answers that question automatically.** Point it at your PostgreSQL or MySQL database, and it analyzes every query pattern, scores each one against 6 AWS purpose-built engines, validates the architecture, and produces ready-to-implement schema designs with TCO projections.
+**Database Modernizer Assessment answers these questions using your real workload.** Give it the collected schema and queries of a PostgreSQL or MySQL database. It analyzes every query pattern, scores each one against 6 AWS purpose-built engines, checks the resulting architecture, and produces schema designs and TCO projections you can implement.
 
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 **Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
-> **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it moved to a Claude Code–first local tool to keep the open-source release simple to adopt. See [Hosted Deployment (Retired)](https://github.com/aws-samples/sample-aws-genai-db-modernizer#hosted-deployment-retired) for details.
+> **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it became a local tool built around Claude Code, to keep the open-source release simple to adopt. See [Hosted Deployment (Retired)](https://github.com/aws-samples/sample-aws-genai-db-modernizer#hosted-deployment-retired) for details.
 
 ## Who is this for?
 
@@ -41,7 +39,7 @@ This tool is for teams that have **decided to refactor their application** to us
 
 ## How It Works
 
-The modernizer runs a multi-phase pipeline that progressively narrows from "all possible targets" to a concrete, validated modernization architecture:
+The modernizer runs a pipeline of phases. Each phase narrows the choice, from every possible target engine down to one checked architecture:
 
 ```
 Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --> Synthesis
@@ -57,7 +55,7 @@ Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --
 | **Schema Design** | Designs target schemas per engine (DynamoDB tables, DocumentDB collections, OpenSearch indices, etc.)      |
 | **Synthesis**     | Produces the final migration assessment report with TCO, risk analysis, and recommendations                |
 
-The core pipeline through Reality Check is **fully deterministic**. Pattern detection, scoring, assignment, and consolidation all run without any LLM dependency. GenAI enhances the pipeline at key decision points (Schema Design, Synthesis executive summaries) but the analysis and recommendations are reproducible and auditable every time.
+The pipeline through Reality Check is **deterministic**. Pattern detection, scoring, assignment and consolidation run without a model. A model writes the schema designs and the executive summary, but the analysis and the engine recommendations come out the same on every run and can be audited.
 
 See [Understand the results](https://aws-samples.github.io/sample-aws-genai-db-modernizer/understand-the-results/) on the help site for what each deliverable shows and how to read an assignment.
 
@@ -94,9 +92,11 @@ Open the repository in Claude Code and run, with the collector file as the argum
 /modernize docs/examples/wordpress/wordpress-collection.json
 ```
 
-`/modernize` opens the local UI next to the chat by default (chat narrates each phase while the UI shows the assignment, schema designs and the full report). When the chat says the UI is ready, open <http://localhost:3000>. There is one approval gate, after Reality Check: the chat presents the final engine assignment and asks you to approve it (and, unless you're in chat-only mode, points you at the Sankey/assignment view in the UI first); once you approve, the run continues on its own through Schema Design and Synthesis to the finished deliverables. Use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat` for a terminal-only run (no browser, headless environments).
+By default `/modernize` opens the local UI next to the chat. The chat reports each phase, and the UI shows the assignment, the schema designs and the full report. When the chat says the UI is ready, open <http://localhost:3000>.
 
-The individual commands (`/collect`, `/triage`, `/analyze`, `/assign`, `/reality-check`, `/design-schema`, `/synthesize`) run one phase at a time — see [Use Claude Code](https://aws-samples.github.io/sample-aws-genai-db-modernizer/use-claude-code/) on the help site.
+The run stops once, after Reality Check, for your approval. The chat shows the final engine assignment and asks you to approve it. Outside chat-only mode it first points you to the Sankey and assignment view in the UI. After you approve, the run goes on by itself through Schema Design and Synthesis to the finished deliverables. For a terminal-only run (no browser, or a headless environment), use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat`.
+
+The individual commands (`/collect`, `/triage`, `/analyze`, `/assign`, `/reality-check`, `/design-schema`, `/synthesize`) run one phase at a time. See [Use Claude Code](https://aws-samples.github.io/sample-aws-genai-db-modernizer/use-claude-code/) on the help site.
 
 ### Prefer no LLM, or no Claude Code?
 
@@ -105,7 +105,7 @@ uv run python scripts/run_assessment.py --file docs/examples/wordpress/wordpress
 ```
 
 runs the deterministic pipeline (Collect through Reality Check) with no credentials and no network calls. See
-[Other ways to run it](https://aws-samples.github.io/sample-aws-genai-db-modernizer/other-ways-to-run-it/) for the deterministic CLI, Amazon Bedrock, and the local UI on its own — including analyzing your own database.
+[Other ways to run it](https://aws-samples.github.io/sample-aws-genai-db-modernizer/other-ways-to-run-it/) for the deterministic CLI, Amazon Bedrock, the local UI on its own, and how to analyze your own database.
 <!-- --8<-- [end:quickstart] -->
 
 ---
@@ -119,7 +119,7 @@ For customers who can't run the collector scripts themselves, the API has an opt
 export MODERNIZER_ENABLE_AUTOMATION=1
 ```
 
-Treat this as an early look, not a supported path yet: the automation instance ID is not yet threaded through to the collector environment, the region is hard-coded, and the provisioned instance and its ingress rule have no automated teardown. Until #342 lands, run the collector scripts yourself (see [Other ways to run it](https://aws-samples.github.io/sample-aws-genai-db-modernizer/other-ways-to-run-it/)).
+This is an early preview and not supported yet. The automation instance ID is not yet threaded through to the collector environment, the region is hard-coded, and the instance and its ingress rule have no automated teardown. Until #342 lands, run the collector scripts yourself (see [Other ways to run it](https://aws-samples.github.io/sample-aws-genai-db-modernizer/other-ways-to-run-it/)).
 <!-- --8<-- [end:run-it-for-you] -->
 
 ---
@@ -137,29 +137,29 @@ make lint         # or: uv run pre-commit run --all-files
 make test         # or: ./ci/test.sh --cov=src --cov-report=term
 
 # Deterministic end-to-end: full pipeline, rendered HTML/PDF, UI smoke test
-# (needs the `e2e` extra, Node 22, and Playwright browsers -- ci/e2e.sh
-# installs/builds all of that for you)
+# (needs the `e2e` extra, Node 22 and Playwright browsers; ci/e2e.sh
+# installs and builds them for you)
 make e2e          # or: ./ci/e2e.sh
 
 # Headless /modernize --auto run against a real model (both mode by
 # default, chat or ui also work, on the wordpress or discourse sample),
 # checked with the same deliverable checks plus a rubric-based quality
-# judge -- needs model access and costs real tokens
+# judge; needs model access and costs real tokens
 make e2e-llm      # or: ./ci/e2e-llm.sh both wordpress
 
 # Full dev setup (pre-commit hooks, cfn-nag, etc.)
 ./scripts/setup_dev.sh
 ```
 
-[AGENTS.md](AGENTS.md) is the working guide for coding agents (and a fast
-map for everyone else): the full repo map, the test-tier table, and the
+[AGENTS.md](AGENTS.md) is the working guide for coding agents, and a quick
+map for everyone else: the full repo map, the test-tier table, and the
 headless `/modernize --auto` rules. What each CI script runs and why is in
 [ci/README.md](ci/README.md). Every change is also checked by an internal
 validation pipeline before it merges.
 
 ### Local Web UI
 
-Run the React web interface locally to visualize results, browse query journeys, and review schema designs:
+Run the React web interface locally to visualize results, follow each query through the context graph, and review schema designs:
 
 ```bash
 # Start the API server
@@ -179,7 +179,7 @@ Then open `http://localhost:3000` to browse your modernization results.
 
 ### Hosted Deployment (Retired)
 
-The hosted platform — ECS Fargate, Step Functions orchestration, Cognito authentication, and the per-environment CloudFormation stacks — is retired. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) was removed in #175.
+The hosted platform is retired: ECS Fargate, Step Functions orchestration, Cognito authentication and the per-environment CloudFormation stacks. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) was removed in #175.
 
 ---
 
@@ -190,7 +190,7 @@ src/
   agents/           # Pipeline agents (collector, analysis, referee, schema_design)
   contracts/        # Pydantic I/O contracts between phases
   orchestrator/     # Local phase orchestrator (the Step Functions path was removed, #175)
-  storage/          # Artifact store (S3 — AWS Transform integration only — or local filesystem)
+  storage/          # Artifact store (local filesystem, or S3 for the AWS Transform integration only)
   tools/            # Analysis tools, scoring, pattern catalogs
   api/              # FastAPI backend (local-only)
   ui/               # React frontend
@@ -218,7 +218,7 @@ The [help site](https://aws-samples.github.io/sample-aws-genai-db-modernizer/) i
 ## Contributing
 
 1. Read the [Contribute](https://aws-samples.github.io/sample-aws-genai-db-modernizer/contribute/) page on the help site (architecture overview, the LLM seam pattern, contracts, writing Claude Code commands, testing, release process)
-2. Follow TDD: contracts → tests → implementation
+2. Follow TDD: write the contract, then the tests, then the code
 3. Submit PR with tests and documentation
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.

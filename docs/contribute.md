@@ -1,10 +1,10 @@
 # Contribute
 
-This page is the short map for extending the pipeline. [CONTRIBUTING.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/CONTRIBUTING.md) has the full process (branching, commit format, PR checklist); [AGENTS.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/AGENTS.md) is the working guide for coding agents and a fast map for everyone else.
+This page is the short map for extending the pipeline. [CONTRIBUTING.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/CONTRIBUTING.md) has the full process (branching, commit format, PR checklist); [AGENTS.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/AGENTS.md) is the working guide for coding agents and a quick map for everyone else.
 
 ## Architecture overview
 
-The pipeline runs local-first: a `LocalOrchestrator` calls each phase's agent as a direct function call over a local artifact store (no event bus, no hosted queue). See the
+The pipeline runs locally: a `LocalOrchestrator` calls each phase's agent as a direct function call over a local artifact store (no event bus, no hosted queue). See the
 [guides index](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/README.md) and
 [high-level design](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/high-level-design.md)
 for the full picture, and the [architecture decision records](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/architecture/decisions) for how the design got here.
@@ -13,21 +13,21 @@ for the full picture, and the [architecture decision records](https://github.com
 
 Every phase that can use a model splits into three functions, so the same code serves Amazon Bedrock, Claude Code, and fully deterministic runs:
 
-1. `run_*_deterministic(...)` — the complete result with no model call.
-2. `prepare_*_llm_input(det)` — the payload a model reasons over.
-3. `apply_*_llm_output(det, llm_output)` — merges and validates the model's answer on top of the deterministic result.
+1. `run_*_deterministic(...)`: the complete result with no model call.
+2. `prepare_*_llm_input(det)`: the payload a model reasons over.
+3. `apply_*_llm_output(det, llm_output)`: merges and validates the model's answer on top of the deterministic result.
 
 See the [implementation guides](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/guides/README.md) for the agent patterns themselves, and `src/agents/analysis/aurora_*_analysis_agent.py` for a worked example of the shape.
 
 ## Contracts
 
-All agent I/O flows through Pydantic models in `src/contracts/`. Breaking changes go through a proposal issue, a version bump, and a migration note — see the
+All agent I/O flows through Pydantic models in `src/contracts/`. Breaking changes go through a proposal issue, a version bump and a migration note. See the
 [agent contracts spec](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/contracts/agent-contracts-spec.md) and
 [contracts README](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/contracts/README.md).
 
 ## Writing or changing Claude Code commands
 
-Commands live in [`.claude/commands/`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/.claude/commands); each one calls a `uv run python scripts/<script>.py` entry point and follows a `src/skills/*.md` prompt. `uv run python scripts/validate_skills.py` checks that every script and skill path a command names actually exists — run it (or `make lint`) after editing a command. `.claude/settings.ci.json` is the permission allowlist headless runs use; a new script a command calls needs an allow rule there too.
+Commands live in [`.claude/commands/`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/.claude/commands); each one calls a `uv run python scripts/<script>.py` entry point and follows a `src/skills/*.md` prompt. `uv run python scripts/validate_skills.py` checks that every script and skill path a command names exists. Run it (or `make lint`) after you edit a command. `.claude/settings.ci.json` is the permission allowlist headless runs use; a new script a command calls needs an allow rule there too.
 
 ## Testing
 

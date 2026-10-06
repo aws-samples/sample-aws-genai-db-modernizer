@@ -1,10 +1,10 @@
 # Other ways to run it
 
-Claude Code is the primary experience, but the pipeline underneath is a set of plain scripts. Here are the other ways to drive them.
+Claude Code is the main way to run the tool, but the pipeline itself is a set of plain scripts. You can also run them in these ways.
 
 === "Deterministic CLI (no LLM)"
 
-    Zero config, no credentials, no network calls. Runs Collect through Reality Check and produces architecture recommendations in seconds — good for a quick check or for CI:
+    No setup, no credentials and no network calls. It runs Collect through Reality Check and gives the engine recommendations in seconds, which suits a quick check or CI:
 
     ```bash
     uv run python scripts/run_assessment.py \
@@ -33,7 +33,7 @@ Claude Code is the primary experience, but the pipeline underneath is a set of p
     AWS setup:
 
     1. Configure AWS credentials (`aws configure`, environment variables, or `aws sso login`).
-    2. Make sure the account can invoke the Anthropic models this pipeline uses: Claude Sonnet (Reality Check validation and Synthesis) and Claude Opus (Schema Design). Most Bedrock model access is enabled by default; Anthropic models need a one-time use-case form submitted once per account (select the model in the Bedrock console's model catalog, or call `PutUseCaseForModelAccess`) — see [Request access to models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html).
+    2. Make sure the account can invoke the Anthropic models this pipeline uses: Claude Sonnet (Reality Check validation and Synthesis) and Claude Opus (Schema Design). Most Bedrock model access is enabled by default; Anthropic models need a use-case form, submitted once per account (select the model in the Bedrock console's model catalog, or call `PutUseCaseForModelAccess`). See [Request access to models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html).
     3. Re-run the command above.
 
     ![Bedrock mode demo](assets/local-modernizer-bedrock.gif)

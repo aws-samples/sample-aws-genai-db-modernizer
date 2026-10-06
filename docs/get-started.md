@@ -4,9 +4,9 @@
 
 ## The one approval point
 
-`/modernize` has a single decision gate, after Reality Check: the chat presents the final engine assignment (which engines survived consolidation, the query distribution across them, anything the LLM validator redirected) and asks you to approve it before Schema Design runs. Unless you're in chat-only mode, it also points you at the Sankey/assignment view in the UI so you can look at the full breakdown before deciding.
+`/modernize` stops once for a decision, after Reality Check. The chat shows the final engine assignment: which engines remain after consolidation, how many queries each one serves, and any query that the model's check redirected. It asks you to approve it before Schema Design runs. Outside chat-only mode it also points you to the Sankey and assignment view in the UI, so you can see the full breakdown first.
 
-Once you approve, the run continues on its own — no further approval asks — through Schema Design and Synthesis to the finished deliverables: the decision report, engineering report, executive PDF/deck, and the UI's own view, all built from the same `report.json`. With `--auto`, the gate auto-approves and the whole run is unattended.
+After you approve, the run goes on by itself, with no more questions, through Schema Design and Synthesis to the finished deliverables: the decision report, the engineering report, the executive PDF and deck, and the UI view. All of them are built from the same `report.json`. With `--auto` the approval is automatic and the whole run is unattended.
 
 ## Next
 
