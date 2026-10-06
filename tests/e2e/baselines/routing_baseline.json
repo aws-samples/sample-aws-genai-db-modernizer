@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "routing earns its place: #327 excludes utility/DDL/catalog statements from routing; #338 gives the capability gate aggregation and join capability (including single-table COUNT(*)/FOUND_ROWS and multi-table SUM/JOIN), so DynamoDB no longer absorbs queries it cannot serve; #326 adds an OpenSearch justification floor (traffic, real search depth, native-source preference), dropping OpenSearch to zero queries on both samples; #167 generalizes the cost-per-query floor to any mandatory engine. Net effect: more queries stay on the source-compatible relational engine (wordpress aurora_mysql 5->28, discourse aurora_postgresql 1266->1275), OpenSearch drops out entirely on both samples (-$240.96/mo each), and owner engines go from 3 to 2 on both samples.",
+  "reason": "Review of #375 (second recheck): B1 fixes two real bugs in the OpenSearch search-depth rule -- the fuzzy-match regex was inverted (it matched a LIKE pattern's own wildcard and missed the real pg_trgm % operator), and the floor is now decided per query (one shallow query no longer sinks a deep one, and vice versa), with the corpus proxy's comment now explicit that it measures result size, not corpus size; B2 blocks a join ever being consolidated onto DynamoDB from a non-Aurora engine in the reality check, and adds a computed_join hard capability so a join on a function call (lower(name) = ...) never lands on a key-value store at any stage; B3 changes commit 2fb429e's trailer from 'Closes #340 (routing part)' to 'Refs #340' so merging does not close the Epic, and the PR body no longer contains a literal 'Closes #167' substring that GitHub's auto-linker picked up despite the Refs wording. Also: the floor's justification text now only attaches to the consolidation record it actually caused, the OpenSearch/cost-share floor reasons use display names, and the 'Saves ~/mo' recommendation line is now labelled as an operational-overhead placeholder, not the real infrastructure cost. Routing numbers: wordpress unchanged (aurora_mysql 49, dynamodb 58); discourse aurora_postgresql 1281 -> 1283 (the two previously-misrouted joins).",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -12,7 +12,9 @@
     "PR #315 re-review fixes (#225): the retained wave now also carries the collector's views with no observed query, so discourse's retained-wave table count grows (210 -> 213) and its unresolved-name count drops by 1 (badge_posts resolves); DynamoDB table-group query counts now cover every DynamoDB-assigned query that touches an owned table, not just a co-dependency group's own members, so group totals change on both samples without changing the wave's own query_count. Owner shares, owned queries and the cache overlay are unchanged.",
     "#321: reorder migration waves relational-first (Aurora wave 1, cache wave 2 fronting Aurora, DynamoDB wave 3 moving from Aurora, OpenSearch wave 4); owner shares, owned queries and the cache overlay are unchanged -- only the wave order and the wave-1 table_count (now the whole collected schema per sample) changed",
     "#324 independent review of #321: wave text/field corrections only (dual-read 'until wave N' only when N is later; wave 1 states the end-state share and cutover count explicitly; DynamoDB+DocumentDB share one wave; heterogeneous-source wording; shorter homogeneity wording; cache-note/roadmap-description order independence); wave structure (engines, shares, table counts) is unchanged from the prior baseline",
-    "routing earns its place: #327 excludes utility/DDL/catalog statements from routing; #338 gives the capability gate aggregation and join capability (including single-table COUNT(*)/FOUND_ROWS and multi-table SUM/JOIN), so DynamoDB no longer absorbs queries it cannot serve; #326 adds an OpenSearch justification floor (traffic, real search depth, native-source preference), dropping OpenSearch to zero queries on both samples; #167 generalizes the cost-per-query floor to any mandatory engine. Net effect: more queries stay on the source-compatible relational engine (wordpress aurora_mysql 5->28, discourse aurora_postgresql 1266->1275), OpenSearch drops out entirely on both samples (-$240.96/mo each), and owner engines go from 3 to 2 on both samples."
+    "routing earns its place: #327 excludes utility/DDL/catalog statements from routing; #338 gives the capability gate aggregation and join capability (including single-table COUNT(*)/FOUND_ROWS and multi-table SUM/JOIN), so DynamoDB no longer absorbs queries it cannot serve; #326 adds an OpenSearch justification floor (traffic, real search depth, native-source preference), dropping OpenSearch to zero queries on both samples; #167 generalizes the cost-per-query floor to any mandatory engine. Net effect: more queries stay on the source-compatible relational engine (wordpress aurora_mysql 5->28, discourse aurora_postgresql 1266->1275), OpenSearch drops out entirely on both samples (-$240.96/mo each), and owner engines go from 3 to 2 on both samples.",
+    "Review of #375: finding 1 (critical) -- utility statements now get a sql_admin hard capability only Aurora has, so the serviceability gate keeps them on the source-compatible engine through the reality check instead of undoing the #327 pin; finding 2 extends the detector to pg_* catalog tables without the pg_catalog. prefix, transaction control (BEGIN/COMMIT/ROLLBACK/SAVEPOINT/RELEASE), TRUNCATE, and leading comments; finding 3 fixes complex_joins to fire on a 3-table join (join_count >= 2), not just 4+; finding 4 makes the OpenSearch search-depth decision per query (a search predicate plus ranking/fuzzy/facets in the SAME query, never a bare GROUP BY or CREATE EXTENSION/to_tsvector construction) and adds a corpus-size floor; finding 6 extends the aggregation capability to GROUP_CONCAT/STRING_AGG/ARRAY_AGG/window functions via the shared is_dedup_only_group_by; finding 8 applies the same hard-capability gate at the initial v1 assignment, not just inside the reality check. Combined, this moves far more wordpress queries onto aurora_mysql (28 -> 49) since real aggregates and 3-table joins no longer round-trip through DynamoDB even transiently, and keeps every utility statement on the source-compatible engine on both samples (0 off-Aurora, was 13 on wordpress / 3 on discourse).",
+    "Review of #375 (second recheck): B1 fixes two real bugs in the OpenSearch search-depth rule -- the fuzzy-match regex was inverted (it matched a LIKE pattern's own wildcard and missed the real pg_trgm % operator), and the floor is now decided per query (one shallow query no longer sinks a deep one, and vice versa), with the corpus proxy's comment now explicit that it measures result size, not corpus size; B2 blocks a join ever being consolidated onto DynamoDB from a non-Aurora engine in the reality check, and adds a computed_join hard capability so a join on a function call (lower(name) = ...) never lands on a key-value store at any stage; B3 changes commit 2fb429e's trailer from 'Closes #340 (routing part)' to 'Refs #340' so merging does not close the Epic, and the PR body no longer contains a literal 'Closes #167' substring that GitHub's auto-linker picked up despite the Refs wording. Also: the floor's justification text now only attaches to the consolidation record it actually caused, the OpenSearch/cost-share floor reasons use display names, and the 'Saves ~/mo' recommendation line is now labelled as an operational-overhead placeholder, not the real infrastructure cost. Routing numbers: wordpress unchanged (aurora_mysql 49, dynamodb 58); discourse aurora_postgresql 1281 -> 1283 (the two previously-misrouted joins)."
   ],
   "samples": {
     "wordpress": {
@@ -21,14 +23,14 @@
       "assignment_version": 2,
       "queries_in_scope": 107,
       "owner_share_percent": {
-        "aurora_mysql": 26.2,
-        "dynamodb": 73.8
+        "aurora_mysql": 45.8,
+        "dynamodb": 54.2
       },
       "owner_queries": {
-        "aurora_mysql": 28,
-        "dynamodb": 79
+        "aurora_mysql": 49,
+        "dynamodb": 58
       },
-      "source_compatible_share_percent": 26.2,
+      "source_compatible_share_percent": 45.8,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 20,
@@ -39,7 +41,7 @@
           "engines": [
             "aurora_mysql"
           ],
-          "workload_percent": 26.2,
+          "workload_percent": 45.8,
           "cached_call_share_percent": 0.0,
           "table_count": 50
         },
@@ -55,11 +57,12 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 73.8,
+          "workload_percent": 54.2,
           "cached_call_share_percent": 0.0,
-          "table_count": 15
+          "table_count": 8
         }
-      ]
+      ],
+      "utility_queries_off_aurora": 0
     },
     "discourse": {
       "source_engine": "postgresql",
@@ -67,14 +70,14 @@
       "assignment_version": 2,
       "queries_in_scope": 1654,
       "owner_share_percent": {
-        "aurora_postgresql": 77.1,
-        "dynamodb": 22.9
+        "aurora_postgresql": 77.6,
+        "dynamodb": 22.4
       },
       "owner_queries": {
-        "aurora_postgresql": 1275,
-        "dynamodb": 379
+        "aurora_postgresql": 1283,
+        "dynamodb": 371
       },
-      "source_compatible_share_percent": 77.1,
+      "source_compatible_share_percent": 77.6,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 3,
@@ -85,7 +88,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 77.1,
+          "workload_percent": 77.6,
           "cached_call_share_percent": 0.0,
           "table_count": 314
         },
@@ -101,11 +104,12 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 22.9,
+          "workload_percent": 22.4,
           "cached_call_share_percent": 0.0,
           "table_count": 101
         }
-      ]
+      ],
+      "utility_queries_off_aurora": 0
     }
   }
 }

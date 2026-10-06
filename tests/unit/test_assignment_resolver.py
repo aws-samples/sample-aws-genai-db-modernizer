@@ -889,3 +889,85 @@ class TestResolveNoiseFiltering:
 
         assert [t.table_id for t in result.table_assignments] == ["wordpress.wp_posts"]
         assert result.unresolved_table_names.count == 0
+
+
+class TestHardCapabilityGateAtInitialAssignment:
+    """The hard-capability gate runs at v1 too, not just inside the reality
+    check (review finding 8): a bare COUNT(*)/FOUND_ROWS()/SQL_CALC_FOUND_ROWS
+    query must never win the v1 confidence-scoring path onto DynamoDB."""
+
+    def test_bare_count_star_never_lands_on_dynamodb_at_v1(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0][
+            "query_text"
+        ] = "SELECT COUNT(*) FROM wp_postmeta WHERE meta_key = ?"
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_found_rows_never_lands_on_dynamodb_at_v1(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0]["query_text"] = "SELECT FOUND_ROWS()"
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_sql_calc_found_rows_never_lands_on_dynamodb_at_v1(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0][
+            "query_text"
+        ] = "SELECT SQL_CALC_FOUND_ROWS id FROM wp_posts"
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_ordinary_query_is_unaffected(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+
+    def test_precomputed_query_capabilities_from_triage_are_used(self):
+        """When triage already computed query_capabilities, the resolver reuses them
+        instead of recomputing from scratch."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        triage["query_capabilities"] = {"q1": ["aggregation"]}
+        collector = _make_collector(["q1"])
+        # query_text looks ordinary -- only the precomputed capability should matter.
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"

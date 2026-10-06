@@ -34,6 +34,10 @@ from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
+from src.agents.referee.capability_registry import (
+    can_engine_serve_capability,
+    detect_required_capabilities,
+)
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
@@ -117,6 +121,28 @@ class AssignmentResolver:
         # Step 3: Build co-dependency groups
         co_dep_groups = build_co_dependency_groups(queries, tables)
 
+        # Step 3b: Hard capability requirements per query (#338 follow-up,
+        # review of #375 finding 8): the triage signals a query's required
+        # capabilities (aggregation, complex_joins, sql_admin, ...) the same
+        # way the reality check's serviceability gate does. Pre-#375 this
+        # gate only ran inside the reality check, so a bare COUNT(*)/
+        # FOUND_ROWS()/SQL_CALC_FOUND_ROWS query (or a SHOW/SET statement
+        # before the resolver's own utility pin runs) could still win the
+        # v1 confidence-scoring path onto an engine that cannot run it --
+        # the reality check corrected it in v2, but v1 (and any consumer
+        # that reads it directly) showed the wrong engine in the meantime.
+        query_capabilities: dict[str, list[str]] = triage.get("query_capabilities") or {}
+        if not query_capabilities:
+            query_capabilities = {
+                q["query_id"]: caps
+                for q in queries
+                if (
+                    caps := detect_required_capabilities(
+                        q.get("query_text", ""), [], q.get("tables_accessed")
+                    )
+                )
+            }
+
         # Step 4: Score each query against each engine (adjusted)
         scores: dict[str, dict[str, int]] = {}
         exclusion_notes: dict[str, list[str]] = {}  # query_id → list of exclusion messages
@@ -133,6 +159,17 @@ class AssignmentResolver:
                     scores[qid][engine] = 0
                     exclusion_notes.setdefault(qid, []).append(
                         f"[{exclusion.rule_id}] Excluded from {engine}: {exclusion.description}"
+                    )
+                    continue
+
+                # Hard capability check — an engine with no aggregation/join/
+                # sql_admin capability scores 0, the same way an exclusion does.
+                required_caps = query_capabilities.get(qid, [])
+                if required_caps and not can_engine_serve_capability(engine, required_caps):
+                    scores[qid][engine] = 0
+                    exclusion_notes.setdefault(qid, []).append(
+                        f"[capability] {engine} lacks required capability: "
+                        f"{', '.join(required_caps)}"
                     )
                     continue
 
