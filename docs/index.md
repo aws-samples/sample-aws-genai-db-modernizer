@@ -1,5 +1,5 @@
 ---
-title: Database Modernizer Assessment
+title: Run an assessment with Claude Code
 hide:
   - navigation
   - toc
