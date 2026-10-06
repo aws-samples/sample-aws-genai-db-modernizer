@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 
+from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.schema_design.group_input import (
     READ_PAGE_CHARS,
     build_group_input,
@@ -65,12 +66,36 @@ def _qualify(table: str, db_name: str) -> str:
     return table
 
 
+def _canon(table: str, db_name: str, resolver: TableNameResolver | None) -> str:
+    """Resolve ``table`` to the collector's canonical ``table_id`` when possible.
+
+    Falls back to :func:`_qualify` (schema-qualify with ``db_name``) when
+    there is no resolver, or it has no match -- the same fallback
+    ``filter_collector_for_assignment`` uses (#116). Without this, FK/co-
+    dependency clustering keys are built from the collector's own
+    (canonical) ``table_id``, but a query's ``tables_accessed`` can be a bare
+    name a live engine's parser emits (367-2): two FK-linked tables then
+    cluster together only when both sides happen to already be schema-
+    qualified the same way, and split into separate groups otherwise.
+    Pseudo tables (``unknown``, ``DUAL``) are returned unchanged: they name
+    nothing to qualify or resolve.
+    """
+    if table in PSEUDO_TABLES:
+        return table
+    if resolver is not None:
+        resolved = resolver.resolve(table)
+        if resolved:
+            return resolved
+    return _qualify(table, db_name)
+
+
 def _build_table_clusters(
     collector_output: dict,
     analysis_output: dict | None,
     db_name: str,
     queries: list[dict] | None = None,
     co_dependency_groups: list[list[str]] | None = None,
+    resolver: TableNameResolver | None = None,
 ) -> dict[str, str]:
     """Build table clusters from FK relationships and analysis signals.
 
@@ -96,7 +121,7 @@ def _build_table_clusters(
     for table in collector_output.get("database_schema", {}).get("tables", []):
         table_id = table.get("table_id", "")
         for fk in table.get("foreign_keys") or []:
-            ref_table = _qualify(fk.get("referenced_table", ""), db_name)
+            ref_table = _canon(fk.get("referenced_table", ""), db_name, resolver)
             if table_id and ref_table:
                 union(table_id, ref_table)
 
@@ -116,7 +141,7 @@ def _build_table_clusters(
             group_tables: list[str] = []
             for qid in group:
                 group_tables.extend(qid_to_tables.get(qid, []))
-            qualified = list(dict.fromkeys(_qualify(t, db_name) for t in group_tables if t))
+            qualified = list(dict.fromkeys(_canon(t, db_name, resolver) for t in group_tables if t))
             for i in range(1, len(qualified)):
                 union(qualified[0], qualified[i])
 
@@ -182,6 +207,11 @@ def build_groups(
 
     Returns a list of dicts with keys: group_name, primary_tables, queries.
     """
+    # Resolver for canonicalising tables_accessed before clustering (367-2),
+    # built once from the collector's own schema; None keeps the pre-367-2
+    # qualify-only fallback when there is no collector output to resolve against.
+    resolver = TableNameResolver.from_collector(collector_output) if collector_output else None
+
     # Build table clusters when we have any clustering signal. co_dependency_groups
     # alone is enough (it clusters from the queries' own tables), so this no longer
     # requires analysis_output.
@@ -192,6 +222,7 @@ def build_groups(
             db_name,
             queries=queries,
             co_dependency_groups=co_dependency_groups,
+            resolver=resolver,
         )
     else:
         parent = {}
@@ -201,16 +232,17 @@ def build_groups(
     cluster_tables: dict[str, set[str]] = defaultdict(set)
 
     for q in queries:
-        primary = get_primary_table(q, db_name)
+        primary = _canon(get_primary_table(q, db_name), db_name, resolver)
         root = _get_cluster_root(primary, parent)
         by_cluster[root].append(q)
         cluster_tables[root].add(primary)
         # Also track all accessed tables for naming
         for t in q.get("tables_accessed", []):
-            if "." in t:
-                t_root = _get_cluster_root(t, parent)
+            t_canon = _canon(t, db_name, resolver)
+            if "." in t_canon:
+                t_root = _get_cluster_root(t_canon, parent)
                 if t_root == root:
-                    cluster_tables[root].add(t)
+                    cluster_tables[root].add(t_canon)
 
     groups: list[dict] = []
     small_batch: list[dict] = []
@@ -287,11 +319,30 @@ def build_groups(
     return groups
 
 
-def tables_for_queries(queries: list[dict], all_tables: list[dict]) -> list[dict]:
-    """Return only the source tables referenced by the given queries."""
+def tables_for_queries(
+    queries: list[dict],
+    all_tables: list[dict],
+    resolver: TableNameResolver | None = None,
+) -> list[dict]:
+    """Return only the source tables referenced by the given queries.
+
+    Resolved through ``resolver`` (:class:`TableNameResolver`, #319) when given,
+    the same resolution ``filter_collector_for_assignment`` uses (#116): a
+    query's ``tables_accessed`` can be qualified with the SQL schema the parser
+    saw while ``table_id`` is qualified with the customer-entered database
+    label, and an exact-string join drops every table when the two diverge.
+    Review finding 367-1: this is the join ``--split`` uses for every group
+    once an engine has more than ``MAX_GROUP_SIZE`` queries, so it needs the
+    same resolution ``filter_collector_for_assignment`` already has, or the
+    qualifier mismatch resurfaces downstream of it. Falls back to the exact
+    match when no resolver is given, for callers that build it once per split
+    (:func:`split_schema_input`) and reuse it across every group.
+    """
     referenced: set[str] = set()
     for q in queries:
         referenced.update(q.get("tables_accessed", []))
+    if resolver is not None:
+        referenced |= {m for m in (resolver.resolve(name) for name in referenced) if m}
     return [
         t
         for t in all_tables
@@ -396,6 +447,11 @@ def split_schema_input(
         SchemaDesignGroupsManifest with group entries.
     """
     all_tables = collector_output.get("database_schema", {}).get("tables", [])
+    # Built once and reused for every group (367-1): the same resolution
+    # filter_collector_for_assignment uses for the table-filtering join, so
+    # a group's tables don't regress to an exact-string match once an engine
+    # has more than one group.
+    resolver = TableNameResolver.from_collector(collector_output)
     groups = build_groups(
         queries,
         database_name,
@@ -406,7 +462,7 @@ def split_schema_input(
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 
     def measure(group: dict) -> int:
-        tables = tables_for_queries(group["queries"], all_tables)
+        tables = tables_for_queries(group["queries"], all_tables, resolver)
         data = _group_input(
             job_id,
             database_name,
@@ -429,7 +485,7 @@ def split_schema_input(
 
     for idx, group in enumerate(fit_groups_to_budget(groups, measure)):
         group_queries = group["queries"]
-        group_tables = tables_for_queries(group_queries, all_tables)
+        group_tables = tables_for_queries(group_queries, all_tables, resolver)
         text = render_group_input(
             _group_input(
                 job_id,

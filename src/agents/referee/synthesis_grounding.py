@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.engine_names import display_engine
 
 # How each engine is written in prose, for *recognising* a mention -- deliberately
@@ -506,10 +507,20 @@ def engine_table_scope(
     fronts (``cache_engine``, #296). A table can belong to several engines. Names that are not
     known source tables (``unknown``, ``DUAL``) are ignored.
 
+    ``source_tables``/``tables_accessed`` can be qualified with the SQL schema
+    the parser saw, while ``known_tables`` (collector ``table_id``s) is
+    qualified with the customer-entered database label; an exact-string match
+    against ``known`` drops every table when the two diverge (#116, 367-3).
+    Resolved through :class:`TableNameResolver` the same way
+    ``filter_collector_for_assignment`` is, built from the flat ``known_tables``
+    set (no bare ``table_name``/``view_name`` side here, so resolution falls
+    back to :meth:`TableNameResolver.from_known_ids`'s normalized-only match).
+
     Without an assignment (unversioned run) the schema designs stand in: every engine
     whose design covers a table (``table_mappings`` primary and alternatives).
     """
     known = set(known_tables)
+    resolver = TableNameResolver.from_known_ids(known)
     scope: dict[str, set[str]] = {}
     qas = (assignment or {}).get("query_assignments") or []
     if qas:
@@ -520,10 +531,19 @@ def engine_table_scope(
             tables = qa.get("source_tables") or accessed.get(qa.get("query_id"), [])
             # The cache layer serves the tables of the reads it fronts (#296)
             for engine in (qa.get("assigned_engine"), qa.get("cache_engine")):
-                if engine:
-                    scope.setdefault(engine, set()).update(
-                        t for t in tables if not known or t in known
-                    )
+                if not engine:
+                    continue
+                resolved: set[str] = set()
+                for t in tables:
+                    if not known:
+                        resolved.add(t)
+                        continue
+                    match = resolver.resolve(t) if resolver is not None else None
+                    if match:
+                        resolved.add(match)
+                    elif t in known:
+                        resolved.add(t)
+                scope.setdefault(engine, set()).update(resolved)
     else:
         for m in table_mappings:
             scope.setdefault(m["recommended_database"], set()).add(m["source_table"])

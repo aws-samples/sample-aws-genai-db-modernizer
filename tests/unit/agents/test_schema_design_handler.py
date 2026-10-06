@@ -273,6 +273,195 @@ class TestRunSchemaDesignAutoRouting:
         split.assert_called_once()
 
 
+class TestFilterCollectorForAssignmentQualifierMismatch:
+    """#116: a collector table qualified with the customer-entered database
+    label (``discource.admin_notices``) must still match a query's
+    ``source_tables`` qualified with the real SQL schema
+    (``discourse.admin_notices``), so schema design is not starved of tables
+    just because the two qualifiers spell the database differently."""
+
+    def _collector_output(self) -> dict:
+        return {
+            "contract_version": "3.0",
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": "discource.admin_notices",
+                        "table_name": "admin_notices",
+                        "row_count": 10,
+                        "columns": [{"column_name": "id", "data_type": "int", "nullable": False}],
+                    }
+                ]
+            },
+            "queries": {
+                "query_patterns": [
+                    {
+                        "query_id": "q-1",
+                        "query_text": "SELECT * FROM admin_notices",
+                        "tables_accessed": ["discourse.admin_notices"],
+                    }
+                ]
+            },
+        }
+
+    def _assignment(self, target_engine: str = "dynamodb") -> dict:
+        return {
+            "query_assignments": [
+                {
+                    "query_id": "q-1",
+                    "assigned_engine": target_engine,
+                    "in_scope": True,
+                    "source_tables": ["discourse.admin_notices"],
+                }
+            ]
+        }
+
+    def test_qualifier_mismatch_still_matches_table(self) -> None:
+        from src.agents.schema_design.handler import filter_collector_for_assignment
+
+        filtered = filter_collector_for_assignment(
+            self._collector_output(), self._assignment(), "dynamodb"
+        )
+
+        # The query itself is still in scope...
+        assert [q["query_id"] for q in filtered["queries"]["query_patterns"]] == ["q-1"]
+        # ...and its table must survive the qualifier mismatch, not be dropped.
+        table_ids = [t["table_id"] for t in filtered["database_schema"]["tables"]]
+        assert table_ids == ["discource.admin_notices"]
+
+    def test_exact_qualifier_match_still_works(self) -> None:
+        """No regression for the common case where both qualifiers agree."""
+        from src.agents.schema_design.handler import filter_collector_for_assignment
+
+        collector_output = self._collector_output()
+        collector_output["database_schema"]["tables"][0]["table_id"] = "discourse.admin_notices"
+
+        filtered = filter_collector_for_assignment(collector_output, self._assignment(), "dynamodb")
+
+        table_ids = [t["table_id"] for t in filtered["database_schema"]["tables"]]
+        assert table_ids == ["discourse.admin_notices"]
+
+    def test_ambiguous_bare_name_stays_unresolved(self) -> None:
+        """#367-4: two tables that share a bare name under different schemas
+        (``auth.users`` and ``public.users``) must not let a bare or
+        wrongly-qualified reference guess which one a query meant. The
+        TableNameResolver only accepts a bare/normalized match when exactly
+        one candidate exists (table_resolution.py); here there are two, so
+        the table is correctly dropped rather than silently misattributed.
+        """
+        from src.agents.schema_design.handler import filter_collector_for_assignment
+
+        collector_output = {
+            "contract_version": "3.0",
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": "auth.users",
+                        "table_name": "users",
+                        "row_count": 10,
+                        "columns": [{"column_name": "id", "data_type": "int", "nullable": False}],
+                    },
+                    {
+                        "table_id": "public.users",
+                        "table_name": "users",
+                        "row_count": 20,
+                        "columns": [{"column_name": "id", "data_type": "int", "nullable": False}],
+                    },
+                ]
+            },
+            "queries": {
+                "query_patterns": [
+                    {
+                        "query_id": "q-1",
+                        "query_text": "SELECT * FROM users",
+                        "tables_accessed": ["users"],
+                    }
+                ]
+            },
+        }
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": "q-1",
+                    "assigned_engine": "dynamodb",
+                    "in_scope": True,
+                    "source_tables": ["users"],
+                }
+            ]
+        }
+
+        filtered = filter_collector_for_assignment(collector_output, assignment, "dynamodb")
+
+        # The query stays in scope...
+        assert [q["query_id"] for q in filtered["queries"]["query_patterns"]] == ["q-1"]
+        # ...but an ambiguous bare name resolves to neither table, not a guess.
+        assert filtered["database_schema"]["tables"] == []
+        # An exact match on either qualified name is unaffected by the ambiguity.
+        exact = filter_collector_for_assignment(
+            collector_output,
+            {
+                "query_assignments": [
+                    {
+                        "query_id": "q-1",
+                        "assigned_engine": "dynamodb",
+                        "in_scope": True,
+                        "source_tables": ["public.users"],
+                    }
+                ]
+            },
+            "dynamodb",
+        )
+        table_ids = [t["table_id"] for t in exact["database_schema"]["tables"]]
+        assert table_ids == ["public.users"]
+
+    def test_live_collector_bare_name_resolves(self) -> None:
+        """#367-4: a live collector's table_id is schema-qualified
+        (``wordpress.wp_posts``), but its own SQL parser emits the bare
+        table name (``wp_posts``) in ``tables_accessed``/``source_tables``.
+        That must still resolve, same property #367's review verified by
+        hand against this function.
+        """
+        from src.agents.schema_design.handler import filter_collector_for_assignment
+
+        collector_output = {
+            "contract_version": "3.0",
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": "wordpress.wp_posts",
+                        "table_name": "wp_posts",
+                        "row_count": 10,
+                        "columns": [{"column_name": "id", "data_type": "int", "nullable": False}],
+                    }
+                ]
+            },
+            "queries": {
+                "query_patterns": [
+                    {
+                        "query_id": "q-1",
+                        "query_text": "SELECT * FROM wp_posts",
+                        "tables_accessed": ["wp_posts"],
+                    }
+                ]
+            },
+        }
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": "q-1",
+                    "assigned_engine": "dynamodb",
+                    "in_scope": True,
+                    "source_tables": ["wp_posts"],
+                }
+            ]
+        }
+
+        filtered = filter_collector_for_assignment(collector_output, assignment, "dynamodb")
+
+        table_ids = [t["table_id"] for t in filtered["database_schema"]["tables"]]
+        assert table_ids == ["wordpress.wp_posts"]
+
+
 class TestGroupConcurrency:
     """SCHEMA_GROUP_CONCURRENCY tunes the parallel group cap for a constrained
     Bedrock quota (default 5, positive-int, fail-safe fallback)."""

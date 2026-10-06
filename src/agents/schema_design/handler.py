@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
+from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design.scope import (
     EMPTY_REPORT,
     ScopeReport,
@@ -111,9 +112,27 @@ def filter_collector_for_assignment(
     original_queries = collector_output.get("queries", {}).get("query_patterns", [])
     filtered_queries = [q for q in original_queries if q.get("query_id") in in_scope_query_ids]
 
-    # Filter tables to only those referenced by filtered queries
+    # Filter tables to only those referenced by filtered queries. Resolved
+    # through TableNameResolver (#319) rather than an exact string match: a
+    # query's ``source_tables`` is qualified with the SQL schema the parser
+    # saw, while the collector's own ``table_id`` is qualified with the
+    # customer-entered database label, and the two can legitimately differ
+    # (``discourse.admin_notices`` vs. ``discource.admin_notices``, #116). An
+    # exact-match-only join silently drops every table in that case, which
+    # starves schema design of tables even though queries are in scope.
     original_tables = collector_output.get("database_schema", {}).get("tables", [])
-    filtered_tables = [t for t in original_tables if t.get("table_id") in in_scope_tables]
+    resolver = TableNameResolver.from_collector(collector_output)
+    if resolver is not None:
+        # No union with the raw in_scope_tables here: TableNameResolver checks
+        # exact table_id matches first, so every name that was already an exact
+        # match resolves to itself. A name resolver.resolve() drops (ambiguous,
+        # or no match at all) would not have matched a real table_id either.
+        resolved_scope_tables = {
+            t for t in (resolver.resolve(name) for name in in_scope_tables) if t
+        }
+    else:
+        resolved_scope_tables = in_scope_tables
+    filtered_tables = [t for t in original_tables if t.get("table_id") in resolved_scope_tables]
 
     # Build filtered collector output preserving structure
     filtered = dict(collector_output)

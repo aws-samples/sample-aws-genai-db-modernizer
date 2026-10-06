@@ -147,6 +147,34 @@ class TestAffinityGrouping:
         qids = {q["query_id"] for q in orders_group["queries"]}
         assert "q4" in qids or "q5" in qids, "FK-linked tables should be in same group"
 
+    def test_fk_clusters_bare_named_queries_when_table_ids_are_qualified(self):
+        """#367 review finding 367-2: a live engine's collector qualifies
+        table_id (``wordpress.wp_posts``) but its SQL parser -- and FK
+        metadata -- can carry the bare table name (``wp_posts``). FK
+        clustering keys off the collector's canonical table_id, so without
+        resolving tables_accessed first, two FK-linked tables only cluster
+        together when both happen to already be schema-qualified the same
+        way, and split into separate groups when the query side is bare.
+        """
+        queries = [_make_query(f"q{i}", ["wp_posts"]) for i in range(3)]
+        queries += [_make_query(f"qc{i}", ["wp_comments"]) for i in range(3)]
+        collector = self._make_collector(
+            ["wordpress.wp_posts", "wordpress.wp_comments"],
+            fks=[("wordpress.wp_comments", "wp_posts")],
+        )
+        analysis = self._make_analysis()
+
+        groups = build_groups(queries, "wordpress", collector, analysis)
+        posts_group = None
+        for g in groups:
+            qids = {q["query_id"] for q in g["queries"]}
+            if "q0" in qids:
+                posts_group = g
+                break
+        assert posts_group is not None
+        qids = {q["query_id"] for q in posts_group["queries"]}
+        assert "qc0" in qids, "FK-linked tables must cluster even with bare query table names"
+
     def test_aggregate_clusters_tables_together(self):
         """Tables in the same aggregate recommendation should be grouped together."""
         queries = [

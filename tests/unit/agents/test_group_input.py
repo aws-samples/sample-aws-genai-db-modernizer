@@ -362,3 +362,51 @@ def test_split_writes_bounded_inputs_with_read_pages(tmp_path) -> None:
         assert len(text) <= MAX_GROUP_INPUT_CHARS
         assert g.input_pages == read_pages(text)
         assert 1 <= len(g.input_pages) <= MAX_GROUP_INPUT_PAGES
+
+
+def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> None:
+    """#367 review finding 1: ``filter_collector_for_assignment`` resolves the
+    #116 qualifier mismatch, but ``tables_for_queries`` in group_splitter.py
+    did not use the same resolver, so ``--split`` wrote zero-table group parts
+    for any engine with more than ``MAX_GROUP_SIZE`` queries once the
+    collector's table_id qualifier (customer-entered database label)
+    diverged from the SQL schema qualifier a query's ``tables_accessed``
+    carries. 25 queries forces the sub-split that single-group runs (and the
+    PR's original regression test) never exercised.
+    """
+    collector = get_ecommerce_collector_output()
+    for t in collector["database_schema"]["tables"]:
+        if t["table_id"] == PRODUCTS:
+            # The customer-entered database label ("ecommerc3") diverges from
+            # the real SQL schema ("ecommerce") a query's tables_accessed carries.
+            t["table_id"] = "ecommerc3.products"
+    queries = [
+        {
+            "query_id": f"q-prod-{i}",
+            "query_text": "SELECT product_id FROM products WHERE product_id = ?",
+            "query_type": "SELECT",
+            "frequency_per_hour": 10.0,
+            "calls_per_second": 1.0,
+            "tables_accessed": [PRODUCTS],
+        }
+        for i in range(25)
+    ]
+    analysis = _analysis(collector)
+    store = LocalArtifactStore(str(tmp_path))
+
+    manifest = split_schema_input(
+        job_id="j1",
+        database_name="ecommerce",
+        engine="dynamodb",
+        collector_output=collector,
+        analysis_output=analysis,
+        queries=queries,
+        store=store,
+    )
+
+    assert manifest.total_groups >= 2  # 25 queries over MAX_GROUP_SIZE=20
+    assert sum(g.query_count for g in manifest.groups) == 25
+    for g in manifest.groups:
+        assert g.table_count > 0, f"group {g.group_name!r} has no tables"
+        data = json.loads((tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text())
+        CollectorOutputContract.model_validate(data["collector_output"])
