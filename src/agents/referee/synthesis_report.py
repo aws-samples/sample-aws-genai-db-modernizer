@@ -40,9 +40,11 @@ from src.shared.ranking import (
 )
 from src.shared.signal_labels import signal_noun
 from src.shared.unsupported_pattern import (
+    is_dedup_only_group_by,
     unsupported_pattern_ids,
     unsupported_pattern_label,
     unsupported_pattern_mitigation,
+    unsupported_pattern_text,
 )
 
 if TYPE_CHECKING:
@@ -665,6 +667,11 @@ def build_risk_assessment(
         q: normalise(query_tables.get(q) or assigned_tables.get(q) or [])
         for q in set(query_tables) | set(assigned_tables)
     }
+    query_text = {
+        q["query_id"]: str(q.get("query_text") or "")
+        for q in data.source_queries
+        if q.get("query_id")
+    }
     covered_by = {
         engine: _covered_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
@@ -672,11 +679,6 @@ def build_risk_assessment(
     unsupported_by = {
         engine: _unsupported_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
-    }
-    query_text = {
-        q["query_id"]: str(q.get("query_text") or "")
-        for q in data.source_queries
-        if q.get("query_id")
     }
     # target engine -> {query id: severity} for queries an anti-pattern's advice moved to
     # that engine but its design does not serve (reported as one gap risk per engine).
@@ -886,7 +888,41 @@ def build_risk_assessment(
         # "[engine] unknown: " for the engines whose contract this code used
         # to not read (#210).
         for up in schema.get("unsupported_patterns", []):
+            pattern_ids = unsupported_pattern_ids(up)
+            tables = sorted({t for q in pattern_ids for t in risk_tables.get(q, ())})
             risk_id += 1
+            # Dedup-only GROUP BY (#336): every one of this *aggregation* entry's
+            # queries is a GROUP BY used only to de-duplicate rows (no aggregate
+            # function, no HAVING, no window function, no ROLLUP/CUBE/GROUPING
+            # SETS) -- an application-code fix, not a real blocking aggregation.
+            # Gated on the entry's own category (``_is_aggregation_unsupported_
+            # pattern``), not just the SQL shape: a non-aggregation entry (a join
+            # or LIKE-pattern limitation, say) is never reclassified just because
+            # its query also happens to have a dedup-only GROUP BY. Kept as an
+            # open LOW risk, worded as the application-code fix it is -- the
+            # issue's own alternative -- not resolved and not counted as covered:
+            # no in-scope access pattern actually serves these queries.
+            if (
+                pattern_ids
+                and _is_aggregation_unsupported_pattern(up)
+                and all(is_dedup_only_group_by(query_text.get(q, "")) for q in pattern_ids)
+            ):
+                risks.append(
+                    {
+                        "risk_id": f"RISK-{risk_id:03d}",
+                        "risk_type": "MIGRATION_COMPLEXITY",
+                        "severity": "LOW",
+                        "description": f"[{engine}] {unsupported_pattern_label(up)}: "
+                        f"{_unsupported_pattern_problem(engine, up, query_text)}",
+                        "affected_tables": tables,
+                        "mitigation": (
+                            "Needs an application change: drop the GROUP BY and serve "
+                            "it as a Query."
+                        ),
+                        "query_ids": sorted(pattern_ids),
+                    }
+                )
+                continue
             risks.append(
                 {
                     "risk_id": f"RISK-{risk_id:03d}",
@@ -894,11 +930,9 @@ def build_risk_assessment(
                     "severity": "MEDIUM",
                     "description": f"[{engine}] {unsupported_pattern_label(up)}: "
                     f"{_unsupported_pattern_problem(engine, up, query_text)}",
-                    "affected_tables": sorted(
-                        {t for q in unsupported_pattern_ids(up) for t in risk_tables.get(q, ())}
-                    ),
+                    "affected_tables": tables,
                     "mitigation": unsupported_pattern_mitigation(up),
-                    "query_ids": sorted(unsupported_pattern_ids(up)),
+                    "query_ids": sorted(pattern_ids),
                 }
             )
 
@@ -1089,6 +1123,27 @@ def _unsupported_query_ids(schema: dict) -> set[str]:
     for up in schema.get("unsupported_patterns", []):
         ids.update(unsupported_pattern_ids(up))
     return ids
+
+
+def _is_aggregation_unsupported_pattern(up: dict) -> bool:
+    """True when ``up``'s own category is aggregation, however its contract spells it (#336).
+
+    Only DynamoDB's contract carries a real ``pattern_type`` (one of
+    ``UNSUPPORTED_PATTERN_TYPES``); DocumentDB, ElastiCache and OpenSearch have
+    no equivalent structured field, only free-text ``reason``/``workaround``
+    (``unsupported_pattern_label`` falls back to the generic "unsupported
+    pattern" for all three). Gating the dedup-only GROUP BY check (#336) on
+    "this entry's own category is aggregation" -- not "this entry's queries
+    happen to have a GROUP BY somewhere in their SQL" -- matters: a DynamoDB
+    entry whose actual pattern_type is a multi-table join, or an ElastiCache
+    entry about LIKE pattern matching, must not be reclassified just because
+    one of its flagged queries also has a dedup-only GROUP BY elsewhere in its
+    text.
+    """
+    pattern_type = str(up.get("pattern_type") or "").strip().strip("*").lower()
+    if pattern_type:
+        return pattern_type == "aggregation"
+    return "aggregat" in unsupported_pattern_text(up).lower()
 
 
 def _coverage_gap_risk(
