@@ -1,0 +1,29 @@
+name: Maintainer Decision gate
+
+# Fails while a PR carries the "Maintainer Decision" label, so a ruleset that
+# requires this check keeps the PR from merging until a maintainer has decided
+# and removed the label. Reads only the event payload: no checkout, no token.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+# Only the newest run per PR counts, so a quick label then unlabel can't leave
+# an older failing run as the latest result.
+concurrency:
+  group: maintainer-decision-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  maintainer-decision-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for the Maintainer Decision label
+        if: contains(github.event.pull_request.labels.*.name, 'Maintainer Decision')
+        run: |
+          echo "::error::This PR is waiting for a maintainer decision. Remove the 'Maintainer Decision' label once it is decided."
+          exit 1
+      - name: No pending maintainer decision
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'Maintainer Decision') }}
+        run: echo "No 'Maintainer Decision' label on this PR."

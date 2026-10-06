@@ -275,6 +275,12 @@ fix(api): handle timeout errors in job status endpoint
 
 Smaller PRs are reviewed faster and merged more easily.
 
+### Labels
+
+- **`good first issue`**: small, self-contained issues with a suggested fix, good for a first contribution.
+- **`help wanted`**: well-scoped issues that need more context in the codebase; contributions welcome.
+- **`Maintainer Decision`**: the issue or PR is waiting for a maintainer to decide. While a PR carries this label, the `maintainer-decision-gate` check fails and the PR can't be merged. A maintainer removes the label once the decision is made, and the check passes on the next run. A PR opened before this check existed has no result for it until it gets a new push, a label change, or is closed and reopened.
+
 ---
 
 ## Code Standards

@@ -189,3 +189,6 @@ truth.
 - Write tests first; keep PRs small; open them against `main`.
 - Public wording everywhere (issues, commits, docs, code): this is a public
   sample repository, so no internal system names or internal links.
+- The "Maintainer Decision" label marks an issue or PR waiting for a
+  maintainer, and blocks a PR from merging. Agents may add it; agents never
+  remove it unless a human explicitly says to in that session.
