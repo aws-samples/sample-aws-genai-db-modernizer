@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
     PATTERN_LABELS,
@@ -32,6 +33,7 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
+from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.ranking import (
     PARTIAL_NOTE,
     SIGNAL_ONLY_NOTE,
@@ -968,6 +970,19 @@ def build_risk_assessment(
             _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables)
         )
 
+    # Guard (#335): a query reality check moved onto an engine whose own schema
+    # design lists it as unsupported. #338 fixes #335's root cause (a missing
+    # aggregation/complex-joins capability check in the reality check's
+    # serviceability gate) at the source; this is a narrow invariant guard in
+    # case a gap like it slips through again, not the fix itself. Every such id
+    # already has an open risk by construction (the per-pattern unsupported-
+    # pattern risk above, at minimum), so this never adds a parallel risk: it
+    # raises/annotates the existing one, and only falls back to a new one for
+    # the (should not happen) case where none names the id.
+    risk_id = _raise_moved_onto_unsupported_risks(
+        risk_id, data, unsupported_by, risks, risk_tables, query_text
+    )
+
     risks = [_without_repeated_mitigation(r) for r in risks]
     risks = ground_risks(risks, eliminated or {}, query_engine)
     resolved = ground_risks(resolved, eliminated or {}, query_engine)
@@ -1144,6 +1159,186 @@ def _is_aggregation_unsupported_pattern(up: dict) -> bool:
     if pattern_type:
         return pattern_type == "aggregation"
     return "aggregat" in unsupported_pattern_text(up).lower()
+
+
+def _moved_query_ids(data: SynthesisData) -> dict[str, set[str]]:
+    """Query ids Reality Check actually moved to a different engine, keyed by
+    the CURRENT (post-move) engine (#335).
+
+    Compares the effective assignment against the one Reality Check started
+    from (``data.pre_reality_check_assignment``, loaded via
+    ``resolve_reality_check_input_version`` -- see ``synthesis_data.py``): a
+    query whose ``assigned_engine`` differs between the two was moved. This is
+    not the same as "an anti-pattern on a different engine also names this
+    query": an anti-pattern's own query_ids are routinely served by whichever
+    engine the *initial* assignment resolver already picked -- most queries
+    aurora_mysql's analysis flags, say, are assigned to dynamodb from the
+    start, never "moved" there by anything. ``Consolidation``
+    (``src/contracts/reality_check_output.py``) itself carries no per-query
+    ids (only a per-engine-pair ``query_count``), so the only precise signal is
+    this before/after diff.
+
+    ``None`` for either assignment (no Reality Check run on record for this
+    lineage, or the pre-run version could not be read) means nothing was
+    moved -- fail safe, not "everything was moved".
+    """
+    if not data.assignment or not data.pre_reality_check_assignment:
+        return {}
+    before = {
+        qa["query_id"]: qa.get("assigned_engine")
+        for qa in data.pre_reality_check_assignment.get("query_assignments", [])
+        if qa.get("query_id")
+    }
+    moved: dict[str, set[str]] = {}
+    for qa in data.assignment.get("query_assignments", []):
+        query_id = qa.get("query_id")
+        after = qa.get("assigned_engine")
+        if not query_id or not after:
+            continue
+        before_engine = before.get(query_id)
+        if before_engine and before_engine != after:
+            moved.setdefault(after, set()).add(query_id)
+    return moved
+
+
+def _source_compatible_aurora_engine(data: SynthesisData) -> str:
+    """The Aurora engine matching the source database's dialect (#335's guard
+    mitigation: Aurora always runs the source SQL as-is, regardless of what any
+    other engine's assignment or schema design says).
+
+    Prefers whichever Aurora engine is already part of this architecture
+    (``data.engines``); otherwise maps the collector's source database engine
+    (mysql/mariadb -> aurora_mysql, postgresql/postgres -> aurora_postgresql),
+    defaulting to aurora_mysql when even that is unknown -- never wrong about
+    there being an Aurora safety net, only about which flavour's name to print.
+    """
+    for engine in sorted(AURORA_ENGINES):
+        if engine in data.engines:
+            return engine
+    source_engine = source_database_engine(data.collector)
+    return SOURCE_ENGINE_TO_AURORA.get(source_engine, "aurora_mysql")
+
+
+def _raise_moved_onto_unsupported_risks(
+    risk_id: int,
+    data: SynthesisData,
+    unsupported_by: dict[str, set[str]],
+    risks: list[dict],
+    risk_tables: dict[str, set[str]],
+    query_text: dict[str, str],
+) -> int:
+    """Raise to HIGH, and annotate, the risk(s) for a query reality check moved
+    onto an engine whose own schema design lists it as unsupported (#335's
+    actual invariant, narrowed by review).
+
+    #338 (``feat/engines-earn-their-place``) fixes #335's root cause -- a
+    missing aggregation/complex-joins capability check in the reality check's
+    serviceability gate, ``src/agents/referee/capability_registry.py`` -- at
+    the source. This module does not decide routing, so it stays a narrow
+    invariant guard rather than the fix: it reports a query that still ends up
+    moved onto an engine that cannot serve it, in case a capability gap like
+    #335's slips through again (#338's own gate has at least one known gap:
+    it does not block a single-table ``COUNT(*)`` move).
+
+    Never adds a risk in parallel with an existing one for the same id: every
+    unsupported id already has an open risk by construction (at minimum, the
+    per-pattern "unsupported_patterns" risk every such id gets above, whatever
+    its severity -- MEDIUM, or LOW for a #336 dedup-only ``GROUP BY``). This
+    raises that risk's severity to HIGH (never down -- a query already flagged
+    CRITICAL or already HIGH for an unrelated reason keeps that) and appends
+    one sentence naming the Aurora fallback, rather than creating a second
+    entry for the same gap. Only when (by construction, should not happen) no
+    existing risk names the id does this add a new dedicated one, so the gap
+    is never silently dropped.
+
+    Not CRITICAL: Aurora always runs the source SQL as-is (#221), so this is
+    never "no engine serves it" -- it is "stuck on the wrong engine rather than
+    Aurora until that engine's schema design (or an application change) catches
+    up", the same severity register as every other reattribution risk above.
+    The note is phrased as advice ("keep it on Aurora until ..."), not as a
+    statement of where the query is ("stays on Aurora"): the assignment still
+    names the engine it was moved to, not Aurora.
+    """
+    moved = _moved_query_ids(data)
+    aurora_name = display_name(_source_compatible_aurora_engine(data))
+
+    ids_by_engine = {
+        engine: ids
+        for engine in sorted(moved)
+        if engine not in AURORA_ENGINES
+        for ids in [moved[engine] & unsupported_by.get(engine, set())]
+        if ids
+    }
+    if not ids_by_engine:
+        return risk_id
+
+    mitigation_addendum = f"{aurora_name} runs the source SQL as-is."
+    for engine, ids in ids_by_engine.items():
+        # Grouped by the risk object itself (by risk_id, not by query id): several
+        # of this engine's moved-and-unsupported ids can share one pre-existing
+        # risk (e.g. one unsupported_patterns entry naming all of them), and each
+        # such risk is annotated once, with its own it/them wording.
+        claimed: dict[str, dict] = {}
+        unclaimed: set[str] = set()
+        for q in sorted(ids):
+            target_risk = next((r for r in risks if q in (r.get("query_ids") or [])), None)
+            if target_risk is None:
+                unclaimed.add(q)
+            else:
+                claimed[target_risk["risk_id"]] = target_risk
+
+        for target_risk in claimed.values():
+            # This risk's own share of the moved-and-unsupported ids -- not every
+            # id moved onto this engine necessarily sits in this particular risk.
+            overlap = ids & set(target_risk.get("query_ids") or [])
+            pronoun = "it" if len(overlap) == 1 else "them"
+            note = (
+                f" Moved onto {display_name(engine)}, which lists {pronoun} as "
+                f"unsupported: keep {pronoun} on {aurora_name} until "
+                f"{display_name(engine)}'s schema design (or an application "
+                f"change) can serve {pronoun}."
+            )
+            if _SEVERITY_ORDER.get(target_risk.get("severity", "LOW"), 9) > _SEVERITY_ORDER["HIGH"]:
+                target_risk["severity"] = "HIGH"
+            if note not in target_risk["description"]:
+                target_risk["description"] += note
+            mitigation = target_risk.get("mitigation") or ""
+            if aurora_name not in mitigation:
+                target_risk["mitigation"] = (
+                    f"{mitigation} {mitigation_addendum}".strip()
+                    if mitigation
+                    else mitigation_addendum
+                )
+
+        if not unclaimed:
+            continue
+        # Should not happen (every unsupported id has an unsupported_patterns risk
+        # above), but a gap is never silently dropped if it ever does.
+        ids_sorted = sorted(unclaimed)
+        n = len(ids_sorted)
+        pronoun = "it" if n == 1 else "them"
+        tables = sorted({t for q in ids_sorted for t in risk_tables.get(q, ())})
+        texts = [_sql_excerpt(query_text.get(q) or q[:12]) for q in ids_sorted[:3]]
+        listed = "; ".join(texts) + (f"; and {n - 3} more" if n > 3 else "")
+        risk_id += 1
+        risks.append(
+            {
+                "risk_id": f"RISK-{risk_id:03d}",
+                "risk_type": "MIGRATION_COMPLEXITY",
+                "severity": "HIGH",
+                "description": (
+                    f"[{engine}] {n} {'query' if n == 1 else 'queries'} moved onto "
+                    f"{display_name(engine)}, whose schema design lists {pronoun} as "
+                    f"unsupported: {listed}. Keep {pronoun} on {aurora_name} until "
+                    f"{display_name(engine)}'s schema design (or an application "
+                    f"change) can serve {pronoun}."
+                ),
+                "affected_tables": tables,
+                "mitigation": mitigation_addendum,
+                "query_ids": ids_sorted,
+            }
+        )
+    return risk_id
 
 
 def _coverage_gap_risk(

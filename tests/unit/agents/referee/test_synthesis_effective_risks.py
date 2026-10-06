@@ -178,8 +178,15 @@ class TestEliminatedEngineNeverATarget:
 
     def test_no_risk_is_dropped_and_no_severity_changes(self, result, store) -> None:
         risks = result["risk_assessment"]["risks"]
-        assert len(risks) == 4  # 3 unsupported patterns + 1 anti-pattern
+        # 3 unsupported patterns + 1 anti-pattern. q-orders is assigned to dynamodb
+        # and dynamodb's own schema design lists it as unsupported, but no analysis
+        # attributes it to a different engine than dynamodb -- it was never "moved"
+        # by reality check (#335's narrowed invariant guard: only a query reality
+        # check actually moved onto an unsupported engine is flagged, not every
+        # unsupported one), so the #335 guard does not add a risk for it here.
+        assert len(risks) == 4
         assert [r["severity"] for r in risks].count("HIGH") == 1
+        assert not [r for r in risks if r["severity"] == "CRITICAL"]
 
     def test_mitigation_strategies_name_the_absorbing_engine(self, result) -> None:
         strategies = result["risk_assessment"]["mitigation_strategies"]

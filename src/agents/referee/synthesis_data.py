@@ -19,6 +19,7 @@ from src.agents.referee.cache_overlay import (
     safety_net_note,
 )
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import resolve_reality_check_input_version
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,12 @@ class SynthesisData:
     collector: dict = field(default_factory=dict)
     engines: dict[str, EngineArtifacts] = field(default_factory=dict)
     assignment: dict | None = None
+    # The assignment version Reality Check started from, when one ran for this
+    # lineage (#335): lets a risk check tell "reality check moved this query"
+    # apart from "this query was simply assigned here to begin with". ``None``
+    # means no Reality Check run is on record for this lineage -- callers must
+    # treat that as "nothing moved", not "everything moved".
+    pre_reality_check_assignment: dict | None = None
     # Cache overlay safety net (#296): cached queries the cache's schema design does
     # not serve, and the notes recording that their overlay was dropped.
     cache_overlay_dropped: list[str] = field(default_factory=list)
@@ -106,6 +113,28 @@ def load_synthesis_data(
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json",
             required=False,
         )
+
+        # Pre-Reality-Check assignment (#335): the version Reality Check started
+        # from. Reading fails open to None (no run on record, or the read itself
+        # fails) rather than raising -- a risk check using this is reporting-only
+        # and must never block synthesis.
+        try:
+            input_version = resolve_reality_check_input_version(store, database_name, job_id)
+        except Exception:
+            logger.warning(
+                "Synthesis: could not resolve the pre-Reality-Check assignment version "
+                "for %s/%s",
+                database_name,
+                job_id,
+                exc_info=True,
+            )
+            input_version = None
+        if input_version is not None and input_version != assignment_version:
+            data.pre_reality_check_assignment = _read_artifact(
+                store,
+                f"{database_name}/{job_id}/assignment/v{input_version}/assignment.json",
+                required=False,
+            )
 
     # Legacy ElastiCache owners (an assignment written before the cache overlay,
     # #296) move to their system-of-record engine, in memory only.
