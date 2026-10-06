@@ -820,6 +820,62 @@ def check_summary_grounding(
     return findings
 
 
+# #380: internal field/section names this codebase uses for its own JSON
+# shape (``report.json``'s own keys, or a sibling object's), which a model
+# sometimes points a customer at instead of just stating the figure (e.g.
+# "see tco_analysis's cost_breakdown for documentdb's own figure before
+# removal"). Matched whole-word, case-insensitively, so prose that happens to
+# contain one of these words in a different sense is still caught -- a
+# customer-facing summary has no legitimate reason to name any of them at
+# all, so there is no false-positive case worth tolerating a narrower regex
+# for.
+_INTERNAL_FIELD_NAMES = (
+    "tco_analysis",
+    "cost_breakdown",
+    "table_mappings",
+    "risk_assessment",
+    "query_groups",
+    "schema_designs",
+    "recommended_architecture",
+    "migration_waves",
+    "assignment_summary",
+    "effective_architecture",
+)
+_INTERNAL_FIELD_RE = re.compile(
+    r"\b(" + "|".join(re.escape(name) for name in _INTERNAL_FIELD_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def check_summary_internal_leaks(summary: str) -> list[dict]:
+    """Find internal field/section names leaked into customer-facing ``summary``.
+
+    Returns findings shaped like :func:`check_summary_grounding`'s own
+    (``high_confidence`` always ``True`` -- there is no legitimate, low-stakes
+    reason for a customer-facing summary to name one of this codebase's own
+    JSON field names), so a caller can fold them into the same accept/reject
+    decision without a second code path. An empty list means clean.
+    """
+    if not summary:
+        return []
+    findings: list[dict] = []
+    for m in _INTERNAL_FIELD_RE.finditer(summary):
+        findings.append(
+            {
+                "table": None,
+                "text": m.group(0),
+                "engines": [],
+                "high_confidence": True,
+                "sentence": summary,
+                "message": (
+                    f'[high confidence] Summary names an internal field, "{m.group(0)}", '
+                    "instead of just stating the figure."
+                ),
+            }
+        )
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Customer-facing fallback summary
 # ---------------------------------------------------------------------------

@@ -175,6 +175,107 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        assert report["contract_version"] == "1.5"
+        assert report["contract_version"] == "1.6"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
+
+
+@pytest.fixture
+def store_with_schema_design_noise(tmp_path):
+    """Reproduces the Discourse evidence end to end (#380): a real table the
+    collector saw but no schema design ever mapped (``extra_table``, a stand-in
+    for a framework table like ``ar_internal_metadata``), plus a schema design
+    that hallucinates a "source table" nothing collected (``db.made_up_seq``,
+    a sequence name). The sequence inflated the migration map's own "tables
+    migrate" count (confidence 0, never a real table); the real-but-unmapped
+    table must NOT disappear from wave 1 -- it is still part of "the whole
+    database moves to Aurora" (#380 review).
+    """
+    s = LocalArtifactStore(base_dir=str(tmp_path))
+    engines = ["dynamodb", "aurora_mysql"]
+    s.write_json(
+        f"{DB}/{JOB}/referee-triage/triage.json",
+        {"selected_agents": [{"agent_type": e} for e in engines], "signals": []},
+    )
+    s.write_json(
+        f"{DB}/{JOB}/collector/output.json",
+        {
+            "metadata": {"source_database": {"engine": "mysql"}},
+            "database_schema": {
+                "tables": [
+                    {"table_id": "users"},
+                    {"table_id": "orders"},
+                    # Collected, but no schema design will map it below.
+                    {"table_id": "extra_table"},
+                ]
+            },
+            "queries": {"query_patterns": QUERIES},
+        },
+    )
+    conf = {"dynamodb": 90, "aurora_mysql": 60}
+    for engine in engines:
+        s.write_json(f"{DB}/{JOB}/analysis-{engine}/analysis.json", _analysis(conf[engine]))
+    s.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json",
+        {
+            "table_definitions": [
+                {
+                    "table_name": "users",
+                    "aggregate_pattern": "relational_table",
+                    "source_tables": ["users"],
+                },
+                {
+                    # Never a real collected table: a schema-design hallucination.
+                    "table_name": "id_sequence_counters",
+                    "aggregate_pattern": "separate",
+                    "source_tables": ["db.made_up_seq"],
+                },
+            ]
+        },
+    )
+    s.write_json(
+        f"{DB}/{JOB}/schema-aurora_mysql/v2/schema_output.json",
+        {"source_database": DB, "table_definitions": [{"table_name": "orders", "columns": []}]},
+    )
+    assignment = {
+        **ASSIGNMENT,
+        "table_assignments": [
+            t for t in ASSIGNMENT["table_assignments"] if t["table_id"] != "sessions"
+        ],
+        "query_assignments": [
+            qa for qa in ASSIGNMENT["query_assignments"] if qa["query_id"] != "kv2"
+        ],
+        "co_dependency_groups": [],
+    }
+    s.write_json(f"{DB}/{JOB}/assignment/v2/assignment.json", assignment)
+    return s
+
+
+class TestMigrationWavesKeepRealUnmappedTablesButDropNoise:
+    def test_wave_1_carries_every_real_table_including_unmapped_ones(
+        self, store_with_schema_design_noise
+    ):
+        result = run_synthesis_deterministic(
+            JOB, DB, store_with_schema_design_noise, assignment_version=2
+        )
+        mapped_sources = {m["source_table"] for m in result["table_mappings"]}
+        # The hallucinated sequence never counts as a mapped table (build_table_mappings
+        # resolves it against the collector's real schema and drops it); only the two
+        # real, schema-design-covered tables are "mapped".
+        assert mapped_sources == {"users", "orders"}
+        aurora = result["migration_waves"][0]
+        # #380 review: "extra_table" is real (the collector saw it) but no schema
+        # design maps it -- it still belongs to "the whole database moves to Aurora"
+        # and must not vanish from wave 1.
+        assert sorted(aurora["tables"]) == ["extra_table", "orders", "users"]
+        assert aurora["table_count"] == 3
+        # The sequence hallucination is still gone from wave 1: it was never a real
+        # collected table (not in data.source_tables), and build_table_mappings has
+        # already dropped it from table_mappings too.
+        assert "db.made_up_seq" not in aurora["tables"]
+        # The rationale reconciles wave 1's full count against the smaller mapped
+        # total, instead of leaving the two numbers to disagree with no explanation.
+        assert "2 of these tables and views are mapped to a target engine in a later wave" in (
+            aurora["rationale"]
+        )
+        assert "the other 1 stay" in aurora["rationale"]

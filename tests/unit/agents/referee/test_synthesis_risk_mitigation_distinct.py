@@ -185,10 +185,16 @@ class TestMigrationNotes:
         )
         _assert_distinct(risk)
 
-    def test_no_logic_text_leaves_no_mitigation(self) -> None:
+    def test_no_logic_text_still_gets_a_concrete_mitigation(self) -> None:
+        """#380: a MEDIUM+ risk always carries a concrete mitigation -- with no
+        logic text to build from, this falls back to a reviewable action
+        instead of leaving the risk with no mitigation at all."""
         note = {**_MIGRATION_NOTE, "application_logic_required": ""}
         out = build_risk_assessment(_data({"elasticache": {"migration_notes": [note]}}))
-        assert out["risks"][0]["mitigation"] is None
+        mitigation = out["risks"][0]["mitigation"]
+        assert mitigation is not None
+        assert "sales report aggregation" in mitigation
+        assert "before cutover" in mitigation
 
 
 @pytest.mark.parametrize(

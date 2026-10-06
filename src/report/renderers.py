@@ -128,6 +128,52 @@ def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
 
+# #380 review: ``current_monthly_cost``/``savings_percent`` are 0.0/0 both when
+# the source genuinely has no baseline estimate (the collector reported no RDS
+# instance metadata, ``current_cost_known: False``) and -- in principle -- when
+# the baseline really is zero; the second never happens in practice, so a bare
+# "$0.00"/"0%" reads as a cost comparison that was actually attempted and came
+# out even, not as "no comparison was possible". Every deliverable that shows a
+# cost baseline or a savings figure must call this, so none of them can show the
+# bare number ``build_tco_analysis`` left in place for a reader who only looks
+# at the raw field.
+def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
+    """(current monthly cost, savings) display text for ``tco``.
+
+    ``("source cost not provided", "not available")`` when
+    ``current_cost_known`` is ``False`` (missing for a report written before
+    this field existed, defaulting to known -- same as the contract's own
+    default, so an old report keeps showing its number).
+    """
+    if tco.get("current_cost_known", True) is False:
+        return "source cost not provided", "not available"
+    return (
+        _fmt_usd(tco.get("current_monthly_cost")),
+        f"{fmt_num(tco.get('savings_percent', 0), 1)}%",
+    )
+
+
+def _eliminated_engine_costs_text(tco: dict[str, Any]) -> str:
+    """ "$271.80/mo (DocumentDB), $240.96/mo (OpenSearch)" or "" with none.
+
+    Makes a saving named for an eliminated engine elsewhere in the same
+    report (the reality check's own recommendation text, e.g. "Removes
+    $271.80/mo of infrastructure cost") traceable to this report's own TCO
+    facts, not just asserted in prose.
+    """
+    rows = [
+        row
+        for row in (tco.get("eliminated_engine_costs") or [])
+        if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
+    ]
+    if not rows:
+        return ""
+    return ", ".join(
+        f"{_fmt_usd(row['monthly_cost_usd'])}/mo ({display_engine(row.get('database', ''))})"
+        for row in rows
+    )
+
+
 def _engine_costs(report: dict[str, Any]) -> dict[str, float]:
     """engine name -> monthly USD, from tco_analysis.cost_breakdown."""
     out: dict[str, float] = {}
@@ -829,12 +875,23 @@ def render_decision_report_html(
         "</div></div>",
         "<div class=wrap>",
         "<div class=tiles>",
+    ]
+    current_cost_text, savings_text = _cost_baseline_text(tco)
+    out += [
+        f'<div class="tile slate"><h3>{esc(current_cost_text)}</h3><p>Current monthly</p></div>',
         f'<div class="tile green"><h3>{_fmt_usd(tco.get("projected_monthly_cost"))}</h3><p>Projected monthly</p></div>',
+        f'<div class="tile green"><h3>{esc(savings_text)}</h3><p>Savings</p></div>',
         f'<div class="tile blue"><h3>{len(engines)}</h3><p>Engines</p></div>',
         f'<div class="tile slate"><h3>{migrated}</h3><p>Tables migrate</p></div>',
         f'<div class="tile {_risk_tile_class(risk_level)}"><h3>{esc(risk_level)}</h3><p>Overall risk</p></div>',
         "</div>",
     ]
+    eliminated_cost_text = _eliminated_engine_costs_text(tco)
+    if eliminated_cost_text:
+        out.append(
+            f"<p class=note>Already removed from this comparison: {esc(eliminated_cost_text)}, "
+            "retired before this projection; see Engines not used below.</p>"
+        )
 
     summary = (
         report.get("summary") if trust_generated_summary else report.get("summary_deterministic")
@@ -1779,6 +1836,26 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             out.append(
                 f"| {escaping.md_cell(e['engine'])} | {escaping.md_cell(e['role'])} "
                 f"| {escaping.md_cell(share)} | {escaping.md_cell(e['rationale'] or '-')} |"
+            )
+        out.append("")
+
+    tco = report.get("tco_analysis") or {}
+    if tco:
+        current_cost_text, savings_text = _cost_baseline_text(tco)
+        out += [
+            "## Cost",
+            "",
+            f"- Current monthly (source): {escaping.md_text(current_cost_text)}",
+            f"- Projected monthly (target): "
+            f"{escaping.md_text(_fmt_usd(tco.get('projected_monthly_cost')))}",
+            f"- Savings: {escaping.md_text(savings_text)}",
+        ]
+        eliminated_cost_text = _eliminated_engine_costs_text(tco)
+        if eliminated_cost_text:
+            out.append(
+                f"- Already removed from this comparison: "
+                f"{escaping.md_text(eliminated_cost_text)}, "
+                "retired before this projection (see Migration trade-offs below for why)."
             )
         out.append("")
 

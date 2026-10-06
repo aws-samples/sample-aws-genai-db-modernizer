@@ -31,7 +31,13 @@ def _seed(store: LocalArtifactStore, *, eliminated: bool) -> None:
     store.write_json(
         f"{DB}/{JOB}/collector/output.json",
         {
-            "database_schema": {"tables": [{"table_id": "shop.orders"}]},
+            # "shop.products" is a real collected table too (#380: table_mappings
+            # resolves every source_table against the collector's own schema, so
+            # a table only ever named by a schema design -- never collected --
+            # would otherwise be dropped as noise).
+            "database_schema": {
+                "tables": [{"table_id": "shop.orders"}, {"table_id": "shop.products"}]
+            },
             "queries": {"query_patterns": []},
         },
     )

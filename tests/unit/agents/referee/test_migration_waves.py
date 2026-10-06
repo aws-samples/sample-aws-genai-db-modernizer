@@ -297,6 +297,79 @@ class TestAuroraWave:
         assert "wp_never_queried" in aurora["tables"]
         assert aurora["table_count"] == 5
 
+    def test_mapped_tables_never_narrows_wave_1s_own_table_list(self):
+        # #380 review: a real application table the collector saw but no
+        # engine's schema design ever mapped (a framework table, or one no
+        # query touches) is still part of "the whole database moves to
+        # Aurora" -- narrowing wave 1 to "what was mapped" was tried and
+        # wrong, since it silently dropped real tables. ``mapped_tables``
+        # only adds an explanatory sentence (below), it never filters
+        # ``tables``.
+        waves = _build(
+            known_tables=KNOWN_TABLES | {"wp_never_queried", "wp_a_view"},
+            mapped_tables=KNOWN_TABLES,
+        )
+        aurora = waves[0]
+        assert sorted(aurora["tables"]) == sorted(KNOWN_TABLES | {"wp_never_queried", "wp_a_view"})
+        assert aurora["table_count"] == 6
+
+    def test_mapped_tables_adds_a_reconciling_sentence_to_the_rationale(self):
+        # #380: the judge's real complaint was an unexplained count mismatch
+        # (322 wave-1 tables vs. 280 in the migration map) -- the rationale
+        # now reconciles the two numbers instead of just stating the larger one.
+        waves = _build(
+            known_tables=KNOWN_TABLES | {"wp_never_queried", "wp_a_view"},
+            mapped_tables=KNOWN_TABLES,
+        )
+        aurora = waves[0]
+        assert "subsets of these 6 tables and views" in aurora["rationale"]
+        assert "4 of these tables and views are mapped to a target engine in a later wave" in (
+            aurora["rationale"]
+        )
+        assert "the other 2 stay on Aurora MySQL unchanged" in aurora["rationale"]
+
+    def test_no_mapped_tables_adds_no_reconciling_sentence(self):
+        # #380: no schema design ran for any engine (e.g. --llm-mode none) ->
+        # nothing is "mapped" at all, so there is nothing to reconcile yet.
+        waves = _build(known_tables=KNOWN_TABLES | {"wp_never_queried"})
+        aurora = waves[0]
+        assert "wp_never_queried" in aurora["tables"]
+        assert "mapped to a target engine" not in aurora["rationale"]
+
+    def test_system_objects_are_dropped_from_wave_1(self):
+        # #380 review: an engine stats-extension object or a system catalog
+        # schema never counts as part of "the whole database".
+        waves = _build(
+            known_tables=KNOWN_TABLES | {"pg_stat_statements", "information_schema.tables"}
+        )
+        aurora = waves[0]
+        assert "pg_stat_statements" not in aurora["tables"]
+        assert "information_schema.tables" not in aurora["tables"]
+        assert aurora["table_count"] == 4
+
+    def test_a_framework_table_with_no_mapping_still_counts(self):
+        # #380 review: ar_internal_metadata-style tables are real application
+        # schema, not an engine object -- there is no classification that
+        # drops them, and none should be invented.
+        waves = _build(known_tables=KNOWN_TABLES | {"ar_internal_metadata"})
+        aurora = waves[0]
+        assert "ar_internal_metadata" in aurora["tables"]
+
+    def test_a_real_table_merely_named_like_a_sequence_stays_in_wave_1(self):
+        # #380 round 2 review: known_tables holds the collector's own
+        # verified tables and views; the collector has no Sequence model, so
+        # a "known table" named this way (e.g. a Postgres SERIAL column's
+        # auto-created sequence shares its naming convention with real
+        # tables an app happens to call "orders_seq") is always real -- a
+        # name-suffix heuristic here could only misclassify real tables.
+        # Hallucinated sequence source_tables are already dropped earlier,
+        # in build_table_mappings (TableNameResolver), before they ever
+        # reach known_tables.
+        waves = _build(known_tables=KNOWN_TABLES | {"orders_seq", "shop.item_seq"})
+        aurora = waves[0]
+        assert "orders_seq" in aurora["tables"]
+        assert "shop.item_seq" in aurora["tables"]
+
     def test_heterogeneous_source_has_no_engine_and_flags_a_risk(self):
         waves = _build(source_engine="sqlserver", known_tables=KNOWN_TABLES)
         aurora = waves[0]

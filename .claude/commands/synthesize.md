@@ -50,11 +50,20 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
         eliminated engine named as the server) rejects the whole summary and the
         report shows a deterministic summary instead. Your text is kept in
         `summary_llm` and every finding in `summary_validation_warnings`; weaker
-        findings are recorded without rejecting
+        findings are recorded without rejecting. Naming any internal JSON field name
+        (`tco_analysis`, `cost_breakdown`, `table_mappings`, `risk_assessment`,
+        `query_groups`, `schema_designs`, `recommended_architecture`, `migration_waves`,
+        `assignment_summary`, `effective_architecture`) also rejects the whole summary
       - Reference the deterministic summary provided for factual grounding
+      - A workload share the request already gives you (e.g. `workload_percent: 77.7`)
+        is quoted exactly as given (`77.7%`), never re-rounded or re-worded ("about 78
+        percent", "roughly four-fifths"): the decision report and engineering report
+        state the same figure precisely, and a different-looking number for the same
+        fact reads as a contradiction even when it technically rounds the same way
       - No confidence scores, no cost figures (those are in the report)
       - Mention specific AWS service names (DynamoDB, OpenSearch Service, etc.)
-      - No em dashes, no hedging, no buzzwords
+      - No em dashes, no hedging ("typically", "generally", "is recommended", "not the
+        only option" -- state the fact, don't soften it), no buzzwords
       - Focus on: what engines were selected, why, and what the migration enables
    c. Output:
 

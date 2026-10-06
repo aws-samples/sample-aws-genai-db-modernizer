@@ -395,9 +395,16 @@ class TestRecommendations:
 
     def test_full_consolidation_grounds_its_cost_in_the_real_analysed_estimate(self) -> None:
         """Review of #375: when the removed engine's own analysed cost estimate
-        is available, the sentence states that real figure (traceable to
-        tco_analysis's cost_breakdown), not the ENGINE_BASE_COST +
-        EXTRA_ENGINE_BURDEN_MONTHLY operational-overhead heuristic."""
+        is available, the sentence states that real figure, not the
+        ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY operational-overhead
+        heuristic.
+
+        #380: it states the figure plainly rather than pointing the customer
+        at an internal field name (``tco_analysis``'s ``cost_breakdown``) --
+        the number itself is grounded in ``build_tco_analysis``'s own
+        ``eliminated_engine_costs`` (see ``test_synthesis_report_tco.py``),
+        so there is nothing left to point at there anyway.
+        """
         rec = _build_recommendations(
             [],
             [_record("opensearch", "aurora_postgresql", 119, saved=450)],
@@ -408,6 +415,18 @@ class TestRecommendations:
         assert "$240.96" in rec
         assert "$450" not in rec
         assert "Saves ~$" not in rec
+        assert "tco_analysis" not in rec
+        assert "cost_breakdown" not in rec
+
+    def test_no_real_cost_estimate_names_no_internal_field_either(self) -> None:
+        """#380: the no-real-cost-estimate branch used to point at
+        ``tco_analysis`` for "when available"; it now just says no figure is
+        available here, with no internal field name."""
+        rec = _build_recommendations([], [_record("documentdb", "dynamodb", 6, saved=500)], [], {})[
+            0
+        ]
+        assert "tco_analysis" not in rec
+        assert "cost_breakdown" not in rec
 
 
 class TestWrittenOutput:

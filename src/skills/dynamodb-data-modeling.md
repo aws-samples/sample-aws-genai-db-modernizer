@@ -260,6 +260,8 @@ Translate the design summary from Phase 3a into `dynamodb_model_output.json`, wh
 
 Every trade-off must trace back to specific tables and queries. Common trade-offs: denormalization decisions, GSI fan-out replacing JOINs, composite sort key designs, eventual consistency on GSI reads, hot partition mitigations, patterns moved to unsupported.
 
+Write `description` and `impact` as plain, declarative facts, not hedged ("typically", "generally", "usually") or phrased as outside advice to the reader ("is recommended before migration", "it is suggested that", "should be considered"). State the consequence and, if there is one, the concrete action -- "re-read the base item with a strongly consistent GetItem if the window matters" reads as a fact about the system; "consistency is recommended before migration" reads as a hedge about nothing. The engineering report quotes this text verbatim in a customer deliverable, so a hedge here is a hedge the customer reads.
+
 `validation_passed` — `true` only if all of the following hold:
 
 - Every `full_table_scans > 0` query is either replaced or in `unsupported_patterns`

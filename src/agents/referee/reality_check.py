@@ -1981,19 +1981,23 @@ def _build_recommendations(
         elif saved:
             real_cost = engine_infra_cost.get(source)
             if real_cost:
+                # #380 review: name the figure plainly instead of pointing at an
+                # internal field name (``tco_analysis``'s ``cost_breakdown``) --
+                # the number itself (``engine_infra_cost``, the same one
+                # ``build_tco_analysis`` carries into ``eliminated_engine_costs``
+                # for this engine) is the only thing a customer needs here.
                 outcome = (
-                    f"Removes ${real_cost:,.2f}/mo of infrastructure cost (see tco_analysis's "
-                    f"cost_breakdown for {source}'s own figure before removal), plus a "
-                    "qualitative reduction in operational overhead -- one fewer engine's worth "
-                    "of team expertise, monitoring, backups and failover to maintain -- by "
-                    f"avoiding a dedicated {source} cluster."
+                    f"Removes ${real_cost:,.2f}/mo of infrastructure cost ({source}'s own "
+                    "analysed estimate before removal), plus a qualitative reduction in "
+                    "operational overhead -- one fewer engine's worth of team expertise, "
+                    f"monitoring, backups and failover to maintain -- by avoiding a dedicated "
+                    f"{source} cluster."
                 )
             else:
                 outcome = (
                     f"Avoids running a dedicated {source} cluster: one fewer engine's worth of "
                     "team expertise, monitoring, backups and failover to maintain. No specific "
-                    f"infrastructure-cost figure is claimed here; see tco_analysis for {source}'s "
-                    "cost before removal, when available."
+                    f"infrastructure-cost figure is available for {source} to show here."
                 )
         else:
             outcome = f"{source} leaves the architecture."

@@ -36,6 +36,64 @@ from src.agents.schema_design.scope import normalize_table_name
 # previously duplicated between ``migration_waves`` and ``synthesis_handler``.
 PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
 
+# Schemas that hold only the database engine's own catalog/metadata, never an
+# application table (#380 review): a raw collector introspection that does
+# not filter by schema can pick these up alongside the real workload.
+_SYSTEM_SCHEMAS = frozenset(
+    {"information_schema", "pg_catalog", "performance_schema", "mysql", "sys"}
+)
+# Specific engine-internal objects a monitoring/stats extension installs
+# (typically in ``public``, so no system schema name to catch them by). Not
+# an exhaustive list of every such object any engine could ever expose --
+# just the ones a real collector run has actually surfaced so far; add to it
+# as new ones turn up rather than guessing at a complete set up front.
+_SYSTEM_OBJECT_NAMES = frozenset(
+    {
+        "pg_stat_statements",
+        "pg_stat_statements_info",
+        "pg_stat_activity",
+        "pg_stat_user_tables",
+        "pg_stat_user_indexes",
+        "pg_buffercache",
+    }
+)
+
+
+def is_engine_system_object(table_id: str) -> bool:
+    """True when ``table_id`` names a database-engine-internal object, never
+    a real application table (#380 review).
+
+    Two cases: a system catalog schema (``information_schema.tables``), or a
+    monitoring/stats extension's own object regardless of schema
+    (``pg_stat_statements``). Deliberately narrow and explicit, not "any
+    table a schema design didn't map to an engine" -- a real application
+    table the collector saw stays part of "the whole database" even when it
+    is a framework table (``ar_internal_metadata``) or one no in-scope query
+    happens to touch; only ever add a *name* here that is unambiguously the
+    database engine's own object, never a guess.
+
+    This is called on ``known_tables`` -- the collector's own verified
+    tables and views (#380 round 2 review): the collector contract has no
+    ``Sequence`` model at all, so a name here that merely *looks* like a
+    sequence (``orders_seq``) is always a real collected table, never an
+    actual sequence; a name-suffix heuristic here can only misclassify real
+    tables (e.g. ``order_seq``, ``shop.item_seq``). A schema design's own
+    hallucinated sequence name (``public.badge_groupings_id_seq``) is a
+    different problem, already solved earlier and more precisely by
+    ``build_table_mappings``'s own :class:`TableNameResolver` check (it
+    resolves the name against the collector's real schema and drops it
+    because no such table exists there at all) -- it never reaches here as
+    a "known" table in the first place.
+    """
+    name = str(table_id or "").strip()
+    if not name:
+        return False
+    parts = name.split(".")
+    if len(parts) > 1 and parts[0].lower() in _SYSTEM_SCHEMAS:
+        return True
+    bare = parts[-1].lower()
+    return bare in _SYSTEM_OBJECT_NAMES
+
 
 class TableNameResolver:
     """Resolves a parsed name to the collector's canonical ``table_id``/``view_id``.

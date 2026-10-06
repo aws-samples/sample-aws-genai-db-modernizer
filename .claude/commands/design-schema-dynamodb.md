@@ -116,7 +116,7 @@ Key rules for each group draft:
 - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; when group IDs collide, `--merge` renumbers them `DDB-AP-1..N` across groups and rewrites the `DDB-AP-<n>` mentions in each group's draft text and design trace to match)
 - `table_definitions[].gsis[].partition_key` and `sort_key` must be LISTS of KeyDefinition
 - Base table `partition_key` and `sort_key` are single KeyDefinition objects
-- `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine
+- `trade_offs` must be objects with: description, impact, source_tables, target_tables, query_ids, engine. State `description`/`impact` as plain facts, not hedged ("typically", "generally") or phrased as outside advice ("is recommended before migration", "it is suggested that") -- the engineering report quotes this text verbatim in a customer deliverable
 - `unsupported_patterns` for text search (LIKE '%...%') and aggregation (COUNT, GROUP BY) queries
 - Include `hot_partition_analysis` for each table
 - Set `validation_passed` to true only if all the skill's checks pass, including `--check-costs` returning `"passed": true` (step 6)

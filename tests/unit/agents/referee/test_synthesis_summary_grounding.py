@@ -293,6 +293,21 @@ class TestFinalize:
         assert out["summary_source"] == "llm"
         assert out["summary_validation_warnings"] == []
 
+    def test_internal_field_name_rejects_the_summary(self, det) -> None:
+        """#380: a summary that points the customer at one of this codebase's
+        own JSON field names (e.g. "see tco_analysis's cost_breakdown for
+        documentdb's own figure before removal") is rejected, even though it
+        names no table at all -- there is no table/engine mismatch for
+        ``check_summary_grounding`` to catch, so this needs its own check."""
+        llm = (
+            "DynamoDB serves the order and product lookups; see tco_analysis's "
+            "cost_breakdown for the figure."
+        )
+        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
+        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
+        assert out["summary_source"] == "deterministic_fallback"
+        assert any("tco_analysis" in w for w in out["summary_validation_warnings"])
+
     def test_low_confidence_finding_keeps_the_llm_text(self, det) -> None:
         llm = "Aurora MySQL keeps the orders table hot."  # one-word stem: warning only
         out = apply_synthesis_llm_output(det, {"executive_summary": llm})

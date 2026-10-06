@@ -77,6 +77,17 @@ Version History:
   and wording. Backward compatible: ``homogeneity``/``cutover_query_count``
   default to ``None`` for a wave written before they existed, and
   ``resolve_migration_waves``'s legacy fallback applies the same reorder.
+- 1.6 (2026-10-06, #380): Added optional ``current_cost_known`` to
+  ``TCOAnalysis`` (default ``True``): whether ``current_monthly_cost`` is a
+  real baseline or 0.0 only because the collector reported no RDS instance
+  metadata to estimate from -- a renderer shows "source cost not provided"
+  instead of the bare figure when this is ``False``. Added optional
+  ``eliminated_engine_costs`` (``list[CostBreakdown]``): engines the reality
+  check eliminated, each with its own analysed cost before removal, so a
+  saving a recommendation names for one is traceable here too, not only in
+  prose. Backward compatible: both default to their pre-1.6 meaning
+  (``current_cost_known`` true, ``eliminated_engine_costs`` absent) for a
+  report written before this version.
 """
 
 from datetime import datetime
@@ -181,9 +192,19 @@ class TCOAnalysis(BaseModel):
     """Total cost of ownership analysis."""
 
     current_monthly_cost: float = Field(..., ge=0)
+    # #380: whether ``current_monthly_cost`` is a real baseline or 0.0 only
+    # because the collector never reported RDS instance metadata to estimate
+    # from. Defaults ``True`` so a report written before this field existed
+    # (where 0.0 almost always did mean "no instance metadata") still reads
+    # as it always has.
+    current_cost_known: bool = Field(True)
     projected_monthly_cost: float = Field(..., ge=0)
     savings_percent: float = Field(...)
     cost_breakdown: list[CostBreakdown] | None = Field(None)
+    # #380: engines the reality check eliminated, each with its own analysed
+    # cost before removal -- so a saving a recommendation names for one is
+    # traceable here too, not only in prose.
+    eliminated_engine_costs: list[CostBreakdown] | None = Field(None)
     assumptions: list[str] | None = Field(None)
 
     model_config = ConfigDict(extra="allow")
@@ -388,7 +409,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.5",
+        default="1.6",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

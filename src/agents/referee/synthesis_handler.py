@@ -24,6 +24,7 @@ from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
     build_fallback_summary,
     check_summary_grounding,
+    check_summary_internal_leaks,
     eliminated_engines,
     engine_table_scope,
     recompute_reality_check_patterns,
@@ -49,6 +50,38 @@ from src.storage.artifact_store import ArtifactStore
 # ---------------------------------------------------------------------------
 # Seam 1: Deterministic — all builders, no LLM
 # ---------------------------------------------------------------------------
+
+
+def _eliminated_engine_costs(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    eliminated: dict[str, str | None],
+) -> dict[str, float]:
+    """Each eliminated engine's own analysed infrastructure cost (#380).
+
+    By the time ``build_tco_analysis`` runs, ``data.engines`` has already
+    dropped every engine the reality check eliminated (ADR-029 Layer E,
+    #202), so their analysis artifacts are read directly here -- the same
+    real, per-engine ``cost_estimate.monthly_cost_usd`` figure the reality
+    check's own recommendation text quotes (``_engine_infra_cost`` in
+    reality_check.py). This is the only way a saving a recommendation names
+    for an eliminated engine (e.g. "$271.80/mo") is also traceable in the TCO
+    facts the report publishes, not just in prose. An engine missing an
+    analysis artifact, or missing a cost estimate within it, is simply absent
+    from the returned dict -- callers must handle that, not assume every
+    eliminated engine has one.
+    """
+    costs: dict[str, float] = {}
+    for engine in eliminated:
+        key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
+        if not store.exists(key):
+            continue
+        analysis = store.read_json(key) or {}
+        monthly = (analysis.get("cost_estimate") or {}).get("monthly_cost_usd")
+        if isinstance(monthly, (int, float)):
+            costs[engine] = float(monthly)
+    return costs
 
 
 def run_synthesis_deterministic(
@@ -95,8 +128,6 @@ def run_synthesis_deterministic(
     table_mappings = build_table_mappings(data)
     print("[synthesis] Building query groups...")
     query_groups = build_query_groups(data)
-    print("[synthesis] Building TCO analysis...")
-    tco = build_tco_analysis(data)
     # Engines the reality check removed from the effective assignment, mapped to the
     # engine that absorbed them.
     # Every target recommendation below is grounded in the effective set (#202).
@@ -109,6 +140,12 @@ def run_synthesis_deterministic(
         if engine
     } or set(data.engines)
     eliminated = eliminated_engines(effective, reality_check_output)
+    print("[synthesis] Building TCO analysis...")
+    # #380: an eliminated engine's own analysed cost, read directly -- ``data.engines``
+    # has already dropped it (ADR-029 Layer E, #202) by this point, so a dollar figure
+    # a recommendation quotes for it is also traceable in the TCO facts, not just prose.
+    eliminated_costs = _eliminated_engine_costs(store, database_name, job_id, eliminated)
+    tco = build_tco_analysis(data, eliminated_costs=eliminated_costs)
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).
     known_tables: list[str] = sorted(
@@ -149,6 +186,14 @@ def run_synthesis_deterministic(
         if v.get("view_id")
     }
     wave_known_tables = set(known_tables) | view_ids
+    # #380 review: wave 1 still carries every table/view in ``wave_known_tables``
+    # (never narrowed to what some engine's schema design mapped -- that silently
+    # dropped real, unmapped application tables). ``mapped_table_ids`` is used only
+    # to add an explanatory sentence to wave 1's rationale, reconciling its full
+    # count against the migration map's smaller "mapped" total; ``None`` (not an
+    # empty set) when no schema design ran for any engine (e.g. ``--llm-mode
+    # none``), so there is nothing to reconcile against yet and no sentence is added.
+    mapped_table_ids = {m["source_table"] for m in table_mappings if m.get("source_table")}
     migration_waves = build_migration_waves(
         ranking=ranking,
         table_assignments=raw_table_assignments,
@@ -163,6 +208,7 @@ def run_synthesis_deterministic(
         # #321: named in wave 1's homogeneity statement when the collector
         # reported it; never invented when it didn't.
         source_version=source_database_version(data.collector),
+        mapped_tables=mapped_table_ids or None,
     )
     # #316: an assignment produced by this fix already resolved source_tables
     # noise against the collector's canonical schema (CTE aliases, system
@@ -339,6 +385,10 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
         deterministic_result.get("database_name", ""),
         deterministic_result.get("known_tables"),
     )
+    # #380: a second, independent check -- an internal field name leaked into the
+    # summary is always high-confidence (there is no low-stakes reading of it),
+    # regardless of whether any table/engine attribution also happens to be wrong.
+    findings = findings + check_summary_internal_leaks(str(llm_summary or ""))
     deterministic_result["summary_llm"] = llm_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:

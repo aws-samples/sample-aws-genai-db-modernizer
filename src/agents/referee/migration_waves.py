@@ -91,7 +91,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.table_resolution import (
+    PSEUDO_TABLES,
+    TableNameResolver,
+    is_engine_system_object,
+)
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.migration_wave_engines import (
@@ -443,6 +447,7 @@ def _aurora_wave(
     known: set[str] | None,
     table_assignments: list[dict[str, Any]],
     source_version: Any,
+    mapped_tables: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Wave 1 (#321): the whole source database moves to Aurora first.
 
@@ -472,6 +477,23 @@ def _aurora_wave(
     which is a share of calls): the whole workload runs on Aurora the moment
     this wave finishes, before any later wave has moved its own share away.
     Set by the caller (``build_migration_waves``) once every wave exists.
+
+    ``mapped_tables`` (#380 review) is the caller's set of tables some
+    engine's schema design actually mapped (``table_mappings``' own
+    ``source_table`` set, already resolved against the collector's real
+    schema). It never narrows ``tables`` -- wave 1 still carries every
+    collected base table and view, because that is what "the whole source
+    database moves 1:1" actually means, and every other deliverable
+    (``renderers.py``, ``pptx_report.py``) keeps this wave's ``table_count``
+    as the whole collected schema. It is used only to add one explanatory
+    sentence to the rationale, reconciling this wave's full count against the
+    migration map's smaller "N tables mapped to a target engine" total (the
+    #380 complaint was the two counts disagreeing with no explanation, not
+    that wave 1 counted too much): "``M`` of these are mapped to a target
+    engine in a later wave; the other ``K`` stay on ``<engine>`` unchanged."
+    Omitted (``None``) when the caller has nothing mapped at all (no schema
+    design ran for any engine, e.g. ``--llm-mode none``) -- there is nothing
+    to reconcile against yet.
     """
     source_engine = (source_engine or "").strip().lower()
     if not source_engine or source_engine in _ALREADY_AURORA:
@@ -488,6 +510,13 @@ def _aurora_wave(
     else:
         source_desc = source_name + (f" {version}" if version else "")
 
+    # #380 review: wave 1 carries the whole collected schema -- every base
+    # table and view the collector saw, minus only engine-internal noise
+    # (a sequence, a stats-extension object: ``is_engine_system_object``),
+    # never narrowed to what some later wave happens to map. A real
+    # application table with no schema-design mapping (a framework table
+    # like ``ar_internal_metadata``, or simply one no query touches) is
+    # still part of "the whole database" and stays.
     tables = sorted(known) if known is not None else _table_ids(table_assignments)
 
     if retained_engine:
@@ -507,6 +536,18 @@ def _aurora_wave(
             f"later waves have moved their share; later waves move subsets of these "
             f"{len(tables)} tables and views out of {target_name}."
         )
+        if mapped_tables is not None:
+            # #380 review: reconciles this wave's full table-and-view count
+            # against the migration map's smaller "mapped" total, so the two
+            # numbers disagreeing (322 vs 280 in the field) reads as explained,
+            # not contradictory.
+            mapped_count = len(set(tables) & mapped_tables)
+            unmapped_count = len(tables) - mapped_count
+            rationale += (
+                f" {mapped_count} of these tables and views are mapped to a target engine "
+                f"in a later wave; the other {unmapped_count} stay on {target_name} "
+                "unchanged."
+            )
         gate = (
             "Schema and data parity validated against the source database before cutover; "
             "decommission the legacy source once replication lag is zero."
@@ -842,6 +883,7 @@ def build_migration_waves(
     source_engine: str,
     known_tables: set[str] | list[str] | None = None,
     source_version: Any = None,
+    mapped_tables: set[str] | list[str] | None = None,
 ) -> list[dict[str, Any]] | None:
     """The incremental migration roadmap for this report, or ``None`` with no assignment.
 
@@ -860,17 +902,30 @@ def build_migration_waves(
     (e.g. a bare name the collector recorded schema-qualified) is carried
     under the canonical id, so it is not double-counted against
     ``known_tables``. Wave 1 (Aurora, #321) carries every table in
-    ``known_tables`` — the whole collected schema moves there first — so wave
-    table counts add up to the collected schema without a separate
-    unreferenced-table pass. ``None`` skips the filtering (back-compat for a
-    caller that cannot supply the collected schema): wave 1 then falls back to
-    every table named anywhere in ``table_assignments``.
+    ``known_tables`` — the whole collected schema moves there first, minus
+    only an engine-internal object (:func:`is_engine_system_object`: a
+    sequence, a stats-extension table/view a raw introspection can pick up
+    alongside real application tables) — so wave table counts add up to the
+    collected schema, less that engine noise, without a separate
+    unreferenced-table pass. A real application table with no later wave's
+    mapping (a framework table, or one no query touches) stays; #380 review:
+    narrowing wave 1 to "what some schema design mapped" was tried and wrong
+    -- it silently dropped real tables from "the whole database moves to
+    Aurora". ``None`` skips the filtering (back-compat for a caller that
+    cannot supply the collected schema): wave 1 then falls back to every
+    table named anywhere in ``table_assignments``.
 
     ``source_version`` is the collector's own
     ``metadata.source_database.version`` (free-form string), when the caller
     has it, used only to state what was checked for wave 1's homogeneity
     note — never to infer a feature or extension gap the collector did not
     report (#321).
+
+    ``mapped_tables`` (#380) is the caller's set of tables some engine's
+    schema design actually mapped (``table_mappings``' own ``source_table``
+    set, after it has resolved out model-written noise) -- see
+    :func:`_aurora_wave` for the explanatory sentence it adds to wave 1's
+    rationale (it never narrows wave 1's own table list).
     """
     if not ranking:
         return None
@@ -878,7 +933,12 @@ def build_migration_waves(
     source_engine = (source_engine or "").lower()
     retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine)
 
-    known: set[str] | None = None if known_tables is None else {str(t) for t in known_tables}
+    known: set[str] | None = (
+        None
+        if known_tables is None
+        else {str(t) for t in known_tables if not is_engine_system_object(str(t))}
+    )
+    mapped: set[str] | None = None if mapped_tables is None else {str(t) for t in mapped_tables}
     resolver = None if known is None else TableNameResolver.from_known_ids(known)
 
     def _canonical_in_scope(table_id: Any) -> Any | None:
@@ -899,7 +959,13 @@ def build_migration_waves(
     waves: list[dict[str, Any]] = []
 
     aurora = _aurora_wave(
-        by_engine, retained_engine, source_engine, known, table_assignments, source_version
+        by_engine,
+        retained_engine,
+        source_engine,
+        known,
+        table_assignments,
+        source_version,
+        mapped_tables=mapped,
     )
     if aurora:
         waves.append(aurora)

@@ -34,6 +34,7 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
+from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.ranking import (
@@ -382,7 +383,30 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
     Each source table gets mapped to the engine(s) whose schema design
     includes it. A table can map to multiple engines (e.g., payment stays
     in Aurora for writes but gets a DynamoDB read replica).
+
+    A schema design's own ``source_tables`` is free text a model wrote (#380):
+    it has named a Postgres sequence (``public.badge_groupings_id_seq``) as the
+    "source" for a DynamoDB id-generator table, with no real analysis behind
+    it (``table_confidence`` then defaults to 0), which inflated the migration
+    map with objects nothing actually collected. Every ``source_table`` is
+    resolved against the collector's own schema (:class:`TableNameResolver`,
+    the same canonical check ``migration_waves`` and assignment resolution
+    use, #225/#316) before it is kept: a name that does not resolve to a real
+    table or view the collector saw is dropped, never counted as a "mapped"
+    table. A name that resolves under a different spelling (a bare name the
+    collector recorded schema-qualified) is carried under the canonical id,
+    so it is not double-counted under two spellings.
     """
+    resolver = TableNameResolver.from_collector(data.collector)
+
+    def _canonical(source_table: str) -> str | None:
+        if resolver is None:
+            # No collector schema to check against (#380's guard only has teeth
+            # when there is one): fail open and keep every name, the pre-#380
+            # behavior, rather than treat a known-good caller as all noise.
+            return source_table
+        return resolver.resolve(str(source_table))
+
     # Collect all source_table → engine mappings from schema designs
     table_to_engines: dict[str, list[dict]] = {}
 
@@ -402,7 +426,10 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
             target_table_name = table_def.get("table_name", "")
             aggregate_pattern = table_def.get("aggregate_pattern", "separate")
 
-            for source_table in table_def.get("source_tables", []):
+            for raw_source_table in table_def.get("source_tables", []):
+                source_table = _canonical(raw_source_table)
+                if source_table is None:
+                    continue
                 if source_table not in table_to_engines:
                     table_to_engines[source_table] = []
 
@@ -411,7 +438,9 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
                         "engine": engine,
                         "target_table": target_table_name,
                         "aggregate_pattern": aggregate_pattern,
-                        "confidence_score": table_confidence.get(source_table, 0),
+                        "confidence_score": table_confidence.get(
+                            source_table, table_confidence.get(raw_source_table, 0)
+                        ),
                     }
                 )
 
@@ -522,8 +551,20 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     return result
 
 
-def build_tco_analysis(data: SynthesisData) -> dict:
-    """Aggregate cost estimates from all analysis outputs."""
+def build_tco_analysis(
+    data: SynthesisData, eliminated_costs: dict[str, float] | None = None
+) -> dict:
+    """Aggregate cost estimates from all analysis outputs.
+
+    ``eliminated_costs`` (#380) is each engine the reality check eliminated,
+    mapped to its own analysed ``cost_estimate.monthly_cost_usd`` -- the
+    figure a recommendation sentence names as a saving (e.g. "$271.80/mo")
+    when it recommends removing that engine's dedicated cluster. It is
+    carried into ``eliminated_engine_costs`` here so that figure is
+    traceable in the TCO facts the report publishes, not only in prose
+    elsewhere; omitted entirely (not an empty list) when there is nothing to
+    report, so a reader never sees a bare "[]" with no eliminated engine.
+    """
     target_costs = []
     total_projected = 0.0
 
@@ -546,6 +587,13 @@ def build_tco_analysis(data: SynthesisData) -> dict:
         .get("source_database", {})
         .get("rds_instance_metadata", {})
     )
+    # #380: whether there is a real source baseline to compare against at all,
+    # not just whether the rough estimate happened to come out to zero -- a
+    # customer reading "$0.00 current / 0% savings" cannot tell "no instance
+    # metadata was collected" from "the source genuinely costs nothing", and
+    # the second never happens. Renderers must show "source cost not
+    # provided" instead of the figure when this is ``False``.
+    current_cost_known = bool(rds_meta)
     # Rough RDS cost estimate based on instance class
     current_monthly = _estimate_rds_cost(rds_meta) if rds_meta else 0
 
@@ -553,8 +601,9 @@ def build_tco_analysis(data: SynthesisData) -> dict:
         round((1 - total_projected / current_monthly) * 100, 1) if current_monthly > 0 else 0
     )
 
-    return {
+    result = {
         "current_monthly_cost": current_monthly,
+        "current_cost_known": current_cost_known,
         "projected_monthly_cost": round(total_projected, 2),
         "savings_percent": savings_pct,
         "cost_breakdown": target_costs,
@@ -565,6 +614,12 @@ def build_tco_analysis(data: SynthesisData) -> dict:
             "Does not include data transfer, backups, or global tables",
         ],
     }
+    if eliminated_costs:
+        result["eliminated_engine_costs"] = [
+            {"database": engine, "monthly_cost_usd": cost}
+            for engine, cost in sorted(eliminated_costs.items())
+        ]
+    return result
 
 
 def _estimate_rds_cost(rds_meta: dict) -> float:
@@ -806,26 +861,39 @@ def build_risk_assessment(
                             assignment_reason.get(q, "") for q in sibling_qids
                         )
                         if pin_reason:
-                            # Review of #375: this anti-pattern's own flagged
-                            # queries look like simple key-value access, but a
-                            # different query on the same table is why it
-                            # stays on this engine -- say so, and offer the
-                            # alternative as a later-wave opportunity for the
-                            # flagged queries, not a blanket contradiction of
-                            # the architecture.
+                            # #380 review: this anti-pattern's own flagged queries
+                            # look like simple key-value access, but a different
+                            # query on the same table is why it stays on this
+                            # engine -- the routing is deliberate, not an open
+                            # risk, so it is resolved (not raised) rather than
+                            # kept as a MEDIUM risk whose own text says the table
+                            # "could run on a simpler engine" and whose
+                            # "mitigation" is "no action needed" (not a
+                            # mitigation at all, and a restatement of a decision
+                            # the report already made elsewhere). This is also
+                            # how two anti-patterns flagging the same
+                            # already-pinned table (e.g. "no foreign keys" and
+                            # "at most 2 patterns") stop duplicating each other
+                            # as separate open risks over largely the same
+                            # tables: both resolve here instead.
                             engine_name = display_name(engine)
-                            text += (
-                                f" This table also serves other in-scope queries that need "
-                                f"{pin_reason}, which only {engine_name} can run in this "
-                                "architecture today -- keeping the table there is deliberate, "
-                                "not an oversight."
+                            resolved.append(
+                                _resolved_risk(
+                                    engine,
+                                    severity,
+                                    text,
+                                    tables,
+                                    ids,
+                                    engine,
+                                    f"{engine_name} is also required for {pin_reason} on "
+                                    "this table, so keeping it there is a deliberate "
+                                    "routing decision, not an open risk; revisit "
+                                    "DynamoDB for this table's simple key-value reads "
+                                    "in a later wave if those other queries are "
+                                    "retired or move too",
+                                )
                             )
-                            mitigation = (
-                                f"No action needed now: the table stays on {engine_name} "
-                                f"because of {pin_reason} elsewhere on it. If those other "
-                                "queries are retired or move too, revisit DynamoDB for this "
-                                "table's simple key-value reads in a later wave."
-                            )
+                            continue
                     risk_id += 1
                     risks.append(
                         {
@@ -1044,7 +1112,19 @@ def build_risk_assessment(
                         f"{display_name(engine)}."
                     ),
                     "affected_tables": sorted(normalise([mn.get("source_table") or ""])),
-                    "mitigation": f"Implement as application logic: {logic}" if logic else None,
+                    # #380: a MEDIUM+ risk always carries a concrete mitigation --
+                    # when the schema design gave no logic to build, fall back to
+                    # a reviewable action instead of leaving it ``None`` (silently
+                    # no mitigation at all for a risk this severe).
+                    "mitigation": (
+                        f"Implement as application logic: {logic}"
+                        if logic
+                        else (
+                            f"Review {object_label or 'this object'} "
+                            f"({mn.get('object_type') or 'migration note'}) and implement its "
+                            f"logic in the application before cutover to {display_name(engine)}."
+                        )
+                    ),
                     "object_type": str(mn.get("object_type") or ""),
                     "object_name": str(mn.get("object_name") or ""),
                 }

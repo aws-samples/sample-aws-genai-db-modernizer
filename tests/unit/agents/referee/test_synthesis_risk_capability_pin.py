@@ -3,7 +3,15 @@ aurora-anti-06 "single-access-pattern-table") must not read as a flat
 contradiction of the routing when the SAME table also carries another
 in-scope query the capability gate (#338) or the utility pin (#327) pinned to
 Aurora -- it must name that reason and offer DynamoDB as a later-wave
-opportunity for the flagged queries specifically (review of #375)."""
+opportunity for the flagged queries specifically (review of #375).
+
+#380: once the reason is named, the routing is a deliberate decision, not an
+open risk -- it is resolved (``resolved_risks``), not kept as an open MEDIUM
+risk whose own "mitigation" was "No action needed now" (not a mitigation at
+all) and whose description said the table "could run on a simpler engine"
+while the decision already keeps it on Aurora. This is also how two
+anti-patterns pinned to the same table (RISK-002/003 in the field) stop
+duplicating each other as separate open risks."""
 
 from __future__ import annotations
 
@@ -58,7 +66,9 @@ def _data(sibling_reason: str) -> SynthesisData:
 
 
 class TestCapabilityPinnedTableRisk:
-    def test_sibling_query_needing_joins_names_the_reason_and_offers_a_later_wave(self) -> None:
+    def test_sibling_query_needing_joins_resolves_with_the_reason_and_a_later_wave_offer(
+        self,
+    ) -> None:
         result = build_risk_assessment(
             _data(
                 "highest confidence for aurora_mysql | [capability] dynamodb lacks required "
@@ -66,12 +76,14 @@ class TestCapabilityPinnedTableRisk:
                 "complex_joins"
             )
         )
-        risk = next(r for r in result["risks"] if "key-value workload" in r["description"])
-        assert "multi-table joins" in risk["description"]
-        assert "deliberate, not an oversight" in risk["description"]
-        assert "No action needed now" in risk["mitigation"]
-        assert "later wave" in risk["mitigation"]
-        assert "Consider DynamoDB" not in risk["mitigation"]
+        assert not any("key-value workload" in r["description"] for r in result["risks"])
+        resolved = next(
+            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
+        )
+        assert "multi-table joins" in resolved["reason"]
+        assert "deliberate routing decision, not an open risk" in resolved["reason"]
+        assert "later wave" in resolved["reason"]
+        assert resolved["resolved_on"] == "aurora_mysql"
 
     def test_sibling_query_needing_aggregation_names_that_reason(self) -> None:
         result = build_risk_assessment(
@@ -80,8 +92,11 @@ class TestCapabilityPinnedTableRisk:
                 "capability: aggregation"
             )
         )
-        risk = next(r for r in result["risks"] if "key-value workload" in r["description"])
-        assert "aggregation" in risk["description"]
+        assert not any("key-value workload" in r["description"] for r in result["risks"])
+        resolved = next(
+            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
+        )
+        assert "aggregation" in resolved["reason"]
 
     def test_sibling_utility_statement_pin_is_named_too(self) -> None:
         result = build_risk_assessment(
@@ -90,14 +105,20 @@ class TestCapabilityPinnedTableRisk:
                 "(aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin"
             )
         )
-        risk = next(r for r in result["risks"] if "key-value workload" in r["description"])
-        assert "utility or DDL statement" in risk["description"]
+        assert not any("key-value workload" in r["description"] for r in result["risks"])
+        resolved = next(
+            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
+        )
+        assert "utility or DDL statement" in resolved["reason"]
 
     def test_no_sibling_pin_keeps_the_plain_recommendation(self) -> None:
         """Control: with no capability/utility reason anywhere on the table, the
         risk keeps today's behaviour -- the catalog's own recommendation, with
-        no rewording claiming a reason that is not actually there."""
+        no rewording claiming a reason that is not actually there, and it is
+        NOT resolved away (there is no deliberate-decision reason to resolve
+        it with)."""
         result = build_risk_assessment(_data("co-dependency group → aurora_mysql"))
         risk = next(r for r in result["risks"] if "key-value workload" in r["description"])
         assert risk["mitigation"] == "Consider DynamoDB for simple key-value access."
         assert "deliberate, not an oversight" not in risk["description"]
+        assert not any("key-value workload" in r["description"] for r in result["resolved_risks"])
