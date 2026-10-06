@@ -59,6 +59,7 @@ def _latest(job_dir: Path, sub: str, name: str) -> Path:
 def measure(job_dir: Path) -> dict[str, Any]:
     """The routing shape of one job (see module docstring)."""
     from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+    from src.agents.referee.utility_statements import is_utility_statement
     from src.report.renderers import resolve_migration_waves
 
     report = json.loads(_latest(job_dir, "synthesis", "report.json").read_text())
@@ -79,6 +80,21 @@ def measure(job_dir: Path) -> dict[str, Any]:
     owners = Counter(qa["assigned_engine"] for qa in in_scope)
     total = len(in_scope) or 1
     overlay = assignment.get("cache_overlay") or {}
+
+    # #327 finding 1: a utility/metadata statement must stay on the
+    # source-compatible engine all the way to the final assignment, not just
+    # survive the initial resolver pass -- the reality check used to have no
+    # guard and sent every one of these to DynamoDB.
+    query_by_id = {q["query_id"]: q for q in collector.get("queries", {}).get("query_patterns", [])}
+    utility_off_aurora = [
+        qa["query_id"]
+        for qa in in_scope
+        if qa["assigned_engine"] != source_compatible
+        and is_utility_statement(
+            query_by_id.get(qa["query_id"], {}).get("query_text"),
+            query_by_id.get(qa["query_id"], {}).get("tables_accessed"),
+        )
+    ]
 
     waves = [
         {
@@ -111,6 +127,7 @@ def measure(job_dir: Path) -> dict[str, Any]:
             "call_share_percent": overlay.get("call_share_percent", 0.0),
         },
         "waves": waves,
+        "utility_queries_off_aurora": len(utility_off_aurora),
     }
 
 
@@ -163,6 +180,12 @@ def compare(
                     f"wave {i + 1} table_count: {b_tc} -> {a_tc} (tolerance "
                     f"{query_tolerance(b_tc)})"
                 )
+    # #327 finding 1: zero tolerance. A utility/metadata statement off the
+    # source-compatible engine is a bug (DynamoDB cannot run SHOW/SET/DDL),
+    # not a routing-shape drift to tolerate.
+    a_u = actual.get("utility_queries_off_aurora", 0)
+    if a_u:
+        problems.append(f"utility statements off the source-compatible engine: {a_u} (want 0)")
     return problems
 
 

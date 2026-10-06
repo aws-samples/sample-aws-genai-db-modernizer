@@ -143,6 +143,123 @@ class TestSignalOverrides:
         assert q3.assigned_engine == "dynamodb"  # no override, highest confidence wins
 
 
+class TestUtilityStatementsExcludedFromRouting:
+    """Utility/metadata statements never route to a target engine (#327)."""
+
+    def _collector_with_metadata(self, query_texts: dict[str, str], source_engine: str) -> dict:
+        collector = _make_collector(list(query_texts))
+        collector["metadata"] = {"source_database": {"engine": source_engine}}
+        for q in collector["queries"]["query_patterns"]:
+            q["query_text"] = query_texts[q["query_id"]]
+        return collector
+
+    def test_show_statement_pinned_to_aurora_mysql(self):
+        """SHOW FULL FIELDS would otherwise score highest for dynamodb (#327)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = self._collector_with_metadata(
+            {"q1": "SHOW FULL FIELDS FROM `wp_options`"}, "mysql"
+        )
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+        assert "utility/metadata statement" in q1.assignment_reason
+
+    def test_set_session_pinned_to_aurora_mysql(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = self._collector_with_metadata(
+            {"q1": "SET SESSION `SQL_BIG_SELECTS` = ?"}, "mysql"
+        )
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_create_extension_pinned_to_aurora_postgresql_even_with_signal_override(self):
+        """CREATE EXTENSION pg_trgm must not win text_search's signal override to opensearch."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch", "aurora_postgresql"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "CREATE EXTENSION pg_trgm",
+                }
+            ],
+        )
+        collector = self._collector_with_metadata(
+            {"q1": "CREATE EXTENSION IF NOT EXISTS pg_trgm"}, "postgresql"
+        )
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=50),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=90),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert q1.signal_override is None
+
+    def test_ordinary_query_unaffected(self):
+        """A normal SELECT keeps the normal confidence-scoring outcome."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = self._collector_with_metadata({"q1": "SELECT * FROM wp_posts"}, "mysql")
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+
+    def test_tableless_catalog_call_pinned_to_aurora_postgresql(self):
+        """discourse shape: obj_description($1::regclass::oid, $2), no real source table."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_postgresql"])
+        collector = self._collector_with_metadata(
+            {"q1": "SELECT obj_description($1::regclass::oid, $2)"}, "postgresql"
+        )
+        for q in collector["queries"]["query_patterns"]:
+            q["tables_accessed"] = ["unknown"]
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert "utility/metadata statement" in q1.assignment_reason
+
+    def test_no_aurora_engine_leaves_scored_assignment(self):
+        """With no Aurora candidate, the scored assignment is left in place."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb"])
+        collector = self._collector_with_metadata({"q1": "SHOW TABLES"}, "mysql")
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+
+
 class TestAntiPatternPenalties:
     """Test that anti-pattern penalties demote engines for specific queries."""
 

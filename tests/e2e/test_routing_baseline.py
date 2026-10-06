@@ -91,3 +91,22 @@ def test_compare_catches_a_small_engine_growing() -> None:
     more_cached["cache_overlay"] = {"queries": 12, "call_share_percent": 26.0}
     assert any("cached reads: 3 -> 12" in p for p in compare(base, more_cached))
     assert compare(base, json.loads(json.dumps(base))) == []
+
+
+def test_compare_fails_zero_tolerance_on_utility_statements_off_aurora() -> None:
+    """#327 finding 1: a utility statement off the source-compatible engine always fails,
+    even by one query -- there is no tolerance window for this kind of bug."""
+    base = {
+        "owner_share_percent": {"aurora_mysql": 26.2, "dynamodb": 73.8},
+        "owner_queries": {"aurora_mysql": 28, "dynamodb": 79},
+        "source_compatible_share_percent": 26.2,
+        "owner_engines": 2,
+        "cache_overlay": {"queries": 20, "call_share_percent": 83.4},
+        "waves": [],
+        "utility_queries_off_aurora": 0,
+    }
+    assert compare(base, json.loads(json.dumps(base))) == []
+    regressed = json.loads(json.dumps(base))
+    regressed["utility_queries_off_aurora"] = 1
+    problems = compare(base, regressed)
+    assert any("utility statements off the source-compatible engine: 1" in p for p in problems)

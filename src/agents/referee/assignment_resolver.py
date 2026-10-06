@@ -37,6 +37,7 @@ from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overl
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
@@ -252,6 +253,33 @@ class AssignmentResolver:
             )
             for qid in fallback_qids:
                 assigned[qid] = aurora_fallback
+
+        # Step 7b: Utility and metadata statements never enter engine routing
+        # (#327). SHOW/SET/DESCRIBE/EXPLAIN/CREATE/ALTER/DROP and catalog
+        # lookups (information_schema, pg_catalog) are database-administration
+        # traffic, not an application access pattern a target engine needs to
+        # serve -- a purpose-built engine like DynamoDB has no concept of a
+        # column list to SHOW or a session variable to SET. They are pinned to
+        # the source-compatible relational engine, overriding whatever the
+        # confidence-scoring path above picked, so every other artifact still
+        # accounts for every collected query. If no Aurora engine is in play,
+        # the scored assignment is left as-is rather than left unset.
+        utility_engine = pick_aurora_engine(
+            analysis_outputs.keys(),
+            source_database_engine(collector_output),
+            Counter(e for e in assigned.values() if e),
+        )
+        if utility_engine:
+            for query in queries:
+                qid = query["query_id"]
+                if is_utility_statement(query.get("query_text"), query.get("tables_accessed")):
+                    assigned[qid] = utility_engine
+                    assigned_confidence[qid] = 100
+                    assigned_reason[qid] = (
+                        "utility/metadata statement — kept on source-compatible "
+                        f"relational engine ({utility_engine})"
+                    )
+                    assigned_signal.pop(qid, None)
 
         # Step 8: Cache overlay (#296): hot bounded reads get cache_engine; the
         # owner stays the engine assigned above.
