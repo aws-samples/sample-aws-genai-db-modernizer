@@ -44,6 +44,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from src.agents.referee.cache_overlay import HOT_READ_MIN_CALLS_PER_SECOND
+from src.agents.referee.capability_registry import (
+    detect_required_capabilities,
+    requires_aggregation_capability,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +250,6 @@ _TIMESTAMP_RE = re.compile(
     re.IGNORECASE,
 )
 _SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
-_AGGREGATION_RE = re.compile(r"\b(sum|count|avg)\s*\(", re.IGNORECASE)
 
 
 def _detect_query_signals(co: dict) -> list[TriageSignal]:
@@ -312,14 +315,19 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         if qtype == "SELECT" and cps < 0.1:
             low_freq_reads.append(qid)
 
-        # Group 5: Complex joins (3+ tables)
-        if join_count >= 3 or (q.get("has_joins") and text.count(" join ") >= 3):
+        # Group 5: Complex joins (3+ tables, i.e. 2+ JOIN clauses). join_count
+        # >= 3 used to require 4+ tables -- a 3-table join (join_count == 2)
+        # scored no signal at all and was free to move to DynamoDB (#338).
+        if join_count >= 2 or (q.get("has_joins") and text.count(" join ") >= 2):
             complex_joins.append(qid)
 
-        # Group 6: Aggregations
-        if _AGGREGATION_RE.search(text) and re.search(r"\bgroup\s+by\b", text):
-            aggregations.append(qid)
-        elif re.search(r"\b(sum|count|avg|min|max)\s*\(", text) and q.get("has_joins"):
+        # Group 6: Aggregations -- an aggregate function call needs real
+        # aggregation capability on one table just as much as a joined one
+        # (COUNT(*)/FOUND_ROWS() on a single table used to score no signal at
+        # all). A GROUP BY with no aggregate function and no HAVING is a
+        # dedup technique (#336), not an aggregation, so it is excluded here
+        # the same way the capability gate excludes it.
+        if requires_aggregation_capability(text):
             aggregations.append(qid)
 
         # Group 7: Large result sets / bulk scans
@@ -563,8 +571,6 @@ def _detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[st
     Combines regex detection on SQL text with signal-based derivation.
     Only returns entries for queries that actually require capabilities.
     """
-    from src.agents.referee.capability_registry import detect_required_capabilities
-
     queries = co.get("queries", {}).get("query_patterns", [])
     if not queries:
         return {}
@@ -580,7 +586,7 @@ def _detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[st
         qid = q.get("query_id", "")
         query_text = q.get("query_text", "")
         sigs = query_signal_map.get(qid, [])
-        caps = detect_required_capabilities(query_text, sigs)
+        caps = detect_required_capabilities(query_text, sigs, q.get("tables_accessed"))
         if caps:
             result[qid] = caps
 
