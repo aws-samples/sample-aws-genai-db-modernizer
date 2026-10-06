@@ -73,7 +73,7 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
 
     Never mutates ``schema``.
     """
-    table_defs = list(schema.get("table_definitions", []))
+    table_defs = list(schema.get("table_definitions") or [])
 
     if engine in AURORA_ENGINES:
         source_db = schema.get("source_database", "")
@@ -96,14 +96,14 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
                 "source_tables": idx.get("source_tables", []),
                 "aggregate_pattern": "search_index",
             }
-            for idx in schema.get("index_designs", [])
+            for idx in (schema.get("index_designs") or [])
         ] + [
             {
                 "table_name": ds.get("data_stream_name", ""),
                 "source_tables": ds.get("source_tables", []),
                 "aggregate_pattern": "data_stream",
             }
-            for ds in schema.get("data_stream_designs", [])
+            for ds in (schema.get("data_stream_designs") or [])
         ]
     if engine == "documentdb":
         return [
@@ -112,7 +112,7 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
                 "source_tables": coll.get("source_tables", []),
                 "aggregate_pattern": "document_collection",
             }
-            for coll in schema.get("collections", [])
+            for coll in (schema.get("collections") or [])
         ]
     if engine == "elasticache":
         return [
@@ -121,7 +121,7 @@ def schema_table_defs(engine: str, schema: dict) -> list[dict]:
                 "source_tables": kd.get("source_tables", []),
                 "aggregate_pattern": kd.get("data_type", "unknown"),
             }
-            for kd in schema.get("key_designs", [])
+            for kd in (schema.get("key_designs") or [])
         ]
     return []
 
