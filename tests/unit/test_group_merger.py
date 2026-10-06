@@ -7,8 +7,10 @@ from src.agents.schema_design.group_merger import (
     OVERLAP_PREFIX,
     merge_failures,
     merge_group_drafts,
+    merge_schema_groups,
     merge_warnings,
 )
+from src.storage.local_store import LocalArtifactStore
 
 
 class TestMergeGroupDrafts:
@@ -726,3 +728,157 @@ class TestDynamoDBPerDraftRenames:
         billing = next(t for t in result["trade_offs"] if t["description"] == "billing")
         assert billing["target_tables"] == ["Accounts"]
         assert result["validation_passed"] is True
+
+
+class TestMergeSchemaGroupsCarriesExcludedQueries:
+    """#276/#369: a query --split left out of every group (no source table)
+    must still be visible on the merged schema output, not silently dropped
+    once drafts are merged."""
+
+    BASE = "wordpress/job-001/schema-dynamodb/v1"
+
+    def test_excluded_queries_appear_on_the_merged_output(self, tmp_path) -> None:
+        store = LocalArtifactStore(str(tmp_path))
+        store.write_json(
+            f"{self.BASE}/groups_manifest.json",
+            {
+                "job_id": "job-001",
+                "database_name": "wordpress",
+                "target_engine": "dynamodb",
+                "total_queries": 7,
+                "total_groups": 1,
+                "groups": [
+                    {
+                        "group_index": 0,
+                        "group_name": "wp_posts",
+                        "primary_tables": ["wordpress.wp_posts"],
+                        "query_count": 6,
+                        "table_count": 1,
+                        "input_file": "input_group_0.json",
+                        "input_pages": [],
+                    }
+                ],
+                "excluded_queries": [
+                    {"query_id": "q-catalog-0", "reason": "not designed: no source table"}
+                ],
+            },
+        )
+        store.write_json(
+            f"{self.BASE}/schema_draft_group_0.json",
+            {
+                "table_definitions": [],
+                "access_patterns": [],
+                "unsupported_patterns": [],
+                "migration_notes": [],
+                "hot_partition_analysis": [],
+                "trade_offs": [],
+                "validation_failures": [],
+            },
+        )
+
+        merged = merge_schema_groups("job-001", "wordpress", "dynamodb", store)
+
+        assert merged["excluded_queries"] == [
+            {"query_id": "q-catalog-0", "reason": "not designed: no source table"}
+        ]
+        written = store.read_json(f"{self.BASE}/schema_output.json")
+        assert written["excluded_queries"] == merged["excluded_queries"]
+
+    def test_no_excluded_queries_key_when_manifest_has_none(self, tmp_path) -> None:
+        """No regression: a manifest without excluded_queries (the common
+        case) must not add the key to the merged output at all."""
+        store = LocalArtifactStore(str(tmp_path))
+        store.write_json(
+            f"{self.BASE}/groups_manifest.json",
+            {
+                "job_id": "job-001",
+                "database_name": "wordpress",
+                "target_engine": "dynamodb",
+                "total_queries": 6,
+                "total_groups": 1,
+                "groups": [
+                    {
+                        "group_index": 0,
+                        "group_name": "wp_posts",
+                        "primary_tables": ["wordpress.wp_posts"],
+                        "query_count": 6,
+                        "table_count": 1,
+                        "input_file": "input_group_0.json",
+                        "input_pages": [],
+                    }
+                ],
+            },
+        )
+        store.write_json(
+            f"{self.BASE}/schema_draft_group_0.json",
+            {
+                "table_definitions": [],
+                "access_patterns": [],
+                "unsupported_patterns": [],
+                "migration_notes": [],
+                "hot_partition_analysis": [],
+                "trade_offs": [],
+                "validation_failures": [],
+            },
+        )
+
+        merged = merge_schema_groups("job-001", "wordpress", "dynamodb", store)
+
+        assert "excluded_queries" not in merged
+
+
+class TestMergeSchemaGroupsSkipsWhenEveryQueryIsPseudoOnly:
+    """#276/#369 (reviewer suggestion 1): when every assigned query touches
+    no source table, --split's manifest has zero groups and only
+    excluded_queries. Merging that must write a skipped schema_output.json,
+    not raise "No group drafts found" -- there is nothing wrong, there is
+    just nothing to design."""
+
+    BASE = "discourse/job-001/schema-dynamodb/v1"
+
+    def test_writes_a_skipped_output_carrying_excluded_queries(self, tmp_path) -> None:
+        store = LocalArtifactStore(str(tmp_path))
+        excluded = [
+            {"query_id": "q-catalog-0", "reason": "not designed: no source table"},
+            {"query_id": "q-catalog-1", "reason": "not designed: no source table"},
+        ]
+        store.write_json(
+            f"{self.BASE}/groups_manifest.json",
+            {
+                "job_id": "job-001",
+                "database_name": "discourse",
+                "target_engine": "dynamodb",
+                "total_queries": 2,
+                "total_groups": 0,
+                "groups": [],
+                "excluded_queries": excluded,
+            },
+        )
+
+        merged = merge_schema_groups("job-001", "discourse", "dynamodb", store)
+
+        assert merged["status"] == "skipped"
+        assert merged["target_type"] == "dynamodb"
+        assert merged["excluded_queries"] == excluded
+        written = store.read_json(f"{self.BASE}/schema_output.json")
+        assert written == merged
+
+    def test_still_raises_when_zero_groups_and_no_excluded_queries(self, tmp_path) -> None:
+        """A manifest with zero groups and nothing excluded either is a
+        different, genuine failure (e.g. a malformed manifest) -- it must
+        keep raising, not silently write an empty skip."""
+        store = LocalArtifactStore(str(tmp_path))
+        store.write_json(
+            f"{self.BASE}/groups_manifest.json",
+            {
+                "job_id": "job-001",
+                "database_name": "discourse",
+                "target_engine": "dynamodb",
+                "total_queries": 0,
+                "total_groups": 0,
+                "groups": [],
+            },
+        )
+
+        with pytest.raises(ValueError, match="No group drafts found"):
+            merge_schema_groups("job-001", "discourse", "dynamodb", store)

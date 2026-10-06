@@ -212,12 +212,16 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
 
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
     manifest = store.read_json(f"{base_key}/groups_manifest.json")
+    excluded_queries = manifest.get("excluded_queries") or []
     _output(
         {
             "status": "split",
             "assignment_version": assignment_version,
             "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
             "groups": _group_entries(store, base_key, manifest),
+            # Queries with no source table (#276/#369): left out of every
+            # group, so their count would otherwise be invisible here.
+            "excluded_count": len(excluded_queries),
         }
     )
 

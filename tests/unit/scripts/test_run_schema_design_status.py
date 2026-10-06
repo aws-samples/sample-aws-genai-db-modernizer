@@ -285,6 +285,44 @@ def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_pat
     assert status["groups"][1]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_1.json")
 
 
+def test_split_reports_the_excluded_count(monkeypatch, capsys, tmp_path):
+    """#276/#369: queries with no source table are left out of every group;
+    --split's stdout must still say how many, not just silently shrink
+    total_groups with no explanation."""
+
+    def fake_split(*, job_id, database_name, target_type, store, assignment_version):
+        _manifest(store)
+        manifest = store.read_json(f"{BASE}/groups_manifest.json")
+        manifest["excluded_queries"] = [
+            {"query_id": "q-catalog-0", "reason": "not designed: no source table"},
+            {"query_id": "q-catalog-1", "reason": "not designed: no source table"},
+        ]
+        store.write_json(f"{BASE}/groups_manifest.json", manifest)
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_split", fake_split)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--split")
+
+    assert code == 0
+    assert status["excluded_count"] == 2
+
+
+def test_split_reports_zero_excluded_when_manifest_has_none(monkeypatch, capsys, tmp_path):
+    """No regression: a manifest without excluded_queries (the common case,
+    and every manifest written before #369) reports 0, not a missing key or
+    an error."""
+
+    def fake_split(*, job_id, database_name, target_type, store, assignment_version):
+        _manifest(store)
+
+    monkeypatch.setattr("src.agents.schema_design.handler.run_schema_split", fake_split)
+
+    code, status = _run(monkeypatch, capsys, tmp_path, "--split")
+
+    assert code == 0
+    assert status["excluded_count"] == 0
+
+
 def test_split_prints_each_groups_read_pages(monkeypatch, capsys, tmp_path):
     # #272: a group subagent reads its input one Read call per page.
     pages = [{"offset": 1, "limit": 400}, {"offset": 401, "limit": 120}]

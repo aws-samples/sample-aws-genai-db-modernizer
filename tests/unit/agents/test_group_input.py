@@ -404,9 +404,193 @@ def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> Non
         store=store,
     )
 
-    assert manifest.total_groups >= 2  # 25 queries over MAX_GROUP_SIZE=20
+    # 25 queries, all on one table, over MAX_GROUP_SIZE=20: the cluster is
+    # sub-split into two chunks (20 + 5), so no group has zero tables and no
+    # query is excluded (none of these queries is pseudo-table-only).
+    assert manifest.excluded_queries == []
+    assert manifest.total_groups >= 2
     assert sum(g.query_count for g in manifest.groups) == 25
     for g in manifest.groups:
         assert g.table_count > 0, f"group {g.group_name!r} has no tables"
         data = json.loads((tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text())
         CollectorOutputContract.model_validate(data["collector_output"])
+
+
+def _catalog_queries(n: int, start: int = 0) -> list[dict]:
+    """``n`` queries whose only table is the pseudo table ``unknown`` (#276):
+    catalog/utility statements like ``SELECT obj_description(...)``."""
+    return [
+        {
+            "query_id": f"q-catalog-{start + i}",
+            "query_text": "SELECT obj_description($1::regclass::oid, $2)",
+            "query_type": "SELECT",
+            "tables_accessed": ["unknown"],
+            "frequency_per_hour": 36.0,
+            "calls_per_second": 0.01,
+        }
+        for i in range(n)
+    ]
+
+
+def test_split_excludes_no_source_table_queries_instead_of_grouping_them(tmp_path) -> None:
+    """#276/#369: catalog/utility queries with ``tables_accessed: ["unknown"]``
+    must not form their own group with zero real tables, and must not be
+    folded into a real table's group either (that just asks that table's
+    design to invent access patterns for a catalog query it cannot serve).
+    They are left out of every group and listed in the manifest instead.
+
+    Not asserted: an exact ``total_groups`` count. #367's better clustering
+    (table-name resolution before FK/co-dependency clustering) can legitimately
+    change how many groups the fixture's own, non-catalog queries land in; what
+    this test cares about is the three invariants #276 is actually about.
+    """
+    collector = get_ecommerce_collector_output()
+    catalog_queries = _catalog_queries(6)
+    queries = collector["queries"]["query_patterns"] + catalog_queries
+    analysis = _analysis(collector)
+    store = LocalArtifactStore(str(tmp_path))
+
+    manifest = split_schema_input(
+        job_id="j1",
+        database_name="ecommerce",
+        engine="dynamodb",
+        collector_output=collector,
+        analysis_output=analysis,
+        queries=queries,
+        store=store,
+    )
+
+    assert sum(g.query_count for g in manifest.groups) + len(manifest.excluded_queries) == len(
+        queries
+    )
+    assert {e.query_id for e in manifest.excluded_queries} == {
+        q["query_id"] for q in catalog_queries
+    }
+    assert all(e.reason == "not designed: no source table" for e in manifest.excluded_queries)
+    # No group was named after, or contains, the pseudo table.
+    assert all("unknown" not in g.primary_tables for g in manifest.groups)
+    for g in manifest.groups:
+        assert g.table_count > 0, f"group {g.group_name!r} has no tables"
+        data = json.loads((tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text())
+        # Must validate against the full contract the Bedrock path checks.
+        CollectorOutputContract.model_validate(data["collector_output"])
+
+
+def test_split_excludes_catalog_queries_even_when_the_largest_group_is_full(
+    tmp_path,
+) -> None:
+    """#367 review finding 1 (critical): folding tableless queries into the
+    target group used to re-chunk it once the merge pushed it over
+    MAX_GROUP_SIZE, so a chunk after the first held only catalog queries --
+    a zero-table group again, just one layer removed. Excluding catalog
+    queries before grouping at all means the real group's size is never
+    inflated by them in the first place, so this can't happen regardless of
+    how full the real group already is.
+    """
+    collector = get_ecommerce_collector_output()
+    base = collector["queries"]["query_patterns"][0]
+    real_queries = [
+        {**base, "query_id": f"q-prod-{i}", "tables_accessed": [PRODUCTS]}
+        for i in range(MAX_GROUP_SIZE)  # the largest group already has exactly 20 queries
+    ]
+    catalog_queries = _catalog_queries(6)
+    queries = real_queries + catalog_queries
+    analysis = _analysis(collector)
+    store = LocalArtifactStore(str(tmp_path))
+
+    manifest = split_schema_input(
+        job_id="j1",
+        database_name="ecommerce",
+        engine="dynamodb",
+        collector_output=collector,
+        analysis_output=analysis,
+        queries=queries,
+        store=store,
+    )
+
+    assert len(manifest.excluded_queries) == 6
+    assert {e.query_id for e in manifest.excluded_queries} == {
+        q["query_id"] for q in catalog_queries
+    }
+    for g in manifest.groups:
+        assert g.table_count > 0, f"group {g.group_name!r} has no tables"
+        assert g.query_count <= MAX_GROUP_SIZE
+        data = json.loads((tmp_path / "ecommerce/j1/schema-dynamodb/v1" / g.input_file).read_text())
+        CollectorOutputContract.model_validate(data["collector_output"])
+    # The real queries were never inflated by the catalog queries riding along.
+    assert sum(g.query_count for g in manifest.groups) == MAX_GROUP_SIZE
+
+
+def test_split_leaves_a_genuine_resolution_failure_in_its_own_group(tmp_path) -> None:
+    """#367 review finding 369-2: "no matching table" must not fold a real,
+    just-unresolved table name together with catalog queries. A query naming
+    a real table the collector's schema does not have (a spelling mismatch,
+    not a pseudo table) stays in normal grouping -- visible if it still
+    can't be designed, rather than silently merged away with the catalog
+    queries. (This case is a genuine resolution failure that #367's resolver
+    would fix at the source; left loud here rather than papered over.)
+    """
+    collector = get_ecommerce_collector_output()
+    mismatched_queries = [
+        {
+            "query_id": f"q-mismatch-{i}",
+            "query_text": "SELECT * FROM wp_users",
+            "query_type": "SELECT",
+            "tables_accessed": ["wp_users"],  # not a pseudo table, but unknown to the collector
+            "frequency_per_hour": 10.0,
+            "calls_per_second": 1.0,
+        }
+        for i in range(6)
+    ]
+    queries = collector["queries"]["query_patterns"] + mismatched_queries
+    analysis = _analysis(collector)
+    store = LocalArtifactStore(str(tmp_path))
+
+    manifest = split_schema_input(
+        job_id="j1",
+        database_name="ecommerce",
+        engine="dynamodb",
+        collector_output=collector,
+        analysis_output=analysis,
+        queries=queries,
+        store=store,
+    )
+
+    # Not excluded: these queries name a real (if unresolved) table, not a
+    # pseudo one, so they are not "no source table" and are not silently
+    # dropped from the manifest's accounting either way.
+    assert manifest.excluded_queries == []
+    mismatch_group = next(g for g in manifest.groups if g.group_name == "wp_users")
+    assert mismatch_group.query_count == 6
+    assert mismatch_group.table_count == 0  # genuine resolution failure stays visible
+
+
+def test_split_then_merge_when_every_query_is_pseudo_only(tmp_path) -> None:
+    """#276/#369 (reviewer suggestion 1), end to end: an engine assigned only
+    catalog/utility queries has zero groups to split into, so --merge must
+    write a skipped schema_output.json carrying excluded_queries instead of
+    raising "No group drafts found" for an engine that was never broken."""
+    from src.agents.schema_design.group_merger import merge_schema_groups
+
+    collector = get_ecommerce_collector_output()
+    catalog_queries = _catalog_queries(6)
+    analysis = _analysis(collector)
+    store = LocalArtifactStore(str(tmp_path))
+
+    manifest = split_schema_input(
+        job_id="j1",
+        database_name="ecommerce",
+        engine="dynamodb",
+        collector_output=collector,
+        analysis_output=analysis,
+        queries=catalog_queries,  # only pseudo-table-only queries assigned
+        store=store,
+    )
+
+    assert manifest.total_groups == 0
+    assert len(manifest.excluded_queries) == 6
+
+    merged = merge_schema_groups("j1", "ecommerce", "dynamodb", store)
+
+    assert merged["status"] == "skipped"
+    assert len(merged["excluded_queries"]) == 6

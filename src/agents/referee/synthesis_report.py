@@ -902,6 +902,36 @@ def build_risk_assessment(
                 }
             )
 
+        # Queries --split left out of every design group because they touch no
+        # source table (catalog/utility statements, #276/#369): a deterministic
+        # out-of-scope note, same as an unsupported pattern, so they are visible
+        # in the report rather than silently missing from both coverage and risks.
+        excluded_queries = schema.get("excluded_queries") or []
+        if excluded_queries:
+            risk_id += 1
+            excluded_ids = sorted(
+                {str(e.get("query_id")) for e in excluded_queries if e.get("query_id")}
+            )
+            n_excluded = len(excluded_ids)
+            risks.append(
+                {
+                    "risk_id": f"RISK-{risk_id:03d}",
+                    "risk_type": "MIGRATION_COMPLEXITY",
+                    "severity": "LOW",
+                    "description": (
+                        f"[{engine}] Not designed: {n_excluded} "
+                        f"{'query' if n_excluded == 1 else 'queries'} touch no source "
+                        "table (catalog/utility statements) and were left out of "
+                        "schema design."
+                    ),
+                    "affected_tables": [],
+                    "mitigation": (
+                        "Review whether these statements should be routed to this " "engine at all."
+                    ),
+                    "query_ids": excluded_ids,
+                }
+            )
+
         # Migration notes from schema design
         # The description names the object; the logic to build is the mitigation (#252).
         for mn in schema.get("migration_notes", []):

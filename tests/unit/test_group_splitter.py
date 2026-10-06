@@ -4,6 +4,7 @@ from src.agents.schema_design.group_splitter import (
     MAX_GROUP_SIZE,
     build_groups,
     get_primary_table,
+    has_no_source_table,
     tables_for_queries,
 )
 
@@ -24,6 +25,31 @@ class TestGetPrimaryTable:
     def test_returns_unknown_for_no_tables(self):
         q = _make_query("q1", [])
         assert get_primary_table(q, "db") == "unknown"
+
+
+class TestHasNoSourceTable:
+    """#276/#369: only queries touching nothing but pseudo tables count."""
+
+    def test_true_for_only_unknown(self):
+        assert has_no_source_table(_make_query("q1", ["unknown"])) is True
+
+    def test_true_for_only_dual(self):
+        assert has_no_source_table(_make_query("q1", ["DUAL"])) is True
+
+    def test_true_for_no_tables_at_all(self):
+        assert has_no_source_table(_make_query("q1", [])) is True
+
+    def test_false_for_a_real_table(self):
+        assert has_no_source_table(_make_query("q1", ["db.users"])) is False
+
+    def test_false_when_mixed_with_a_real_table(self):
+        assert has_no_source_table(_make_query("q1", ["unknown", "db.users"])) is False
+
+    def test_false_for_an_unresolved_but_real_looking_name(self):
+        """A genuine resolution failure (a real table name the collector's
+        schema just doesn't have, e.g. a spelling mismatch) is NOT "no source
+        table" -- it is a different problem (367's review, finding 369-2)."""
+        assert has_no_source_table(_make_query("q1", ["wp_users"])) is False
 
 
 class TestBuildGroups:

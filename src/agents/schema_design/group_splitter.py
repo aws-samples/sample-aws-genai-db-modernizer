@@ -28,8 +28,16 @@ from src.agents.schema_design.group_input import (
     read_pages,
     render_group_input,
 )
-from src.contracts.schema_design_input import SchemaDesignGroupEntry, SchemaDesignGroupsManifest
+from src.contracts.schema_design_input import (
+    ExcludedQuery,
+    SchemaDesignGroupEntry,
+    SchemaDesignGroupsManifest,
+)
 from src.storage.artifact_store import ArtifactStore
+
+# A query with no reason to see any table at all. The exclusion reason
+# written to the split manifest for these (#276/#369).
+NO_SOURCE_TABLE_REASON = "not designed: no source table"
 
 # Groups with fewer queries than this get batched together
 SMALL_GROUP_THRESHOLD = 5
@@ -52,6 +60,26 @@ def get_primary_table(query: dict, db_name: str) -> str:
         if t.startswith(prefix):
             return t
     return tables[0] if tables else "unknown"
+
+
+def has_no_source_table(query: dict) -> bool:
+    """True when ``query`` touches nothing but pseudo tables (#276/#369).
+
+    A catalog or utility statement (``SELECT obj_description(...)``,
+    ``SELECT pg_get_serial_sequence(...)``, ...) has ``tables_accessed``
+    that is empty or only ``PSEUDO_TABLES`` (``unknown``, ``DUAL``) -- it
+    names no real source table at all, so there is nothing to design
+    against, ever, regardless of what the collector's schema contains.
+
+    This is a narrower, and different, condition than "no table matched":
+    a query naming a real table the collector's schema doesn't have (a
+    spelling mismatch, a genuine resolution failure) is NOT "no source
+    table" -- it stays in the normal grouping, visible if it still can't be
+    designed, rather than being quietly folded away with catalog queries
+    (367's review, finding 369-2).
+    """
+    tables = query.get("tables_accessed") or []
+    return all(t in PSEUDO_TABLES for t in tables)
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +472,16 @@ def split_schema_input(
             co-dependent queries are designed together.
 
     Returns:
-        SchemaDesignGroupsManifest with group entries.
+        SchemaDesignGroupsManifest with group entries. A query that touches no
+        source table (``has_no_source_table``, #276/#369) is left out of every
+        group -- there is nothing to design it against, and routing it into a
+        real table's group would ask that table's design to invent access
+        patterns for a catalog/utility statement it cannot serve either. It is
+        listed in the manifest's ``excluded_queries`` instead, so merge and
+        synthesis can account for it rather than silently dropping it. A query
+        that names a real table the collector's schema does not have (a
+        genuine resolution failure, not a pseudo table) is NOT excluded: it
+        stays in normal grouping, visible if it still can't be designed.
     """
     all_tables = collector_output.get("database_schema", {}).get("tables", [])
     # Built once and reused for every group (367-1): the same resolution
@@ -452,8 +489,14 @@ def split_schema_input(
     # a group's tables don't regress to an exact-string match once an engine
     # has more than one group.
     resolver = TableNameResolver.from_collector(collector_output)
+    design_queries = [q for q in queries if not has_no_source_table(q)]
+    excluded_queries = [
+        ExcludedQuery(query_id=str(q["query_id"]), reason=NO_SOURCE_TABLE_REASON)
+        for q in queries
+        if has_no_source_table(q) and q.get("query_id") is not None
+    ]
     groups = build_groups(
-        queries,
+        design_queries,
         database_name,
         collector_output,
         analysis_output,
@@ -467,12 +510,12 @@ def split_schema_input(
             job_id,
             database_name,
             engine,
-            len(queries),  # no group index is larger (one group has 1+ queries)
+            len(design_queries),  # no group index is larger (one group has 1+ queries)
             group,
             tables,
             collector_output,
             analysis_output,
-            len(queries),
+            len(design_queries),
         )
         text = render_group_input(data)
         if len(read_pages(text)) > MAX_GROUP_INPUT_PAGES:
@@ -496,7 +539,7 @@ def split_schema_input(
                 group_tables,
                 collector_output,
                 analysis_output,
-                len(queries),
+                len(design_queries),
             )
         )
         input_file = f"input_group_{idx}.json"
@@ -521,6 +564,7 @@ def split_schema_input(
         total_queries=len(queries),
         total_groups=len(manifest_groups),
         groups=manifest_groups,
+        excluded_queries=excluded_queries,
     )
 
     store.write_json(f"{base_key}/groups_manifest.json", manifest.model_dump())

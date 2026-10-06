@@ -122,3 +122,47 @@ class TestUnsupportedPatternRisksCarryRealText:
         assert len(out["risks"]) == 3
         for risk, pattern in zip(out["risks"], _ELASTICACHE_UNSUPPORTED, strict=True):
             assert risk["query_ids"] == sorted(pattern["source_query_ids"])
+
+
+class TestExcludedQueriesBecomeADeterministicNote:
+    """#276/#369: --split's excluded_queries ("not designed: no source
+    table") must surface as a visible, deterministic note in the report,
+    not silently vanish once schema design finishes."""
+
+    _EXCLUDED = [
+        {"query_id": "q-catalog-0", "reason": "not designed: no source table"},
+        {"query_id": "q-catalog-1", "reason": "not designed: no source table"},
+    ]
+
+    def test_excluded_queries_produce_a_low_severity_risk(self) -> None:
+        data = SynthesisData(job_id="job-1", database_name="discourse")
+        data.triage = {"selected_agents": [{"agent_type": "dynamodb"}]}
+        data.engines["dynamodb"] = EngineArtifacts(
+            engine="dynamodb",
+            analysis={},
+            schema_design={"excluded_queries": self._EXCLUDED, "unsupported_patterns": []},
+        )
+
+        out = build_risk_assessment(data)
+
+        assert len(out["risks"]) == 1
+        risk = out["risks"][0]
+        assert risk["severity"] == "LOW"
+        assert risk["risk_type"] == "MIGRATION_COMPLEXITY"
+        assert "[dynamodb]" in risk["description"]
+        assert "2 queries" in risk["description"]
+        assert "no source table" in risk["description"]
+        assert risk["query_ids"] == ["q-catalog-0", "q-catalog-1"]
+        assert risk["affected_tables"] == []
+
+    def test_no_risk_when_no_engine_has_excluded_queries(self) -> None:
+        """No regression: an engine with no excluded_queries at all adds nothing."""
+        data = SynthesisData(job_id="job-1", database_name="discourse")
+        data.triage = {"selected_agents": [{"agent_type": "dynamodb"}]}
+        data.engines["dynamodb"] = EngineArtifacts(
+            engine="dynamodb", analysis={}, schema_design={"unsupported_patterns": []}
+        )
+
+        out = build_risk_assessment(data)
+
+        assert out["risks"] == []

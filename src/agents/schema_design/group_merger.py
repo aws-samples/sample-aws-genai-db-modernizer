@@ -240,6 +240,31 @@ def merge_schema_groups(
     # Read manifest
     manifest = store.read_json(f"{base_key}/groups_manifest.json")
 
+    # Every assigned query touched no source table (#276/#369): --split left
+    # all of them out of grouping, so there is no group, and so no draft, to
+    # merge -- not a failure, the same way an engine with no in-scope queries
+    # at all gets a placeholder (schema_design/handler.py's "skipped" shape)
+    # rather than an error. Checked before the draft-reading loop below: an
+    # empty manifest["groups"] would otherwise fall through to "no drafts
+    # found", indistinguishable from a real missing-draft failure.
+    if not manifest["groups"]:
+        excluded_queries = manifest.get("excluded_queries") or []
+        if excluded_queries:
+            skipped = {
+                "target_type": engine,
+                "status": "skipped",
+                "reason": "every assigned query touches no source table",
+                "excluded_queries": excluded_queries,
+            }
+            store.write_json(f"{base_key}/schema_output.json", skipped)
+            print(
+                f"[schema-merge/{engine}] No groups to merge: all "
+                f"{len(excluded_queries)} assigned queries touch no source table. "
+                "Wrote a skipped schema_output.json."
+            )
+            return skipped
+        raise ValueError(f"No group drafts found to merge for {engine}")
+
     # Read all group drafts
     drafts: list[dict] = []
     indices: list[int] = []
@@ -262,6 +287,14 @@ def merge_schema_groups(
 
     # Merge
     merged = merge_group_drafts(drafts, engine, group_indices=indices)
+
+    # Carry the manifest's excluded_queries (--split's "not designed: no source
+    # table" list, #276/#369) into the final output, so a query that never
+    # reached any group draft is still visible on the merged result rather
+    # than silently missing from it.
+    excluded_queries = manifest.get("excluded_queries") or []
+    if excluded_queries:
+        merged["excluded_queries"] = excluded_queries
 
     # Write merged draft
     store.write_json(f"{base_key}/schema_output.json", merged)

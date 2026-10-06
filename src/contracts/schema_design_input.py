@@ -301,6 +301,19 @@ class SchemaDesignGroupEntry(BaseModel):
     )
 
 
+class ExcludedQuery(BaseModel):
+    """A query ``--split`` left out of every design group (#276/#369).
+
+    Today the only reason is ``has_no_source_table``: the query touches
+    nothing but pseudo tables (``unknown``, ``DUAL``), so there is no table
+    to design it against. Listed here rather than silently dropped, so
+    merge and synthesis can account for it.
+    """
+
+    query_id: str
+    reason: str
+
+
 class SchemaDesignGroupsManifest(BaseModel):
     """Manifest produced by prepare_schema_input.py --split.
 
@@ -310,9 +323,15 @@ class SchemaDesignGroupsManifest(BaseModel):
     job_id: str
     database_name: str
     target_engine: str
-    total_queries: int = Field(..., ge=0)
+    total_queries: int = Field(
+        ..., ge=0, description="Every query passed to --split, including excluded_queries"
+    )
     total_groups: int = Field(..., ge=0)
     groups: list[SchemaDesignGroupEntry]
+    excluded_queries: list[ExcludedQuery] = Field(
+        default_factory=list,
+        description="Queries left out of every group (not counted in total_groups)",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
