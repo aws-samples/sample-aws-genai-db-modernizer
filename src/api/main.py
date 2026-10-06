@@ -6,7 +6,9 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Database Modernizer Assessment API")
+from src.shared.package_version import get_package_version
+
+app = FastAPI(title="Database Modernizer Assessment API", version=get_package_version())
 
 _raw_sha = os.environ.get("COMMIT_SHA", "unknown")
 BUILD_VERSION = (

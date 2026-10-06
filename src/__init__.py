@@ -1,3 +1,5 @@
 """Database Modernizer Assessment - AI-powered database modernization analysis system."""
 
-__version__ = "1.0.0"
+from src.shared.package_version import get_package_version
+
+__version__ = get_package_version()

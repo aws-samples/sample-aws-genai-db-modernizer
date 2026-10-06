@@ -17,6 +17,39 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Verify the resolved version matches the pushed tag
+        # hatch-vcs (#391) derives the version from this tag at build time
+        # (fetch-depth: 0 above makes the tag history visible). Fail loudly
+        # here, before the release is published, if the two ever disagree --
+        # e.g. a tag_pattern change that stops matching a tag shape.
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          uv sync --locked --extra dev
+          uv run python -c "
+          import importlib.metadata
+          import os
+
+          from packaging.version import Version
+
+          tag = os.environ['TAG_NAME']
+          expected = str(Version(tag.removeprefix('v')))
+          resolved = importlib.metadata.version('database-modernizer')
+          print(f'tag={tag} expected={expected} resolved={resolved}')
+          if resolved != expected:
+              raise SystemExit(
+                  f'Resolved version {resolved!r} does not match tag {tag!r} '
+                  f'(expected {expected!r} in PEP 440 form)'
+              )
+          "
+
       - name: Determine pre-release
         id: prerelease
         env:

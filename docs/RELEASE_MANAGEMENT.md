@@ -153,41 +153,49 @@ mainline (default branch)
 
 ```bash
 # Create feature branch
-git checkout -b feature/add-postgresql-collector mainline
+git checkout -b feature/add-postgresql-collector main
 
 # Develop and commit
 git commit -m "feat(collector): add PostgreSQL collector"
 
-# Create PR to mainline
+# Create PR to main
 # After review and approval, merge
 ```
 
 **Step 2: Prepare Release**
 
+The package version is never edited by hand (#391): `pyproject.toml` declares
+`dynamic = ["version"]`, and `hatch-vcs` derives it from the tag you push in
+Step 3 (`v1.5.0` -> `1.5.0`; a prerelease tag like `v1.5.0-beta.1` -> `1.5.0b1`
+PEP 440). There is no `setup.py`, `package.json`, or `__version__.py` version
+field to bump, and no release-prep PR for the version itself.
+
 ```bash
-# Update version in code
-# - setup.py
-# - package.json
-# - __version__.py
-
-# Update CHANGELOG.md (automated from commits)
+# Update CHANGELOG.md (automated from commits), if the project keeps one
 git log v1.4.0..HEAD --pretty=format:"%s" | grep -E "^(feat|fix)"
-
-# Create release PR
-git checkout -b release-prep/v1.5.0 mainline
-git commit -m "chore: prepare release v1.5.0"
-# Create PR, review, merge
 ```
 
 **Step 3: Tag Release**
 
 ```bash
-# Tag on mainline
-git checkout mainline
+# Tag on main -- main is protected, so this is the only step that
+# "publishes" a release; nothing commits a version bump back to main.
+git checkout main
 git pull
 git tag -a v1.5.0 -m "Release v1.5.0: Add PostgreSQL collector and Aurora analysis"
 git push origin v1.5.0
 ```
+
+Pushing the tag triggers `.github/workflows/release.yml`, which checks out
+full git history, verifies the resolved `hatch-vcs` version matches the tag
+(failing the workflow if it doesn't), and publishes the GitHub release.
+
+**Note:** any checkout that isn't a clone with the matching `v*` tag reports a
+version that is obviously not a release, never `v1.5.0`'s clean `1.5.0`. A
+copy with no `.git` at all falls back to `0.0.0`. The internal sync script's
+mirror target keeps its own git history with no source tags at all, so it
+instead reports a plain commit-count dev version like `0.0.1.devN+g<sha>`
+that changes on every sync commit.
 
 **Step 4: Build and Deploy**
 
@@ -471,8 +479,8 @@ git checkout -b feature/my-feature mainline
 ### Create Release
 
 ```bash
-# 1. Merge all features to mainline
-# 2. Update version and CHANGELOG
+# 1. Merge all features to main
+# 2. Update CHANGELOG (the version follows the tag -- no pyproject edit, #391)
 # 3. Tag release
 git tag -a v1.5.0 -m "Release v1.5.0"
 git push origin v1.5.0

@@ -1,6 +1,6 @@
 [project]
 name = "database-modernizer"
-version = "0.1.0b1"
+dynamic = ["version"]
 description = "AI-powered database modernization analysis and recommendation system"
 authors = [
     {name = "Amazon Web Services"}
@@ -93,11 +93,24 @@ docs = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+# The version is derived from the git tag (e.g. "v0.2.0-beta.1" -> "0.2.0b1";
+# untagged commits -> "0.2.0b2.devN+g<sha>"), never hand-edited.
+# `fallback-version` only applies when there is no .git directory at all (e.g.
+# a source archive) -- so `uv sync` / `uv build` never fail outright. A shallow
+# clone, or scripts/maintainer-sync.sh's target repo (which keeps its own,
+# tagless git history rather than the source's v* tags -- see
+# tests/unit/test_version_from_tag.py), still has a .git directory, so each
+# instead resolves to a plain commit-count dev version like "0.0.1.devN+g<sha>"
+# -- obviously not a release, and still never hand-edited.
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
 
 [tool.black]
 line-length = 100
