@@ -23,6 +23,17 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 
+def _validate_database_name(params: dict) -> dict:
+    """Constrain the caller's database identifier before constructing artifact keys."""
+    name = params.get("database_name", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name.strip()):
+        raise ValueError(
+            "database_name must contain 1 to 128 ASCII letters, digits, underscores or hyphens."
+        )
+    params["database_name"] = name.strip()
+    return params
+
+
 def extract_text(message) -> str:
     """Extract user text from a ProcessMessageRequest or A2A dict/str.
 
@@ -79,8 +90,8 @@ def parse_invocation(text: str) -> dict:
     Accepts a JSON object embedded in the text, or 'key: value' / 'key=value' lines.
 
     Guarantees ``job_id``, ``database_name`` and ``input_key`` are present as
-    stripped strings, because the wrapper validates the first two and every
-    subagent reads them.
+    stripped strings. ``database_name`` must contain 1 to 128 ASCII letters,
+    digits, underscores or hyphens; invalid identifiers raise ``ValueError``.
 
     **Every other key in the JSON is preserved as sent.** Until 2026-08-21 this
     returned a hardcoded three-key dict, so any additional parameter was silently
@@ -97,16 +108,17 @@ def parse_invocation(text: str) -> dict:
             data = json.loads(match.group(0))
             if isinstance(data, dict):
                 parsed = dict(data)
-                for key in ("job_id", "database_name", "input_key"):
+                for key in ("job_id", "input_key"):
                     parsed[key] = str(data.get(key, "")).strip()
-                return parsed
+                return _validate_database_name(parsed)
         except json.JSONDecodeError:
             pass
 
     # Fallback for human- or LLM-typed text rather than a JSON payload.
     result = {"job_id": "", "database_name": "", "input_key": ""}
     for key in result:
-        m = re.search(rf"{key}\s*[:=]\s*([^\s,;]+)", text, re.IGNORECASE)
+        value_pattern = r"([^\r\n]*)" if key == "database_name" else r"([^\s,;]+)"
+        m = re.search(rf"{key}[ \t]*[:=][ \t]*{value_pattern}", text, re.IGNORECASE)
         if m:
             result[key] = m.group(1).strip().strip("\"'")
     # Optional numeric parameters some phases accept. Only set when present, so
@@ -115,7 +127,7 @@ def parse_invocation(text: str) -> dict:
         m = re.search(rf"{key}\s*[:=]\s*(\d+)", text, re.IGNORECASE)
         if m:
             result[key] = m.group(1)
-    return result
+    return _validate_database_name(result)
 
 
 class _SubagentResult:
@@ -230,7 +242,6 @@ def make_subagent_factory(
         class _Subagent(AsyncBaseSubagent):
             async def process_message_async(self, message):  # type: ignore[override]
                 text = extract_text(message)
-                params = parse_invocation(text)
 
                 # Resolve status manager lazily (None when outside ATX runtime).
                 manager = None
@@ -248,6 +259,7 @@ def make_subagent_factory(
                     logger.debug("No ATX agent context, running in local mode: %s", exc)
 
                 try:
+                    params = parse_invocation(text)
                     if not params["job_id"] or not params["database_name"]:
                         raise ValueError(
                             "Invocation must include 'job_id' and 'database_name'. "
