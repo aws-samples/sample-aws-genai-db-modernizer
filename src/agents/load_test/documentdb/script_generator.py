@@ -15,6 +15,7 @@ Generated layout (under a tempdir):
 """
 
 import math
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -112,7 +113,8 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
         for i, s in enumerate(scenarios):
             rps = max(1, math.ceil(s.get("design_rps", 1)))
             qid = s.get("query_id", f"unknown_{i}")
-            safe_id = f"q{qid[:8]}_{i}"  # JS-identifier-safe + unique
+            safe_prefix = re.sub(r"[^a-zA-Z0-9_]", "_", qid[:8])
+            safe_id = f"q{safe_prefix}_{i}"  # JS-identifier-safe + unique
             max_vus = max(10, math.ceil(rps * 2 * scale))
             enriched.append(
                 {
@@ -247,14 +249,14 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
     def _extract_source_table(self, access_pattern: dict[str, Any]) -> str | None:
         """Extract the primary source table targeted by an access pattern.
 
-        DocumentDB AccessPattern doesn't directly carry a source_table — the
-        coordinator resolves it via the collection_def. We accept several keys
-        for forward compat:
-
-          - ``source_table`` (explicit)
-          - ``collections[0]`` (collection name → not source table; needs reverse lookup)
-          - ``table_name`` (DynamoDB convention)
+        The contract's ``source_tables[0]`` is the primary source, matching
+        the collection and seed-manifest lookup in ``generate_all``. Retain
+        ``source_table`` and ``table_name`` as fallbacks for older artifacts.
         """
+        source_tables = access_pattern.get("source_tables") or []
+        if source_tables:
+            return str(source_tables[0])
+
         source_table = access_pattern.get("source_table") or access_pattern.get("table_name")
         if source_table:
             return str(source_table)
