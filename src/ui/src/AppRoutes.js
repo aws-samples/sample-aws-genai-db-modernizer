@@ -7,8 +7,6 @@ import JobMonitoring from "./pages/JobMonitoring";
 import JobMonitoringSummary from "./pages/JobMonitoringSummary";
 import PatternAnalysis from "./pages/PatternAnalysis";
 import Settings from "./pages/Settings";
-import Debug from "./pages/Debug";
-import LocalAnalysis from "./pages/LocalAnalysis";
 import EngineAnalysis from "./pages/EngineAnalysis";
 import AssignmentGate from "./pages/AssignmentGate";
 import AnalysisResultsV2 from "./pages/AnalysisResults-02";
@@ -37,10 +35,8 @@ export default function AppRoutes() {
       <Route path="/analysis/patterns/:jobId" element={<PatternAnalysis />} />
       <Route path="/analysis/report/:jobId" element={<LegacyResultsRedirect />} />
       <Route path="/settings" element={<Settings />} />
-      <Route path="/analysis/local" element={<LocalAnalysis />} />
       <Route path="/analysis/assignments/:jobId" element={<AssignmentGate />} />
       <Route path="/analysis/engine-analysis/:jobId" element={<EngineAnalysis />} />
-      <Route path="/debug" element={<Debug />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
