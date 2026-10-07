@@ -23,6 +23,7 @@ from src.agents.load_test.documentdb.script_generator import (
     DocumentDBScriptGenerator,
 )
 from src.agents.load_test.models import SeedManifest
+from src.contracts.documentdb_model_output import AccessPattern
 from src.contracts.load_test_models import TestConfig
 
 # =============================================================================
@@ -85,7 +86,7 @@ def _make_pattern(
     return {
         "pattern_id": pattern_id,
         "operation": operation,
-        "source_table": source_table,
+        "source_tables": [source_table],
         "design_rps": design_rps,
         "description": description,
     }
@@ -408,3 +409,49 @@ class TestGeneratedContent:
         assert "metrics.latency" in content
         assert "metrics.requests" in content
         assert "metrics.errors" in content
+
+
+@pytest.mark.parametrize(
+    "source_fields,expected",
+    [
+        ({"source_tables": ["users"]}, "users"),
+        ({"source_tables": ["users", "profiles"], "source_table": "wrong"}, "users"),
+        ({"source_table": "legacy_users"}, "legacy_users"),
+        ({"table_name": "legacy_users"}, "legacy_users"),
+        ({"source_tables": [], "source_table": "legacy_users"}, "legacy_users"),
+        ({}, None),
+    ],
+)
+def test_extract_source_table_reads_contract_before_legacy_fields(
+    generator: DocumentDBScriptGenerator, source_fields: dict[str, Any], expected: str | None
+) -> None:
+    assert generator._extract_source_table(source_fields) == expected
+
+
+def test_contract_valid_pattern_generates_a_real_scenario(
+    generator: DocumentDBScriptGenerator,
+    schema_output: dict[str, Any],
+    seed_manifest: SeedManifest,
+    test_config: TestConfig,
+) -> None:
+    pattern = AccessPattern(
+        pattern_id="DOC-AP-1",
+        description="Look up a user",
+        operation="findOne",
+        collection_name="users",
+        query_filter={"primary_id": 1},
+        index_used="primary_id_1",
+        source_query_ids=["q1"],
+        source_tables=["users", "profiles"],
+        design_rps=12.5,
+    ).model_dump()
+    assert "source_table" not in pattern
+    scripts_dir = Path(generator.generate_all([pattern], schema_output, seed_manifest, test_config))
+    scenario = scripts_dir / "scenarios/DOC-AP-1.js"
+    assert scenario.is_file()
+    assert "LoadTest_users" in scenario.read_text()
+    main = (scripts_dir / "main.js").read_text()
+    assert "scenarios/DOC-AP-1.js" in main
+    assert "scenario_qDOC_AP_1_0" in main
+    assert "run_qDOC_AP_1_0" in main
+    assert "rate: 13" in main  # k6 arrival rates round design_rps up to an integer
