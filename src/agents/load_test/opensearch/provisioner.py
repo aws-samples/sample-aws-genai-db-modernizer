@@ -26,6 +26,7 @@ class OpenSearchProvisioner(BaseProvisioner):
     def __init__(self, region: str = "us-east-1"):
         self.region = region
         self.client = boto3.client("opensearch", region_name=region)
+        self._partial: list[DeployedResource] = []
 
     def provision(self, schema_output: dict, tags: dict[str, str]) -> InfrastructureManifest:
         """Create an OpenSearch domain sized from the schema design.
@@ -119,6 +120,16 @@ class OpenSearchProvisioner(BaseProvisioner):
         except self.client.exceptions.ResourceAlreadyExistsException:
             logger.warning("domain_already_exists", domain_name=domain_name)
 
+        # The domain is billable from here on. Record it before waiting so that a
+        # _wait_for_active timeout still leaves the orchestrator something to delete.
+        self._partial = [
+            DeployedResource(
+                resource_type="AWS::OpenSearchService::Domain",
+                resource_arn="",
+                configuration={"domain_name": domain_name},
+            )
+        ]
+
         self._wait_for_active(domain_name)
 
         desc = self.client.describe_domain(DomainName=domain_name)
@@ -143,21 +154,13 @@ class OpenSearchProvisioner(BaseProvisioner):
         return InfrastructureManifest(resources=[resource], tags=tags)
 
     def teardown(self, manifest: InfrastructureManifest) -> None:
-        """Skip teardown by default — domain is reusable across runs.
+        """Delete the OpenSearch domain. Idempotent.
 
-        Call teardown_force() explicitly or use the --teardown CLI flag.
+        A 3-node r8g.large.search domain bills ~$14/day whether or not anything
+        queries it, so an unused domain is never left behind. Reuse across runs
+        is handled by provision() finding the existing domain, not by skipping
+        deletion.
         """
-        for resource in manifest.resources:
-            if resource.resource_type == "AWS::OpenSearchService::Domain":
-                domain_name = resource.configuration["domain_name"]
-                logger.info(
-                    "skipping_teardown",
-                    domain_name=domain_name,
-                    hint="Domain kept alive for reuse. Delete with --teardown flag.",
-                )
-
-    def teardown_force(self, manifest: InfrastructureManifest) -> None:
-        """Actually delete the OpenSearch domain."""
         for resource in manifest.resources:
             if resource.resource_type == "AWS::OpenSearchService::Domain":
                 domain_name = resource.configuration["domain_name"]
@@ -166,6 +169,14 @@ class OpenSearchProvisioner(BaseProvisioner):
                     self.client.delete_domain(DomainName=domain_name)
                 except self.client.exceptions.ResourceNotFoundException:
                     logger.warning("domain_not_found_during_teardown", domain_name=domain_name)
+
+    # Retained for callers that opted into deletion explicitly before teardown()
+    # became unconditional.
+    teardown_force = teardown
+
+    def partial_manifest(self) -> InfrastructureManifest:
+        """The domain created by an in-flight provision(), if it got that far."""
+        return InfrastructureManifest(resources=list(self._partial), tags={})
 
     def _get_existing_domain(
         self, domain_name: str, master_password: str
