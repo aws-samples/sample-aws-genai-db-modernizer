@@ -15,6 +15,8 @@ import {
   targetEngineEntries,
   resolveCostBreakdown,
   isKeptCostEngine,
+  ownerSchemaDesigns,
+  cacheAccessPatternCount,
 } from '../cacheLayer';
 import en from '../../locales/en.json';
 
@@ -60,6 +62,53 @@ describe('ownerDistribution', () => {
   test('handles a missing/undefined distribution', () => {
     expect(ownerDistribution(undefined, true)).toEqual({});
     expect(ownerDistribution(undefined, false)).toEqual({});
+  });
+});
+
+describe('ownerSchemaDesigns (#361: the explorer must not count cache patterns as owned)', () => {
+  const designs = [
+    { target_type: 'dynamodb', content: { access_patterns: [{}, {}] } },
+    { target_type: 'elasticache', content: { access_patterns: [{}, {}, {}] } },
+    { target_type: 'opensearch', content: { access_patterns: [{}] } },
+  ];
+
+  test('drops the cache engine design, keeps owner designs in order', () => {
+    expect(ownerSchemaDesigns(designs)).toEqual([designs[0], designs[2]]);
+  });
+
+  test('legacy run with no cache-engine design: passes straight through', () => {
+    const ownerOnly = [designs[0], designs[2]];
+    expect(ownerSchemaDesigns(ownerOnly)).toEqual(ownerOnly);
+  });
+
+  test('handles a missing/undefined designs list', () => {
+    expect(ownerSchemaDesigns(undefined)).toEqual([]);
+    expect(ownerSchemaDesigns(null)).toEqual([]);
+  });
+});
+
+describe('cacheAccessPatternCount (#361)', () => {
+  const designs = [
+    { target_type: 'dynamodb', content: { access_patterns: [{}, {}] } },
+    { target_type: 'elasticache', content: { access_patterns: [{}, {}, {}] } },
+    { target_type: 'opensearch', content: { access_patterns: [{}] } },
+  ];
+
+  test('counts only the cache engine design\'s access patterns', () => {
+    expect(cacheAccessPatternCount(designs)).toBe(3);
+  });
+
+  test('zero when there is no cache-engine design (legacy run)', () => {
+    expect(cacheAccessPatternCount([designs[0], designs[2]])).toBe(0);
+  });
+
+  test('zero when the cache design has no access_patterns', () => {
+    expect(cacheAccessPatternCount([{ target_type: 'elasticache', content: {} }])).toBe(0);
+  });
+
+  test('handles a missing/undefined designs list', () => {
+    expect(cacheAccessPatternCount(undefined)).toBe(0);
+    expect(cacheAccessPatternCount(null)).toBe(0);
   });
 });
 
@@ -337,5 +386,21 @@ describe('resolveCostBreakdown (#358 Results page "Cost breakdown" + "Projected 
 
   test('handles a missing/undefined tco_analysis', () => {
     expect(resolveCostBreakdown(undefined, {}, null)).toEqual({ items: [], total: 0 });
+  });
+});
+
+describe('Results page access-patterns captions pluralization (#361 review: _one/_other, not a bare key)', () => {
+  test('"of N queries" is singular for count 1, plural otherwise', () => {
+    expect(t('analysis-results-v2.executive-summary.access-patterns-of-queries', { count: 1 })).toBe('of 1 query');
+    expect(t('analysis-results-v2.executive-summary.access-patterns-of-queries', { count: 3 })).toBe('of 3 queries');
+  });
+
+  test('"+N cache-layer pattern(s)" is singular for count 1, plural otherwise', () => {
+    expect(t('analysis-results-v2.executive-summary.cache-patterns-note', { count: 1 })).toBe(
+      '+1 cache-layer pattern (not counted above)',
+    );
+    expect(t('analysis-results-v2.executive-summary.cache-patterns-note', { count: 13 })).toBe(
+      '+13 cache-layer patterns (not counted above)',
+    );
   });
 });

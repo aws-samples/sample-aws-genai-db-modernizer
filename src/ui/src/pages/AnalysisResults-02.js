@@ -39,7 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount } from "../utils/cacheLayer";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
@@ -275,7 +275,13 @@ const AnalysisResultsPage = memo(() => {
   const allAccessPatterns = useMemo(() => {
     const patterns = [];
 
-    activeDesigns.forEach(design => {
+    // #361: the cache layer gets its own schema design (and its own
+    // access_patterns) too, but those patterns were never queries it owns --
+    // counting them here double-counted ElastiCache as if it were an owner
+    // engine in the explorer's total and its engine pie. ownerSchemaDesigns
+    // drops it (cacheAccessPatternCount below tracks it separately so the
+    // page can still say how many there are, just not as owned patterns).
+    ownerSchemaDesigns(activeDesigns).forEach(design => {
       const engine = design.target_type;
       const content = design.content || {};
 
@@ -370,8 +376,24 @@ const AnalysisResultsPage = memo(() => {
     return lookup;
   }, [activeDesigns]);
 
-  // Total access patterns
+  // Total access patterns (owner engines only -- see the #361 note on
+  // allAccessPatterns above for why the cache layer is excluded).
   const totalAccessPatterns = allAccessPatterns.length;
+
+  // #361: the cache layer's own pattern count, tracked separately so the page
+  // can say "+N cache-layer patterns" instead of silently dropping them or
+  // folding them into the owner total/pie.
+  const cachePatternCount = useMemo(() => cacheAccessPatternCount(activeDesigns), [activeDesigns]);
+
+  // #361: the Query flow's query count (afterDist is already owner-only, see
+  // ownerDistribution above) -- the number "Access patterns" is compared
+  // against. Access patterns can legitimately differ from this: relational
+  // engines model as tables, not per-pattern designs, and several queries can
+  // converge into one access pattern.
+  const ownerQueryCount = useMemo(
+    () => Object.values(afterDist).reduce((a, b) => a + b, 0),
+    [afterDist]
+  );
 
 
   // ============================================
@@ -1615,8 +1637,26 @@ const AnalysisResultsPage = memo(() => {
                   <Box>
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.access-patterns')}</Box>
                     <Box fontSize="heading-m" fontWeight="bold">
-                      {totalAccessPatterns > 0 ? totalAccessPatterns : Object.values(afterDist).reduce((a, b) => a + b, 0) || '—'}
+                      {totalAccessPatterns > 0 ? totalAccessPatterns : ownerQueryCount || '—'}
                     </Box>
+                    {/* #361: access patterns and the Query flow's query count
+                        don't always match (relational engines model as tables,
+                        not patterns; several queries can converge into one
+                        pattern) -- say so instead of leaving the gap
+                        unexplained. */}
+                    {totalAccessPatterns > 0 && ownerQueryCount > 0 && totalAccessPatterns !== ownerQueryCount && (
+                      <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                        {t('analysis-results-v2.executive-summary.access-patterns-of-queries', { count: ownerQueryCount })}
+                      </Box>
+                    )}
+                    {/* #361: the cache layer's own patterns are real, but
+                        never owned workload -- call them out separately
+                        instead of folding them into the total/pie above. */}
+                    {cachePatternCount > 0 && (
+                      <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+                        {t('analysis-results-v2.executive-summary.cache-patterns-note', { count: cachePatternCount })}
+                      </Box>
+                    )}
                   </Box>
                 </ColumnLayout>
               </SpaceBetween>

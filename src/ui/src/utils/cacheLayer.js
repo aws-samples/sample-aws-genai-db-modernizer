@@ -48,6 +48,32 @@ export function ownerDistribution(distribution, hasOverlay) {
 }
 
 /**
+ * Schema designs for owner engines only, dropping the cache layer's own
+ * design (#361: the access pattern explorer's unified pattern list -- and the
+ * total/engine pie it drives -- must not count ElastiCache's own cached-read
+ * patterns as if they were owned workload, the same invariant
+ * `ownerDistribution` enforces for a `{ engine: count }` map). A no-op when
+ * `designs` has no cache-engine entry, so a legacy run (ElastiCache still a
+ * real owner, no cache_overlay) is unaffected.
+ */
+export function ownerSchemaDesigns(designs) {
+  return (designs || []).filter((d) => !isCacheEngine(d?.target_type));
+}
+
+/**
+ * Count of the cache layer's own schema-design access patterns across a list
+ * of `{ target_type, content: { access_patterns } }` schema designs (#361):
+ * real design artifacts, but never owned query workload, so callers can
+ * surface the count on its own (e.g. "+13 cache-layer patterns") instead of
+ * silently dropping it or folding it into an owner-only total.
+ */
+export function cacheAccessPatternCount(designs) {
+  return (designs || [])
+    .filter((d) => isCacheEngine(d?.target_type))
+    .reduce((sum, d) => sum + (d?.content?.access_patterns?.length || 0), 0);
+}
+
+/**
  * Split a synthesis report's `ranking[]` into owner rows and the cache-layer row
  * (role === "cache_layer"), if present. Owners keep their relative order; the
  * cache layer entry (always sorted after owners by the backend) is pulled out so
