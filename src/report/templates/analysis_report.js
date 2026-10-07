@@ -301,6 +301,85 @@
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
+    function buildRiskAssessment() {
+      const container = document.getElementById('risk-assessment-container');
+      if (!container) return;
+      const ra = DATA.results?.synthesis?.risk_assessment || {};
+      const splitDesc = function(desc) {
+        const s = String(desc || '').trim();
+        if (s.charAt(0) === '[') {
+          const j = s.indexOf(']');
+          if (j !== -1) return { engine: s.slice(1, j).trim() || '(general)', body: s.slice(j + 1).trim() };
+        }
+        return { engine: '(general)', body: s };
+      };
+      const hasContent = function(desc) {
+        let body = splitDesc(desc).body;
+        if (body.toLowerCase().indexOf('unknown:') === 0) body = body.slice(8).trim();
+        return body.length > 0;
+      };
+      const openRisks = (ra.risks || []).filter(r => r && hasContent(r.description));
+      const resolvedRisks = (ra.resolved_risks || []).filter(r => r && hasContent(r.description));
+      if (!ra.overall_risk_level && openRisks.length === 0 && resolvedRisks.length === 0) { container.style.display = 'none'; return; }
+      const severities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+      const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
+      openRisks.forEach(r => { const sev = String(r.severity || '').toUpperCase(); (bySeverity[sev] || bySeverity.LOW).push(r); });
+      const sevClass = function(sev) { return (sev === 'CRITICAL' || sev === 'HIGH') ? 'error' : (sev === 'MEDIUM' ? 'warning' : 'success'); };
+      const sevAccent = { error: '#d13212', warning: '#ffc107', success: '#1d8102' };
+      const sevText = { error: '#d13212', warning: '#5b4708', success: '#1d8102' };
+      const sevBadgeFg = { error: '#fff', warning: '#5b4708', success: '#fff' };
+      let html = '';
+      if (ra.overall_risk_level) {
+        const lvl = sevClass(ra.overall_risk_level);
+        html += '<div style="margin-bottom: 16px;"><span class="badge" style="background: ' + sevAccent[lvl] + '; color: ' + sevBadgeFg[lvl] + ';">Overall risk: ' + escapeHtml(ra.overall_risk_level) + '</span></div>';
+      }
+      severities.forEach(function(sev) {
+        const risks = bySeverity[sev];
+        const cls = sevClass(sev);
+        html += '<div style="margin-top: 16px;">';
+        html += '<div style="font-weight: 700; font-size: 14px; color: ' + sevText[cls] + ';">' + escapeHtml(sev) + ' (' + risks.length + ')</div>';
+        if (risks.length === 0) {
+          html += '<p style="color: var(--color-text-secondary); font-size: 13px;">No open risks at this severity.</p>';
+        }
+        risks.forEach(function(r) {
+          const parts = splitDesc(r.description);
+          html += '<div class="item-card" style="border-left: 4px solid ' + sevAccent[cls] + ';">';
+          html += '<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">';
+          if (parts.engine !== '(general)') html += engineBadge(parts.engine, ENGINE_LABELS[parts.engine] || parts.engine);
+          if (r.risk_id) html += '<span style="font-size: 12px; color: var(--color-text-secondary);">' + escapeHtml(r.risk_id) + '</span>';
+          html += '</div>';
+          html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(parts.body) + '</div>';
+          const mitigation = r.mitigation ? String(r.mitigation) : '';
+          const norm = function(s) { return s.replace(/\s+/g, ' ').trim().toLowerCase(); };
+          const repeats = mitigation.length > 0 && norm(parts.body).indexOf(norm(mitigation)) !== -1;
+          if (mitigation.length > 0 && !repeats) html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;"><b>Mitigation:</b> ' + escapeHtml(mitigation) + '</div>';
+          const affected = Array.isArray(r.affected_tables) ? r.affected_tables : [];
+          if (affected.length > 0) html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;">Affects: ' + escapeHtml(affected.join(', ')) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+      if (resolvedRisks.length > 0) {
+        html += '<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">' + resolvedRisks.length + ' resolved by the assignment</summary>';
+        resolvedRisks.forEach(function(r) {
+          const parts = splitDesc(r.description);
+          const cls = sevClass(r.severity);
+          const fromLabel = ENGINE_LABELS[r.engine] || r.engine || '';
+          const toLabel = r.resolved_on ? (ENGINE_LABELS[r.resolved_on] || r.resolved_on) : '';
+          html += '<div class="item-card" style="border-left: 4px solid ' + sevAccent[cls] + ';">';
+          html += '<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">';
+          html += '<span class="badge" style="background: ' + sevAccent[cls] + '; color: ' + sevBadgeFg[cls] + ';">' + escapeHtml(r.severity || '') + '</span>';
+          html += '<span style="font-size: 12px; color: var(--color-text-secondary);">' + escapeHtml(toLabel ? (fromLabel + ' \u2192 ' + toLabel) : fromLabel) + '</span>';
+          html += '</div>';
+          html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(parts.body) + '</div>';
+          if (r.reason) html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;">Resolved because ' + escapeHtml(r.reason) + '</div>';
+          html += '</div>';
+        });
+        html += '</details>';
+      }
+      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
     function buildQueryFlow() {
       const container = document.getElementById('query-flow-container');
       const afterDist = DATA.results?.synthesis?.reality_check?.after_distribution || {};
@@ -761,6 +840,7 @@
       allPatterns = extractPatterns();
       buildMigrationRoadmap();
       buildCostBreakdown();
+      buildRiskAssessment();
       buildQueryFlow();
       buildTable();
       createCharts();

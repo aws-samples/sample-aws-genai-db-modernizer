@@ -40,6 +40,7 @@ import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
+import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
@@ -58,6 +59,15 @@ const ENGINE_BADGE_COLORS = {
   neptune: 'red',
   keyspaces: 'blue',
   aurora: 'green',
+};
+
+// #373: mirrors src/report/renderers.py's .risk/.sev CSS -- red for the
+// error-level severities (CRITICAL and HIGH, kept equally severe, #270),
+// amber for MEDIUM, green for LOW.
+const RISK_BORDER_COLOR = {
+  error: '#d13212',
+  warning: '#ffc107',
+  success: '#1d8102',
 };
 
 const ENGINE_HEX = {
@@ -247,6 +257,27 @@ const AnalysisResultsPage = memo(() => {
     () => resolveCostBreakdown(synthesis?.tco_analysis, afterDist, cacheOverlay),
     [synthesis, afterDist, cacheOverlay]
   );
+
+  // #373: synthesis.risk_assessment was never read on this page -- no risk
+  // list, no severity tabs, no overall_risk_level, nothing, even for a
+  // CRITICAL risk. openRisks/resolvedRisksList use the same content filter
+  // (filterRisksWithContent) the decision/engineering reports use
+  // (renderers.filtered_risks/resolved_risks), so this view's risk count can
+  // never disagree with theirs (#201). risksBySeverity always has one bucket
+  // per severity -- including CRITICAL -- even when it is empty, so a
+  // CRITICAL risk is never styled or tabbed the way #270 found HIGH/MEDIUM/LOW
+  // treated it (a plain warning, no tab at all).
+  const riskAssessment = synthesis?.risk_assessment || {};
+  const overallRiskLevel = riskAssessment.overall_risk_level;
+  const openRisks = useMemo(
+    () => filterRisksWithContent(riskAssessment.risks),
+    [riskAssessment]
+  );
+  const resolvedRisksList = useMemo(
+    () => filterRisksWithContent(riskAssessment.resolved_risks),
+    [riskAssessment]
+  );
+  const risksBySeverity = useMemo(() => groupRisksBySeverity(openRisks), [openRisks]);
 
   // Build Sankey from after_distribution
   const sankeyData = useMemo(() => {
@@ -1955,6 +1986,110 @@ const AnalysisResultsPage = memo(() => {
                         onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
                       />
                     </Box>
+                  )}
+                </SpaceBetween>
+              </Container>
+            )}
+
+            {/* Risk Assessment (#373): synthesis.risk_assessment, including
+                any CRITICAL risk, with one tab per severity (always present,
+                even empty) and the risks the assignment already resolved. */}
+            {(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
+              <Container header={<Header variant="h2" description={t('analysis-results-v2.risk-assessment.description')}>{t('analysis-results-v2.risk-assessment.title')}</Header>}>
+                <SpaceBetween size="m">
+                  {overallRiskLevel && (
+                    <StatusIndicator type={riskSeverityStatus(overallRiskLevel)}>
+                      {t('analysis-results-v2.risk-assessment.overall-risk')}: {overallRiskLevel}
+                    </StatusIndicator>
+                  )}
+                  <Tabs
+                    tabs={RISK_SEVERITIES.map((severity) => {
+                      const risksAtSeverity = risksBySeverity[severity] || [];
+                      const status = riskSeverityStatus(severity);
+                      return {
+                        id: severity,
+                        label: t('analysis-results-v2.risk-assessment.tab-label', { severity, count: risksAtSeverity.length }),
+                        content: risksAtSeverity.length === 0 ? (
+                          <Box color="text-body-secondary" padding="s">
+                            {t('analysis-results-v2.risk-assessment.no-risks-at-severity')}
+                          </Box>
+                        ) : (
+                          <SpaceBetween size="s">
+                            {risksAtSeverity.map((risk, idx) => {
+                              const { engine, body } = splitRiskDescription(risk.description);
+                              const showMitigation = risk.mitigation
+                                && !mitigationRepeatsDescription(risk.mitigation, body);
+                              const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
+                              return (
+                                <Box
+                                  key={risk.risk_id || idx}
+                                  padding={{ vertical: 'xs', horizontal: 's' }}
+                                  style={{ borderLeft: `4px solid ${RISK_BORDER_COLOR[status]}`, backgroundColor: '#fff', borderRadius: '4px' }}
+                                >
+                                  <SpaceBetween size="xxs">
+                                    <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                      <StatusIndicator type={status}>{severity}</StatusIndicator>
+                                      {engine !== '(general)' && (
+                                        <Badge color={ENGINE_BADGE_COLORS[engine] || 'grey'}>
+                                          {ENGINE_LABELS[engine] || engine}
+                                        </Badge>
+                                      )}
+                                      {risk.risk_id && (
+                                        <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
+                                      )}
+                                    </SpaceBetween>
+                                    <Box fontSize="body-s">{body}</Box>
+                                    {showMitigation && (
+                                      <Box fontSize="body-s" color="text-body-secondary">
+                                        <b>{t('analysis-results-v2.risk-assessment.mitigation')}:</b> {risk.mitigation}
+                                      </Box>
+                                    )}
+                                    {affectedTables.length > 0 && (
+                                      <Box fontSize="body-s" color="text-body-secondary">
+                                        {t('analysis-results-v2.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
+                                      </Box>
+                                    )}
+                                  </SpaceBetween>
+                                </Box>
+                              );
+                            })}
+                          </SpaceBetween>
+                        ),
+                      };
+                    })}
+                  />
+                  {resolvedRisksList.length > 0 && (
+                    <ExpandableSection headerText={t('analysis-results-v2.risk-assessment.resolved-count', { count: resolvedRisksList.length })}>
+                      <SpaceBetween size="s">
+                        {resolvedRisksList.map((risk, idx) => {
+                          const { body } = splitRiskDescription(risk.description);
+                          const fromEngine = ENGINE_LABELS[risk.engine] || risk.engine;
+                          const toEngine = ENGINE_LABELS[risk.resolved_on] || risk.resolved_on;
+                          return (
+                            <Box key={risk.risk_id || idx} padding={{ vertical: 'xs', horizontal: 's' }}>
+                              <SpaceBetween size="xxs">
+                                <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                  <StatusIndicator type={riskSeverityStatus(risk.severity)}>{risk.severity}</StatusIndicator>
+                                  {risk.resolved_on ? (
+                                    <Box fontSize="body-s" color="text-body-secondary">
+                                      {t('analysis-results-v2.risk-assessment.resolved-where', { from: fromEngine, to: toEngine })}
+                                    </Box>
+                                  ) : (
+                                    <Box fontSize="body-s" color="text-body-secondary">{fromEngine}</Box>
+                                  )}
+                                </SpaceBetween>
+                                <Box fontSize="body-s">{body}</Box>
+                                {risk.reason && (
+                                  <Box fontSize="body-s" color="text-body-secondary">
+                                    {t('analysis-results-v2.risk-assessment.resolved-reason', { reason: risk.reason })}
+                                  </Box>
+                                )}
+                              </SpaceBetween>
+                            </Box>
+                          );
+                        })}
+                      </SpaceBetween>
+                    </ExpandableSection>
                   )}
                 </SpaceBetween>
               </Container>

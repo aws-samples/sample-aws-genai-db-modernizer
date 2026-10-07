@@ -538,6 +538,103 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
+  // #373: synthesis.risk_assessment was never read here -- no risk list, no
+  // severity grouping, no overall_risk_level, including for a CRITICAL risk.
+  // Mirrors renderers.py's filtered_risks/_risk_has_content/_risk_engine_and_body
+  // (so the risk count here can never disagree with the decision/engineering
+  // reports, #201) and _risk_tile_class (CRITICAL and HIGH are equally severe
+  // -- "error"/red -- never downgraded to a warning the way #270 found the
+  // deleted ReportResults.js page treating CRITICAL). Severities are always
+  // shown in CRITICAL/HIGH/MEDIUM/LOW order, each with its count, even at zero.
+  script += '    function buildRiskAssessment() {\n';
+  script += '      const container = document.getElementById(\'risk-assessment-container\');\n';
+  script += '      if (!container) return;\n';
+  script += '      const ra = DATA.results?.synthesis?.risk_assessment || {};\n';
+  script += '      const splitDesc = function(desc) {\n';
+  script += '        const s = String(desc || \'\').trim();\n';
+  script += '        if (s.charAt(0) === \'[\') {\n';
+  script += '          const j = s.indexOf(\']\');\n';
+  script += '          if (j !== -1) return { engine: s.slice(1, j).trim() || \'(general)\', body: s.slice(j + 1).trim() };\n';
+  script += '        }\n';
+  script += '        return { engine: \'(general)\', body: s };\n';
+  script += '      };\n';
+  script += '      const hasContent = function(desc) {\n';
+  script += '        let body = splitDesc(desc).body;\n';
+  script += '        if (body.toLowerCase().indexOf(\'unknown:\') === 0) body = body.slice(8).trim();\n';
+  script += '        return body.length > 0;\n';
+  script += '      };\n';
+  script += '      const openRisks = (ra.risks || []).filter(r => r && hasContent(r.description));\n';
+  script += '      const resolvedRisks = (ra.resolved_risks || []).filter(r => r && hasContent(r.description));\n';
+  script += '      if (!ra.overall_risk_level && openRisks.length === 0 && resolvedRisks.length === 0) { container.style.display = \'none\'; return; }\n';
+  script += '      const severities = [\'CRITICAL\', \'HIGH\', \'MEDIUM\', \'LOW\'];\n';
+  script += '      const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };\n';
+  script += '      openRisks.forEach(r => { const sev = String(r.severity || \'\').toUpperCase(); (bySeverity[sev] || bySeverity.LOW).push(r); });\n';
+  script += '      const sevClass = function(sev) { return (sev === \'CRITICAL\' || sev === \'HIGH\') ? \'error\' : (sev === \'MEDIUM\' ? \'warning\' : \'success\'); };\n';
+  // #421 review: #ffc107 (amber) as plain text, or as a badge background with
+  // white text, is a 1.63:1 contrast ratio on white -- axe's color-contrast
+  // (WCAG AA needs 4.5:1 for this 14px bold text, below the "large text"
+  // threshold). sevAccent (decorative only: border-left, never carries text)
+  // keeps the vibrant severity colors; sevText (plain text on the page
+  // background) and sevBadgeFg (badge foreground, paired with sevAccent as
+  // the badge background) both resolve to colors verified >= 4.5:1 for every
+  // severity -- warning's dark brown #5b4708 reuses the decision report's own
+  // ``.sev.MEDIUM`` text color (src/report/renderers.py), which already pairs
+  // with #ffc107 at 5.48:1.
+  script += '      const sevAccent = { error: \'#d13212\', warning: \'#ffc107\', success: \'#1d8102\' };\n';
+  script += '      const sevText = { error: \'#d13212\', warning: \'#5b4708\', success: \'#1d8102\' };\n';
+  script += '      const sevBadgeFg = { error: \'#fff\', warning: \'#5b4708\', success: \'#fff\' };\n';
+  script += '      let html = \'\';\n';
+  script += '      if (ra.overall_risk_level) {\n';
+  script += '        const lvl = sevClass(ra.overall_risk_level);\n';
+  script += '        html += \'<div style="margin-bottom: 16px;"><span class="badge" style="background: \' + sevAccent[lvl] + \'; color: \' + sevBadgeFg[lvl] + \';">Overall risk: \' + escapeHtml(ra.overall_risk_level) + \'</span></div>\';\n';
+  script += '      }\n';
+  script += '      severities.forEach(function(sev) {\n';
+  script += '        const risks = bySeverity[sev];\n';
+  script += '        const cls = sevClass(sev);\n';
+  script += '        html += \'<div style="margin-top: 16px;">\';\n';
+  script += '        html += \'<div style="font-weight: 700; font-size: 14px; color: \' + sevText[cls] + \';">\' + escapeHtml(sev) + \' (\' + risks.length + \')</div>\';\n';
+  script += '        if (risks.length === 0) {\n';
+  script += '          html += \'<p style="color: var(--color-text-secondary); font-size: 13px;">No open risks at this severity.</p>\';\n';
+  script += '        }\n';
+  script += '        risks.forEach(function(r) {\n';
+  script += '          const parts = splitDesc(r.description);\n';
+  script += '          html += \'<div class="item-card" style="border-left: 4px solid \' + sevAccent[cls] + \';">\';\n';
+  script += '          html += \'<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">\';\n';
+  script += '          if (parts.engine !== \'(general)\') html += engineBadge(parts.engine, ENGINE_LABELS[parts.engine] || parts.engine);\n';
+  script += '          if (r.risk_id) html += \'<span style="font-size: 12px; color: var(--color-text-secondary);">\' + escapeHtml(r.risk_id) + \'</span>\';\n';
+  script += '          html += \'</div>\';\n';
+  script += '          html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(parts.body) + \'</div>\';\n';
+  script += '          const mitigation = r.mitigation ? String(r.mitigation) : \'\';\n';
+  script += '          const norm = function(s) { return s.replace(/\\s+/g, \' \').trim().toLowerCase(); };\n';
+  script += '          const repeats = mitigation.length > 0 && norm(parts.body).indexOf(norm(mitigation)) !== -1;\n';
+  script += '          if (mitigation.length > 0 && !repeats) html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;"><b>Mitigation:</b> \' + escapeHtml(mitigation) + \'</div>\';\n';
+  script += '          const affected = Array.isArray(r.affected_tables) ? r.affected_tables : [];\n';
+  script += '          if (affected.length > 0) html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;">Affects: \' + escapeHtml(affected.join(\', \')) + \'</div>\';\n';
+  script += '          html += \'</div>\';\n';
+  script += '        });\n';
+  script += '        html += \'</div>\';\n';
+  script += '      });\n';
+  script += '      if (resolvedRisks.length > 0) {\n';
+  script += '        html += \'<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">\' + resolvedRisks.length + \' resolved by the assignment</summary>\';\n';
+  script += '        resolvedRisks.forEach(function(r) {\n';
+  script += '          const parts = splitDesc(r.description);\n';
+  script += '          const cls = sevClass(r.severity);\n';
+  script += '          const fromLabel = ENGINE_LABELS[r.engine] || r.engine || \'\';\n';
+  script += '          const toLabel = r.resolved_on ? (ENGINE_LABELS[r.resolved_on] || r.resolved_on) : \'\';\n';
+  script += '          html += \'<div class="item-card" style="border-left: 4px solid \' + sevAccent[cls] + \';">\';\n';
+  script += '          html += \'<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">\';\n';
+  script += '          html += \'<span class="badge" style="background: \' + sevAccent[cls] + \'; color: \' + sevBadgeFg[cls] + \';">\' + escapeHtml(r.severity || \'\') + \'</span>\';\n';
+  script += '          html += \'<span style="font-size: 12px; color: var(--color-text-secondary);">\' + escapeHtml(toLabel ? (fromLabel + \' \\u2192 \' + toLabel) : fromLabel) + \'</span>\';\n';
+  script += '          html += \'</div>\';\n';
+  script += '          html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(parts.body) + \'</div>\';\n';
+  script += '          if (r.reason) html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 6px;">Resolved because \' + escapeHtml(r.reason) + \'</div>\';\n';
+  script += '          html += \'</div>\';\n';
+  script += '        });\n';
+  script += '        html += \'</details>\';\n';
+  script += '      }\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
 
   // Continue with buildQueryFlow - this is a large function with SVG generation
   script += '    function buildQueryFlow() {\n';
@@ -1016,6 +1113,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      allPatterns = extractPatterns();\n';
   script += '      buildMigrationRoadmap();\n';
   script += '      buildCostBreakdown();\n';
+  script += '      buildRiskAssessment();\n';
   script += '      buildQueryFlow();\n';
   script += '      buildTable();\n';
   script += '      createCharts();\n';
@@ -1163,6 +1261,12 @@ export const generateHTMLReport = (data) => {
       <div class="section-header">Cost Breakdown</div>
       <p class="section-desc">Estimated monthly cost of running each recommended engine at your current workload volume.</p>
       <div id="cost-breakdown-container"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Risk Assessment</div>
+      <p class="section-desc">Open migration risks by severity, and risks the assignment already resolved.</p>
+      <div id="risk-assessment-container"></div>
     </div>
 
     <div class="section">

@@ -253,6 +253,17 @@ const hostileExportData = () => {
         reality_check: { after_distribution: Object.fromEntries(engines.map((e, i) => [e, 10 + i])) },
         // A string cost must not throw in the client's cost cards either.
         tco_analysis: { cost_breakdown: engines.map((e, i) => ({ database: e, monthly_cost_usd: i === 1 ? '5' : 1, pricing_mode: ATTR })) },
+        // #373: risk_assessment must render through buildRiskAssessment the same
+        // way every other section does -- hostile text everywhere a risk carries it.
+        risk_assessment: {
+          overall_risk_level: BREAKOUT,
+          risks: [
+            { risk_id: ATTR, engine: IMG, severity: 'CRITICAL', description: `[dynamodb] ${IMG}`, mitigation: BREAKOUT, affected_tables: [SQUOTE] },
+          ],
+          resolved_risks: [
+            { engine: ATTR, resolved_on: IMG, severity: BREAKOUT, description: `[x] ${END_SCRIPT}`, reason: JS_URL },
+          ],
+        },
       },
     },
     schemaDesigns: engines.map((engine, ei) => ({

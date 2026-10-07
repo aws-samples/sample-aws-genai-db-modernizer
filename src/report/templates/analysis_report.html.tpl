@@ -67,6 +67,12 @@ __BANNER__
     </div>
 
     <div class="section">
+      <div class="section-header">Risk Assessment</div>
+      <p class="section-desc">Open migration risks by severity, and risks the assignment already resolved.</p>
+      <div id="risk-assessment-container"></div>
+    </div>
+
+    <div class="section">
       <div class="section-header">Query Flow</div>
       <p class="section-desc">How your access patterns distribute across the recommended engines, from source table to target.</p>
       <div id="query-flow-container"></div>
