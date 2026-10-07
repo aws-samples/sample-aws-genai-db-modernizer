@@ -444,16 +444,122 @@ def phase_reality_check(store, job_id: str, db: str, llm_mode: str) -> str:
     return "complete"
 
 
-def _reality_check_artifact(store, job_id: str, db: str) -> dict:
-    """``artifact`` (the RC output) and ``assignment_version`` (the effective
-    assignment downstream phases use) for a reality_check status line."""
-    from src.storage.assignment_versioning import resolve_downstream_assignment_version
+_REASON_LIMIT = 140  # keeps the reality_check status line compact (#329)
 
-    out: dict = {"assignment_version": resolve_downstream_assignment_version(store, db, job_id)}
+# A draft reasoning pass inside reality_check.py's mandatory-engine
+# justification floor builds its reason text with a bare issue tag, e.g.
+# "... does not meet its justification floor (#167) -- ...". Reconciliation
+# (reconcile_consolidations) usually replaces that text once query counts
+# settle, but review of #329 found a scenario where the tag survives all
+# the way into reality-check/output.json unchanged. An internal issue
+# number is not something an approval gate should show a customer, so this
+# is stripped defensively here regardless of what the upstream text does.
+_ISSUE_REF_RE = re.compile(r"\s*\(#\d+(?:,\s*#\d+)*\)|\s#\d+\b")
+
+
+def _scrub_issue_refs(text: str) -> str:
+    return _ISSUE_REF_RE.sub("", text)
+
+
+def _truncate(text: str, limit: int = _REASON_LIMIT) -> str:
+    text = _scrub_issue_refs(text or "")
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+_CACHE_OVERLAY_FIELDS = ("query_count", "calls_per_second", "call_share_percent")
+
+
+def _compact_consolidations(consolidations: list[dict]) -> list[dict]:
+    """``from``/``to``/``queries`` per entry, ``reason`` only where it adds
+    information.
+
+    Several consolidation records from the same ``from_engine`` often carry
+    the identical reason text verbatim (e.g. two "documentdb has no unique
+    capabilities ..." records, one per destination engine) -- printing it on
+    every one makes the status line grow without telling the approver
+    anything new. Keep it on the first record for that ``from_engine``;
+    later ones with the exact same text omit it.
+    """
+    out: list[dict] = []
+    last_reason: dict[str, str] = {}
+    for c in consolidations:
+        from_engine = c["from_engine"]
+        reason = c.get("reason", "")
+        entry = {"from": from_engine, "to": c["to_engine"], "queries": c["query_count"]}
+        if last_reason.get(from_engine) != reason:
+            entry["reason"] = _truncate(reason)
+            last_reason[from_engine] = reason
+        out.append(entry)
+    return out
+
+
+def _schema_design_engines(store, job_id: str, db: str, version: int) -> list[str]:
+    """The engines that get a schema design: triage's selection, filtered to
+    the ones with an in-scope query at ``version`` -- owners (``assigned_engine``)
+    *and* the cache-layer engine when it fronts an owner's hot reads
+    (``cache_engine``, #296). Computed the same way as the state's
+    ``selected_engines`` (``_surviving_engines``), so it never drifts from
+    what schema design actually dispatches.
+
+    Issue #329 review: ``after_distribution`` only counts owners -- the cache
+    layer never owns a query by design (ADR #296's write gate), so a model
+    reading only that dict for its engine list drops the cache layer and its
+    schema design never gets dispatched. This gives the orchestrator an
+    explicit, correct list instead of making it infer one.
+    """
+    from src.storage.assignment_versioning import engines_with_in_scope_queries
+
+    in_scope = engines_with_in_scope_queries(store, db, job_id, version)
+    triage_key = f"{db}/{job_id}/referee-triage/triage.json"
+    if not in_scope:
+        return []
+    if store.exists(triage_key):
+        selected = [a["agent_type"] for a in store.read_json(triage_key).get("selected_agents", [])]
+        return [e for e in selected if e in in_scope]
+    return sorted(in_scope)
+
+
+def _reality_check_artifact(store, job_id: str, db: str) -> dict:
+    """``artifact`` (the RC output), ``assignment_version`` (the effective
+    assignment downstream phases use), and the final per-engine distribution
+    for a reality_check status line.
+
+    Issue #329: a chat-only approval gate had no numbers to show -- the
+    orchestrator must never read reality-check/output.json or an assignment
+    artifact itself, so without this the status line carried nothing besides
+    a version number and a path. ``before_distribution``/``after_distribution``
+    (the v1 -> vN per-engine query counts), a compact ``consolidations`` list
+    (what moved, how many queries, why -- deduplicated, see
+    ``_compact_consolidations``), ``cache_overlay`` (the final assignment's
+    cache coverage, trimmed to the three fields the gate names) and
+    ``schema_design_engines`` (see ``_schema_design_engines``) are read here,
+    deterministically, so the orchestrator can present them, and dispatch
+    schema design, without opening either file. Review of #329: keep this
+    line's growth in check -- the full cache_overlay object (owners,
+    patterns, min/max) and repeated reason text are not needed to approve.
+    """
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_downstream_assignment_version,
+    )
+
+    version = resolve_downstream_assignment_version(store, db, job_id)
+    out: dict = {"assignment_version": version}
     key = f"{db}/{job_id}/reality-check/output.json"
     if store.exists(key):
         out["artifact"] = _path(store, key)
         _log_artifact("reality-check", out["artifact"])
+        rc = store.read_json(key)
+        out["before_distribution"] = rc.get("before_distribution", {})
+        out["after_distribution"] = rc.get("after_distribution", {})
+        out["consolidations"] = _compact_consolidations(rc.get("consolidations", []))
+
+    assignment_path = assignment_artifact_path(db, job_id, version)
+    if store.exists(assignment_path):
+        overlay = store.read_json(assignment_path).get("cache_overlay")
+        if overlay:
+            out["cache_overlay"] = {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}
+    out["schema_design_engines"] = _schema_design_engines(store, job_id, db, version)
     return out
 
 

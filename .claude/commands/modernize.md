@@ -98,29 +98,34 @@ Its stdout is short and is the whole tool result: one JSON status line per phase
 
 **After resume-reality-check completes:**
 
-- Unless `{experience_mode}` is `ui`, present a brief summary: selected engines and why, query distribution across engines, reality check consolidations and any reversals, architecture patterns detected.
+- Unless `{experience_mode}` is `ui`, present a brief summary: selected engines and why, query distribution across engines, reality check consolidations and any reversals, architecture patterns detected. Source the distribution and consolidations from the `reality_check` status line (below), not from memory or a guess.
 - Unless `{experience_mode}` is `chat`, add: the Sankey/assignment page in the UI has the full query-to-engine breakdown.
 
 ### Decision Gate: Assignment Approval
 
-After reality check, present the final assignment to the user — this is the approval gate, so these numbers appear in every mode, including `ui`:
+After reality check, present the final assignment to the user — this is the approval gate, so these numbers appear in every mode, including `ui`. Read them from the `reality_check` status line `run_assessment.py` already printed — the `--resume-reality-check` line, or the direct `"status": "complete"` line when reality check never went through `awaiting_llm` — never from opening `reality-check/output.json` or an assignment artifact yourself. That line always carries the data below when reality check produced one, so never tell the user you have not read it or do not have the numbers.
 
-- Which engines survived consolidation
-- Query distribution across engines
-- Any queries that were redirected by the LLM validator
+Show a compact table, one row per engine, built from that line's fields:
 
-Unless `{experience_mode}` is `chat`, point the user at the Sankey/assignment page in the UI for the full breakdown before they decide — do not repeat the full table in chat, just the numbers above.
+- `before_distribution` vs `after_distribution`: each engine's query count v1 → final, and its share of the total (survived, newly consolidated into, or dropped to zero)
+- `consolidations`: each entry's `from`, `to`, `queries` and `reason` — the queries that were redirected and why
+- `cache_overlay`, when present: `query_count` cached reads serving `call_share_percent`% of calls (`calls_per_second` is also on the line)
+- `schema_design_engines`: the engines Phase 6 will design next. When `cache_overlay` is present, its engine is in this list even though it owns no row in `after_distribution` — it still gets its own schema design, for the reads it fronts.
+
+When `before_distribution` and `after_distribution` are identical (or `consolidations` is empty), say so explicitly — reality check changed nothing — instead of presenting an empty-looking table.
+
+Unless `{experience_mode}` is `chat`, also point the user at the Sankey/assignment page in the UI for the full breakdown before they decide — the table above is the required minimum in every mode, the UI link is additional.
 
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
 Only proceed to schema design after user approval (unless `--auto`).
 
 ### Phase 6: Schema Design (Parallel Subagents)
 
-Only engines in `selected_engines` after reality check get a schema design. Build each skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.
+Design exactly the engines in `schema_design_engines`, from the `reality_check` status line (Decision Gate, above) — never re-derive the list from `after_distribution` or any other field: `after_distribution` only ever lists owners, so the cache-layer engine (present whenever `cache_overlay` is on that line) would be silently dropped. Build each skill name by replacing every `_` in the engine id with `-`, so `aurora_mysql` → `/design-schema-aurora-mysql` and `aurora_postgresql` → `/design-schema-aurora-postgresql`.
 
 DynamoDB is always designed as split → one subagent per group → merge. **The orchestrator runs that flow itself** (6a-6c): it never dispatches `/design-schema-dynamodb` as one subagent, because that subagent would have to dispatch the group subagents one level deeper, and their results would never reach it.
 
-**6a. Split DynamoDB** (only if `dynamodb` is selected):
+**6a. Split DynamoDB** (only if `dynamodb` is in `schema_design_engines`):
 
 ```bash
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split

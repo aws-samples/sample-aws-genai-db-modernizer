@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess  # nosec B404 -- runs this repo's own run_assessment.py script with fixed argv
 import sys
 import zipfile
@@ -298,6 +299,240 @@ def test_all_status_lines_name_real_artifacts(monkeypatch, tmp_path, capsys):
     assert schema["reason"] == "llm_mode=none: every schema designer needs a model"
     assert schema["artifacts"] == {}
     assert schema["skipped_engines"]  # every in-scope engine, none designed
+
+
+# --- #329: the approval gate needs the final per-engine distribution ------
+
+
+def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
+    monkeypatch, tmp_path, capsys
+):
+    status = _run_all_in_process(monkeypatch, tmp_path, capsys)
+    by_phase = {s["phase"]: s for s in status}
+    rc = by_phase["reality_check"]
+    assert rc["status"] == "complete"
+
+    # v1 -> final per-engine query counts, so the gate can show the shift
+    # instead of a maintainer having to open the artifact themselves.
+    assert rc["before_distribution"] == {
+        "dynamodb": 33,
+        "aurora_mysql": 58,
+        "opensearch": 10,
+        "documentdb": 6,
+    }
+    assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
+    assert "opensearch" not in rc["after_distribution"]  # consolidated away
+    assert "documentdb" not in rc["after_distribution"]
+
+    # What moved, how many queries, and why -- compact, not the full query lists.
+    assert rc["consolidations"]
+    for c in rc["consolidations"]:
+        assert {"from", "to", "queries"} <= set(c)
+        assert set(c) <= {"from", "to", "queries", "reason"}
+        assert isinstance(c["queries"], int) and c["queries"] > 0
+        if "reason" in c:
+            assert len(c["reason"]) <= run_assessment._REASON_LIMIT
+            assert not re.search(
+                r"#\d+", c["reason"]
+            ), f"bare issue reference leaked into a printed reason: {c['reason']!r}"
+
+    # documentdb -> aurora_mysql and documentdb -> dynamodb share the exact
+    # same reason text on this sample: the second entry must drop it rather
+    # than repeat it (#329 review).
+    documentdb_entries = [c for c in rc["consolidations"] if c["from"] == "documentdb"]
+    assert len(documentdb_entries) == 2
+    assert "reason" in documentdb_entries[0]
+    assert "reason" not in documentdb_entries[1]
+
+    # Cache coverage carries over from the input assignment (#296) so the gate
+    # can show it alongside the engine distribution -- trimmed to just the
+    # fields the gate names, not the full overlay object (#329 review).
+    assert set(rc["cache_overlay"]) == {"query_count", "calls_per_second", "call_share_percent"}
+
+    # #329 review (regression on PR #407): elasticache owns no row in
+    # after_distribution (the cache layer never owns a query, #296), but it
+    # still gets its own schema design -- schema_design_engines must name it
+    # explicitly so the orchestrator never has to (mis-)infer the dispatch
+    # list from after_distribution alone.
+    assert "elasticache" not in rc["after_distribution"]
+    assert set(rc["schema_design_engines"]) == {"dynamodb", "aurora_mysql", "elasticache"}
+
+
+def test_reality_check_status_line_reports_unchanged_distribution(tmp_path, monkeypatch, capsys):
+    # Issue #329: when reality check consolidates nothing, the status line
+    # still carries before_distribution == after_distribution (equal dicts,
+    # no consolidations) so the command can say "nothing changed" instead of
+    # presenting an empty table.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {
+            "before_distribution": {"dynamodb": 10},
+            "after_distribution": {"dynamodb": 10},
+            "consolidations": [],
+        },
+    )
+    store.write_json("wordpress/job-1/assignment/v1/assignment.json", {"version": 1})
+    artifact = run_assessment._reality_check_artifact(store, "job-1", "wordpress")
+    assert artifact["before_distribution"] == artifact["after_distribution"] == {"dynamodb": 10}
+    assert artifact["consolidations"] == []
+    assert "cache_overlay" not in artifact  # none on the assignment
+    # No query_assignments on this bare fixture assignment -- nothing in scope.
+    assert artifact["schema_design_engines"] == []
+
+
+def test_schema_design_engines_includes_the_cache_layer_engine(tmp_path, monkeypatch):
+    # Regression test for the #329 review (PR #407): a run where the cache
+    # layer fronts hot reads for two owner engines. after_distribution only
+    # ever lists owners, so schema_design_engines -- not after_distribution
+    # -- is what the orchestrator must read to decide which engines to
+    # dispatch Phase 6 for.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    db, job = "wordpress", "job-cache"
+    store.write_json(
+        f"{db}/{job}/referee-triage/triage.json",
+        {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "elasticache"},
+                {"agent_type": "aurora_mysql"},
+            ]
+        },
+    )
+    store.write_json(
+        f"{db}/{job}/assignment/v1/assignment.json",
+        {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": "q1", "assigned_engine": "dynamodb", "cache_engine": "elasticache"},
+                {"query_id": "q2", "assigned_engine": "aurora_mysql"},
+            ],
+            "cache_overlay": {
+                "engine": "elasticache",
+                "query_count": 1,
+                "calls_per_second": 5.0,
+                "call_share_percent": 50.0,
+            },
+        },
+    )
+    store.write_json(
+        f"{db}/{job}/reality-check/output.json",
+        {
+            "before_distribution": {"dynamodb": 1, "aurora_mysql": 1},
+            "after_distribution": {"dynamodb": 1, "aurora_mysql": 1},
+            "consolidations": [],
+        },
+    )
+    artifact = run_assessment._reality_check_artifact(store, job, db)
+    assert "elasticache" not in artifact["after_distribution"]
+    assert set(artifact["schema_design_engines"]) == {"dynamodb", "aurora_mysql", "elasticache"}
+
+
+def test_truncate_keeps_long_reasons_within_the_limit():
+    long_reason = "x" * 500
+    truncated = run_assessment._truncate(long_reason)
+    assert len(truncated) <= run_assessment._REASON_LIMIT
+    assert truncated.endswith("…")
+    assert run_assessment._truncate("short") == "short"
+
+
+def test_truncate_scrubs_bare_issue_references():
+    # Issue #329 review: the mandatory-engine justification floor in
+    # reality_check.py builds a draft reason with a bare issue tag, e.g.
+    # "... does not meet its justification floor (#167) -- ...". It is
+    # usually rewritten by reconcile_consolidations before the artifact is
+    # written, but test_reality_check_status_line_never_leaks_an_issue_tag
+    # (below) shows a real scenario where it is not. An internal issue
+    # number must never reach a customer-facing approval gate, so
+    # run_assessment.py scrubs it defensively regardless of upstream text.
+    reason = "DocumentDB does not meet its justification floor (#167) — serves 1 of 40 queries"
+    cleaned = run_assessment._truncate(reason)
+    assert "#167" not in cleaned
+    assert "justification floor — serves" in cleaned
+    assert (
+        run_assessment._scrub_issue_refs("flagged per #167 for review") == "flagged per for review"
+    )
+    assert run_assessment._scrub_issue_refs("no tags here") == "no tags here"
+
+
+def test_reality_check_status_line_never_leaks_an_issue_tag(tmp_path, monkeypatch):
+    # Regression test for #329 review: build the exact scenario from
+    # tests/unit/agents/referee/test_mandatory_engine_cost_share_floor.py
+    # (a mandatory engine with a tiny workload share and a high fixed cost)
+    # through the real deterministic handler + write step -- the same path
+    # /modernize's reality_check status line reads. Confirms the underlying
+    # artifact still carries the draft "(#167)" tag (so this test is not
+    # vacuous), and that the printed status line never does.
+    from src.agents.referee.reality_check_handler import (
+        run_reality_check_deterministic,
+        write_reality_check_result,
+    )
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    db, job = "wordpress", "job-floor"
+
+    query_ids = [f"dq{i}" for i in range(39)] + ["doc1"]
+    assignment = {
+        "version": 1,
+        "query_assignments": [
+            {"query_id": f"dq{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+            for i in range(39)
+        ]
+        + [
+            {
+                "query_id": "doc1",
+                "assigned_engine": "documentdb",
+                "assignment_reason": "signal override: nested_document -> documentdb",
+                "signal_override": "nested_document",
+            }
+        ],
+    }
+    triage = {
+        "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "documentdb"}],
+        "signals": [],
+        "query_capabilities": {},
+    }
+    collector = {
+        "queries": {
+            "query_patterns": [
+                {"query_id": qid, "tables_accessed": ["db.users"], "query_type": "SELECT"}
+                for qid in query_ids
+            ]
+        }
+    }
+    recommendation = [{"table_id": "db.users", "confidence_score": 80}]
+    store.write_json(f"{db}/{job}/assignment/v1/assignment.json", assignment)
+    store.write_json(f"{db}/{job}/referee-triage/triage.json", triage)
+    store.write_json(f"{db}/{job}/collector/output.json", collector)
+    store.write_json(
+        f"{db}/{job}/analysis-dynamodb/analysis.json", {"table_recommendations": recommendation}
+    )
+    store.write_json(
+        f"{db}/{job}/analysis-documentdb/analysis.json", {"table_recommendations": recommendation}
+    )
+
+    det = run_reality_check_deterministic(job, db, store, assignment_version=1)
+    write_reality_check_result(store, job, db, det, 1)
+
+    raw = store.read_json(f"{db}/{job}/reality-check/output.json")
+    raw_reason = next(
+        c["reason"] for c in raw["consolidations"] if c["from_engine"] == "documentdb"
+    )
+    assert "#167" in raw_reason, "fixture no longer reproduces the underlying leak -- update it"
+
+    printed = run_assessment._reality_check_artifact(store, job, db)
+    for c in printed["consolidations"]:
+        assert "reason" not in c or not re.search(
+            r"#\d+", c["reason"]
+        ), f"bare issue reference leaked into the printed reason: {c!r}"
 
 
 def test_schema_design_lists_only_engines_with_output(monkeypatch, tmp_path, capsys):

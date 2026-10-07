@@ -199,6 +199,42 @@ def test_ui_mode_suppresses_phase_summaries_but_keeps_approval_gate_numbers() ->
     assert "including `ui`" in decision_gate
 
 
+def test_decision_gate_requires_the_concrete_distribution() -> None:
+    # Issue #329: a chat-only approval gate was satisfied by a vague prose
+    # summary ("Which engines survived", "Query distribution") with no
+    # required numbers, so a maintainer approved without seeing the v1 -> v2
+    # shift. The gate must now name the concrete status-line fields and
+    # forbid presenting it as unread.
+    text = _modernize_text()
+    decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1].split(
+        "### Phase 6", 1
+    )[0]
+    for field in (
+        "before_distribution",
+        "after_distribution",
+        "consolidations",
+        "cache_overlay",
+        "schema_design_engines",
+    ):
+        assert f"`{field}`" in decision_gate, f"Decision Gate does not name `{field}`"
+    assert "never from opening" in decision_gate
+    assert "never tell the user you have not read it" in decision_gate
+    assert "identical" in decision_gate  # the no-op case is called out explicitly
+
+
+def test_schema_design_phase_names_the_engine_list_field() -> None:
+    # Regression test for the #329 review (PR #407): the orchestrator picked
+    # schema design engines from after_distribution (owners only) and silently
+    # dropped the cache-layer engine, which never owns a query. Phase 6 must
+    # point at the explicit schema_design_engines field instead of leaving the
+    # engine list to be inferred from after_distribution or anything else.
+    text = _modernize_text()
+    phase_6 = text.split("### Phase 6: Schema Design", 1)[1].split("### Phase 7", 1)[0]
+    assert "`schema_design_engines`" in phase_6
+    assert "never re-derive the list from `after_distribution`" in phase_6
+    assert "only if `dynamodb` is in `schema_design_engines`" in phase_6
+
+
 def test_dispatched_subcommands_have_no_unexempted_user_prompts() -> None:
     for filename in DISPATCHED_SUBCOMMANDS:
         path = COMMANDS_DIR / filename
