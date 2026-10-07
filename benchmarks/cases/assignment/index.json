@@ -1,0 +1,17 @@
+{
+  "stage": "assignment",
+  "cases": [
+    {
+      "id": "kv-lookup-clean",
+      "path": "kv-lookup-clean",
+      "intent": "Point-lookup KV workload",
+      "tags": ["clean", "kv", "dynamodb", "elasticache"]
+    },
+    {
+      "id": "wordpress-trimmed",
+      "path": "wordpress-trimmed",
+      "intent": "Trimmed real WordPress workload",
+      "tags": ["real", "mixed"]
+    }
+  ]
+}
