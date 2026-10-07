@@ -28,6 +28,13 @@ class FakeProc:
 def _isolated_state_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     state_dir = tmp_path / "state" / ".local-ui"
     monkeypatch.setattr(start_local_ui, "STATE_DIR", state_dir)
+    ui_dir = tmp_path / "ui"
+    (ui_dir / "src").mkdir(parents=True)
+    (ui_dir / "public").mkdir()
+    (ui_dir / "src" / "App.js").write_text("original")
+    (ui_dir / "package.json").write_text("{}")
+    (ui_dir / "package-lock.json").write_text("{}")
+    monkeypatch.setattr(start_local_ui, "UI_DIR", ui_dir)
     return state_dir
 
 
@@ -58,6 +65,7 @@ def test_ready_when_both_servers_come_up(monkeypatch: pytest.MonkeyPatch, tmp_pa
         "api": start_local_ui.API_URL,
         "ui": start_local_ui.UI_URL,
         "pids": {"api": 111, "serve": 222},
+        "ui_build": "rebuilt",
     }
     assert written == {"api": 111, "serve": 222}
 
@@ -71,6 +79,7 @@ def test_ready_reuses_already_running_servers_from_a_previous_run(
     _isolated_state_dir.mkdir(parents=True)
     (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
     _all_processes_match(monkeypatch)
+    _stamp_build()
     monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
 
     def _must_not_be_called(name: str) -> Any:
@@ -90,6 +99,7 @@ def test_ready_reuses_already_running_servers_from_a_previous_run(
         "api": start_local_ui.API_URL,
         "ui": start_local_ui.UI_URL,
         "pids": {"api": 111, "serve": 222},
+        "ui_build": "reused",
     }
 
 
@@ -100,6 +110,7 @@ def test_rebuild_flag_skips_reuse_and_starts_fresh(
     (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
     _all_processes_match(monkeypatch)
     _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: dict(pids))
     monkeypatch.setattr(start_local_ui, "start_api", lambda root, log_dir: FakeProc(333))
     monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(444))
     monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
@@ -135,6 +146,7 @@ def test_recorded_servers_alive_but_unhealthy_do_not_short_circuit_the_port_chec
     _isolated_state_dir.mkdir(parents=True)
     (_isolated_state_dir / "pids.json").write_text(json.dumps({"api": 111, "serve": 222}))
     _all_processes_match(monkeypatch)
+    _stamp_build()
     monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: False)
     _patch_common(monkeypatch, port_available=False)
 
@@ -471,3 +483,153 @@ def test_run_refuses_artifact_root_outside_repo_under_ci_sandbox(
     assert code == 1
     assert result["status"] == "error"
     assert "--artifact-root" in result["reason"]
+
+
+def _stamp_build() -> None:
+    build = start_local_ui.UI_DIR / "build"
+    build.mkdir(exist_ok=True)
+    (build / "index.html").write_text("built")
+    (build / ".modernizer-build.json").write_text(json.dumps(start_local_ui.ui_build_fingerprint()))
+
+
+@pytest.mark.parametrize(
+    "relative", ["src/App.js", "public/index.html", "package.json", "package-lock.json"]
+)
+def test_ui_source_changes_invalidate_the_build(relative: str) -> None:
+    _stamp_build()
+    assert start_local_ui.ui_build_is_current()
+    (start_local_ui.UI_DIR / relative).write_text("changed")
+    assert not start_local_ui.ui_build_is_current()
+
+
+def test_deleted_source_and_changed_commit_invalidate_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(start_local_ui, "_git_head", lambda: "first")
+    _stamp_build()
+    monkeypatch.setattr(start_local_ui, "_git_head", lambda: "second")
+    assert not start_local_ui.ui_build_is_current()
+    monkeypatch.setattr(start_local_ui, "_git_head", lambda: "first")
+    (start_local_ui.UI_DIR / "src/App.js").unlink()
+    assert not start_local_ui.ui_build_is_current()
+
+
+@pytest.mark.parametrize("stamp", [None, "invalid json", "{}", "[]"])
+def test_missing_or_invalid_build_stamp_requires_rebuild(stamp: str | None) -> None:
+    _stamp_build()
+    path = start_local_ui.UI_DIR / "build/.modernizer-build.json"
+    if stamp is None:
+        path.unlink()
+    else:
+        path.write_text(stamp)
+    assert not start_local_ui.ui_build_is_current()
+
+
+def test_missing_index_requires_rebuild() -> None:
+    _stamp_build()
+    (start_local_ui.UI_DIR / "build/index.html").unlink()
+    assert not start_local_ui.ui_build_is_current()
+
+
+def test_stale_bundle_restarts_recorded_servers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stamp_build()
+    (start_local_ui.UI_DIR / "src/App.js").write_text("updated")
+    start_local_ui.write_pids({"api": 111, "serve": 222})
+    _all_processes_match(monkeypatch)
+    _patch_common(monkeypatch)
+    killed = []
+
+    def record_kill(pids: dict[str, int]) -> dict[str, int]:
+        killed.append(pids)
+        return pids
+
+    monkeypatch.setattr(start_local_ui, "kill_pids", record_kill)
+    monkeypatch.setattr(start_local_ui, "start_api", lambda *args: FakeProc(333))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda *args: FakeProc(444))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+    assert code == 0
+    assert result["ui_build"] == "rebuilt"
+    assert result["pids"] == {"api": 333, "serve": 444}
+    assert killed == [{"api": 111, "serve": 222}]
+
+
+def test_build_stamps_only_successful_builds(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    build = start_local_ui.UI_DIR / "build"
+
+    def npm(cmd: list[str], **kwargs: Any) -> None:
+        calls.append(cmd)
+        if cmd == ["npm", "run", "build"]:
+            build.mkdir(exist_ok=True)
+            (build / "index.html").write_text("built")
+
+    monkeypatch.setattr(start_local_ui, "_run_npm", npm)
+    start_local_ui.build_ui(start_local_ui.UI_DIR / "node_modules/.bin/serve")
+    assert calls == [["npm", "ci"], ["npm", "run", "build"]]
+    assert start_local_ui.ui_build_is_current()
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise start_local_ui.BuildError("build failed")
+
+    monkeypatch.setattr(start_local_ui, "_run_npm", fail)
+    with pytest.raises(start_local_ui.BuildError):
+        start_local_ui.build_ui(start_local_ui.UI_DIR / "node_modules/.bin/serve")
+    assert not start_local_ui.ui_build_is_current()
+
+
+def test_current_bundle_can_be_reused_without_running_servers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stamp_build()
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "build_ui", lambda *args: pytest.fail("unexpected build"))
+    monkeypatch.setattr(start_local_ui, "start_api", lambda *args: FakeProc(111))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda *args: FakeProc(222))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+    assert code == 0
+    assert result["ui_build"] == "reused"
+
+
+def test_fingerprint_works_without_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_git(*args: Any, **kwargs: Any) -> None:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(start_local_ui.subprocess, "run", missing_git)
+    _stamp_build()
+    assert start_local_ui.ui_build_is_current()
+    (start_local_ui.UI_DIR / "src/App.js").write_text("edited")
+    assert not start_local_ui.ui_build_is_current()
+
+
+def test_restart_waits_for_ports_and_fails_if_they_stay_busy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    start_local_ui.write_pids({"api": 111, "serve": 222})
+    _all_processes_match(monkeypatch)
+    _patch_common(monkeypatch, port_available=False)
+    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: pids)
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=0)
+    assert code == 1
+    assert result["reason"] == "local servers did not release their ports"
+
+
+def test_restart_waits_for_ports_to_be_released(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    start_local_ui.write_pids({"api": 111, "serve": 222})
+    _all_processes_match(monkeypatch)
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "kill_pids", lambda pids: pids)
+    available = iter([False, True, True, True, True])
+    monkeypatch.setattr(start_local_ui, "check_port_available", lambda port: next(available))
+    monkeypatch.setattr(start_local_ui, "start_api", lambda *args: FakeProc(333))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda *args: FakeProc(444))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    monkeypatch.setattr(start_local_ui.time, "sleep", lambda seconds: None)
+    result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+    assert code == 0
+    assert result["pids"] == {"api": 333, "serve": 444}

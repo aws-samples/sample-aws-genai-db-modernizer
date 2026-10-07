@@ -16,7 +16,7 @@ Usage:
 
 Outputs JSON to stdout (the only output the caller parses):
     {"status": "ready", "api": "http://localhost:8000", "ui": "http://localhost:3000",
-     "pids": {"api": 123, "serve": 456}}
+     "pids": {"api": 123, "serve": 456}, "ui_build": "rebuilt" | "reused"}
     {"status": "error", "reason": "..."}
     {"status": "stopped", "pids": {"api": 123, "serve": 456}}
 
@@ -35,6 +35,7 @@ a stale pid file can never take down an unrelated process that reused the pid.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import json
 import os
@@ -148,15 +149,62 @@ def _run_npm(cmd: list[str], cwd: Path, env: dict[str, str]) -> None:
         raise BuildError(f"`{' '.join(cmd)}` failed (exit {proc.returncode}): {combined[-800:]}")
 
 
+def _git_head() -> str | None:
+    try:
+        proc = subprocess.run(  # nosec B603 B607 -- fixed argv, local revision only
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None  # Source archives can still use content-based freshness.
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def ui_build_fingerprint() -> dict[str, str | None]:
+    """Identify the revision and contents used by the local production build."""
+    files = [
+        path for name in ("src", "public") for path in (UI_DIR / name).rglob("*") if path.is_file()
+    ]
+    # Include build configuration (.env*, JS and JSON) as well as the lockfile.
+    files.extend(
+        path
+        for path in UI_DIR.iterdir()
+        if path.is_file() and (path.suffix in (".js", ".json") or path.name.startswith(".env"))
+    )
+    digest = hashlib.sha256()
+    for path in sorted(files):
+        digest.update(path.relative_to(UI_DIR).as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return {"commit": _git_head(), "source_hash": digest.hexdigest()}
+
+
+def ui_build_is_current() -> bool:
+    """Only reuse a complete bundle with a matching, valid build stamp."""
+    if not (UI_DIR / "build" / "index.html").is_file():
+        return False
+    try:
+        stamp = json.loads((UI_DIR / "build" / ".modernizer-build.json").read_text())
+        return bool(stamp == ui_build_fingerprint())
+    except (OSError, ValueError):
+        return False
+
+
 def build_ui(serve_bin: Path) -> None:
-    """Install UI deps (only if `serve` is missing) and build the production bundle."""
-    if not serve_bin.exists():
-        _run_npm(["npm", "ci"], cwd=UI_DIR, env=os.environ.copy())
+    """Restore locked UI dependencies, build and stamp the production bundle."""
+    stamp_path = UI_DIR / "build" / ".modernizer-build.json"
+    stamp_path.unlink(missing_ok=True)
+    fingerprint = ui_build_fingerprint()
+    # A changed lockfile must not build against dependencies from an older run.
+    _run_npm(["npm", "ci"], cwd=UI_DIR, env=os.environ.copy())
 
     env = os.environ.copy()
     env["REACT_APP_API_URL"] = f"{API_URL}/api/v1/"
     env["CI"] = "false"
     _run_npm(["npm", "run", "build"], cwd=UI_DIR, env=env)
+    stamp_path.write_text(json.dumps(fingerprint))
 
 
 def start_api(artifact_root: Path, log_dir: Path) -> subprocess.Popen:
@@ -285,14 +333,30 @@ def _recorded_servers_match_markers() -> dict[str, int] | None:
 def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[str, Any], int]:
     log_dir = local_ui_dir()
 
-    # `/modernize` never stops these servers at the end of a run (the user
-    # keeps browsing), so the next default run finds both ports already
-    # taken by last time's servers. Reuse them instead of treating that as
-    # an unrelated process holding the port (#346).
-    if not rebuild:
-        recorded = _recorded_servers_match_markers()
-        if recorded is not None and wait_for_ready(timeout):
-            return {"status": "ready", "api": API_URL, "ui": UI_URL, "pids": recorded}, 0
+    needs_build = rebuild or not ui_build_is_current()
+    recorded = _recorded_servers_match_markers()
+    if recorded is not None:
+        if not needs_build and wait_for_ready(timeout):
+            return {
+                "status": "ready",
+                "api": API_URL,
+                "ui": UI_URL,
+                "pids": recorded,
+                "ui_build": "reused",
+            }, 0
+        if needs_build:
+            kill_pids(recorded)
+            clear_pids()
+            # SIGTERM is asynchronous; give our recorded servers time to release
+            # their ports before applying the unrelated-process guard below.
+            deadline = time.monotonic() + min(timeout, 10.0)
+            while not all(check_port_available(port) for port in (API_PORT, UI_PORT)):
+                if time.monotonic() >= deadline:
+                    return {
+                        "status": "error",
+                        "reason": "local servers did not release their ports",
+                    }, 1
+                time.sleep(0.1)
 
     for port in (API_PORT, UI_PORT):
         if not check_port_available(port):
@@ -301,10 +365,9 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
                 "reason": f"port {port} is already in use by something this script didn't start",
             }, 1
 
-    build_index = UI_DIR / "build" / "index.html"
     serve_bin = UI_DIR / "node_modules" / ".bin" / "serve"
 
-    if rebuild or not build_index.exists():
+    if needs_build:
         try:
             build_ui(serve_bin)
         except NpmAuthError:
@@ -328,7 +391,13 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
     write_pids(pids)
 
     if wait_for_ready(timeout):
-        return {"status": "ready", "api": API_URL, "ui": UI_URL, "pids": pids}, 0
+        return {
+            "status": "ready",
+            "api": API_URL,
+            "ui": UI_URL,
+            "pids": pids,
+            "ui_build": "rebuilt" if needs_build else "reused",
+        }, 0
 
     kill_pids(pids)
     clear_pids()
@@ -357,7 +426,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--rebuild",
         action="store_true",
-        help="Rebuild the UI bundle even if src/ui/build/index.html already exists",
+        help="Force a UI rebuild (changed or unstamped bundles rebuild automatically)",
     )
     parser.add_argument(
         "--timeout",
