@@ -4,10 +4,9 @@ Implementation guides for the agents, contracts and storage layer behind
 Database Modernizer Assessment.
 
 > **Note:** This project originally shipped with a hosted deployment option.
-> Following customer feedback, it moved to a Claude Code–first local tool to
-> keep the open-source release simple to adopt. See the top-level
-> [README's "Hosted Deployment (Retired)"](../../README.md#hosted-deployment-retired)
-> section for details.
+> Following customer feedback, it became a local tool built around Claude Code,
+> to keep the open-source release simple to adopt. The retirement is recorded
+> in [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).
 
 ## Architecture Overview
 

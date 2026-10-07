@@ -22,7 +22,7 @@ Moving off a monolithic relational database raises hard questions. Which queries
 **Supported sources:** PostgreSQL, MySQL, MariaDB
 **Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
-> **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it became a local tool built around Claude Code, to keep the open-source release simple to adopt. See [Hosted Deployment (Retired)](https://github.com/aws-samples/sample-aws-genai-db-modernizer#hosted-deployment-retired) for details.
+> **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it became a local tool built around Claude Code, to keep the open-source release simple to adopt.
 
 ## Who is this for?
 
@@ -176,10 +176,6 @@ npm run serve
 The local API only answers requests addressed to `localhost`, `127.0.0.1` or `::1`. To reach it under another host name, set `MODERNIZER_ALLOWED_HOSTS` to a comma-separated list of names.
 
 Then open `http://localhost:3000` to browse your modernization results.
-
-### Hosted Deployment (Retired)
-
-The hosted platform is retired: ECS Fargate, Step Functions orchestration, Cognito authentication and the per-environment CloudFormation stacks. The tool now runs locally: the CLI (`run_assessment.py`), Claude Code (`/modernize` and the other slash commands), or the local API + UI described above. The hosted code (`infrastructure/cloudformation/` and the service Dockerfiles, the `make deploy-*`/`make destroy-*` targets, the Step Functions orchestrator, and the Step Functions/S3 service paths in `src/api`) was removed in #175.
 
 ---
 
