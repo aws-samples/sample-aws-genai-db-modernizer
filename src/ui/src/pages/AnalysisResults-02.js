@@ -39,7 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
@@ -257,8 +257,10 @@ const AnalysisResultsPage = memo(() => {
       nodes.push({ id: engine });
       links.push({ source: 'queries', target: engine, value: count });
     });
-    return { nodes, links };
-  }, [afterDist]);
+    // #330: show the cache layer in the diagram, fed by its owner engines'
+    // flows, instead of only in the cacheLayerLine caption below it.
+    return addCacheOverlayNode({ nodes, links }, cacheOverlay);
+  }, [afterDist, cacheOverlay]);
 
   const breadcrumbItems = useMemo(() => [
     { href: "/", text: t('analysis-results-v2.breadcrumb.home') },

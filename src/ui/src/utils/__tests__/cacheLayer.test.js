@@ -17,6 +17,7 @@ import {
   isKeptCostEngine,
   ownerSchemaDesigns,
   cacheAccessPatternCount,
+  addCacheOverlayNode,
 } from '../cacheLayer';
 import en from '../../locales/en.json';
 
@@ -418,5 +419,67 @@ describe('Results page access-patterns captions pluralization (#361 review: _one
     expect(t('analysis-results-v2.executive-summary.cache-patterns-note', { count: 13 })).toBe(
       '+13 cache-layer patterns (not counted above)',
     );
+  });
+});
+
+describe('addCacheOverlayNode (#330: cache layer visible in the Sankey itself)', () => {
+  const sankeyData = {
+    nodes: [{ id: 'queries' }, { id: 'dynamodb' }, { id: 'aurora_mysql' }],
+    links: [
+      { source: 'queries', target: 'dynamodb', value: 82 },
+      { source: 'queries', target: 'aurora_mysql', value: 21 },
+    ],
+  };
+  const overlay = {
+    engine: 'elasticache',
+    query_count: 13,
+    owners: { dynamodb: 11, aurora_mysql: 2 },
+  };
+
+  test('adds the cache engine as a node fed by its owner engines (not the source)', () => {
+    const result = addCacheOverlayNode(sankeyData, overlay);
+    expect(result.nodes).toEqual([...sankeyData.nodes, { id: 'elasticache' }]);
+    expect(result.links).toEqual([
+      ...sankeyData.links,
+      { source: 'dynamodb', target: 'elasticache', value: 11 },
+      { source: 'aurora_mysql', target: 'elasticache', value: 2 },
+    ]);
+  });
+
+  test('leaves the original queries -> owner links untouched (owner totals still sum to the query count)', () => {
+    const result = addCacheOverlayNode(sankeyData, overlay);
+    const ownerLinks = result.links.filter((l) => l.source === 'queries');
+    expect(ownerLinks).toEqual(sankeyData.links);
+    expect(ownerLinks.reduce((sum, l) => sum + l.value, 0)).toBe(103);
+  });
+
+  test('skips an overlay owner engine that is not actually a node in this sankey', () => {
+    const partialOverlay = { engine: 'elasticache', owners: { dynamodb: 11, opensearch: 4 } };
+    const result = addCacheOverlayNode(sankeyData, partialOverlay);
+    expect(result.links).toEqual([...sankeyData.links, { source: 'dynamodb', target: 'elasticache', value: 11 }]);
+  });
+
+  test('no-op when there is no overlay', () => {
+    expect(addCacheOverlayNode(sankeyData, null)).toBe(sankeyData);
+    expect(addCacheOverlayNode(sankeyData, undefined)).toBe(sankeyData);
+  });
+
+  test('no-op when the overlay has no owners breakdown', () => {
+    expect(addCacheOverlayNode(sankeyData, { engine: 'elasticache' })).toBe(sankeyData);
+  });
+
+  test('no-op when none of the overlay owners are nodes in this sankey', () => {
+    const unrelated = { engine: 'elasticache', owners: { opensearch: 4 } };
+    expect(addCacheOverlayNode(sankeyData, unrelated)).toBe(sankeyData);
+  });
+
+  test('no-op when sankeyData itself is missing', () => {
+    expect(addCacheOverlayNode(null, overlay)).toBeNull();
+  });
+
+  test('drops a zero-count owner entry rather than adding a zero-value link', () => {
+    const zeroOwner = { engine: 'elasticache', owners: { dynamodb: 0, aurora_mysql: 2 } };
+    const result = addCacheOverlayNode(sankeyData, zeroOwner);
+    expect(result.links).toEqual([...sankeyData.links, { source: 'aurora_mysql', target: 'elasticache', value: 2 }]);
   });
 });

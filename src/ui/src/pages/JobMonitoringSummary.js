@@ -32,6 +32,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ProgressState02 from "../components/ProgressState-02";
 import ChartSankey from "../components/ChartSankey-01";
+import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
 
 
 
@@ -96,6 +97,9 @@ const JobMonitoringSummaryPage = memo(() => {
   const [collectorInsights, setCollectorInsights] = useState(null);
   const [triageInsights, setTriageInsights] = useState(null);
   const [assignmentDistribution, setAssignmentDistribution] = useState(null);
+  // #330: the cache_overlay off the same assignment fetch, so the Sankey can
+  // show ElastiCache as a node fed by its owner engines' flows.
+  const [cacheOverlay, setCacheOverlay] = useState(null);
 
   //-- Agent filter for artifacts
   const [selectedArtifact, setSelectedArtifact] = useState(null);
@@ -398,6 +402,7 @@ const JobMonitoringSummaryPage = memo(() => {
               dist[q.assigned_engine] = (dist[q.assigned_engine] || 0) + 1;
             });
             setAssignmentDistribution(dist);
+            setCacheOverlay(getCacheOverlay(res.assignments.assignment));
           }
         });
     }
@@ -737,8 +742,10 @@ const JobMonitoringSummaryPage = memo(() => {
       });
     });
 
-    return { nodes, links };
-  }, [ranking]);
+    // #330: show the cache layer in the diagram, fed by its owner engines'
+    // flows, instead of leaving ElastiCache absent from it entirely.
+    return addCacheOverlayNode({ nodes, links }, cacheOverlay);
+  }, [ranking, cacheOverlay]);
 
 
 

@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { sankey, sankeyCenter, sankeyLinkHorizontal } from 'd3-sankey';
 import { displayEngine } from '../utils/engineNames';
+import { isCacheEngine } from '../utils/cacheLayer';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
@@ -45,17 +46,31 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
     return sankeyGenerator(data);
   }, [data, width, height]);
 
-  // Calculate total values for each node
+  // Calculate total values for each node. Before #330 every node was either
+  // a pure source (the "queries"/"patterns" root) or a pure target (an owner
+  // engine), so summing a node's value across every link touching it and
+  // taking the max of its incoming/outgoing totals gave the same number. Now
+  // an owner engine can be *both* -- a target of the "queries -> owner" flow
+  // and a source of the "owner -> cache" overlay flow (addCacheOverlayNode in
+  // src/ui/src/utils/cacheLayer.js) -- so summing both directions would double
+  // count it (e.g. 11 owned + 11 also cached showing as "22" instead of 11).
+  // max(incoming, outgoing) keeps every owner's displayed total equal to the
+  // query count it owns, cache overlay or not.
   const nodeValues = useMemo(() => {
-    const values = {};
+    const incoming = {};
+    const outgoing = {};
 
-    // Calculate totals from links
     links.forEach((link) => {
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
 
-      values[sourceId] = (values[sourceId] || 0) + link.value;
-      values[targetId] = (values[targetId] || 0) + link.value;
+      outgoing[sourceId] = (outgoing[sourceId] || 0) + link.value;
+      incoming[targetId] = (incoming[targetId] || 0) + link.value;
+    });
+
+    const values = {};
+    new Set([...Object.keys(incoming), ...Object.keys(outgoing)]).forEach((id) => {
+      values[id] = Math.max(incoming[id] || 0, outgoing[id] || 0);
     });
 
     return values;
@@ -66,9 +81,21 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
     return nodes.map((node) => {
       const nodeValue = nodeValues[node.id] || 0;
       const label = `${displayEngine(node.id)} (${nodeValue})`;
-      const isSource = node.x0 < width / 2;
-      const isClickable = onNodeClick && !isSource;
+      // The root ("queries"/"patterns") is always depth 0. x0 < width / 2 was
+      // an equivalent stand-in for "is the root" while the diagram only ever
+      // had two columns; #330 adds a third column (the cache node), whose x0
+      // can also land left of the midpoint on a narrow chart, so depth is the
+      // only check that stays correct regardless of column count.
+      const isSource = node.depth === 0;
+      // #330: the cache layer is fed by its owner engines' flows, never a flow
+      // source itself -- it's never clickable as a target the way an owner
+      // engine is, and its node/label are styled to read as an overlay (not a
+      // peer owner) via the dashed outline and secondary caption below.
+      const isCache = isCacheEngine(node.id);
+      const isClickable = onNodeClick && !isSource && !isCache;
       const nodeColor = NODE_COLORS[node.id] || '#0972D3';
+      const labelX = isSource ? node.x1 + 6 : node.x0 - 6;
+      const labelAnchor = isSource ? 'start' : 'end';
 
       return (
         <g
@@ -84,18 +111,32 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
             stroke={nodeColor}
             fill={nodeColor}
             fillOpacity={isClickable ? 0.8 : 0.6}
+            strokeDasharray={isCache ? '3,2' : undefined}
             rx={0.9}
           />
           <text
-            x={node.x0 < width / 2 ? node.x1 + 6 : node.x0 - 6}
+            x={labelX}
             y={(node.y1 + node.y0) / 2}
             dy="0.35em"
-            textAnchor={node.x0 < width / 2 ? 'start' : 'end'}
+            textAnchor={labelAnchor}
             fontSize={12}
             fill={textFill}
           >
             {label}
           </text>
+          {isCache && (
+            <text
+              x={labelX}
+              y={(node.y1 + node.y0) / 2}
+              dy="1.6em"
+              textAnchor={labelAnchor}
+              fontSize={10}
+              fill={textFill}
+              opacity={0.65}
+            >
+              cache layer
+            </text>
+          )}
         </g>
       );
     });
@@ -109,6 +150,10 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
       const path = linkGenerator(link);
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
       const linkColor = NODE_COLORS[targetId] || '#0972D3';
+      // #330: a link into the cache layer is a cached-reads overlay on top of
+      // its owner engine's flow, not a flow from the query source -- dash it
+      // so it reads as a second, overlaid layer rather than another owner flow.
+      const isCacheLink = isCacheEngine(targetId);
 
       return (
         <path
@@ -118,6 +163,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
           fill="none"
           strokeOpacity={isDark ? 0.3 : 0.4}
           strokeWidth={link.width}
+          strokeDasharray={isCacheLink ? '6,4' : undefined}
         />
       );
     });

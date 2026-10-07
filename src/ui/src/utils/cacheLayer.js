@@ -184,6 +184,36 @@ export function getQueryCacheInfo(queryAssignment) {
   };
 }
 
+/**
+ * Add the cache layer to a Sankey `{ nodes, links }` graph as a node fed by
+ * its owner engines' flows (#330), so ElastiCache becomes visible in the
+ * diagram itself instead of only in a caption below it. This is a *second*
+ * layer of links -- `ownerEngine -> cacheEngine` -- on top of the existing
+ * `source -> ownerEngine` flows; it never touches those, so owner node totals
+ * (and the existing links) still sum to the total query count. The cache
+ * engine is still never a flow source, preserving the #296 invariant that it
+ * never owns a query.
+ *
+ * No-op (returns `sankeyData` unchanged) when there's no overlay, the overlay
+ * has no `owners` breakdown, or none of its owner engines are present as
+ * nodes in `sankeyData` (so a partial/legacy sankey is left alone).
+ */
+export function addCacheOverlayNode(sankeyData, overlay) {
+  if (!sankeyData || !overlay?.engine || !overlay?.owners) return sankeyData;
+
+  const nodeIds = new Set((sankeyData.nodes || []).map((node) => node.id));
+  const cacheLinks = Object.entries(overlay.owners)
+    .filter(([engine, count]) => nodeIds.has(engine) && count > 0)
+    .map(([engine, count]) => ({ source: engine, target: overlay.engine, value: count }));
+
+  if (cacheLinks.length === 0) return sankeyData;
+
+  return {
+    nodes: [...sankeyData.nodes, { id: overlay.engine }],
+    links: [...sankeyData.links, ...cacheLinks],
+  };
+}
+
 // Fallback used when no i18next `t` is supplied (mirrors defaultT in
 // assignmentSummary.js so this module stays safe to call standalone).
 function defaultT(key, options = {}) {

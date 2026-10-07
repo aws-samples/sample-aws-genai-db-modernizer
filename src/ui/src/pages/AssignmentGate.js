@@ -33,7 +33,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { buildAssignmentSummary } from "../utils/assignmentSummary";
-import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -362,7 +362,9 @@ const AssignmentGatePage = memo(() => {
     t,
   }), [realityCheck, databaseName, afterDist, tableCount, patterns, cacheOverlay, t]);
 
-  // Sankey data from after_distribution
+  // Sankey data from after_distribution. #330: the cache layer is added as a
+  // node fed by its owner engines' flows (never a flow source itself), so
+  // cache coverage is visible in the diagram instead of only in cacheLayerLine.
   const sankeyData = useMemo(() => {
     if (Object.keys(afterDist).length === 0) return null;
 
@@ -374,8 +376,8 @@ const AssignmentGatePage = memo(() => {
       links.push({ source: 'queries', target: engine, value: count });
     });
 
-    return { nodes, links };
-  }, [afterDist]);
+    return addCacheOverlayNode({ nodes, links }, cacheOverlay);
+  }, [afterDist, cacheOverlay]);
 
   // Consolidated query IDs (for highlighting in advanced view)
   const consolidatedQueryIds = useMemo(() => {
@@ -725,8 +727,10 @@ const AssignmentGatePage = memo(() => {
             data={sankeyData}
             onNodeClick={handleSankeyNodeClick}
           />
-          {/* #296: the Sankey only ever shows owner engines (ElastiCache never
-              owns a query); its cache_overlay role is called out below it. */}
+          {/* #296/#330: ElastiCache never owns a query, so it's never a flow
+              source -- the Sankey instead shows it as a node fed by its owner
+              engines' flows (addCacheOverlayNode); this caption adds the
+              overlay's call-share stat, which the diagram doesn't carry. */}
           {cacheLayerLine && (
             <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
               {cacheLayerLine}
