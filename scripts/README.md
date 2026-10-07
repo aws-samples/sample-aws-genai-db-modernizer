@@ -39,6 +39,23 @@ cd database-modernizer
 
 ### Development Scripts
 
+#### start_local_ui.py
+
+Start the local API and production UI for an assessment:
+
+```bash
+uv run python scripts/start_local_ui.py
+uv run python scripts/start_local_ui.py --rebuild
+uv run python scripts/start_local_ui.py --stop
+```
+
+The launcher automatically rebuilds when the current commit, UI source files,
+public assets, package files or build configuration differ from the last successful
+build. Older bundles without a build stamp are rebuilt once. Each rebuild runs
+`npm ci` to restore the locked dependencies. Healthy recorded servers are reused
+only with a current bundle; a rebuild stops and restarts those recorded servers.
+The ready JSON result includes `"ui_build": "rebuilt"` or `"ui_build": "reused"`.
+
 #### validate_schemas.py
 
 Validates JSON schema files for correctness.
