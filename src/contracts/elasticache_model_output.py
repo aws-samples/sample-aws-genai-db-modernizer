@@ -245,10 +245,15 @@ class CacheInvalidationStrategy(BaseModel):
 
 
 class ElastiCacheModelOutputContract(BaseModel):
-    """Output contract for the ElastiCache/Redis schema design agent."""
+    """Output contract for the ElastiCache/Redis schema design agent.
+
+    Version history:
+    - 1.0: Initial version
+    - 1.1: HEXISTS added to the Hash operations (#337)
+    """
 
     contract_version: str = Field(
-        default="1.0",
+        default="1.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
