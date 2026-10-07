@@ -46,6 +46,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts._compact_output import CompactConsole, display_path, want_verbose  # noqa: E402
+from src.tools.database.collection_text import extract_json_object  # noqa: E402
 
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -169,9 +170,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
         _error("collect", f"File not found: {collector_file}")
 
     with open(collector_file, encoding="utf-8") as f:
-        content = f.read().strip()
-        if not content.startswith("{") and "\n" in content:
-            content = content[content.index("\n") + 1 :]
+        content = extract_json_object(f.read(), source=collector_file)
         input_data = json.loads(content)
 
     is_contract = isinstance(input_data.get("contract_version"), str) and input_data[

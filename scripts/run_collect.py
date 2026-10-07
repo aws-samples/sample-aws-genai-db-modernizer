@@ -17,6 +17,8 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.tools.database.collection_text import extract_json_object  # noqa: E402
+
 
 def _output(data: dict) -> None:
     """Print JSON to stdout (the only output the caller parses)."""
@@ -55,11 +57,7 @@ def main() -> None:
 
     # Read and parse the collector file
     with open(args.file, encoding="utf-8") as f:
-        content = f.read().strip()
-        # MySQL outputs a column header (e.g. "collection_output") on the first
-        # line when run without -N. Strip it so we get valid JSON.
-        if not content.startswith("{") and "\n" in content:
-            content = content[content.index("\n") + 1 :]
+        content = extract_json_object(f.read(), source=args.file)
         input_data = json.loads(content)
 
     # Detect format: contract (processed) vs raw (collection script output)

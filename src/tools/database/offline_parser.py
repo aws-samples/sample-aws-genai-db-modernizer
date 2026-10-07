@@ -12,6 +12,8 @@ import re
 
 import boto3
 
+from src.tools.database.collection_text import extract_json_object
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,12 +21,9 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     """Download the offline collection JSON from S3."""
     s3 = boto3.client("s3", region_name=region)
     resp = s3.get_object(Bucket=bucket, Key=key)
-    content = resp["Body"].read().decode("utf-8").strip()
-
-    # MySQL collection script may include a column header line before the JSON
-    # when run without the -N flag (e.g. "collection_output\n{...}")
-    if not content.startswith("{") and "\n" in content:
-        content = content[content.index("\n") + 1 :]
+    content = extract_json_object(
+        resp["Body"].read().decode("utf-8"), source=f"s3://{bucket}/{key}"
+    )
 
     # Oracle 19c JSON_OBJECT doesn't escape control chars in string values.
     # Strip them (except newlines which are line separators in the JSON).

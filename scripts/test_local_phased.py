@@ -33,6 +33,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.tools.database.collection_text import extract_json_object  # noqa: E402
+
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
 
@@ -70,11 +72,7 @@ def main():
         sys.exit(1)
 
     with open(collector_file, encoding="utf-8") as f:
-        content = f.read().strip()
-        # MySQL outputs a column header (e.g. "collection_output") on the first
-        # line when run without -N.  Strip it so we get valid JSON.
-        if not content.startswith("{") and "\n" in content:
-            content = content[content.index("\n") + 1 :]
+        content = extract_json_object(f.read(), source=collector_file)
         input_data = json.loads(content)
 
     # Detect format
