@@ -32,7 +32,7 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
-import { buildAssignmentSummary } from "../utils/assignmentSummary";
+import { buildAssignmentSummary, engineOptionsForAssignment } from "../utils/assignmentSummary";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
@@ -309,6 +309,13 @@ const AssignmentGatePage = memo(() => {
   // artifacts (no cache_overlay, ElastiCache still a real owner) keep
   // rendering exactly as before.
   const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
+  // #381 review round 2: never offer the losing Aurora engine as a per-query
+  // override target -- the server rejects it (LosingAuroraEngineOverride) with no
+  // warning here otherwise.
+  const engineOptions = useMemo(
+    () => engineOptionsForAssignment(ENGINE_OPTIONS, assignmentData?.assignment),
+    [assignmentData],
+  );
   const beforeDist = useMemo(
     () => ownerDistribution(realityCheck?.before_distribution, !!cacheOverlay),
     [realityCheck, cacheOverlay],
@@ -1008,7 +1015,7 @@ const AssignmentGatePage = memo(() => {
                             setOverrides(prev => ({ ...prev, [item.query_id]: newEngine }));
                           }
                         }}
-                        options={ENGINE_OPTIONS}
+                        options={engineOptions}
                         triggerVariant="option"
                         expandToViewport
                       />

@@ -8,7 +8,7 @@
  * so plural resolution is actually exercised, not just the JS fallback.
  */
 import i18next from 'i18next';
-import { buildAssignmentSummary } from '../assignmentSummary';
+import { buildAssignmentSummary, engineOptionsForAssignment } from '../assignmentSummary';
 import en from '../../locales/en.json';
 
 const i18n = i18next.createInstance();
@@ -176,5 +176,43 @@ describe('#296 cache overlay', () => {
       `Your wordpress workload has 73 access patterns across 50 tables. ${LLM} `
       + 'Cache layer · 20 cached reads · 83.4% of calls.',
     );
+  });
+});
+
+describe('engineOptionsForAssignment', () => {
+  // #381 review round 2: the losing Aurora engine (a heterogeneous source's
+  // resolver choice between aurora_mysql/aurora_postgresql) must never appear as a
+  // per-query override target -- the server rejects it with no warning otherwise.
+  const OPTIONS = [
+    { label: 'DynamoDB', value: 'dynamodb' },
+    { label: 'Aurora MySQL', value: 'aurora_mysql' },
+    { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+  ];
+
+  test('drops the losing engine when a choice is recorded', () => {
+    const assignment = { aurora_engine_choice: { engine: 'aurora_postgresql' } };
+    expect(engineOptionsForAssignment(OPTIONS, assignment)).toEqual([
+      { label: 'DynamoDB', value: 'dynamodb' },
+      { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+    ]);
+  });
+
+  test('drops the other losing engine when mysql wins', () => {
+    const assignment = { aurora_engine_choice: { engine: 'aurora_mysql' } };
+    expect(engineOptionsForAssignment(OPTIONS, assignment)).toEqual([
+      { label: 'DynamoDB', value: 'dynamodb' },
+      { label: 'Aurora MySQL', value: 'aurora_mysql' },
+    ]);
+  });
+
+  test('returns every option unchanged when there is no recorded choice', () => {
+    expect(engineOptionsForAssignment(OPTIONS, {})).toEqual(OPTIONS);
+    expect(engineOptionsForAssignment(OPTIONS, undefined)).toEqual(OPTIONS);
+    expect(engineOptionsForAssignment(OPTIONS, null)).toEqual(OPTIONS);
+  });
+
+  test('returns every option unchanged for a homogeneous source (non-Aurora winner)', () => {
+    const assignment = { aurora_engine_choice: { engine: 'dynamodb' } };
+    expect(engineOptionsForAssignment(OPTIONS, assignment)).toEqual(OPTIONS);
   });
 });

@@ -9,7 +9,7 @@ that callers translate to their own protocol (HTTP status, chat message, ...).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -20,7 +20,7 @@ from src.agents.referee.assignment_resolver import (
     retained_engine_for,
 )
 from src.agents.referee.assignment_validator import AssignmentValidator
-from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.aurora_choice import AURORA_ENGINES, source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
     CUSTOMER_UNCACHE_REASON,
@@ -41,6 +41,7 @@ from src.contracts.assignment_models import (
     QueryAssignment,
     ValidationResult,
 )
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
     resolve_effective_assignment_version,
@@ -109,6 +110,28 @@ class AssignmentValidationFailed(AssignmentOverrideError):
         super().__init__("Assignment validation failed with hard errors")
 
 
+class LosingAuroraEngineOverride(AssignmentOverrideError):
+    """A customer override tried to move a query onto the #381 losing Aurora engine.
+
+    Rejected up front, before validation runs, with a message naming both engines'
+    display names and the source database -- clearer than letting it fall through
+    to the generic validator error ("... which did not analyze it"), which is
+    technically true (``load_assignment_for_edit`` drops the loser's analysis
+    output, #381 review) but does not explain *why* that engine is not a candidate
+    at all for this source (#381 review round 2).
+    """
+
+    def __init__(self, winner: str, loser: str, source_engine: str) -> None:
+        self.winner = winner
+        self.loser = loser
+        self.source_engine = source_engine
+        source_name = SOURCE_ENGINE_DISPLAY_NAMES.get(source_engine, display_engine(source_engine))
+        super().__init__(
+            f"This assessment chose {display_engine(winner)} for this {source_name} "
+            f"source; {display_engine(loser)} is not a target."
+        )
+
+
 def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> dict[str, dict]:
     """Read every ``analysis-<engine>/analysis.json`` for the job."""
     prefix = f"{database_name}/{job_id}/"
@@ -125,6 +148,26 @@ def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> di
     return outputs
 
 
+def _drop_losing_aurora_analysis(analysis_outputs: dict[str, dict], raw: dict) -> dict[str, dict]:
+    """Drop the #381 losing Aurora engine's analysis from ``analysis_outputs``.
+
+    Triage selects both ``aurora_mysql`` and ``aurora_postgresql`` for a
+    heterogeneous source (SQL Server, Oracle, DB2), so ``_read_analysis_outputs``
+    (which lists every ``analysis-<engine>`` artifact the job actually wrote,
+    not just the engines an assignment currently uses) reads both back in --
+    but the assignment never uses the loser once ``Assignment.
+    aurora_engine_choice`` is recorded. Returns a new dict; never mutates the
+    caller's. A no-op when ``raw`` has no recorded choice (homogeneous source,
+    or an assignment written before #381).
+    """
+    choice = raw.get("aurora_engine_choice")
+    engine = choice.get("engine") if isinstance(choice, Mapping) else None
+    if engine not in AURORA_ENGINES:
+        return analysis_outputs
+    loser = next(e for e in AURORA_ENGINES if e != engine)
+    return {e: a for e, a in analysis_outputs.items() if e != loser}
+
+
 def load_assignment_for_edit(
     store: _Store, database_name: str, job_id: str, version: int
 ) -> tuple[dict, dict, dict[str, dict]]:
@@ -139,6 +182,11 @@ def load_assignment_for_edit(
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
     analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
+    # #381 review: triage selected both Aurora engines for a heterogeneous source, so
+    # both have an analysis artifact on disk -- drop the one the resolver's recorded
+    # choice says lost, so the editing surface (and the validator run against it) never
+    # treats it as a live candidate again.
+    analysis_outputs = _drop_losing_aurora_analysis(analysis_outputs, raw)
     if normalize_cache_owners(
         raw,
         collector_output.get("queries", {}).get("query_patterns", []),
@@ -149,7 +197,9 @@ def load_assignment_for_edit(
         table_assignments, unresolved_table_names = derive_table_assignments(
             qas,
             known_tables=TableNameResolver.from_collector(collector_output),
-            retained_engine=retained_engine_for(collector_output),
+            retained_engine=retained_engine_for(
+                collector_output, qas, raw.get("aurora_engine_choice")
+            ),
         )
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
@@ -255,6 +305,18 @@ def apply_assignment_overrides(
         qa = qa_map.get(override.query_id)
         if qa is None:
             raise UnknownQuery(override.query_id)
+        # #381 review round 2: reject a re-route onto the losing Aurora engine up
+        # front, with a clear reason, instead of letting it fall through to the
+        # generic "did not analyze it" validator error.
+        choice = current.aurora_engine_choice
+        if (
+            choice is not None
+            and override.assigned_engine in AURORA_ENGINES
+            and override.assigned_engine != choice.engine
+        ):
+            raise LosingAuroraEngineOverride(
+                choice.engine, override.assigned_engine, choice.source_engine
+            )
         note = _apply_cache_override(
             qa,
             override,
@@ -456,7 +518,9 @@ def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> 
     table_assignments, unresolved_table_names = derive_table_assignments(
         assignment.query_assignments,
         known_tables=TableNameResolver.from_collector(collector_output),
-        retained_engine=retained_engine_for(collector_output),
+        retained_engine=retained_engine_for(
+            collector_output, assignment.query_assignments, assignment.aurora_engine_choice
+        ),
     )
     assignment.table_assignments = table_assignments
     assignment.unresolved_table_names = unresolved_table_names
@@ -504,7 +568,7 @@ def refresh_consolidated_assignment(
     table_assignments, unresolved_table_names = derive_table_assignments(
         qas,
         known_tables=TableNameResolver.from_collector(collector_output),
-        retained_engine=retained_engine_for(collector_output),
+        retained_engine=retained_engine_for(collector_output, qas, raw.get("aurora_engine_choice")),
     )
     co_dependency_groups = build_co_dependency_groups(
         collector_output.get("queries", {}).get("query_patterns", []),

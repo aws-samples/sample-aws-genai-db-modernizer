@@ -189,6 +189,39 @@ class LocalOrchestrator(Orchestrator):
 
         return engines_with_in_scope_queries(self.store, database_name, job_id, assignment_version)
 
+    def _drop_losing_aurora_engine(
+        self,
+        job_id: str,
+        database_name: str,
+        engines: list[str],
+        assignment_version: int,
+    ) -> list[str]:
+        """Drop the #381 losing Aurora engine from ``engines``, if one is recorded.
+
+        Triage selects both ``aurora_mysql`` and ``aurora_postgresql`` for a
+        heterogeneous source (SQL Server, Oracle, DB2) with no Aurora dialect of its
+        own, so a caller working off the triage-selected engine list (post-schema
+        routing) would otherwise still treat the losing engine as active even after
+        the assignment resolver picked one of the two (``Assignment.
+        aurora_engine_choice``). A no-op when there is no assignment yet, no recorded
+        choice (homogeneous source, or a legacy assignment written before #381), or
+        the loser is not even in ``engines`` to begin with.
+        """
+        from src.agents.referee.aurora_choice import AURORA_ENGINES
+        from src.storage.assignment_versioning import assignment_artifact_path
+
+        if assignment_version == 0:
+            return engines
+        path = assignment_artifact_path(database_name, job_id, assignment_version)
+        if not self.store.exists(path):
+            return engines
+        choice = self.store.read_json(path).get("aurora_engine_choice")
+        winner = choice.get("engine") if isinstance(choice, dict) else None
+        if winner not in AURORA_ENGINES:
+            return engines
+        loser = next(e for e in AURORA_ENGINES if e != winner)
+        return [e for e in engines if e != loser]
+
     def _run_phase(
         self,
         job_id: str,
@@ -400,6 +433,14 @@ class LocalOrchestrator(Orchestrator):
 
         selected_engines = self._get_selected_engines(job_id, database_name)
         assignment_version = self._get_assignment_version(job_id, database_name)
+        # #381 review round 2: triage selects both competing Aurora engines for a
+        # heterogeneous source (SQL Server, Oracle, DB2), but the assignment resolver
+        # only ever uses the one it picked -- drop the loser from the router's own
+        # active set so it is never offered as a target for an orphaned/unsupported
+        # query, same as every other caller downstream of the #381 choice.
+        selected_engines = self._drop_losing_aurora_engine(
+            job_id, database_name, selected_engines, assignment_version
+        )
 
         # Load query texts for exclusion checking
         collector_key = f"{database_name}/{job_id}/collector/output.json"

@@ -422,7 +422,11 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cred_mgr = _build_cred_mgr(inp)
     assert inp.offline_config is not None  # nosec B101 — type narrowing for mypy
 
-    from src.tools.database.offline_parser import fetch_offline_json, parse_offline_collection
+    from src.tools.database.offline_parser import (
+        fetch_offline_json,
+        offline_version_label,
+        parse_offline_collection,
+    )
 
     # Stage 1: parse offline JSON
     parsed = ckpt.load_or_run(
@@ -514,10 +518,21 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
             perf.write_iops_avg = float(io_stats["physical_writes_per_sec"])
 
     offline_meta = parsed.get("metadata", {})
+    # #381 review round 2: offline_version_label (not the raw metadata.version/
+    # version_full banner) -- a SQL Server @@VERSION banner embeds newlines, tabs
+    # and the edition/processor info, and duplicates the engine name in wave 1's
+    # rationale once migration_waves tries to dedupe a name it does not start with
+    # ("SQL Server Microsoft SQL Server 2019 ..."). Falls back to the AWS-reported
+    # engine version when the offline collection itself has no version at all.
+    offline_version = offline_version_label(offline_meta)
     return _build_output(
         inp,
         start,
-        version=offline_meta.get("version") or aws_raw.get("engine_version", "unknown"),
+        version=(
+            offline_version
+            if offline_version != "unknown"
+            else aws_raw.get("engine_version", "unknown")
+        ),
         db_size=offline_meta.get("database_size_gb"),
         tables=tables,
         queries=queries,
@@ -720,7 +735,14 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
             Table(
                 table_id=f"{db_name}.{name}",
                 table_name=name,
-                schema_name=db_name,
+                # #381: prefer the raw table's own schema_name (SQL Server/Oracle
+                # collector scripts report the real per-table schema, e.g. "Sales",
+                # "dbo", "HR" — see collect-sqlserver.sql/collect-oracle.sql) over the
+                # database name. MySQL/MariaDB (no separate schema concept; their
+                # information_schema.SCHEMA_NAME *is* the database name) and any
+                # collection that reports none fall back to db_name, same as before.
+                # table_id is unaffected -- still f"{db_name}.{name}" (#382 scope).
+                schema_name=t.get("schema_name") or db_name,
                 row_count=max(t.get("row_count") or 0, 0),
                 size_mb=float(t.get("data_size_mb") or 0) + float(t.get("index_size_mb") or 0),
                 columns=columns,
@@ -769,7 +791,9 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
             Table(
                 table_id=t["table_id"],
                 table_name=t["table_name"],
-                schema_name=db_name,
+                # #381: see _build_tables above -- prefer the raw table's own
+                # schema_name when the DDL source reported one.
+                schema_name=t.get("schema_name") or db_name,
                 row_count=0,
                 size_mb=0,
                 columns=columns,

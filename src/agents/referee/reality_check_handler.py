@@ -99,6 +99,18 @@ def run_reality_check_deterministic(
         if store.exists(analysis_key):
             analysis_outputs[engine] = store.read_json(analysis_key)
 
+    # #381 review: triage selects both Aurora engines for a heterogeneous source
+    # (SQL Server, Oracle, DB2), so both are read back in above -- but the
+    # assignment resolver already collapsed them to one winner
+    # (``Assignment.aurora_engine_choice``) before anything was assigned. Drop the
+    # loser here too, so Reality Check's absorption pass and consolidation logic
+    # never treat it as a live candidate to move a query onto.
+    aurora_choice = assignment.get("aurora_engine_choice")
+    winner = aurora_choice.get("engine") if aurora_choice else None
+    if winner in AURORA_ENGINES:
+        loser = next(e for e in AURORA_ENGINES if e != winner)
+        analysis_outputs.pop(loser, None)
+
     # An assignment written before the cache overlay (#296) has ElastiCache owners:
     # move them to their system-of-record engine first, so the revision carries
     # no cache owner (recorded in cache_notes).

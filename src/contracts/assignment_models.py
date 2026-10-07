@@ -38,6 +38,13 @@ Version History:
   ``table_assignments`` rather than treating them as tables, and records the
   dropped names here. Defaults to an empty ``UnresolvedNames``, so artifacts
   written before 1.5 still load.
+- 1.6 (2026-10-07): Added ``Assignment.aurora_engine_choice`` (#381). A source
+  with no Aurora dialect of its own (SQL Server, Oracle, DB2) has both Aurora
+  engines compete on workload fit instead of being skipped; the resolver
+  collapses the two to a single winner and records the decision here --
+  totals, margin and any deciding features -- so every deliverable can state
+  the move is cross-engine. ``None`` for a homogeneous source (MySQL/MariaDB/
+  PostgreSQL, unaffected) and for artifacts written before 1.6.
 """
 
 from datetime import datetime
@@ -222,6 +229,45 @@ class TableAssignment(BaseModel):
     )
 
 
+class AuroraEngineChoice(BaseModel):
+    """How the resolver picked one Aurora engine for a source with no Aurora
+    dialect of its own (SQL Server, Oracle, DB2 -- #381).
+
+    Triage selects both ``aurora_mysql`` and ``aurora_postgresql`` for such a
+    source, and every query is scored against both the same way it is scored
+    against any other candidate engine. ``AssignmentResolver`` compares the
+    two engines on ``totals`` (the sum of each engine's adjusted score across
+    every query) before assigning anything, and the winner serves every
+    relational query -- the assignment never carries both Aurora engines.
+
+    ``margin`` is ``totals["aurora_postgresql"] - totals["aurora_mysql"]``;
+    ``deciding_features`` is non-empty only when the totals were close enough
+    for source features (recursive CTEs, sequences, ``MERGE``, JSON, multiple
+    schemas, the Babelfish compatibility path, ...) to tip the choice, per
+    ``aurora_choice.choose_heterogeneous_engine``. Always present for a
+    heterogeneous source, never for a homogeneous one (MySQL/MariaDB ->
+    Aurora MySQL, PostgreSQL -> Aurora PostgreSQL keep their own dialect
+    without a competition to record).
+    """
+
+    source_engine: str = Field(..., description="The collector's source database engine")
+    engine: str = Field(
+        ..., description="The Aurora engine chosen (aurora_mysql/aurora_postgresql)"
+    )
+    totals: dict[str, float] = Field(
+        default_factory=dict,
+        description="Each competing Aurora engine's total adjusted score across every query",
+    )
+    margin: float | None = Field(
+        None, description="aurora_postgresql's total minus aurora_mysql's total"
+    )
+    deciding_features: list[str] = Field(
+        default_factory=list,
+        description="Source features that tipped a close call (empty when the totals decided it)",
+    )
+    reason: str = Field(..., description="One-line explanation of the decision")
+
+
 class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
@@ -283,6 +329,14 @@ class Assignment(BaseModel):
             "deriving table_assignments rather than counted as tables. Empty when the "
             "collector schema was unavailable (every name is kept, legacy behavior) or "
             "every name resolved."
+        ),
+    )
+    aurora_engine_choice: AuroraEngineChoice | None = Field(
+        None,
+        description=(
+            "How the resolver picked one Aurora engine when the source has no Aurora "
+            "dialect of its own (#381). None for a homogeneous source and for "
+            "artifacts written before 1.6."
         ),
     )
 

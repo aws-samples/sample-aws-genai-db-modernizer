@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from src.contracts.assignment_models import Assignment, AssignmentSource, AssignmentStatus
+from src.contracts.assignment_models import (
+    Assignment,
+    AssignmentSource,
+    AssignmentStatus,
+    AuroraEngineChoice,
+)
 from src.contracts.synthesis_output import AssignmentSummary
 
 
@@ -128,3 +133,38 @@ class TestUnresolvedTableNames:
         reloaded = Assignment.model_validate(a.model_dump(mode="json"))
         assert reloaded == a
         assert reloaded.unresolved_table_names.count == 0
+
+
+class TestAuroraEngineChoice:
+    """#381: aurora_engine_choice is optional and backward compatible -- a
+    pre-1.6 artifact (the field absent entirely) still loads, defaulting to
+    None (a homogeneous source has no competition to record)."""
+
+    def test_defaults_to_none_on_a_pre_1_6_artifact(self) -> None:
+        a = Assignment.model_validate(_assignment())
+        assert a.aurora_engine_choice is None
+
+    def test_round_trips_with_a_cross_engine_choice(self) -> None:
+        choice = {
+            "source_engine": "sqlserver",
+            "engine": "aurora_postgresql",
+            "totals": {"aurora_mysql": 65.0, "aurora_postgresql": 70.0},
+            "margin": 5.0,
+            "deciding_features": ["recursive_ctes"],
+            "reason": "close on total adjusted score; tipped by: recursive_ctes",
+        }
+        a = Assignment.model_validate(_assignment(aurora_engine_choice=choice))
+        assert isinstance(a.aurora_engine_choice, AuroraEngineChoice)
+        assert a.aurora_engine_choice.engine == "aurora_postgresql"
+        assert a.aurora_engine_choice.deciding_features == ["recursive_ctes"]
+        dumped = a.model_dump(mode="json")
+        assert dumped["aurora_engine_choice"]["source_engine"] == "sqlserver"
+        assert Assignment.model_validate(dumped) == a
+
+    def test_pre_1_6_artifact_round_trips_through_dump_and_reload(self) -> None:
+        pre_1_6 = _assignment()
+        assert "aurora_engine_choice" not in pre_1_6
+        a = Assignment.model_validate(pre_1_6)
+        reloaded = Assignment.model_validate(a.model_dump(mode="json"))
+        assert reloaded == a
+        assert reloaded.aurora_engine_choice is None

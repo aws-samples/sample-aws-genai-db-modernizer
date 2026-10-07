@@ -16,11 +16,16 @@ decides the sequence:
    last). The wave states how homogeneous the move is from what the collector
    actually reported — engine and version only; the collector never reports
    feature or extension compatibility, so none is claimed: ``homogeneous``
-   when the source maps to a compatible Aurora engine, ``heterogeneous``
-   (titled "Move off <source> (heterogeneous)", flagged as a risk in the
-   gate, no Aurora engine named and no share claimed) when it does not.
+   when the source maps to a compatible Aurora engine, ``cross_engine`` (#381:
+   titled "Move off <source> to <engine> (cross-engine)", the chosen engine
+   named and given its share, the gate flagging schema and query translation
+   as a risk to validate) when the source has no Aurora dialect of its own
+   (SQL Server, Oracle, DB2) but the assignment resolver still picked one of
+   the two competing Aurora engines, and ``heterogeneous`` (titled "Move off
+   <source> (heterogeneous)", flagged as a risk in the gate, no Aurora engine
+   named and no share claimed) when no Aurora engine was picked at all.
    Skipped when there is no source engine to report at all, or the source is
-   already an Aurora engine. For a homogeneous move, ``query_count`` and
+   already an Aurora engine. For a homogeneous or cross-engine move, ``query_count`` and
    ``workload_share_percent`` are the share still assigned to Aurora once
    every later wave has moved its own share away — the same figures the
    pre-#321 "retained" wave reported as its own, separate, final wave;
@@ -91,12 +96,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agents.referee.aurora_choice import AURORA_ENGINES, describe_features
 from src.agents.referee.table_resolution import (
     PSEUDO_TABLES,
     TableNameResolver,
     is_engine_system_object,
 )
-from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.triage import HETEROGENEOUS_SOURCE_ENGINES, SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.migration_wave_engines import (
     CACHE_ENGINES,
@@ -448,6 +454,8 @@ def _aurora_wave(
     table_assignments: list[dict[str, Any]],
     source_version: Any,
     mapped_tables: set[str] | None = None,
+    cross_engine: bool = False,
+    aurora_engine_choice: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Wave 1 (#321): the whole source database moves to Aurora first.
 
@@ -460,12 +468,24 @@ def _aurora_wave(
 
     ``homogeneity`` is ``"homogeneous"`` when the source maps to a
     source-compatible Aurora engine (MySQL/MariaDB -> Aurora MySQL,
-    PostgreSQL -> Aurora PostgreSQL) and ``"heterogeneous"`` otherwise, in
-    which case ``engines`` is empty (this assessment did not pick an Aurora
-    target, so none is named), the title says what the source moves *off*
-    instead of *to*, and the rationale drops the share and "later waves move
-    off Aurora" sentences entirely -- there is no Aurora here for either to
-    be true of (#324 review).
+    PostgreSQL -> Aurora PostgreSQL); ``"cross_engine"`` (#381, ``cross_engine=True``,
+    the caller's own signal: the source has no Aurora dialect of its own, but the
+    assignment resolver still picked one of the two competing Aurora engines, so
+    ``retained_engine`` names it) when the source has no Aurora dialect but a choice
+    was made anyway -- the title and rationale state this is a schema-and-dialect
+    conversion, not a 1:1 carry-over, and the gate calls out validating the
+    translation, but the engine is still named and still given a share, same as the
+    homogeneous case; and ``"heterogeneous"`` otherwise, in which case ``engines`` is
+    empty (this assessment did not pick an Aurora target at all, so none is named),
+    the title says what the source moves *off* instead of *to*, and the rationale
+    drops the share and "later waves move off Aurora" sentences entirely -- there is
+    no Aurora here for either to be true of (#324 review).
+
+    ``aurora_engine_choice`` (#381) is the resolver's own decision trace
+    (``Assignment.aurora_engine_choice``, as a dict: ``totals``, ``margin``,
+    ``deciding_features``, ``reason``) for a ``cross_engine`` wave's rationale, naming
+    both engines' totals and whatever tipped the choice. ``None`` (homogeneous, no
+    Aurora at all, or a legacy assignment with no such field) drops that sentence.
 
     The rationale states only what the collector actually reports for
     homogeneity: engine and version. The collector never reports feature or
@@ -519,7 +539,7 @@ def _aurora_wave(
     # still part of "the whole database" and stays.
     tables = sorted(known) if known is not None else _table_ids(table_assignments)
 
-    if retained_engine:
+    if retained_engine and not cross_engine:
         target_name = display_engine(retained_engine)
         family = (
             "MySQL-compatible"
@@ -555,6 +575,61 @@ def _aurora_wave(
         title = f"Move to {target_name}"
         engines: list[str] = [retained_engine]
         homogeneity = "homogeneous"
+    elif retained_engine and cross_engine:
+        # #381: the source has no Aurora dialect of its own (SQL Server, Oracle, DB2),
+        # but the assignment resolver still picked one of the two competing Aurora
+        # engines by scoring every query against both -- named and given a share here,
+        # the same as the homogeneous case, but stated plainly as a dialect-and-schema
+        # conversion rather than a 1:1 carry-over, so this wave never reads as "no data
+        # model changes".
+        target_name = display_engine(retained_engine)
+        owner_entry = by_engine.get(retained_engine) or {}
+        n = int(owner_entry.get("assigned_queries") or 0)
+        share = round(float(owner_entry.get("workload_percent") or 0.0), 1)
+        decision = ""
+        if aurora_engine_choice:
+            totals = aurora_engine_choice.get("totals") or {}
+            if totals:
+                decision = (
+                    " Aurora MySQL scored "
+                    f"{float(totals.get('aurora_mysql', 0.0)):.1f} and Aurora PostgreSQL "
+                    f"{float(totals.get('aurora_postgresql', 0.0)):.1f} in total adjusted "
+                    "query fit"
+                )
+            features = aurora_engine_choice.get("deciding_features") or []
+            if features:
+                decision += f"; tipped by {describe_features(features)}"
+            if decision:
+                decision += "."
+        rationale = (
+            f"The source database ({source_desc}) has no Aurora engine of its own dialect: "
+            f"Aurora MySQL and Aurora PostgreSQL both competed on the collected workload, "
+            # #381 review: never "earned the move" -- that reads as a decisive win even
+            # when the actual decision was a tie-break or an unneeded default (an exact
+            # tie, or a close call with no deciding feature). "Selected" is accurate
+            # whichever of those the trace in ``decision`` (if present) turns out to be.
+            f"and the assignment resolver selected {target_name} to serve it.{decision} "
+            "This is a cross-engine move -- SQL dialect and schema conversion, not a 1:1 "
+            "carry-over. "
+            f"{n} {_query_noun(n)} ({share:.1f}%) remain on {target_name} once later waves "
+            f"have moved their share; later waves move subsets of these {len(tables)} "
+            f"tables and views out of {target_name}."
+        )
+        if mapped_tables is not None:
+            mapped_count = len(set(tables) & mapped_tables)
+            unmapped_count = len(tables) - mapped_count
+            rationale += (
+                f" {mapped_count} of these tables and views are mapped to a target engine "
+                f"in a later wave; the other {unmapped_count} stay on {target_name} "
+                "unchanged."
+            )
+        gate = (
+            f"Cross-engine move: validate the schema and query translation to {target_name} "
+            "(SQL dialect and data model conversion, not a 1:1 carry-over) before cutover."
+        )
+        title = f"Move off {source_name} to {target_name} (cross-engine)"
+        engines = [retained_engine]
+        homogeneity = "cross_engine"
     else:
         rationale = (
             f"The source database ({source_desc}) has no source-compatible Aurora engine in "
@@ -884,6 +959,7 @@ def build_migration_waves(
     known_tables: set[str] | list[str] | None = None,
     source_version: Any = None,
     mapped_tables: set[str] | list[str] | None = None,
+    aurora_engine_choice: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
     """The incremental migration roadmap for this report, or ``None`` with no assignment.
 
@@ -926,12 +1002,40 @@ def build_migration_waves(
     set, after it has resolved out model-written noise) -- see
     :func:`_aurora_wave` for the explanatory sentence it adds to wave 1's
     rationale (it never narrows wave 1's own table list).
+
+    ``aurora_engine_choice`` (#381) is ``Assignment.aurora_engine_choice`` (as a
+    dict), when the caller has it, used only for wave 1's cross-engine rationale --
+    see :func:`_aurora_wave`.
     """
     if not ranking:
         return None
     by_engine = {str(r["target"]): r for r in ranking if r.get("target")}
     source_engine = (source_engine or "").lower()
     retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+    # #381: a source with no Aurora dialect of its own (SQL Server, Oracle, DB2) still
+    # gets a retained engine once the assignment resolver has picked one of the two
+    # competing Aurora engines -- by then only the winner ever owns a query, so it is
+    # the one (if either) actually present in ``by_engine``. ``cross_engine`` flags
+    # wave 1 as a dialect-and-schema conversion rather than a 1:1 carry-over, so it
+    # never claims "no data model changes" for one of these sources.
+    cross_engine = False
+    if retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
+        # #381 review round 2: trust the resolver's own recorded decision
+        # (``aurora_engine_choice.engine``) over re-deriving it from set order, which
+        # is really alphabetical order (``AURORA_ENGINES & set(by_engine)`` sorted) and
+        # would silently pick aurora_mysql over aurora_postgresql whenever both appear
+        # in ``by_engine`` regardless of which one actually won. Falls back to the set
+        # intersection only when there is no recorded choice, or it names an engine with
+        # no ranking entry at all (nothing to build wave 1 from).
+        choice_engine = aurora_engine_choice.get("engine") if aurora_engine_choice else None
+        if choice_engine in AURORA_ENGINES and choice_engine in by_engine:
+            retained_engine = choice_engine
+            cross_engine = True
+        else:
+            chosen = sorted(AURORA_ENGINES & set(by_engine))
+            if chosen:
+                retained_engine = chosen[0]
+                cross_engine = True
 
     known: set[str] | None = (
         None
@@ -966,6 +1070,8 @@ def build_migration_waves(
         table_assignments,
         source_version,
         mapped_tables=mapped,
+        cross_engine=cross_engine,
+        aurora_engine_choice=aurora_engine_choice,
     )
     if aurora:
         waves.append(aurora)
@@ -1072,7 +1178,7 @@ def build_migration_waves(
     # every wave with a query-pattern share (every wave but the cache, which
     # is a share of calls), since 100% of it runs on Aurora the moment wave 1
     # finishes.
-    if waves[0].get("homogeneity") == "homogeneous":
+    if waves[0].get("homogeneity") in ("homogeneous", "cross_engine"):
         waves[0]["cutover_query_count"] = sum(
             w.get("query_count") or 0 for w in waves if w.get("share_basis") != "calls"
         )
