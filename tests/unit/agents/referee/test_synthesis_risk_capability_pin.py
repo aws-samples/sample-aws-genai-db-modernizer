@@ -11,7 +11,12 @@ risk whose own "mitigation" was "No action needed now" (not a mitigation at
 all) and whose description said the table "could run on a simpler engine"
 while the decision already keeps it on Aurora. This is also how two
 anti-patterns pinned to the same table (RISK-002/003 in the field) stop
-duplicating each other as separate open risks."""
+duplicating each other as separate open risks.
+
+#393: the resolved entry's own ``description`` no longer carries that "could
+run on a simpler engine" wording either -- it states the resolution ("Kept on
+<engine> because <reason> on this table.") instead of reusing the anti-pattern
+catalog's open-risk text, which contradicted the decision it was describing."""
 
 from __future__ import annotations
 
@@ -77,8 +82,13 @@ class TestCapabilityPinnedTableRisk:
             )
         )
         assert not any("key-value workload" in r["description"] for r in result["risks"])
-        resolved = next(
-            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
+        assert len(result["resolved_risks"]) == 1
+        resolved = result["resolved_risks"][0]
+        assert "could run on a simpler" not in resolved["description"]
+        assert "key-value workload" not in resolved["description"]
+        assert (
+            "Kept on Aurora MySQL because of multi-table joins on this table."
+            in resolved["description"]
         )
         assert "multi-table joins" in resolved["reason"]
         assert "deliberate routing decision, not an open risk" in resolved["reason"]
@@ -93,9 +103,11 @@ class TestCapabilityPinnedTableRisk:
             )
         )
         assert not any("key-value workload" in r["description"] for r in result["risks"])
-        resolved = next(
-            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
-        )
+        assert len(result["resolved_risks"]) == 1
+        resolved = result["resolved_risks"][0]
+        assert "could run on a simpler" not in resolved["description"]
+        assert "Kept on Aurora MySQL because" in resolved["description"]
+        assert "aggregation" in resolved["description"]
         assert "aggregation" in resolved["reason"]
 
     def test_sibling_utility_statement_pin_is_named_too(self) -> None:
@@ -106,10 +118,51 @@ class TestCapabilityPinnedTableRisk:
             )
         )
         assert not any("key-value workload" in r["description"] for r in result["risks"])
-        resolved = next(
-            r for r in result["resolved_risks"] if "key-value workload" in r["description"]
-        )
+        assert len(result["resolved_risks"]) == 1
+        resolved = result["resolved_risks"][0]
+        assert "could run on a simpler" not in resolved["description"]
+        assert "utility or DDL statement" in resolved["description"]
         assert "utility or DDL statement" in resolved["reason"]
+
+    def test_real_catalog_wording_is_not_repeated_once_resolved(self) -> None:
+        """Evidence (#393, judged WordPress run): aurora-anti-05's own catalog
+        description ("...could run on a simpler, purpose-built engine (DynamoDB for
+        key-value, ElastiCache for hot lookups)") must not survive into a resolved
+        entry whose decision keeps the table right where it is."""
+        catalog_description = (
+            "Table with no foreign keys and no join participation — all queries are "
+            "single-table CRUD. This workload has no structural relational "
+            "requirement and could run on a simpler, purpose-built engine (DynamoDB "
+            "for key-value, ElastiCache for hot lookups)."
+        )
+        data = _data(
+            "co-dependency group → aurora_mysql | [capability] dynamodb lacks required "
+            "capability: aggregation, complex_joins"
+        )
+        data.engines["aurora_mysql"].analysis["workload_analysis"]["anti_patterns_detected"][0] = {
+            "anti_pattern_type": "no-relational-need",
+            "description": catalog_description,
+            "query_ids": ["q-simple"],
+            "table_ids": ["db.t"],
+            "severity_weight": 0.6,
+            "recommendation": (
+                "Evaluate whether this table benefits from Aurora's relational "
+                "features. If it's purely key-value access, DynamoDB offers better "
+                "cost/performance. If it's a hot lookup, ElastiCache is more "
+                "appropriate."
+            ),
+        }
+        result = build_risk_assessment(data)
+        assert not any("simpler, purpose-built engine" in r["description"] for r in result["risks"])
+        assert len(result["resolved_risks"]) == 1
+        resolved = result["resolved_risks"][0]
+        assert "simpler, purpose-built engine" not in resolved["description"]
+        assert "could run on a simpler" not in resolved["description"]
+        assert "Kept on Aurora MySQL because" in resolved["description"]
+        assert (
+            "aggregation" in resolved["description"]
+            and "multi-table joins" in resolved["description"]
+        )
 
     def test_no_sibling_pin_keeps_the_plain_recommendation(self) -> None:
         """Control: with no capability/utility reason anywhere on the table, the

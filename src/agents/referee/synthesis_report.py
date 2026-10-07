@@ -866,22 +866,27 @@ def build_risk_assessment(
                             # query on the same table is why it stays on this
                             # engine -- the routing is deliberate, not an open
                             # risk, so it is resolved (not raised) rather than
-                            # kept as a MEDIUM risk whose own text says the table
-                            # "could run on a simpler engine" and whose
-                            # "mitigation" is "no action needed" (not a
-                            # mitigation at all, and a restatement of a decision
-                            # the report already made elsewhere). This is also
-                            # how two anti-patterns flagging the same
-                            # already-pinned table (e.g. "no foreign keys" and
-                            # "at most 2 patterns") stop duplicating each other
-                            # as separate open risks over largely the same
-                            # tables: both resolve here instead.
+                            # kept as a MEDIUM risk whose own "mitigation" is "no
+                            # action needed" (not a mitigation at all, and a
+                            # restatement of a decision the report already made
+                            # elsewhere). This is also how two anti-patterns
+                            # flagging the same already-pinned table (e.g. "no
+                            # foreign keys" and "at most 2 patterns") stop
+                            # duplicating each other as separate open risks over
+                            # largely the same tables: both resolve here instead.
+                            #
+                            # #393: the resolved entry states the resolution ("kept
+                            # on <engine> because <reason>") instead of reusing the
+                            # anti-pattern's own open-risk wording (``text``), which
+                            # names the table a candidate for "a simpler engine" --
+                            # true while the risk was open, false (and
+                            # self-contradicting) once it is resolved and kept here.
                             engine_name = display_name(engine)
                             resolved.append(
                                 _resolved_risk(
                                     engine,
                                     severity,
-                                    text,
+                                    f"Kept on {engine_name} because of {pin_reason} on this table.",
                                     tables,
                                     ids,
                                     engine,
@@ -1573,11 +1578,23 @@ _DYNAMODB_ALTERNATIVE_ANTI_PATTERNS = frozenset(
 # re-deriving the same decision from the query text a second time.
 _CAPABILITY_PIN_RE = re.compile(r"\[capability\]\s+\S+\s+lacks required capability:\s*([^;]+)")
 _UTILITY_PIN_RE = re.compile(r"utility/metadata statement")
+# Every capability name ``capability_registry.detect_required_capabilities`` can put in
+# a "lacks required capability" reason (#393 review: ``inverted_index`` and
+# ``scan_engine`` had no entry here, so a query pinned by either leaked the raw id into
+# customer text instead of reading as prose). ``multi_doc_acid`` is in
+# ``ENGINE_CAPABILITIES`` but ``detect_required_capabilities`` never emits it today (its
+# own ``CAPABILITY_DETECTORS`` entry is an empty, structural-only placeholder); kept here
+# anyway so this never silently regresses if that changes.
+# ``test_synthesis_capability_pin_display_coverage.py`` asserts this dict covers every
+# capability name the registry can produce.
 _CAPABILITY_PIN_DISPLAY = {
     "aggregation": "aggregation",
     "complex_joins": "multi-table joins",
     "computed_join": "a join on a computed expression",
     "sql_admin": "a utility or DDL statement",
+    "inverted_index": "full-text or pattern search",
+    "scan_engine": "window or recursive queries",
+    "multi_doc_acid": "multi-document transactions",
 }
 
 
@@ -1585,14 +1602,19 @@ def _capability_pin_reason(reasons: Iterable[str]) -> str | None:
     """The named reason (joins, aggregation, a utility statement, ...) that some
     query sharing ``reasons``' table is pinned to its engine by a hard
     capability, or ``None`` when none of ``reasons`` names one.
+
+    Reads every "[capability] <engine> lacks required capability: ..." fragment in each
+    reason with ``finditer``, not just the first (#393 review): different excluded
+    engines can lack different, non-identical subsets of the required capabilities (an
+    engine that already has aggregation but not joins lists only "complex_joins", while
+    one with neither lists both), so only the first fragment under-reported the full set.
     """
     found: set[str] = set()
     for reason in reasons:
         reason = reason or ""
         if _UTILITY_PIN_RE.search(reason):
             found.add(_CAPABILITY_PIN_DISPLAY["sql_admin"])
-        match = _CAPABILITY_PIN_RE.search(reason)
-        if match:
+        for match in _CAPABILITY_PIN_RE.finditer(reason):
             for cap in match.group(1).split(","):
                 cap = cap.strip()
                 if cap:
@@ -1601,6 +1623,36 @@ def _capability_pin_reason(reasons: Iterable[str]) -> str | None:
         return None
     names = sorted(found)
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _aurora_capability_lead(data: SynthesisData, engine: str) -> tuple[int, str] | None:
+    """Why ``engine``'s (an Aurora engine) queries stay relational (#393): the hard
+    capability pins (joins, aggregation, a utility/DDL statement) named in each
+    in-scope query's own ``assignment_reason`` -- the same source
+    :func:`_capability_pin_reason` and the resolved-risk pin text (above) read, so
+    the "Why" cell cannot contradict them with the leading workload signal, which
+    is often key-value lookups riding along in the same co-dependency group, not
+    the reason the table is relational at all.
+
+    Returns ``(pinned_query_count, capability_names)``, or ``None`` when no in-scope
+    query assigned to ``engine`` carries a capability pin -- the caller then falls
+    back to the routed-workload signal.
+    """
+    pinned: set[str] = set()
+    reasons: list[str] = []
+    for qa in (data.assignment or {}).get("query_assignments", []):
+        if not qa.get("in_scope", True) or qa.get("assigned_engine") != engine:
+            continue
+        reason = qa.get("assignment_reason") or ""
+        if _UTILITY_PIN_RE.search(reason) or _CAPABILITY_PIN_RE.search(reason):
+            qid = qa.get("query_id")
+            if qid:
+                pinned.add(qid)
+            reasons.append(reason)
+    if not pinned:
+        return None
+    caps = _capability_pin_reason(reasons)
+    return (len(pinned), caps) if caps else None
 
 
 def _tables_for(
@@ -1955,6 +2007,12 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     ``cache_front_description``, the one place every deliverable's
     cache-fronting sentence is built (#375 review), so this "Why" cell and the
     roadmap's own wave 2 card cannot name different engines.
+
+    An Aurora engine never leads with the routed workload signal (#393): see
+    ``_aurora_capability_lead``. It leads with the hard capability pins (joins,
+    aggregation, a utility/DDL statement) instead, so the "Why" cell cannot say an
+    engine the rest of the report frames as the relational core is "led by
+    key-value lookups" while naming no relational reason at all.
     """
     if is_cache_layer(r):
         retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
@@ -1993,14 +2051,29 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         return ". ".join(parts) + "."
     if r.get("routed_confidence") is not None:
         n = int(r.get("routed_queries") or 0)
-        lead = r.get("routed_lead")
+        engine = r.get("target", "")
+        lead_clause = None
+        if engine in AURORA_ENGINES:
+            # #393: an Aurora engine's leading *workload* signal is often
+            # key-value lookups riding along in the same co-dependency group as
+            # the joins/aggregation/utility statements that actually pin the
+            # table to a relational engine -- naming the workload signal here
+            # instead reads as contradicting the "relational core" framing the
+            # rest of the report gives Aurora. When any in-scope query routed
+            # here carries one of those hard capability pins, lead with that
+            # instead; only an Aurora engine with no pinned query at all (e.g. a
+            # 1:1, not-yet-scored carry-over) falls back to the workload signal.
+            pin = _aurora_capability_lead(data, engine)
+            if pin:
+                pinned, caps = pin
+                lead_clause = f"pinned by {caps} ({pinned} of {n})"
+        if lead_clause is None:
+            lead = r.get("routed_lead")
+            if lead:
+                lead_clause = f"led by {signal_noun(lead)} ({r.get('routed_lead_count', 0)} of {n})"
         parts = [
             _routed_phrase(r, "mean fit", ("query", "queries"))
-            + (
-                f", led by {signal_noun(lead)} ({r.get('routed_lead_count', 0)} of {n})"
-                if lead
-                else ""
-            )
+            + (f", {lead_clause}" if lead_clause else "")
         ]
     elif "assigned_queries" in r:
         parts = [

@@ -876,6 +876,225 @@ def check_summary_internal_leaks(summary: str) -> list[dict]:
     return findings
 
 
+# #393: the wave order (``migration_waves``, ``src.agents.referee.migration_waves``) is
+# one deterministic rule -- a model may explain a wave, it never decides the sequence --
+# so a summary that states an explicit "X first, then Y" order contradicting it is wrong
+# the same way a table/engine mismatch is.
+#
+# Matched narrowly, binding each cue to the engine actually next to it (#393 review: a
+# looser "first ... then" co-occurrence anywhere in the sentence, paired with every
+# engine mention ordered by position, rejected unrelated prose such as "Validate the
+# schema first, then roll out: Aurora MySQL serves relational joins, DynamoDB serves
+# key-value lookups" -- no engine sits anywhere near either cue there):
+# - "first" binds to the nearest engine mention immediately BEFORE it ("the cache
+#   first"); "then" binds to the nearest engine mention immediately AFTER it ("then
+#   Aurora MySQL"); each within a few words.
+# - clauses are also split on ";"/":" (sentences read as a list of steps there, e.g.
+#   "DynamoDB first; then Aurora takes over"), but a cue's binding never crosses that
+#   split to reach an engine named only in the OTHER clause -- only the one adjacent
+#   pair of clauses where one clause ENDS with a bound "first" (nothing but the cue
+#   itself trails it) and the next STARTS with a "then" cue (within the usual word gap)
+#   is paired across the boundary (#393 review round 2: splitting unconditionally let a
+#   "DynamoDB moves first; then Aurora MySQL takes over." order escape entirely, since
+#   each engine then sat in its own clause with no partner to compare against).
+# - "first" immediately next to a hyphen ("first-party", "class-first") or followed by
+#   "wave" ("the first wave", describing a wave, not an order) is not a cue at all.
+# - every cue-bound engine (whether bound to "first" or to "then") is compared only
+#   against another cue-bound engine later in the clause (or, for the one adjacent-pair
+#   case above, in the next clause), so "X first, then Y, then Z" also catches Y stated
+#   ahead of Z -- an engine mention that is not itself next to a cue never enters the
+#   comparison at all.
+# When no cue binds to an engine this way, the check makes no claim and rejects
+# nothing -- in doubt, it stays silent rather than guessing from loose proximity.
+_FIRST_CUE_RE = re.compile(r"(?<!-)\bfirst\b(?!-)(?!\s+wave\b)", re.IGNORECASE)
+_THEN_CUE_RE = re.compile(r"\bthen\b", re.IGNORECASE)
+_WAVE_CLAUSE_SPLIT = re.compile(r"[;:]")
+# How many whole words may separate a cue from the engine mention it binds to.
+_MAX_CUE_GAP_WORDS = 4
+# Prose often calls the cache wave just "the cache", not "ElastiCache"/"Redis"/"Valkey"
+# (the only aliases ``_ENGINE_PATTERNS`` recognises) -- recognised here, in addition to
+# that map, only when a cache wave actually exists, so this never invents a mention of
+# an engine that is not even part of the migration.
+_BARE_CACHE_RE = re.compile(r"\bcache\b", re.IGNORECASE)
+
+
+def _clause_engine_mentions(clause: str, has_cache_wave: bool) -> list[tuple[str, int, int]]:
+    mentions = engine_mentions(clause)
+    if has_cache_wave:
+        mentions = mentions + [
+            ("elasticache", m.start(), m.end()) for m in _BARE_CACHE_RE.finditer(clause)
+        ]
+    return sorted(mentions, key=lambda f: f[1])
+
+
+def _nearest_bound_engine(
+    clause: str,
+    cue_start: int,
+    cue_end: int,
+    mentions: list[tuple[str, int, int]],
+    *,
+    before: bool,
+) -> str | None:
+    """The engine mention closest to the cue, strictly before/after it, within
+    ``_MAX_CUE_GAP_WORDS`` whole words -- or ``None`` when none is that close."""
+    best: tuple[str, int] | None = None  # (engine, distance in characters, for tie-break)
+    for engine, m_start, m_end in mentions:
+        if before:
+            if m_end > cue_start:
+                continue
+            gap_text, distance = clause[m_end:cue_start], cue_start - m_end
+        else:
+            if m_start < cue_end:
+                continue
+            gap_text, distance = clause[cue_end:m_start], m_start - cue_end
+        if len(gap_text.split()) > _MAX_CUE_GAP_WORDS:
+            continue
+        if best is None or distance < best[1]:
+            best = (engine, distance)
+    return best[0] if best else None
+
+
+class _WaveOrderClause:
+    """One ``;``/``:``-separated clause's cue-bound engines (#393 review round 2:
+    split out so the cross-clause boundary pairing can reuse the same per-clause
+    binding as the within-clause pass, instead of re-deriving it)."""
+
+    def __init__(self, clause: str, has_cache_wave: bool) -> None:
+        self.clause = clause
+        self.firsts = list(_FIRST_CUE_RE.finditer(clause))
+        self.thens = list(_THEN_CUE_RE.finditer(clause))
+        mentions = (
+            _clause_engine_mentions(clause, has_cache_wave) if (self.firsts or self.thens) else []
+        )
+        self.bound_firsts = [
+            (m.start(), engine)
+            for m in self.firsts
+            if (engine := _nearest_bound_engine(clause, m.start(), m.end(), mentions, before=True))
+        ]
+        self.bound_thens = [
+            (m.start(), engine)
+            for m in self.thens
+            if (engine := _nearest_bound_engine(clause, m.start(), m.end(), mentions, before=False))
+        ]
+        self._mentions = mentions
+
+    def ends_with_bound_first(self) -> tuple[int, str] | None:
+        """The last "first" cue's bound engine, when nothing but the cue itself
+        trails it in this clause -- or ``None``."""
+        if not self.firsts:
+            return None
+        last = self.firsts[-1]
+        if self.clause[last.end() :].split():  # words remain after the cue
+            return None
+        engine = _nearest_bound_engine(
+            self.clause, last.start(), last.end(), self._mentions, before=True
+        )
+        return (last.start(), engine) if engine else None
+
+    def starts_with_bound_then(self) -> tuple[int, str] | None:
+        """The first "then" cue's bound engine, when it is within the usual word gap
+        of this clause's start -- or ``None``."""
+        if not self.thens:
+            return None
+        first = self.thens[0]
+        if len(self.clause[: first.start()].split()) > _MAX_CUE_GAP_WORDS:
+            return None
+        engine = _nearest_bound_engine(
+            self.clause, first.start(), first.end(), self._mentions, before=False
+        )
+        return (first.start(), engine) if engine else None
+
+
+def _wave_order_finding(earlier: str, later: str, wave_of: dict[str, int], sentence: str) -> dict:
+    return {
+        "table": None,
+        "text": f"{display_name(earlier)} ... {display_name(later)}",
+        "engines": [earlier, later],
+        "high_confidence": True,
+        "sentence": sentence,
+        "message": (
+            f"[high confidence] Summary states {display_name(earlier)} before "
+            f"{display_name(later)}, but the migration waves move {display_name(later)} "
+            f"first (wave {wave_of[later]}) and {display_name(earlier)} later "
+            f"(wave {wave_of[earlier]}): {sentence}"
+        ),
+    }
+
+
+def check_summary_wave_order(summary: str, migration_waves: list[dict] | None) -> list[dict]:
+    """Find a summary clause whose stated migration order contradicts ``migration_waves``.
+
+    ``migration_waves`` is synthesis's own deterministic roadmap (one wave per step, each
+    carrying ``wave`` (its 1-based position) and ``engines`` (the engine(s) it moves)). A
+    clause that binds "first" or "then" to an engine (see the module comment above for
+    exactly how narrow that binding is) is checked against every other cue-bound engine
+    later in the clause -- or, when one clause ends with a bound "first" and the very
+    next one starts with a bound "then", in that next clause too -- and the earlier one
+    must have an earlier (or equal) wave number than the later one. ``display_name``
+    renders every engine in the message, never a raw id.
+
+    Returns findings shaped like :func:`check_summary_grounding`'s own (``table`` is
+    always ``None``; ``high_confidence`` is always ``True`` -- the wave order is a fact,
+    not a judgement call, so there is no low-stakes reading of stating it backwards). An
+    empty list means the summary states nothing this check can bind an order from, or the
+    order it states agrees with the waves -- when in doubt, this check does not reject.
+    """
+    if not summary or not migration_waves:
+        return []
+    wave_of: dict[str, int] = {}
+    for wave in migration_waves:
+        n = wave.get("wave")
+        if not isinstance(n, int):
+            continue
+        for engine in wave.get("engines") or []:
+            wave_of.setdefault(engine, n)
+    if len(wave_of) < 2:
+        return []
+    has_cache_wave = "elasticache" in wave_of
+
+    def ordered_pair_is_wrong(earlier: str, later: str) -> bool:
+        return (
+            earlier in wave_of
+            and later in wave_of
+            and earlier != later
+            and wave_of[earlier] > wave_of[later]
+        )
+
+    findings: list[dict] = []
+    for sentence in split_sentences(summary):
+        clauses = [
+            _WaveOrderClause(clause, has_cache_wave)
+            for clause in _WAVE_CLAUSE_SPLIT.split(sentence)
+        ]
+        for clause in clauses:
+            # Every cue-bound engine, in the order its cue appears in the clause --
+            # "X first, then Y, then Z" chains into X, Y, Z, so Y stated ahead of Z is
+            # just as wrong as X stated ahead of Y, even though neither Y nor Z is
+            # itself bound to "first". Unlike the engine mentions ``check_summary_
+            # grounding`` reads, every entry here is already cue-bound (#393 review),
+            # so adding "then"-to-"then" pairs does not reintroduce the original,
+            # unbound "any two engines in the sentence" false positives.
+            bound = sorted(clause.bound_firsts + clause.bound_thens, key=lambda b: b[0])
+            for i, (first_pos, earlier) in enumerate(bound):
+                for then_pos, later in bound[i + 1 :]:
+                    if then_pos <= first_pos or not ordered_pair_is_wrong(earlier, later):
+                        continue
+                    findings.append(_wave_order_finding(earlier, later, wave_of, sentence))
+        # The one cross-boundary case (#393 review round 2): a clause ending with a
+        # bound "first" paired with the very next clause starting with a bound "then".
+        for cur, nxt in zip(clauses, clauses[1:], strict=False):
+            first = cur.ends_with_bound_first()
+            then = nxt.starts_with_bound_then()
+            if not first or not then:
+                continue
+            _, earlier = first
+            _, later = then
+            if not ordered_pair_is_wrong(earlier, later):
+                continue
+            findings.append(_wave_order_finding(earlier, later, wave_of, sentence))
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Customer-facing fallback summary
 # ---------------------------------------------------------------------------

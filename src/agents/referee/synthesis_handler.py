@@ -25,6 +25,7 @@ from src.agents.referee.synthesis_grounding import (
     build_fallback_summary,
     check_summary_grounding,
     check_summary_internal_leaks,
+    check_summary_wave_order,
     eliminated_engines,
     engine_table_scope,
     recompute_reality_check_patterns,
@@ -361,9 +362,12 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
     """Merge the LLM-generated executive summary into the deterministic result.
 
     If ``llm_output`` contains an ``executive_summary`` it is post-checked against the
-    effective assignment (``check_summary_grounding``). It is used unless the check
-    finds a high-confidence mis-attribution (a table named under an engine none of
-    whose in-scope queries touch it); lower-confidence findings are only recorded. On
+    effective assignment (``check_summary_grounding``), against this codebase's own
+    internal field names (``check_summary_internal_leaks``), and against the
+    deterministic wave order (``check_summary_wave_order``, #393). It is used unless a
+    check finds a high-confidence problem (a table named under an engine none of whose
+    in-scope queries touch it, an internal field name, or a stated migration order that
+    contradicts ``migration_waves``); lower-confidence findings are only recorded. On
     rejection: ``executive_summary`` stays
     deterministic, and the LLM text plus the warnings are kept for audit in
     ``summary_llm`` / ``summary_validation_warnings`` (#205). ``summary_source``
@@ -389,6 +393,13 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
     # summary is always high-confidence (there is no low-stakes reading of it),
     # regardless of whether any table/engine attribution also happens to be wrong.
     findings = findings + check_summary_internal_leaks(str(llm_summary or ""))
+    # #393: a third, independent check -- a summary that states a migration order
+    # ("X first, then Y") contradicting the deterministic ``migration_waves`` sequence
+    # is always high-confidence, the same way the wave order itself is never a model's
+    # choice (``prepare_synthesis_llm_input``'s own docstring).
+    findings = findings + check_summary_wave_order(
+        str(llm_summary or ""), deterministic_result.get("migration_waves")
+    )
     deterministic_result["summary_llm"] = llm_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:

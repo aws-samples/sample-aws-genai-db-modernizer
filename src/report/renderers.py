@@ -354,6 +354,40 @@ def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+# #393: three independent high-confidence checks can reject the generated executive
+# summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
+# ``check_summary_internal_leaks``, ``check_summary_wave_order``), each stamping its
+# own ``[high confidence] ...`` message onto ``summary_validation_warnings`` with its
+# own wording -- read here instead of hard-coding the table-attribution reason, which
+# used to show even when a different check was the one that actually rejected it.
+_FALLBACK_REASONS: tuple[tuple[str, str], ...] = (
+    ("internal field", "named one of this codebase's internal field names"),
+    ("migration waves move", "stated a migration order that contradicts the roadmap"),
+    (
+        "no in-scope query of that engine touches it",
+        "named a table under an engine that does not serve it",
+    ),
+)
+
+
+def fallback_withheld_reason(report: dict[str, Any]) -> str:
+    """Why the generated executive summary was withheld, in one clause.
+
+    Falls back to the original, table-attribution wording when
+    ``summary_validation_warnings`` carries none of the known markers (e.g. an older
+    ``report.json`` written before a given check existed) -- a missing or unrecognised
+    warning should read as the historical default, not an empty note.
+    """
+    warnings = [str(w) for w in (report.get("summary_validation_warnings") or [])]
+    high = [w for w in warnings if w.startswith("[high confidence]")]
+    reasons = [text for marker, text in _FALLBACK_REASONS if any(marker in w for w in high)]
+    if not reasons:
+        reasons = [_FALLBACK_REASONS[-1][1]]
+    if len(reasons) == 1:
+        return reasons[0]
+    return ", ".join(reasons[:-1]) + " and " + reasons[-1]
+
+
 _CACHE_ENGINES = {"elasticache", "memorydb"}
 # Search engines are read models (#303): their data is synced from the engine
 # that owns each table, so they never hold system-of-record data, never need a
@@ -911,8 +945,8 @@ def render_decision_report_html(
             ]
         elif report.get("summary_source") == "deterministic_fallback":
             out += [
-                "<p class=note>The generated narrative was withheld because it named a table "  # nosemgrep: string-concat-in-list -- intentional multi-line string
-                "under an engine that does not serve it; this summary is built from the "
+                "<p class=note>The generated narrative was withheld because it "
+                f"{esc(fallback_withheld_reason(report))}; this summary is built from the "
                 "effective assignment.</p>"
             ]
 
