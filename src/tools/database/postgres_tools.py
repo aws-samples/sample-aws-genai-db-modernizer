@@ -129,7 +129,7 @@ class PostgreSQLRemoteCollector:
             JOIN pg_am am ON i.relam = am.oid
             WHERE t.relname = '{table_name}'
               AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-            ORDER BY i.relname, a.attnum
+            ORDER BY i.relname, array_position(ix.indkey, a.attnum)
         """)  # nosec B608 — table_name from information_schema, not user input
         indexes: dict[str, dict] = {}
         for r in raw:
@@ -186,7 +186,7 @@ class PostgreSQLRemoteCollector:
             FROM pg_index i
             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
             WHERE i.indrelid = 'public.{table_name}'::regclass AND i.indisprimary
-            ORDER BY a.attnum
+            ORDER BY array_position(i.indkey, a.attnum)
         """)  # nosec B608 — table_name from information_schema, not user input
         return [r["column_name"] for r in rows]
 
