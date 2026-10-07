@@ -475,7 +475,7 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
 def build_query_groups(data: SynthesisData) -> list[dict]:
     """Build unified query group view across all engines.
 
-    Groups access patterns by pattern_group from schema design outputs,
+    Groups access patterns by their explicit pattern_group or source tables,
     enriched with the original source query data from the collector.
     This is the primary organizing structure for the UI — similar to
     Leo's query classification approach.
@@ -486,7 +486,9 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
         for ap in schema.get("access_patterns", []):
-            group_name = ap.get("pattern_group", "ungrouped")
+            source_tables = sorted(set(ap.get("source_tables") or []))
+            group_name = ap.get("pattern_group") or ", ".join(source_tables) or "ungrouped"
+            query_ids = _access_pattern_query_ids(ap)
 
             if group_name not in groups:
                 groups[group_name] = {
@@ -510,14 +512,14 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                     "design_rps": ap.get("design_rps", 0),
                     "description": ap.get("description"),
                     "in_scope": ap.get("in_scope", True),
-                    "query_ids": ap.get("query_ids", []),
+                    "query_ids": query_ids,
                 }
             )
 
             groups[group_name]["total_design_rps"] += ap.get("design_rps", 0)
 
             # Link back to source queries
-            for qid in ap.get("query_ids", []):
+            for qid in query_ids:
                 if qid in source_queries:
                     # Check if already added
                     existing = next(
