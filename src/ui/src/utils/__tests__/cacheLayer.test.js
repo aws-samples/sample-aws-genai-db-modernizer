@@ -18,6 +18,7 @@ import {
   ownerSchemaDesigns,
   cacheAccessPatternCount,
   addCacheOverlayNode,
+  cacheLayerAccessPatterns,
 } from '../cacheLayer';
 import en from '../../locales/en.json';
 
@@ -481,5 +482,105 @@ describe('addCacheOverlayNode (#330: cache layer visible in the Sankey itself)',
     const zeroOwner = { engine: 'elasticache', owners: { dynamodb: 0, aurora_mysql: 2 } };
     const result = addCacheOverlayNode(sankeyData, zeroOwner);
     expect(result.links).toEqual([...sankeyData.links, { source: 'aurora_mysql', target: 'elasticache', value: 2 }]);
+  });
+});
+
+describe('cacheLayerAccessPatterns (#429 part 2: the explorer must still be able to browse the cache layer\'s own key designs)', () => {
+  // Shaped like job a5cbb2bc's schema-elasticache/v2/schema_output.json.
+  const designs = [
+    { target_type: 'dynamodb', content: { access_patterns: [{ pattern_id: 'ddb-1' }] } },
+    {
+      target_type: 'elasticache',
+      content: {
+        key_designs: [
+          { key_pattern: 'wp_options:{option_name}', data_type: 'hash', ttl_seconds: 3600 },
+          { key_pattern: 'wp_posts:{ID}', data_type: 'hash', ttl_seconds: 900 },
+        ],
+        access_patterns: [
+          {
+            pattern_id: 'EC-AP-1',
+            description: 'Read an option value by option_name.',
+            operation: 'HGET',
+            key_pattern: 'wp_options:{option_name}',
+            source_tables: ['wordpress.wp_options'],
+            source_query_ids: ['q1'],
+          },
+          {
+            pattern_id: 'EC-AP-2',
+            description: 'Read a post by ID.',
+            operation: 'HGET',
+            key_pattern: 'wp_posts:{ID}',
+            source_tables: ['wordpress.wp_posts'],
+            source_query_ids: ['q2'],
+          },
+        ],
+      },
+    },
+  ];
+  const cacheOverlay = { engine: 'elasticache', query_count: 2 };
+
+  test('builds a tagged row per cache-design access pattern, with its key design\'s TTL joined in by key_pattern', () => {
+    expect(cacheLayerAccessPatterns(designs, cacheOverlay)).toEqual([
+      {
+        id: 'EC-AP-1',
+        engine: 'elasticache',
+        isCacheLayer: true,
+        operation: 'HGET',
+        sourceTables: ['wp_options'],
+        sourceTablesRaw: ['wordpress.wp_options'],
+        destTable: 'wp_options:{option_name}',
+        keyPattern: 'wp_options:{option_name}',
+        ttlSeconds: 3600,
+        keyDataType: 'hash',
+        gsiName: null,
+        patternGroup: null,
+        description: 'Read an option value by option_name.',
+        queryIds: ['q1'],
+      },
+      {
+        id: 'EC-AP-2',
+        engine: 'elasticache',
+        isCacheLayer: true,
+        operation: 'HGET',
+        sourceTables: ['wp_posts'],
+        sourceTablesRaw: ['wordpress.wp_posts'],
+        destTable: 'wp_posts:{ID}',
+        keyPattern: 'wp_posts:{ID}',
+        ttlSeconds: 900,
+        keyDataType: 'hash',
+        gsiName: null,
+        patternGroup: null,
+        description: 'Read a post by ID.',
+        queryIds: ['q2'],
+      },
+    ]);
+  });
+
+  test('no-op without a cache_overlay (legacy report: ElastiCache is already a normal owner)', () => {
+    expect(cacheLayerAccessPatterns(designs, null)).toEqual([]);
+    expect(cacheLayerAccessPatterns(designs, undefined)).toEqual([]);
+  });
+
+  test('empty when there is no cache-engine design', () => {
+    expect(cacheLayerAccessPatterns([designs[0]], cacheOverlay)).toEqual([]);
+  });
+
+  test('leaves ttlSeconds/keyDataType null when the pattern\'s key_pattern has no matching key design', () => {
+    const noKeyDesign = [{
+      target_type: 'elasticache',
+      content: {
+        key_designs: [],
+        access_patterns: [{ pattern_id: 'EC-AP-9', operation: 'GET', key_pattern: 'unmatched:{id}' }],
+      },
+    }];
+    const [row] = cacheLayerAccessPatterns(noKeyDesign, cacheOverlay);
+    expect(row.ttlSeconds).toBeNull();
+    expect(row.keyDataType).toBeNull();
+    expect(row.destTable).toBe('unmatched:{id}');
+  });
+
+  test('handles a missing/undefined designs list', () => {
+    expect(cacheLayerAccessPatterns(undefined, cacheOverlay)).toEqual([]);
+    expect(cacheLayerAccessPatterns(null, cacheOverlay)).toEqual([]);
   });
 });

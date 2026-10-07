@@ -732,6 +732,20 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         for d in schema_designs
         if cache_engine and d.get("target_type") == cache_engine
     )
+    # #429 part 2: unlike total_patterns above, the Access Pattern Explorer's
+    # own header count is not owner-only -- the cache layer's rows are browsable
+    # there (tagged, in their own section after the owner rows), so the header
+    # that introduces them breaks the combined total down into owned vs. cache
+    # layer. Mirrors the embedded script's own formatExplorerCount (generated
+    # from ExportReport.js by sync_report_template.py) and the Results page
+    # explorer header (analysis-results-v2.explorer.header-count).
+    if cache_pattern_count > 0:
+        explorer_header_count = (
+            f"{total_patterns + cache_pattern_count} "
+            f"({total_patterns} owned + {cache_pattern_count} cache layer)"
+        )
+    else:
+        explorer_header_count = str(total_patterns)
 
     meta = {
         "artifact": "analysis-report",
@@ -795,6 +809,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__SAVINGS_STAT__": escaping.html_text(savings_stat),
         "__TOTAL_PATTERNS__": str(total_patterns),
         "__CACHE_PATTERNS_NOTE__": _cache_patterns_note(cache_pattern_count),
+        "__EXPLORER_HEADER_COUNT__": explorer_header_count,
         "__CACHE_LAYER_STAT__": _cache_layer_stat(synthesis),
     }
 

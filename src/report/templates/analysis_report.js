@@ -46,33 +46,60 @@
     let browseMode = 'pattern';
     const PAGE_SIZE = 10;
     let currentPage = 1;
+    const cacheEngine = (DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay && DATA.results.synthesis.cache_overlay.engine) || null;
+
+    function formatExplorerCount(ownerCount, cacheCount) {
+      return cacheCount > 0
+        ? (ownerCount + cacheCount) + ' (' + ownerCount + ' owned + ' + cacheCount + ' cache layer)'
+        : String(ownerCount);
+    }
 
     function extractPatterns() {
       const patterns = [];
-      const hasCacheOverlay = !!(DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay);
       DATA.schemaDesigns.forEach(design => {
-        if (hasCacheOverlay && design.target_type === 'elasticache') return;
         const engine = design.target_type;
         const content = design.content || {};
+        const isCacheLayer = !!(cacheEngine && engine === cacheEngine);
+        const keyDesignByPattern = {};
+        if (isCacheLayer) {
+          (content.key_designs || []).forEach(kd => { if (kd && kd.key_pattern) keyDesignByPattern[kd.key_pattern] = kd; });
+        }
         (content.access_patterns || []).forEach(ap => {
           const opCategory = getOpCategory(ap.operation || ap.http_method);
+          const keyDesign = isCacheLayer && ap.key_pattern ? keyDesignByPattern[ap.key_pattern] : null;
           patterns.push({
             id: ap.pattern_id || ap.name || (engine + '-' + patterns.length),
-            engine, operation: ap.operation || ap.http_method || '—', opCategory,
+            engine, operation: ap.operation || ap.http_method || '—', opCategory, isCacheLayer,
             sourceTables: (ap.source_tables || []).map(t => t.split('.').pop()).join(', '),
             sourceTablesArray: (ap.source_tables || []).map(t => t.split('.').pop()),
             destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || '—',
-            description: ap.description || ap.name || '', gsiName: ap.gsi_name || null
+            description: ap.description || ap.name || '', gsiName: ap.gsi_name || null,
+            ttlSeconds: keyDesign && typeof keyDesign.ttl_seconds === 'number' ? keyDesign.ttl_seconds : null,
+            keyDataType: (keyDesign && keyDesign.data_type) || null
           });
         });
       });
       return patterns;
     }
 
-    function buildSourceTableGroups() {
-      const filtered = filterPatterns();
+    function patternRowHtml(p) {
+      let row = '<tr onclick="showPatternDetails(' + jsArg(p.id) + ')">';
+      row += '<td class="nowrap"><span class="link">' + escapeHtml(p.id.slice(0, 8)) + '</span></td>';
+      row += '<td>' + escapeHtml(p.operation) + '</td>';
+      const engineLabel = (ENGINE_LABELS[p.engine] || p.engine) + (p.isCacheLayer ? ' (cache layer)' : '');
+      row += '<td>' + engineBadge(p.engine, engineLabel) + '</td>';
+      row += '<td>' + escapeHtml(p.sourceTables) + '</td>';
+      let dest = escapeHtml(p.destTable) + (p.gsiName ? ' (GSI: ' + escapeHtml(p.gsiName) + ')' : '');
+      if (p.isCacheLayer && p.ttlSeconds != null) dest += ' · TTL ' + p.ttlSeconds + 's';
+      row += '<td>' + dest + '</td>';
+      row += '<td>' + escapeHtml(p.description) + '</td>';
+      row += '</tr>';
+      return row;
+    }
+
+    function buildSourceTableGroups(patterns) {
       const groups = {};
-      filtered.forEach(ap => {
+      patterns.forEach(ap => {
         ap.sourceTablesArray.forEach(table => {
           if (!groups[table]) {
             groups[table] = { table, engines: new Set(), destTables: new Set(), patterns: [], convergesFrom: new Set() };
@@ -83,7 +110,7 @@
         });
       });
       const destToSources = {};
-      filtered.forEach(ap => {
+      patterns.forEach(ap => {
         if (ap.destTable !== '—') {
           if (!destToSources[ap.destTable]) destToSources[ap.destTable] = new Set();
           ap.sourceTablesArray.forEach(t => destToSources[ap.destTable].add(t));
@@ -98,6 +125,24 @@
         });
       });
       return Object.values(groups).sort((a, b) => b.patterns.length - a.patterns.length);
+    }
+
+    function sourceGroupRowHtml(g) {
+      const engines = [...g.engines].map(e => engineBadge(e, (ENGINE_LABELS[e] || e) + (e === cacheEngine ? ' (cache layer)' : ''))).join(' ');
+      const destTables = [...g.destTables].join(', ');
+      const opSummary = {};
+      g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });
+      const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + '(' + entry[1] + ')'; }).join(', ');
+      const convergence = g.convergesFrom.size > 0 ? '<span class="badge badge-blue">Merged (' + g.convergesFrom.size + ')</span>' : '—';
+      let row = '<tr onclick="showSourceTableDetails(' + jsArg(g.table) + ')">';
+      row += '<td><span class="link">' + escapeHtml(g.table) + '</span></td>';
+      row += '<td>' + engines + '</td>';
+      row += '<td>' + escapeHtml(destTables) + '</td>';
+      row += '<td><span class="badge badge-grey">' + g.patterns.length + '</span></td>';
+      row += '<td>' + convergence + '</td>';
+      row += '<td style="font-size: 12px;">' + escapeHtml(operations) + '</td>';
+      row += '</tr>';
+      return row;
     }
 
     function switchBrowseMode(mode) {
@@ -164,59 +209,53 @@
 
     function buildPatternTable() {
       const filtered = filterPatterns();
-      document.getElementById('pattern-count').textContent = filtered.length;
+      const ownerFiltered = filtered.filter(p => !p.isCacheLayer);
+      const cacheFiltered = filtered.filter(p => p.isCacheLayer);
+      document.getElementById('pattern-count').textContent = formatExplorerCount(ownerFiltered.length, cacheFiltered.length);
       const start = (currentPage - 1) * PAGE_SIZE;
-      const paginated = filtered.slice(start, start + PAGE_SIZE);
-      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+      const paginated = ownerFiltered.slice(start, start + PAGE_SIZE);
+      const totalPages = Math.ceil(ownerFiltered.length / PAGE_SIZE);
       let html = '<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>';
-      paginated.forEach(p => {
-        html += '<tr onclick="showPatternDetails(' + jsArg(p.id) + ')">';
-        html += '<td class="nowrap"><span class="link">' + escapeHtml(p.id.slice(0, 8)) + '</span></td>';
-        html += '<td>' + escapeHtml(p.operation) + '</td>';
-        html += '<td>' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + '</td>';
-        html += '<td>' + escapeHtml(p.sourceTables) + '</td>';
-        html += '<td>' + escapeHtml(p.destTable) + (p.gsiName ? ' (GSI: ' + escapeHtml(p.gsiName) + ')' : '') + '</td>';
-        html += '<td>' + escapeHtml(p.description) + '</td>';
-        html += '</tr>';
-      });
+      paginated.forEach(p => { html += patternRowHtml(p); });
       html += '</tbody></table><div class="pagination">';
       html += '<button class="btn" onclick="changePage(-1)" ' + (currentPage === 1 ? 'disabled' : '') + '>Previous</button>';
       html += '<span>Page ' + currentPage + ' of ' + totalPages + '</span>';
       html += '<button class="btn" onclick="changePage(1)" ' + (currentPage === totalPages ? 'disabled' : '') + '>Next</button>';
       html += '</div>';
+      if (cacheFiltered.length > 0) {
+        const cacheLabel = (ENGINE_LABELS[cacheEngine] || cacheEngine) + ' (cache layer)';
+        html += '<div class="cache-layer-section-title" style="font-size: 1.17em; font-weight: 600; margin: 16px 0 8px;">' + escapeHtml(cacheLabel) + ' (' + cacheFiltered.length + ')</div>';
+        html += '<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>';
+        cacheFiltered.forEach(p => { html += patternRowHtml(p); });
+        html += '</tbody></table>';
+      }
       document.getElementById('access-patterns-container').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
     function buildSourceTableTable() {
-      sourceTableGroups = buildSourceTableGroups();
-      document.getElementById('pattern-count').textContent = sourceTableGroups.length;
+      const filtered = filterPatterns();
+      const ownerFiltered = filtered.filter(p => !p.isCacheLayer);
+      const cacheFiltered = filtered.filter(p => p.isCacheLayer);
+      sourceTableGroups = buildSourceTableGroups(ownerFiltered);
+      const cacheGroups = buildSourceTableGroups(cacheFiltered);
+      document.getElementById('pattern-count').textContent = formatExplorerCount(sourceTableGroups.length, cacheGroups.length);
       const start = (currentPage - 1) * PAGE_SIZE;
       const paginated = sourceTableGroups.slice(start, start + PAGE_SIZE);
       const totalPages = Math.ceil(sourceTableGroups.length / PAGE_SIZE);
       let html = '<table><thead><tr><th>Source Table</th><th>Engines</th><th>Destination Tables</th><th>Patterns</th><th>Convergence</th><th>Operations</th></tr></thead><tbody>';
-      paginated.forEach(g => {
-        const engines = [...g.engines].map(e => {
-          return engineBadge(e, ENGINE_LABELS[e] || e);
-        }).join(' ');
-        const destTables = [...g.destTables].join(', ');
-        const opSummary = {};
-        g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });
-        const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + '(' + entry[1] + ')'; }).join(', ');
-        const convergence = g.convergesFrom.size > 0 ? '<span class="badge badge-blue">Merged (' + g.convergesFrom.size + ')</span>' : '—';
-        html += '<tr onclick="showSourceTableDetails(' + jsArg(g.table) + ')">';
-        html += '<td><span class="link">' + escapeHtml(g.table) + '</span></td>';
-        html += '<td>' + engines + '</td>';
-        html += '<td>' + escapeHtml(destTables) + '</td>';
-        html += '<td><span class="badge badge-grey">' + g.patterns.length + '</span></td>';
-        html += '<td>' + convergence + '</td>';
-        html += '<td style="font-size: 12px;">' + escapeHtml(operations) + '</td>';
-        html += '</tr>';
-      });
+      paginated.forEach(g => { html += sourceGroupRowHtml(g); });
       html += '</tbody></table><div class="pagination">';
       html += '<button class="btn" onclick="changePage(-1)" ' + (currentPage === 1 ? 'disabled' : '') + '>Previous</button>';
       html += '<span>Page ' + currentPage + ' of ' + totalPages + '</span>';
       html += '<button class="btn" onclick="changePage(1)" ' + (currentPage === totalPages ? 'disabled' : '') + '>Next</button>';
       html += '</div>';
+      if (cacheGroups.length > 0) {
+        const cacheLabel = (ENGINE_LABELS[cacheEngine] || cacheEngine) + ' (cache layer)';
+        html += '<div class="cache-layer-section-title" style="font-size: 1.17em; font-weight: 600; margin: 16px 0 8px;">' + escapeHtml(cacheLabel) + ' (' + cacheGroups.length + ')</div>';
+        html += '<table><thead><tr><th>Source Table</th><th>Engines</th><th>Destination Tables</th><th>Patterns</th><th>Convergence</th><th>Operations</th></tr></thead><tbody>';
+        cacheGroups.forEach(g => { html += sourceGroupRowHtml(g); });
+        html += '</tbody></table>';
+      }
       document.getElementById('access-patterns-container').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
@@ -228,10 +267,15 @@
     function createCharts() {
       const filtered = filterPatterns();
       const engineDist = {}, opDist = {};
+      let cacheCount = 0;
       filtered.forEach(p => {
-        engineDist[p.engine] = (engineDist[p.engine] || 0) + 1;
+        if (p.isCacheLayer) { cacheCount++; } else { engineDist[p.engine] = (engineDist[p.engine] || 0) + 1; }
         opDist[p.opCategory] = (opDist[p.opCategory] || 0) + 1;
       });
+      const cacheLegendEl = document.getElementById('engine-cache-legend');
+      if (cacheLegendEl) {
+        cacheLegendEl.textContent = cacheEngine ? ((ENGINE_LABELS[cacheEngine] || cacheEngine) + ' (cache layer): ' + cacheCount) : '';
+      }
       if (engineChart) engineChart.destroy();
       engineChart = new Chart(document.getElementById('engineChart'), {
         type: 'pie',
@@ -587,10 +631,13 @@
       tabsHtml += '<div style="margin-bottom: 24px;"><div class="key-value-label">Description</div>';
       tabsHtml += '<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">' + escapeHtml(fullPattern.description || fullPattern.name || 'No description available') + '</div></div>';
       tabsHtml += '<div class="key-value-grid">';
-      tabsHtml += '<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">' + engineBadge(fullPattern.engine, ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + '</div></div>';
+      const fpEngineLabel = (ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + (fullPattern.engine === cacheEngine ? ' (cache layer)' : '');
+      tabsHtml += '<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">' + engineBadge(fullPattern.engine, fpEngineLabel) + '</div></div>';
       tabsHtml += '<div class="key-value-item"><div class="key-value-label">Operation</div><div class="key-value-value">' + escapeHtml(fullPattern.operation || fullPattern.http_method || '—') + '</div></div>';
       tabsHtml += '<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || '—') + '</div></div>';
       tabsHtml += '</div>';
+      if (pattern.isCacheLayer && pattern.ttlSeconds != null) tabsHtml += '<div class="key-value-item"><div class="key-value-label">TTL</div><div class="key-value-value">' + escapeHtml(pattern.ttlSeconds + 's') + '</div></div>';
+      if (pattern.isCacheLayer && pattern.keyDataType) tabsHtml += '<div class="key-value-item"><div class="key-value-label">Key data type</div><div class="key-value-value">' + escapeHtml(pattern.keyDataType) + '</div></div>';
       if (fullPattern.source_tables && fullPattern.source_tables.length > 0) {
         tabsHtml += '<div class="key-value-block"><div class="key-value-label">Source Tables</div><div>';
         fullPattern.source_tables.forEach(function(t) {

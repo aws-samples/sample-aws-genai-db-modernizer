@@ -630,12 +630,17 @@ def test_cost_baseline_stat_treats_an_older_zero_cost_report_as_unknown():
 def test_access_patterns_stat_excludes_the_cache_layers_own_patterns():
     """#405: the cache layer gets its own schema design (and its own
     access_patterns) too, but those were never queries it owns. Counting them
-    in the "Access Patterns" stat, the embedded script's pattern-count, and the
-    Explorer's rows would double-count the cache engine as an owner -- the same
-    gap #361 fixed on the Results page (ownerSchemaDesigns/
-    cacheAccessPatternCount in utils/cacheLayer.js). This fixture's only owner
-    schema design (dynamodb) has one access pattern; the cache layer's design
-    has two more that must be called out separately, not folded in.
+    in the "Access Patterns" stat would double-count the cache engine as an
+    owner -- the same gap #361 fixed on the Results page
+    (ownerSchemaDesigns/cacheAccessPatternCount in utils/cacheLayer.js). This
+    fixture's only owner schema design (dynamodb) has one access pattern; the
+    cache layer's design has two more that must be called out separately, not
+    folded into that stat.
+
+    #429 part 2: the Explorer itself is different -- its own header count is
+    not owner-only, since the cache layer's rows are browsable there (tagged,
+    in their own section after the owner rows), so the header breaks the
+    combined total down into owned vs. cache layer instead of hiding it.
     """
     objects = _objects()
     objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
@@ -649,7 +654,7 @@ def test_access_patterns_stat_excludes_the_cache_layers_own_patterns():
 
     assert '<div class="stat-label">Access Patterns</div><div class="stat-value">1</div>' in html
     assert '<div class="stat-note">+2 cache-layer patterns (not counted above)</div>' in html
-    assert 'id="pattern-count">1</span>' in html
+    assert 'id="pattern-count">3 (1 owned + 2 cache layer)</span>' in html
 
 
 def test_access_patterns_cache_note_is_singular_for_one_pattern():

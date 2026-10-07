@@ -39,7 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
@@ -118,6 +118,53 @@ const getOpCategory = (op) => OP_CATEGORY[op] || (
 );
 
 const shortTable = (t) => t?.split('.').pop() || t;
+
+// #429 part 2: shared by the owner rows and the cache-layer rows -- each is
+// grouped by source table separately so the cache layer renders as its own
+// section "By source table" too, instead of mixing its key designs into the
+// owner groups' convergence counts.
+const groupPatternsBySourceTable = (patterns) => {
+  const groups = {};
+
+  patterns.forEach(ap => {
+    ap.sourceTables.forEach(table => {
+      if (!groups[table]) {
+        groups[table] = {
+          table,
+          engines: new Set(),
+          destTables: new Set(),
+          patterns: [],
+          convergesFrom: new Set(),
+        };
+      }
+      groups[table].engines.add(ap.engine);
+      if (ap.destTable !== '—') groups[table].destTables.add(ap.destTable);
+      groups[table].patterns.push(ap);
+    });
+  });
+
+  // Detect convergence: if a dest table has multiple source tables
+  const destToSources = {};
+  patterns.forEach(ap => {
+    if (ap.destTable !== '—') {
+      if (!destToSources[ap.destTable]) destToSources[ap.destTable] = new Set();
+      ap.sourceTables.forEach(t => destToSources[ap.destTable].add(t));
+    }
+  });
+
+  Object.values(groups).forEach(g => {
+    g.destTables.forEach(dt => {
+      const sources = destToSources[dt];
+      if (sources && sources.size > 1) {
+        sources.forEach(s => {
+          if (s !== g.table) g.convergesFrom.add(s);
+        });
+      }
+    });
+  });
+
+  return Object.values(groups).sort((a, b) => b.patterns.length - a.patterns.length);
+};
 
 
 // ============================================
@@ -376,6 +423,28 @@ const AnalysisResultsPage = memo(() => {
     return patterns;
   }, [activeDesigns, cacheOverlay]);
 
+  // #429 part 2: the cache layer's own access patterns, tagged isCacheLayer so
+  // the explorer can render them as their own "<Name> (cache layer)" group
+  // after the owner rows above, instead of leaving them out of the explorer
+  // entirely the way #361/#405 did (correct for the owner total/pie, wrong
+  // for browsability). No-op without a cache_overlay -- see
+  // cacheLayerAccessPatterns's hasOverlay guard.
+  const cacheLayerPatterns = useMemo(() => {
+    return cacheLayerAccessPatterns(activeDesigns, cacheOverlay).map(ap => ({
+      ...ap,
+      opCategory: getOpCategory(ap.operation),
+    }));
+  }, [activeDesigns, cacheOverlay]);
+
+  // Owner rows followed by the cache-layer rows -- the explorer's combined
+  // browsing set. Everything that must stay owner-only (the "Access
+  // patterns" stat, the engine pie) keeps reading allAccessPatterns/
+  // totalAccessPatterns directly instead of this.
+  const explorerPatterns = useMemo(
+    () => [...allAccessPatterns, ...cacheLayerPatterns],
+    [allAccessPatterns, cacheLayerPatterns]
+  );
+
   // Engine trade-offs lookup
   const engineTradeOffs = useMemo(() => {
     const map = {};
@@ -451,6 +520,12 @@ const AnalysisResultsPage = memo(() => {
     [afterDist]
   );
 
+  // #429 part 2: the explorer's own combined total (owner rows + cache-layer
+  // rows), used for its header count ("64 (54 owned + 10 cache layer)") --
+  // kept separate from totalAccessPatterns, which must stay owner-only (the
+  // "Access patterns" stat above compares against it).
+  const explorerTotal = totalAccessPatterns + cachePatternCount;
+
 
   // ============================================
   // Filtering
@@ -477,7 +552,10 @@ const AnalysisResultsPage = memo(() => {
     const groups = new Set();
     const queryIds = new Set();
 
-    allAccessPatterns.forEach(ap => {
+    // #429 part 2: explorerPatterns (owner rows + cache-layer rows) so the
+    // cache layer's engine/source tables/operations are filterable facets
+    // too, not just the owner rows'.
+    explorerPatterns.forEach(ap => {
       engines.add(ap.engine);
       ap.sourceTables.forEach(t => sources.add(t));
       if (ap.destTable !== '—') dests.add(ap.destTable);
@@ -498,11 +576,13 @@ const AnalysisResultsPage = memo(() => {
       { propertyKey: 'gsi', value: 'no' },
       ...[...queryIds].sort().map(v => ({ propertyKey: 'query_id', value: v })),
     ];
-  }, [allAccessPatterns]);
+  }, [explorerPatterns]);
 
-  // Apply all filters (engine bar, op donut, property filter)
+  // Apply all filters (engine bar, op donut, property filter) over the
+  // combined owner + cache-layer set (#429 part 2); filteredOwnerPatterns/
+  // filteredCacheLayerPatterns below split it back out for rendering.
   const filteredPatterns = useMemo(() => {
-    let items = [...allAccessPatterns];
+    let items = [...explorerPatterns];
 
     // Engine filter (multi-select)
     if (engineFilter.length > 0) {
@@ -603,55 +683,35 @@ const AnalysisResultsPage = memo(() => {
     }
 
     return items;
-  }, [allAccessPatterns, engineFilter, opFilter, filterQuery]);
+  }, [explorerPatterns, engineFilter, opFilter, filterQuery]);
+
+  // #429 part 2: split the combined filtered set back into owner rows and
+  // the cache layer's rows, so each renders as its own group/section (the
+  // cache layer always after the owners) instead of mixed together.
+  const filteredOwnerPatterns = useMemo(
+    () => filteredPatterns.filter(ap => !ap.isCacheLayer),
+    [filteredPatterns]
+  );
+  const filteredCacheLayerPatterns = useMemo(
+    () => filteredPatterns.filter(ap => ap.isCacheLayer),
+    [filteredPatterns]
+  );
 
 
   // ============================================
   // Source table view grouping
   // ============================================
 
-  const sourceTableGroups = useMemo(() => {
-    const groups = {};
-
-    filteredPatterns.forEach(ap => {
-      ap.sourceTables.forEach(table => {
-        if (!groups[table]) {
-          groups[table] = {
-            table,
-            engines: new Set(),
-            destTables: new Set(),
-            patterns: [],
-            convergesFrom: new Set(),
-          };
-        }
-        groups[table].engines.add(ap.engine);
-        if (ap.destTable !== '—') groups[table].destTables.add(ap.destTable);
-        groups[table].patterns.push(ap);
-      });
-    });
-
-    // Detect convergence: if a dest table has multiple source tables
-    const destToSources = {};
-    filteredPatterns.forEach(ap => {
-      if (ap.destTable !== '—') {
-        if (!destToSources[ap.destTable]) destToSources[ap.destTable] = new Set();
-        ap.sourceTables.forEach(t => destToSources[ap.destTable].add(t));
-      }
-    });
-
-    Object.values(groups).forEach(g => {
-      g.destTables.forEach(dt => {
-        const sources = destToSources[dt];
-        if (sources && sources.size > 1) {
-          sources.forEach(s => {
-            if (s !== g.table) g.convergesFrom.add(s);
-          });
-        }
-      });
-    });
-
-    return Object.values(groups).sort((a, b) => b.patterns.length - a.patterns.length);
-  }, [filteredPatterns]);
+  // #429 part 2: grouped separately so the cache layer is its own section in
+  // the "By source table" view too, after the owner groups.
+  const sourceTableGroups = useMemo(
+    () => groupPatternsBySourceTable(filteredOwnerPatterns),
+    [filteredOwnerPatterns]
+  );
+  const cacheSourceTableGroups = useMemo(
+    () => groupPatternsBySourceTable(filteredCacheLayerPatterns),
+    [filteredCacheLayerPatterns]
+  );
 
   // ============================================
   // Chart Data (based on filtered patterns)
@@ -686,21 +746,27 @@ const AnalysisResultsPage = memo(() => {
     }));
   }, [opDistribution]);
 
-  // Engine distribution for pie chart
+  // Engine distribution for pie chart (#429 part 2: owner rows only -- the
+  // cache layer never owned a query, so it must stay out of the pie's share
+  // the same way it stays out of the "Access patterns" stat; it gets its own
+  // legend-style entry next to the pie instead, see renderEngineBar below).
   const filteredEngineDist = useMemo(() => {
     const counts = {};
-    filteredPatterns.forEach(ap => {
+    filteredOwnerPatterns.forEach(ap => {
       counts[ap.engine] = (counts[ap.engine] || 0) + 1;
     });
     return counts;
-  }, [filteredPatterns]);
+  }, [filteredOwnerPatterns]);
 
 
   // ============================================
   // Pagination
   // ============================================
 
-  const displayItems = browseMode === 'pattern' ? filteredPatterns : sourceTableGroups;
+  // #429 part 2: pagination still covers the owner rows only -- the cache
+  // layer's own section (always small -- one group of key designs) renders
+  // in full underneath, unpaginated.
+  const displayItems = browseMode === 'pattern' ? filteredOwnerPatterns : sourceTableGroups;
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
     return displayItems.slice(start, start + PAGE_SIZE);
@@ -970,6 +1036,10 @@ const AnalysisResultsPage = memo(() => {
       cell: item => (
         <Badge color={ENGINE_BADGE_COLORS[item.engine] || 'grey'}>
           {ENGINE_LABELS[item.engine] || item.engine}
+          {/* #429 part 2: every cache-layer row carries this suffix, even
+              inside its own section, so the role is unambiguous wherever the
+              row is seen (e.g. a copied/zoomed screenshot of just the row). */}
+          {item.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}
         </Badge>
       ),
       sortingField: 'engine',
@@ -984,9 +1054,18 @@ const AnalysisResultsPage = memo(() => {
     {
       id: 'destination',
       header: t('analysis-results-v2.explorer.col-destination'),
-      cell: item => item.gsiName ? `${item.destTable} (GSI: ${item.gsiName})` : item.destTable,
+      cell: item => {
+        const base = item.gsiName ? `${item.destTable} (GSI: ${item.gsiName})` : item.destTable;
+        // #429 part 2: the cache layer's "destination" is its key design
+        // (key_pattern) -- show the TTL alongside it, when the pattern's key
+        // design has one, instead of leaving the key design's eviction
+        // policy entirely unbrowsable.
+        return item.isCacheLayer && item.ttlSeconds != null
+          ? `${base} · ${t('analysis-results-v2.explorer.ttl-suffix', { seconds: item.ttlSeconds })}`
+          : base;
+      },
       sortingField: 'destTable',
-      width: 200
+      width: 220
     },
     {
       id: 'description',
@@ -1016,6 +1095,9 @@ const AnalysisResultsPage = memo(() => {
           {[...item.engines].map(e => (
             <Badge key={e} color={ENGINE_BADGE_COLORS[e] || 'grey'}>
               {ENGINE_LABELS[e] || e}
+              {/* #429 part 2: a source-table group's engines can include the
+                  cache layer -- tag it the same way the pattern rows are. */}
+              {e === cacheOverlay?.engine ? t('cache-layer.engine-badge-suffix') : ''}
             </Badge>
           ))}
         </SpaceBetween>
@@ -1063,7 +1145,7 @@ const AnalysisResultsPage = memo(() => {
       },
       width: 250
     }
-  ], [t, handleSourceTableClick]);
+  ], [t, handleSourceTableClick, cacheOverlay]);
 
 
   // ============================================
@@ -1078,7 +1160,7 @@ const AnalysisResultsPage = memo(() => {
 
     // Build metrics items dynamically
     const metricsItems = [];
-    if (ap.engine) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.engine'), value: <Badge color={ENGINE_BADGE_COLORS[ap.engine] || 'grey'}>{ENGINE_LABELS[ap.engine] || ap.engine}</Badge> });
+    if (ap.engine) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.engine'), value: <Badge color={ENGINE_BADGE_COLORS[ap.engine] || 'grey'}>{ENGINE_LABELS[ap.engine] || ap.engine}{ap.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}</Badge> });
     if (ap.operation) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.operation'), value: ap.operation });
     if (ap.destTable) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.destination-table'), value: ap.destTable });
     if (ap.gsiName) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.gsi'), value: ap.gsiName });
@@ -1087,6 +1169,11 @@ const AnalysisResultsPage = memo(() => {
     if (ap.itemSize != null) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.item-size'), value: `${ap.itemSize} bytes` });
     if (ap.avgItems != null) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.avg-items-returned'), value: ap.avgItems });
     if (ap.patternGroup) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.pattern-group'), value: ap.patternGroup });
+    // #429 part 2: the cache layer's key design (TTL, data type) -- the only
+    // place that information exists is the cache design's key_designs[],
+    // joined in by cacheLayerAccessPatterns.
+    if (ap.ttlSeconds != null) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.ttl'), value: t('analysis-results-v2.explorer.ttl-suffix', { seconds: ap.ttlSeconds }) });
+    if (ap.keyDataType) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.key-data-type'), value: ap.keyDataType });
 
     return (
       <SpaceBetween size="l">
@@ -1297,7 +1384,7 @@ const AnalysisResultsPage = memo(() => {
 
       return {
         id: engine,
-        label: ENGINE_LABELS[engine] || engine,
+        label: `${ENGINE_LABELS[engine] || engine}${engine === cacheOverlay?.engine ? t('cache-layer.engine-badge-suffix') : ''}`,
         content: (
           <SpaceBetween size="l">
             {destGroups.map((dg, idx) => {
@@ -1415,11 +1502,22 @@ const AnalysisResultsPage = memo(() => {
 
   const engineOptions = useMemo(() => {
     const engines = Object.entries(filteredEngineDist);
-    return engines.map(([engine, count]) => ({
+    const options = engines.map(([engine, count]) => ({
       label: `${ENGINE_LABELS[engine] || engine} (${count})`,
       value: engine
     }));
-  }, [filteredEngineDist]);
+    // #429 part 2: "ElastiCache (cache layer)" gets its own filter option --
+    // without this, there's no way to filter the explorer down to just the
+    // cache layer's rows (or exclude them) the way every owner engine can be.
+    if (cacheOverlay?.engine) {
+      const cacheEngine = cacheOverlay.engine;
+      options.push({
+        label: `${ENGINE_LABELS[cacheEngine] || cacheEngine}${t('cache-layer.engine-badge-suffix')} (${filteredCacheLayerPatterns.length})`,
+        value: cacheEngine
+      });
+    }
+    return options;
+  }, [filteredEngineDist, cacheOverlay, filteredCacheLayerPatterns, t]);
 
   const enginePieData = useMemo(() => {
     const engines = Object.entries(filteredEngineDist);
@@ -1570,6 +1668,28 @@ const AnalysisResultsPage = memo(() => {
             />
           </div>
         </Box>
+        {/* #429 part 2: the cache layer stays out of the pie's shares (it
+            never owned a query) but still needs to be visible here -- a
+            legend-style entry with its own count, next to the pie rather
+            than a slice inside it, so the owner shares still read as 100% of
+            owned workload. */}
+        {cacheOverlay?.engine && (
+          <Box margin={{ top: 'xs' }} fontSize="body-s" color="text-body-secondary">
+            <span
+              aria-hidden="true"
+              style={{
+                display: 'inline-block',
+                width: '10px',
+                height: '10px',
+                borderRadius: '2px',
+                backgroundColor: ENGINE_HEX[cacheOverlay.engine] || '#5f6b7a',
+                marginRight: '6px',
+                verticalAlign: 'middle',
+              }}
+            />
+            {`${ENGINE_LABELS[cacheOverlay.engine] || cacheOverlay.engine}${t('cache-layer.engine-badge-suffix')}: ${filteredCacheLayerPatterns.length}`}
+          </Box>
+        )}
       </>
     );
   };
@@ -1782,13 +1902,29 @@ const AnalysisResultsPage = memo(() => {
             {/* ============================================ */}
             {/* Access Pattern Explorer                      */}
             {/* ============================================ */}
-            {totalAccessPatterns > 0 && (
+            {(totalAccessPatterns > 0 || cachePatternCount > 0) && (
               <Container
                 id="access-patterns-section"
                 header={
                   <Header
                     variant="h2"
-                    counter={`(${filteredPatterns.length}${filteredPatterns.length !== totalAccessPatterns ? ` of ${totalAccessPatterns}` : ''})`}
+                    // #429 part 2: once there's a cache layer, the header
+                    // breaks the combined total down into owned vs. cache
+                    // layer ("64 (54 owned + 10 cache layer)") instead of
+                    // just a bare count -- filtering still falls back to the
+                    // simpler "(N of M)" form, same as before #429.
+                    counter={
+                      hasActiveFilters
+                        ? `(${filteredOwnerPatterns.length + filteredCacheLayerPatterns.length} of ${explorerTotal})`
+                        : cachePatternCount > 0
+                          ? `(${t('analysis-results-v2.explorer.header-count', {
+                              count: explorerTotal,
+                              total: explorerTotal,
+                              owned: totalAccessPatterns,
+                              cache: cachePatternCount,
+                            })})`
+                          : `(${totalAccessPatterns})`
+                    }
                     description={t('analysis-results-v2.explorer.description')}
                     actions={
                       <SpaceBetween direction="horizontal" size="xs">
@@ -2013,6 +2149,59 @@ const AnalysisResultsPage = memo(() => {
                         currentPageIndex={currentPage}
                         pagesCount={Math.ceil(displayItems.length / PAGE_SIZE)}
                         onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
+                      />
+                    </Box>
+                  )}
+
+                  {/* ============================================ */}
+                  {/* Cache layer section (#429 part 2)             */}
+                  {/* ============================================ */}
+                  {/* The cache layer's own access patterns/key designs, as a
+                      distinct group after the owner rows above -- in both
+                      browse modes -- instead of mixed into the owner table
+                      or left out of the explorer entirely (#361/#405 only
+                      excluded them from the owner total/pie). Hidden
+                      whenever the current filters leave no cache-layer rows
+                      (e.g. the engine filter is set to an owner engine only),
+                      same as the owner table's own empty state. */}
+                  {browseMode === 'pattern' && filteredCacheLayerPatterns.length > 0 && (
+                    <Box margin={{ top: 'l' }}>
+                      <Header
+                        variant="h3"
+                        counter={`(${filteredCacheLayerPatterns.length})`}
+                      >
+                        {t('analysis-results-v2.explorer.cache-layer-section-title', {
+                          engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
+                        })}
+                      </Header>
+                      <Table
+                        columnDefinitions={patternColumnDefinitions}
+                        items={filteredCacheLayerPatterns}
+                        variant="embedded"
+                        selectionType="single"
+                        selectedItems={selectedItems}
+                        onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
+                      />
+                    </Box>
+                  )}
+
+                  {browseMode === 'source' && cacheSourceTableGroups.length > 0 && (
+                    <Box margin={{ top: 'l' }}>
+                      <Header
+                        variant="h3"
+                        counter={`(${cacheSourceTableGroups.length})`}
+                      >
+                        {t('analysis-results-v2.explorer.cache-layer-section-title', {
+                          engine: ENGINE_LABELS[cacheOverlay?.engine] || cacheOverlay?.engine,
+                        })}
+                      </Header>
+                      <Table
+                        columnDefinitions={sourceTableColumnDefinitions}
+                        items={cacheSourceTableGroups}
+                        variant="embedded"
+                        selectionType="single"
+                        selectedItems={selectedItems}
+                        onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
                       />
                     </Box>
                   )}

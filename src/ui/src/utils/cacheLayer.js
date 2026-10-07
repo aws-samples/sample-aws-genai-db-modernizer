@@ -214,6 +214,56 @@ export function addCacheOverlayNode(sankeyData, overlay) {
   };
 }
 
+/**
+ * Cache-layer access-pattern rows for the explorer (#429 part 2, follow-up to
+ * #361/#405): `ownerSchemaDesigns`/`allAccessPatterns` correctly drop the
+ * cache design's own `access_patterns` from the owner total and pie, but the
+ * Results page used to drop them from the explorer entirely -- the cache
+ * layer's key designs were real deliverables with nowhere to browse them.
+ * This builds that design's own rows, each tagged `isCacheLayer: true` so a
+ * caller renders them as a distinct "<Name> (cache layer)" group instead of
+ * mixing them into the owner rows, with the matching key design (by
+ * `key_pattern`) joined in so its TTL and data type travel with the row.
+ *
+ * No-op (returns []) without `cacheOverlay.engine` (same hasOverlay guard as
+ * `ownerSchemaDesigns`/`cacheAccessPatternCount`): a legacy report has no
+ * overlay at all, so ElastiCache's design is already included in the owner
+ * rows there -- this must not duplicate it.
+ */
+export function cacheLayerAccessPatterns(designs, cacheOverlay) {
+  const cacheEngine = cacheOverlay?.engine;
+  if (!cacheEngine) return [];
+  const design = (designs || []).find((d) => d?.target_type === cacheEngine);
+  if (!design) return [];
+
+  const content = design.content || {};
+  const keyDesignByPattern = {};
+  (content.key_designs || []).forEach((kd) => {
+    if (kd?.key_pattern) keyDesignByPattern[kd.key_pattern] = kd;
+  });
+
+  return (content.access_patterns || []).map((ap, idx) => {
+    const keyPattern = ap.key_pattern || null;
+    const keyDesign = keyPattern ? keyDesignByPattern[keyPattern] : null;
+    return {
+      id: ap.pattern_id || ap.name || `${cacheEngine}-${idx}`,
+      engine: cacheEngine,
+      isCacheLayer: true,
+      operation: ap.operation || ap.http_method || '—',
+      sourceTables: (ap.source_tables || []).map((t) => t.split('.').pop()),
+      sourceTablesRaw: ap.source_tables || [],
+      destTable: keyPattern || '—',
+      keyPattern,
+      ttlSeconds: typeof keyDesign?.ttl_seconds === 'number' ? keyDesign.ttl_seconds : null,
+      keyDataType: keyDesign?.data_type || null,
+      gsiName: null,
+      patternGroup: null,
+      description: ap.description || ap.name || '',
+      queryIds: ap.source_query_ids || ap.query_ids || [],
+    };
+  });
+}
+
 // Fallback used when no i18next `t` is supplied (mirrors defaultT in
 // assignmentSummary.js so this module stays safe to call standalone).
 function defaultT(key, options = {}) {

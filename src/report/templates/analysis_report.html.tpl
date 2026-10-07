@@ -81,7 +81,7 @@ __BANNER__
     </div>
 
     <div class="section">
-      <div class="section-header">Access Pattern Explorer (<span id="pattern-count">__TOTAL_PATTERNS__</span>)</div>
+      <div class="section-header">Access Pattern Explorer (<span id="pattern-count">__EXPLORER_HEADER_COUNT__</span>)</div>
       <p class="section-desc">Browse every access pattern by pattern or by source table. Filter by engine, operation, or text to narrow the list, then select a row to see its target design.</p>
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <div class="toggle-group">
@@ -95,7 +95,7 @@ __BANNER__
       </div>
       <div id="active-filters" style="margin: 16px 0;"></div>
       <div class="grid grid-2">
-        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div></div>
+        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div><div id="engine-cache-legend" style="margin-top: 8px; font-size: 13px; color: var(--color-text-secondary);"></div></div>
         <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by operation type</div><div class="chart-container"><canvas id="operationChart"></canvas></div></div>
       </div>
       <div id="access-patterns-container"></div>

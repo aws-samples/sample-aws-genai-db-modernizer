@@ -64,6 +64,7 @@ SHELL_SUBSTITUTIONS: list[tuple[str, str]] = [
     ("${savingsStat}", "__SAVINGS_STAT__"),
     ("${totalPatterns}", "__TOTAL_PATTERNS__"),
     ("${cachePatternsNote}", "__CACHE_PATTERNS_NOTE__"),
+    ("${explorerHeaderCount}", "__EXPLORER_HEADER_COUNT__"),
     ("${cacheLayerStat}", "__CACHE_LAYER_STAT__"),
     ("${safeJobId}", "__JOB_ID__"),
 ]

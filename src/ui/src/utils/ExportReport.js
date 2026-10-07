@@ -50,23 +50,27 @@ export const CACHE_LAYER_SUFFIX = ' (cache layer)';
 // silently drift.
 export const KEEP_COST_CARD_EXPR = 'afterDist[cb.database] != null || cb.database === cacheEngine';
 
-// #405: the embedded client script's extractPatterns() (generated below) mirrors
-// ownerSchemaDesigns's cache-engine filter -- the cache layer gets its own schema
-// design (and its own access_patterns) too, but those were never queries it owns,
-// so counting them here would double-count ElastiCache as if it were an owner
-// engine in the Access Pattern Explorer's total, pie and rows, the same gap #361
-// fixed on the Results page. Only skips when the report carries a cache_overlay
-// (hasCacheOverlay, set from DATA.results.synthesis.cache_overlay just above):
-// a legacy report with no overlay at all still has ElastiCache as a real owner,
-// matching src/report/analysis_report.py (which only strips a design when
-// cache_overlay.engine names it) and ownerSchemaDesigns's own hasOverlay guard.
-// No bundler at runtime, so extractPatterns can't `import` isCacheEngine from
-// cacheLayer.js -- it hardcodes this exact expression as a literal instead (same
-// reason as CACHE_LAYER_SUFFIX/KEEP_COST_CARD_EXPR above). Kept as a string
-// constant with the same text, so ExportReport.cachePatterns.test.js can both
-// `new Function(...)` it to assert it agrees with cacheLayer.js's isCacheEngine,
-// and assert the generated script's literal still matches it.
-export const CACHE_ENGINE_SKIP_EXPR = "hasCacheOverlay && design.target_type === 'elasticache'";
+// #429 part 2: the embedded client script's extractPatterns() (generated below)
+// used to skip the cache engine's own schema design entirely (ownerSchemaDesigns's
+// cache-engine filter, mirrored here as of #405) -- correct for the "Access
+// Patterns" stat and the explorer's pie/total (still owner-only, see
+// ownerSchemaDesigns above and the owner-only engineDist filter in createCharts
+// below), but it also made the cache layer's own key designs unbrowsable in the
+// Access Pattern Explorer. extractPatterns now includes them, tagging each row
+// `isCacheLayer` instead of dropping it, so the explorer can render them as their
+// own "<Name> (cache layer)" group/rows (same as the Results page's
+// cacheLayerAccessPatterns). Only tags when the report carries a cache_overlay
+// (cacheEngine, set from DATA.results.synthesis.cache_overlay just above): a
+// legacy report with no overlay at all still has ElastiCache as a real owner, so
+// none of its rows are tagged, matching src/report/analysis_report.py (which only
+// strips a design when cache_overlay.engine names it) and
+// cacheLayerAccessPatterns's own hasOverlay guard. No bundler at runtime, so
+// extractPatterns can't `import` isCacheEngine from cacheLayer.js -- it hardcodes
+// this exact expression as a literal instead (same reason as
+// CACHE_LAYER_SUFFIX/KEEP_COST_CARD_EXPR above). Kept as a string constant with
+// the same text, so ExportReport.cachePatterns.test.js can assert the generated
+// script's literal still matches it.
+export const CACHE_ROW_TAG_EXPR = '!!(cacheEngine && engine === cacheEngine)';
 
 // Engine, operation and chart colours are NOT declared here. The palette lives in
 // exactly one place -- the :root block of REPORT_CSS below -- and both the badges
@@ -264,42 +268,77 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    let browseMode = \'pattern\';\n';
   script += '    const PAGE_SIZE = 10;\n';
   script += '    let currentPage = 1;\n';
+  // #429 part 2: only tags rows when the report actually carries a
+  // cache_overlay -- a legacy report with none at all still has ElastiCache as
+  // a real owner (mirrors cacheLayerAccessPatterns's hasOverlay guard and
+  // src/report/analysis_report.py, which only strips a design when
+  // cache_overlay.engine names it).
+  script += '    const cacheEngine = (DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay && DATA.results.synthesis.cache_overlay.engine) || null;\n';
+  script += '\n';
+  // English-only (this file is i18n-exempt, see header): mirrors the Results
+  // page explorer header's "{{total}} ({{owned}} owned + {{cache}} cache
+  // layer)" text (locales/en.json's analysis-results-v2.explorer.header-count).
+  script += '    function formatExplorerCount(ownerCount, cacheCount) {\n';
+  script += '      return cacheCount > 0\n';
+  script += '        ? (ownerCount + cacheCount) + \' (\' + ownerCount + \' owned + \' + cacheCount + \' cache layer)\'\n';
+  script += '        : String(ownerCount);\n';
+  script += '    }\n';
   script += '\n';
   script += '    function extractPatterns() {\n';
   script += '      const patterns = [];\n';
-  // #405: only skip the cache engine's own design when the report actually
-  // carries a cache_overlay -- a legacy report with none at all still has
-  // ElastiCache as a real owner (mirrors ownerSchemaDesigns's hasOverlay guard
-  // and src/report/analysis_report.py, which only strips a design when
-  // cache_overlay.engine names it).
-  script += '      const hasCacheOverlay = !!(DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay);\n';
   script += '      DATA.schemaDesigns.forEach(design => {\n';
-  // sync_report_template.py requires this `script += '...'` line to be its own
-  // single-quoted literal (it can't splice in CACHE_ENGINE_SKIP_EXPR at build
-  // time), so the text below is a hardcoded copy of that constant --
-  // ExportReport.cachePatterns.test.js asserts the two agree.
-  script += '        if (hasCacheOverlay && design.target_type === \'elasticache\') return;\n';
   script += '        const engine = design.target_type;\n';
   script += '        const content = design.content || {};\n';
+  // sync_report_template.py requires this `script += '...'` line to be its own
+  // single-quoted literal (it can't splice in CACHE_ROW_TAG_EXPR at build
+  // time), so the text below is a hardcoded copy of that constant --
+  // ExportReport.cachePatterns.test.js asserts the two agree.
+  script += '        const isCacheLayer = !!(cacheEngine && engine === cacheEngine);\n';
+  script += '        const keyDesignByPattern = {};\n';
+  script += '        if (isCacheLayer) {\n';
+  script += '          (content.key_designs || []).forEach(kd => { if (kd && kd.key_pattern) keyDesignByPattern[kd.key_pattern] = kd; });\n';
+  script += '        }\n';
   script += '        (content.access_patterns || []).forEach(ap => {\n';
   script += '          const opCategory = getOpCategory(ap.operation || ap.http_method);\n';
+  script += '          const keyDesign = isCacheLayer && ap.key_pattern ? keyDesignByPattern[ap.key_pattern] : null;\n';
   script += '          patterns.push({\n';
   script += '            id: ap.pattern_id || ap.name || (engine + \'-\' + patterns.length),\n';
-  script += '            engine, operation: ap.operation || ap.http_method || \'—\', opCategory,\n';
+  script += '            engine, operation: ap.operation || ap.http_method || \'—\', opCategory, isCacheLayer,\n';
   script += '            sourceTables: (ap.source_tables || []).map(t => t.split(\'.\').pop()).join(\', \'),\n';
   script += '            sourceTablesArray: (ap.source_tables || []).map(t => t.split(\'.\').pop()),\n';
   script += '            destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || \'—\',\n';
-  script += '            description: ap.description || ap.name || \'\', gsiName: ap.gsi_name || null\n';
+  script += '            description: ap.description || ap.name || \'\', gsiName: ap.gsi_name || null,\n';
+  script += '            ttlSeconds: keyDesign && typeof keyDesign.ttl_seconds === \'number\' ? keyDesign.ttl_seconds : null,\n';
+  script += '            keyDataType: (keyDesign && keyDesign.data_type) || null\n';
   script += '          });\n';
   script += '        });\n';
   script += '      });\n';
   script += '      return patterns;\n';
   script += '    }\n';
   script += '\n';
-  script += '    function buildSourceTableGroups() {\n';
-  script += '      const filtered = filterPatterns();\n';
+  // Shared by buildPatternTable/buildSourceTableTable's cache-layer section
+  // below -- a single row's markup, so the owner table and the cache-layer
+  // table render identically instead of two hand-maintained copies drifting.
+  script += '    function patternRowHtml(p) {\n';
+  script += '      let row = \'<tr onclick="showPatternDetails(\' + jsArg(p.id) + \')">\';\n';
+  script += '      row += \'<td class="nowrap"><span class="link">\' + escapeHtml(p.id.slice(0, 8)) + \'</span></td>\';\n';
+  script += '      row += \'<td>\' + escapeHtml(p.operation) + \'</td>\';\n';
+  // Hardcoded copy of CACHE_LAYER_SUFFIX's text -- ExportReport.cachePatterns.test.js
+  // asserts this literal still matches the constant.
+  script += '      const engineLabel = (ENGINE_LABELS[p.engine] || p.engine) + (p.isCacheLayer ? \' (cache layer)\' : \'\');\n';
+  script += '      row += \'<td>\' + engineBadge(p.engine, engineLabel) + \'</td>\';\n';
+  script += '      row += \'<td>\' + escapeHtml(p.sourceTables) + \'</td>\';\n';
+  script += '      let dest = escapeHtml(p.destTable) + (p.gsiName ? \' (GSI: \' + escapeHtml(p.gsiName) + \')\' : \'\');\n';
+  script += '      if (p.isCacheLayer && p.ttlSeconds != null) dest += \' · TTL \' + p.ttlSeconds + \'s\';\n';
+  script += '      row += \'<td>\' + dest + \'</td>\';\n';
+  script += '      row += \'<td>\' + escapeHtml(p.description) + \'</td>\';\n';
+  script += '      row += \'</tr>\';\n';
+  script += '      return row;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function buildSourceTableGroups(patterns) {\n';
   script += '      const groups = {};\n';
-  script += '      filtered.forEach(ap => {\n';
+  script += '      patterns.forEach(ap => {\n';
   script += '        ap.sourceTablesArray.forEach(table => {\n';
   script += '          if (!groups[table]) {\n';
   script += '            groups[table] = { table, engines: new Set(), destTables: new Set(), patterns: [], convergesFrom: new Set() };\n';
@@ -310,7 +349,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '      });\n';
   script += '      const destToSources = {};\n';
-  script += '      filtered.forEach(ap => {\n';
+  script += '      patterns.forEach(ap => {\n';
   script += '        if (ap.destTable !== \'—\') {\n';
   script += '          if (!destToSources[ap.destTable]) destToSources[ap.destTable] = new Set();\n';
   script += '          ap.sourceTablesArray.forEach(t => destToSources[ap.destTable].add(t));\n';
@@ -325,6 +364,26 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '      });\n';
   script += '      return Object.values(groups).sort((a, b) => b.patterns.length - a.patterns.length);\n';
+  script += '    }\n';
+  script += '\n';
+  // Shared by buildSourceTableTable's owner and cache-layer sections, same
+  // reason as patternRowHtml above.
+  script += '    function sourceGroupRowHtml(g) {\n';
+  script += '      const engines = [...g.engines].map(e => engineBadge(e, (ENGINE_LABELS[e] || e) + (e === cacheEngine ? \' (cache layer)\' : \'\'))).join(\' \');\n';
+  script += '      const destTables = [...g.destTables].join(\', \');\n';
+  script += '      const opSummary = {};\n';
+  script += '      g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });\n';
+  script += '      const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + \'(\' + entry[1] + \')\'; }).join(\', \');\n';
+  script += '      const convergence = g.convergesFrom.size > 0 ? \'<span class="badge badge-blue">Merged (\' + g.convergesFrom.size + \')</span>\' : \'—\';\n';
+  script += '      let row = \'<tr onclick="showSourceTableDetails(\' + jsArg(g.table) + \')">\';\n';
+  script += '      row += \'<td><span class="link">\' + escapeHtml(g.table) + \'</span></td>\';\n';
+  script += '      row += \'<td>\' + engines + \'</td>\';\n';
+  script += '      row += \'<td>\' + escapeHtml(destTables) + \'</td>\';\n';
+  script += '      row += \'<td><span class="badge badge-grey">\' + g.patterns.length + \'</span></td>\';\n';
+  script += '      row += \'<td>\' + convergence + \'</td>\';\n';
+  script += '      row += \'<td style="font-size: 12px;">\' + escapeHtml(operations) + \'</td>\';\n';
+  script += '      row += \'</tr>\';\n';
+  script += '      return row;\n';
   script += '    }\n';
   script += '\n';
   script += '    function switchBrowseMode(mode) {\n';
@@ -389,61 +448,59 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      else buildSourceTableTable();\n';
   script += '    }\n';
   script += '\n';
+  // #429 part 2: the cache layer's own rows render as a second, separately
+  // labelled table after the owner table -- a distinct group, not mixed into
+  // the owner rows or their pagination -- instead of extractPatterns dropping
+  // them from the explorer entirely (the pre-#429 behavior).
   script += '    function buildPatternTable() {\n';
   script += '      const filtered = filterPatterns();\n';
-  script += '      document.getElementById(\'pattern-count\').textContent = filtered.length;\n';
+  script += '      const ownerFiltered = filtered.filter(p => !p.isCacheLayer);\n';
+  script += '      const cacheFiltered = filtered.filter(p => p.isCacheLayer);\n';
+  script += '      document.getElementById(\'pattern-count\').textContent = formatExplorerCount(ownerFiltered.length, cacheFiltered.length);\n';
   script += '      const start = (currentPage - 1) * PAGE_SIZE;\n';
-  script += '      const paginated = filtered.slice(start, start + PAGE_SIZE);\n';
-  script += '      const totalPages = Math.ceil(filtered.length / PAGE_SIZE);\n';
+  script += '      const paginated = ownerFiltered.slice(start, start + PAGE_SIZE);\n';
+  script += '      const totalPages = Math.ceil(ownerFiltered.length / PAGE_SIZE);\n';
   script += '      let html = \'<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>\';\n';
-  script += '      paginated.forEach(p => {\n';
-  script += '        html += \'<tr onclick="showPatternDetails(\' + jsArg(p.id) + \')">\';\n';
-  script += '        html += \'<td class="nowrap"><span class="link">\' + escapeHtml(p.id.slice(0, 8)) + \'</span></td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(p.operation) + \'</td>\';\n';
-  script += '        html += \'<td>\' + engineBadge(p.engine, ENGINE_LABELS[p.engine] || p.engine) + \'</td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(p.sourceTables) + \'</td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(p.destTable) + (p.gsiName ? \' (GSI: \' + escapeHtml(p.gsiName) + \')\' : \'\') + \'</td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(p.description) + \'</td>\';\n';
-  script += '        html += \'</tr>\';\n';
-  script += '      });\n';
+  script += '      paginated.forEach(p => { html += patternRowHtml(p); });\n';
   script += '      html += \'</tbody></table><div class="pagination">\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(-1)" \' + (currentPage === 1 ? \'disabled\' : \'\') + \'>Previous</button>\';\n';
   script += '      html += \'<span>Page \' + currentPage + \' of \' + totalPages + \'</span>\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(1)" \' + (currentPage === totalPages ? \'disabled\' : \'\') + \'>Next</button>\';\n';
   script += '      html += \'</div>\';\n';
+  script += '      if (cacheFiltered.length > 0) {\n';
+  script += '        const cacheLabel = (ENGINE_LABELS[cacheEngine] || cacheEngine) + \' (cache layer)\';\n';
+  script += '        html += \'<div class="cache-layer-section-title" style="font-size: 1.17em; font-weight: 600; margin: 16px 0 8px;">\' + escapeHtml(cacheLabel) + \' (\' + cacheFiltered.length + \')</div>\';\n';
+  script += '        html += \'<table><thead><tr><th class="nowrap">Pattern ID</th><th>Operation</th><th>Engine</th><th>Source Tables</th><th>Destination</th><th>Description</th></tr></thead><tbody>\';\n';
+  script += '        cacheFiltered.forEach(p => { html += patternRowHtml(p); });\n';
+  script += '        html += \'</tbody></table>\';\n';
+  script += '      }\n';
   script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
   script += '    function buildSourceTableTable() {\n';
-  script += '      sourceTableGroups = buildSourceTableGroups();\n';
-  script += '      document.getElementById(\'pattern-count\').textContent = sourceTableGroups.length;\n';
+  script += '      const filtered = filterPatterns();\n';
+  script += '      const ownerFiltered = filtered.filter(p => !p.isCacheLayer);\n';
+  script += '      const cacheFiltered = filtered.filter(p => p.isCacheLayer);\n';
+  script += '      sourceTableGroups = buildSourceTableGroups(ownerFiltered);\n';
+  script += '      const cacheGroups = buildSourceTableGroups(cacheFiltered);\n';
+  script += '      document.getElementById(\'pattern-count\').textContent = formatExplorerCount(sourceTableGroups.length, cacheGroups.length);\n';
   script += '      const start = (currentPage - 1) * PAGE_SIZE;\n';
   script += '      const paginated = sourceTableGroups.slice(start, start + PAGE_SIZE);\n';
   script += '      const totalPages = Math.ceil(sourceTableGroups.length / PAGE_SIZE);\n';
   script += '      let html = \'<table><thead><tr><th>Source Table</th><th>Engines</th><th>Destination Tables</th><th>Patterns</th><th>Convergence</th><th>Operations</th></tr></thead><tbody>\';\n';
-  script += '      paginated.forEach(g => {\n';
-  script += '        const engines = [...g.engines].map(e => {\n';
-  script += '          return engineBadge(e, ENGINE_LABELS[e] || e);\n';
-  script += '        }).join(\' \');\n';
-  script += '        const destTables = [...g.destTables].join(\', \');\n';
-  script += '        const opSummary = {};\n';
-  script += '        g.patterns.forEach(p => { opSummary[p.operation] = (opSummary[p.operation] || 0) + 1; });\n';
-  script += '        const operations = Object.entries(opSummary).map(function(entry) { return entry[0] + \'(\' + entry[1] + \')\'; }).join(\', \');\n';
-  script += '        const convergence = g.convergesFrom.size > 0 ? \'<span class="badge badge-blue">Merged (\' + g.convergesFrom.size + \')</span>\' : \'—\';\n';
-  script += '        html += \'<tr onclick="showSourceTableDetails(\' + jsArg(g.table) + \')">\';\n';
-  script += '        html += \'<td><span class="link">\' + escapeHtml(g.table) + \'</span></td>\';\n';
-  script += '        html += \'<td>\' + engines + \'</td>\';\n';
-  script += '        html += \'<td>\' + escapeHtml(destTables) + \'</td>\';\n';
-  script += '        html += \'<td><span class="badge badge-grey">\' + g.patterns.length + \'</span></td>\';\n';
-  script += '        html += \'<td>\' + convergence + \'</td>\';\n';
-  script += '        html += \'<td style="font-size: 12px;">\' + escapeHtml(operations) + \'</td>\';\n';
-  script += '        html += \'</tr>\';\n';
-  script += '      });\n';
+  script += '      paginated.forEach(g => { html += sourceGroupRowHtml(g); });\n';
   script += '      html += \'</tbody></table><div class="pagination">\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(-1)" \' + (currentPage === 1 ? \'disabled\' : \'\') + \'>Previous</button>\';\n';
   script += '      html += \'<span>Page \' + currentPage + \' of \' + totalPages + \'</span>\';\n';
   script += '      html += \'<button class="btn" onclick="changePage(1)" \' + (currentPage === totalPages ? \'disabled\' : \'\') + \'>Next</button>\';\n';
   script += '      html += \'</div>\';\n';
+  script += '      if (cacheGroups.length > 0) {\n';
+  script += '        const cacheLabel = (ENGINE_LABELS[cacheEngine] || cacheEngine) + \' (cache layer)\';\n';
+  script += '        html += \'<div class="cache-layer-section-title" style="font-size: 1.17em; font-weight: 600; margin: 16px 0 8px;">\' + escapeHtml(cacheLabel) + \' (\' + cacheGroups.length + \')</div>\';\n';
+  script += '        html += \'<table><thead><tr><th>Source Table</th><th>Engines</th><th>Destination Tables</th><th>Patterns</th><th>Convergence</th><th>Operations</th></tr></thead><tbody>\';\n';
+  script += '        cacheGroups.forEach(g => { html += sourceGroupRowHtml(g); });\n';
+  script += '        html += \'</tbody></table>\';\n';
+  script += '      }\n';
   script += '      document.getElementById(\'access-patterns-container\').innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
@@ -452,13 +509,24 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      buildTable();\n';
   script += '    }\n';
   script += '\n';
+  // #429 part 2: engineDist (the pie's own data) stays owner-only -- the cache
+  // layer never owned a query, so it must stay out of the pie's shares, same
+  // as the "Access Patterns" stat (mirrors the Results page's enginePieData,
+  // which reads filteredEngineDist built from owner rows only). The cache
+  // layer gets its own legend-style line next to the pie instead (below),
+  // with its own count, rather than a slice.
   script += '    function createCharts() {\n';
   script += '      const filtered = filterPatterns();\n';
   script += '      const engineDist = {}, opDist = {};\n';
+  script += '      let cacheCount = 0;\n';
   script += '      filtered.forEach(p => {\n';
-  script += '        engineDist[p.engine] = (engineDist[p.engine] || 0) + 1;\n';
+  script += '        if (p.isCacheLayer) { cacheCount++; } else { engineDist[p.engine] = (engineDist[p.engine] || 0) + 1; }\n';
   script += '        opDist[p.opCategory] = (opDist[p.opCategory] || 0) + 1;\n';
   script += '      });\n';
+  script += '      const cacheLegendEl = document.getElementById(\'engine-cache-legend\');\n';
+  script += '      if (cacheLegendEl) {\n';
+  script += '        cacheLegendEl.textContent = cacheEngine ? ((ENGINE_LABELS[cacheEngine] || cacheEngine) + \' (cache layer): \' + cacheCount) : \'\';\n';
+  script += '      }\n';
   script += '      if (engineChart) engineChart.destroy();\n';
   script += '      engineChart = new Chart(document.getElementById(\'engineChart\'), {\n';
   script += '        type: \'pie\',\n';
@@ -857,10 +925,15 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      tabsHtml += \'<div style="margin-bottom: 24px;"><div class="key-value-label">Description</div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">\' + escapeHtml(fullPattern.description || fullPattern.name || \'No description available\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-grid">\';\n';
-  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">\' + engineBadge(fullPattern.engine, ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + \'</div></div>\';\n';
+  script += '      const fpEngineLabel = (ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + (fullPattern.engine === cacheEngine ? \' (cache layer)\' : \'\');\n';
+  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">\' + engineBadge(fullPattern.engine, fpEngineLabel) + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Operation</div><div class="key-value-value">\' + escapeHtml(fullPattern.operation || fullPattern.http_method || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">\' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
+  // Cache rows: TTL and key data type live in key_designs, which buildPatterns
+  // already joined onto the row -- same metrics as the Results page modal.
+  script += '      if (pattern.isCacheLayer && pattern.ttlSeconds != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">TTL</div><div class="key-value-value">\' + escapeHtml(pattern.ttlSeconds + \'s\') + \'</div></div>\';\n';
+  script += '      if (pattern.isCacheLayer && pattern.keyDataType) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Key data type</div><div class="key-value-value">\' + escapeHtml(pattern.keyDataType) + \'</div></div>\';\n';
   script += '      if (fullPattern.source_tables && fullPattern.source_tables.length > 0) {\n';
   script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">Source Tables</div><div>\';\n';
   script += '        fullPattern.source_tables.forEach(function(t) {\n';
@@ -1200,8 +1273,9 @@ export const generateHTMLReport = (data) => {
   // when cache_overlay.engine names it) and the Results page.
   const safeSchemaDesigns = Array.isArray(schemaDesigns) ? schemaDesigns : [];
   const hasCacheOverlay = !!cacheOverlay;
-  const totalPatterns = escapeHtml(ownerSchemaDesigns(safeSchemaDesigns, hasCacheOverlay).reduce(
-    (sum, d) => sum + (Array.isArray(d?.content?.access_patterns) ? d.content.access_patterns.length : 0), 0));
+  const totalPatternsNum = ownerSchemaDesigns(safeSchemaDesigns, hasCacheOverlay).reduce(
+    (sum, d) => sum + (Array.isArray(d?.content?.access_patterns) ? d.content.access_patterns.length : 0), 0);
+  const totalPatterns = escapeHtml(totalPatternsNum);
   // #405: shown as its own note under the "Access Patterns" stat, worded like
   // the Results page's "+N cache-layer pattern(s)" caption
   // (analysis-results-v2.executive-summary.cache-patterns-note in
@@ -1213,6 +1287,16 @@ export const generateHTMLReport = (data) => {
     ? '<div class="stat-note">+' + escapeHtml(cachePatternCount) + ' cache-layer pattern'
       + (cachePatternCount === 1 ? '' : 's') + ' (not counted above)</div>'
     : '';
+  // #429 part 2: the explorer's own header count, by contrast, now includes
+  // the cache layer's rows (it stays browsable there, just not owned
+  // workload) -- "64 (54 owned + 10 cache layer)", mirroring the Results
+  // page explorer header (analysis-results-v2.explorer.header-count) and the
+  // embedded script's own formatExplorerCount (generated above).
+  const explorerHeaderCount = escapeHtml(
+    cachePatternCount > 0
+      ? `${totalPatternsNum + cachePatternCount} (${totalPatternsNum} owned + ${cachePatternCount} cache layer)`
+      : `${totalPatternsNum}`
+  );
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1292,7 +1376,7 @@ export const generateHTMLReport = (data) => {
     </div>
 
     <div class="section">
-      <div class="section-header">Access Pattern Explorer (<span id="pattern-count">${totalPatterns}</span>)</div>
+      <div class="section-header">Access Pattern Explorer (<span id="pattern-count">${explorerHeaderCount}</span>)</div>
       <p class="section-desc">Browse every access pattern by pattern or by source table. Filter by engine, operation, or text to narrow the list, then select a row to see its target design.</p>
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <div class="toggle-group">
@@ -1306,7 +1390,7 @@ export const generateHTMLReport = (data) => {
       </div>
       <div id="active-filters" style="margin: 16px 0;"></div>
       <div class="grid grid-2">
-        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div></div>
+        <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by engine</div><div class="chart-container"><canvas id="engineChart"></canvas></div><div id="engine-cache-legend" style="margin-top: 8px; font-size: 13px; color: var(--color-text-secondary);"></div></div>
         <div><div style="font-weight: 600; margin-bottom: 8px;">Filter by operation type</div><div class="chart-container"><canvas id="operationChart"></canvas></div></div>
       </div>
       <div id="access-patterns-container"></div>
