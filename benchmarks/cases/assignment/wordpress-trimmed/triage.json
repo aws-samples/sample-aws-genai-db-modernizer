@@ -1,0 +1,24 @@
+{
+  "selected_agents": [
+    { "agent_type": "dynamodb" },
+    { "agent_type": "aurora_mysql" }
+  ],
+  "signals": [
+    {
+      "signal": "key_value_lookups",
+      "targets": ["dynamodb", "elasticache"],
+      "evidence": "single-table point lookups by option_name/meta_key/key_id, very high call volume",
+      "query_ids": ["q_option_get", "q_postmeta_point", "q_api_key_update"],
+      "table_ids": ["wp_options", "wp_postmeta", "wp_woocommerce_api_keys"],
+      "query_count": 3
+    },
+    {
+      "signal": "relational_join_and_aggregation",
+      "targets": ["aurora_mysql"],
+      "evidence": "taxonomy join and GROUP BY aggregation retained from the source relational schema",
+      "query_ids": ["q_term_join", "q_agg_group_by"],
+      "table_ids": ["wp_terms", "wp_term_taxonomy", "wp_posts"],
+      "query_count": 2
+    }
+  ]
+}

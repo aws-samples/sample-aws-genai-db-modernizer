@@ -1,0 +1,11 @@
+{
+  "table_recommendations": [
+    { "table_id": "users", "confidence_score": 70 },
+    { "table_id": "carts", "confidence_score": 65 },
+    { "table_id": "sessions", "confidence_score": 92 }
+  ],
+  "workload_analysis": {
+    "patterns_detected": [],
+    "anti_patterns_detected": []
+  }
+}
