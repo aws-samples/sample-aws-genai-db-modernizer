@@ -962,13 +962,11 @@ def run_reality_check(
         # other mandatory engine, applied to every one of its queries.
         if engine == "opensearch":
             verdicts = opensearch_justification(current_qas, query_map, resolved_source_engine)
-            issue_tag = "#326"
         else:
             cost_reason = _mandatory_cost_share_reason(engine, current_qas, len(query_assignments))
             verdicts = {
                 qa["query_id"]: (cost_reason is None, cost_reason or "") for qa in current_qas
             }
-            issue_tag = "#167"
         to_move_qas = [qa for qa in current_qas if not verdicts[qa["query_id"]][0]]
         if not to_move_qas:
             continue
@@ -1009,7 +1007,7 @@ def run_reality_check(
                         rqa["assigned_engine"] = target_engine
                         rqa["assignment_reason"] = (
                             f"reality check: consolidated from {display_engine(engine)} → "
-                            f"{display_engine(target_engine)} (justification floor {issue_tag} "
+                            f"{display_engine(target_engine)} (justification floor "
                             f"— {this_reason}; {fit_reason})"
                         )
                         rqa.pop("signal_override", None)
@@ -1024,8 +1022,7 @@ def run_reality_check(
         )
         floor_reason = "; ".join(moved_reasons)
         floor_entry_reason = (
-            f"{display_engine(engine)} does not meet its justification floor "
-            f"({issue_tag}) — {floor_reason}"
+            f"{display_engine(engine)} does not meet its justification floor — {floor_reason}"
         )
         for i, (target_engine, placed) in enumerate(floor_placement.items()):
             # moved_queries() (reality_check_request.py) recomputes membership

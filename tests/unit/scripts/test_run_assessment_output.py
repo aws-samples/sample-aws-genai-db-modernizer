@@ -444,13 +444,14 @@ def test_truncate_keeps_long_reasons_within_the_limit():
 
 def test_truncate_scrubs_bare_issue_references():
     # Issue #329 review: the mandatory-engine justification floor in
-    # reality_check.py builds a draft reason with a bare issue tag, e.g.
-    # "... does not meet its justification floor (#167) -- ...". It is
-    # usually rewritten by reconcile_consolidations before the artifact is
-    # written, but test_reality_check_status_line_never_leaks_an_issue_tag
-    # (below) shows a real scenario where it is not. An internal issue
-    # number must never reach a customer-facing approval gate, so
-    # run_assessment.py scrubs it defensively regardless of upstream text.
+    # reality_check.py used to build a draft reason with a bare issue tag,
+    # e.g. "... does not meet its justification floor (#167) -- ...", which
+    # reconcile_consolidations did not always rewrite before the artifact
+    # was written (see test_reality_check_status_line_never_leaks_an_issue_tag,
+    # below). #406 fixed that at the source -- reality_check.py never emits
+    # the tag at all now -- but an internal issue number must never reach a
+    # customer-facing approval gate, so run_assessment.py keeps this scrub
+    # as belt and braces regardless of what upstream text does.
     reason = "DocumentDB does not meet its justification floor (#167) — serves 1 of 40 queries"
     cleaned = run_assessment._truncate(reason)
     assert "#167" not in cleaned
@@ -462,13 +463,17 @@ def test_truncate_scrubs_bare_issue_references():
 
 
 def test_reality_check_status_line_never_leaks_an_issue_tag(tmp_path, monkeypatch):
-    # Regression test for #329 review: build the exact scenario from
+    # Regression test for #329 review and #406: build the exact scenario from
     # tests/unit/agents/referee/test_mandatory_engine_cost_share_floor.py
     # (a mandatory engine with a tiny workload share and a high fixed cost)
     # through the real deterministic handler + write step -- the same path
-    # /modernize's reality_check status line reads. Confirms the underlying
-    # artifact still carries the draft "(#167)" tag (so this test is not
-    # vacuous), and that the printed status line never does.
+    # /modernize's reality_check status line reads. #406 fixed the leak at
+    # the source (reality_check.py no longer builds a reason with a bare
+    # issue tag at all), so the underlying artifact no longer carries one
+    # either; this test now confirms both the artifact and the printed
+    # status line stay clean. ``_scrub_issue_refs`` (below, for #329) is kept
+    # as a defensive scrub of the printed line regardless of what upstream
+    # text does.
     from src.agents.referee.reality_check_handler import (
         run_reality_check_deterministic,
         write_reality_check_result,
@@ -526,7 +531,8 @@ def test_reality_check_status_line_never_leaks_an_issue_tag(tmp_path, monkeypatc
     raw_reason = next(
         c["reason"] for c in raw["consolidations"] if c["from_engine"] == "documentdb"
     )
-    assert "#167" in raw_reason, "fixture no longer reproduces the underlying leak -- update it"
+    assert "#167" not in raw_reason
+    assert not re.search(r"#\d+", raw_reason)
 
     printed = run_assessment._reality_check_artifact(store, job, db)
     for c in printed["consolidations"]:
