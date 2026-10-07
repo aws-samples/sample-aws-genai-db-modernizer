@@ -374,13 +374,78 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
     return patterns
 
 
+# Default port per engine, for an offline collection's CollectorInput (mode="offline"
+# never actually connects, so this is cosmetic/display only).
+_ENGINE_PORTS: dict[str, int] = {
+    "mysql": 3306,
+    "mariadb": 3306,
+    "postgresql": 5432,
+    "postgres": 5432,
+    "sqlserver": 1433,
+    "oracle": 1521,
+    "db2": 50000,
+}
+
+
 def detect_source_engine(metadata: dict | None) -> tuple[str, int]:
     """Return ``(engine, port)`` for an offline collection from its metadata.
 
-    Offline collector output only identifies the engine through the server
-    version string; anything that does not mention PostgreSQL is treated as MySQL.
+    ``metadata.engine`` is checked first -- the SQL Server collector script sets it
+    explicitly (#381: it used to be ignored, so every SQL Server offline collection was
+    mislabelled ``mysql``). Falling back to the server version string (``version``, or
+    ``version_full``/``product_version`` when the SQL Server script wrote those instead,
+    #381) when there is no explicit engine, or it is not one this function recognizes.
+    Anything that matches neither is treated as MySQL, the original (pre-#381) default
+    for every offline collection.
     """
-    version = str((metadata or {}).get("version") or "").lower()
+    meta = metadata or {}
+    engine = str(meta.get("engine") or "").strip().lower()
+    if engine in _ENGINE_PORTS:
+        return engine, _ENGINE_PORTS[engine]
+
+    version = str(
+        meta.get("version") or meta.get("version_full") or meta.get("product_version") or ""
+    ).lower()
     if "postgres" in version:
         return "postgresql", 5432
+    if "sql server" in version:
+        return "sqlserver", 1433
+    if "oracle" in version:
+        return "oracle", 1521
     return "mysql", 3306
+
+
+def offline_version_label(metadata: dict | None) -> str:
+    """Short, human-readable source version string for an offline collection (#381).
+
+    ``metadata.product_version`` (a short build number, e.g. ``"15.0.2000.5"`` for
+    SQL Server) is preferred over ``metadata.version``/``version_full`` (the full
+    ``@@VERSION``/version-banner string some collector scripts write instead,
+    which embeds the edition, OS and processor info across several lines and
+    tabs -- never fit for a user-visible sentence like wave 1's rationale).
+
+    A SQL Server ``@@VERSION`` banner (``"Microsoft SQL Server 2019 (RTM) -
+    15.0.2000.5 (X64) ..."``) is run through ``sqlserver_collector.
+    _parse_sqlserver_version`` to pull out just the build number, or failing that
+    the marketing year (#381 review round 2): the banner's first line still starts
+    with "Microsoft", not "SQL Server", so wave 1's rationale (which only dedupes a
+    version string that already starts with the source engine's own display name)
+    would otherwise render the engine name twice -- "SQL Server Microsoft SQL
+    Server 2019 (RTM) - 15.0.2000.5". Every other (non-SQL-Server) banner falls
+    back to the first line only, as before. ``"unknown"`` when there is neither
+    ``product_version`` nor ``version``/``version_full``.
+    """
+    meta = metadata or {}
+    product_version = meta.get("product_version")
+    if product_version:
+        return str(product_version).strip()
+    full = meta.get("version") or meta.get("version_full")
+    if full:
+        full_str = str(full).strip()
+        if "sql server" in full_str.lower():
+            from src.agents.collector.sqlserver_collector import _parse_sqlserver_version
+
+            return _parse_sqlserver_version(full_str)
+        first_line = full_str.splitlines()[0].strip()
+        return first_line or "unknown"
+    return "unknown"

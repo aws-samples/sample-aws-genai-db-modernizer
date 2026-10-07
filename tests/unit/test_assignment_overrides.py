@@ -15,16 +15,19 @@ import pytest
 
 from src.agents.referee.assignment_overrides import (
     AssignmentValidationFailed,
+    LosingAuroraEngineOverride,
     NoAssignmentFound,
     QueryOverrideInput,
     UnknownQuery,
     apply_assignment_overrides,
+    load_assignment_for_edit,
     refresh_consolidated_assignment,
 )
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
     AssignmentStatus,
+    AuroraEngineChoice,
     QueryAssignment,
 )
 
@@ -106,6 +109,37 @@ def _store_with_two_ddb_queries() -> _MemStore:
     return store
 
 
+def _store_with_heterogeneous_aurora_choice() -> _MemStore:
+    """#381 review: a SQL Server source where the resolver picked aurora_postgresql
+    over aurora_mysql -- both have an analysis artifact on disk (triage selected
+    both), but the assignment only ever uses the winner."""
+    store = _MemStore()
+    query_assignments = [
+        _qa("q1", "aurora_postgresql", ["Sales.Orders"]),
+        _qa("q2", "aurora_postgresql", ["Sales.Customer"]),
+    ]
+    _seed(store, query_assignments, engines=["aurora_mysql", "aurora_postgresql"])
+    assignment = Assignment.model_validate(
+        store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+    )
+    assignment = assignment.model_copy(
+        update={
+            "aurora_engine_choice": AuroraEngineChoice(
+                source_engine="sqlserver",
+                engine="aurora_postgresql",
+                totals={"aurora_mysql": 60.0, "aurora_postgresql": 65.0},
+                margin=5.0,
+                deciding_features=[],
+                reason="higher total adjusted score wins (60.0 vs 65.0)",
+            )
+        }
+    )
+    store.write_json(
+        f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+    )
+    return store
+
+
 class TestApplyAssignmentOverrides:
     def test_engine_reassignment_writes_v2_with_provenance(self) -> None:
         store = _store_with_two_ddb_queries()
@@ -175,6 +209,41 @@ class TestApplyAssignmentOverrides:
             )
         assert exc.value.errors
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestHeterogeneousAuroraChoiceOverrides:
+    """#381 review: Assignment.aurora_engine_choice.engine is authoritative --
+    load_assignment_for_edit drops the losing engine's analysis, and (round 2) the
+    override itself is rejected up front with a clear reason naming both engines."""
+
+    def test_load_assignment_for_edit_drops_the_losing_engines_analysis(self) -> None:
+        store = _store_with_heterogeneous_aurora_choice()
+        _, _, analysis_outputs = load_assignment_for_edit(store, DB, JOB, 1)
+        assert "aurora_mysql" not in analysis_outputs
+        assert "aurora_postgresql" in analysis_outputs
+
+    def test_override_to_the_losing_engine_is_rejected(self) -> None:
+        store = _store_with_heterogeneous_aurora_choice()
+        with pytest.raises(LosingAuroraEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="aurora_mysql")]
+            )
+        # #381 review round 2: a clear, specific reason -- not the generic
+        # validator's "... which did not analyze it".
+        assert str(exc.value) == (
+            "This assessment chose Aurora PostgreSQL for this SQL Server source; "
+            "Aurora MySQL is not a target."
+        )
+        assert exc.value.winner == "aurora_postgresql"
+        assert exc.value.loser == "aurora_mysql"
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_override_to_the_winning_engine_still_works(self) -> None:
+        store = _store_with_heterogeneous_aurora_choice()
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", in_scope=False)]
+        )
+        assert result.assignment.version == 2
 
 
 class TestMarkCustomerApproved:

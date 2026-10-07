@@ -1,0 +1,363 @@
+{
+  "job_id": "fixture-adventureworks-sqlserver",
+  "metadata": {
+    "source_database": {
+      "engine": "sqlserver",
+      "version": "15.0.2000.5",
+      "database_name": "AdventureWorks"
+    }
+  },
+  "database_schema": {
+    "tables": [
+      {
+        "table_id": "Sales.Customer",
+        "table_name": "Customer",
+        "schema_name": "Sales",
+        "columns": [
+          {"column_name": "CustomerID", "data_type": "int"},
+          {"column_name": "PersonID", "data_type": "int"},
+          {"column_name": "StoreID", "data_type": "int"},
+          {"column_name": "AccountNumber", "data_type": "varchar"},
+          {"column_name": "Demographics", "data_type": "nvarchar"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 12
+      },
+      {
+        "table_id": "Sales.SalesOrderHeader",
+        "table_name": "SalesOrderHeader",
+        "schema_name": "Sales",
+        "columns": [
+          {"column_name": "SalesOrderID", "data_type": "int"},
+          {"column_name": "CustomerID", "data_type": "int"},
+          {"column_name": "OrderDate", "data_type": "datetime2"},
+          {"column_name": "Status", "data_type": "tinyint"},
+          {"column_name": "TotalDue", "data_type": "money"}
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_SalesOrderHeader_Customer",
+            "columns": ["CustomerID"],
+            "referenced_table": "Sales.Customer",
+            "referenced_columns": ["CustomerID"]
+          }
+        ],
+        "size_mb": 48
+      },
+      {
+        "table_id": "Sales.SalesOrderDetail",
+        "table_name": "SalesOrderDetail",
+        "schema_name": "Sales",
+        "columns": [
+          {"column_name": "SalesOrderID", "data_type": "int"},
+          {"column_name": "SalesOrderDetailID", "data_type": "int"},
+          {"column_name": "ProductID", "data_type": "int"},
+          {"column_name": "OrderQty", "data_type": "smallint"},
+          {"column_name": "UnitPrice", "data_type": "money"}
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_SalesOrderDetail_SalesOrderHeader",
+            "columns": ["SalesOrderID"],
+            "referenced_table": "Sales.SalesOrderHeader",
+            "referenced_columns": ["SalesOrderID"]
+          }
+        ],
+        "size_mb": 96
+      },
+      {
+        "table_id": "Production.Product",
+        "table_name": "Product",
+        "schema_name": "Production",
+        "columns": [
+          {"column_name": "ProductID", "data_type": "int"},
+          {"column_name": "Name", "data_type": "nvarchar"},
+          {"column_name": "ProductCategoryID", "data_type": "int"},
+          {"column_name": "rowguid", "data_type": "uniqueidentifier"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 6
+      },
+      {
+        "table_id": "Production.ProductCategory",
+        "table_name": "ProductCategory",
+        "schema_name": "Production",
+        "columns": [
+          {"column_name": "ProductCategoryID", "data_type": "int"},
+          {"column_name": "Name", "data_type": "nvarchar"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 1
+      },
+      {
+        "table_id": "Production.ProductInventory",
+        "table_name": "ProductInventory",
+        "schema_name": "Production",
+        "columns": [
+          {"column_name": "ProductID", "data_type": "int"},
+          {"column_name": "LocationID", "data_type": "smallint"},
+          {"column_name": "Quantity", "data_type": "smallint"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 4
+      },
+      {
+        "table_id": "HumanResources.Employee",
+        "table_name": "Employee",
+        "schema_name": "HumanResources",
+        "columns": [
+          {"column_name": "EmployeeID", "data_type": "int"},
+          {"column_name": "ManagerID", "data_type": "int"},
+          {"column_name": "JobTitle", "data_type": "nvarchar"},
+          {"column_name": "IsActive", "data_type": "bit"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 2
+      },
+      {
+        "table_id": "HumanResources.EmployeeDepartmentHistory",
+        "table_name": "EmployeeDepartmentHistory",
+        "schema_name": "HumanResources",
+        "columns": [
+          {"column_name": "EmployeeID", "data_type": "int"},
+          {"column_name": "DepartmentID", "data_type": "smallint"},
+          {"column_name": "StartDate", "data_type": "date"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 1
+      },
+      {
+        "table_id": "Person.Person",
+        "table_name": "Person",
+        "schema_name": "Person",
+        "columns": [
+          {"column_name": "BusinessEntityID", "data_type": "int"},
+          {"column_name": "FirstName", "data_type": "nvarchar"},
+          {"column_name": "LastName", "data_type": "nvarchar"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 10
+      },
+      {
+        "table_id": "Person.Address",
+        "table_name": "Address",
+        "schema_name": "Person",
+        "columns": [
+          {"column_name": "AddressID", "data_type": "int"},
+          {"column_name": "BusinessEntityID", "data_type": "int"},
+          {"column_name": "City", "data_type": "nvarchar"}
+        ],
+        "foreign_keys": [],
+        "size_mb": 7
+      }
+    ]
+  },
+  "queries": {
+    "query_patterns": [
+      {
+        "query_id": "aw-q01",
+        "query_text": "SELECT * FROM Sales.Customer WHERE CustomerID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 8.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": ["Sales.Customer"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q02",
+        "query_text": "SELECT * FROM Sales.SalesOrderHeader WHERE SalesOrderID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 6.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q03",
+        "query_text": "SELECT soh.SalesOrderID, sod.ProductID, sod.OrderQty FROM Sales.SalesOrderHeader soh JOIN Sales.SalesOrderDetail sod ON soh.SalesOrderID = sod.SalesOrderID WHERE soh.CustomerID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 4.0,
+        "rows_returned_avg": 12,
+        "tables_accessed": ["Sales.SalesOrderHeader", "Sales.SalesOrderDetail"],
+        "has_joins": true,
+        "join_count": 1
+      },
+      {
+        "query_id": "aw-q04",
+        "query_text": "INSERT INTO Sales.SalesOrderHeader (CustomerID, OrderDate, Status, TotalDue) VALUES (?, ?, ?, ?)",
+        "query_type": "INSERT",
+        "calls_per_second": 1.5,
+        "rows_returned_avg": 0,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q05",
+        "query_text": "UPDATE Sales.SalesOrderHeader SET Status = ? WHERE SalesOrderID = ?",
+        "query_type": "UPDATE",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 0,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q06",
+        "query_text": "SELECT NEXT VALUE FOR Sales.OrderNumberSequence",
+        "query_type": "SELECT",
+        "calls_per_second": 1.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": [],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q07",
+        "query_text": "MERGE INTO Production.ProductInventory AS tgt USING Staging.InventoryUpdates AS src ON tgt.ProductID = src.ProductID AND tgt.LocationID = src.LocationID WHEN MATCHED THEN UPDATE SET tgt.Quantity = src.Quantity WHEN NOT MATCHED THEN INSERT (ProductID, LocationID, Quantity) VALUES (src.ProductID, src.LocationID, src.Quantity);",
+        "query_type": "UPDATE",
+        "calls_per_second": 0.5,
+        "rows_returned_avg": 0,
+        "tables_accessed": ["Production.ProductInventory"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q08",
+        "query_text": "WITH EmpTree AS (SELECT EmployeeID, ManagerID FROM HumanResources.Employee WHERE ManagerID IS NULL UNION ALL SELECT e.EmployeeID, e.ManagerID FROM HumanResources.Employee e JOIN EmpTree t ON e.ManagerID = t.EmployeeID) SELECT * FROM EmpTree",
+        "query_type": "SELECT",
+        "calls_per_second": 0.2,
+        "rows_returned_avg": 50,
+        "tables_accessed": ["HumanResources.Employee"],
+        "has_joins": true,
+        "join_count": 1
+      },
+      {
+        "query_id": "aw-q09",
+        "query_text": "SELECT CustomerID, JSON_VALUE(Demographics, '$.TotalPurchaseYTD') AS TotalPurchaseYTD FROM Sales.Customer",
+        "query_type": "SELECT",
+        "calls_per_second": 0.3,
+        "rows_returned_avg": 100,
+        "tables_accessed": ["Sales.Customer"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q10",
+        "query_text": "SELECT p.Name, pc.Name FROM Production.Product p JOIN Production.ProductCategory pc ON p.ProductCategoryID = pc.ProductCategoryID",
+        "query_type": "SELECT",
+        "calls_per_second": 2.0,
+        "rows_returned_avg": 40,
+        "tables_accessed": ["Production.Product", "Production.ProductCategory"],
+        "has_joins": true,
+        "join_count": 1
+      },
+      {
+        "query_id": "aw-q11",
+        "query_text": "SELECT COUNT(*) FROM Sales.SalesOrderHeader WHERE OrderDate BETWEEN ? AND ?",
+        "query_type": "SELECT",
+        "calls_per_second": 0.5,
+        "rows_returned_avg": 1,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0,
+        "has_time_range_filter": true,
+        "has_aggregations": true
+      },
+      {
+        "query_id": "aw-q12",
+        "query_text": "SELECT * FROM Person.Person WHERE LastName = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 3.0,
+        "rows_returned_avg": 5,
+        "tables_accessed": ["Person.Person"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q13",
+        "query_text": "SELECT a.City FROM Person.Address a JOIN Person.Person p ON a.BusinessEntityID = p.BusinessEntityID WHERE p.BusinessEntityID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 2.5,
+        "rows_returned_avg": 1,
+        "tables_accessed": ["Person.Address", "Person.Person"],
+        "has_joins": true,
+        "join_count": 1
+      },
+      {
+        "query_id": "aw-q14",
+        "query_text": "DELETE FROM Sales.SalesOrderDetail WHERE SalesOrderID = ?",
+        "query_type": "DELETE",
+        "calls_per_second": 0.2,
+        "rows_returned_avg": 0,
+        "tables_accessed": ["Sales.SalesOrderDetail"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q15",
+        "query_text": "SELECT ProductID, AVG(UnitPrice) FROM Sales.SalesOrderDetail GROUP BY ProductID",
+        "query_type": "SELECT",
+        "calls_per_second": 0.3,
+        "rows_returned_avg": 200,
+        "tables_accessed": ["Sales.SalesOrderDetail"],
+        "has_joins": false,
+        "join_count": 0,
+        "has_aggregations": true
+      },
+      {
+        "query_id": "aw-q16",
+        "query_text": "SELECT * FROM HumanResources.EmployeeDepartmentHistory WHERE EmployeeID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 0.4,
+        "rows_returned_avg": 3,
+        "tables_accessed": ["HumanResources.EmployeeDepartmentHistory"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q17",
+        "query_text": "SELECT TOP 10 * FROM Sales.SalesOrderHeader ORDER BY OrderDate DESC",
+        "query_type": "SELECT",
+        "calls_per_second": 1.2,
+        "rows_returned_avg": 10,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q18",
+        "query_text": "UPDATE Production.ProductInventory SET Quantity = Quantity - ? WHERE ProductID = ? AND LocationID = ?",
+        "query_type": "UPDATE",
+        "calls_per_second": 1.8,
+        "rows_returned_avg": 0,
+        "tables_accessed": ["Production.ProductInventory"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q19",
+        "query_text": "SELECT * FROM Production.Product WHERE ProductID = ?",
+        "query_type": "SELECT",
+        "calls_per_second": 5.0,
+        "rows_returned_avg": 1,
+        "tables_accessed": ["Production.Product"],
+        "has_joins": false,
+        "join_count": 0
+      },
+      {
+        "query_id": "aw-q20",
+        "query_text": "SELECT soh.SalesOrderID FROM Sales.SalesOrderHeader soh WHERE EXISTS (SELECT 1 FROM Sales.SalesOrderDetail sod WHERE sod.SalesOrderID = soh.SalesOrderID AND sod.OrderQty > 100)",
+        "query_type": "SELECT",
+        "calls_per_second": 0.2,
+        "rows_returned_avg": 8,
+        "tables_accessed": ["Sales.SalesOrderHeader"],
+        "has_joins": false,
+        "join_count": 0,
+        "has_subqueries": true
+      }
+    ]
+  }
+}

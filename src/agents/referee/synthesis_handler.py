@@ -210,6 +210,11 @@ def run_synthesis_deterministic(
         # reported it; never invented when it didn't.
         source_version=source_database_version(data.collector),
         mapped_tables=mapped_table_ids or None,
+        # #381: present only for a heterogeneous source where the resolver picked one
+        # of the two competing Aurora engines; used only for wave 1's cross-engine
+        # rationale (totals, deciding features). ``None`` for every other assignment,
+        # including one written before this field existed.
+        aurora_engine_choice=assignment.get("aurora_engine_choice"),
     )
     # #316: an assignment produced by this fix already resolved source_tables
     # noise against the collector's canonical schema (CTE aliases, system
@@ -249,6 +254,11 @@ def run_synthesis_deterministic(
                 1 for qa in data.assignment.get("query_assignments", []) if qa.get("in_scope", True)
             ),
             "co_dependency_groups": len(data.assignment.get("co_dependency_groups", [])),
+            # #381 review: the only way this choice reached report.json before was
+            # buried inside wave 1's rationale text -- carry the structured decision
+            # itself so the decision/engineering reports and the UI can all point at
+            # one place for it.
+            "aurora_engine_choice": data.assignment.get("aurora_engine_choice"),
         }
 
     # Merge reality check data into trade_offs for visibility

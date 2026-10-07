@@ -29,10 +29,16 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
-from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
+from src.agents.referee.aurora_choice import (
+    AURORA_ENGINES,
+    choose_heterogeneous_engine,
+    detect_heterogeneous_features,
+    pick_aurora_engine,
+    source_database_engine,
+)
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
 from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
@@ -46,6 +52,7 @@ from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
     AssignmentStatus,
+    AuroraEngineChoice,
     CacheOverlaySummary,
     QueryAssignment,
     TableAssignment,
@@ -106,6 +113,12 @@ class AssignmentResolver:
         Respects co-dependent query groups (queries sharing significant
         JOINs on the same tables stay together).
         """
+        # Local copy: this method mutates ``analysis_outputs`` (#381, Step 4b below)
+        # when it collapses two competing Aurora engines to one, and the caller's own
+        # dict is also handed to ``AssignmentValidator`` afterwards -- it must see every
+        # engine it originally analyzed, not this method's internal decision.
+        analysis_outputs = dict(analysis_outputs)
+
         queries = collector_output.get("queries", {}).get("query_patterns", [])
         tables = collector_output.get("database_schema", {}).get("tables", [])
         # selected_agents can be a list of strings or dicts with agent_type
@@ -180,6 +193,51 @@ class AssignmentResolver:
                 adjusted = max(0, base_score - penalty)
 
                 scores[qid][engine] = adjusted
+
+        # Step 4b: Collapse a heterogeneous source's two competing Aurora engines to
+        # one (#381). A source with no Aurora dialect of its own (SQL Server, Oracle,
+        # DB2) has triage select both aurora_mysql and aurora_postgresql, and both were
+        # just scored above like any other candidate. Compare the total adjusted score
+        # each would earn across every query -- the design's "winner takes all
+        # relational queries" -- before any query is actually assigned, and drop the
+        # losing engine from this method's own ``analysis_outputs``/``scores`` so every
+        # step after this one (co-dependency groups, ties, the Aurora fallback, the
+        # utility-statement pin, table derivation) only ever sees the winner, the same
+        # as a homogeneous source only ever had one Aurora candidate to begin with.
+        source_engine = source_database_engine(collector_output)
+        aurora_engine_choice: AuroraEngineChoice | None = None
+        both_aurora = AURORA_ENGINES & set(analysis_outputs)
+        if source_engine not in SOURCE_ENGINE_TO_AURORA and len(both_aurora) == 2:
+            totals = {
+                engine: float(sum(scores.get(q["query_id"], {}).get(engine, 0) for q in queries))
+                for engine in both_aurora
+            }
+            features = detect_heterogeneous_features(collector_output, source_engine)
+            winner, trace = choose_heterogeneous_engine(sorted(both_aurora), totals, features)
+            loser = next(e for e in both_aurora if e != winner)
+            analysis_outputs = {e: a for e, a in analysis_outputs.items() if e != loser}
+            for qid_scores in scores.values():
+                qid_scores.pop(loser, None)
+            aurora_engine_choice = AuroraEngineChoice(
+                source_engine=source_engine,
+                engine=winner,
+                totals=trace["totals"],
+                margin=trace["margin"],
+                deciding_features=trace["deciding_features"],
+                reason=trace["reason"],
+            )
+
+        # The "retained Aurora engine" passed to ``derive_table_assignments`` below,
+        # the same role ``retained_engine_for`` plays for every other caller (#317):
+        # the source's own dialect when it has one, else the #381 winner just computed,
+        # else ``None`` (no source engine at all, or no Aurora candidate selected --
+        # unaffected by this change). Computed here, rather than by calling
+        # ``retained_engine_for(collector_output)`` again, because that helper only
+        # knows ``SOURCE_ENGINE_TO_AURORA`` -- it has no way to see the #381 choice
+        # this method just made.
+        effective_relational_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine) or (
+            aurora_engine_choice.engine if aurora_engine_choice else None
+        )
 
         # Step 5: Assign co-dependent groups atomically. Only engines that may own
         # every query of the group compete (cache engines never own; engines that
@@ -264,7 +322,7 @@ class AssignmentResolver:
 
         # Step 6b: Resolve exact ties against the traffic already placed (#296).
         if tied:
-            source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
+            source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
             table_traffic, engine_counts = _placed_traffic(assigned, query_by_id)
             for qids, best, top_score, kind in tied:
                 winner, why = break_owner_tie(
@@ -283,10 +341,22 @@ class AssignmentResolver:
                         assigned_reason[qid] = f"co-dependency group → {winner} (tie: {why})"
 
         if fallback_qids:
+            # #381 review: still ``selected_engines`` (the fallback must use whichever
+            # Aurora engine triage selected, whether or not it was ever analyzed -- the
+            # pre-#381 contract this fallback has always had), but with the Step 4b
+            # loser explicitly excluded, so a heterogeneous source's fallback only ever
+            # sees the engine the resolver actually chose, the same restriction every
+            # other step after Step 4b already respects.
+            fallback_pool = selected_engines - (
+                {e for e in AURORA_ENGINES if e != aurora_engine_choice.engine}
+                if aurora_engine_choice
+                else set()
+            )
             aurora_fallback = _resolve_aurora_fallback(
-                selected_engines,
-                source_database_engine(collector_output),
+                fallback_pool,
+                source_engine,
                 Counter(e for e in assigned.values() if e),
+                prior_choice=aurora_engine_choice.engine if aurora_engine_choice else None,
             )
             for qid in fallback_qids:
                 assigned[qid] = aurora_fallback
@@ -303,8 +373,9 @@ class AssignmentResolver:
         # the scored assignment is left as-is rather than left unset.
         utility_engine = pick_aurora_engine(
             analysis_outputs.keys(),
-            source_database_engine(collector_output),
+            source_engine,
             Counter(e for e in assigned.values() if e),
+            prior_choice=aurora_engine_choice.engine if aurora_engine_choice else None,
         )
         if utility_engine:
             for query in queries:
@@ -372,7 +443,7 @@ class AssignmentResolver:
         table_assignments, unresolved_table_names = derive_table_assignments(
             query_assignments,
             known_tables=TableNameResolver.from_collector(collector_output),
-            retained_engine=retained_engine_for(collector_output),
+            retained_engine=effective_relational_engine,
         )
 
         # Flatten co-dep groups to list of lists of query_ids
@@ -390,6 +461,7 @@ class AssignmentResolver:
             validation_warnings=[],
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
             unresolved_table_names=unresolved_table_names,
+            aurora_engine_choice=aurora_engine_choice,
         )
 
     def _build_signal_overrides(
@@ -580,6 +652,8 @@ def _resolve_aurora_fallback(
     selected_engines: set[str],
     source_engine: str = "",
     query_counts: Mapping[str, int] | None = None,
+    *,
+    prior_choice: str | None = None,
 ) -> str:
     """Determine which Aurora engine to use as fallback.
 
@@ -588,8 +662,15 @@ def _resolve_aurora_fallback(
     queries, then Aurora PostgreSQL (``pick_aurora_engine``, #288). If no
     Aurora engine was selected, uses a generic 'aurora' placeholder (legacy
     behavior).
+
+    ``prior_choice`` (#381 review) is ``Assignment.aurora_engine_choice.engine``
+    when the resolver already made that choice this run -- passed through to
+    ``pick_aurora_engine`` so a 0/0-count tie here never overrides it.
     """
-    return pick_aurora_engine(selected_engines, source_engine, query_counts) or "aurora"
+    return (
+        pick_aurora_engine(selected_engines, source_engine, query_counts, prior_choice=prior_choice)
+        or "aurora"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -682,18 +763,62 @@ def build_co_dependency_groups(
 # ---------------------------------------------------------------------------
 
 
-def retained_engine_for(collector_output: Mapping) -> str | None:
+def retained_engine_for(
+    collector_output: Mapping,
+    query_assignments: Iterable[Mapping | QueryAssignment] | None = None,
+    aurora_engine_choice: str | Mapping | AuroraEngineChoice | None = None,
+) -> str | None:
     """The retained source-compatible Aurora engine for ``collector_output`` (#317).
 
     The Aurora engine matching the source database's dialect (``aurora_mysql``
     for a MySQL source, ``aurora_postgresql`` for Postgres) — never a member of
     ``NON_OWNER_ENGINES``. ``None`` when the source engine is missing or
-    unrecognized. Every caller that recomputes ``table_assignments`` from a
+    unrecognized and neither ``aurora_engine_choice`` nor ``query_assignments``
+    is given. Every caller that recomputes ``table_assignments`` from a
     ``collector_output`` should pass this through so a table with no durable
     owner among its own engines never keeps a cache or search engine as
     ``primary_engine``.
+
+    ``aurora_engine_choice`` (#381 review) is the authoritative
+    ``Assignment.aurora_engine_choice`` -- as the engine string itself, the
+    ``AuroraEngineChoice`` model, or its ``model_dump()``/raw-JSON dict -- when
+    the caller has it, for a source with no Aurora dialect of its own (SQL
+    Server, Oracle, DB2 — no entry in ``SOURCE_ENGINE_TO_AURORA``). Preferred
+    over reconstructing the choice from ``query_assignments``: a customer
+    override that moves one query onto the *losing* Aurora engine would make
+    the reconstruction see both engines in use and resolve the ambiguity by
+    alphabetical sort, not by the resolver's actual decision.
+
+    ``query_assignments`` (#381), when given and ``aurora_engine_choice`` is
+    not, recovers the same Aurora engine from the current assignment's own
+    routing instead: by the time an assignment exists, the resolver's own
+    choice (``choose_heterogeneous_engine``) already dropped the losing engine
+    from scoring, so at most one of ``aurora_mysql``/``aurora_postgresql``
+    ever appears as an ``assigned_engine`` -- unless a later customer override
+    changed that, which is exactly why ``aurora_engine_choice`` is preferred
+    when available.
     """
-    return SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
+    native = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
+    if native:
+        return native
+    if aurora_engine_choice is not None:
+        engine: str | None
+        if isinstance(aurora_engine_choice, str):
+            engine = aurora_engine_choice
+        elif isinstance(aurora_engine_choice, Mapping):
+            engine = aurora_engine_choice.get("engine")
+        else:
+            engine = getattr(aurora_engine_choice, "engine", None)
+        if engine in AURORA_ENGINES:
+            return engine
+    if not query_assignments:
+        return None
+    used = {
+        (qa.get("assigned_engine") if isinstance(qa, Mapping) else qa.assigned_engine)
+        for qa in query_assignments
+    }
+    chosen = sorted(AURORA_ENGINES.intersection(used))
+    return chosen[0] if chosen else None
 
 
 def derive_table_assignments(

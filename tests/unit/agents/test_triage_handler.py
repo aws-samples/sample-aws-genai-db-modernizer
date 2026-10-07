@@ -400,6 +400,68 @@ class TestTriageSchemaSignals:
 # ---------------------------------------------------------------------------
 
 
+class TestTriageHeterogeneousAuroraSelection:
+    """#381: a source with no Aurora dialect of its own has both Aurora agents
+    compete, instead of both being skipped (the pre-#381 behaviour)."""
+
+    def test_sqlserver_source_selects_both_aurora_agents(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="sqlserver")
+        result = triage(co)
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" in result.selected
+        assert "aurora_mysql" not in result.skipped
+        assert "aurora_postgresql" not in result.skipped
+        # #381 review: no issue number in user-visible reason text (kept in comments).
+        assert "both Aurora" in " ".join(result.selected["aurora_mysql"])
+        assert "both Aurora" in " ".join(result.selected["aurora_postgresql"])
+        assert "#381" not in " ".join(result.selected["aurora_mysql"])
+        assert "#381" not in " ".join(result.selected["aurora_postgresql"])
+
+    def test_oracle_source_selects_both_aurora_agents(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="oracle")
+        result = triage(co)
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" in result.selected
+
+    def test_db2_source_selects_both_aurora_agents(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="db2")
+        result = triage(co)
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" in result.selected
+
+    def test_mysql_source_selects_only_aurora_mysql(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="mysql")
+        result = triage(co)
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" not in result.selected
+        assert "aurora_postgresql" in result.skipped
+
+    def test_mariadb_source_selects_only_aurora_mysql(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="mariadb")
+        result = triage(co)
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" not in result.selected
+
+    def test_postgresql_source_selects_only_aurora_postgresql(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="postgresql")
+        result = triage(co)
+        assert "aurora_postgresql" in result.selected
+        assert "aurora_mysql" not in result.selected
+        assert "aurora_mysql" in result.skipped
+
+    def test_unknown_engine_selects_neither(self):
+        co = _co(queries=[_q("SELECT * FROM orders")], engine="some_unknown_engine")
+        result = triage(co)
+        assert "aurora_mysql" not in result.selected
+        assert "aurora_postgresql" not in result.selected
+
+    def test_no_engine_metadata_selects_neither(self):
+        co = _co(queries=[_q("SELECT * FROM orders")])
+        result = triage(co)
+        assert "aurora_mysql" not in result.selected
+        assert "aurora_postgresql" not in result.selected
+
+
 class TestTriageSkipping:
     def test_no_signals_skips_agent(self):
         co = _co(queries=[_q("SELECT * FROM users WHERE id = ?", rows_returned_avg=1)])
@@ -526,11 +588,14 @@ class TestTriageHandler:
 # ---------------------------------------------------------------------------
 
 
-def _co(queries: list | None = None, tables: list | None = None) -> dict:
-    return {
+def _co(queries: list | None = None, tables: list | None = None, engine: str | None = None) -> dict:
+    co: dict = {
         "database_schema": {"tables": tables or []},
         "queries": {"query_patterns": queries or []},
     }
+    if engine is not None:
+        co["metadata"] = {"source_database": {"engine": engine}}
+    return co
 
 
 def _q(

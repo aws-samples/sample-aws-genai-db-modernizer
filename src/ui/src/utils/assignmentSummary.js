@@ -117,3 +117,26 @@ export function buildAssignmentSummary({
 
   return parts.join(' ');
 }
+
+// #381 review round 2: the resolver may have picked one of the two competing
+// Aurora engines for a heterogeneous source (SQL Server, Oracle, DB2 -- no Aurora
+// dialect of its own), recorded on the assignment as `aurora_engine_choice.engine`.
+// The losing engine is never a valid target for this assessment -- offering it in
+// the per-query engine picker would let a customer pick it and then have the
+// override rejected server-side (LosingAuroraEngineOverride) with no warning here.
+const AURORA_ENGINES = ['aurora_mysql', 'aurora_postgresql'];
+
+/**
+ * Drop the #381 losing Aurora engine from a list of engine `options`
+ * (`{ label, value }`), when `assignment.aurora_engine_choice` names a winner.
+ * Returns `options` unchanged when there is no recorded choice, or the winner is
+ * not one of the two Aurora engines (homogeneous source, or a legacy assignment).
+ */
+export function engineOptionsForAssignment(options, assignment) {
+  const winner = assignment?.aurora_engine_choice?.engine;
+  if (!AURORA_ENGINES.includes(winner)) {
+    return options;
+  }
+  const loser = AURORA_ENGINES.find((engine) => engine !== winner);
+  return options.filter((option) => option.value !== loser);
+}

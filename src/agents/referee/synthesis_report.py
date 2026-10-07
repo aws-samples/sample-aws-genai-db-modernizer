@@ -36,6 +36,7 @@ from src.agents.referee.synthesis_grounding import (
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.shared.engine_names import display_source_database
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.ranking import (
     PARTIAL_NOTE,
@@ -2017,7 +2018,13 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     key-value lookups" while naming no relational reason at all.
     """
     if is_cache_layer(r):
-        retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
+        # #381: a source with no Aurora dialect of its own has no entry in
+        # SOURCE_ENGINE_TO_AURORA, but the assignment resolver may still have picked
+        # one of the two competing Aurora engines -- _source_compatible_aurora_engine
+        # already prefers whichever Aurora engine is actually part of this
+        # architecture before falling back to that mapping, so it names the #381
+        # choice here too instead of silently falling back to no engine at all.
+        retained_engine = _source_compatible_aurora_engine(data)
         owners = cache_front_description(retained_engine, r.get("cache_overlay_owners"))
         n = r.get("cache_overlay_queries", 0)
         lead = r.get("routed_lead")
@@ -2212,6 +2219,30 @@ def build_summary(
         f"Analyzed {total_source_tables} source tables and {total_queries} query patterns "
         f"across {len(ranking)} target database(s)."
     )
+
+    # #381 review: the resolver's heterogeneous Aurora engine choice (a source with no
+    # Aurora dialect of its own -- SQL Server, Oracle, DB2 -- where Aurora MySQL and
+    # Aurora PostgreSQL competed on the collected workload) reached wave 1's rationale
+    # only; name it here too, with display names, so it is visible without reading the
+    # migration roadmap.
+    aurora_choice = (data.assignment or {}).get("aurora_engine_choice")
+    source_engine = (aurora_choice or {}).get("source_engine")
+    # #381 review round 2: display_source_database (the same helper every other
+    # caller uses for a wave's "moves_from" source name) instead of a hand-rolled
+    # SOURCE_ENGINE_DISPLAY_NAMES lookup -- that fallback defaulted to the raw,
+    # un-prettified source_engine string (or "" when it was missing entirely)
+    # instead of title-casing an unmapped engine the way display_engine does.
+    # source_engine is required to say anything at all; without it the sentence is
+    # skipped, same as with no recorded choice.
+    if aurora_choice and aurora_choice.get("engine") and source_engine:
+        source_name = display_source_database(source_engine)
+        chosen_name = display_name(aurora_choice["engine"])
+        parts.append(
+            f"{source_name} has no Aurora engine of its own dialect: Aurora MySQL and "
+            f"Aurora PostgreSQL both competed on the collected workload, and "
+            f"{chosen_name} was selected to serve it (a cross-engine, dialect-and-schema "
+            "conversion, not a 1:1 carry-over)."
+        )
 
     has_assignment = any("assigned_queries" in r for r in ranking)
     with_workload = sorted(

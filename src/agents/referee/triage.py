@@ -76,6 +76,15 @@ SOURCE_ENGINE_TO_AURORA: dict[str, str] = {
     "postgres": "aurora_postgresql",
 }
 
+# Relational source engines with no Aurora dialect of their own (#381). Neither
+# Aurora engine is a native match, so instead of skipping both (the pre-#381
+# behaviour), both compete on the collected workload and the assignment resolver
+# picks exactly one (`src.agents.referee.aurora_choice.choose_heterogeneous_engine`).
+# `scripts/collect-oracle.sql` and `scripts/collect-sqlserver.sql` exist; there is no
+# DB2 collector yet, so a DB2 collection cannot reach this path in practice today --
+# the entry is kept for when one exists, per the agreed design.
+HETEROGENEOUS_SOURCE_ENGINES = frozenset({"sqlserver", "oracle", "db2"})
+
 # Agents deferred to Phase 1 — signals tracked for Synthesis reporting
 # but not dispatched as ECS tasks.
 DEFERRED = frozenset({"keyspaces", "neptune"})
@@ -112,13 +121,22 @@ def triage(collector_output: dict) -> TriageResult:
     signals = _detect_schema_signals(collector_output)
     signals.extend(_detect_query_signals(collector_output))
 
-    # Determine which Aurora agent matches the source engine
+    # Determine which Aurora agent(s) compete for this source engine: its own
+    # dialect when it has one; both Aurora agents when it is a known relational
+    # engine with no Aurora dialect of its own (#381); neither otherwise (no
+    # source engine recorded, or a non-relational source).
     source_engine = (
         collector_output.get("metadata", {}).get("source_database", {}).get("engine", "")
     ).lower()
-    aurora_agent = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+    matched_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+    if matched_aurora:
+        aurora_agents = [matched_aurora]
+    elif source_engine in HETEROGENEOUS_SOURCE_ENGINES:
+        aurora_agents = sorted(ANALYSIS_AGENTS & {"aurora_mysql", "aurora_postgresql"})
+    else:
+        aurora_agents = []
 
-    result = _select_agents(signals, aurora_agent=aurora_agent)
+    result = _select_agents(signals, aurora_agents=aurora_agents)
 
     # Detect hard capability requirements per query
     result.query_capabilities = _detect_query_capabilities(collector_output, signals)
@@ -598,12 +616,19 @@ def _detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[st
 # ---------------------------------------------------------------------------
 
 
-def _select_agents(signals: list[TriageSignal], aurora_agent: str | None = None) -> TriageResult:
+def _select_agents(
+    signals: list[TriageSignal], aurora_agents: list[str] | None = None
+) -> TriageResult:
     """Select analysis agents based on detected signals.
 
     Aurora signals are tracked separately in `baseline` for Synthesis —
     orchestration only dispatches agents in `selected`.
     Deferred agents (Phase 1) are tracked in `deferred` for reporting.
+
+    ``aurora_agents`` is 0, 1 or 2 Aurora analysis agents: 1 when the source
+    engine has its own Aurora dialect, 2 when it is a known relational engine
+    with none (#381, both compete), 0 otherwise (both skipped, pre-#381
+    behaviour).
     """
     result = TriageResult(signals=signals)
 
@@ -623,14 +648,25 @@ def _select_agents(signals: list[TriageSignal], aurora_agent: str | None = None)
                     result.selected[target] = []
                 result.selected[target].append(f"{sig.signal}: {sig.evidence}")
 
-    # Always select the matching Aurora agent (source engine is inherently relational)
-    if aurora_agent and aurora_agent not in result.selected:
-        result.selected[aurora_agent] = [
-            "Source engine is relational — Aurora analysis provides baseline scoring"
-        ]
+    # Always select the matching Aurora agent(s) (source engine is inherently
+    # relational). Two agents means the source has no Aurora dialect of its own
+    # (#381): both compete on the workload, and the assignment resolver picks
+    # exactly one before anything is assigned.
+    aurora_agents = aurora_agents or []
+    for agent in aurora_agents:
+        if agent not in result.selected:
+            if len(aurora_agents) > 1:
+                result.selected[agent] = [
+                    "Source engine has no Aurora dialect of its own — both Aurora "
+                    "engines compete on workload fit"
+                ]
+            else:
+                result.selected[agent] = [
+                    "Source engine is relational — Aurora analysis provides baseline scoring"
+                ]
 
-    # The non-matching Aurora agent should be skipped (not both)
-    non_matching_aurora = {"aurora_postgresql", "aurora_mysql"} - {aurora_agent or ""}
+    # An Aurora agent not selected above is skipped (never both selected and skipped)
+    non_matching_aurora = {"aurora_postgresql", "aurora_mysql"} - set(aurora_agents)
     for agent in ANALYSIS_AGENTS:
         if agent not in result.selected:
             if agent in non_matching_aurora:

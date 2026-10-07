@@ -88,6 +88,21 @@ Version History:
   prose. Backward compatible: both default to their pre-1.6 meaning
   (``current_cost_known`` true, ``eliminated_engine_costs`` absent) for a
   report written before this version.
+- 1.7 (2026-10-07, #381 review): Added ``"cross_engine"`` to ``MigrationWave.
+  homogeneity``'s ``Literal`` (independent review blocker: a heterogeneous
+  source where the assignment resolver still picked one of the two competing
+  Aurora engines wrote ``homogeneity="cross_engine"`` starting with #381, but
+  the contract's ``Literal`` had not been updated to match, so synthesis
+  failed ``SynthesisOutputContract`` validation for every such source).
+  ``cutover_query_count``'s description corrected to say it is also set for a
+  ``"cross_engine"`` wave 1, not ``"homogeneous"`` only (``migration_waves.py``
+  always set it this way; only the description was wrong). Added optional
+  ``aurora_engine_choice`` to ``AssignmentSummary`` (a copy of ``Assignment.
+  aurora_engine_choice``, #381): the only way the resolver's heterogeneous
+  engine choice reached ``report.json`` before this was buried inside wave 1's
+  rationale text. Backward compatible: a pre-1.7 wave never had
+  ``homogeneity="cross_engine"`` to begin with, and ``aurora_engine_choice``
+  defaults to ``None``.
 """
 
 from datetime import datetime
@@ -95,7 +110,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.contracts.assignment_models import UnresolvedNames  # re-exported, see docstring below
+from src.contracts.assignment_models import (  # re-exported, see docstring below
+    AuroraEngineChoice,
+    UnresolvedNames,
+)
 
 from .schema_design_output import TradeOff
 
@@ -244,6 +262,15 @@ class AssignmentSummary(BaseModel):
     query_count: int = Field(..., ge=0)
     in_scope_count: int = Field(..., ge=0)
     co_dependency_groups: int = Field(default=0, ge=0)
+    aurora_engine_choice: AuroraEngineChoice | None = Field(
+        None,
+        description=(
+            "Copy of Assignment.aurora_engine_choice (#381): how the resolver picked "
+            "one Aurora engine for a source with no Aurora dialect of its own. None "
+            "for a homogeneous source and for a report synthesized before this field "
+            "existed."
+        ),
+    )
 
 
 class TableGroup(BaseModel):
@@ -341,15 +368,19 @@ class MigrationWave(BaseModel):
             "empty); this is the fronted engine"
         ),
     )
-    homogeneity: Literal["homogeneous", "heterogeneous"] | None = Field(
+    homogeneity: Literal["homogeneous", "cross_engine", "heterogeneous"] | None = Field(
         None,
         description=(
             "Wave 1 (Aurora) only (#321): 'homogeneous' when the source maps to a "
-            "source-compatible Aurora engine, 'heterogeneous' when it does not. A "
-            "heterogeneous wave 1 still runs -- it is not skipped -- it just names no "
-            "Aurora engine (engines is then empty, the title says what the source moves "
-            "off instead of to, and the gate flags it as a risk). None for every other "
-            "wave, and for a wave written before this field existed"
+            "source-compatible Aurora engine, 'cross_engine' (#381) when the source has "
+            "no Aurora dialect of its own but the assignment resolver still picked one of "
+            "the two competing Aurora engines (named, with a share, same as 'homogeneous', "
+            "but stated as a dialect-and-schema conversion, not a 1:1 carry-over), and "
+            "'heterogeneous' when no Aurora engine was picked at all. A heterogeneous wave "
+            "1 still runs -- it is not skipped -- it just names no Aurora engine (engines "
+            "is then empty, the title says what the source moves off instead of to, and "
+            "the gate flags it as a risk). None for every other wave, and for a wave "
+            "written before this field existed"
         ),
     )
     tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
@@ -377,11 +408,12 @@ class MigrationWave(BaseModel):
     cutover_query_count: int | None = Field(
         None,
         description=(
-            "Wave 1 (Aurora), homogeneous only (#321 review): every in-scope query, since "
-            "the whole workload runs on Aurora the moment this wave finishes, before any "
-            "later wave has moved its own share away. query_count/workload_share_percent "
-            "stay the end-state share still on Aurora once every later wave has moved its "
-            "own. None for every other wave, a heterogeneous wave 1, and a wave written "
+            "Wave 1 (Aurora), homogeneous or cross_engine only (#321 review, #381): every "
+            "in-scope query, since the whole workload runs on Aurora the moment this wave "
+            "finishes, before any later wave has moved its own share away. "
+            "query_count/workload_share_percent stay the end-state share still on Aurora "
+            "once every later wave has moved its own. None for every other wave, a "
+            "heterogeneous wave 1 (no Aurora engine picked at all), and a wave written "
             "before this field existed"
         ),
     )
@@ -409,7 +441,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.6",
+        default="1.7",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

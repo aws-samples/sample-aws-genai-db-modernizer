@@ -200,6 +200,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
         # Parse offline collection
         from src.tools.database.offline_parser import (
             detect_source_engine,
+            offline_version_label,
             parse_offline_collection,
         )
 
@@ -246,7 +247,11 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
             _build_output(
                 inp,
                 start,
-                version=offline_meta.get("version", "unknown"),
+                # #381: a short, human-readable version string (product_version, or
+                # the first line only of version/version_full) -- the full @@VERSION
+                # banner (newlines, tabs, build date) must never reach wave 1's
+                # user-visible rationale text.
+                version=offline_version_label(offline_meta),
                 db_size=offline_meta.get("database_size_gb"),
                 tables=tables_built,
                 queries=queries_built,

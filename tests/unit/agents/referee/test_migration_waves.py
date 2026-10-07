@@ -370,8 +370,132 @@ class TestAuroraWave:
         assert "orders_seq" in aurora["tables"]
         assert "shop.item_seq" in aurora["tables"]
 
-    def test_heterogeneous_source_has_no_engine_and_flags_a_risk(self):
+    def test_heterogeneous_source_with_an_aurora_choice_is_cross_engine(self):
+        # #381: SQL Server has no Aurora dialect of its own, but the default
+        # RANKING fixture already has aurora_mysql as a target (the resolver's
+        # #381 choice) -- wave 1 names it and flags the move as cross-engine,
+        # rather than the pre-#381 "no Aurora engine named" heterogeneous wave.
         waves = _build(source_engine="sqlserver", known_tables=KNOWN_TABLES)
+        aurora = waves[0]
+        assert aurora["engines"] == ["aurora_mysql"]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["moves_from"] == ["sqlserver"]
+        assert "cross-engine" in aurora["rationale"]
+        assert "Cross-engine move" in aurora["gate"]
+        assert "SQL dialect and data model conversion" in aurora["gate"]
+        assert aurora["title"] == "Move off SQL Server to Aurora MySQL (cross-engine)"
+        assert "Sqlserver" not in aurora["rationale"]
+        assert "SQL Server" in aurora["rationale"]
+        assert aurora["query_count"] == 5
+        assert aurora["workload_share_percent"] == 4.7
+        assert aurora["cutover_query_count"] == 107
+        # #381 review: never claims the engine "earned" the move -- that reads as a
+        # decisive win even for a tie-break or an unneeded default.
+        assert "earned" not in aurora["rationale"]
+        assert "selected" in aurora["rationale"]
+
+    def test_cross_engine_rationale_names_the_decision_trace(self):
+        # #381: Assignment.aurora_engine_choice (as a dict), threaded through from
+        # synthesis_handler, names both totals and the deciding feature in wave 1's
+        # own rationale.
+        choice = {
+            "source_engine": "sqlserver",
+            "engine": "aurora_mysql",
+            "totals": {"aurora_mysql": 70.0, "aurora_postgresql": 65.0},
+            "margin": -5.0,
+            "deciding_features": [],
+            "reason": "higher total adjusted score wins (70.0 vs 65.0)",
+        }
+        waves = _build(
+            source_engine="sqlserver", known_tables=KNOWN_TABLES, aurora_engine_choice=choice
+        )
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert "70.0" in aurora["rationale"]
+        assert "65.0" in aurora["rationale"]
+
+    def test_cross_engine_rationale_names_deciding_features(self):
+        choice = {
+            "source_engine": "sqlserver",
+            "engine": "aurora_mysql",
+            "totals": {"aurora_mysql": 66.0, "aurora_postgresql": 65.0},
+            "margin": -1.0,
+            "deciding_features": ["recursive_ctes", "sequences"],
+            "reason": "close on total adjusted score; tipped by: recursive_ctes, sequences",
+        }
+        waves = _build(
+            source_engine="sqlserver", known_tables=KNOWN_TABLES, aurora_engine_choice=choice
+        )
+        aurora = waves[0]
+        # #381 review: user-visible text names features with readable labels
+        # (aurora_choice.FEATURE_LABELS), not the raw internal identifiers.
+        assert "recursive CTEs" in aurora["rationale"]
+        assert "sequences" in aurora["rationale"]
+        assert "recursive_ctes" not in aurora["rationale"]
+
+    def test_cross_engine_without_a_decision_trace_still_builds(self):
+        # aurora_engine_choice is optional (a legacy assignment written before
+        # #381, or no caller support yet) -- the wave still builds, just without
+        # the extra sentence naming totals/features.
+        waves = _build(source_engine="sqlserver", known_tables=KNOWN_TABLES)
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["engines"] == ["aurora_mysql"]
+
+    def test_cross_engine_choice_engine_wins_over_sorted_set_order(self):
+        # #381 review round 2: when both Aurora engines have a ranking entry, the
+        # pre-fix fallback (sorted(AURORA_ENGINES & set(by_engine))) always picked
+        # aurora_mysql first (alphabetical), regardless of which engine the resolver
+        # actually chose. aurora_engine_choice.engine must be consulted first.
+        ranking = [
+            {"target": "aurora_mysql", "assigned_queries": 2, "workload_percent": 2.0},
+            {"target": "aurora_postgresql", "assigned_queries": 5, "workload_percent": 4.7},
+        ]
+        choice = {
+            "source_engine": "sqlserver",
+            "engine": "aurora_postgresql",
+            "totals": {"aurora_mysql": 60.0, "aurora_postgresql": 65.0},
+            "margin": 5.0,
+            "deciding_features": [],
+            "reason": "higher total adjusted score wins (60.0 vs 65.0)",
+        }
+        waves = _build(
+            ranking=ranking,
+            source_engine="sqlserver",
+            known_tables=KNOWN_TABLES,
+            aurora_engine_choice=choice,
+        )
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["engines"] == ["aurora_postgresql"]
+
+    def test_cross_engine_choice_engine_missing_from_ranking_falls_back(self):
+        # #381 review round 2: aurora_engine_choice names a winner with no ranking
+        # entry at all (nothing to build wave 1's share/query-count from) -- fall back
+        # to whichever Aurora engine the ranking itself has, rather than trusting a
+        # name with nothing behind it. The default RANKING fixture only has
+        # aurora_mysql.
+        choice = {
+            "source_engine": "sqlserver",
+            "engine": "aurora_postgresql",
+            "totals": {},
+            "margin": None,
+            "deciding_features": [],
+            "reason": "only one Aurora engine competed",
+        }
+        waves = _build(
+            source_engine="sqlserver", known_tables=KNOWN_TABLES, aurora_engine_choice=choice
+        )
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["engines"] == ["aurora_mysql"]
+
+    def test_heterogeneous_source_with_no_aurora_choice_has_no_engine_and_flags_a_risk(self):
+        waves = _build(
+            source_engine="sqlserver",
+            ranking=[r for r in RANKING if not r["target"].startswith("aurora")],
+            known_tables=KNOWN_TABLES,
+        )
         aurora = waves[0]
         assert aurora["engines"] == []
         assert aurora["homogeneity"] == "heterogeneous"
@@ -402,9 +526,12 @@ class TestAuroraWave:
         # display_engine's title-cased guess ("Oracle" is already correct by
         # coincidence; "Db2" is not -- the generic fallback would say "Db2"
         # too since it's already one word, but verify explicitly anyway).
-        oracle = _build(source_engine="oracle", known_tables=KNOWN_TABLES)[0]
+        # No Aurora engine in the ranking here (#381: without one, the wave
+        # stays the pre-#381 "no engine named" heterogeneous wave).
+        no_aurora = [r for r in RANKING if not r["target"].startswith("aurora")]
+        oracle = _build(source_engine="oracle", ranking=no_aurora, known_tables=KNOWN_TABLES)[0]
         assert oracle["title"] == "Move off Oracle (heterogeneous)"
-        db2 = _build(source_engine="db2", known_tables=KNOWN_TABLES)[0]
+        db2 = _build(source_engine="db2", ranking=no_aurora, known_tables=KNOWN_TABLES)[0]
         assert db2["title"] == "Move off Db2 (heterogeneous)"
 
     def test_skipped_when_the_source_is_already_aurora(self):

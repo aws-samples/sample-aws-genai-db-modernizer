@@ -132,6 +132,7 @@ def main():
         print("[collector] Parsing raw collection output (offline mode)...")
         from src.tools.database.offline_parser import (
             detect_source_engine,
+            offline_version_label,
             parse_offline_collection,
         )
 
@@ -179,7 +180,11 @@ def main():
             _build_output(
                 inp,
                 start,
-                version=offline_meta.get("version", "unknown"),
+                # #381: a short, human-readable version string (product_version, or
+                # the first line only of version/version_full) -- the full @@VERSION
+                # banner (newlines, tabs, build date) must never reach wave 1's
+                # user-visible rationale text.
+                version=offline_version_label(offline_meta),
                 db_size=offline_meta.get("database_size_gb"),
                 tables=tables_built,
                 queries=queries_built,

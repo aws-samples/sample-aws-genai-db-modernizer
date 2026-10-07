@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
+from src.contracts.assignment_models import AuroraEngineChoice
 from src.contracts.synthesis_output import (
     AssignmentSummary,
     CostBreakdown,
@@ -173,6 +174,39 @@ class TestMigrationWave:
             {"tables": ["db.users"], "query_count": 10, "kind": "independent"}
         ]
 
+    def test_cross_engine_homogeneity_is_accepted(self):
+        """1.7 (#381 review blocker): the resolver writes homogeneity="cross_engine"
+        for a heterogeneous source where it still picked an Aurora engine -- the
+        contract's Literal must accept it or every such source fails synthesis."""
+        w = MigrationWave(
+            wave=1,
+            title="Move off SQL Server to Aurora MySQL (cross-engine)",
+            engines=["aurora_mysql"],
+            homogeneity="cross_engine",
+            table_count=5,
+            query_count=20,
+            cutover_query_count=20,
+            workload_share_percent=100.0,
+            rationale="cross-engine move",
+            gate="validate the schema and query translation",
+        )
+        assert w.homogeneity == "cross_engine"
+        assert w.cutover_query_count == 20
+
+    def test_homogeneity_rejects_an_unknown_value(self):
+        with pytest.raises(ValidationError):
+            MigrationWave(
+                wave=1,
+                title="x",
+                engines=["aurora_mysql"],
+                homogeneity="partially_homogeneous",
+                table_count=0,
+                query_count=1,
+                workload_share_percent=1.0,
+                rationale="x",
+                gate="x",
+            )
+
 
 class TestTCOAnalysis:
     """Test TCO analysis model."""
@@ -241,6 +275,24 @@ class TestAssignmentSummary:
         assert s.status is None
         assert s.source is None
         assert s.co_dependency_groups == 0
+        assert s.aurora_engine_choice is None
+
+    def test_aurora_engine_choice_roundtrips(self):
+        """1.7 (#381 review): the resolver's heterogeneous Aurora choice reaches
+        report.json via AssignmentSummary, not only wave 1's rationale text."""
+        choice = AuroraEngineChoice(
+            source_engine="sqlserver",
+            engine="aurora_postgresql",
+            totals={"aurora_mysql": 60.0, "aurora_postgresql": 65.0},
+            margin=5.0,
+            deciding_features=[],
+            reason="higher total adjusted score wins (60.0 vs 65.0)",
+        )
+        s = AssignmentSummary(query_count=10, in_scope_count=10, aurora_engine_choice=choice)
+        assert s.aurora_engine_choice.engine == "aurora_postgresql"
+        dumped = s.model_dump(mode="json")
+        assert dumped["aurora_engine_choice"]["source_engine"] == "sqlserver"
+        assert AssignmentSummary.model_validate(dumped) == s
 
     def test_source_provenance_roundtrips(self):
         # ADR-028: the report records which stage produced the assignment it used.
@@ -334,7 +386,7 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        assert output.contract_version == "1.6"
+        assert output.contract_version == "1.7"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]
