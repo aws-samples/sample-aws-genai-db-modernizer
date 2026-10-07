@@ -455,6 +455,40 @@ Results View (when complete)
 
 ---
 
+## Current Route Inventory (#357)
+
+The views above describe the original pre-build requirements doc; the actual
+implementation diverged (no WebSocket, no TypeScript, polling instead of a
+live socket) once the hosted deployment was retired and the UI moved to the
+local FastAPI backend. This table reflects what `src/ui/src/AppRoutes.js`
+actually serves today, with a keep/merge/remove call for each route and page.
+Every kept route has a routing-table test in `src/ui/src/__tests__/AppRoutes.test.js`.
+
+| Route | Page | Decision | Why |
+|---|---|---|---|
+| `/` | — (redirect) | Keep | Entry redirect to `/dashboard`. |
+| `/dashboard` | `Dashboard.js` | Keep | Job list and hub; linked from the side nav and from every page's "back to dashboard" action. |
+| `/analysis/create` | `CreateAnalysis.js` | Keep | Starts a new analysis; linked from the side nav and the Dashboard's "New analysis" button. |
+| `/analysis/monitor/:jobId` | `JobMonitoring.js` | Keep | In-flight job progress; linked from `EngineAnalysis`'s breadcrumb. |
+| `/analysis/monitor/summary/:jobId` | `JobMonitoringSummary.js` | Keep | Post-phase hub; linked from `CreateAnalysis`, `AssignmentGate`, `Dashboard`. |
+| `/analysis/assignments/:jobId` | `AssignmentGate.js` | Keep | Assignment approval gate; linked from `JobMonitoringSummary`; the intended UI for the `/assign` gate (the command currently prints a wrong URL, #439). |
+| `/analysis/engine-analysis/:jobId` | `EngineAnalysis.js` | Keep | Per-engine analysis drill-down; linked from `Dashboard`. |
+| `/analysis/patterns/:jobId` (requires `?target=`) | `PatternAnalysis.js` | Keep | Access-pattern drill-down; linked from `JobMonitoringSummary` and `AssignmentGate`, always with a `target`. |
+| `/analysis/results-v2/:jobId` | `AnalysisResults-02.js` | Keep | Final deliverable page; linked from `JobMonitoring` and `JobMonitoringSummary`. |
+| `/analysis/results/:jobId` | — (redirect to results-v2) | Keep | Thin redirect so old bookmarks still resolve (#185). |
+| `/analysis/report/:jobId` | — (redirect to results-v2) | Keep | Thin redirect so old bookmarks still resolve (#356). |
+| `/settings` | `Settings.js` | Keep (flagged) | Route and backend (`src/api/routes/settings.py`, with its own test) exist, but the page never calls that API — Save/Test just `console.log` — and its "AWS Configuration" fields (S3 bucket, DynamoDB table, IAM role) are vestiges of the retired hosted deployment. Tracked in #437; the side-nav link to it is also broken (`href: "/settings/s"` in `GlobalConfigurations.js`, which doesn't match the `/settings` route, #438). |
+| `/analysis/local` | `LocalAnalysis.js` | **Removed** | Fetched static files (`/data/collector-output.json`, `/data/analysis-*.json`) that no script or build step has ever produced; always rendered empty. Dead since the local API backend replaced this prototype. |
+| `/debug` | `Debug.js` | **Removed** | Dev-only raw API console, not part of the `/modernize` flow or any deliverable. |
+| `*` | — (redirect to `/`) | Keep | Fallback for unknown paths. |
+| *(no route)* | `LandingPage.js` | **Removed** | Not imported by `AppRoutes.js` or anywhere else; unreachable. |
+
+Side navigation (`src/ui/src/config/GlobalConfigurations.js`,
+`SideNavigationConfigurations`) dropped the "Local analysis" and "API Debug"
+entries along with their pages.
+
+---
+
 ## Related Documentation
 
 - Cloudscape Design System: <https://cloudscape.design/>

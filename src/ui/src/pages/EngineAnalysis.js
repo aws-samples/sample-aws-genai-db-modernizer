@@ -22,9 +22,7 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import useEngineAnalysis from "../hooks/useEngineAnalysis";
 
-// Shared constants and components — imported from LocalAnalysis
-// To avoid duplication, we extract the shared pieces into this file directly.
-// In a future refactor these could move to a shared module.
+// Page-local constants and components.
 
 const ENGINE_COLORS = {
   dynamodb: 'blue',

@@ -28,21 +28,8 @@ export const SideNavigationConfigurations = {
       type: "link",
     },
     {
-      href: "/analysis/local",
-      text: "Local analysis",
-      type: "link",
-    },
-    {
       href: "/settings/s",
       text: "Settings",
-      type: "link",
-    },
-    {
-      type: "divider"
-    },
-    {
-      href: "/debug",
-      text: "API Debug",
       type: "link",
     },
   ],

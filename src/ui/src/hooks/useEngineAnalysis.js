@@ -7,7 +7,7 @@ import ApiManager from '../classes/ApiManager';
  * 2. Fetch collector output
  * 3. Fetch analysis/{agent_type} for each selected agent
  *
- * Returns the same shape as useLocalAnalysis so the UI components are reusable.
+ * Returns { queryRows, engines, engineStats, collector, triage, loading, error }.
  */
 
 export default function useEngineAnalysis(jobId) {
@@ -72,7 +72,7 @@ export default function useEngineAnalysis(jobId) {
     })();
   }, [jobId]);
 
-  // Reuse the same query-row building logic from useLocalAnalysis
+  // One row per collected query, with each engine's verdict for it
   const queryRows = useMemo(() => {
     if (!collector || Object.keys(engines).length === 0) return [];
 
