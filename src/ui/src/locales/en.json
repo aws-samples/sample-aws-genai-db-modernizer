@@ -450,6 +450,7 @@
   "analysis-results-v2.explorer.col-engine": "Engine",
   "analysis-results-v2.explorer.col-source-tables": "Source tables",
   "analysis-results-v2.explorer.col-destination": "Destination",
+  "analysis-results-v2.explorer.col-description": "Description",
   "analysis-results-v2.explorer.col-gsi-index": "GSI / Index",
   "analysis-results-v2.explorer.col-source-table": "Source table",
   "analysis-results-v2.explorer.col-engines": "Engines",
