@@ -20,7 +20,10 @@
 // HTML escaping for the shell below; the embedded client script carries its own copy
 // (the exported file is standalone). Both escape & < > " ' -- see ./escapeHtml.js.
 import { escapeHtml, jsonForScript } from './escapeHtml';
-import { getCacheOverlay, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown } from './cacheLayer';
+import {
+  getCacheOverlay, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown,
+  ownerSchemaDesigns, cacheAccessPatternCount,
+} from './cacheLayer';
 
 // #358: this file is English-only (i18n-exempt, see header), so this is the
 // one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
@@ -45,6 +48,24 @@ export const CACHE_LAYER_SUFFIX = ' (cache layer)';
 // script's literal still matches it -- rather than letting the two copies
 // silently drift.
 export const KEEP_COST_CARD_EXPR = 'afterDist[cb.database] != null || cb.database === cacheEngine';
+
+// #405: the embedded client script's extractPatterns() (generated below) mirrors
+// ownerSchemaDesigns's cache-engine filter -- the cache layer gets its own schema
+// design (and its own access_patterns) too, but those were never queries it owns,
+// so counting them here would double-count ElastiCache as if it were an owner
+// engine in the Access Pattern Explorer's total, pie and rows, the same gap #361
+// fixed on the Results page. Only skips when the report carries a cache_overlay
+// (hasCacheOverlay, set from DATA.results.synthesis.cache_overlay just above):
+// a legacy report with no overlay at all still has ElastiCache as a real owner,
+// matching src/report/analysis_report.py (which only strips a design when
+// cache_overlay.engine names it) and ownerSchemaDesigns's own hasOverlay guard.
+// No bundler at runtime, so extractPatterns can't `import` isCacheEngine from
+// cacheLayer.js -- it hardcodes this exact expression as a literal instead (same
+// reason as CACHE_LAYER_SUFFIX/KEEP_COST_CARD_EXPR above). Kept as a string
+// constant with the same text, so ExportReport.cachePatterns.test.js can both
+// `new Function(...)` it to assert it agrees with cacheLayer.js's isCacheEngine,
+// and assert the generated script's literal still matches it.
+export const CACHE_ENGINE_SKIP_EXPR = "hasCacheOverlay && design.target_type === 'elasticache'";
 
 // Engine, operation and chart colours are NOT declared here. The palette lives in
 // exactly one place -- the :root block of REPORT_CSS below -- and both the badges
@@ -122,6 +143,7 @@ const REPORT_CSS = '\n' +
   '  .item-card { margin: 12px 0; }\n' +
   '  .stat-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }\n' +
   '  .stat-value { font-size: 24px; font-weight: 700; }\n' +
+  '  .stat-note { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; font-weight: 400; }\n' +
   '  .badge { display: inline-block; padding: 3px 10px; border-radius: var(--radius-container); font-size: 12px; font-weight: 600; margin-right: 4px; background: var(--color-badge-neutral); color: var(--color-text); }\n' +
   '  .badge-blue { background: var(--indigo-600); color: white; }\n' +
   '  .badge-green { background: var(--indigo-700); color: white; }\n' +
@@ -244,7 +266,18 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '\n';
   script += '    function extractPatterns() {\n';
   script += '      const patterns = [];\n';
+  // #405: only skip the cache engine's own design when the report actually
+  // carries a cache_overlay -- a legacy report with none at all still has
+  // ElastiCache as a real owner (mirrors ownerSchemaDesigns's hasOverlay guard
+  // and src/report/analysis_report.py, which only strips a design when
+  // cache_overlay.engine names it).
+  script += '      const hasCacheOverlay = !!(DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay);\n';
   script += '      DATA.schemaDesigns.forEach(design => {\n';
+  // sync_report_template.py requires this `script += '...'` line to be its own
+  // single-quoted literal (it can't splice in CACHE_ENGINE_SKIP_EXPR at build
+  // time), so the text below is a hardcoded copy of that constant --
+  // ExportReport.cachePatterns.test.js asserts the two agree.
+  script += '        if (hasCacheOverlay && design.target_type === \'elasticache\') return;\n';
   script += '        const engine = design.target_type;\n';
   script += '        const content = design.content || {};\n';
   script += '        (content.access_patterns || []).forEach(ap => {\n';
@@ -1042,8 +1075,32 @@ export const generateHTMLReport = (data) => {
     results?.synthesis?.tco_analysis, afterDist, cacheOverlay
   );
   const projectedCost = escapeHtml(finite(projectedCostValue).toFixed(2));
-  const totalPatterns = escapeHtml((Array.isArray(schemaDesigns) ? schemaDesigns : []).reduce(
+  // #405: the cache layer gets its own schema design (and its own
+  // access_patterns) too, but those patterns were never queries it owns --
+  // counting them here double-counted ElastiCache as if it were an owner engine
+  // in the "Access Patterns" stat and the explorer's total/pie/rows, the same
+  // gap #361 fixed on the Results page. ownerSchemaDesigns drops it;
+  // cacheAccessPatternCount (below) tracks it separately so the report can
+  // still say how many there are, just not as owned patterns. Both are no-ops
+  // without a cache_overlay: a legacy report (no cache_overlay at all) has
+  // ElastiCache as a real owner, so its design's patterns stay in the owner
+  // total, matching src/report/analysis_report.py (which only strips a design
+  // when cache_overlay.engine names it) and the Results page.
+  const safeSchemaDesigns = Array.isArray(schemaDesigns) ? schemaDesigns : [];
+  const hasCacheOverlay = !!cacheOverlay;
+  const totalPatterns = escapeHtml(ownerSchemaDesigns(safeSchemaDesigns, hasCacheOverlay).reduce(
     (sum, d) => sum + (Array.isArray(d?.content?.access_patterns) ? d.content.access_patterns.length : 0), 0));
+  // #405: shown as its own note under the "Access Patterns" stat, worded like
+  // the Results page's "+N cache-layer pattern(s)" caption
+  // (analysis-results-v2.executive-summary.cache-patterns-note in
+  // locales/en.json). This export is i18n-exempt (standalone, English-only --
+  // see file header), so the English singular/plural text is inlined directly
+  // instead of going through i18next's t().
+  const cachePatternCount = cacheAccessPatternCount(safeSchemaDesigns, hasCacheOverlay);
+  const cachePatternsNote = cachePatternCount > 0
+    ? '<div class="stat-note">+' + escapeHtml(cachePatternCount) + ' cache-layer pattern'
+      + (cachePatternCount === 1 ? '' : 's') + ' (not counted above)</div>'
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1091,7 +1148,7 @@ export const generateHTMLReport = (data) => {
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${safeDatabaseNameStat}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
         <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$${projectedCost}/mo</div></div>
-        <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div></div>
+        <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div>${cachePatternsNote}</div>
         ${cacheLayerStat}
       </div>
     </div>

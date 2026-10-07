@@ -281,7 +281,9 @@ const AnalysisResultsPage = memo(() => {
     // engine in the explorer's total and its engine pie. ownerSchemaDesigns
     // drops it (cacheAccessPatternCount below tracks it separately so the
     // page can still say how many there are, just not as owned patterns).
-    ownerSchemaDesigns(activeDesigns).forEach(design => {
+    // #405: both are no-ops without a cache_overlay -- a legacy report has
+    // ElastiCache as a real owner, so its design stays in the owner total.
+    ownerSchemaDesigns(activeDesigns, !!cacheOverlay).forEach(design => {
       const engine = design.target_type;
       const content = design.content || {};
 
@@ -322,7 +324,7 @@ const AnalysisResultsPage = memo(() => {
     });
 
     return patterns;
-  }, [activeDesigns]);
+  }, [activeDesigns, cacheOverlay]);
 
   // Engine trade-offs lookup
   const engineTradeOffs = useMemo(() => {
@@ -382,8 +384,12 @@ const AnalysisResultsPage = memo(() => {
 
   // #361: the cache layer's own pattern count, tracked separately so the page
   // can say "+N cache-layer patterns" instead of silently dropping them or
-  // folding them into the owner total/pie.
-  const cachePatternCount = useMemo(() => cacheAccessPatternCount(activeDesigns), [activeDesigns]);
+  // folding them into the owner total/pie. #405: 0 without a cache_overlay --
+  // see the overlay guard note on allAccessPatterns above.
+  const cachePatternCount = useMemo(
+    () => cacheAccessPatternCount(activeDesigns, !!cacheOverlay),
+    [activeDesigns, cacheOverlay]
+  );
 
   // #361: the Query flow's query count (afterDist is already owner-only, see
   // ownerDistribution above) -- the number "Access patterns" is compared

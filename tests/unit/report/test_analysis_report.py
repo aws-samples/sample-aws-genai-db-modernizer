@@ -568,6 +568,82 @@ def test_render_fills_the_header_and_stat_cards(rendered):
     assert 'class="badge" data-engine="dynamodb">DynamoDB</span>' in rendered
 
 
+def test_access_patterns_stat_excludes_the_cache_layers_own_patterns():
+    """#405: the cache layer gets its own schema design (and its own
+    access_patterns) too, but those were never queries it owns. Counting them
+    in the "Access Patterns" stat, the embedded script's pattern-count, and the
+    Explorer's rows would double-count the cache engine as an owner -- the same
+    gap #361 fixed on the Results page (ownerSchemaDesigns/
+    cacheAccessPatternCount in utils/cacheLayer.js). This fixture's only owner
+    schema design (dynamodb) has one access pattern; the cache layer's design
+    has two more that must be called out separately, not folded in.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={"engine": "elasticache", "query_count": 2, "call_share_percent": 50.0}
+    )
+    objects[f"{DB}/{JOB}/schema-elasticache/v1/schema_output.json"] = {
+        "access_patterns": [{"pattern_id": "EC-AP-1"}, {"pattern_id": "EC-AP-2"}],
+    }
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert '<div class="stat-label">Access Patterns</div><div class="stat-value">1</div>' in html
+    assert '<div class="stat-note">+2 cache-layer patterns (not counted above)</div>' in html
+    assert 'id="pattern-count">1</span>' in html
+
+
+def test_access_patterns_cache_note_is_singular_for_one_pattern():
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={"engine": "elasticache", "query_count": 1, "call_share_percent": 50.0}
+    )
+    objects[f"{DB}/{JOB}/schema-elasticache/v1/schema_output.json"] = {
+        "access_patterns": [{"pattern_id": "EC-AP-1"}],
+    }
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert '<div class="stat-note">+1 cache-layer pattern (not counted above)</div>' in html
+
+
+def test_access_patterns_cache_note_absent_without_a_cache_overlay(rendered):
+    """This fixture's synthesis report carries no cache_overlay at all (legacy
+    shape, no cache layer in play), so there is no separate note to show."""
+    assert '<div class="stat-note">' not in rendered
+
+
+def test_legacy_elasticache_design_counts_as_owned_without_a_cache_overlay():
+    """#405: all three surfaces must agree on a legacy report.
+
+    A report produced before the cache overlay existed has no cache_overlay at
+    all, and ElastiCache there is a real owner (same shape as every other
+    engine's schema design) -- this module only strips a design when
+    cache_overlay.engine names it. The Results page and the HTML export
+    (utils/cacheLayer.js's ownerSchemaDesigns/cacheAccessPatternCount) must make
+    the same call: both now take a ``hasOverlay`` guard and are no-ops without
+    one, so a legacy ElastiCache design is owned workload everywhere, not a
+    cache layer stripped out with a spurious "+N cache-layer patterns" note.
+    """
+    objects = _objects()
+    # _report() carries no cache_overlay by default -- legacy shape.
+    objects[f"{DB}/{JOB}/schema-elasticache/v1/schema_output.json"] = {
+        "access_patterns": [
+            {"pattern_id": "EC-AP-1"},
+            {"pattern_id": "EC-AP-2"},
+            {"pattern_id": "EC-AP-3"},
+        ],
+    }
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    # 1 dynamodb (this fixture's only other schema design) + 3 elasticache = 4.
+    assert '<div class="stat-label">Access Patterns</div><div class="stat-value">4</div>' in html
+    assert 'id="pattern-count">4</span>' in html
+    assert '<div class="stat-note">' not in html
+    assert 'class="badge" data-engine="elasticache">' in html
+
+
 def test_render_is_self_identifying(rendered):
     assert "discourse_analysis-report_29d77e81.html" in rendered
     assert '<meta name="x-dbmod-artifact" content="analysis-report">' in rendered

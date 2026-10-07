@@ -52,12 +52,19 @@ export function ownerDistribution(distribution, hasOverlay) {
  * design (#361: the access pattern explorer's unified pattern list -- and the
  * total/engine pie it drives -- must not count ElastiCache's own cached-read
  * patterns as if they were owned workload, the same invariant
- * `ownerDistribution` enforces for a `{ engine: count }` map). A no-op when
- * `designs` has no cache-engine entry, so a legacy run (ElastiCache still a
- * real owner, no cache_overlay) is unaffected.
+ * `ownerDistribution` enforces for a `{ engine: count }` map).
+ *
+ * Only filters when `hasOverlay` is true (#405), mirroring `ownerDistribution`:
+ * a legacy report has no `cache_overlay` at all, so ElastiCache is still a real
+ * owner there and its schema design's access patterns are owned workload, not a
+ * cache layer's. Without this guard, a legacy report would disagree with
+ * src/report/analysis_report.py, which only strips a design when
+ * `cache_overlay.engine` names it.
  */
-export function ownerSchemaDesigns(designs) {
-  return (designs || []).filter((d) => !isCacheEngine(d?.target_type));
+export function ownerSchemaDesigns(designs, hasOverlay) {
+  const list = designs || [];
+  if (!hasOverlay) return list;
+  return list.filter((d) => !isCacheEngine(d?.target_type));
 }
 
 /**
@@ -66,8 +73,15 @@ export function ownerSchemaDesigns(designs) {
  * real design artifacts, but never owned query workload, so callers can
  * surface the count on its own (e.g. "+13 cache-layer patterns") instead of
  * silently dropping it or folding it into an owner-only total.
+ *
+ * Only counts when `hasOverlay` is true (#405): a legacy report with no
+ * `cache_overlay` never carries a separate cache-layer count -- ElastiCache's
+ * design there is owned workload (see `ownerSchemaDesigns` above), already
+ * included in the owner total, so this must return 0 rather than double-count
+ * it as both owned and "+N cache-layer patterns".
  */
-export function cacheAccessPatternCount(designs) {
+export function cacheAccessPatternCount(designs, hasOverlay) {
+  if (!hasOverlay) return 0;
   return (designs || [])
     .filter((d) => isCacheEngine(d?.target_type))
     .reduce((sum, d) => sum + (d?.content?.access_patterns?.length || 0), 0);

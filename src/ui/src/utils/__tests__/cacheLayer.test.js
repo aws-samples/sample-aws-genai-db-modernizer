@@ -72,18 +72,27 @@ describe('ownerSchemaDesigns (#361: the explorer must not count cache patterns a
     { target_type: 'opensearch', content: { access_patterns: [{}] } },
   ];
 
-  test('drops the cache engine design, keeps owner designs in order', () => {
-    expect(ownerSchemaDesigns(designs)).toEqual([designs[0], designs[2]]);
+  test('overlay present: drops the cache engine design, keeps owner designs in order', () => {
+    expect(ownerSchemaDesigns(designs, true)).toEqual([designs[0], designs[2]]);
+  });
+
+  // #405: a legacy report (no cache_overlay at all) has ElastiCache as a real
+  // owner -- its design must stay in, matching src/report/analysis_report.py
+  // (which only strips a design when cache_overlay.engine names it).
+  test('legacy artifact (no overlay): elasticache design passes straight through', () => {
+    expect(ownerSchemaDesigns(designs, false)).toEqual(designs);
   });
 
   test('legacy run with no cache-engine design: passes straight through', () => {
     const ownerOnly = [designs[0], designs[2]];
-    expect(ownerSchemaDesigns(ownerOnly)).toEqual(ownerOnly);
+    expect(ownerSchemaDesigns(ownerOnly, true)).toEqual(ownerOnly);
+    expect(ownerSchemaDesigns(ownerOnly, false)).toEqual(ownerOnly);
   });
 
   test('handles a missing/undefined designs list', () => {
-    expect(ownerSchemaDesigns(undefined)).toEqual([]);
-    expect(ownerSchemaDesigns(null)).toEqual([]);
+    expect(ownerSchemaDesigns(undefined, true)).toEqual([]);
+    expect(ownerSchemaDesigns(null, true)).toEqual([]);
+    expect(ownerSchemaDesigns(undefined, false)).toEqual([]);
   });
 });
 
@@ -94,21 +103,28 @@ describe('cacheAccessPatternCount (#361)', () => {
     { target_type: 'opensearch', content: { access_patterns: [{}] } },
   ];
 
-  test('counts only the cache engine design\'s access patterns', () => {
-    expect(cacheAccessPatternCount(designs)).toBe(3);
+  test('overlay present: counts only the cache engine design\'s access patterns', () => {
+    expect(cacheAccessPatternCount(designs, true)).toBe(3);
+  });
+
+  // #405: no cache_overlay means ElastiCache's design is owned workload (see
+  // ownerSchemaDesigns above), already in the owner total -- there is no
+  // separate cache-layer count to report, so this must be 0, not 3.
+  test('legacy artifact (no overlay): zero, even though a cache-engine design exists', () => {
+    expect(cacheAccessPatternCount(designs, false)).toBe(0);
   });
 
   test('zero when there is no cache-engine design (legacy run)', () => {
-    expect(cacheAccessPatternCount([designs[0], designs[2]])).toBe(0);
+    expect(cacheAccessPatternCount([designs[0], designs[2]], true)).toBe(0);
   });
 
   test('zero when the cache design has no access_patterns', () => {
-    expect(cacheAccessPatternCount([{ target_type: 'elasticache', content: {} }])).toBe(0);
+    expect(cacheAccessPatternCount([{ target_type: 'elasticache', content: {} }], true)).toBe(0);
   });
 
   test('handles a missing/undefined designs list', () => {
-    expect(cacheAccessPatternCount(undefined)).toBe(0);
-    expect(cacheAccessPatternCount(null)).toBe(0);
+    expect(cacheAccessPatternCount(undefined, true)).toBe(0);
+    expect(cacheAccessPatternCount(null, true)).toBe(0);
   });
 });
 

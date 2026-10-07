@@ -575,6 +575,25 @@ def _cache_layer_stat(synthesis: dict) -> str:
     )
 
 
+def _cache_patterns_note(count: int) -> str:
+    """ "+N cache-layer pattern(s)" note under the "Access Patterns" stat (#405).
+
+    Mirrors ``cachePatternsNote`` in ExportReport.js, which mirrors the Results
+    page's ``analysis-results-v2.executive-summary.cache-patterns-note`` caption
+    (``src/ui/src/locales/en.json``). This report is i18n-exempt (standalone,
+    English-only), so the English singular/plural text is inlined directly
+    instead of going through i18next.
+    """
+    if count <= 0:
+        return ""
+    noun = "pattern" if count == 1 else "patterns"
+    return (
+        '<div class="stat-note">+'
+        + escaping.html_text(str(count))
+        + f" cache-layer {noun} (not counted above)</div>"
+    )
+
+
 def _banner_html(export_data: dict) -> str:
     truncated = (export_data.get("queryJourneys") or {}).get("truncated")
     if not truncated:
@@ -675,9 +694,22 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
             for r in cost_rows
             if r.get("database") in kept and _finite_number(r.get("monthly_cost_usd"))
         )
+    # #405: the cache layer gets its own schema design (and its own
+    # access_patterns) too, but those patterns were never queries it owns --
+    # counting them here double-counted the cache engine as if it were an owner
+    # in the "Access Patterns" stat, the same gap #361 fixed on the Results page
+    # (ownerSchemaDesigns/cacheAccessPatternCount in utils/cacheLayer.js).
+    schema_designs = export_data.get("schemaDesigns") or []
+    owner_designs = [
+        d for d in schema_designs if not cache_engine or d.get("target_type") != cache_engine
+    ]
     total_patterns = sum(
+        len((d.get("content") or {}).get("access_patterns") or []) for d in owner_designs
+    )
+    cache_pattern_count = sum(
         len((d.get("content") or {}).get("access_patterns") or [])
-        for d in export_data.get("schemaDesigns") or []
+        for d in schema_designs
+        if cache_engine and d.get("target_type") == cache_engine
     )
 
     meta = {
@@ -739,6 +771,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__ENGINE_BADGES__": _engine_badges(after, cache_overlay),
         "__PROJECTED_COST__": f"{projected:,.2f}",
         "__TOTAL_PATTERNS__": str(total_patterns),
+        "__CACHE_PATTERNS_NOTE__": _cache_patterns_note(cache_pattern_count),
         "__CACHE_LAYER_STAT__": _cache_layer_stat(synthesis),
     }
 

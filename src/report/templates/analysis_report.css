@@ -50,6 +50,7 @@
   .item-card { margin: 12px 0; }
   .stat-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
   .stat-value { font-size: 24px; font-weight: 700; }
+  .stat-note { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; font-weight: 400; }
   .badge { display: inline-block; padding: 3px 10px; border-radius: var(--radius-container); font-size: 12px; font-weight: 600; margin-right: 4px; background: var(--color-badge-neutral); color: var(--color-text); }
   .badge-blue { background: var(--indigo-600); color: white; }
   .badge-green { background: var(--indigo-700); color: white; }

@@ -49,7 +49,9 @@
 
     function extractPatterns() {
       const patterns = [];
+      const hasCacheOverlay = !!(DATA.results && DATA.results.synthesis && DATA.results.synthesis.cache_overlay);
       DATA.schemaDesigns.forEach(design => {
+        if (hasCacheOverlay && design.target_type === 'elasticache') return;
         const engine = design.target_type;
         const content = design.content || {};
         (content.access_patterns || []).forEach(ap => {
