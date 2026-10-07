@@ -58,6 +58,7 @@ For each classified pattern:
 Translate each source SQL query to Redis commands:
 
 - Simple lookups → `GET`, `HGET`, `HGETALL`
+- Hash field existence-only checks → `HEXISTS key field` (returns 0 or 1 without fetching the value)
 - Range queries → `ZRANGEBYSCORE`, `XRANGE`, `LRANGE`
 - Aggregations → `PFCOUNT`, `BITCOUNT`, `ZCARD`
 - Writes → `SET`, `HSET`, `ZADD`, `XADD`

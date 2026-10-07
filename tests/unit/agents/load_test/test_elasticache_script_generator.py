@@ -17,6 +17,7 @@ Verifies:
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -76,6 +77,15 @@ def _make_seed_manifest(resources: dict[str, Any] | None = None) -> SeedManifest
 # =============================================================================
 # generate_scenario — structure
 # =============================================================================
+
+
+def test_hexists_is_a_read_with_a_field_argument(generator, seed_info) -> None:
+    with patch.object(
+        generator, "_generate_command_js", wraps=generator._generate_command_js
+    ) as cmd:
+        script = generator.generate_scenario(_make_pattern(operation="HEXISTS"), {}, seed_info)
+    cmd.assert_called_once_with("HEXISTS", "read")
+    assert 'client.sendCommand("HEXISTS", key, "field1")' in script
 
 
 class TestGenerateScenarioStructure:

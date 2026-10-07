@@ -42,6 +42,7 @@ REDIS_OPERATION = Literal[
     "DECR",
     # Hash
     "HGET",
+    "HEXISTS",
     "HSET",
     "HMGET",
     "HMSET",

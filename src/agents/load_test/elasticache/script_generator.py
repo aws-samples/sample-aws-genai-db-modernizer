@@ -150,6 +150,7 @@ export function handleSummary(data) {{
             "GET",
             "MGET",
             "HGET",
+            "HEXISTS",
             "HMGET",
             "HGETALL",
             "LRANGE",
@@ -216,6 +217,8 @@ export async function {safe_id}() {{
                 return 'client.set(key, "value_" + keyId);'
             case "HGET":
                 return 'client.hget(key, "field1");'
+            case "HEXISTS":
+                return 'client.sendCommand("HEXISTS", key, "field1");'
             case "HSET":
                 return 'client.hset(key, "field1", "value_" + keyId);'
             case "HGETALL":
