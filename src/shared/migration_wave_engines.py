@@ -10,19 +10,17 @@ that the copies stayed in sync (#225). Importing
 from here instead means a new engine added to the rule only has to be added
 once.
 
-These are deliberately the narrow sets the wave rule itself cares about, not
-the broader membership ``src.report.renderers._CACHE_ENGINES`` /
-``_RELATIONAL_ENGINES`` use for whole-report role classification (which also
-recognize ``memorydb`` and generic ``aurora``): the wave rule only ever
-sequences the six engines synthesis can target.
+The cache bucket shares the assessment cache-overlay policy. The relational
+bucket is narrower than whole-report role classification (which also recognizes
+generic ``aurora``): the wave rule sequences the six engines synthesis can target.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-# Engines that can only ever be a cache layer, never a system of record (#296).
-CACHE_ENGINES: frozenset[str] = frozenset({"elasticache"})
+from src.shared.cache_policy import CACHE_ENGINES as CACHE_ENGINES
+
 # Key-value / point-lookup engine, Wave 2.
 KV_ENGINES: frozenset[str] = frozenset({"dynamodb"})
 # Read-model engines: they index data synced from an owner, never own it (#303).

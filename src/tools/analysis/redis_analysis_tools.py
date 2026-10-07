@@ -14,6 +14,7 @@ from src.contracts.analysis_output import (
     TableRecommendation,
     WorkloadAnalysis,
 )
+from src.shared.cache_policy import HOT_READ_MIN_CALLS_PER_SECOND
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
@@ -71,7 +72,10 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         text_lower = q.get("query_text", "").lower()
 
         # Caching: high-frequency SELECTs
-        if q.get("query_type") == "SELECT" and q.get("calls_per_second", 0) > 1:
+        if (
+            q.get("query_type") == "SELECT"
+            and q.get("calls_per_second", 0) >= HOT_READ_MIN_CALLS_PER_SECOND
+        ):
             caching_queries.append(q)
 
         # Session store: session or user_id references
@@ -290,7 +294,7 @@ def _apply_redis_adjustments(scores: ScoreBreakdown, profile: TableProfile) -> S
         performance += 10
 
     # Small + hot tables are ideal for Redis
-    if profile.size_mb <= 100 and profile.total_calls_per_second >= 1:
+    if profile.size_mb <= 100 and profile.total_calls_per_second >= HOT_READ_MIN_CALLS_PER_SECOND:
         cost += 10
 
     # Large datasets are expensive in Redis

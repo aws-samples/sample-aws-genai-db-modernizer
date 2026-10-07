@@ -22,6 +22,7 @@
  * shape is in play.
  */
 
+// Mirrors src/shared/cache_policy.py; tests/unit/shared/test_cache_policy.py checks it.
 export const CACHE_ENGINES = new Set(['elasticache']);
 
 export const isCacheEngine = (engine) => CACHE_ENGINES.has(engine);

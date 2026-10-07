@@ -30,16 +30,12 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 
-# Engines that can only be a cache layer: they never own a query.
-CACHE_OVERLAY_ENGINES = frozenset({"elasticache"})
+from src.shared.cache_policy import CACHE_ENGINES as CACHE_OVERLAY_ENGINES
+from src.shared.cache_policy import HOT_READ_MIN_CALLS_PER_SECOND as HOT_READ_MIN_CALLS_PER_SECOND
 
 # Engines that are not a system of record for a table, so they never own a write.
 # OpenSearch's write gate is tracked in #303.
-NON_SYSTEM_OF_RECORD_ENGINES = frozenset({"elasticache"})
-
-# Hot-read floor (calls/s). Starting value from #296; tune with data. On the two
-# reference samples every overlay candidate is either >= 1.26 calls/s or <= 0.95.
-HOT_READ_MIN_CALLS_PER_SECOND = 1.0
+NON_SYSTEM_OF_RECORD_ENGINES = CACHE_OVERLAY_ENGINES
 
 # Largest average result size (rows) a cached query may return.
 CACHE_MAX_ROWS_AVG = 100.0

@@ -10,6 +10,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from src.shared.cache_policy import CACHE_ENGINES as _CACHE_ENGINES
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine, display_source_database
 from src.shared.migration_wave_engines import CACHE_ENGINES as _WAVE_CACHE_ENGINES
 from src.shared.migration_wave_engines import DOCUMENT_ENGINES as _WAVE_DOCUMENT_ENGINES
@@ -388,7 +389,6 @@ def fallback_withheld_reason(report: dict[str, Any]) -> str:
     return ", ".join(reasons[:-1]) + " and " + reasons[-1]
 
 
-_CACHE_ENGINES = {"elasticache", "memorydb"}
 # Search engines are read models (#303): their data is synced from the engine
 # that owns each table, so they never hold system-of-record data, never need a
 # "data migration", and come after their owners in the wave plan.
@@ -1252,8 +1252,8 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
 
 # The wave-specific engine buckets come from src/shared/migration_wave_engines.py
 # (#225), the same ones src.agents.referee.migration_waves
-# uses -- not the broader _CACHE_ENGINES/_RELATIONAL_ENGINES above (which also
-# recognize memorydb and generic aurora for whole-report role classification):
+# uses. The cache bucket also drives whole-report roles; the relational bucket
+# is narrower than _RELATIONAL_ENGINES above (which recognizes generic aurora):
 # src/report never imports src/agents (clean layering), so both modules import
 # the shared bucket set instead of each hand-mirroring the other's copy.
 
