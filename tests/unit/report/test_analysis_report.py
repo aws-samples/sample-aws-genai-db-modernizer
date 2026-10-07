@@ -566,6 +566,65 @@ def test_render_fills_the_header_and_stat_cards(rendered):
     # only in the CSS, so this side never names a colour.
     assert 'class="badge" data-engine="elasticache">ElastiCache</span>' in rendered
     assert 'class="badge" data-engine="dynamodb">DynamoDB</span>' in rendered
+    # #334: this fixture's tco_analysis has neither current_cost_known nor
+    # current_monthly_cost at all -- unknown, not "$0.00/mo"/"0%".
+    assert (
+        '<div class="stat-label">Current Monthly Cost</div><div class="stat-value">source cost not provided</div>'
+        in rendered
+    )
+    assert (
+        '<div class="stat-label">Savings</div><div class="stat-value">not available</div>'
+        in rendered
+    )
+
+
+def test_cost_baseline_stat_shows_the_real_figures_when_known():
+    """#334: a report with a real current-cost baseline shows it, not "unknown"."""
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        tco_analysis={
+            "current_cost_known": True,
+            "current_monthly_cost": 500.0,
+            "projected_monthly_cost": 280.0,
+            "savings_percent": 44,
+            "cost_breakdown": [],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    html = ar.render_analysis_report_html(data)
+    assert (
+        '<div class="stat-label">Current Monthly Cost</div><div class="stat-value">$500.00/mo</div>'
+        in html
+    )
+    assert '<div class="stat-label">Savings</div><div class="stat-value">44%</div>' in html
+
+
+def test_cost_baseline_stat_treats_an_older_zero_cost_report_as_unknown():
+    """#334: an older report (no current_cost_known field) whose current_monthly_cost
+    is a literal 0 is overwhelmingly the "no RDS instance metadata" placeholder, not
+    a genuine zero-cost database -- so this tile must not read "$0.00/mo"/"0%"
+    (the real wordpress sample evidence shape). This is the same rule
+    renderers._cost_baseline_text applies for the decision/engineering reports
+    (test_cost_baseline_rendering.py) -- _interactive_cost_baseline_stats
+    delegates to it, so this tile can never disagree with them."""
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        tco_analysis={
+            "current_monthly_cost": 0.0,
+            "projected_monthly_cost": 823.72,
+            "savings_percent": 0.0,
+            "cost_breakdown": [],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    html = ar.render_analysis_report_html(data)
+    assert (
+        '<div class="stat-label">Current Monthly Cost</div><div class="stat-value">source cost not provided</div>'
+        in html
+    )
+    assert (
+        '<div class="stat-label">Savings</div><div class="stat-value">not available</div>' in html
+    )
 
 
 def test_access_patterns_stat_excludes_the_cache_layers_own_patterns():

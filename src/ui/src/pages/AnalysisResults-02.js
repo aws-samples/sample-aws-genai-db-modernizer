@@ -41,6 +41,7 @@ import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode } from "../utils/cacheLayer";
 import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
+import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
@@ -278,6 +279,22 @@ const AnalysisResultsPage = memo(() => {
     [riskAssessment]
   );
   const risksBySeverity = useMemo(() => groupRisksBySeverity(openRisks), [openRisks]);
+
+  // #334: a report with no current-cost baseline (the collector never reported
+  // RDS instance metadata) left current_monthly_cost/savings_percent at 0, and
+  // this page showed neither at all -- so a reader comparing to the decision
+  // report (which, since #380, says "source cost not provided"/"not available"
+  // for the same report) saw nothing here, and would see a bare "$0.00"/"0%"
+  // if this were added without the same unknown-baseline handling. known is
+  // false both for an explicit current_cost_known: false and for an older
+  // report with no current_cost_known field at all whose current_monthly_cost
+  // is still 0 -- the same rule renderers._cost_baseline_text uses, so this
+  // tile can never disagree with the decision/engineering reports (see
+  // utils/tcoAnalysis.js).
+  const costBaseline = useMemo(
+    () => costBaselineStats(synthesis?.tco_analysis),
+    [synthesis]
+  );
 
   // Build Sankey from after_distribution
   const sankeyData = useMemo(() => {
@@ -1671,6 +1688,18 @@ const AnalysisResultsPage = memo(() => {
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.projected-cost')}</Box>
                     <Box fontSize="heading-m" fontWeight="bold">
                       {projectedCost > 0 ? `$${projectedCost.toFixed(2)}/mo` : '—'}
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.current-cost')}</Box>
+                    <Box fontSize="heading-m" fontWeight="bold">
+                      {costBaseline.known ? costBaseline.currentCostStat : t('analysis-results-v2.executive-summary.cost-baseline-unknown')}
+                    </Box>
+                  </Box>
+                  <Box>
+                    <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.savings')}</Box>
+                    <Box fontSize="heading-m" fontWeight="bold">
+                      {costBaseline.known ? costBaseline.savingsStat : t('analysis-results-v2.executive-summary.savings-unknown')}
                     </Box>
                   </Box>
                   <Box>

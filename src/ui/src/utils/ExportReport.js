@@ -24,6 +24,7 @@ import {
   getCacheOverlay, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown,
   ownerSchemaDesigns, cacheAccessPatternCount,
 } from './cacheLayer';
+import { costBaselineStats } from './tcoAnalysis';
 
 // #358: this file is English-only (i18n-exempt, see header), so this is the
 // one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
@@ -1173,6 +1174,19 @@ export const generateHTMLReport = (data) => {
     results?.synthesis?.tco_analysis, afterDist, cacheOverlay
   );
   const projectedCost = escapeHtml(finite(projectedCostValue).toFixed(2));
+  // #334: a report with no current-cost baseline left current_monthly_cost/
+  // savings_percent at a bare 0 -- indistinguishable from a real zero-savings
+  // outcome. Mirrors utils/tcoAnalysis.js's costBaselineStats (also used by
+  // AnalysisResults-02.js), which matches the decision/engineering reports'
+  // renderers._cost_baseline_text exactly (#334 review), including for an
+  // older report with no current_cost_known field at all whose
+  // current_monthly_cost is still a literal 0 (see tcoAnalysis.js for why).
+  // This file is i18n-exempt (English-only, see header), so the "unknown"
+  // wording is a fixed literal here, matching the decision report's own
+  // wording.
+  const costBaseline = costBaselineStats(results?.synthesis?.tco_analysis);
+  const currentCostStat = escapeHtml(costBaseline.known ? costBaseline.currentCostStat : 'source cost not provided');
+  const savingsStat = escapeHtml(costBaseline.known ? costBaseline.savingsStat : 'not available');
   // #405: the cache layer gets its own schema design (and its own
   // access_patterns) too, but those patterns were never queries it owns --
   // counting them here double-counted ElastiCache as if it were an owner engine
@@ -1246,6 +1260,8 @@ export const generateHTMLReport = (data) => {
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${safeDatabaseNameStat}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
         <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$${projectedCost}/mo</div></div>
+        <div class="stat-card"><div class="stat-label">Current Monthly Cost</div><div class="stat-value">${currentCostStat}</div></div>
+        <div class="stat-card"><div class="stat-label">Savings</div><div class="stat-value">${savingsStat}</div></div>
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div>${cachePatternsNote}</div>
         ${cacheLayerStat}
       </div>

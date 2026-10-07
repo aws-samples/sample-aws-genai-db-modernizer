@@ -371,8 +371,11 @@ describe('generateHTMLReport (interactive export)', () => {
     expect(doc.querySelectorAll('img')).toHaveLength(0);
     const stats = [...doc.querySelectorAll('.stat-card')].map(c => c.querySelector('.stat-value').textContent);
     expect(stats[2]).toBe('$3.75/mo');
+    // #334: no current_cost_known field and no current_monthly_cost -- unknown.
+    expect(stats[3]).toBe('source cost not provided');
+    expect(stats[4]).toBe('not available');
     // 3 real designs x 6 patterns; the fake {length} object counts as none.
-    expect(stats[3]).toBe('18');
+    expect(stats[5]).toBe('18');
     expect(doc.getElementById('pattern-count').textContent).toBe('18');
   });
 

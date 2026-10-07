@@ -39,7 +39,7 @@ from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.parallel import map_parallel
 
 from . import escaping
-from .renderers import resolve_migration_waves
+from .renderers import _cost_baseline_text, resolve_migration_waves
 
 logger = logging.getLogger(__name__)
 
@@ -663,6 +663,26 @@ def _chart_js_tag() -> str:
     )
 
 
+def _interactive_cost_baseline_stats(tco: dict[str, Any]) -> tuple[str, str]:
+    """(current cost, savings) stat text for the interactive report's Executive
+    Summary tiles (#334).
+
+    Delegates to ``renderers._cost_baseline_text`` -- the same function the
+    decision/engineering reports call -- so this tile can never disagree with
+    them on the same report (#334 review: a report with no ``current_cost_known``
+    field and a literal ``0`` ``current_monthly_cost`` must read "source cost
+    not provided"/"not available" everywhere, not just here). Only adds the
+    "/mo" suffix this view's other dollar stats (e.g. "Projected Cost") use.
+    Mirrors ``src/ui/src/utils/tcoAnalysis.js``'s ``costBaselineStats`` exactly,
+    since this Python path renders the same report the browser export does
+    (``scripts/sync_report_template.py``).
+    """
+    cost_text, savings_text = _cost_baseline_text(tco)
+    if cost_text.startswith("$"):
+        cost_text = f"{cost_text}/mo"
+    return cost_text, savings_text
+
+
 def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
     """Render the interactive analysis report from an assembled ``DATA`` object."""
     synthesis = (export_data.get("results") or {}).get("synthesis") or {}
@@ -675,6 +695,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
     cost_rows = tco.get("cost_breakdown") or []
     cache_overlay = synthesis.get("cache_overlay") or {}
     cache_engine = cache_overlay.get("engine")
+    current_cost_stat, savings_stat = _interactive_cost_baseline_stats(tco)
 
     def _finite_number(value: Any) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
@@ -770,6 +791,8 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__SUMMARY__": escaping.html_text(synthesis.get("summary") or "No summary available."),
         "__ENGINE_BADGES__": _engine_badges(after, cache_overlay),
         "__PROJECTED_COST__": f"{projected:,.2f}",
+        "__CURRENT_COST_STAT__": escaping.html_text(current_cost_stat),
+        "__SAVINGS_STAT__": escaping.html_text(savings_stat),
         "__TOTAL_PATTERNS__": str(total_patterns),
         "__CACHE_PATTERNS_NOTE__": _cache_patterns_note(cache_pattern_count),
         "__CACHE_LAYER_STAT__": _cache_layer_stat(synthesis),

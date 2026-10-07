@@ -49,6 +49,8 @@ __BANNER__
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">__DATABASE_NAME__</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">__ENGINE_BADGES__</div></div>
         <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$__PROJECTED_COST__/mo</div></div>
+        <div class="stat-card"><div class="stat-label">Current Monthly Cost</div><div class="stat-value">__CURRENT_COST_STAT__</div></div>
+        <div class="stat-card"><div class="stat-label">Savings</div><div class="stat-value">__SAVINGS_STAT__</div></div>
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">__TOTAL_PATTERNS__</div>__CACHE_PATTERNS_NOTE__</div>
         __CACHE_LAYER_STAT__
       </div>

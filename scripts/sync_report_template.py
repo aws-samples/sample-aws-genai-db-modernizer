@@ -60,6 +60,8 @@ SHELL_SUBSTITUTIONS: list[tuple[str, str]] = [
     ("${safeSummary}", "__SUMMARY__"),
     ("${engineBadges}", "__ENGINE_BADGES__"),
     ("${projectedCost}", "__PROJECTED_COST__"),
+    ("${currentCostStat}", "__CURRENT_COST_STAT__"),
+    ("${savingsStat}", "__SAVINGS_STAT__"),
     ("${totalPatterns}", "__TOTAL_PATTERNS__"),
     ("${cachePatternsNote}", "__CACHE_PATTERNS_NOTE__"),
     ("${cacheLayerStat}", "__CACHE_LAYER_STAT__"),

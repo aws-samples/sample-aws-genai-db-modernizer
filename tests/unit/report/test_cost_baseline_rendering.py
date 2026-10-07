@@ -56,10 +56,10 @@ class TestDecisionReportCostBaseline:
         assert "75.8%" in html
         assert "source cost not provided" not in html
 
-    def test_missing_current_cost_known_defaults_to_the_old_behaviour(self) -> None:
-        """A report written before current_cost_known existed still shows its
-        number -- the field defaults to known, same as the contract's own
-        default, so nothing changes for an old report."""
+    def test_missing_current_cost_known_with_a_real_cost_shows_the_number(self) -> None:
+        """A report written before current_cost_known existed, with a real
+        nonzero current_monthly_cost, still shows its number -- that cost can't
+        be the "no instance metadata" placeholder."""
         tco = {
             "current_monthly_cost": 500.0,
             "projected_monthly_cost": 121.06,
@@ -68,6 +68,26 @@ class TestDecisionReportCostBaseline:
         }
         html = render_decision_report_html(_report(tco))
         assert "$500.00" in html
+
+    def test_missing_current_cost_known_with_a_zero_cost_is_unknown(self) -> None:
+        """#334: a report written before current_cost_known existed (no field
+        at all) whose current_monthly_cost is a literal 0 -- the real wordpress
+        sample evidence shape -- must say the baseline is unknown, not "$0.00"/
+        "0%": that 0 is overwhelmingly the "no RDS instance metadata"
+        placeholder a missing current_cost_known can't distinguish from a real
+        zero-cost database, so this must be treated the same as an explicit
+        current_cost_known: False."""
+        tco = {
+            "current_monthly_cost": 0.0,
+            "projected_monthly_cost": 823.72,
+            "savings_percent": 0.0,
+            "cost_breakdown": [],
+        }
+        html = render_decision_report_html(_report(tco))
+        assert "<p>Current monthly</p><h3>source cost not provided</h3>" in html
+        assert "<p>Savings</p><h3>not available</h3>" in html
+        assert "<p>Current monthly</p><h3>$0.00</h3>" not in html
+        assert "<p>Savings</p><h3>0%</h3>" not in html
 
     def test_eliminated_engine_costs_are_traceable(self) -> None:
         tco = {

@@ -137,18 +137,32 @@ def _fmt_usd(x: Any) -> str:
 # cost baseline or a savings figure must call this, so none of them can show the
 # bare number ``build_tco_analysis`` left in place for a reader who only looks
 # at the raw field.
+#
+# #334 review: a report written before ``current_cost_known`` existed has no
+# way to say "unknown" explicitly, and a literal ``0`` there is overwhelmingly
+# that same "no instance metadata" placeholder, not a genuine zero-cost
+# database -- so a missing/``None`` ``current_cost_known`` combined with a
+# falsy ``current_monthly_cost`` is unknown too, not just an explicit
+# ``current_cost_known: False``. This is the one rule every deliverable
+# (decision/engineering reports here, the interactive report's
+# ``analysis_report._interactive_cost_baseline_stats`` and the React UI's
+# ``tcoAnalysis.js``) must share, so they can't disagree on the same report.
 def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     """(current monthly cost, savings) display text for ``tco``.
 
-    ``("source cost not provided", "not available")`` when
-    ``current_cost_known`` is ``False`` (missing for a report written before
-    this field existed, defaulting to known -- same as the contract's own
-    default, so an old report keeps showing its number).
+    ``("source cost not provided", "not available")`` when the baseline is
+    unknown: ``current_cost_known`` is ``False``, or it is missing/``None``
+    and ``current_monthly_cost`` is falsy (covers a report written before
+    ``current_cost_known`` existed whose ``current_monthly_cost`` is still a
+    literal ``0`` placeholder). A report with no ``current_cost_known`` field
+    but a real nonzero ``current_monthly_cost`` keeps showing its number.
     """
-    if tco.get("current_cost_known", True) is False:
+    known = tco.get("current_cost_known")
+    current = tco.get("current_monthly_cost")
+    if known is False or (known is None and not current):
         return "source cost not provided", "not available"
     return (
-        _fmt_usd(tco.get("current_monthly_cost")),
+        _fmt_usd(current),
         f"{fmt_num(tco.get('savings_percent', 0), 1)}%",
     )
 
