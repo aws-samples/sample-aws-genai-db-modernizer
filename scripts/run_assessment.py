@@ -647,8 +647,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--artifact-root",
-        default="./artifacts",
-        help="Root directory for local artifacts (default: ./artifacts)",
+        default=os.environ.get("ARTIFACT_DIR", "./artifacts"),
+        help="Root directory for local artifacts (default: $ARTIFACT_DIR or ./artifacts)",
     )
     parser.add_argument(
         "--verbose",

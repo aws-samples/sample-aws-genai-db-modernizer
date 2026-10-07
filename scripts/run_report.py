@@ -75,7 +75,11 @@ def main() -> None:
         default=None,
         help="Synthesis version to render (default: the highest present)",
     )
-    parser.add_argument("--artifact-root", default="./artifacts")
+    parser.add_argument(
+        "--artifact-root",
+        default=os.environ.get("ARTIFACT_DIR", "./artifacts"),
+        help="Root directory for local artifacts (default: $ARTIFACT_DIR or ./artifacts)",
+    )
     args = parser.parse_args()
 
     from scripts._sandbox import sandbox_violation
