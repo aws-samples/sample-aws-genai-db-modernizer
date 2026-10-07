@@ -153,17 +153,121 @@ def parse_offline_collection(data: dict) -> dict:
     }
 
 
+def _merge_query_variants(raw: list[dict]) -> list[dict]:
+    """Merge rows that share a ``digest`` into one row per query shape.
+
+    This is the safety net for every offline collection format (#386): SQL Server's
+    ``sys.dm_exec_query_stats`` keeps one row per cached *statement*, so a
+    non-parameterized query gets one row per literal value, all sharing the
+    same ``query_hash``/``digest``. The collection scripts should already
+    aggregate by digest, but offline collections may predate that fix (or
+    come from an engine that doesn't group), so we merge here defensively
+    before building the patterns list. It only merges rows that already
+    share a digest: Oracle's ``SQL_ID`` differs per literal, so Oracle
+    literal variants are not merged here (tracked separately).
+
+    Summable counters (execution_count, rows sent/examined/affected, total
+    time, lock time, scan/index counters, errors/warnings) are summed across
+    variants; min/max fields take the min/max across variants; averages are
+    recomputed from the merged totals; ``first_seen``/``last_seen`` take the
+    min/max across variants; one representative ``query_text`` is kept (the
+    variant with the highest ``total_time_ms``). Pattern order is
+    deterministic: one row per digest, in order of first appearance.
+    """
+    import hashlib
+
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for r in raw:
+        query_text = str(r.get("query_text") or "")
+        key = str(r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16])
+        if key not in groups:
+            order.append(key)
+            groups[key] = []
+        groups[key].append(r)
+
+    merged_variant_count = sum(len(variants) - 1 for variants in groups.values())
+    if merged_variant_count:
+        logger.info(
+            "offline_parser: merged %d literal-variant row(s) sharing a digest "
+            "into %d query shape(s)",
+            merged_variant_count,
+            len(groups),
+        )
+
+    int_sum_fields = (
+        "execution_count",
+        "total_rows_sent",
+        "total_rows_examined",
+        "total_rows_affected",
+        "full_table_scans",
+        "range_scans",
+        "no_index_used",
+        "no_good_index_used",
+        "sum_errors",
+        "sum_warnings",
+    )
+    float_sum_fields = ("total_time_ms", "lock_time_ms")
+
+    merged_rows = []
+    for key in order:
+        variants = groups[key]
+        if len(variants) == 1:
+            row = dict(variants[0])
+            row["digest"] = key
+            merged_rows.append(row)
+            continue
+
+        # Representative text/sample comes from the costliest variant.
+        representative = max(variants, key=lambda v: float(v.get("total_time_ms") or 0))
+        merged = dict(representative)
+        merged["digest"] = key
+
+        for field in int_sum_fields:
+            if any(field in v for v in variants):
+                merged[field] = int(sum(float(v.get(field) or 0) for v in variants))
+        for field in float_sum_fields:
+            if any(field in v for v in variants):
+                merged[field] = sum(float(v.get(field) or 0) for v in variants)
+
+        min_times = [float(v["min_time_ms"]) for v in variants if v.get("min_time_ms") is not None]
+        max_times = [float(v["max_time_ms"]) for v in variants if v.get("max_time_ms") is not None]
+        if min_times:
+            merged["min_time_ms"] = min(min_times)
+        if max_times:
+            merged["max_time_ms"] = max(max_times)
+
+        exec_count = merged.get("execution_count") or 1
+        merged["avg_time_ms"] = float(merged.get("total_time_ms") or 0) / exec_count
+
+        first_seens = [v["first_seen"] for v in variants if v.get("first_seen")]
+        last_seens = [v["last_seen"] for v in variants if v.get("last_seen")]
+        if first_seens:
+            merged["first_seen"] = min(first_seens)
+        if last_seens:
+            merged["last_seen"] = max(last_seens)
+
+        merged_rows.append(merged)
+
+    return merged_rows
+
+
 def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str]) -> list[dict]:
     """Transform raw MySQL performance_schema rows into the format _build_queries expects.
 
     Maps field names from the SQL collection script output to the same
     keys that MySQLRemoteCollector.collect_query_patterns() produces.
+
+    Rows that share a ``digest`` are merged first (see
+    ``_merge_query_variants``), as a safety net against collections where
+    one query shape produced multiple rows (e.g. SQL Server literal
+    variants, #386).
     """
     import hashlib
     import re
 
     patterns = []
-    for r in raw:
+    for r in _merge_query_variants(raw):
         query_text = str(r.get("query_text") or "")
         exec_count = r.get("execution_count") or 1
         total_rows_sent = r.get("total_rows_sent") or 0

@@ -374,6 +374,51 @@ class TestQueryPatterns:
         # 16 hex chars from sha256
         assert len(p["query_id"]) == 16
 
+    def test_collect_query_patterns_groups_by_query_hash(
+        self, collector: SQLServerRemoteCollector, mock_ssm: MagicMock
+    ) -> None:
+        # Regression for #386: sys.dm_exec_query_stats keeps one row per
+        # cached statement, so a non-parameterized query gets a row per
+        # literal value, all sharing query_hash. The SQL must group by
+        # query_hash and sum/min/max the per-variant counters, so the cap
+        # (TOP/execution_count) applies to shapes rather than literal rows.
+        mock_ssm.run_sql_json.return_value = []
+        collector.collect_query_patterns()
+        sent_sql = mock_ssm.run_sql_json.call_args.kwargs["sql"]
+        assert "GROUP BY v.query_hash" in sent_sql
+        assert "SUM(v.execution_count) AS execution_count" in sent_sql
+        assert "SUM(v.total_elapsed_time) AS total_elapsed_time" in sent_sql
+        assert "MIN(v.min_elapsed_time) AS min_elapsed_time" in sent_sql
+        assert "MAX(v.max_elapsed_time) AS max_elapsed_time" in sent_sql
+        assert "MIN(v.creation_time) AS creation_time" in sent_sql
+        assert "MAX(v.last_execution_time) AS last_execution_time" in sent_sql
+        # The execution_count threshold and TOP cap apply to the grouped
+        # result (alias `g`), not to the raw per-variant rows.
+        assert "WHERE g.execution_count >= 10" in sent_sql
+
+    def test_collect_query_patterns_merges_literal_variants(
+        self, collector: SQLServerRemoteCollector, mock_ssm: MagicMock
+    ) -> None:
+        # The SQL groups server-side, so the mock simulates the *result* of
+        # that grouping: a single row whose counters already sum what would
+        # have been 3 literal-variant rows sharing one query_hash.
+        mock_ssm.run_sql_json.return_value = [
+            self._row(
+                execution_count=300,  # 100 executions x 3 literal variants
+                total_elapsed_time=6_000_000,  # 2_000_000 x 3
+                total_worker_time=3_000_000,
+                total_rows=600,
+                total_logical_reads=15_000,
+                total_physical_reads=30,
+            )
+        ]
+        patterns = collector.collect_query_patterns()
+        assert len(patterns) == 1
+        p = patterns[0]
+        assert p["execution_count"] == 300
+        # avg recomputed from the merged totals: 6_000_000us/1000/300 = 20ms
+        assert p["execution_time_ms_avg"] == pytest.approx(20.0)
+
 
 # ---------------------------------------------------------------------
 # Global stats

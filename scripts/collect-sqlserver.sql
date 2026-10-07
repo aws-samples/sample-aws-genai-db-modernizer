@@ -51,29 +51,32 @@ DECLARE @ExcludeSystemSchemas NVARCHAR(200) =
 -- BEFORE the schema-collection queries (sys.tables, sys.columns, etc.) pollute
 -- the plan cache. On SQL Server Express the cache is small and aggressive
 -- eviction can drop user workload entries within seconds of being inserted.
+--
+-- sys.dm_exec_query_stats keeps one row per cached *statement*, so a
+-- non-parameterized query gets a new row per literal value, all sharing the
+-- same query_hash. We group by qs.query_hash below so one row == one query
+-- shape (matching the queryid/DIGEST grouping already done for PostgreSQL
+-- and MySQL), SUM the counters across variants, take MIN(creation_time) /
+-- MAX(last_execution_time) across variants, and keep the query text from the
+-- variant with the highest total_elapsed_time as the representative sample.
+-- TOP and the execution_count >= 10 floor apply AFTER grouping, so the cap
+-- limits query shapes rather than literal-variant rows.
 SET @queries = (
     SELECT TOP 1000
-        CONVERT(VARCHAR(40), qs.query_hash, 1) AS digest,
-        REPLACE(REPLACE(REPLACE(
-            SUBSTRING(st.text,
-                (qs.statement_start_offset / 2) + 1,
-                ((CASE qs.statement_end_offset
-                    WHEN -1 THEN DATALENGTH(st.text)
-                    ELSE qs.statement_end_offset
-                    END - qs.statement_start_offset) / 2) + 1),
-            CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
-        qs.execution_count,
-        ROUND(qs.total_elapsed_time / 1000.0, 3) AS total_time_ms,
-        ROUND(qs.total_elapsed_time / 1000.0 / qs.execution_count, 3) AS avg_time_ms,
-        ROUND(qs.min_elapsed_time / 1000.0, 3) AS min_time_ms,
-        ROUND(qs.max_elapsed_time / 1000.0, 3) AS max_time_ms,
-        qs.total_rows AS total_rows_sent,
-        qs.total_logical_reads AS total_rows_examined,
-        qs.total_rows AS total_rows_affected,
-        ROUND(qs.total_worker_time / 1000.0, 3) AS total_cpu_ms,
-        ROUND(qs.total_worker_time / 1000.0 / qs.execution_count, 3) AS avg_cpu_time_ms,
-        ROUND(qs.total_logical_reads * 1.0 / qs.execution_count, 3) AS avg_logical_reads,
-        ROUND(qs.total_physical_reads * 1.0 / qs.execution_count, 3) AS avg_physical_reads,
+        CONVERT(VARCHAR(40), g.query_hash, 1) AS digest,
+        g.query_text,
+        g.execution_count,
+        ROUND(g.total_elapsed_time / 1000.0, 3) AS total_time_ms,
+        ROUND(g.total_elapsed_time / 1000.0 / g.execution_count, 3) AS avg_time_ms,
+        ROUND(g.min_elapsed_time / 1000.0, 3) AS min_time_ms,
+        ROUND(g.max_elapsed_time / 1000.0, 3) AS max_time_ms,
+        g.total_rows AS total_rows_sent,
+        g.total_logical_reads AS total_rows_examined,
+        g.total_rows AS total_rows_affected,
+        ROUND(g.total_worker_time / 1000.0, 3) AS total_cpu_ms,
+        ROUND(g.total_worker_time / 1000.0 / g.execution_count, 3) AS avg_cpu_time_ms,
+        ROUND(g.total_logical_reads * 1.0 / g.execution_count, 3) AS avg_logical_reads,
+        ROUND(g.total_physical_reads * 1.0 / g.execution_count, 3) AS avg_physical_reads,
         -- NOTE: Style 121 is ODBC canonical ('YYYY-MM-DD HH:MM:SS.mmm', 23 chars).
         -- Observed on SQL Server 2019 Express (customer job 4372c723, Jul 04 2026):
         -- FOR JSON PATH occasionally emits these values with the space between
@@ -83,31 +86,78 @@ SET @queries = (
         -- (src/agents/collector/mysql_collector.py::_normalize_datetime_str)
         -- detects and repairs this shape defensively. Style 121 kept as-is
         -- for backward compatibility with existing customer JSONs.
-        CONVERT(VARCHAR(30), qs.creation_time, 121) AS first_seen,
-        CONVERT(VARCHAR(30), qs.last_execution_time, 121) AS last_seen
-    FROM sys.dm_exec_query_stats qs
-    CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
-    WHERE qs.execution_count >= 10
-      AND (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
-      AND st.text NOT LIKE '%rdsadmin%'
-      AND st.text NOT LIKE '%rds_configuration%'
-      AND st.text NOT LIKE '%rds_database_tracking%'
-      AND st.text NOT LIKE '%rds_is_db_writable%'
-      AND st.text NOT LIKE '%rds_component_version%'
-      AND st.text NOT LIKE '%dm_os_sys_info%'
-      AND st.text NOT LIKE '%dm_exec_query_stats%'
-      AND st.text NOT LIKE '%dm_exec_sql_text%'
-      AND st.text NOT LIKE '%information_schema%'
-      AND st.text NOT LIKE '%@@VERSION%'
-      AND st.text NOT LIKE '%msdb.%'
-      AND st.text NOT LIKE '%msdb..%'
-      AND st.text NOT LIKE '%sys.server_role_members%'
-      AND st.text NOT LIKE '%sys.server_principals%'
-      AND st.text NOT LIKE '%sys.server_triggers%'
-      AND st.text NOT LIKE '%sys.configurations%'
-      AND st.text NOT LIKE '%sys.databases%'
-      AND st.text NOT LIKE '%sys.dm_%'
-    ORDER BY qs.total_elapsed_time DESC
+        CONVERT(VARCHAR(30), g.creation_time, 121) AS first_seen,
+        CONVERT(VARCHAR(30), g.last_execution_time, 121) AS last_seen
+    FROM (
+        -- One row per query_hash: SUM the counters across literal variants,
+        -- MIN/MAX the timestamps, and surface the highest-elapsed variant's
+        -- text via the variant_rank tiebreak from the innermost query below.
+        SELECT
+            v.query_hash,
+            SUM(v.execution_count) AS execution_count,
+            SUM(v.total_elapsed_time) AS total_elapsed_time,
+            SUM(v.total_worker_time) AS total_worker_time,
+            SUM(v.total_rows) AS total_rows,
+            SUM(v.total_logical_reads) AS total_logical_reads,
+            SUM(v.total_physical_reads) AS total_physical_reads,
+            MIN(v.min_elapsed_time) AS min_elapsed_time,
+            MAX(v.max_elapsed_time) AS max_elapsed_time,
+            MIN(v.creation_time) AS creation_time,
+            MAX(v.last_execution_time) AS last_execution_time,
+            MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+        FROM (
+            -- One row per cached statement (literal variant). variant_rank
+            -- picks the costliest variant per query_hash as the sample text.
+            SELECT
+                qs.query_hash,
+                qs.execution_count,
+                qs.total_elapsed_time,
+                qs.total_worker_time,
+                qs.total_rows,
+                qs.total_logical_reads,
+                qs.total_physical_reads,
+                qs.min_elapsed_time,
+                qs.max_elapsed_time,
+                qs.creation_time,
+                qs.last_execution_time,
+                REPLACE(REPLACE(REPLACE(
+                    SUBSTRING(st.text,
+                        (qs.statement_start_offset / 2) + 1,
+                        ((CASE qs.statement_end_offset
+                            WHEN -1 THEN DATALENGTH(st.text)
+                            ELSE qs.statement_end_offset
+                            END - qs.statement_start_offset) / 2) + 1),
+                    CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
+                ROW_NUMBER() OVER (
+                    PARTITION BY qs.query_hash
+                    ORDER BY qs.total_elapsed_time DESC, qs.plan_handle, qs.statement_start_offset
+                ) AS variant_rank
+            FROM sys.dm_exec_query_stats qs
+            CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+            WHERE (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
+              AND st.text NOT LIKE '%rdsadmin%'
+              AND st.text NOT LIKE '%rds_configuration%'
+              AND st.text NOT LIKE '%rds_database_tracking%'
+              AND st.text NOT LIKE '%rds_is_db_writable%'
+              AND st.text NOT LIKE '%rds_component_version%'
+              AND st.text NOT LIKE '%dm_os_sys_info%'
+              AND st.text NOT LIKE '%dm_exec_query_stats%'
+              AND st.text NOT LIKE '%dm_exec_sql_text%'
+              AND st.text NOT LIKE '%information_schema%'
+              AND st.text NOT LIKE '%@@VERSION%'
+              AND st.text NOT LIKE '%msdb.%'
+              AND st.text NOT LIKE '%msdb..%'
+              AND st.text NOT LIKE '%sys.server_role_members%'
+              AND st.text NOT LIKE '%sys.server_principals%'
+              AND st.text NOT LIKE '%sys.server_triggers%'
+              AND st.text NOT LIKE '%sys.configurations%'
+              AND st.text NOT LIKE '%sys.databases%'
+              AND st.text NOT LIKE '%sys.dm_%'
+        ) v
+        GROUP BY v.query_hash
+    ) g
+    WHERE g.execution_count >= 10
+    ORDER BY g.total_elapsed_time DESC
     FOR JSON PATH
 );
 

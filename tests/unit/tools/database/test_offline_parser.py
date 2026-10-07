@@ -8,6 +8,8 @@ Focused on hardening changes from the Oracle production JSON test run:
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestSentinelRegex:
     """The two `.replace()` calls previously used could not handle
@@ -98,3 +100,158 @@ class TestSentinelRegex:
         result = self._run_fetch(content)
         # Round-trip through json to prove it's a real dict
         assert json.loads(json.dumps(result))["tables"] == [{"table_name": "t1"}]
+
+
+class TestMergeQueryVariants:
+    """Regression for #386: offline collections can hold multiple rows for
+    one query shape (SQL Server literal variants in particular, but this is
+    a safety net applied on every engine). Rows sharing a ``digest`` must be
+    merged into one row before patterns are built.
+    """
+
+    @staticmethod
+    def _variant(**overrides: object) -> dict:
+        base = {
+            "digest": "shape-1",
+            "query_text": "SELECT * FROM Person.StateProvince WHERE CountryRegionCode = 'FR'",
+            "execution_count": 10,
+            "total_time_ms": 100.0,
+            "avg_time_ms": 10.0,
+            "min_time_ms": 8.0,
+            "max_time_ms": 12.0,
+            "total_rows_sent": 100,
+            "total_rows_examined": 200,
+            "total_rows_affected": 0,
+            "first_seen": "2026-01-01 00:00:00",
+            "last_seen": "2026-01-02 00:00:00",
+        }
+        base.update(overrides)
+        return base
+
+    def test_literal_variants_merge_into_one_pattern(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(query_text="... CountryRegionCode = 'FR'"),
+            self._variant(query_text="... CountryRegionCode = 'US'"),
+            self._variant(query_text="... CountryRegionCode = 'DE'"),
+        ]
+        patterns = _transform_queries(raw, "adventureworks", set())
+        assert len(patterns) == 1
+        assert patterns[0]["query_id"] == "shape-1"
+
+    def test_execution_count_and_total_time_are_summed(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(execution_count=10, total_time_ms=100.0),
+            self._variant(execution_count=20, total_time_ms=300.0),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert patterns[0]["execution_count"] == 30
+        assert patterns[0]["total_time_ms"] == pytest.approx(400.0)
+
+    def test_average_is_recomputed_from_merged_totals(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(execution_count=10, total_time_ms=100.0, avg_time_ms=10.0),
+            self._variant(execution_count=20, total_time_ms=300.0, avg_time_ms=15.0),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        # 400ms total / 30 executions = 13.33ms, NOT a simple average of the
+        # per-variant avg_time_ms values (10 and 15).
+        assert patterns[0]["execution_time_ms_avg"] == pytest.approx(400.0 / 30)
+
+    def test_min_and_max_take_extremes_across_variants(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(min_time_ms=8.0, max_time_ms=12.0),
+            self._variant(min_time_ms=3.0, max_time_ms=50.0),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert patterns[0]["execution_time_ms_min"] == pytest.approx(3.0)
+        assert patterns[0]["execution_time_ms_max"] == pytest.approx(50.0)
+
+    def test_rows_sent_examined_affected_are_summed(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(
+                execution_count=10,
+                total_rows_sent=100,
+                total_rows_examined=200,
+                total_rows_affected=5,
+            ),
+            self._variant(
+                execution_count=10,
+                total_rows_sent=50,
+                total_rows_examined=80,
+                total_rows_affected=2,
+            ),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        p = patterns[0]
+        assert p["rows_returned_avg"] == pytest.approx(150 / 20)
+        assert p["rows_examined_avg"] == pytest.approx(280 / 20)
+        assert p["rows_affected_avg"] == pytest.approx(7 / 20)
+
+    def test_first_seen_min_and_last_seen_max(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(first_seen="2026-03-01 00:00:00", last_seen="2026-03-05 00:00:00"),
+            self._variant(first_seen="2026-01-15 00:00:00", last_seen="2026-06-01 00:00:00"),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert patterns[0]["first_seen"] == "2026-01-15 00:00:00"
+        assert patterns[0]["last_seen"] == "2026-06-01 00:00:00"
+
+    def test_keeps_representative_text_from_costliest_variant(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(query_text="... CountryRegionCode = 'FR'", total_time_ms=50.0),
+            self._variant(query_text="... CountryRegionCode = 'US'", total_time_ms=900.0),
+            self._variant(query_text="... CountryRegionCode = 'DE'", total_time_ms=10.0),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert patterns[0]["query_text"] == "... CountryRegionCode = 'US'"
+
+    def test_pattern_order_is_deterministic_by_first_appearance(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(digest="shape-b", query_text="SELECT b"),
+            self._variant(digest="shape-a", query_text="SELECT a v1"),
+            self._variant(digest="shape-b", query_text="SELECT b v2"),
+            self._variant(digest="shape-a", query_text="SELECT a v2"),
+            self._variant(digest="shape-c", query_text="SELECT c"),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert [p["query_id"] for p in patterns] == ["shape-b", "shape-a", "shape-c"]
+
+    def test_rows_without_shared_digest_are_not_merged(self) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(digest="shape-a"),
+            self._variant(digest="shape-b"),
+        ]
+        patterns = _transform_queries(raw, "db", set())
+        assert len(patterns) == 2
+        assert {p["query_id"] for p in patterns} == {"shape-a", "shape-b"}
+
+    def test_logs_how_many_rows_were_merged(self, caplog) -> None:
+        from src.tools.database.offline_parser import _transform_queries
+
+        raw = [
+            self._variant(query_text="... 'FR'"),
+            self._variant(query_text="... 'US'"),
+            self._variant(query_text="... 'DE'"),
+        ]
+        with caplog.at_level("INFO", logger="src.tools.database.offline_parser"):
+            _transform_queries(raw, "db", set())
+        assert any("merged" in record.message for record in caplog.records)
+        assert any("2" in record.message for record in caplog.records)

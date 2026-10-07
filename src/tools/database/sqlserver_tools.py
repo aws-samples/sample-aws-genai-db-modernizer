@@ -304,6 +304,16 @@ class SQLServerRemoteCollector:
         Note: ``sys.dm_exec_query_stats`` reflects the plan cache only — long
         idle queries that aged out are not visible.
 
+        ``sys.dm_exec_query_stats`` keeps one row per cached statement, so a
+        non-parameterized query gets a new row per literal value, all sharing
+        the same ``query_hash``. We group by ``qs.query_hash`` below so one
+        row == one query shape (matching the queryid/DIGEST grouping already
+        done for PostgreSQL and MySQL): the counters are summed across
+        variants, timestamps take MIN/MAX across variants, and the query text
+        comes from the variant with the highest ``total_elapsed_time``. The
+        ``limit``/``min_executions`` thresholds apply after grouping, so they
+        cap query shapes rather than literal-variant rows.
+
         Filtering note: ``sys.dm_exec_sql_text`` returns NULL for ``dbid`` on
         ad-hoc queries (only stored-procedure-bound statements get a real
         dbid). Filtering by ``dbid = DB_ID()`` would drop all user ad-hoc
@@ -312,52 +322,87 @@ class SQLServerRemoteCollector:
         ``NOT LIKE`` allow-list on the query text.
         """
         # CONVERT(NVARCHAR(MAX), ...) keeps the query text on a single line for
-        # tab-separated parsing; CHAR(13)/CHAR(10) are stripped explicitly to
-        # avoid embedded line breaks.
+        # tab-separated parsing; CHAR(13)/CHAR(10)/CHAR(9) are stripped explicitly,
+        # as the offline script does, to avoid embedded line breaks and tabs.
         raw = self._query(f"""
             SELECT TOP {limit}
-                CONVERT(VARCHAR(40), qs.query_hash, 1) AS query_id,
-                REPLACE(REPLACE(
-                    SUBSTRING(st.text,
-                        (qs.statement_start_offset/2)+1,
-                        ((CASE qs.statement_end_offset
-                            WHEN -1 THEN DATALENGTH(st.text)
-                            ELSE qs.statement_end_offset
-                            END - qs.statement_start_offset)/2) + 1),
-                    CHAR(13), ' '), CHAR(10), ' ') AS query_text,
-                qs.execution_count,
-                qs.total_logical_reads,
-                qs.total_physical_reads,
-                qs.total_worker_time,
-                qs.total_elapsed_time,
-                qs.total_rows,
-                qs.min_elapsed_time,
-                qs.max_elapsed_time,
-                CONVERT(VARCHAR(30), qs.creation_time, 121) AS creation_time,
-                CONVERT(VARCHAR(30), qs.last_execution_time, 121) AS last_execution_time
-            FROM sys.dm_exec_query_stats qs
-            CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
-            WHERE qs.execution_count >= {min_executions}
-              AND (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
-              AND st.text NOT LIKE '%rdsadmin%'
-              AND st.text NOT LIKE '%rds_configuration%'
-              AND st.text NOT LIKE '%rds_database_tracking%'
-              AND st.text NOT LIKE '%rds_is_db_writable%'
-              AND st.text NOT LIKE '%rds_component_version%'
-              AND st.text NOT LIKE '%dm_os_sys_info%'
-              AND st.text NOT LIKE '%dm_exec_query_stats%'
-              AND st.text NOT LIKE '%dm_exec_sql_text%'
-              AND st.text NOT LIKE '%information_schema%'
-              AND st.text NOT LIKE '%@@VERSION%'
-              AND st.text NOT LIKE '%msdb.%'
-              AND st.text NOT LIKE '%msdb..%'
-              AND st.text NOT LIKE '%sys.server_role_members%'
-              AND st.text NOT LIKE '%sys.server_principals%'
-              AND st.text NOT LIKE '%sys.server_triggers%'
-              AND st.text NOT LIKE '%sys.configurations%'
-              AND st.text NOT LIKE '%sys.databases%'
-              AND st.text NOT LIKE '%sys.dm_%'
-            ORDER BY qs.total_elapsed_time DESC
+                CONVERT(VARCHAR(40), g.query_hash, 1) AS query_id,
+                g.query_text,
+                g.execution_count,
+                g.total_logical_reads,
+                g.total_physical_reads,
+                g.total_worker_time,
+                g.total_elapsed_time,
+                g.total_rows,
+                g.min_elapsed_time,
+                g.max_elapsed_time,
+                CONVERT(VARCHAR(30), g.creation_time, 121) AS creation_time,
+                CONVERT(VARCHAR(30), g.last_execution_time, 121) AS last_execution_time
+            FROM (
+                SELECT
+                    v.query_hash,
+                    SUM(v.execution_count) AS execution_count,
+                    SUM(v.total_logical_reads) AS total_logical_reads,
+                    SUM(v.total_physical_reads) AS total_physical_reads,
+                    SUM(v.total_worker_time) AS total_worker_time,
+                    SUM(v.total_elapsed_time) AS total_elapsed_time,
+                    SUM(v.total_rows) AS total_rows,
+                    MIN(v.min_elapsed_time) AS min_elapsed_time,
+                    MAX(v.max_elapsed_time) AS max_elapsed_time,
+                    MIN(v.creation_time) AS creation_time,
+                    MAX(v.last_execution_time) AS last_execution_time,
+                    MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+                FROM (
+                    SELECT
+                        qs.query_hash,
+                        qs.execution_count,
+                        qs.total_logical_reads,
+                        qs.total_physical_reads,
+                        qs.total_worker_time,
+                        qs.total_elapsed_time,
+                        qs.total_rows,
+                        qs.min_elapsed_time,
+                        qs.max_elapsed_time,
+                        qs.creation_time,
+                        qs.last_execution_time,
+                        REPLACE(REPLACE(REPLACE(
+                            SUBSTRING(st.text,
+                                (qs.statement_start_offset/2)+1,
+                                ((CASE qs.statement_end_offset
+                                    WHEN -1 THEN DATALENGTH(st.text)
+                                    ELSE qs.statement_end_offset
+                                    END - qs.statement_start_offset)/2) + 1),
+                            CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY qs.query_hash
+                            ORDER BY qs.total_elapsed_time DESC, qs.plan_handle, qs.statement_start_offset
+                        ) AS variant_rank
+                    FROM sys.dm_exec_query_stats qs
+                    CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
+                    WHERE (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
+                      AND st.text NOT LIKE '%rdsadmin%'
+                      AND st.text NOT LIKE '%rds_configuration%'
+                      AND st.text NOT LIKE '%rds_database_tracking%'
+                      AND st.text NOT LIKE '%rds_is_db_writable%'
+                      AND st.text NOT LIKE '%rds_component_version%'
+                      AND st.text NOT LIKE '%dm_os_sys_info%'
+                      AND st.text NOT LIKE '%dm_exec_query_stats%'
+                      AND st.text NOT LIKE '%dm_exec_sql_text%'
+                      AND st.text NOT LIKE '%information_schema%'
+                      AND st.text NOT LIKE '%@@VERSION%'
+                      AND st.text NOT LIKE '%msdb.%'
+                      AND st.text NOT LIKE '%msdb..%'
+                      AND st.text NOT LIKE '%sys.server_role_members%'
+                      AND st.text NOT LIKE '%sys.server_principals%'
+                      AND st.text NOT LIKE '%sys.server_triggers%'
+                      AND st.text NOT LIKE '%sys.configurations%'
+                      AND st.text NOT LIKE '%sys.databases%'
+                      AND st.text NOT LIKE '%sys.dm_%'
+                ) v
+                GROUP BY v.query_hash
+            ) g
+            WHERE g.execution_count >= {min_executions}
+            ORDER BY g.total_elapsed_time DESC
         """)  # nosec B608 — min_executions and limit are internal constants
 
         patterns = []
