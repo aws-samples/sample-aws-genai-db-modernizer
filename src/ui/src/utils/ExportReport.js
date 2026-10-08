@@ -657,6 +657,13 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const lvl = sevClass(ra.overall_risk_level);\n';
   script += '        html += \'<div style="margin-bottom: 16px;"><span class="badge" style="background: \' + sevAccent[lvl] + \'; color: \' + sevBadgeFg[lvl] + \';">Overall risk: \' + escapeHtml(ra.overall_risk_level) + \'</span></div>\';\n';
   script += '      }\n';
+  // #434: "0 open risks" must not read as "0 migration risk" -- the same
+  // reminder every deliverable's no-open-risk state carries (renderers.py's
+  // NO_OPEN_RISKS_CAVEAT; JS cannot import it, so this copy is kept in sync by
+  // hand).
+  script += '      if (openRisks.length === 0) {\n';
+  script += '        html += \'<p style="color: var(--color-text-secondary); font-size: 13px; margin-bottom: 12px;">\' + escapeHtml(\'No open risks is not the same as no migration risk: this analysis reads schema and query patterns only and does not model traffic bursts, peak load or compliance requirements.\') + \'</p>\';\n';
+  script += '      }\n';
   script += '      severities.forEach(function(sev) {\n';
   script += '        const risks = bySeverity[sev];\n';
   script += '        const cls = sevClass(sev);\n';

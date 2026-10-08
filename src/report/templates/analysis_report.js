@@ -377,6 +377,9 @@
         const lvl = sevClass(ra.overall_risk_level);
         html += '<div style="margin-bottom: 16px;"><span class="badge" style="background: ' + sevAccent[lvl] + '; color: ' + sevBadgeFg[lvl] + ';">Overall risk: ' + escapeHtml(ra.overall_risk_level) + '</span></div>';
       }
+      if (openRisks.length === 0) {
+        html += '<p style="color: var(--color-text-secondary); font-size: 13px; margin-bottom: 12px;">' + escapeHtml('No open risks is not the same as no migration risk: this analysis reads schema and query patterns only and does not model traffic bursts, peak load or compliance requirements.') + '</p>';
+      }
       severities.forEach(function(sev) {
         const risks = bySeverity[sev];
         const cls = sevClass(sev);

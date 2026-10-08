@@ -60,6 +60,7 @@ from src.shared.migration_wave_engines import RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
 
 from .renderers import (
+    NO_OPEN_RISKS_CAVEAT,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
@@ -71,6 +72,8 @@ from .renderers import (
     plural_verb,
     resolve_migration_waves,
 )
+from .renderers import resolved_risk_label as _resolved_risk_label
+from .renderers import resolved_risks as _resolved_risks
 
 logger = logging.getLogger(__name__)
 
@@ -287,11 +290,20 @@ def _place(shape, box) -> None:
 
 def clip(text: str, n: int) -> str:
     """Truncate on a word boundary — contract descriptions are long and cutting
-    mid-word ("...DocumentDB versi") reads like a rendering bug on a slide."""
+    mid-word ("...DocumentDB versi") reads like a rendering bug on a slide.
+
+    A single very long word at the cut point (an identifier, path or URL with no
+    space to back up to) used to back the whole cut up to the word boundary
+    *before* it, silently surrendering most of the character budget to that one
+    word (#434 review); hard-cut at ``n`` instead whenever backing up would lose
+    more than half of it.
+    """
     text = " ".join(text.split())
     if len(text) <= n:
         return text
     cut = text[:n].rsplit(" ", 1)[0]
+    if len(cut) < n // 2:
+        cut = text[:n]
     return cut.rstrip(" ,;:.") + "…"
 
 
@@ -941,6 +953,19 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     high_types = sorted({str(r.get("risk_type") or "") for r in high})
     one_root_cause = len(high_types) == 1 and bool(high)
 
+    # Analysis risks the effective assignment resolved (#434): with no open risks
+    # the Risk Profile slide leads with these instead of an empty table and an
+    # empty "BY TYPE" box. Same filter as the Engineering Report's "Resolved by
+    # the assignment" section (``renderers.resolved_risks``). Sorted by severity
+    # only -- ``sorted`` is stable, so risks tied on severity keep the order
+    # ``resolved_risks`` (and so the Engineering/Analysis reports) already list
+    # them in, rather than a second, finer sort those reports don't apply.
+    def _resolved_sort_key(r: dict[str, Any]) -> int:
+        level = _severity(r)
+        return SEVERITY_ORDER.index(level) if level in SEVERITY_ORDER else len(SEVERITY_ORDER)
+
+    resolved = sorted(_resolved_risks(rep), key=_resolved_sort_key)
+
     # ---- workload shape -----------------------------------------------------
     ops: dict[str, int] = {}
     for row in exp.get("flowAggregate") or []:
@@ -1172,6 +1197,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "high_by_engine": high_by_engine,
         "shown_level": shown_level,
         "shown_risks": shown_risks,
+        "resolved_risks": resolved,
         "by_type": sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])),
         "one_root_cause": one_root_cause,
         "high_type": high_types[0].replace("_", " ").lower() if one_root_cause else "",
@@ -1636,10 +1662,126 @@ def slide_decisions(prs, f):
     return s
 
 
+# Resolved-risk rows past this count are named only by their total; the table
+# keeps the Risk Profile slide one page and the Engineering Report lists every
+# one of them (``renderers.render_engineering_report_md``'s "Resolved by the
+# assignment" section).
+MAX_RESOLVED_ROWS = 6
+# Muted, not an accent colour (#434 review): a resolved row is not an open risk,
+# so it does not get the open-risk table's severity colour-coding -- the point
+# of this table is that these are no longer live, not how bad they used to be.
+_RESOLVED_SEVERITY_COLOR = MUTED
+
+
+def _resolved_engine_label(risk: dict[str, Any]) -> str:
+    """``aurora_mysql`` resolved onto ``dynamodb`` -> ``Aurora MySQL to DynamoDB``;
+    resolved onto its own engine -> ``Aurora MySQL (kept)``.
+
+    Uses ``renderers.resolved_risk_label`` (``display_engine``, not the deck's own
+    six-engine ``ENGINE_LABEL``) so the deck and the Engineering Report's "Resolved
+    by the assignment" section agree on every engine name and on the "(kept)"
+    wording. Spells out "to" rather than an arrow glyph (#434 review, PDF): the
+    embedded ``AmazonEmber_Rg.ttf``/``AmazonEmber_Bd.ttf`` the PDF renderer draws
+    with have no U+2192 glyph, so the arrow this helper used to emit rendered as a
+    blank in the PDF (``tests/unit/report/test_risk_profile_empty_state.py``'s
+    ``TestPdfFontCoverage`` covers every character this slide can print against
+    both font files).
+    """
+    label = _resolved_risk_label(risk)
+    return label.replace(" → ", " to ")
+
+
+def _resolved_kept(risk: dict[str, Any]) -> bool:
+    resolved_on = risk.get("resolved_on")
+    return bool(resolved_on) and str(resolved_on) == str(risk.get("engine") or "")
+
+
+def _slide_risk_no_open_risks(s, f) -> None:
+    """The Risk Profile slide when ``filtered_risks`` is empty (#434).
+
+    An empty severity breakdown, an empty "BY TYPE" box and a header-only table
+    said nothing about a run with no open risks; the slide now leads with what
+    the assignment resolved (the Engineering Report's "Resolved by the
+    assignment" section, mirrored here with the same engine display names) and
+    carries the same fixed reminder every deliverable's no-open-risk state
+    carries (``renderers.NO_OPEN_RISKS_CAVEAT``) that an empty register is not
+    the same as "no migration risk".
+    """
+    resolved = f["resolved_risks"]
+    n_resolved = len(resolved)
+    if not n_resolved:
+        # Nothing to show at all: the caveat is the only real content on this
+        # slide, so it sits in the lead card instead of being stranded alone at
+        # the bottom with an empty slide above it.
+        set_subtitle(s, "No open or resolved risks identified")
+        card(s, 0.67, BODY_TOP, 11.43, 1.45, MUTED)
+        tf = textbox(s, 0.90, BODY_TOP + 0.14, 11.0, 1.25)
+        para(
+            tf,
+            "No risks were identified in this analysis.",
+            size=14.0,
+            bold=True,
+            color=WHITE,
+            first=True,
+            space_after=6,
+        )
+        para(tf, NO_OPEN_RISKS_CAVEAT, size=12.0, color=PAPER)
+        return
+
+    set_subtitle(
+        s,
+        f"No open risks. {n_resolved} {plural_noun(n_resolved, 'risk')} resolved by "
+        "the assignment",
+    )
+    rows = [("Severity", "Engine", "What it is", "Reason")]
+    for r in resolved[:MAX_RESOLVED_ROWS]:
+        desc, _ = clean_risk_text(str(r.get("description") or ""))
+        reason = str(r.get("reason") or "")
+        if _resolved_kept(r):
+            affected = [str(t) for t in (r.get("affected_tables") or []) if t][:2]
+            if affected:
+                desc = f"{desc} ({', '.join(affected)})"
+        rows.append(
+            (
+                _severity(r),
+                _resolved_engine_label(r),
+                clip(desc, 100),
+                clip(reason, 100) if reason else "—",
+            )
+        )
+    table(
+        s,
+        0.67,
+        BODY_TOP,
+        11.43,
+        rows,
+        col_w=[1.00, 2.35, 4.00, 4.08],
+        head_size=10.0,
+        body_size=9.5,
+        row_h=0.44,
+        head_h=0.30,
+        emphasis={(i, 0): _RESOLVED_SEVERITY_COLOR for i in range(1, len(rows))},
+    )
+    reminder = NO_OPEN_RISKS_CAVEAT
+    if n_resolved > MAX_RESOLVED_ROWS:
+        more = n_resolved - MAX_RESOLVED_ROWS
+        reminder += (
+            f" The remaining {more} resolved {plural_noun(more, 'risk')} are in the "
+            "Engineering Report."
+        )
+
+    card(s, 0.67, 5.05, 11.43, 1.05, MUTED)
+    tf = textbox(s, 0.90, 5.17, 11.0, 0.9)
+    para(tf, reminder, size=12.0, color=WHITE, first=True)
+
+
 def slide_risk(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
-    n_high = f["sev"].get("HIGH", 0)
     set_title(s, "Risk Profile")
+    if not f["risks"]:
+        _slide_risk_no_open_risks(s, f)
+        return s
+    n_high = f["sev"].get("HIGH", 0)
     mix = ", ".join(
         f"{f['sev'][k]} {k.lower() if k == UNRATED else k}"
         for k in (*SEVERITY_ORDER, UNRATED)

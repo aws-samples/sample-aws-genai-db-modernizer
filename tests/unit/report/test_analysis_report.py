@@ -387,6 +387,19 @@ def test_render_leaves_no_unfilled_placeholders(rendered):
     assert not re.findall(r"__[A-Z_]+__", rendered)
 
 
+def test_risk_assessment_script_carries_the_no_open_risks_caveat(rendered):
+    """#434 round-1 review: the client script's no-open-risk state must carry the
+    same caveat the deck and the Decision Report do (``renderers.NO_OPEN_RISKS_CAVEAT``
+    -- this copy lives in ``src/ui/src/utils/ExportReport.js``, kept in sync with
+    ``src/report/templates/analysis_report.js`` by ``scripts/sync_report_template.py``,
+    so it is embedded verbatim regardless of this fixture's own risk data)."""
+    assert (
+        "No open risks is not the same as no migration risk: this analysis reads "
+        "schema and query patterns only and does not model traffic bursts, peak "
+        "load or compliance requirements."
+    ) in rendered
+
+
 def test_unfilled_placeholder_in_the_template_raises(monkeypatch):
     """A placeholder added by the sync script but not by the renderer must fail loudly."""
     real = ar._read_template
