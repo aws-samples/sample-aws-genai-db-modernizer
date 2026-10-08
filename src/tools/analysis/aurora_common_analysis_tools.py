@@ -302,14 +302,14 @@ def analyze_aurora_common_use_cases(
         if not has_joins and len(tables) == 1:
             for tid in tables:
                 if tid not in access_pattern_per_table:
-                    access_pattern_per_table[tid] = {"query_ids": set(), "all_single_table": True}
-                access_pattern_per_table[tid]["query_ids"].add(qid)
+                    access_pattern_per_table[tid] = {"query_ids": [], "all_single_table": True}
+                access_pattern_per_table[tid]["query_ids"].append(qid)
         else:
             for tid in tables:
                 if tid in access_pattern_per_table:
                     access_pattern_per_table[tid]["all_single_table"] = False
                 else:
-                    access_pattern_per_table[tid] = {"query_ids": {qid}, "all_single_table": False}
+                    access_pattern_per_table[tid] = {"query_ids": [qid], "all_single_table": False}
 
         # aurora-anti-07: track text search volume per table
         if _text_contains_any(text_lower, TEXT_SEARCH_KEYWORDS):

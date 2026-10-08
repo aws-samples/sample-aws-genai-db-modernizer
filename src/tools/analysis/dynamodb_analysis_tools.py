@@ -1611,7 +1611,7 @@ def build_table_groups(collector_output: dict) -> dict[str, list[str]]:
     visited: set[str] = set()
     groups: dict[str, list[str]] = {}
 
-    for tid in all_table_ids:
+    for tid in sorted(all_table_ids):
         if tid in visited:
             continue
         # BFS from this table
