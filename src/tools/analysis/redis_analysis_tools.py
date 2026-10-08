@@ -139,7 +139,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         )
 
     if leaderboard_queries:
-        leaderboard_table_ids = list(
+        leaderboard_table_ids = sorted(
             {t for q in leaderboard_queries for t in q.get("tables_accessed", [])}
         )
         patterns.append(
@@ -155,7 +155,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         )
 
     if timeseries_queries:
-        timeseries_table_ids = list(
+        timeseries_table_ids = sorted(
             {t for q in timeseries_queries for t in q.get("tables_accessed", [])}
         )
         patterns.append(
@@ -171,7 +171,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         )
 
     if geospatial_queries:
-        geospatial_table_ids = list(
+        geospatial_table_ids = sorted(
             {t for q in geospatial_queries for t in q.get("tables_accessed", [])}
         )
         patterns.append(
@@ -187,7 +187,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
         )
 
     if large_result_queries:
-        large_result_table_ids = list(
+        large_result_table_ids = sorted(
             {t for q in large_result_queries for t in q.get("tables_accessed", [])}
         )
         anti_patterns.append(

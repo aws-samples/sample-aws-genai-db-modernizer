@@ -980,7 +980,7 @@ def build_opensearch_decision_trace(
                     break
 
         if wtype is not None:
-            reason = f"Matched {wtype.value.lower()} patterns: {', '.join(ts_pattern_types & (SEARCH_PATTERN_TYPES | TIMESERIES_PATTERN_TYPES))}"
+            reason = f"Matched {wtype.value.lower()} patterns: {', '.join(sorted(ts_pattern_types & (SEARCH_PATTERN_TYPES | TIMESERIES_PATTERN_TYPES)))}"
         else:
             reason = "No search or time-series patterns detected — NOT_SUITABLE"
 
