@@ -216,8 +216,11 @@ Common scopes in this project:
 2. Don't end subject with period
 3. Limit subject line to 50 characters
 4. Separate subject from body with blank line
-5. Use body to explain what and why, not how
-6. Reference issues: Use "Closes #123" or "Fixes #456"
+5. Keep the body short: a sentence or two on the problem, a sentence or two
+   on the fix. The full explanation, review notes and test results go in
+   the issue and the PR, not the commit.
+6. Reference issues at the end of the body: "Closes #123" when the commit
+   finishes the issue, "Refs #123" for a follow-up
 
 ---
 
@@ -411,7 +414,7 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## Finding Contributions to Work On
 
-Looking at the existing issues is a great way to find something to contribute on. Issues labeled `good first contribution` or `help wanted` are great places to start.
+Looking at the existing issues is a great way to find something to contribute on. Issues labeled `good first issue` or `help wanted` are great places to start.
 
 ---
 
@@ -425,6 +428,45 @@ Breaking changes to contracts (`src/contracts/`) require special process:
 4. Update all affected agents
 
 See `docs/contracts/agent-contracts-spec.md` for details.
+
+---
+
+## Maintainer Sync
+
+Maintainers can mirror this repository into a separate target deployment
+repository with `scripts/maintainer-sync.sh`. It exports one git ref
+(`--ref`, default `HEAD`) with `git archive` and syncs it as a single
+snapshot commit, branched from a freshly fetched copy of the target
+repository's default branch, recording a `Source-Commit: <sha>` trailer on
+the sync commit.
+
+Main options (each has an environment variable equivalent; the script's own
+header comment has the full list):
+
+- `--ref <ref>` -- the git ref to sync (env `SYNC_REF`, default `HEAD`)
+- `--branch <name>` -- target branch name (env `SYNC_TARGET_BRANCH`, default
+  the current source branch)
+- `--message <text>` -- commit message, before the `Source-Commit:` trailer
+  is appended (env `SYNC_COMMIT_MESSAGE`)
+- `--force` -- overwrite a remote target branch even if its latest commit
+  has no `Source-Commit:` trailer
+- `SYNC_DRY_RUN=true` -- preview the sync in a disposable worktree; nothing
+  in the real target clone is stashed, committed or pushed
+- `TARGET_REPO_PATH` -- required; path to the target repository's local clone
+
+**Snapshot model:** each sync is one commit covering everything new since
+the last sync, not one commit per source commit, so an internal validation
+pipeline is never run against the target repository's intermediate states.
+This is an accepted trade-off: it matches this project's one-commit-per-issue
+convention (the unit that was validated is already one issue, one commit),
+and bisecting a regression in the target repository is still possible by
+syncing one `--ref <sha>` at a time.
+
+**Safety:** the script stashes a dirty target clone before syncing, refuses
+to run if the target's default branch has diverged from or is ahead of its
+remote, protects paths the target's own `.gitignore` excludes from deletion,
+and refuses to overwrite a target branch whose latest commit isn't one of
+its own prior sync commits unless `--force` is given.
 
 ---
 
