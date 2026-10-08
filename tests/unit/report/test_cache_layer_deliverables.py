@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ci.llm import judge_facts
+from src.agents.referee.cache_overlay import safety_net_note
 from src.report import pptx_report
 from src.report.renderers import (
     _architecture_engines,
@@ -66,7 +67,14 @@ def _report() -> dict[str, Any]:
             "min_calls_per_second": 1.0,
             "max_rows_avg": 100.0,
             "dropped_query_ids": ["q9"],
+            # #459 review: the full audit trail (engineering report only) also
+            # carries customer-edit/legacy-migration notes -- here it happens to
+            # be only the safety-net note too, same text in both lists, as a real
+            # run would record it in both.
             "notes": ["1 cached query had no in-scope access pattern ... owner unchanged)."],
+            "safety_net_notes": [
+                "1 cached query had no in-scope access pattern ... owner unchanged)."
+            ],
         },
     }
 
@@ -89,6 +97,36 @@ class TestDecisionReport:
         assert "fronts 20 hot reads (83.4% of calls) cache-aside" in html
         assert "<td>100%</td>" in html  # owner shares still add up
 
+    def test_html_explains_a_safety_net_drop(self):
+        # #424: the gate's cache_overlay and the report's disagreed with no
+        # explanation. The decision report must carry the safety net's own
+        # note (safety_net_notes), the same one the engineering report shows
+        # (via the full notes list), so the two deliverables agree.
+        html = render_decision_report_html(_report())
+        assert "owner unchanged" in html
+
+    def test_html_never_shows_the_full_notes_field(self):
+        # #459 review: `notes` also carries customer-edit notes (full query
+        # hashes) and the legacy-migration note -- neither customer-facing.
+        rep = _report()
+        rep["cache_overlay"]["safety_net_notes"] = []
+        rep["cache_overlay"]["notes"] = ["query q_8f21c carried over, full hash attached"]
+        html = render_decision_report_html(rep)
+        assert "q_8f21c" not in html
+
+    def test_html_escapes_a_hostile_safety_net_note(self):
+        # #459: the note is server-generated, deterministic text -- but
+        # escaping must not assume that. A `<script>`/`<b>&` payload must
+        # render as literal text, never as markup, in the decision report.
+        rep = _report()
+        rep["cache_overlay"]["safety_net_notes"] = [
+            "<script>alert(1)</script><b>bold</b> & escaped"
+        ]
+        html = render_decision_report_html(rep)
+        assert "<script>alert(1)</script>" not in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+        assert "&lt;b&gt;bold&lt;/b&gt; &amp; escaped" in html
+
     def test_svg(self):
         svg = architecture_svg(_report())
         assert "Cache layer  ·  20 reads · 83.4% of calls" in svg
@@ -105,16 +143,185 @@ class TestDecisionReport:
 class TestEngineeringReport:
     def test_cache_layer_section(self):
         md = render_engineering_report_md(_report())
-        assert "## Cache layer (elasticache)" in md
-        assert "fronts 20 hot reads (83.4% of calls, 185.1 calls/s) cache-aside" in md
+        # #459 round 3: display_engine, not the raw engine id.
+        assert "## Cache layer (ElastiCache)" in md
+        assert "ElastiCache fronts 20 hot reads (83.4% of calls, 185.1 calls/s) cache-aside" in md
         assert "- Owner engines: dynamodb 20" in md
         assert "≥ 1 calls/s" in md and "≤ 100 rows" in md
         assert "owner unchanged" in md
+
+    def test_md_escapes_a_hostile_note(self):
+        # #459: markdown-escaped (escaping.md_text), not HTML-escaped -- the
+        # engineering report is Markdown. A literal `<script>` and markdown
+        # emphasis/link syntax must not survive into the rendered document.
+        rep = _report()
+        rep["cache_overlay"]["notes"] = ["<script>alert(1)</script> *bold* [x](y)"]
+        md = render_engineering_report_md(rep)
+        assert "<script>alert(1)</script>" not in md
+        assert "<script>" not in md
 
     def test_no_section_without_overlay(self):
         rep = _report()
         rep.pop("cache_overlay")
         assert "## Cache layer" not in render_engineering_report_md(rep)
+
+    def test_after_a_customer_edit_only_this_versions_note_is_current(self):
+        """#459 round 3: ``notes`` is cumulative across versions (customer
+        edits carry it forward, #459 round 1); ``safety_net_notes`` is reset
+        on every new version (#459 round 2). A v3 rendered right after a
+        customer edit must show only the v3 note as current -- the v2 note
+        goes under "Earlier assignment versions", never presented as if it
+        described v3's own numbers.
+        """
+        v2_note = (
+            "20 hot reads (83.4% of calls) were assigned at the assignment gate. "
+            "The ElastiCache schema design covers 10 of them; the other 10 are no "
+            "longer cached and stay served by their owner engine. 10 hot reads "
+            "(72.3% of calls) remain."
+        )
+        v3_note = (
+            "11 hot reads (73.7% of calls) were assigned at the assignment gate. "
+            "The ElastiCache schema design covers 9 of them; the other 2 are no "
+            "longer cached and stay served by their owner engine. 9 hot reads "
+            "(68.1% of calls) remain."
+        )
+        rep = _report()
+        rep["cache_overlay"] = {
+            **rep["cache_overlay"],
+            "notes": [v2_note, v3_note],
+            "safety_net_notes": [v3_note],
+        }
+        md = render_engineering_report_md(rep)
+        current_section, _, rest = md.partition("### Earlier assignment versions")
+        # Markdown-escaped parentheses (escaping.md_text): compare on each
+        # note's own distinctive, non-overlapping number (not "20 hot reads"
+        # or "83.4%", which the base fixture's own stat paragraph also uses).
+        assert "73.7% of calls" in current_section and "68.1% of calls" in current_section
+        assert "72.3% of calls" not in current_section
+        assert "### Earlier assignment versions" in md
+        assert "72.3% of calls" in rest
+        assert "73.7% of calls" not in rest and "68.1% of calls" not in rest
+
+
+def _shrink_report() -> dict[str, Any]:
+    """Reproduces #424's own WordPress numbers: 20 hot reads (83.4% of
+    calls) were assigned at the assignment gate; the post-schema-design
+    safety net dropped 10, leaving 10 (61.3% of calls). The note is the real
+    generator's output, not a hand-written stand-in, so these tests fail if
+    the renderers stop reading it.
+
+    Set on both ``notes`` (the full audit trail, engineering report only) and
+    ``safety_net_notes`` (the customer-facing subset every other deliverable
+    reads, #459) with the same text, as a real synthesis run would record it
+    in both.
+    """
+    note = safety_net_note(
+        "elasticache",
+        [f"q{i}" for i in range(10)],
+        before={"query_count": 20, "call_share_percent": 83.4},
+        after={"query_count": 10, "call_share_percent": 61.3},
+    )
+    rep = _report()
+    rep["ranking"][2]["cache_overlay_queries"] = 10
+    rep["ranking"][2]["cache_call_share_percent"] = 61.3
+    rep["cache_overlay"] = {
+        **rep["cache_overlay"],
+        "query_count": 10,
+        "call_share_percent": 61.3,
+        "dropped_query_ids": [f"q{i}" for i in range(10)],
+        "notes": [note],
+        "safety_net_notes": [note],
+    }
+    return rep
+
+
+class TestCacheOverlayShrinkExplained:
+    """#424: the cache layer shrinks between the gate and the report with no
+    explanation. The fix is to carry the before/after numbers in the note the
+    safety net already records, and to show that note in every deliverable
+    that states the cache layer's final scope -- not only the engineering
+    report, which already did.
+    """
+
+    def test_decision_report_states_before_and_after_numbers(self):
+        html = render_decision_report_html(_shrink_report())
+        assert "10 cached reads · 61.3% of calls" in html
+        assert "20 hot reads (83.4% of calls) were assigned at the assignment gate" in html
+        assert "ElastiCache schema design covers 10 of them" in html
+        assert "10 hot reads (61.3% of calls) remain." in html
+
+    def test_engineering_report_states_before_and_after_numbers(self):
+        md = render_engineering_report_md(_shrink_report())
+        assert "fronts 10 hot reads (61.3% of calls" in md
+        # Markdown-escaped parentheses (escaping.md_text): still the same note.
+        assert "20 hot reads \\(83.4% of calls\\) were assigned at the assignment gate" in md
+        assert "10 hot reads \\(61.3% of calls\\) remain." in md
+
+
+def _full_drop_report() -> dict[str, Any]:
+    """#459 round 2: every cached read is dropped. ElastiCache then owns no
+    workload and fronts nothing (``cache_overlay`` carries no ``engine`` key
+    at all -- :func:`src.agents.referee.synthesis_report.overlay_summary`
+    returns ``None`` with nothing cached), so it is absent from ``ranking``
+    entirely (#296: the cache never owns a query, so a cache with nothing
+    cached has no workload and no overlay to be listed by). The note is still
+    the real generator's own output.
+    """
+    note = safety_net_note(
+        "elasticache",
+        ["q9"],
+        before={"query_count": 1, "call_share_percent": 10.0},
+        after={"query_count": 0, "call_share_percent": 0.0},
+    )
+    rep = _report()
+    rep["ranking"] = [r for r in rep["ranking"] if r["target"] != "elasticache"]
+    rep["cache_overlay"] = {
+        "dropped_query_ids": ["q9"],
+        "notes": [note],
+        "safety_net_notes": [note],
+    }
+    return rep
+
+
+class TestCacheOverlayFullDropExplained:
+    """#459 round 2: when the safety net drops *every* cached read, the cache
+    engine leaves the engine list entirely (it owns no workload, #296) --
+    exactly #424's own repro. The note must still say so, in plain words
+    ("none remain"), and the decision report must still show it even though
+    there is no "Cache layer" row left to attach it to.
+    """
+
+    def test_note_says_none_remain(self):
+        note = safety_net_note(
+            "elasticache",
+            ["q9"],
+            before={"query_count": 1, "call_share_percent": 10.0},
+            after={"query_count": 0, "call_share_percent": 0.0},
+        )
+        assert note == (
+            "1 hot read (10.0% of calls) was assigned at the assignment gate. "
+            "The ElastiCache schema design covers none of them; it is no "
+            "longer cached and stays served by its owner engine. None remain."
+        )
+
+    def test_decision_report_still_shows_the_note(self):
+        rep = _full_drop_report()
+        assert not any(r["target"] == "elasticache" for r in rep["ranking"])
+        html = render_decision_report_html(rep)
+        assert "was assigned at the assignment gate" in html
+        assert "None remain." in html
+
+    def test_engineering_report_still_shows_the_note_with_no_engine_in_the_heading(self):
+        # #459 round 3: a full drop clears `engine`, so the heading cannot
+        # name it -- it used to hide the whole section (round 2's own fix
+        # only applied to the decision/analysis reports and the Results
+        # page); now it renders a plain "## Cache layer" heading plus the
+        # note.
+        md = render_engineering_report_md(_full_drop_report())
+        assert "## Cache layer\n" in md
+        assert "## Cache layer (" not in md
+        assert "was assigned at the assignment gate" in md
+        assert "None remain." in md
 
 
 def _deck_text(rep: dict[str, Any]) -> str:

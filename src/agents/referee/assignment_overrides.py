@@ -372,6 +372,14 @@ def apply_assignment_overrides(
             "query_assignments": list(qa_map.values()),
             "previous_version": current_version,
             "cache_notes": [*current.cache_notes, *cache_notes],
+            # #459 round 2: cache_safety_net_notes is this version's own
+            # customer-facing explanation, not a cumulative log like
+            # cache_notes -- a previous version's safety-net note (e.g. "10
+            # cached reads remain") would otherwise read as current fact
+            # about THIS version's (different) numbers once synthesis runs
+            # again. The next synthesis run, if it drops anything from this
+            # version's overlay, writes its own note here.
+            "cache_safety_net_notes": [],
         }
     )
 

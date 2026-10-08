@@ -247,6 +247,20 @@ class TestSafetyNet:
         assert b["cache_engine"] is None and b["assigned_engine"] == "aurora_mysql"
         assert assignment["cache_overlay"]["query_count"] == 1
 
+    def test_customer_pinned_warning_names_the_engine_with_display_engine(self):
+        # #459 round 2: the warning used to print the raw engine id.
+        assignment = self._assignment()
+        assignment["query_assignments"][1]["cache_customer_override"] = True
+        schema = {"access_patterns": [{"pattern_id": "p", "source_query_ids": ["a"]}]}
+        dropped = apply_schema_safety_net(assignment, schema, [_q("a"), _q("b")])
+        assert dropped == []  # kept, not dropped -- a customer pin only warns
+        b = assignment["query_assignments"][1]
+        assert b["cache_engine"] == "elasticache"
+        (warning,) = b["warnings"]
+        assert "is cached by ElastiCache at the customer's request" in warning
+        assert "the ElastiCache schema design has no in-scope access pattern" in warning
+        assert "elasticache" not in warning
+
     def test_out_of_scope_access_pattern_does_not_cover(self):
         assignment = self._assignment()
         schema = {
@@ -261,8 +275,60 @@ class TestSafetyNet:
         assert assignment["query_assignments"][0]["cache_engine"] == "elasticache"
 
     def test_note(self):
+        # Without before/after (a caller with no snapshot), the note names
+        # the drop only, using the display name and "hot read(s)" wording --
+        # one term throughout (#459 round 2), matching the reports and the
+        # executive summary ("fronts N hot reads").
         assert "owner unchanged" in safety_net_note("elasticache", ["b"])
-        assert safety_net_note("elasticache", ["a", "b"]).startswith("2 cached queries")
+        note = safety_net_note("elasticache", ["a", "b"])
+        assert note.startswith("2 hot reads")
+        assert "ElastiCache schema design" in note
+
+    def test_note_singular_without_before_after(self):
+        note = safety_net_note("elasticache", ["a"])
+        assert note.startswith("1 hot read ")
+        assert "it is served by its owner engine only" in note
+
+    def test_note_with_before_and_after_names_assigned_covered_and_remaining_counts(self):
+        # #424/#459: 20 reads were assigned at the gate at 83.4% of calls; the
+        # safety net drops 10, leaving 10 at 61.3% -- the before/after numbers
+        # the report and the gate disagreed on, in plain words with the engine's
+        # display name, not the raw id, and "hot reads" throughout.
+        before = {"query_count": 20, "call_share_percent": 83.4}
+        after = {"query_count": 10, "call_share_percent": 61.3}
+        note = safety_net_note("elasticache", [f"q{i}" for i in range(10)], before, after)
+        assert note == (
+            "20 hot reads (83.4% of calls) were assigned at the assignment gate. "
+            "The ElastiCache schema design covers 10 of them; the other 10 are no "
+            "longer cached and stay served by their owner engine. 10 hot reads "
+            "(61.3% of calls) remain."
+        )
+
+    def test_note_with_before_and_after_dropping_everything(self):
+        # #459 round 2/3: a full drop says "covers none of them", "all N",
+        # and "None remain" plainly, not the numerically-correct but
+        # easy-to-miss "covers 0 of them", "the other N", "0 hot reads
+        # (0.0%) remain."
+        before = {"query_count": 2, "call_share_percent": 10.0}
+        after = {"query_count": 0, "call_share_percent": 0.0}
+        note = safety_net_note("elasticache", ["a", "b"], before, after)
+        assert note.endswith(
+            "covers none of them; all 2 are no longer cached and stay served by "
+            "their owner engine. None remain."
+        )
+
+    def test_note_with_before_only_treats_the_missing_after_as_a_full_drop(self):
+        # #459 round 2/3: the branch is keyed on `before` alone (a caller
+        # with no `after` is not production code -- synthesis_data.py always
+        # passes both -- but must still produce an honest sentence, not the
+        # no-snapshot fallback: "covers none of them" is the correct reading
+        # of "no after snapshot given").
+        before = {"query_count": 20, "call_share_percent": 83.4}
+        note = safety_net_note("elasticache", ["a", "b"], before)
+        assert note.startswith("20 hot reads (83.4% of calls) were assigned at the assignment gate")
+        assert "covers none of them" in note
+        assert "all 2 are no longer cached" in note
+        assert note.endswith("None remain.")
 
 
 # ---------------------------------------------------------------------------

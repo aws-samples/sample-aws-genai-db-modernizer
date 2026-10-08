@@ -39,7 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
@@ -1803,6 +1803,26 @@ const AnalysisResultsPage = memo(() => {
                         {cacheLayerLine}
                       </Box>
                     )}
+                    {/* #424: the gate's cache_overlay (assigned at the
+                        assignment gate) and this one (after schema design)
+                        can disagree -- the post-schema-design safety net
+                        drops cached reads the design doesn't cover. Each
+                        note already states its own before/after numbers and
+                        the reason, so it is shown verbatim, not summarized.
+                        #459: cacheOverlayNotes reads safety_net_notes only --
+                        never the full notes field, which also carries
+                        customer-edit notes (full query hashes) and the
+                        legacy-migration note. */}
+                    {cacheOverlayNotes(cacheOverlay).map((note, idx) => (
+                      <Box
+                        key={idx}
+                        fontSize="body-s"
+                        color="text-status-warning"
+                        padding={{ top: 'xxs' }}
+                      >
+                        {note}
+                      </Box>
+                    ))}
                   </Box>
                   <Box>
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.projected-cost')}</Box>

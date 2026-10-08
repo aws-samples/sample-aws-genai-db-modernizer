@@ -30,6 +30,8 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 
+from src.shared.engine_names import display_engine
+
 # Engines that can only be a cache layer: they never own a query.
 CACHE_OVERLAY_ENGINES = frozenset({"elasticache"})
 
@@ -402,10 +404,11 @@ def apply_schema_safety_net(
         if not engine or not qa.get("in_scope", True) or qa.get("query_id") in covered:
             continue
         if qa.get("cache_customer_override"):
+            name = display_engine(engine)
             _warn(
                 qa,
-                f"WARNING [MEDIUM]: Query {qa.get('query_id')} is cached by {engine} at the "
-                f"customer's request, but the {engine} schema design has no in-scope access "
+                f"WARNING [MEDIUM]: Query {qa.get('query_id')} is cached by {name} at the "
+                f"customer's request, but the {name} schema design has no in-scope access "
                 "pattern for it.",
             )
             continue
@@ -420,12 +423,89 @@ def apply_schema_safety_net(
     return dropped
 
 
-def safety_net_note(engine: str, dropped: list[str]) -> str:
-    """The note recorded when the safety net drops cached queries."""
+def _call_share(summary: Mapping | None) -> float:
+    """``call_share_percent`` off an :func:`overlay_summary` dict, 0.0 when absent."""
+    value = (summary or {}).get("call_share_percent")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def safety_net_note(
+    engine: str,
+    dropped: list[str],
+    before: Mapping | None = None,
+    after: Mapping | None = None,
+) -> str:
+    """The safety net's own note, shown to customers (#296, #424, #459).
+
+    With ``before`` and ``after`` -- the :func:`overlay_summary` taken just
+    before and just after the drop -- the note states how many hot reads were
+    assigned at the assignment gate, how many the engine's schema design
+    covers (and so stay cached), how many no longer are, and the after share
+    of calls. Named with :func:`src.shared.engine_names.display_engine`,
+    never the raw engine id, so the assignment gate's own ``cache_overlay``
+    and this report's never disagree without saying why.
+
+    This is the customer-facing summary (``cache_overlay.safety_net_notes``,
+    #459 review): never the full ``cache_notes`` audit trail, which also
+    carries customer-edit notes (full query hashes) and the legacy-migration
+    note -- those stay internal, kept only for the engineering report
+    (``cache_overlay.notes``). Per-query detail (which query, which reason)
+    stays on :func:`dropped_reason`, set on each dropped
+    ``QueryAssignment.cache_reason``; this note never repeats it per query.
+
+    Without ``before`` (a caller with no snapshot), the note names only what
+    was dropped, as before #459. ``after`` is never falsy on the before/after
+    branch in production (:func:`src.agents.referee.synthesis_data.
+    _apply_cache_safety_net` passes the zero-value fallback
+    ``{"query_count": 0, "call_share_percent": 0.0}`` when
+    :func:`overlay_summary` returns ``None`` -- dropping every cached read,
+    #459 round 2) -- so the branch is keyed on ``before`` alone: a caller with
+    a real ``before`` always has a real (possibly all-zero) ``after`` too.
+
+    A schema-design re-run for the same assignment version starts from the
+    *already-reduced* overlay the previous run persisted
+    (``synthesis_handler._persist_cache_safety_net`` writes a drop back to the
+    assignment artifact in place): a second run's own ``before`` is the first
+    run's ``after``, not the original assignment-gate count. The note stays
+    correct for what changed in *that* run; it is not a running total across
+    runs.
+    """
     n = len(dropped)
-    noun = "query" if n == 1 else "queries"
+    if not before:
+        noun = "hot read" if n == 1 else "hot reads"
+        return (
+            f"{n} {noun} had no in-scope access pattern in the "
+            f"{display_engine(engine)} schema design, so "
+            f"{'it is' if n == 1 else 'they are'} served by "
+            f"{'its' if n == 1 else 'their'} owner engine only "
+            "(cache overlay dropped, owner unchanged)."
+        )
+    before_count = int(before.get("query_count") or 0)
+    after_count = int((after or {}).get("query_count") or 0)
+    before_share = _call_share(before)
+    after_share = _call_share(after)
+    name = display_engine(engine)
+    # #459 round 2/3: a full drop (after_count == 0) states it plainly
+    # ("covers none of them", "all N", "None remain") instead of the
+    # numerically-correct but easy-to-miss "covers 0 of them", "the other N",
+    # "0 hot reads (0.0% of calls) remain." -- this is exactly the shape
+    # #424's own report described (the cache engine leaves the engine list
+    # entirely).
+    if after_count == 0:
+        covers = "covers none of them"
+        no_longer_cached = "it is no longer cached" if n == 1 else f"all {n} are no longer cached"
+        remaining = "None remain"
+    else:
+        covers = f"covers {after_count} of them"
+        no_longer_cached = f"the other {n} {'is' if n == 1 else 'are'} no longer cached"
+        remaining = (
+            f"{after_count} hot {'read' if after_count == 1 else 'reads'} "
+            f"({after_share:.1f}% of calls) {'remains' if after_count == 1 else 'remain'}"
+        )
     return (
-        f"{n} cached {noun} had no in-scope access pattern in the {engine} schema design, "
-        f"so {'it is' if n == 1 else 'they are'} served by {'its' if n == 1 else 'their'} "
-        "owner engine only (cache overlay dropped, owner unchanged)."
+        f"{before_count} hot {'read' if before_count == 1 else 'reads'} "
+        f"({before_share:.1f}% of calls) {'was' if before_count == 1 else 'were'} "
+        f"assigned at the assignment gate. The {name} schema design {covers}; "
+        f"{no_longer_cached} and {'stays' if n == 1 else 'stay'} served by "
+        f"{'its' if n == 1 else 'their'} owner engine. {remaining}."
     )

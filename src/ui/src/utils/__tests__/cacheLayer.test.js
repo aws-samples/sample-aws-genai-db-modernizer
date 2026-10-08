@@ -11,6 +11,7 @@ import {
   splitRankingByRole,
   getQueryCacheInfo,
   formatCacheLayerLine,
+  cacheOverlayNotes,
   formatCachedByLine,
   targetEngineEntries,
   resolveCostBreakdown,
@@ -209,6 +210,46 @@ describe('formatCacheLayerLine', () => {
 
   test('falls back to sane English when no translation function is supplied', () => {
     expect(formatCacheLayerLine(overlay)).toBe('Cache layer · 20 cached reads · 83.4% of calls');
+  });
+});
+
+describe('cacheOverlayNotes (#424, #459)', () => {
+  test('returns the safety_net_notes array when present', () => {
+    const overlay = {
+      engine: 'elasticache',
+      query_count: 10,
+      safety_net_notes: [
+        '20 hot reads (83.4% of calls) were assigned at the assignment gate. '
+        + 'The ElastiCache schema design covers 10 of them; the other 10 are no '
+        + 'longer cached and stay served by their owner engine. 10 cached reads '
+        + '(61.3% of calls) remain.',
+      ],
+    };
+    expect(cacheOverlayNotes(overlay)).toEqual(overlay.safety_net_notes);
+  });
+
+  test('works without an engine key (#459 round 2: a full drop has no engine on the overlay)', () => {
+    const overlay = {
+      dropped_query_ids: ['q9'],
+      safety_net_notes: ['1 hot read (10.0% of calls) was assigned ... None remain.'],
+    };
+    expect(cacheOverlayNotes(overlay)).toEqual(overlay.safety_net_notes);
+  });
+
+  test('never reads the full notes field (#459: internal, engineering-report only)', () => {
+    const overlay = {
+      engine: 'elasticache',
+      query_count: 10,
+      notes: ['a customer-edit note with a full query hash, not for customers'],
+    };
+    expect(cacheOverlayNotes(overlay)).toEqual([]);
+  });
+
+  test('is always an array, never null, with a malformed, missing, or absent field', () => {
+    expect(cacheOverlayNotes({ engine: 'elasticache', query_count: 10 })).toEqual([]);
+    expect(cacheOverlayNotes({ safety_net_notes: 'not an array' })).toEqual([]);
+    expect(cacheOverlayNotes(null)).toEqual([]);
+    expect(cacheOverlayNotes(undefined)).toEqual([]);
   });
 });
 

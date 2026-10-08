@@ -21,8 +21,8 @@
 // (the exported file is standalone). Both escape & < > " ' -- see ./escapeHtml.js.
 import { escapeHtml, jsonForScript } from './escapeHtml';
 import {
-  getCacheOverlay, formatCacheLayerLine, targetEngineEntries, resolveCostBreakdown,
-  ownerSchemaDesigns, cacheAccessPatternCount,
+  getCacheOverlay, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries,
+  resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount,
 } from './cacheLayer';
 import { costBaselineStats } from './tcoAnalysis';
 
@@ -207,7 +207,16 @@ const REPORT_CSS = '\n' +
 // Helper function to generate the report JavaScript code without template literals
 // This eliminates Semgrep false positives for missing-template-string-indicator
 const generateReportScript = (data, ENGINE_LABELS) => {
-  const { results, schemaDesigns, collector, jobId, queryJourneys } = data;
+  const { schemaDesigns, collector, jobId, queryJourneys } = data;
+  // #459 round 3: strip cache_overlay.notes (the cumulative audit trail --
+  // customer-edit notes can carry full query hashes) before it is embedded
+  // in DATA. Nothing client-side reads it (only safety_net_notes, kept
+  // untouched), but it must not be in the exported file at all, not just
+  // left unrendered. This line is a plain statement, not a `script += `
+  // append, so sync_report_template.py's extractor (which only lifts
+  // `script += '...'` lines into the static body) skips it -- it stays
+  // here, the dynamic half of this function, not in the extracted template.
+  const results = withoutCumulativeCacheNotes(data.results);
 
   // Build the script using string concatenation (not template literals)
   let script = '';
@@ -1206,6 +1215,21 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   return script;
 };
 
+/**
+ * Strips `cache_overlay.notes` (#459 round 3) -- the cumulative audit trail,
+ * which can carry a customer-edit note with a full query hash -- out of
+ * `results` before it reaches a customer-facing export. Nothing client-side
+ * reads `notes` (only `safety_net_notes`, which this keeps untouched), but
+ * it must not be embedded in the exported `DATA` blob at all, not just left
+ * unrendered.
+ */
+export function withoutCumulativeCacheNotes(results) {
+  const overlay = results?.synthesis?.cache_overlay;
+  if (!overlay || !('notes' in overlay)) return results;
+  const { notes, ...overlayWithoutNotes } = overlay;
+  return { ...results, synthesis: { ...results.synthesis, cache_overlay: overlayWithoutNotes } };
+}
+
 export const generateHTMLReport = (data) => {
   const { results, schemaDesigns, collector, jobId, exportDate, queryJourneys } = data;
   const afterDist = results?.synthesis?.reality_check?.after_distribution || {};
@@ -1227,10 +1251,25 @@ export const generateHTMLReport = (data) => {
       + '</span>')
     .join('');
 
+  // #424: the safety net's notes -- recorded when the post-schema-design
+  // safety net drops cached reads the cache's own schema design doesn't
+  // cover -- each carry their own before/after numbers (assigned at the
+  // gate, covered/dropped and why, remaining). Without this, the exported
+  // HTML would state only the final count and silently disagree with the
+  // number shown at the assignment gate, same gap as the live Results page
+  // (fixed alongside this in AnalysisResults-02.js). #459: cacheOverlayNotes
+  // reads safety_net_notes only -- never the full notes field, which also
+  // carries customer-edit notes (full query hashes) and the legacy-migration
+  // note, neither customer-facing.
+  const cacheOverlayNotesHtml = cacheOverlayNotes(cacheOverlay)
+    .map((note) => '<div class="stat-note">' + escapeHtml(note) + '</div>')
+    .join('');
+
   // Shown as its own stat below the Target Engines badges, not folded into them.
   const cacheLayerStat = cacheOverlay
     ? '<div class="stat-card"><div class="stat-label">Cache Layer</div>'
-      + '<div class="stat-value" style="font-size: 14px;">' + escapeHtml(formatCacheLayerLine(cacheOverlay)) + '</div></div>'
+      + '<div class="stat-value" style="font-size: 14px;">' + escapeHtml(formatCacheLayerLine(cacheOverlay)) + '</div>'
+      + cacheOverlayNotesHtml + '</div>'
     : '';
 
   // Untrusted report.json text in the shell, escaped once here. The ATX renderer

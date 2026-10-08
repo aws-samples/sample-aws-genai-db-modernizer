@@ -168,3 +168,37 @@ class TestAuroraEngineChoice:
         reloaded = Assignment.model_validate(a.model_dump(mode="json"))
         assert reloaded == a
         assert reloaded.aurora_engine_choice is None
+
+
+class TestCacheSafetyNetNotes:
+    """#424, #459: cache_safety_net_notes is optional and backward compatible
+    -- a pre-1.7 artifact (the field absent entirely, same shape as any
+    assignment written before the safety net recorded a customer-facing note
+    separately from cache_notes) still loads, defaulting to an empty list."""
+
+    def test_defaults_to_empty_on_a_pre_1_7_artifact(self) -> None:
+        pre_1_7 = _assignment()
+        assert "cache_safety_net_notes" not in pre_1_7
+        a = Assignment.model_validate(pre_1_7)
+        assert a.cache_safety_net_notes == []
+
+    def test_round_trips_with_a_note(self) -> None:
+        note = (
+            "20 hot reads (83.4% of calls) were assigned at the assignment gate. "
+            "The ElastiCache schema design covers 10 of them; the other 10 are no "
+            "longer cached and stay served by their owner engine. 10 hot reads "
+            "(61.3% of calls) remain."
+        )
+        a = Assignment.model_validate(_assignment(cache_safety_net_notes=[note]))
+        assert a.cache_safety_net_notes == [note]
+        dumped = a.model_dump(mode="json")
+        assert dumped["cache_safety_net_notes"] == [note]
+        assert Assignment.model_validate(dumped) == a
+
+    def test_pre_1_7_artifact_round_trips_through_dump_and_reload(self) -> None:
+        pre_1_7 = _assignment()
+        assert "cache_safety_net_notes" not in pre_1_7
+        a = Assignment.model_validate(pre_1_7)
+        reloaded = Assignment.model_validate(a.model_dump(mode="json"))
+        assert reloaded == a
+        assert reloaded.cache_safety_net_notes == []

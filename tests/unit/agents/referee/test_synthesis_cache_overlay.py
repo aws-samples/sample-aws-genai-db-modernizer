@@ -170,8 +170,23 @@ class TestSynthesisData:
         assert hot2["cache_engine"] is None
         assert hot2["assigned_engine"] == "aurora_mysql"
         assert data.cache_overlay_dropped == ["hot2"]
-        assert "owner unchanged" in data.cache_overlay_notes[0]
         assert "elasticache" in data.engines
+        # #424/#459: the note must carry the gate's own before/after numbers,
+        # named with the engine's display name, not only the drop count -- the
+        # shrink between the gate (2 cached reads, 80.0% of calls) and the
+        # report (1 remains) is traceable from the note text alone.
+        note = data.cache_overlay_notes[0]
+        assert note == (
+            "2 hot reads (80.0% of calls) were assigned at the assignment gate. "
+            "The ElastiCache schema design covers 1 of them; the other 1 is no "
+            "longer cached and stays served by its owner engine. 1 hot read "
+            "(60.0% of calls) remains."
+        )
+        # #459 review: the safety-net-only note is recorded separately from the
+        # full (internal) audit trail -- both carry the same text here, since
+        # nothing else wrote to cache_notes in this test.
+        assert data.assignment["cache_safety_net_notes"] == [note]
+        assert data.assignment["cache_notes"] == [note]
 
     def test_safety_net_removes_a_cache_that_serves_nothing(self, store):
         _seed(store, ASSIGNMENT, {"access_patterns": []})
@@ -217,6 +232,26 @@ class TestSynthesisReport:
         )
         assert eff["role"] == "cache_layer" and "workload_percent" not in eff
         assert "elasticache" not in result["eliminated_engines"]
+
+    def test_overlay_separates_safety_net_notes_from_the_full_audit_trail(self, store):
+        """#459 review: ``cache_overlay["notes"]`` is the full, internal audit
+        trail; ``cache_overlay["safety_net_notes"]`` is the customer-facing
+        subset every deliverable but the engineering report must read.
+        """
+        schema = {"access_patterns": [{"pattern_id": "p1", "source_query_ids": ["hot1"]}]}
+        _seed(store, ASSIGNMENT, schema)
+        # A customer-edit note, never customer-facing, lands in cache_notes only.
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v2/assignment.json",
+            {**ASSIGNMENT, "cache_notes": ["customer-edit note, full query hash: hot9"]},
+        )
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        overlay = result["cache_overlay"]
+        assert "customer-edit note, full query hash: hot9" in overlay["notes"]
+        assert "customer-edit note, full query hash: hot9" not in overlay["safety_net_notes"]
+        (safety_net_note,) = overlay["safety_net_notes"]
+        assert safety_net_note.startswith("2 hot reads (80.0% of calls) were assigned")
+        assert safety_net_note in overlay["notes"]
 
     def test_fallback_summary_describes_the_cache_layer(self):
         text = build_fallback_summary(

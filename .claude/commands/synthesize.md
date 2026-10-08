@@ -107,6 +107,16 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    - TCO comparison (current RDS vs target)
    - Top risks and mitigations
    - Executive summary
+   - `cache_safety_net_notes`, when non-empty on step 3e's `--finalize` status
+     line: quote each note verbatim (do not paraphrase or re-round its
+     numbers, and do not read `report.json` for this — the status line
+     already carries it). This is how the cache layer's final scope is
+     explained when it differs from what the assignment gate showed — the
+     post-schema-design safety net drops a cached read the cache's own schema
+     design does not cover, and the note already states exactly how many
+     reads were assigned at the assignment gate, how many the schema design
+     covers, how many no longer are, and how many remain, deterministically
+     computed, not something to re-derive.
 
 6. **Update state**
    Set `phase_status.synthesis` = "complete"

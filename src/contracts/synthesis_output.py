@@ -103,6 +103,13 @@ Version History:
   rationale text. Backward compatible: a pre-1.7 wave never had
   ``homogeneity="cross_engine"`` to begin with, and ``aurora_engine_choice``
   defaults to ``None``.
+- 1.8 (2026-10-08, #424, #459 review): ``cache_overlay`` (``dict[str, Any]``,
+  unstructured) now carries ``safety_net_notes``: the customer-facing subset
+  of ``notes`` (which also carries customer-edit and legacy-migration notes,
+  internal, kept for the engineering report only). Every other deliverable
+  and the chat summary read ``safety_net_notes``. No model field added (the
+  key is unstructured, like ``notes`` and ``dropped_query_ids`` before it);
+  absent on a report with no cache overlay or no safety-net drop.
 """
 
 from datetime import datetime
