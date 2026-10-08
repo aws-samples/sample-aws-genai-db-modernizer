@@ -617,15 +617,37 @@ def merge_failures(schema_output: Any) -> list[str]:
     return [f for f in failures if isinstance(f, str) and f.startswith(MERGE_FAILURE_PREFIX)]
 
 
-def merge_warnings(schema_output: Any) -> list[str]:
-    """Return the review notes (warnings) the DynamoDB merge added to ``schema_output``."""
+def merge_overlaps(schema_output: Any) -> list[dict]:
+    """Return the unresolved cross-group overlap trade-offs in ``schema_output``.
+
+    Each is the full trade-off :func:`independent_homes` built (description,
+    impact, ``source_tables``, ``target_tables``, ``query_ids``, ``engine``) --
+    the ``OVERLAP_PREFIX`` check lives only here, so a reader never has to know
+    the prefix to find them. Deduplicated by (``source_tables``, ``target_tables``):
+    a schema output copied from an earlier merge, or merged more than once,
+    must not double an open conflict.
+    """
     if not isinstance(schema_output, dict):
         return []
-    return [
-        str(t["description"])
-        for t in _dicts(schema_output.get("trade_offs"))
-        if str(t.get("description") or "").startswith(OVERLAP_PREFIX)
-    ]
+    seen: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    overlaps: list[dict] = []
+    for t in _dicts(schema_output.get("trade_offs")):
+        if not str(t.get("description") or "").startswith(OVERLAP_PREFIX):
+            continue
+        key = (
+            tuple(s for s in t.get("source_tables") or [] if isinstance(s, str)),
+            tuple(s for s in t.get("target_tables") or [] if isinstance(s, str)),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        overlaps.append(t)
+    return overlaps
+
+
+def merge_warnings(schema_output: Any) -> list[str]:
+    """Return the review notes (warnings) the DynamoDB merge added to ``schema_output``."""
+    return [str(t["description"]) for t in merge_overlaps(schema_output)]
 
 
 def _draft_passed(draft: dict) -> bool:

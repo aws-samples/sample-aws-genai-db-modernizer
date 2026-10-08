@@ -36,6 +36,7 @@ from src.agents.referee.synthesis_grounding import (
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
 from src.shared.engine_names import display_source_database
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.ranking import (
@@ -1073,6 +1074,18 @@ def build_risk_assessment(
                 }
             )
 
+        # Unresolved cross-group design conflicts from the DynamoDB merge (#426).
+        # ``dynamodb_merge.independent_homes`` records a source table two design
+        # groups each gave its own entity (not consolidated) as a review
+        # trade-off instead of raising a validation failure -- that trade-off
+        # was visible in the deliverables' trade-off list, but never became a
+        # risk, so the report could say "review before migration" while the
+        # risk register stayed empty. One MEDIUM risk per such trade-off; it
+        # disappears with the trade-off once the overlap is consolidated or a
+        # real trade-off covers it (``dynamodb_merge._covers``).
+        risk_id, conflict_risks = _design_conflict_risks(risk_id, engine, schema, normalise)
+        risks.extend(conflict_risks)
+
         # Queries --split left out of every design group because they touch no
         # source table (catalog/utility statements, #276/#369): a deterministic
         # out-of-scope note, same as an unsupported pattern, so they are visible
@@ -1667,6 +1680,67 @@ def _tables_for(
         touched |= query_tables.get(q, set())
     narrowed = sorted(t for t in ap_tables if t in touched)
     return narrowed or sorted(ap_tables)
+
+
+def _design_conflict_risks(
+    risk_id: int,
+    engine: str,
+    schema: dict,
+    normalise: Callable[[Iterable[str]], set[str]],
+) -> tuple[int, list[dict]]:
+    """One MEDIUM risk per unresolved cross-group design conflict (#426).
+
+    ``dynamodb_merge.independent_homes`` adds a review trade-off (collected by
+    :func:`merge_overlaps`) when a source table is the primary entity of two or
+    more tables designed by different groups and nothing already covers the
+    overlap -- it never raises a validation failure, so the merge can succeed
+    with the conflict still open. That trade-off is real (it is in the
+    deliverables' trade-off list), but names a decision the migration still has
+    to make, which makes it a risk too. ``affected_tables`` is the shared source
+    tables (normalised like every other risk's); ``query_ids`` is every
+    in-scope access pattern whose own ``source_tables`` actually touches one of
+    those shared tables, read against the tables the overlap produced -- not
+    every access pattern on those tables, which would also list queries against
+    other entities an item-collection table happens to also hold. The risk
+    disappears exactly when the trade-off does: once the tables are
+    consolidated, or a real (non-review) trade-off names the source table and
+    every table it produced, a later merge stops emitting it.
+    """
+    conflicts = merge_overlaps(schema)
+    if not conflicts:
+        return risk_id, []
+
+    risks: list[dict] = []
+    for conflict in conflicts:
+        risk_id += 1
+        sources = normalise(conflict.get("source_tables") or [])
+        targets = {t for t in conflict.get("target_tables") or [] if isinstance(t, str)}
+        query_ids = sorted(
+            {
+                q
+                for ap in schema.get("access_patterns") or []
+                if isinstance(ap, dict)
+                and str(ap.get("table_name")) in targets
+                and normalise(ap.get("source_tables") or []) & sources
+                for q in ap.get("query_ids") or []
+            }
+        )
+        description = str(conflict["description"])[len(OVERLAP_PREFIX) :].strip()
+        risks.append(
+            {
+                "risk_id": f"RISK-{risk_id:03d}",
+                "risk_type": "DATA_CONSISTENCY",
+                "severity": "MEDIUM",
+                "description": f"[{engine}] {description}",
+                "affected_tables": sorted(sources),
+                "mitigation": (
+                    "Consolidate to one table per source table, or document the "
+                    "dual-write path and keep the copies in sync."
+                ),
+                "query_ids": query_ids,
+            }
+        )
+    return risk_id, risks
 
 
 def _resolved_risk(
