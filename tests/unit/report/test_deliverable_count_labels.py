@@ -297,9 +297,18 @@ class TestRiskProfileSeverityFallback:
         )
 
     def test_no_risks_says_so(self) -> None:
-        rows, caption = _risk_slide([])
-        assert rows[1:] == []
-        assert caption.startswith("No open risks remain.")
+        """No open risks and no resolved ones either (#434): the slide states that
+        plainly instead of an empty table and an empty "BY TYPE" box -- see
+        ``test_risk_profile_empty_state.py`` for the no-open-but-resolved case."""
+        rep = {**_cache_report(), "risk_assessment": {"risks": []}}
+        f = pptx_report.derive(rep, {})
+        slide = pptx_report.slide_risk(pptx_report.open_deck(keep=1), f)
+        assert not any(sh.has_table for sh in slide.shapes)
+        text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "No open or resolved risks identified" in text
+        assert "No risks were identified in this analysis." in text
+        assert "0 risks:" not in text
+        assert "BY TYPE" not in text
 
 
 def _mapped_report() -> dict[str, Any]:

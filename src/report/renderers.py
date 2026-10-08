@@ -368,6 +368,41 @@ def resolved_risks(report: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def resolved_risk_label(risk: dict[str, Any]) -> str:
+    """``aurora_mysql`` resolved onto ``dynamodb`` -> ``Aurora MySQL -> DynamoDB``;
+    resolved onto the same engine it started on -> ``Aurora MySQL (kept)`` (#434).
+
+    A resolved risk whose queries never left its own engine (the risk was
+    resolved some other way -- a schema change, a different access pattern)
+    used to render as ``Aurora MySQL -> Aurora MySQL``, naming the same engine
+    twice as if something moved. Shared by the deck
+    (``src.report.pptx_report``) and this module's own engineering report
+    section so the two agree on the same risk.
+    """
+    engine = str(risk.get("engine") or "")
+    label = display_engine(engine) if engine else "(general)"
+    resolved_on = risk.get("resolved_on")
+    if not resolved_on:
+        return label
+    if str(resolved_on) == engine:
+        return f"{label} (kept)"
+    return f"{label} → {display_engine(str(resolved_on))}"
+
+
+# The headline reminder every deliverable's no-open-risk state carries (#434
+# review): "0 open risks" must never read as "0 migration risk" when the
+# analysis never modeled production traffic, peak load or compliance in the
+# first place. Same wording in the deck/PDF (``pptx_report``), this module's
+# Decision Report, and the interactive Analysis Report's no-open-risk state
+# (``src/ui/src/utils/ExportReport.js`` -- JavaScript cannot import this
+# constant, so that copy is kept in sync by hand).
+NO_OPEN_RISKS_CAVEAT = (
+    "No open risks is not the same as no migration risk: this analysis reads schema and "
+    "query patterns only and does not model traffic bursts, peak load or compliance "
+    "requirements."
+)
+
+
 # #393: three independent high-confidence checks can reject the generated executive
 # summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
 # ``check_summary_internal_leaks``, ``check_summary_wave_order``), each stamping its
@@ -1036,8 +1071,21 @@ def render_decision_report_html(
 
     risks = filtered_risks(report)
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
-    if risks or strategies:
+    resolved_count = len(resolved_risks(report))
+    if risks or strategies or resolved_count:
         out += ["<h2 class=section-title>Risk posture</h2>", "<div class=card><div class=card-b>"]
+        if not risks and resolved_count:
+            # #434: with no open risks this section used to disappear entirely
+            # when there were no mitigation strategies either, saying nothing
+            # about the resolved risks the Engineering Report still lists --
+            # "overall risk LOW" with no section at all reads as "no migration
+            # risk", which the caveat below exists to rule out.
+            out.append(
+                f"<p>No open migration risks; {resolved_count} "
+                f"{plural_verb(resolved_count, 'was', 'were')} resolved by the assignment "
+                "(see the Engineering Report).</p>"
+            )
+            out.append(f"<p class=note>{esc(NO_OPEN_RISKS_CAVEAT)}</p>")
         if risks:
             hi = sum(1 for r in risks if str(r.get("severity", "")).upper() in ("HIGH", "CRITICAL"))
             med = sum(1 for r in risks if str(r.get("severity", "")).upper() == "MEDIUM")
@@ -2087,12 +2135,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out += [f"## Resolved by the assignment ({len(resolved)})", ""]
         for r in resolved:
             _, body = _risk_engine_and_body(r.get("description"))
-            engine_name = display_engine(r.get("engine", "-"))
-            where = (
-                f"{engine_name} \u2192 {display_engine(r['resolved_on'])}"
-                if r.get("resolved_on")
-                else engine_name
-            )
+            where = resolved_risk_label(r)
             out.append(
                 f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
                 f"{escaping.md_text(where)} \u2014 {escaping.md_text(body)}"

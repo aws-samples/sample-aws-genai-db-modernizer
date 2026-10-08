@@ -45,7 +45,9 @@ RESOLVED = [
 def report() -> dict:
     data: dict = json.loads(FIXTURE.read_text())
     data = copy.deepcopy(data)
-    data["risk_assessment"]["resolved_risks"] = RESOLVED
+    # deepcopy RESOLVED too -- a test that mutates its own report's resolved_risks
+    # must not leak that mutation into every other test sharing this fixture.
+    data["risk_assessment"]["resolved_risks"] = copy.deepcopy(RESOLVED)
     return data
 
 
@@ -89,6 +91,53 @@ def test_no_resolved_risks_no_section(report: dict) -> None:
     report["risk_assessment"].pop("resolved_risks")
     assert "Resolved by the assignment" not in renderers.render_engineering_report_md(report)
     assert "resolved by the assignment" not in renderers.render_decision_report_html(report)
+
+
+def test_resolved_risk_label_kept_when_resolved_onto_its_own_engine() -> None:
+    """#434 review: a risk resolved without moving anywhere used to render
+    "Aurora MySQL → Aurora MySQL", naming the same engine twice as if the
+    queries moved. It did not move; say so."""
+    risk = {"engine": "aurora_mysql", "resolved_on": "aurora_mysql"}
+    assert renderers.resolved_risk_label(risk) == "Aurora MySQL (kept)"
+
+
+def test_resolved_risk_label_moved() -> None:
+    risk = {"engine": "aurora_mysql", "resolved_on": "dynamodb"}
+    assert renderers.resolved_risk_label(risk) == "Aurora MySQL → DynamoDB"
+
+
+def test_resolved_risk_label_no_resolved_on() -> None:
+    assert renderers.resolved_risk_label({"engine": "aurora_mysql"}) == "Aurora MySQL"
+
+
+def test_engineering_report_says_kept_not_the_same_engine_twice(report: dict) -> None:
+    report["risk_assessment"]["resolved_risks"][0]["resolved_on"] = "aurora_mysql"
+    md = renderers.render_engineering_report_md(report)
+    section = md.split("## Resolved by the assignment (2)", 1)[1].split("\n## ", 1)[0]
+    # "(" and ")" are backslash-escaped in Markdown flowing text (escaping.md_text).
+    assert "Aurora MySQL \\(kept\\)" in section
+    assert "Aurora MySQL → Aurora MySQL" not in section
+
+
+def test_decision_report_states_resolved_count_when_no_open_risks_remain(report: dict) -> None:
+    """#434: with no open risks the "Risk posture" section used to disappear
+    whenever there were also no mitigation strategies, saying nothing about the
+    risks the assignment resolved -- "overall risk LOW" with no section at all
+    reads as "no migration risk"."""
+    report["risk_assessment"]["risks"] = []
+    report["risk_assessment"]["mitigation_strategies"] = []
+    html = renderers.render_decision_report_html(report)
+    assert "No open migration risks; 2 were resolved by the assignment" in html
+    assert "see the Engineering Report" in html
+    assert renderers.NO_OPEN_RISKS_CAVEAT in html
+
+
+def test_decision_report_no_section_when_truly_no_risks(report: dict) -> None:
+    report["risk_assessment"]["risks"] = []
+    report["risk_assessment"]["resolved_risks"] = []
+    report["risk_assessment"]["mitigation_strategies"] = []
+    html = renderers.render_decision_report_html(report)
+    assert "Risk posture" not in html
 
 
 def test_mitigation_repeating_the_description_is_not_rendered_twice(report: dict) -> None:

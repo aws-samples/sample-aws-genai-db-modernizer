@@ -90,6 +90,19 @@ def test_engine_labels_match_the_python_renderer(sync):
         assert engine in js_labels, f"no display name for {engine}"
 
 
+def test_no_open_risks_caveat_matches_the_python_constant(sync):
+    """#434: the client script's no-open-risk reminder is a hand-kept copy of
+    ``renderers.NO_OPEN_RISKS_CAVEAT`` (JavaScript cannot import a Python
+    constant) -- pin the two together the same way ``ENGINE_LABELS`` is, so a
+    wording change on one side fails loudly instead of silently drifting from
+    the deck and the Decision Report.
+    """
+    from src.report import renderers
+
+    body = sync.extract_script_body(sync._read_source())
+    assert renderers.NO_OPEN_RISKS_CAVEAT in body
+
+
 def test_badges_share_the_container_corner_radius(sync):
     css = sync.extract_css(sync._read_source())
     assert "--radius-container:" in css
