@@ -1,11 +1,11 @@
-"""The deterministic pipeline must give the same assignment and Reality Check
-result whatever the Python hash seed (#186, #288).
+"""The deterministic pipeline must give the same analysis, assignment and
+Reality Check result whatever the Python hash seed (#186, #288, #449).
 
 Finalize runs in a new process and recomputes the deterministic Reality Check,
 so a result that depends on PYTHONHASHSEED can differ from the one the LLM
 reviewed. This runs collect → reality check on each sample under several seeds,
 each in its own subprocesses, and compares the artifacts with only the
-top-level ``timestamp`` removed.
+top-level ``timestamp`` and the analysis run's timing removed.
 """
 
 from __future__ import annotations
@@ -54,6 +54,9 @@ def _run_through_reality_check(sample: str, seed: str, root: Path) -> Path:
 def _canonical(path: Path) -> str:
     data = json.loads(path.read_text())
     data.pop("timestamp", None)
+    # Analysis contracts record when and how long the run took.
+    for key in ("analysis_timestamp", "analysis_duration_seconds"):
+        (data.get("agent_metadata") or {}).pop(key, None)
     return json.dumps(data, ensure_ascii=False, indent=1)
 
 
@@ -68,6 +71,13 @@ def test_reality_check_and_assignment_ignore_hash_seed(sample: str, tmp_path: Pa
     )
     rels.append("reality-check/output.json")
     assert len(rels) >= 2, rels  # the resolver's v1 plus Reality Check's revision
+    analysis = sorted(
+        str(p.relative_to(jobs[0]))
+        for name in ("analysis.json", "decision-trace.json")
+        for p in jobs[0].glob(f"analysis-*/{name}")
+    )
+    assert analysis, "no analysis artifacts written"
+    rels += analysis
     for rel in rels:
         by_seed = {seed: _canonical(job / rel) for seed, job in zip(SEEDS, jobs, strict=True)}
         distinct: dict[str, list[str]] = {}
