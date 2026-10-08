@@ -1961,13 +1961,18 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     cols += ["Shards", "Replicas", "Fields"]
                 out += ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
                 for t in tables:
+                    # Code-span cells go through md_cell too: a ``|`` splits a GFM
+                    # row even inside a code span, which breaks the span and leaves
+                    # the rest of the name as live markup (#457).
                     row = [
-                        f"`{escaping.md_code(t.get('table_name', '?'))}`",
+                        escaping.md_cell(f"`{escaping.md_code(t.get('table_name', '?'))}`"),
                         escaping.md_cell(t.get("aggregate_pattern", "-")),
-                        ", ".join(
-                            f"`{escaping.md_code(s)}`" for s in (t.get("source_tables") or [])
-                        )
-                        or "-",
+                        escaping.md_cell(
+                            ", ".join(
+                                f"`{escaping.md_code(s)}`" for s in (t.get("source_tables") or [])
+                            )
+                            or "-"
+                        ),
                         escaping.md_cell(fmt_num(t.get("gsi_count", "-"))),
                     ]
                     if has_ttl:

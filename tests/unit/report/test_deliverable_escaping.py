@@ -23,6 +23,7 @@ scope the escaping concern to HTML/SVG/Markdown).
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -325,6 +326,37 @@ class TestEngineeringReportEscaping:
         # a leaked backtick would shift that alternation.
         first_cell = map_lines[0].split("|")[1]
         assert "``" not in first_cell
+
+    def test_schema_table_keeps_its_columns_for_pipe_and_angle_brackets(self) -> None:
+        """#457: a ``|`` splits a GFM table row even inside a code span, which breaks
+        the span and leaves the rest of the name as live markup. Target and source
+        table names in the schema table go through md_cell like every other cell, so
+        the row keeps its columns and no raw angle bracket remains."""
+        report = {
+            "schema_designs": {
+                "dynamodb": {
+                    "status": "completed",
+                    "access_pattern_count": 1,
+                    "tables": [
+                        {
+                            "table_name": "Evil|<b>x</b>",
+                            "aggregate_pattern": "single",
+                            "source_tables": ["src|<i>y</i>"],
+                            "gsi_count": 1,
+                        }
+                    ],
+                }
+            }
+        }
+        lines = renderers.render_engineering_report_md(report).splitlines()
+        header = lines.index("| Target | Pattern | Source tables | GSIs |")
+        row = lines[header + 2]
+        # An unescaped pipe delimits a cell; ``\|`` is the GFM escape for a literal one.
+        cells = re.split(r"(?<!\\)\|", row)[1:-1]
+        assert len(cells) == 4, row
+        assert "<" not in row and ">" not in row
+        assert "`Evil\\|&lt;b&gt;x&lt;/b&gt;`" in cells[0]
+        assert "`src\\|&lt;i&gt;y&lt;/i&gt;`" in cells[2]
 
     def test_no_raw_newline_injected_mid_value(self) -> None:
         md = renderers.render_engineering_report_md(_report_with_injection())
