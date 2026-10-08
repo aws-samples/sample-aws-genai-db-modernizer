@@ -7,7 +7,16 @@ Covers:
 - aurora-anti-07: high-volume-text-search
 """
 
+import json
+import os
+import subprocess  # nosec B404 -- runs a fixed, module-level -c script, never external input
+import sys
+import textwrap
+from pathlib import Path
+
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
+
+REPO = Path(__file__).resolve().parents[4]
 
 
 def _make_collector(tables, queries):
@@ -205,6 +214,70 @@ class TestSingleAccessPatternTable:
         _, anti_patterns = analyze_aurora_common_use_cases(_make_collector(tables, queries))
         anti_ids = [ap.anti_pattern_id for ap in anti_patterns]
         assert "aurora-anti-06" not in anti_ids
+
+
+# ==========================================================================
+# TestSingleAccessPatternTableOrderIsHashSeedIndependent (issue #320)
+# ==========================================================================
+
+_ANTI06_CHILD = textwrap.dedent("""
+    import json
+
+    from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
+
+    tables = [{"table_id": "t1", "foreign_keys": [], "columns": []}]
+    queries = [
+        {
+            "query_id": f"qid_{i:03d}",
+            "query_type": "SELECT",
+            "tables_accessed": ["t1"],
+            "has_joins": False,
+            "join_count": 0,
+            "rows_returned_avg": 1.0,
+            "calls_per_second": 5.0,
+            "query_text": f"SELECT * FROM t1 WHERE col{i} = ?",
+        }
+        for i in range(2)
+    ]
+    collector = {
+        "database_schema": {"tables": tables},
+        "queries": {"query_patterns": queries},
+    }
+    _, anti_patterns = analyze_aurora_common_use_cases(collector)
+    anti06 = next(ap for ap in anti_patterns if ap.anti_pattern_id == "aurora-anti-06")
+    print(json.dumps(anti06.query_ids))
+    """)
+
+
+def _run_anti06_child(hashseed: str) -> list[str]:
+    env = dict(os.environ)
+    env["PYTHONHASHSEED"] = hashseed
+    proc = subprocess.run(  # nosec B603 -- fixed interpreter plus a fixed, module-level -c script
+        [sys.executable, "-c", _ANTI06_CHILD],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, (
+        f"child process failed (PYTHONHASHSEED={hashseed}):\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    last_line = proc.stdout.strip().splitlines()[-1]
+    result: list[str] = json.loads(last_line)
+    return result
+
+
+class TestSingleAccessPatternTableOrderIsHashSeedIndependent:
+    """aurora-anti-06's query_ids come from a per-table ``set()``, so its order
+    depended on PYTHONHASHSEED (issue #320)."""
+
+    def test_query_ids_order_matches_across_hash_seeds(self):
+        outputs = {seed: _run_anti06_child(seed) for seed in ("0", "1", "2", "3", "4", "5")}
+        unique_orders = {tuple(order) for order in outputs.values()}
+        msg = f"aurora-anti-06 query_ids order depends on PYTHONHASHSEED: {outputs}"
+        assert len(unique_orders) == 1, msg
 
 
 # ==========================================================================
