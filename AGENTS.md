@@ -26,6 +26,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `.claude/settings.ci.json` | Permission allowlist for headless runs |
 | `ci/` | CI-agnostic entry points (`lint.sh`, `test.sh`, `e2e.sh`, `e2e-llm.sh`) and the quality judge (`ci/llm/`) |
 | `tests/` | `unit/`, `contract/`, `property/`, `graph/` (gated), `e2e/` (deterministic end-to-end), `integration/` (live stack, not gated) |
+| `benchmarks/` | Assessment quality benchmark: scores pipeline output against reviewed answer keys (ADR-030); how to run it: `benchmarks/README.md` |
 | `docs/examples/` | Sample fixtures: `wordpress/` and `discourse/` |
 | `mkdocs.yml`, `docs/` (minus `exclude_docs`) | Help site sources (`scripts/build_docs_sample.py` renders the sample report into it; `.github/workflows/docs.yml` builds and deploys it) |
 
@@ -183,8 +184,11 @@ truth.
 
 - Issues use the templates in `.github/ISSUE_TEMPLATE/`: `[Bug] ...`
   (label `bug`) or `[Feature] ...` (label `enhancement`), every section filled in.
-- One commit per issue, Conventional Commits subject, a body explaining the
-  problem and the fix, ending `Closes #N` (or `Refs #N` for follow-ups).
+- One commit per issue: a short Conventional Commits subject plus a short
+  body (a sentence or two each on the problem and the fix), ending
+  `Closes #N` (or `Refs #N` for follow-ups). The full explanation, review
+  notes and test results go in the issue and the PR, not the commit (see
+  CONTRIBUTING.md's Commit Message Format).
 - Never add `Co-Authored-By` trailers; never use `--no-verify`.
 - Write tests first; keep PRs small; open them against `main`.
 - Public wording everywhere (issues, commits, docs, code): this is a public
@@ -192,3 +196,5 @@ truth.
 - The "Maintainer Decision" label marks an issue or PR waiting for a
   maintainer, and blocks a PR from merging. Agents may add it; agents never
   remove it unless a human explicitly says to in that session.
+- Maintainers mirroring this repo into a deployment target: see
+  CONTRIBUTING.md's Maintainer Sync section (`scripts/maintainer-sync.sh`).

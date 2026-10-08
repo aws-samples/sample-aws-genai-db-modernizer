@@ -17,9 +17,9 @@
 <!-- --8<-- [start:overview] -->
 Moving off a monolithic relational database raises hard questions. Which queries belong in DynamoDB? Which need a document store? What stays relational? A wrong answer can force a redesign in the middle of the project.
 
-**Database Modernizer Assessment answers these questions using your real workload.** Give it the collected schema and queries of a PostgreSQL or MySQL database. It analyzes every query pattern, scores each one against 6 AWS purpose-built engines, checks the resulting architecture, and produces schema designs and TCO projections you can implement.
+**Database Modernizer Assessment answers these questions using your real workload.** Give it the collected schema and queries of a PostgreSQL, MySQL, SQL Server or Oracle database. It analyzes every query pattern, scores each one against 6 AWS purpose-built engines, checks the resulting architecture, and produces schema designs and TCO projections you can implement.
 
-**Supported sources:** PostgreSQL, MySQL, MariaDB
+**Supported sources:** PostgreSQL, MySQL, MariaDB. SQL Server and Oracle collect too (`scripts/collect-sqlserver.sql`, `scripts/collect-oracle.sql`); neither has an Aurora dialect of its own, so both Aurora engines compete on the collected workload and the assessment picks exactly one. Today that is Aurora PostgreSQL unless Aurora MySQL scores clearly higher. The move is cross-engine (dialect and schema conversion), not a lift-and-shift.
 **Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
 > **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it became a local tool built around Claude Code, to keep the open-source release simple to adopt.
