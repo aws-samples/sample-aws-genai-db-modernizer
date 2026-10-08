@@ -684,6 +684,129 @@ def test_access_patterns_cache_note_is_singular_for_one_pattern():
     assert '<div class="stat-note">+1 cache-layer pattern (not counted above)</div>' in html
 
 
+def test_cache_layer_stat_shows_the_safety_net_note():
+    """#424: the Cache Layer stat card must carry the safety net's own notes
+    (the before/after numbers -- assigned at the gate, covered/dropped and
+    why, how many remain) so this report never silently disagrees with the
+    number the assignment gate showed, the same gap fixed for the
+    decision/engineering reports and the live Results page.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={
+            "engine": "elasticache",
+            "query_count": 10,
+            "call_share_percent": 61.3,
+            "safety_net_notes": [
+                "20 hot reads (83.4% of calls) were assigned at the assignment "
+                "gate. The ElastiCache schema design covers 10 of them; the other "
+                "10 are no longer cached and stay served by their owner engine. "
+                "10 hot reads (61.3% of calls) remain."
+            ],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert "10 cached reads" in html and "61.3% of calls" in html
+    assert (
+        '<div class="stat-note">20 hot reads (83.4% of calls) were assigned '
+        "at the assignment gate" in html
+    )
+
+
+def test_cache_layer_stat_never_shows_the_full_notes_field():
+    """#459 review: ``notes`` also carries customer-edit notes (full query
+    hashes) and the legacy-migration note -- neither is customer-facing. Only
+    ``safety_net_notes`` renders here.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={
+            "engine": "elasticache",
+            "query_count": 10,
+            "call_share_percent": 61.3,
+            "notes": ["query q_8f21c carried over from the pre-overlay assignment"],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert '<div class="stat-note">' not in html
+
+
+def test_build_export_data_strips_the_full_notes_field_from_the_embedded_data():
+    """#459 round 3: not rendered (previous test), but it must not be in the
+    embedded DATA at all -- a customer-edit note can carry a full query
+    hash. ``safety_net_notes`` and everything else on ``cache_overlay`` is
+    kept untouched.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={
+            "engine": "elasticache",
+            "query_count": 10,
+            "call_share_percent": 61.3,
+            "notes": ["query q_8f21c carried over from the pre-overlay assignment"],
+            "safety_net_notes": ["10 hot reads (61.3% of calls) remain."],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    overlay = data["results"]["synthesis"]["cache_overlay"]
+    assert "notes" not in overlay
+    assert overlay["safety_net_notes"] == ["10 hot reads (61.3% of calls) remain."]
+    assert overlay["engine"] == "elasticache"
+    assert "q_8f21c" not in json.dumps(data)
+
+
+def test_cache_layer_stat_shows_the_note_after_a_full_drop():
+    """#459 round 2: ``cache_overlay`` carries no ``engine`` key when every
+    cached read is dropped (overlay_summary returns None with nothing
+    cached) -- this stat card is keyed on the overlay dict being non-empty
+    (``if not overlay``), not on ``engine``, so it must still show the note.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={
+            "dropped_query_ids": ["q9"],
+            "safety_net_notes": [
+                "1 hot read (10.0% of calls) was assigned at the assignment "
+                "gate. The ElastiCache schema design covers none of them; "
+                "it is no longer cached and stays served by its owner "
+                "engine. None remain."
+            ],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert '<div class="stat-note">' in html
+    assert "None remain." in html
+
+
+def test_cache_layer_stat_escapes_a_hostile_safety_net_note():
+    """#459: the safety net's note is server-generated, deterministic text --
+    but escaping must not assume that; a `<script>`/`<b>&` payload (e.g. from
+    a future bug upstream, or a legacy artifact edited by hand) must render
+    as literal text, never as markup, in this report.
+    """
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        cache_overlay={
+            "engine": "elasticache",
+            "query_count": 1,
+            "call_share_percent": 10.0,
+            "safety_net_notes": ["<script>alert(1)</script><b>bold</b> & escaped"],
+        }
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    html = ar.render_analysis_report_html(data)
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&lt;b&gt;bold&lt;/b&gt; &amp; escaped" in html
+
+
 def test_access_patterns_cache_note_absent_without_a_cache_overlay(rendered):
     """This fixture's synthesis report carries no cache_overlay at all (legacy
     shape, no cache layer in play), so there is no separate note to show."""

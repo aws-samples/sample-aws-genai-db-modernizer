@@ -198,13 +198,21 @@ def build_cache_overlay(data: SynthesisData) -> dict | None:
     ElastiCache owns no query, so the owner distribution (``workload_percent``) never
     counts it. This is the separate view: the in-scope queries it fronts, their share
     of calls, their owner engines, and the notes of the post-schema safety net.
+
+    #459 review: ``notes`` is the full ``cache_notes`` audit trail (safety-net
+    drops, customer-edit notes with full query hashes, the legacy-migration
+    note) -- internal, for the engineering report only. ``safety_net_notes`` is
+    the customer-facing subset: only the safety net's own notes, the ones every
+    other deliverable (decision report, interactive analysis report, its HTML
+    export, the Results page, chat) must read instead.
     """
     if not data.assignment:
         return None
     qas = data.assignment.get("query_assignments", [])
     summary = overlay_summary(qas, data.source_queries)
-    # Drops and notes persist on the assignment (cache_dropped, cache_notes), so a
-    # re-run of synthesis reports them too, not only the run that dropped them.
+    # Drops and notes persist on the assignment (cache_dropped, cache_notes,
+    # cache_safety_net_notes), so a re-run of synthesis reports them too, not
+    # only the run that dropped them.
     dropped = list(
         dict.fromkeys(
             [
@@ -216,11 +224,17 @@ def build_cache_overlay(data: SynthesisData) -> dict | None:
     notes = list(
         dict.fromkeys([*(data.assignment.get("cache_notes") or []), *data.cache_overlay_notes])
     )
+    safety_net_notes = list(
+        dict.fromkeys(
+            [*(data.assignment.get("cache_safety_net_notes") or []), *data.cache_overlay_notes]
+        )
+    )
     if summary is None and not notes and not dropped:
         return None
     out = dict(summary or {})
     out["dropped_query_ids"] = dropped
     out["notes"] = notes
+    out["safety_net_notes"] = safety_net_notes
     return out
 
 

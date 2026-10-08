@@ -50,6 +50,19 @@ def _report_key(db: str, job_id: str, assignment_version: int) -> str:
     return f"{db}/{job_id}/referee-synthesis/report.json"
 
 
+def _cache_safety_net_notes(cache_overlay: dict | None) -> list[str]:
+    """The safety net's own notes off a ``cache_overlay`` dict, customer-facing only.
+
+    #424, #459: lets the orchestrator relay a cache layer that shrank after
+    schema design without reading ``report.json`` itself (the chat may only
+    read script stdout, never artifact contents). ``safety_net_notes`` only --
+    never the full ``cache_overlay["notes"]``, which also carries customer-edit
+    notes (full query hashes) and the legacy-migration note, neither of which
+    belongs in chat.
+    """
+    return list((cache_overlay or {}).get("safety_net_notes") or [])
+
+
 def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode: str) -> None:
     """Run synthesis (none, bedrock, or external LLM mode)."""
     from src.agents.referee.synthesis_handler import run_synthesis
@@ -66,11 +79,16 @@ def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode:
             )
         _output(status)
     else:
+        report_key = _report_key(db, job_id, assignment_version)
+        cache_overlay = (
+            store.read_json(report_key).get("cache_overlay") if store.exists(report_key) else None
+        )
         _output(
             {
                 "status": "complete",
                 "assignment_version": assignment_version,
-                "report": _report_key(db, job_id, assignment_version),
+                "report": report_key,
+                "cache_safety_net_notes": _cache_safety_net_notes(cache_overlay),
             }
         )
 
@@ -105,6 +123,7 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
             "report": _report_key(db, job_id, assignment_version),
             "summary_source": result.get("summary_source", "deterministic"),
             "summary_validation_warnings": result.get("summary_validation_warnings", []),
+            "cache_safety_net_notes": _cache_safety_net_notes(result.get("cache_overlay")),
         }
     )
 

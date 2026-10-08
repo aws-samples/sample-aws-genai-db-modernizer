@@ -1055,6 +1055,18 @@ def render_decision_report_html(
             )
         if caches:
             note_bits.append(_cache_note(engines, report))
+        else:
+            # #459 round 2: a full safety-net drop (every cached read dropped)
+            # removes the cache engine from `ranking` entirely (it owns no
+            # workload, #296) -- so it is never in `engines` and the `if
+            # caches:` branch above never fires. Without this, the note that
+            # explains the drop (and that none remain) would silently vanish
+            # from the one deliverable that otherwise never mentions the cache
+            # layer at all once it owns nothing -- exactly the shape #424's
+            # report described.
+            fallback_notes = (report.get("cache_overlay") or {}).get("safety_net_notes") or []
+            if fallback_notes:
+                note_bits.append(" ".join(esc(x) for x in fallback_notes))
         if migr:
             note_bits.append(
                 f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned to "
@@ -1274,16 +1286,29 @@ def _cache_note(engines: list[dict[str, Any]], report: dict[str, Any]) -> str:
         front = esc(_moves_from_label(fronted))
     else:
         front = "the current source database"
+    # #424: the safety net's notes (dropped cached reads the schema design did
+    # not cover, with their own before/after numbers) ran after the gate --
+    # without them here, this is the only place the decision report describes
+    # the cache layer's final scope, and it would silently disagree with the
+    # number shown at the assignment gate. #459 review: ``safety_net_notes``
+    # only, never the full ``notes`` (which also carries customer-edit notes
+    # with full query hashes and the legacy-migration note -- internal,
+    # engineering report only).
+    overlay_notes = " ".join(
+        esc(x) for x in (report.get("cache_overlay") or {}).get("safety_net_notes") or []
+    )
     if not counted:
-        return f"<b>{names}</b> is an additive cache layer."
+        base = f"<b>{names}</b> is an additive cache layer."
+        return f"{base} {overlay_notes}" if overlay_notes else base
     n = sum(e["cached_queries"] for e in counted)
     share = sum(e["cached_call_share"] for e in counted)
-    return (
+    note = (
         f"<b>{names}</b> is an additive cache layer: it fronts {n} hot "
         f"{plural_noun(n, 'read')} ({esc(fmt_num(share, 1))}% of calls) cache-aside and owns "
         "none of the workload: the engines listed above still own every cached read. "
         + cache_wave_note(front)
     )
+    return f"{note} {overlay_notes}" if overlay_notes else note
 
 
 _ROLE_PHRASE = {
@@ -1831,14 +1856,30 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     The cache owns no query: each cached read stays with its owner engine and the
     cache serves it cache-aside. The section states the eligibility rule so the
     build team can see why these reads, and only these, are cached.
+
+    #459 round 3: a full safety-net drop clears ``engine`` (``overlay_summary``
+    returns ``None`` with nothing cached) -- the heading omits the engine name
+    rather than hiding the section outright (#424's own repro: the cache engine
+    leaves every list that keys on it, but the explanation must still show).
+    Named with ``display_engine`` when ``engine`` is known, like every other
+    deliverable (#459 review).
+
+    Only this version's own ``safety_net_notes`` render as the section's
+    current explanation; the rest of the cumulative ``notes`` (a customer-edit
+    note with a full query hash, or a prior version's own safety-net note that
+    was not reset, #459 round 2) go under their own "Earlier assignment
+    versions" sub-heading -- the audit trail stays, but never presented as
+    current.
     """
     overlay = report.get("cache_overlay") or {}
     engine = overlay.get("engine")
     n = int(overlay.get("query_count") or 0)
-    notes = [x for x in (overlay.get("notes") or []) if x]
-    if not engine or (not n and not notes):
+    full_notes = [x for x in (overlay.get("notes") or []) if x]
+    safety_net_notes = [x for x in (overlay.get("safety_net_notes") or []) if x]
+    if not engine and not safety_net_notes and not full_notes:
         return []
-    out = [f"## Cache layer ({escaping.md_text(engine)})", ""]
+    name = display_engine(engine) if engine else None
+    out = [f"## Cache layer ({escaping.md_text(name)})" if name else "## Cache layer", ""]
     if n:
         owners = overlay.get("owners") or {}
         owned = ", ".join(f"{escaping.md_text(e)} {c}" for e, c in sorted(owners.items()) if e)
@@ -1866,7 +1907,7 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             else ("the current source database")
         )
         out += [
-            f"{escaping.md_text(engine)} fronts {n} hot {plural_noun(n, 'read')} "
+            f"{escaping.md_text(name)} fronts {n} hot {plural_noun(n, 'read')} "
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
             f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
             "none of the workload: each cached read stays with its owner engine, which "
@@ -1880,7 +1921,11 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             "top-N, session or small reference-read shape, on tables that are not "
             "write-heavy.",
         ]
-    out += [f"- {escaping.md_text(x)}" for x in notes]
+    out += [f"- {escaping.md_text(x)}" for x in safety_net_notes]
+    earlier = [x for x in full_notes if x not in safety_net_notes]
+    if earlier:
+        out += ["", "### Earlier assignment versions", ""]
+        out += [f"- {escaping.md_text(x)}" for x in earlier]
     out.append("")
     return out
 

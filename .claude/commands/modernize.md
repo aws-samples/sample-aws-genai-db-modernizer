@@ -193,7 +193,7 @@ Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask t
 
 ### Completion
 
-Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO) and the deliverables printed by the synthesize step's render command: decision report (HTML), interactive analysis report (HTML), engineering report (Markdown), and `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`.
+Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO) and the deliverables printed by the synthesize step's render command: decision report (HTML), interactive analysis report (HTML), engineering report (Markdown), and `summary-executive-report.pdf`, all under `./artifacts/{db}/{job}/synthesis/v{N}/`. Relay the `/synthesize` subagent's `cache_safety_net_notes` (from `run_synthesis.py`'s `--finalize` status line), when it reported any, verbatim — this is how a cache layer that shrank after schema design (the post-schema-design safety net dropping cached reads the design doesn't cover) is distinguished from the number shown at the assignment gate; dropping the note here would silently disagree with the assignment gate's own `cache_overlay` line.
 
 Unless `{experience_mode}` is `chat`, add: the full interactive report is in the UI.
 

@@ -12,7 +12,9 @@
  * loadInteractiveReport below) -- exportEscaping.test.js already uses its one
  * load for its own hostile-data fixture.
  */
-import { generateHTMLReport, KEEP_COST_CARD_EXPR, CACHE_LAYER_SUFFIX } from '../ExportReport';
+import {
+  generateHTMLReport, KEEP_COST_CARD_EXPR, CACHE_LAYER_SUFFIX, withoutCumulativeCacheNotes,
+} from '../ExportReport';
 import { isKeptCostEngine } from '../cacheLayer';
 
 const cacheReportData = () => ({
@@ -56,6 +58,109 @@ describe('generateHTMLReport shell (#358, no script execution)', () => {
       { engine: 'opensearch', text: 'OpenSearch' },
       { engine: 'elasticache', text: 'ElastiCache (cache layer)' },
     ]);
+  });
+
+  it('shows the safety net\'s note under the Cache Layer stat (#424)', () => {
+    // #424: the gate's cache_overlay and this report's can disagree -- the
+    // post-schema-design safety net drops cached reads the design doesn't
+    // cover. Without the note, the exported HTML silently showed only the
+    // final (lower) number.
+    const data = cacheReportData();
+    data.results.synthesis.cache_overlay.safety_net_notes = [
+      '20 hot reads (83.4% of calls) were assigned at the assignment gate. '
+      + 'The ElastiCache schema design covers 14 of them; the other 6 are no '
+      + 'longer cached and stay served by their owner engine. 14 cached reads '
+      + '(71.5% of calls) remain.',
+    ];
+    const doc = new DOMParser().parseFromString(generateHTMLReport(data), 'text/html');
+    const notes = [...doc.querySelectorAll('.stat-note')].map((n) => n.textContent);
+    expect(notes).toContain(data.results.synthesis.cache_overlay.safety_net_notes[0]);
+  });
+
+  it('never shows the full notes field (#459: internal, engineering-report only)', () => {
+    // The customer-edit note on this field can carry a full query hash; the
+    // legacy-migration note is internal too. Neither belongs in a
+    // customer-facing export.
+    const data = cacheReportData();
+    data.results.synthesis.cache_overlay.notes = [
+      'query q_8f21c carried over from the pre-overlay assignment, full hash attached',
+    ];
+    const doc = new DOMParser().parseFromString(generateHTMLReport(data), 'text/html');
+    const notes = [...doc.querySelectorAll('.stat-note')].map((n) => n.textContent);
+    expect(notes).toEqual([]);
+  });
+
+  it('never embeds the full notes field in the DATA blob either (#459 round 3)', () => {
+    // Not rendered (previous test), but it must not be in the exported file's
+    // embedded JSON at all -- a customer-edit note can carry a full query hash.
+    const data = cacheReportData();
+    data.results.synthesis.cache_overlay.notes = [
+      'query q_8f21c carried over from the pre-overlay assignment, full hash attached',
+    ];
+    const markup = generateHTMLReport(data);
+    expect(markup).not.toContain('q_8f21c');
+    expect(markup).not.toContain('carried over from the pre-overlay assignment');
+  });
+
+  it('withoutCumulativeCacheNotes strips notes but keeps everything else, including safety_net_notes', () => {
+    const results = {
+      synthesis: {
+        database_name: 'wordpress',
+        cache_overlay: {
+          engine: 'elasticache',
+          query_count: 10,
+          notes: ['customer-edit note with a full query hash'],
+          safety_net_notes: ['10 hot reads (61.3% of calls) remain.'],
+        },
+      },
+    };
+    const sanitized = withoutCumulativeCacheNotes(results);
+    expect(sanitized.synthesis.cache_overlay.notes).toBeUndefined();
+    expect(sanitized.synthesis.cache_overlay.safety_net_notes).toEqual(results.synthesis.cache_overlay.safety_net_notes);
+    expect(sanitized.synthesis.cache_overlay.engine).toBe('elasticache');
+    expect(sanitized.synthesis.database_name).toBe('wordpress');
+  });
+
+  it('withoutCumulativeCacheNotes is a no-op without a notes field', () => {
+    const results = { synthesis: { cache_overlay: { engine: 'elasticache' } } };
+    expect(withoutCumulativeCacheNotes(results)).toBe(results);
+    expect(withoutCumulativeCacheNotes(null)).toBe(null);
+    expect(withoutCumulativeCacheNotes({})).toEqual({});
+  });
+
+  it('escapes a hostile safety-net note instead of rendering it as markup (#459)', () => {
+    // The note is server-generated, deterministic text -- but escaping must
+    // not assume that.
+    const data = cacheReportData();
+    data.results.synthesis.cache_overlay.safety_net_notes = [
+      '<script>alert(1)</script><b>bold</b> & escaped',
+    ];
+    const markup = generateHTMLReport(data);
+    expect(markup).not.toContain('<script>alert(1)</script>');
+    const doc = new DOMParser().parseFromString(markup, 'text/html');
+    // Parsed back, the payload must be inert text, not a live element.
+    expect(doc.querySelectorAll('.stat-note script').length).toBe(0);
+    const note = [...doc.querySelectorAll('.stat-note')].map((n) => n.textContent)
+      .find((t) => t.includes('alert(1)'));
+    expect(note).toBe('<script>alert(1)</script><b>bold</b> & escaped');
+  });
+
+  it('shows the note after a full drop, with no cache_overlay.engine at all (#459 round 2)', () => {
+    // overlay_summary returns None with nothing cached, so cache_overlay
+    // carries no `engine` key -- the Cache Layer stat card is gated on the
+    // overlay object itself (truthy), not on `.engine`.
+    const data = cacheReportData();
+    data.results.synthesis.cache_overlay = {
+      dropped_query_ids: ['q9'],
+      safety_net_notes: [
+        '1 hot read (10.0% of calls) was assigned at the assignment gate. '
+        + 'The ElastiCache schema design covers none of them; it is no '
+        + 'longer cached and stays served by its owner engine. None remain.',
+      ],
+    };
+    const doc = new DOMParser().parseFromString(generateHTMLReport(data), 'text/html');
+    const notes = [...doc.querySelectorAll('.stat-note')].map((n) => n.textContent);
+    expect(notes.some((t) => t.includes('None remain.'))).toBe(true);
   });
 
   it('reports the headline total as the report\'s own projected_monthly_cost, not a recomputed sum', () => {

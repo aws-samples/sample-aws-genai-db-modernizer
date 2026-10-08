@@ -315,6 +315,28 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true }
   return parts.join(' · ');
 }
 
+/**
+ * The cache overlay's safety-net notes only (#296, #424, #459): recorded when
+ * the post-schema-design safety net drops cached reads the cache's design
+ * doesn't cover, each one carrying its own before/after counts (how many were
+ * assigned at the assignment gate, how many the schema design covers, how
+ * many no longer are, how many remain). The number on the stat line
+ * (`formatCacheLayerLine`) is the *after* number -- without these, a page
+ * showing it has no way to say it changed since the gate.
+ *
+ * Reads `safety_net_notes` only, never the full `notes` (#459 review): that
+ * field also carries customer-edit notes (full query hashes) and the
+ * legacy-migration note, neither of which is customer-facing -- those stay in
+ * the engineering report only (`src.report.renderers._cache_layer_md`).
+ *
+ * `Array.isArray` guarded (not a truthy check): a malformed or missing field
+ * must render nothing, not throw on `.map()`. Always an array, never null, so
+ * callers can map it directly.
+ */
+export function cacheOverlayNotes(overlay) {
+  return Array.isArray(overlay?.safety_net_notes) ? overlay.safety_net_notes : [];
+}
+
 /** "cached by ElastiCache" indicator text for a single cached query row. */
 export function formatCachedByLine(engineLabelText, { t = defaultT } = {}) {
   return t('assignment-gate.table.cached-by', {

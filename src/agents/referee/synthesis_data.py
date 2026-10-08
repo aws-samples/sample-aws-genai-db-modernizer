@@ -16,6 +16,7 @@ from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
     apply_schema_safety_net,
     normalize_cache_owners,
+    overlay_summary,
     safety_net_note,
 )
 from src.storage.artifact_store import ArtifactStore
@@ -237,15 +238,40 @@ def _apply_cache_safety_net(data: SynthesisData) -> None:
         return
     for engine in sorted(CACHE_OVERLAY_ENGINES & set(data.engines)):
         schema = data.engines[engine].schema_design
+        # Captured before the drop so the note can say how many hot reads
+        # were assigned at the assignment gate, not only how many were
+        # dropped (#424): the gate's cache_overlay and this one are the same
+        # shape, computed the same way, just before and after schema design.
+        before = overlay_summary(
+            data.assignment.get("query_assignments") or [], data.source_queries
+        )
         dropped = apply_schema_safety_net(data.assignment, schema, data.source_queries)
         if not dropped:
             continue
+        # Captured after the drop too, so the note's "covers N of them" / "N
+        # remain" numbers are the real post-drop overlay, not before_count
+        # minus len(dropped) recomputed here (and possibly wrong if something
+        # else also changed the overlay in between). overlay_summary returns
+        # None when nothing is cached any more (#459 round 2: dropping every
+        # cached read is exactly that case) -- the zero-value fallback keeps
+        # safety_net_note on its before/after branch instead of its no-snapshot
+        # one, so a full drop still states the gate share and says none remain.
+        after = overlay_summary(
+            data.assignment.get("query_assignments") or [], data.source_queries
+        ) or {"query_count": 0, "call_share_percent": 0.0}
         data.cache_overlay_dropped.extend(dropped)
-        note = safety_net_note(engine, dropped)
+        note = safety_net_note(engine, dropped, before, after)
         data.cache_overlay_notes.append(note)
+        # #459 review: the full ``cache_notes`` audit trail also carries
+        # customer-edit notes (full query hashes) and the legacy-migration
+        # note, so it is not customer-facing -- ``cache_safety_net_notes`` is
+        # the safety-net-only list every customer deliverable reads.
         notes = data.assignment.setdefault("cache_notes", [])
         if note not in notes:
             notes.append(note)
+        safety_net_notes = data.assignment.setdefault("cache_safety_net_notes", [])
+        if note not in safety_net_notes:
+            safety_net_notes.append(note)
         logger.info("Synthesis: %s overlay dropped for %d queries", engine, len(dropped))
         if not any(
             qa.get("cache_engine") == engine and qa.get("in_scope", True)

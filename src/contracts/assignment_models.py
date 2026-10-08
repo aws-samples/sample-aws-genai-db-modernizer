@@ -45,6 +45,12 @@ Version History:
   totals, margin and any deciding features -- so every deliverable can state
   the move is cross-engine. ``None`` for a homogeneous source (MySQL/MariaDB/
   PostgreSQL, unaffected) and for artifacts written before 1.6.
+- 1.7 (2026-10-08): Added ``Assignment.cache_safety_net_notes`` (#424, #459). A
+  customer-facing subset of ``cache_notes``: only the post-schema safety net's
+  own notes (never a customer-edit note with full query hashes, or the
+  legacy-migration note). Every deliverable except the engineering report
+  reads this field instead of ``cache_notes``. Defaults to an empty list, so
+  artifacts written before 1.7 still load.
 """
 
 from datetime import datetime
@@ -311,6 +317,15 @@ class Assignment(BaseModel):
         description=(
             "Cache layer decisions recorded for audit (#296): safety-net drops after "
             "schema design, legacy ElastiCache owners moved to their system-of-record engine."
+        ),
+    )
+    cache_safety_net_notes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The safety net's own notes only (#459), a customer-facing subset of "
+            "cache_notes: never a customer-edit note (full query hashes) or the "
+            "legacy-migration note. Every deliverable except the engineering report "
+            "reads this field, not cache_notes."
         ),
     )
     cache_overlay: CacheOverlaySummary | None = Field(

@@ -492,6 +492,13 @@ def write_reality_check_result(
         "timestamp": datetime.now(UTC).isoformat(),
         "query_assignments": result["revised_assignments"],
         "reality_check_applied": True,
+        # #459 round 2: this version's own customer-facing safety-net
+        # explanation, not carried forward from the dict this spreads --
+        # a prior version's note (different numbers) would otherwise read as
+        # current fact about this version's overlay. cache_notes (the
+        # cumulative audit trail) is still carried forward by the spread
+        # above, unchanged.
+        "cache_safety_net_notes": [],
     }
     # ADR-029 Layers B+E: recompute derived views against the consolidated
     # routing, refresh validation warnings, and drop per-query warnings that

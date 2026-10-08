@@ -438,6 +438,19 @@ def build_export_data(
     # /results API, not an empty one.
     if not report.get("migration_waves"):
         report = {**report, "migration_waves": resolve_migration_waves(report) or None}
+    # #459 round 3: cache_overlay.notes is the full cumulative audit trail --
+    # customer-edit notes (full query hashes) and the legacy-migration note,
+    # neither customer-facing. Nothing in this report or the live Results
+    # page renders it (only safety_net_notes, kept untouched below), but it
+    # must not be embedded in this customer-facing DATA blob at all, not just
+    # left unrendered -- the same fix applied to the standalone HTML export's
+    # own DATA (utils/ExportReport.js's withoutCumulativeCacheNotes).
+    cache_overlay = report.get("cache_overlay")
+    if cache_overlay and "notes" in cache_overlay:
+        report = {
+            **report,
+            "cache_overlay": {k: v for k, v in cache_overlay.items() if k != "notes"},
+        }
 
     triage: dict | None = None
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
@@ -558,6 +571,15 @@ def _cache_layer_stat(synthesis: dict) -> str:
 
     The cache owns no query, so it is not among the target-engine badges (an owner
     distribution); it gets its own card with its cached reads and share of calls.
+
+    #424: also carries the safety net's own notes (recorded when it drops cached
+    reads the cache's schema design doesn't cover), each stating its own
+    before/after numbers -- how many were assigned at the assignment gate, how
+    many were dropped and why, how many remain -- so this card never silently
+    disagrees with the number the assignment gate showed. #459 review: reads
+    ``safety_net_notes`` only, never the full ``notes`` (which also carries
+    customer-edit notes with full query hashes and the legacy-migration note --
+    internal, engineering report only).
     """
     overlay = synthesis.get("cache_overlay") or {}
     if not overlay:
@@ -567,11 +589,18 @@ def _cache_layer_stat(synthesis: dict) -> str:
     share = overlay.get("call_share_percent")
     if isinstance(share, (int, float)) and not isinstance(share, bool):
         parts.append(f"{share:.1f}% of calls")
+    notes_html = "".join(
+        '<div class="stat-note">' + escaping.html_text(str(x)) + "</div>"
+        for x in overlay.get("safety_net_notes") or []
+        if x
+    )
     return (
         '<div class="stat-card"><div class="stat-label">Cache Layer</div>'
         '<div class="stat-value" style="font-size: 14px;">'
         + escaping.html_text(" \u00b7 ".join(parts))
-        + "</div></div>"
+        + "</div>"
+        + notes_html
+        + "</div>"
     )
 
 

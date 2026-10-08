@@ -510,9 +510,10 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     The query journeys and the assignment gate read the assignment artifact, so a
     dropped overlay must be there, not only in the synthesis report. Only the
     drop is written (``cache_engine`` cleared, ``cache_dropped``, ``cache_reason``,
-    the note in ``cache_notes``, the summary refreshed), in place: the owners and
-    every other engine's scope are unchanged, and the cache's own scope shrinks to
-    what its existing design serves, so no schema design goes stale.
+    the note in ``cache_notes`` and the customer-facing ``cache_safety_net_notes``
+    (#459), the summary refreshed), in place: the owners and every other engine's
+    scope are unchanged, and the cache's own scope shrinks to what its existing
+    design serves, so no schema design goes stale.
     """
     if not data.cache_overlay_dropped or assignment_version <= 0:
         return
@@ -533,6 +534,10 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     for note in data.cache_overlay_notes:
         if note not in notes:
             notes.append(note)
+    safety_net_notes = raw.setdefault("cache_safety_net_notes", [])
+    for note in data.cache_overlay_notes:
+        if note not in safety_net_notes:
+            safety_net_notes.append(note)
     raw["cache_overlay"] = overlay_summary(raw.get("query_assignments", []), data.source_queries)
     store.write_json(key, raw)
     print(f"[synthesis] Cache overlay dropped for {len(dropped)} queries, written to {key}")
