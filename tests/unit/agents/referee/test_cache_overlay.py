@@ -20,13 +20,17 @@ from src.agents.referee.assignment_resolver import (
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.cache_overlay import (
     CACHE_MAX_ROWS_AVG,
+    CACHE_OVERLAY_ENGINES,
     HOT_READ_MIN_CALLS_PER_SECOND,
+    NON_SYSTEM_OF_RECORD_ENGINES,
     WRITE_HEAVY_TABLE_MIN_WRITE_SHARE,
     apply_cache_overlay,
     apply_schema_safety_net,
     cache_eligibility,
     cache_pattern,
     can_own,
+    is_locking_read,
+    is_write_query,
     overlay_summary,
     refresh_cache_overlay,
     safety_net_note,
@@ -171,8 +175,79 @@ class TestOwnership:
     def test_write_gate(self):
         write = _q("w", "INSERT INTO t VALUES (?)", "INSERT")
         assert not can_own("elasticache", write)
+        assert not can_own("opensearch", write)  # #303: OpenSearch owns no write either
         assert can_own("dynamodb", write)
-        assert can_own("opensearch", write)  # its write gate is #303
+
+    def test_opensearch_can_still_own_a_read(self):
+        read = _q("r", "SELECT * FROM t WHERE id = ?", "SELECT")
+        assert can_own("opensearch", read)
+
+    def test_non_system_of_record_engines_composes_from_the_shared_buckets(self):
+        """#303 review round 1: built from the shared cache/search buckets, not
+
+        its own copy, so it stays correct however ``CACHE_OVERLAY_ENGINES``
+        itself is defined (#430 redefines it from ``src.shared.cache_policy``).
+        """
+        from src.shared.migration_wave_engines import SEARCH_ENGINES
+
+        assert NON_SYSTEM_OF_RECORD_ENGINES == CACHE_OVERLAY_ENGINES | SEARCH_ENGINES
+        assert "opensearch" in NON_SYSTEM_OF_RECORD_ENGINES
+
+    def test_locking_read_is_not_ownable_by_opensearch(self):
+        """A locking read needs the same consistency guarantee as a write (#303)."""
+        locking = _q("r", "SELECT * FROM t WHERE id = ? FOR UPDATE", "SELECT")
+        assert not is_write_query(locking)
+        assert is_locking_read(locking)
+        assert not can_own("opensearch", locking)
+        assert can_own("dynamodb", locking)
+        assert can_own("aurora_postgresql", locking)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE id = ? FOR SHARE",
+            "SELECT * FROM t WHERE id = ? LOCK IN SHARE MODE",
+        ],
+    )
+    def test_locking_read_shapes(self, text):
+        assert is_locking_read(_q("r", text, "SELECT"))
+
+    def test_plain_read_is_not_a_locking_read(self):
+        assert not is_locking_read(_q("r", "SELECT * FROM t WHERE id = ?", "SELECT"))
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "WITH w AS (INSERT INTO user_badges(id) VALUES (?) RETURNING id) SELECT * FROM w",
+            "UPDATE translation_overrides SET status = ? WHERE id = ?",
+            "DELETE FROM user_badges WHERE id IN (SELECT id FROM x)",
+            "MERGE INTO t USING s ON t.id = s.id",
+            "CALL some_procedure(?)",
+            "TRUNCATE TABLE sessions",
+            "COPY t FROM 'file.csv'",
+            "-- a leading comment\nINSERT INTO t VALUES (?)",
+            "/* leading block comment */\nCALL proc(?)",
+        ],
+    )
+    def test_other_typed_dml_counts_as_a_write(self, text):
+        """A data-modifying CTE, CALL, TRUNCATE, COPY or a comment-led statement
+
+        all come through the collector as query_type "OTHER" (#303 review
+        round 1): still a write, so OpenSearch cannot own it.
+        """
+        query = _q("w", text, "OTHER")
+        assert is_write_query(query)
+        assert not can_own("opensearch", query)
+
+    def test_other_typed_non_dml_is_not_a_write(self):
+        query = _q("w", "WITH w AS (SELECT 1) SELECT * FROM w", "OTHER")
+        assert not is_write_query(query)
+        assert can_own("opensearch", query)
+
+    def test_percent_inside_a_quoted_literal_is_not_mistaken_for_dml(self):
+        """A literal containing the word "update" must not false-positive."""
+        query = _q("w", "SELECT * FROM t WHERE note = 'please update later'", "OTHER")
+        assert not is_write_query(query)
 
 
 # ---------------------------------------------------------------------------
@@ -561,5 +636,20 @@ class TestValidator:
     def test_owner_engine_is_valid(self):
         result = AssignmentValidator().validate(
             self._assignment("dynamodb"), _collector([_q("q")]), {"dynamodb": {}}
+        )
+        assert result.valid
+
+    def test_opensearch_write_is_a_hard_error(self):
+        """A customer edit putting a write on OpenSearch is rejected (#303)."""
+        write = _q("q", "UPDATE users SET name = ? WHERE id = ?", "UPDATE")
+        result = AssignmentValidator().validate(
+            self._assignment("opensearch"), _collector([write]), {"opensearch": {}}
+        )
+        assert not result.valid
+        assert any("is a write owned by 'opensearch'" in e for e in result.errors)
+
+    def test_opensearch_read_is_still_valid(self):
+        result = AssignmentValidator().validate(
+            self._assignment("opensearch"), _collector([_q("q")]), {"opensearch": {}}
         )
         assert result.valid

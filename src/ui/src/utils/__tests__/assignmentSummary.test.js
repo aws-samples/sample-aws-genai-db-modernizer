@@ -8,7 +8,11 @@
  * so plural resolution is actually exercised, not just the JS fallback.
  */
 import i18next from 'i18next';
-import { buildAssignmentSummary, engineOptionsForAssignment } from '../assignmentSummary';
+import {
+  buildAssignmentSummary,
+  engineOptionsForAssignment,
+  engineOptionsForQuery,
+} from '../assignmentSummary';
 import en from '../../locales/en.json';
 
 const i18n = i18next.createInstance();
@@ -214,5 +218,78 @@ describe('engineOptionsForAssignment', () => {
   test('returns every option unchanged for a homogeneous source (non-Aurora winner)', () => {
     const assignment = { aurora_engine_choice: { engine: 'dynamodb' } };
     expect(engineOptionsForAssignment(OPTIONS, assignment)).toEqual(OPTIONS);
+  });
+});
+
+describe('engineOptionsForQuery', () => {
+  // #303: OpenSearch is a read model, it never owns a write -- a customer
+  // override that put a write on it would be rejected server-side
+  // (AssignmentValidator) with no warning here, so it is never offered.
+  const OPTIONS = [
+    { label: 'DynamoDB', value: 'dynamodb' },
+    { label: 'OpenSearch', value: 'opensearch' },
+    { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+  ];
+
+  test.each(['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UPSERT', 'insert'])(
+    'drops OpenSearch for a %s row',
+    (queryType) => {
+      expect(engineOptionsForQuery(OPTIONS, queryType)).toEqual([
+        { label: 'DynamoDB', value: 'dynamodb' },
+        { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+      ]);
+    },
+  );
+
+  test('returns every option unchanged for a read', () => {
+    expect(engineOptionsForQuery(OPTIONS, 'SELECT')).toEqual(OPTIONS);
+  });
+
+  test('returns every option unchanged for an unknown or missing query type', () => {
+    expect(engineOptionsForQuery(OPTIONS, 'OTHER')).toEqual(OPTIONS);
+    expect(engineOptionsForQuery(OPTIONS, undefined)).toEqual(OPTIONS);
+    expect(engineOptionsForQuery(OPTIONS, null)).toEqual(OPTIONS);
+  });
+
+  // Same shapes as cache_overlay.py's is_write_query/is_locking_read tests:
+  // a data-modifying CTE, CALL, TRUNCATE, COPY, a comment-led statement, or
+  // a locking read all come through as query_type "OTHER"/"SELECT".
+  test.each([
+    'WITH w AS (INSERT INTO user_badges(id) VALUES (?) RETURNING id) SELECT * FROM w',
+    'UPDATE translation_overrides SET status = ? WHERE id = ?',
+    'DELETE FROM user_badges WHERE id IN (SELECT id FROM x)',
+    'MERGE INTO t USING s ON t.id = s.id',
+    'CALL some_procedure(?)',
+    'TRUNCATE TABLE sessions',
+    "COPY t FROM 'file.csv'",
+    '-- a leading comment\nINSERT INTO t VALUES (?)',
+  ])('drops OpenSearch for OTHER-typed DML: %s', (queryText) => {
+    expect(engineOptionsForQuery(OPTIONS, 'OTHER', queryText)).toEqual([
+      { label: 'DynamoDB', value: 'dynamodb' },
+      { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+    ]);
+  });
+
+  test('returns every option unchanged for an OTHER-typed read CTE', () => {
+    expect(engineOptionsForQuery(OPTIONS, 'OTHER', 'WITH w AS (SELECT 1) SELECT * FROM w')).toEqual(
+      OPTIONS,
+    );
+  });
+
+  test.each([
+    'SELECT * FROM t WHERE id = ? FOR UPDATE',
+    'SELECT * FROM t WHERE id = ? FOR SHARE',
+    'SELECT * FROM t WHERE id = ? LOCK IN SHARE MODE',
+  ])('drops OpenSearch for a locking read: %s', (queryText) => {
+    expect(engineOptionsForQuery(OPTIONS, 'SELECT', queryText)).toEqual([
+      { label: 'DynamoDB', value: 'dynamodb' },
+      { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
+    ]);
+  });
+
+  test('a plain read with no locking clause keeps every option', () => {
+    expect(engineOptionsForQuery(OPTIONS, 'SELECT', 'SELECT * FROM t WHERE id = ?')).toEqual(
+      OPTIONS,
+    );
   });
 });

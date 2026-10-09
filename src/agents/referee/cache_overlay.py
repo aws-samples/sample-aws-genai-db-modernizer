@@ -6,6 +6,15 @@ carry ``cache_engine`` so the cache serves it cache-aside in front of its owner.
 The owner distribution never counts the cache; :func:`overlay_summary` is the
 separate view (queries and share of calls).
 
+This module also hosts the write gate every non-system-of-record engine shares
+(:func:`can_own`, :data:`NON_SYSTEM_OF_RECORD_ENGINES`): ElastiCache owns nothing
+at all, and OpenSearch -- a read model that indexes a durable owner's data, never
+the only copy (#303, epic #340) -- owns reads but never a write. Both rules are
+enforced wherever :func:`can_own` gates an assignment: the resolver's v1 scoring,
+signal overrides and co-dependency groups, the reality check's consolidation
+(``reality_check.may_absorb``), and :class:`AssignmentValidator`'s hard-error
+check on the final assignment, customer edits included.
+
 A query qualifies (:func:`cache_eligibility`) when every rule holds:
 
 - it is a ``SELECT`` (the cache never takes a write);
@@ -31,13 +40,22 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 
 from src.shared.engine_names import display_engine
+from src.shared.migration_wave_engines import SEARCH_ENGINES
 
 # Engines that can only be a cache layer: they never own a query.
 CACHE_OVERLAY_ENGINES = frozenset({"elasticache"})
 
-# Engines that are not a system of record for a table, so they never own a write.
-# OpenSearch's write gate is tracked in #303.
-NON_SYSTEM_OF_RECORD_ENGINES = frozenset({"elasticache"})
+# Engines that are not a system of record for a table, so they never own a write
+# (or a locking read, see ``is_locking_read``). Built from the shared cache and
+# search buckets (``CACHE_OVERLAY_ENGINES``, ``migration_wave_engines.
+# SEARCH_ENGINES``) rather than its own copy, so a change to either bucket --
+# including #430, which redefines ``CACHE_OVERLAY_ENGINES`` from
+# ``src.shared.cache_policy`` -- composes here instead of silently dropping
+# OpenSearch's write gate again. OpenSearch is a read model (#303, epic #340
+# decision 2026-10-04): it indexes a durable owner's data and may own reads,
+# but it is never the system of record for a write, the same write gate
+# ElastiCache already has (#296).
+NON_SYSTEM_OF_RECORD_ENGINES = CACHE_OVERLAY_ENGINES | SEARCH_ENGINES
 
 # Hot-read floor (calls/s). Starting value from #296; tune with data. On the two
 # reference samples every overlay candidate is either >= 1.26 calls/s or <= 0.95.
@@ -77,23 +95,68 @@ _TEXT_SEARCH_RE = re.compile(
 SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
 _LOCKING_RE = re.compile(r"\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b", re.IGNORECASE)
 
+# A leading ``--`` or ``#`` line comment, or a ``/* ... */`` block comment,
+# repeated as many times as the statement opens with one (review of #303: a
+# statement opening with a comment is typed ``OTHER`` by the collector
+# because the SQL verb is no longer the first token).
+_LEADING_COMMENT_RE = re.compile(r"^(\s*(--[^\n]*\n|#[^\n]*\n|/\*.*?\*/)\s*)+", re.DOTALL)
+# A DML keyword anywhere in the statement -- not just at the start -- so a
+# data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
+# is caught too, the same way the collector's own query_type misses it.
+_DML_KEYWORD_RE = re.compile(
+    r"\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b", re.IGNORECASE
+)
+# CALL/TRUNCATE/COPY are writes but have no DML keyword of their own; anchored
+# at the start (after stripping a leading comment), since each is a statement
+# in its own right, not a clause that can appear mid-query.
+_LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE)
+
+
+def _strip_leading_comments(text: str) -> str:
+    return _LEADING_COMMENT_RE.sub("", text, count=1) if text else text
+
 
 def is_write_query(query: Mapping) -> bool:
-    """True for INSERT/UPDATE/DELETE (and other data-changing) statements."""
-    return str(query.get("query_type") or "").upper() in WRITE_QUERY_TYPES
+    """True for INSERT/UPDATE/DELETE (and other data-changing) statements.
+
+    The collector's own ``query_type`` catches the common case. A
+    data-modifying CTE, ``CALL``, ``TRUNCATE``, ``COPY``, or a statement that
+    opens with a comment all come through as ``OTHER`` instead (review of
+    #303), so for that type a DML keyword or a leading ``CALL``/``TRUNCATE``/
+    ``COPY`` in the SQL itself -- after stripping any leading comment --
+    counts as a write too.
+    """
+    qtype = str(query.get("query_type") or "").upper()
+    if qtype in WRITE_QUERY_TYPES:
+        return True
+    if qtype != "OTHER":
+        return False
+    text = _strip_leading_comments(str(query.get("query_text") or ""))
+    return bool(_DML_KEYWORD_RE.search(text) or _LEADING_WRITE_VERB_RE.match(text))
+
+
+def is_locking_read(query: Mapping) -> bool:
+    """True for a ``SELECT ... FOR UPDATE``/``FOR SHARE``/``LOCK IN SHARE MODE`` read.
+
+    A locking read takes a row lock as part of a transaction -- the same
+    consistency guarantee a write needs -- so a non-system-of-record engine
+    cannot serve it either (review of #303), even though it is not itself a
+    write and :func:`is_write_query` says False.
+    """
+    return bool(_LOCKING_RE.search(str(query.get("query_text") or "")))
 
 
 def can_own(engine: str, query: Mapping | None = None) -> bool:
-    """Whether ``engine`` may own ``query`` (the write gate, #296).
+    """Whether ``engine`` may own ``query`` (the write gate, #296, #303).
 
     A cache-only engine owns nothing; an engine that is not a system of record
-    owns no write. With no query, answers for reads.
+    owns no write and no locking read. With no query, answers for reads.
     """
     if engine in CACHE_OVERLAY_ENGINES:
         return False
-    return not (
-        query is not None and is_write_query(query) and engine in NON_SYSTEM_OF_RECORD_ENGINES
-    )
+    if query is None or engine not in NON_SYSTEM_OF_RECORD_ENGINES:
+        return True
+    return not (is_write_query(query) or is_locking_read(query))
 
 
 def owner_candidates(engines: Iterable[str], query: Mapping | None = None) -> list[str]:

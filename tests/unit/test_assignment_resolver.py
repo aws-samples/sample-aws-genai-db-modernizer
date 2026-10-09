@@ -143,6 +143,157 @@ class TestSignalOverrides:
         assert q3.assigned_engine == "dynamodb"  # no override, highest confidence wins
 
 
+class TestOpenSearchNeverOwnsAWrite:
+    """OpenSearch is a read model: it never owns a write, even when it wins
+
+    the signal override or the highest table-confidence score (#303). Mirrors
+    the write gate ElastiCache already has (#296); same mechanism
+    (``cache_overlay.can_own``/``NON_SYSTEM_OF_RECORD_ENGINES``), not a new one.
+    """
+
+    def _collector_with_types(self, query_types: dict[str, str]) -> dict:
+        collector = _make_collector(list(query_types))
+        for q in collector["queries"]["query_patterns"]:
+            q["query_type"] = query_types[q["query_id"]]
+        return collector
+
+    def test_write_with_text_search_signal_does_not_win_opensearch(self):
+        """A write that matches the text_search signal still never owns opensearch."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "to_tsvector(...) in an UPDATE",
+                }
+            ],
+        )
+        collector = self._collector_with_types({"q1": "UPDATE"})
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine != "opensearch"
+        assert q1.assigned_engine == "dynamodb"
+
+    def test_write_does_not_win_opensearch_on_table_confidence_alone(self):
+        """A plain write with no signal must not win opensearch via table-average scoring."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["aurora_mysql", "opensearch"])
+        collector = self._collector_with_types({"q1": "UPDATE"})
+        analysis = {
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=40),
+            # opensearch would otherwise win on table confidence alone
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_opensearch_still_wins_a_matching_read(self):
+        """The write gate does not block a legitimate read (opensearch stays a read model)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "LIKE query",
+                }
+            ],
+        )
+        collector = _make_collector(["q1"])  # defaults to query_type SELECT
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "opensearch"
+
+    def test_write_rejected_from_opensearch_ties_go_to_the_source_compatible_engine(self):
+        """Capability guarantee for a homogeneous source (review of #474, round 3).
+
+        A MySQL source's write ties between Aurora MySQL and DynamoDB once
+        OpenSearch is excluded by the write gate: the resolver's existing
+        source-compatible tie-break (``break_owner_tie``'s first rule, #296)
+        -- not a new mechanism -- picks Aurora MySQL.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql", "opensearch"])
+        collector = self._collector_with_types({"q1": "UPDATE"})
+        collector["metadata"] = {"source_database": {"engine": "mysql"}}
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=70),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=70),
+            # OpenSearch would otherwise win outright; the write gate excludes it.
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+
+    def test_write_rejected_from_opensearch_still_loses_to_a_clear_score_winner(self):
+        """The source-compatible engine is always a candidate, never a score
+
+        override (review of #474, round 3): DynamoDB clearly out-scoring
+        Aurora MySQL still wins, exactly as the plain write gate alone would
+        give.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql", "opensearch"])
+        collector = self._collector_with_types({"q1": "UPDATE"})
+        collector["metadata"] = {"source_database": {"engine": "mysql"}}
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=40),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+
+    def test_a_write_in_a_co_dependency_group_excludes_opensearch_for_every_member(self):
+        """A co-dependency group's candidates must all own every member (#296, #303).
+
+        One write in a significant-JOIN group is enough to exclude OpenSearch
+        for the *whole* group, even though its read member would otherwise
+        win OpenSearch on its own merits: the group is assigned atomically to
+        one engine, and that engine must own every one of its members.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "opensearch"])
+        collector = _make_collector(["q1", "q2"], tables=["db.users"])
+        for q in collector["queries"]["query_patterns"]:
+            q["join_count"] = 2
+            q["has_joins"] = True
+        for q in collector["queries"]["query_patterns"]:
+            if q["query_id"] == "q1":
+                q["query_type"] = "UPDATE"
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=40),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        assert [["q1", "q2"]] == [sorted(g) for g in result.co_dependency_groups]
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        q2 = next(qa for qa in result.query_assignments if qa.query_id == "q2")
+        assert q1.assigned_engine == q2.assigned_engine == "dynamodb"
+
+
 class TestUtilityStatementsExcludedFromRouting:
     """Utility/metadata statements never route to a target engine (#327)."""
 
