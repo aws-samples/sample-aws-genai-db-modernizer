@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404 -- runs the system rsync/git binaries with fixed argv
+import sys
 from pathlib import Path
 
 import pytest
@@ -353,7 +354,8 @@ def test_ref_option_syncs_a_commit_that_is_not_checked_out(tmp_path):
     assert not (clone / "newer.txt").exists()
 
     body = _git("log", "-1", "--format=%B", "fix/ref-check", cwd=clone, env=env).stdout
-    assert f"Source-Commit: {older_commit}" in body
+    short = _git("rev-parse", "--short=12", older_commit, cwd=source, env=env).stdout.strip()
+    assert f"Source-Commit: {short}" in body
 
 
 def test_source_commit_trailer_matches_synced_ref(tmp_path):
@@ -369,7 +371,8 @@ def test_source_commit_trailer_matches_synced_ref(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
     body = _git("log", "-1", "--format=%B", "fix/trailer-check", cwd=clone, env=env).stdout
-    assert f"Source-Commit: {head_sha}" in body
+    short = _git("rev-parse", "--short=12", head_sha, cwd=source, env=env).stdout.strip()
+    assert f"Source-Commit: {short}" in body
     assert body.splitlines()[0] == "chore: sync changes from source branch fix/trailer-check"
 
 
@@ -1139,3 +1142,37 @@ def test_default_commit_subject_uses_short_sha_when_source_is_detached(tmp_path)
         "log", "-1", "--format=%s", "feat/explicit-branch", cwd=clone, env=env
     ).stdout.strip()
     assert subject == f"chore: sync changes from source commit {short_sha}"
+
+
+def test_sync_commit_message_passes_detect_secrets(tmp_path):
+    """The repo's detect-secrets hook scans commit messages; a full 40-character
+    sha in the trailer is flagged as a hex secret (#463)."""
+    if _skip_without_rsync():
+        return
+
+    env = _git_env(tmp_path / "home")
+    _bare, clone = _make_target(tmp_path, env)
+    source = _make_source(tmp_path, env, branch="fix/secrets-check")
+
+    result = _run_script(clone, source, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    body = _git("log", "-1", "--format=%B", "fix/secrets-check", cwd=clone, env=env).stdout
+    message = tmp_path / "msg" / "COMMIT_EDITMSG"
+    message.parent.mkdir()
+    message.write_text(body)
+    repo = Path(__file__).resolve().parents[3]
+    scan = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "detect_secrets.pre_commit_hook",
+            "--baseline",
+            str(repo / ".secrets.baseline"),
+            str(message),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo,
+    )
+    assert scan.returncode == 0, scan.stdout + scan.stderr

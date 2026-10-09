@@ -62,7 +62,7 @@
 #                        env: SYNC_TARGET_BRANCH
 #   --message <text>  - Commit message (default: "chore: sync changes
 #                        from source branch <branch>"). A
-#                        "Source-Commit: <full sha>" trailer is always
+#                        "Source-Commit: <12-character sha>" trailer is always
 #                        appended, however the message is chosen.
 #                        env: SYNC_COMMIT_MESSAGE
 #   --force           - Overwrite a remote target branch even if it has
@@ -596,7 +596,11 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
-FULL_COMMIT_MESSAGE=$(git interpret-trailers --trailer "Source-Commit: ${SOURCE_COMMIT}" <<< "$COMMIT_MESSAGE")
+# 12 hex characters: unique in practice, and short enough that secret
+# scanners (detect-secrets flags 16+ hex characters in a commit message as a
+# possible key) don't reject the sync commit in a target with hooks installed.
+SOURCE_COMMIT_SHORT=$(git -C "$SOURCE_REPO_PATH" rev-parse --short=12 "$SOURCE_COMMIT")
+FULL_COMMIT_MESSAGE=$(git interpret-trailers --trailer "Source-Commit: ${SOURCE_COMMIT_SHORT}" <<< "$COMMIT_MESSAGE")
 
 # First commit attempt — hooks may auto-fix files (openapi regen, formatting,
 # etc.). Its output is always shown, even on the first attempt: a hook can
