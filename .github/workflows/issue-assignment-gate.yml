@@ -1,0 +1,58 @@
+name: Issue assignment gate
+
+# Fails unless the pull request links an issue with a closing keyword
+# (Closes/Fixes/Resolves #N) and every linked issue is assigned to the pull
+# request's author. Exempt: maintainers (write access or above), Dependabot,
+# and pull requests labelled "scope: internal". Reads pull request and issue
+# metadata through the API only; never checks out or runs the pull request's
+# own code. The checkout below pins the base commit (not the merge ref
+# `pull_request` would otherwise use) so a pull request's edits to the
+# *script* never run -- but with `pull_request`, GitHub still reads this
+# *workflow file itself* from the pull request's merge ref, so a pull
+# request could edit it. What guards that: this repository's fork pull
+# request policy requires maintainer approval before *every* workflow run
+# from an outside contributor, not just the first, so a workflow edit is
+# seen by a maintainer before it ever runs; merging still needs one
+# approving review; and .github/CODEOWNERS requests (does not require --
+# that's a separate maintainer decision about the branch ruleset) a
+# maintainer reviewer under .github/workflows/.
+#
+# By design, the pull request that first adds this workflow fails its own
+# check (the script isn't on the base commit yet), and any later change to
+# the script is itself checked by the *previous* version of the script.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+# Only the newest run per PR counts, so a quick edit/label/push sequence
+# can't leave an older result as the latest one.
+concurrency:
+  group: issue-assignment-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  issue-assignment-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base ref (never the pull request's own code)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Check issue assignment
+        # No actions/setup-python: the script is standard-library only, and
+        # ubuntu-latest's own python3 is enough to run it.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: python3 scripts/check_issue_assignment.py
