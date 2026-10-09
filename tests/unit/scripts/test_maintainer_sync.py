@@ -354,7 +354,8 @@ def test_ref_option_syncs_a_commit_that_is_not_checked_out(tmp_path):
     assert not (clone / "newer.txt").exists()
 
     body = _git("log", "-1", "--format=%B", "fix/ref-check", cwd=clone, env=env).stdout
-    assert f"Source-Commit: {older_commit}" in body
+    short = _git("rev-parse", "--short=7", older_commit, cwd=source, env=env).stdout.strip()
+    assert f"Source-Commit: {short}\n" in body + "\n"
 
 
 def test_source_commit_trailer_matches_synced_ref(tmp_path):
@@ -370,7 +371,8 @@ def test_source_commit_trailer_matches_synced_ref(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
     body = _git("log", "-1", "--format=%B", "fix/trailer-check", cwd=clone, env=env).stdout
-    assert f"Source-Commit: {head_sha}" in body
+    short = _git("rev-parse", "--short=7", head_sha, cwd=source, env=env).stdout.strip()
+    assert f"Source-Commit: {short}\n" in body + "\n"
     assert body.splitlines()[0] == "chore: sync changes from source branch fix/trailer-check"
 
 
