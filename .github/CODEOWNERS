@@ -1,0 +1,14 @@
+# CODEOWNERS requests a review from the listed owner(s) whenever a pull
+# request touches a matching path. See
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Workflow files run with the repository's own GITHUB_TOKEN and (for
+# `pull_request`-triggered workflows) are read from the pull request's own
+# merge ref -- so a pull request could otherwise change what a check does,
+# or what a workflow is allowed to do. This requests a maintainer review on
+# any change here; it does not by itself require one -- the branch ruleset
+# does not mandate code-owner review, that's a separate maintainer decision.
+# Outside contributors' workflow runs already wait for maintainer approval
+# on every run (not just the first), so a workflow edit is seen before it
+# ever runs, and merging still needs one approving review either way.
+/.github/workflows/ @tebanieo

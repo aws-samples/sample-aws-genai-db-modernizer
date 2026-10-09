@@ -108,6 +108,11 @@ Before starting work, create an issue describing:
 - Why it's needed
 - Proposed approach (for larger changes)
 
+Ask on the issue to be assigned before you open a pull request. The
+`issue-assignment-gate` check (see [Issue Assignment Gate](#issue-assignment-gate))
+fails any pull request that doesn't say `Closes #N` for an issue assigned to
+its author, so getting assigned first saves a round trip.
+
 ### 2. Fork and Branch
 
 ```bash
@@ -283,6 +288,13 @@ Smaller PRs are reviewed faster and merged more easily.
 - **`good first issue`**: small, standalone fixes with a suggested fix, good for a first contribution. They are never part of an epic or a feature, never change a contract, and nothing else waits on them. Before opening the PR, run `make lint` (or `./ci/lint.sh`) and `make test`: the same checks run in CI, and a PR can't merge until they pass.
 - **`help wanted`**: well-scoped issues that need more context in the codebase; contributions welcome.
 - **`Maintainer Decision`**: the issue or PR is waiting for a maintainer to decide. While a PR carries this label, the `maintainer-decision-gate` check fails and the PR can't be merged. A maintainer removes the label once the decision is made, and the check passes on the next run. A PR opened before this check existed has no result for it until it gets a new push, a label change, or is closed and reopened.
+- **`scope: internal`**: exempts a pull request from the `issue-assignment-gate` check below (maintenance/internal work that isn't tied to a contributor-facing issue).
+
+### Issue Assignment Gate
+
+Every pull request must say `Closes #N` (or `Fixes`/`Resolves #N`, case-insensitive) for at least one issue, and that issue must be assigned to the pull request's author -- the `issue-assignment-gate` check fails otherwise, with a message explaining what's missing. Get the issue assigned to you before opening the PR (see [Create an Issue](#1-create-an-issue)). Issues linked under the pull request's "Development" sidebar section count the same as one written in the description -- both come from the same GitHub data -- but linking one there doesn't by itself re-run the check either: like getting assigned after the fact, it still needs an edit to the description or a new commit before the check sees it. A closed issue counts too, as long as it's still assigned to you. If the check fails, assigning the issue to yourself does not by itself make the check pass: edit the pull request description or push a commit once you're assigned (either re-runs the check), or ask a maintainer to re-run it -- re-running a check directly needs write access, and for outside contributors every workflow run (not just the first) already waits for a maintainer's approval before it starts. Maintainers (admin or write access -- including the built-in maintain role, or a custom role built on write access), Dependabot, and pull requests labelled `scope: internal` are exempt.
+
+Changes to `.github/workflows/issue-assignment-gate.yml` itself (or any other workflow) are requested for maintainer review by `.github/CODEOWNERS` -- the branch ruleset doesn't require that review, which is a separate maintainer decision. Checking out the base commit before running the gate's script stops a pull request from changing *what the script does*, but GitHub still reads the *workflow file* from the pull request's own merge ref; what actually keeps a pull request from changing what the workflow itself is allowed to do is that outside contributors' workflow runs always wait for a maintainer's approval, on every run and not just the first, so a workflow edit is seen before it ever runs -- plus the one approving review merging already needs regardless.
 
 ---
 
