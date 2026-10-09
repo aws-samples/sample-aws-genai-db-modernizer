@@ -1,5 +1,7 @@
 """Unit tests for the capability registry."""
 
+import pytest
+
 from src.agents.referee.capability_registry import (
     ENGINE_CAPABILITIES,
     LIGHTWEIGHT_ALTERNATIVES,
@@ -10,7 +12,7 @@ from src.agents.referee.capability_registry import (
     requires_aggregation_capability,
     suggest_lightweight_alternative,
 )
-from src.shared.engine_capabilities import ACID_TRANSACTION_ENGINES
+from src.shared.engine_capabilities import ACID_TRANSACTION_ENGINES, TEXT_SEARCH_ENGINES
 
 
 class TestAcidTransactionEnginesAgreeWithCapabilityRegistry:
@@ -28,6 +30,38 @@ class TestAcidTransactionEnginesAgreeWithCapabilityRegistry:
             engine for engine, caps in ENGINE_CAPABILITIES.items() if "multi_doc_acid" in caps
         )
         assert ACID_TRANSACTION_ENGINES == multi_doc_acid_engines
+
+
+class TestTextSearchEnginesVsCapabilityRegistry:
+    """``engine_capabilities.TEXT_SEARCH_ENGINES`` should agree with
+
+    ``capability_registry.ENGINE_CAPABILITIES``'s ``inverted_index`` set the
+    same way ``ACID_TRANSACTION_ENGINES`` agrees with ``multi_doc_acid``
+    above. The two Aurora engines already do; DocumentDB does not, because
+    the hard gate excludes it from a leading-wildcard query while admitting
+    Aurora MySQL, which runs that query the same way (an unindexed scan) --
+    tracked as #485.
+    """
+
+    def test_aurora_engines_agree_with_inverted_index(self):
+        inverted_index_engines = frozenset(
+            engine for engine, caps in ENGINE_CAPABILITIES.items() if "inverted_index" in caps
+        )
+        assert {"aurora_postgresql", "aurora_mysql"} <= TEXT_SEARCH_ENGINES
+        assert {"aurora_postgresql", "aurora_mysql"} <= inverted_index_engines
+
+    @pytest.mark.xfail(strict=True, reason="#485")
+    def test_documentdb_is_in_inverted_index(self):
+        # Not an equality check against TEXT_SEARCH_ENGINES: inverted_index
+        # also contains opensearch, which is never in TEXT_SEARCH_ENGINES
+        # (see its docstring), so that equality could never pass even once
+        # #485 is fixed. This asserts the specific gap instead, so it goes
+        # from xfail to a loud failure (strict=True) exactly when #485 is
+        # fixed, prompting removal of the marker.
+        inverted_index_engines = frozenset(
+            engine for engine, caps in ENGINE_CAPABILITIES.items() if "inverted_index" in caps
+        )
+        assert "documentdb" in inverted_index_engines
 
 
 class TestDetectRequiredCapabilities:

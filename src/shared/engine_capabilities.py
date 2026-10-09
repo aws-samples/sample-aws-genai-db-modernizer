@@ -70,3 +70,62 @@ from __future__ import annotations
 ACID_TRANSACTION_ENGINES: frozenset[str] = frozenset(
     {"aurora_postgresql", "aurora_mysql", "documentdb"}
 )
+
+# Engines that can run a text/pattern-search-shaped query at all, without a
+# dedicated search engine -- the same "CAN serve this pattern, even if
+# poorly" bar ``capability_registry.ENGINE_CAPABILITIES`` already uses (#480).
+#   - aurora_postgresql: LIKE/ILIKE, ``~``/``~*`` (regex) and ``tsvector``/
+#     ``tsquery`` (full-text) are all native SQL. ``pg_trgm``'s GIN/GiST
+#     index is also the only one of the three that indexes a LEADING
+#     wildcard (``LIKE '%term%'``) -- the other two below still run it,
+#     just as an unindexed scan.
+#   - aurora_mysql: LIKE, REGEXP/RLIKE (regex) and FULLTEXT (``MATCH ...
+#     AGAINST``, full-text) are all native SQL. A leading-wildcard LIKE runs
+#     unindexed -- the same scan cost as DocumentDB below, not Aurora
+#     PostgreSQL's indexed case.
+#   - documentdb: ``$regex`` (LIKE/regex-equivalent) and the ``$text``
+#     operator (full-text) are both native query operators. A
+#     leading-wildcard ``$regex`` also runs unindexed, same scan cost as
+#     Aurora MySQL's LIKE.
+#   - dynamodb / elasticache are deliberately NOT included: neither can
+#     express any of these patterns at all (DynamoDB has no LIKE/regex
+#     equivalent; ElastiCache is a cache, not a queryable text store) -- they
+#     keep ``ANTI_PATTERN_PENALTIES``'s full "wrong engine" penalty, with no
+#     reduced redesign penalty (unlike ``acid-transactions``'s DynamoDB
+#     case): "redesign around no text-search feature at all" is a much
+#     bigger, vaguer leap than a concrete API like ``TransactWriteItems``.
+#   - opensearch is excluded for a different reason: it is the engine these
+#     signals come FROM, not a capability question for this set --
+#     ``assignment_resolver``'s cross-engine step never penalises the
+#     detecting engine for its own signal.
+#
+# Does NOT cover ``fuzzy-search``: see ``FUZZY_SEARCH_ENGINES`` below, a
+# narrower, separate set.
+#
+# Deliberately the same three engines as ACID_TRANSACTION_ENGINES, but a
+# second, independent fact, not inferred from it: a future engine could gain
+# one capability without the other.
+#
+# Known gap, tracked as #485, not fixed here: the HARD capability gate
+# (``capability_registry.ENGINE_CAPABILITIES``'s ``inverted_index``, checked
+# in ``AssignmentResolver.resolve`` Step 3b, before this set is ever
+# consulted) excludes DocumentDB but not Aurora MySQL, even though both only
+# run these patterns unindexed. Its detector fires both on a leading
+# wildcard (``LIKE '%term'``) and on full-text syntax (``MATCH ... AGAINST``,
+# ``tsvector``/``tsquery``), so a leading-wildcard query AND a full-text
+# query both still score 0 on DocumentDB after this fix, hard-excluded
+# before this set is ever reached. A non-leading LIKE or a regex query is
+# unaffected by the hard gate and does benefit from the exemption below.
+# ``tests/unit/test_capability_registry.py`` tracks the gap against #485
+# instead of asserting it as a permanent spec.
+TEXT_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_mysql", "documentdb"})
+
+# Engines with a native fuzzy/similarity-match operator. Today that is only
+# ``pg_trgm``'s ``similarity()`` on Aurora PostgreSQL: Aurora MySQL and
+# DocumentDB have no trigram or edit-distance operator to fall back to --
+# unlike the other three search patterns above, where every
+# ``TEXT_SEARCH_ENGINES`` engine runs the pattern at least as an unindexed
+# scan, there is no SQL/query-language construct for ``fuzzy-search`` on
+# those two, so this is its own, narrower set rather than reusing
+# ``TEXT_SEARCH_ENGINES``.
+FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
