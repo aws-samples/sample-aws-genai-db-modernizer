@@ -398,6 +398,80 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
         payload = prepare_synthesis_llm_input(self._det())
         assert "data" not in payload
 
+    def test_query_groups_are_compacted_for_the_llm(self):
+        """#478: query_groups in the LLM input carry name, engines,
+        tables, query_count and a per-engine calls/s breakdown only -- no
+        per-pattern description or per-source-query text/tables, which the
+        model does not reason over for the summary and which grows with
+        every query a group carries."""
+        det = self._det()
+        det["query_groups"] = [
+            {
+                "group_name": "Option lookups",
+                "engines": ["dynamodb"],
+                "access_patterns": [
+                    {
+                        "engine": "dynamodb",
+                        "table_name": "Options",
+                        "design_rps": 10,
+                        "description": "x" * 300,
+                        "query_ids": ["q1", "q2"],
+                    }
+                ],
+                "source_queries": [{"query_id": "q1", "query_text": "x" * 300}],
+                "total_design_rps": 10,
+            }
+        ]
+        (group,) = prepare_synthesis_llm_input(det)["query_groups"]
+        assert group == {
+            "group_name": "Option lookups",
+            "engines": ["dynamodb"],
+            "tables": ["Options"],
+            "query_count": 2,
+            "calls_per_second_by_engine": {"dynamodb": 10},
+        }
+
+    def test_compact_query_group_keeps_each_engines_calls_per_second_separate(self):
+        """#478: a group two engines share (a cache layer and
+        the relational engine reading the same source table) must not sum
+        their calls/s into one combined, misleadingly-comparable number --
+        DynamoDB's design_rps includes peak/growth factors from its own
+        analysis, a relational engine's is the collector's raw rate."""
+        det = self._det()
+        det["query_groups"] = [
+            {
+                "group_name": "wordpress.wp_posts",
+                "engines": ["elasticache", "aurora_mysql"],
+                "access_patterns": [
+                    {"engine": "elasticache", "design_rps": 12.0, "query_ids": ["q1"]},
+                    {"engine": "aurora_mysql", "design_rps": 0.3, "query_ids": ["q2"]},
+                ],
+                "total_design_rps": 12.3,
+            }
+        ]
+        (group,) = prepare_synthesis_llm_input(det)["query_groups"]
+        assert group["calls_per_second_by_engine"] == {"aurora_mysql": 0.3, "elasticache": 12.0}
+        assert "total_calls_per_second" not in group
+
+    def test_compact_query_group_falls_back_to_group_name_for_tables_when_untitled(self):
+        """Aurora's access_pattern entries carry no table_name (redundant
+        with the group's own name, since tables carry
+        over 1:1) -- the compact "tables" field falls back to the group
+        name's own source tables instead of coming up empty."""
+        det = self._det()
+        det["query_groups"] = [
+            {
+                "group_name": "wordpress.wp_posts, wordpress.wp_postmeta",
+                "engines": ["aurora_mysql"],
+                "access_patterns": [
+                    {"engine": "aurora_mysql", "design_rps": 1.0, "query_ids": ["q1"]}
+                ],
+                "total_design_rps": 1.0,
+            }
+        ]
+        (group,) = prepare_synthesis_llm_input(det)["query_groups"]
+        assert group["tables"] == ["wordpress.wp_posts", "wordpress.wp_postmeta"]
+
 
 # ---------------------------------------------------------------------------
 # Test: apply_synthesis_llm_output

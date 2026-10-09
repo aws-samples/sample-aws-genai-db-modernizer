@@ -468,6 +468,51 @@ class TestFallbackSummary:
         for banned in ("$", "confidence", "source tables mapped", "dynamodb (", "aurora_mysql"):
             assert banned not in text, banned
         assert "ungrouped" not in text
+
+    def test_fallback_never_names_the_collector_blame_groups(self, wordpress) -> None:
+        """#478: a relational engine's query_groups entry
+        for a query with no real source table is labelled "Utility and
+        session statements" or "Table not identified by the collector",
+        never a generic "unknown" -- and neither is a real access pattern a
+        reader should see named as the engine's busiest group, in the
+        effective-architecture view ``build_fallback_summary`` reads or in
+        the narrative itself."""
+        query_groups = [
+            *wordpress["query_groups"],
+            {
+                "group_name": "Table not identified by the collector",
+                "engines": ["aurora_mysql"],
+                "access_patterns": [
+                    {"engine": "aurora_mysql", "design_rps": 999, "query_ids": ["qx"]}
+                ],
+            },
+            {
+                "group_name": "Utility and session statements",
+                "engines": ["aurora_mysql"],
+                "access_patterns": [
+                    {"engine": "aurora_mysql", "design_rps": 998, "query_ids": ["qy"]}
+                ],
+            },
+        ]
+        mappings = [
+            {"source_table": t, "recommended_database": e}
+            for t, e in wordpress["recommended_engine"]
+        ]
+        eff = build_effective_architecture(
+            wordpress["engine_tables"],
+            mappings,
+            wordpress["ranking"],
+            query_groups,
+            wordpress["database_name"],
+            wordpress["eliminated"],
+        )
+        aurora_entry = next(e for e in eff["engines"] if e["engine"] == "aurora_mysql")
+        assert "Table not identified by the collector" not in aurora_entry["top_query_groups"]
+        assert "Utility and session statements" not in aurora_entry["top_query_groups"]
+
+        text = build_fallback_summary(eff) or ""
+        assert "Table not identified by the collector" not in text
+        assert "Utility and session statements" not in text
         assert text.count("tables mapped") == 0
 
     def test_single_engine_and_empty(self) -> None:

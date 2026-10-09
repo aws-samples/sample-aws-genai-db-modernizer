@@ -65,6 +65,7 @@ from .renderers import (
     SHARED_TABLES_NOTE,
     _architecture_engines,
     _mapping_split,
+    clip,
     filtered_risks,
     fmt_num,
     label_summary_counts,
@@ -286,25 +287,6 @@ BODY_TOP = 1.92
 
 def _place(shape, box) -> None:
     shape.left, shape.top, shape.width, shape.height = (Inches(v) for v in box)
-
-
-def clip(text: str, n: int) -> str:
-    """Truncate on a word boundary — contract descriptions are long and cutting
-    mid-word ("...DocumentDB versi") reads like a rendering bug on a slide.
-
-    A single very long word at the cut point (an identifier, path or URL with no
-    space to back up to) used to back the whole cut up to the word boundary
-    *before* it, silently surrendering most of the character budget to that one
-    word (#434 review); hard-cut at ``n`` instead whenever backing up would lose
-    more than half of it.
-    """
-    text = " ".join(text.split())
-    if len(text) <= n:
-        return text
-    cut = text[:n].rsplit(" ", 1)[0]
-    if len(cut) < n // 2:
-        cut = text[:n]
-    return cut.rstrip(" ,;:.") + "…"
 
 
 # Approximate advance widths in em for a bold sans headline face, used to keep

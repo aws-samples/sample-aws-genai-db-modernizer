@@ -559,6 +559,151 @@
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
+    const AURORA_ENGINE_KEYS = ['aurora_mysql', 'aurora_postgresql', 'aurora'];
+    const AURORA_BLAME_LABELS = ['Utility and session statements', 'Table not identified by the collector'];
+
+    function reasonTextFor(group, ap) {
+      if (typeof ap.reason_index === 'number') {
+        const reasons = group.reasons || [];
+        return reasons[ap.reason_index] || '';
+      }
+      return ap.description || '';
+    }
+
+    function auroraQueryGroupsFor(engine) {
+      const groups = DATA.results?.synthesis?.query_groups || [];
+      const out = [];
+      groups.forEach(function(g) {
+        if (!(g.engines || []).includes(engine)) return;
+        const byQueryId = {};
+        (g.access_patterns || []).forEach(function(ap) {
+          if (ap.engine !== engine) return;
+          (ap.query_ids || []).forEach(function(qid) { byQueryId[qid] = ap; });
+        });
+        if (Object.keys(byQueryId).length === 0) return;
+        const queries = (g.source_queries || [])
+          .filter(function(sq) { return byQueryId[sq.query_id]; })
+          .map(function(sq) {
+            const ap = byQueryId[sq.query_id];
+            return {
+              excerpt: sq.query_text || '',
+              type: sq.query_type || ap.operation || '',
+              rps: typeof ap.design_rps === 'number' ? ap.design_rps : 0,
+              reason: reasonTextFor(g, ap),
+            };
+          })
+          .sort(function(a, b) { return b.rps - a.rps; });
+        if (queries.length === 0) return;
+        const trueCount = (g.query_count_by_engine && typeof g.query_count_by_engine[engine] === 'number') ? g.query_count_by_engine[engine] : queries.length;
+        out.push({ table: g.group_name, queries: queries, trueCount: trueCount, totalRps: queries.reduce(function(s, q) { return s + q.rps; }, 0) });
+      });
+      return out.sort(function(a, b) {
+        const aBlame = AURORA_BLAME_LABELS.includes(a.table);
+        const bBlame = AURORA_BLAME_LABELS.includes(b.table);
+        if (aBlame !== bBlame) return aBlame ? 1 : -1;
+        return b.totalRps - a.totalRps;
+      });
+    }
+
+    function auroraTableCardHtml(t) {
+      let html = '<div class="item-card">';
+      html += '<div style="font-weight: 700; font-size: 13px;">' + escapeHtml(t.table_name) + '</div>';
+      const cols = (t.columns || []).map(function(c) {
+        return escapeHtml(c.name) + ' <span style="color: var(--color-text-secondary);">' + escapeHtml(c.aurora_type || '') + '</span>';
+      }).join(', ');
+      html += '<div style="font-size: 12px; margin-top: 4px;">' + cols + '</div>';
+      if ((t.primary_key || []).length > 0) html += '<div style="font-size: 12px; margin-top: 4px;"><b>Primary key:</b> ' + escapeHtml(t.primary_key.join(', ')) + '</div>';
+      if ((t.indexes || []).length > 0) html += '<div style="font-size: 12px; margin-top: 4px;"><b>Indexes:</b> ' + t.indexes.map(function(ix) { return '<div style="font-family: monospace;">' + escapeHtml(ix) + '</div>'; }).join('') + '</div>';
+      if ((t.foreign_keys || []).length > 0) html += '<div style="font-size: 12px; margin-top: 4px;"><b>Foreign keys:</b> ' + t.foreign_keys.map(function(fk) { return '<div style="font-family: monospace;">' + escapeHtml(fk) + '</div>'; }).join('') + '</div>';
+      return html + '</div>';
+    }
+
+    function buildAuroraDesign() {
+      const container = document.getElementById('aurora-design-container');
+      if (!container) return;
+      const designByEngine = {};
+      (DATA.schemaDesigns || []).forEach(function(d) { if (AURORA_ENGINE_KEYS.includes(d.target_type) && d.content) designByEngine[d.target_type] = d; });
+      const enginesWithQueries = {};
+      (DATA.results?.synthesis?.query_groups || []).forEach(function(g) { (g.access_patterns || []).forEach(function(ap) { if (AURORA_ENGINE_KEYS.includes(ap.engine)) enginesWithQueries[ap.engine] = true; }); });
+      const auroraEngines = Array.from(new Set(Object.keys(designByEngine).concat(Object.keys(enginesWithQueries)))).sort();
+      const designs = auroraEngines.map(function(engine) { return designByEngine[engine] || { target_type: engine, content: {} }; });
+      if (designs.length === 0) { const section = container.closest('.section'); if (section) section.style.display = 'none'; return; }
+      let html = '';
+      designs.forEach(function(design) {
+        const engine = design.target_type;
+        const content = design.content || {};
+        const tables = content.table_definitions || [];
+        const groups = auroraQueryGroupsFor(engine);
+        html += '<div class="item-card">';
+        html += '<div style="font-size: 15px; font-weight: 700;">' + escapeHtml(ENGINE_LABELS[engine] || engine) + '</div>';
+        if (content.migration_strategy) {
+          const strategyText = content.migration_strategy === 'carry_over'
+            ? 'Tables carry over from the source database as-is.'
+            : content.migration_strategy === 'translate'
+            ? 'Tables were translated to a new schema for this target.'
+            : content.migration_strategy;
+          html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">' + escapeHtml(strategyText) + '</div>';
+        }
+        html += '<details style="margin-top: 12px;"><summary style="cursor: pointer; font-weight: 600;">' + tables.length + ' table' + (tables.length === 1 ? '' : 's') + '</summary>';
+        tables.forEach(function(t) { html += auroraTableCardHtml(t); });
+        html += '</details>';
+        if (content.generated_ddl) {
+          const DDL_DISPLAY_CAP = 20000;
+          const ddl = content.generated_ddl;
+          const ddlShown = ddl.length > DDL_DISPLAY_CAP ? ddl.slice(0, DDL_DISPLAY_CAP) : ddl;
+          const ddlNote = ddl.length > DDL_DISPLAY_CAP ? '\n-- truncated: ' + (ddl.length - DDL_DISPLAY_CAP) + ' more characters omitted --' : '';
+          html += '<details style="margin-top: 12px;"><summary style="cursor: pointer; font-weight: 600;">Generated DDL</summary>';
+          html += '<pre style="max-height: 400px; overflow: auto; font-size: 12px; background: var(--color-bg-layout); padding: 12px; border-radius: 4px;">' + escapeHtml(ddlShown + ddlNote) + '</pre>';
+          html += '</details>';
+        }
+        const optimizations = content.optimizations || [];
+        if (optimizations.length > 0) {
+          html += '<details style="margin-top: 12px;" open><summary style="cursor: pointer; font-weight: 600;">' + optimizations.length + ' optimization' + (optimizations.length === 1 ? '' : 's') + '</summary>';
+          optimizations.forEach(function(opt) {
+            html += '<div class="item-card">';
+            html += '<div style="font-size: 13px; font-weight: 700;">' + escapeHtml(opt.category || '') + (opt.target ? ': ' + escapeHtml(opt.target) : '') + '</div>';
+            html += '<div style="font-size: 13px; margin-top: 4px;">' + escapeHtml(opt.recommendation || '') + '</div>';
+            if (opt.rationale) html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">' + escapeHtml(opt.rationale) + '</div>';
+            html += '</div>';
+          });
+          html += '</details>';
+        }
+        const queryCount = groups.reduce(function(s, g) { return s + g.trueCount; }, 0);
+        html += '<details style="margin-top: 12px;"' + (queryCount > 0 ? ' open' : '') + '><summary style="cursor: pointer; font-weight: 600;">' + queryCount + ' quer' + (queryCount === 1 ? 'y' : 'ies') + ' on Aurora</summary>';
+        if (groups.length === 0) {
+          html += '<p style="font-size: 13px; color: var(--color-text-secondary);">No queries were routed to this engine by the assignment.</p>';
+        } else {
+          const MAX_GROUPS_SHOWN = 20;
+          const MAX_QUERIES_PER_GROUP_SHOWN = 50;
+          groups.slice(0, MAX_GROUPS_SHOWN).forEach(function(g) {
+            const shownQueries = g.queries.slice(0, MAX_QUERIES_PER_GROUP_SHOWN);
+            html += '<details style="margin: 8px 0 8px 16px;"><summary style="cursor: pointer;">' + escapeHtml(g.table) + ' (' + g.trueCount + ')</summary>';
+            html += '<table><thead><tr><th>Query</th><th>Type</th><th>Calls/s</th><th>Reason</th></tr></thead><tbody>';
+            shownQueries.forEach(function(q) {
+              html += '<tr>';
+              html += '<td style="font-family: monospace; font-size: 12px;">' + escapeHtml(q.excerpt) + '</td>';
+              html += '<td>' + escapeHtml(q.type || '\u2014') + '</td>';
+              html += '<td>' + escapeHtml(q.rps.toFixed(2)) + '</td>';
+              html += '<td>' + escapeHtml(q.reason || '\u2014') + '</td>';
+              html += '</tr>';
+            });
+            html += '</tbody></table>';
+            const omitted = g.trueCount - shownQueries.length;
+            if (omitted > 0) {
+              html += '<p style="font-size: 12px; color: var(--color-text-secondary);">+' + omitted + ' more queries not shown</p>';
+            }
+            html += '</details>';
+          });
+          if (groups.length > MAX_GROUPS_SHOWN) {
+            html += '<p style="font-size: 12px; color: var(--color-text-secondary); margin-left: 16px;">+' + (groups.length - MAX_GROUPS_SHOWN) + ' more tables not shown</p>';
+          }
+        }
+        html += '</details>';
+        html += '</div>';
+      });
+      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
     function buildMigrationRoadmap() {
       const container = document.getElementById('migration-roadmap-container');
       if (!container) return;
@@ -896,4 +1041,5 @@
       createCharts();
       buildTradeoffs();
       buildPeNotes();
+      buildAuroraDesign();
     });

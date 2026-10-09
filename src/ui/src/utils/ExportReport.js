@@ -861,6 +861,200 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
+  // #478: Aurora's schema design has no access_patterns (tables carry over
+  // 1:1; #157 adds real access patterns later), so extractPatterns() above
+  // never sees it. The relational branch in build_query_groups
+  // (src/agents/referee/synthesis_report.py) already puts every query the
+  // assignment routed to an Aurora engine into DATA.results.synthesis.
+  // query_groups, so this section is built from that plus DATA.schemaDesigns
+  // directly -- the same two sources the live Results page's
+  // utils/auroraDesign.js reads, kept in parity by hand (this file has no
+  // access to that module -- it is lifted into static text by
+  // scripts/sync_report_template.py, which cannot import JS modules).
+  script += '    const AURORA_ENGINE_KEYS = [\'aurora_mysql\', \'aurora_postgresql\', \'aurora\'];\n';
+  // Mirrors AURORA_BLAME_LABELS in src/ui/src/utils/auroraDesign.js and
+  // UTILITY_GROUP_LABEL/UNRESOLVED_TABLE_GROUP_LABEL in
+  // src/agents/referee/synthesis_report.py exactly:
+  // neither is a real table a reader should see ranked by throughput, so
+  // both always sort last here too -- same rule, three copies (Python has
+  // no JS, and this file has no access to auroraDesign.js -- lifted into
+  // static text by scripts/sync_report_template.py, which cannot import JS
+  // modules).
+  script += '    const AURORA_BLAME_LABELS = [\'Utility and session statements\', \'Table not identified by the collector\'];\n';
+  script += '\n';
+  // Mirrors reasonTextFor in src/ui/src/utils/auroraDesign.js and
+  // reason_text_for in src/agents/referee/synthesis_report.py: the
+  // relational branch stores reason_index into the group's own reasons
+  // list instead of a copy of the string on every access pattern.
+  script += '    function reasonTextFor(group, ap) {\n';
+  script += '      if (typeof ap.reason_index === \'number\') {\n';
+  script += '        const reasons = group.reasons || [];\n';
+  script += '        return reasons[ap.reason_index] || \'\';\n';
+  script += '      }\n';
+  script += '      return ap.description || \'\';\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function auroraQueryGroupsFor(engine) {\n';
+  script += '      const groups = DATA.results?.synthesis?.query_groups || [];\n';
+  script += '      const out = [];\n';
+  script += '      groups.forEach(function(g) {\n';
+  script += '        if (!(g.engines || []).includes(engine)) return;\n';
+  script += '        const byQueryId = {};\n';
+  script += '        (g.access_patterns || []).forEach(function(ap) {\n';
+  script += '          if (ap.engine !== engine) return;\n';
+  script += '          (ap.query_ids || []).forEach(function(qid) { byQueryId[qid] = ap; });\n';
+  script += '        });\n';
+  script += '        if (Object.keys(byQueryId).length === 0) return;\n';
+  script += '        const queries = (g.source_queries || [])\n';
+  script += '          .filter(function(sq) { return byQueryId[sq.query_id]; })\n';
+  script += '          .map(function(sq) {\n';
+  script += '            const ap = byQueryId[sq.query_id];\n';
+  script += '            return {\n';
+  script += '              excerpt: sq.query_text || \'\',\n';
+  script += '              type: sq.query_type || ap.operation || \'\',\n';
+  script += '              rps: typeof ap.design_rps === \'number\' ? ap.design_rps : 0,\n';
+  script += '              reason: reasonTextFor(g, ap),\n';
+  script += '            };\n';
+  script += '          })\n';
+  script += '          .sort(function(a, b) { return b.rps - a.rps; });\n';
+  script += '        if (queries.length === 0) return;\n';
+  // #478: ``query_count_by_engine`` (set only by
+  // analysis_report.py's _project_query_groups_for_export) is this group's
+  // real count for this engine, from before the export capped it to its
+  // busiest 50 entries -- without it, the "N queries on Aurora" heading
+  // summed only the survivors (discourse: 1213, not the true 1281), and a
+  // trimmed group never got its "+N more" note (every group already had
+  // <=50 entries by the time this ran). Absent for the live "Export to
+  // HTML" button's own DATA (never projected -- built straight from the
+  // page's own state), where queries.length is already the true count.
+  script += '        const trueCount = (g.query_count_by_engine && typeof g.query_count_by_engine[engine] === \'number\') ? g.query_count_by_engine[engine] : queries.length;\n';
+  script += '        out.push({ table: g.group_name, queries: queries, trueCount: trueCount, totalRps: queries.reduce(function(s, q) { return s + q.rps; }, 0) });\n';
+  script += '      });\n';
+  script += '      return out.sort(function(a, b) {\n';
+  script += '        const aBlame = AURORA_BLAME_LABELS.includes(a.table);\n';
+  script += '        const bBlame = AURORA_BLAME_LABELS.includes(b.table);\n';
+  script += '        if (aBlame !== bBlame) return aBlame ? 1 : -1;\n';
+  script += '        return b.totalRps - a.totalRps;\n';
+  script += '      });\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function auroraTableCardHtml(t) {\n';
+  script += '      let html = \'<div class="item-card">\';\n';
+  script += '      html += \'<div style="font-weight: 700; font-size: 13px;">\' + escapeHtml(t.table_name) + \'</div>\';\n';
+  script += '      const cols = (t.columns || []).map(function(c) {\n';
+  script += '        return escapeHtml(c.name) + \' <span style="color: var(--color-text-secondary);">\' + escapeHtml(c.aurora_type || \'\') + \'</span>\';\n';
+  script += '      }).join(\', \');\n';
+  script += '      html += \'<div style="font-size: 12px; margin-top: 4px;">\' + cols + \'</div>\';\n';
+  script += '      if ((t.primary_key || []).length > 0) html += \'<div style="font-size: 12px; margin-top: 4px;"><b>Primary key:</b> \' + escapeHtml(t.primary_key.join(\', \')) + \'</div>\';\n';
+  script += '      if ((t.indexes || []).length > 0) html += \'<div style="font-size: 12px; margin-top: 4px;"><b>Indexes:</b> \' + t.indexes.map(function(ix) { return \'<div style="font-family: monospace;">\' + escapeHtml(ix) + \'</div>\'; }).join(\'\') + \'</div>\';\n';
+  script += '      if ((t.foreign_keys || []).length > 0) html += \'<div style="font-size: 12px; margin-top: 4px;"><b>Foreign keys:</b> \' + t.foreign_keys.map(function(fk) { return \'<div style="font-family: monospace;">\' + escapeHtml(fk) + \'</div>\'; }).join(\'\') + \'</div>\';\n';
+  script += '      return html + \'</div>\';\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function buildAuroraDesign() {\n';
+  script += '      const container = document.getElementById(\'aurora-design-container\');\n';
+  script += '      if (!container) return;\n';
+  // Design-independent: an Aurora engine with no schema
+  // design yet still ran queries (the assignment routed them there), so it
+  // must still show up here -- just with empty tables/DDL/optimizations,
+  // same as the engineering report's "Queries on Aurora by table"
+  // subsection, which never required a design either.
+  script += '      const designByEngine = {};\n';
+  script += '      (DATA.schemaDesigns || []).forEach(function(d) { if (AURORA_ENGINE_KEYS.includes(d.target_type) && d.content) designByEngine[d.target_type] = d; });\n';
+  script += '      const enginesWithQueries = {};\n';
+  script += '      (DATA.results?.synthesis?.query_groups || []).forEach(function(g) { (g.access_patterns || []).forEach(function(ap) { if (AURORA_ENGINE_KEYS.includes(ap.engine)) enginesWithQueries[ap.engine] = true; }); });\n';
+  script += '      const auroraEngines = Array.from(new Set(Object.keys(designByEngine).concat(Object.keys(enginesWithQueries)))).sort();\n';
+  script += '      const designs = auroraEngines.map(function(engine) { return designByEngine[engine] || { target_type: engine, content: {} }; });\n';
+  // #478: omitted entirely, not an empty section with a
+  // placeholder message -- there is nothing Aurora-specific to say when no
+  // Aurora engine is in this assessment.
+  script += '      if (designs.length === 0) { const section = container.closest(\'.section\'); if (section) section.style.display = \'none\'; return; }\n';
+  script += '      let html = \'\';\n';
+  script += '      designs.forEach(function(design) {\n';
+  script += '        const engine = design.target_type;\n';
+  script += '        const content = design.content || {};\n';
+  script += '        const tables = content.table_definitions || [];\n';
+  script += '        const groups = auroraQueryGroupsFor(engine);\n';
+  script += '        html += \'<div class="item-card">\';\n';
+  script += '        html += \'<div style="font-size: 15px; font-weight: 700;">\' + escapeHtml(ENGINE_LABELS[engine] || engine) + \'</div>\';\n';
+  script += '        if (content.migration_strategy) {\n';
+  script += '          const strategyText = content.migration_strategy === \'carry_over\'\n';
+  script += '            ? \'Tables carry over from the source database as-is.\'\n';
+  script += '            : content.migration_strategy === \'translate\'\n';
+  script += '            ? \'Tables were translated to a new schema for this target.\'\n';
+  script += '            : content.migration_strategy;\n';
+  script += '          html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(strategyText) + \'</div>\';\n';
+  script += '        }\n';
+  script += '        html += \'<details style="margin-top: 12px;"><summary style="cursor: pointer; font-weight: 600;">\' + tables.length + \' table\' + (tables.length === 1 ? \'\' : \'s\') + \'</summary>\';\n';
+  script += '        tables.forEach(function(t) { html += auroraTableCardHtml(t); });\n';
+  script += '        html += \'</details>\';\n';
+  script += '        if (content.generated_ddl) {\n';
+  // #478: capped at display time too (not just the embedded DATA,
+  // src/report/analysis_report.py's MAX_EMBEDDED_DDL_CHARS) -- a `<pre>` the
+  // browser lays out at full length is a cost even with "overflow: auto".
+  script += '          const DDL_DISPLAY_CAP = 20000;\n';
+  script += '          const ddl = content.generated_ddl;\n';
+  script += '          const ddlShown = ddl.length > DDL_DISPLAY_CAP ? ddl.slice(0, DDL_DISPLAY_CAP) : ddl;\n';
+  script += '          const ddlNote = ddl.length > DDL_DISPLAY_CAP ? \'\\n-- truncated: \' + (ddl.length - DDL_DISPLAY_CAP) + \' more characters omitted --\' : \'\';\n';
+  script += '          html += \'<details style="margin-top: 12px;"><summary style="cursor: pointer; font-weight: 600;">Generated DDL</summary>\';\n';
+  script += '          html += \'<pre style="max-height: 400px; overflow: auto; font-size: 12px; background: var(--color-bg-layout); padding: 12px; border-radius: 4px;">\' + escapeHtml(ddlShown + ddlNote) + \'</pre>\';\n';
+  script += '          html += \'</details>\';\n';
+  script += '        }\n';
+  script += '        const optimizations = content.optimizations || [];\n';
+  script += '        if (optimizations.length > 0) {\n';
+  script += '          html += \'<details style="margin-top: 12px;" open><summary style="cursor: pointer; font-weight: 600;">\' + optimizations.length + \' optimization\' + (optimizations.length === 1 ? \'\' : \'s\') + \'</summary>\';\n';
+  script += '          optimizations.forEach(function(opt) {\n';
+  script += '            html += \'<div class="item-card">\';\n';
+  script += '            html += \'<div style="font-size: 13px; font-weight: 700;">\' + escapeHtml(opt.category || \'\') + (opt.target ? \': \' + escapeHtml(opt.target) : \'\') + \'</div>\';\n';
+  script += '            html += \'<div style="font-size: 13px; margin-top: 4px;">\' + escapeHtml(opt.recommendation || \'\') + \'</div>\';\n';
+  script += '            if (opt.rationale) html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(opt.rationale) + \'</div>\';\n';
+  script += '            html += \'</div>\';\n';
+  script += '          });\n';
+  script += '          html += \'</details>\';\n';
+  script += '        }\n';
+  script += '        const queryCount = groups.reduce(function(s, g) { return s + g.trueCount; }, 0);\n';
+  script += '        html += \'<details style="margin-top: 12px;"\' + (queryCount > 0 ? \' open\' : \'\') + \'><summary style="cursor: pointer; font-weight: 600;">\' + queryCount + \' quer\' + (queryCount === 1 ? \'y\' : \'ies\') + \' on Aurora</summary>\';\n';
+  script += '        if (groups.length === 0) {\n';
+  script += '          html += \'<p style="font-size: 13px; color: var(--color-text-secondary);">No queries were routed to this engine by the assignment.</p>\';\n';
+  script += '        } else {\n';
+  // #478: capped at display time (both export paths) -- a workload
+  // with hundreds of source tables or queries per table should not render
+  // hundreds of <details>/<table> blocks into the DOM at once.
+  script += '          const MAX_GROUPS_SHOWN = 20;\n';
+  script += '          const MAX_QUERIES_PER_GROUP_SHOWN = 50;\n';
+  script += '          groups.slice(0, MAX_GROUPS_SHOWN).forEach(function(g) {\n';
+  script += '            const shownQueries = g.queries.slice(0, MAX_QUERIES_PER_GROUP_SHOWN);\n';
+  script += '            html += \'<details style="margin: 8px 0 8px 16px;"><summary style="cursor: pointer;">\' + escapeHtml(g.table) + \' (\' + g.trueCount + \')</summary>\';\n';
+  script += '            html += \'<table><thead><tr><th>Query</th><th>Type</th><th>Calls/s</th><th>Reason</th></tr></thead><tbody>\';\n';
+  script += '            shownQueries.forEach(function(q) {\n';
+  script += '              html += \'<tr>\';\n';
+  script += '              html += \'<td style="font-family: monospace; font-size: 12px;">\' + escapeHtml(q.excerpt) + \'</td>\';\n';
+  script += '              html += \'<td>\' + escapeHtml(q.type || \'\\u2014\') + \'</td>\';\n';
+  script += '              html += \'<td>\' + escapeHtml(q.rps.toFixed(2)) + \'</td>\';\n';
+  script += '              html += \'<td>\' + escapeHtml(q.reason || \'\\u2014\') + \'</td>\';\n';
+  script += '              html += \'</tr>\';\n';
+  script += '            });\n';
+  script += '            html += \'</tbody></table>\';\n';
+  // #478: "not shown" is "true count minus what actually
+  // rendered", not "minus the pre-trim array length" -- the latter was
+  // already capped server-side in the ATX export, so this note never fired
+  // there even when hundreds of queries were missing.
+  script += '            const omitted = g.trueCount - shownQueries.length;\n';
+  script += '            if (omitted > 0) {\n';
+  script += '              html += \'<p style="font-size: 12px; color: var(--color-text-secondary);">+\' + omitted + \' more queries not shown</p>\';\n';
+  script += '            }\n';
+  script += '            html += \'</details>\';\n';
+  script += '          });\n';
+  script += '          if (groups.length > MAX_GROUPS_SHOWN) {\n';
+  script += '            html += \'<p style="font-size: 12px; color: var(--color-text-secondary); margin-left: 16px;">+\' + (groups.length - MAX_GROUPS_SHOWN) + \' more tables not shown</p>\';\n';
+  script += '          }\n';
+  script += '        }\n';
+  script += '        html += \'</details>\';\n';
+  script += '        html += \'</div>\';\n';
+  script += '      });\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
   script += '    function buildMigrationRoadmap() {\n';
   script += '      const container = document.getElementById(\'migration-roadmap-container\');\n';
   script += '      if (!container) return;\n';
@@ -1209,6 +1403,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      createCharts();\n';
   script += '      buildTradeoffs();\n';
   script += '      buildPeNotes();\n';
+  script += '      buildAuroraDesign();\n';
   script += '    });\n';
   script += '  </script>\n';
 
@@ -1452,6 +1647,12 @@ export const generateHTMLReport = (data) => {
       <div class="section-header">Principal Engineer Notes</div>
       <p class="section-desc">Observations raised while reviewing each design, including the decisions to validate with your team before you commit to them.</p>
       <div id="pe-notes-container"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Aurora Design</div>
+      <p class="section-desc">Tables, generated DDL and the queries the assignment routed to each Aurora engine. Aurora's schema design has no access patterns yet (tables carry over 1:1), so it doesn't appear in the explorer above.</p>
+      <div id="aurora-design-container"></div>
     </div>
   </div>
 

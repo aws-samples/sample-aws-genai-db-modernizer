@@ -323,6 +323,60 @@ def run_synthesis_deterministic(
 # ---------------------------------------------------------------------------
 
 
+def _compact_query_groups_for_llm(query_groups: list[dict]) -> list[dict]:
+    """Compact ``query_groups`` for the executive-summary LLM input (#478).
+
+    ``effective_architecture`` is already the model's primary per-engine view
+    (compact tables, top query groups by name, capabilities); the full
+    ``query_groups`` embeds every access pattern's description and every
+    source query's text/tables verbatim, which the model does not reason
+    over for the summary and which grows with every query a group carries --
+    on a large workload (and now that a relational engine's queries get
+    their own groups too, #478) that is most of the input. Each group here
+    is name, engines, tables and how many distinct queries it carries --
+    enough to describe a group by name, nothing per-query.
+
+    No single combined "calls per second": a group two
+    engines share (say a cache layer and the relational engine reading the
+    same source table) mixes each engine's own metric under one number --
+    DynamoDB's ``design_rps`` already includes peak and growth factors from
+    its own analysis, while a relational engine's is the collector's raw
+    measured rate, so summing them invited the model to rank throughput
+    across engines that are not on the same scale. ``calls_per_second_by_
+    engine`` keeps each engine's own figure separate instead.
+    """
+    compact = []
+    for g in query_groups:
+        aps = g.get("access_patterns") or []
+        engines = sorted({e for e in (g.get("engines") or []) if e})
+        # Aurora's access_pattern entries carry no table_name (redundant
+        # with this group's own name, since tables carry
+        # over 1:1) -- fall back to the group name's own (sorted,
+        # comma-joined) source tables when no entry has one.
+        tables = sorted({ap.get("table_name") for ap in aps if ap.get("table_name")})
+        if not tables and g.get("group_name"):
+            tables = [t for t in g["group_name"].split(", ") if t]
+        query_ids: set[str] = set()
+        calls_by_engine: dict[str, float] = {}
+        for ap in aps:
+            query_ids.update(ap.get("query_ids") or [])
+            eng = ap.get("engine")
+            if eng:
+                calls_by_engine[eng] = calls_by_engine.get(eng, 0) + (ap.get("design_rps") or 0)
+        compact.append(
+            {
+                "group_name": g.get("group_name"),
+                "engines": engines,
+                "tables": tables,
+                "query_count": len(query_ids),
+                "calls_per_second_by_engine": {
+                    e: round(v, 1) for e, v in sorted(calls_by_engine.items())
+                },
+            }
+        )
+    return compact
+
+
 def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     """Return the payload that should be sent to the executive-summary LLM.
 
@@ -353,7 +407,7 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
         "effective_architecture": deterministic_result["effective_architecture"],
         "deterministic_summary": deterministic_result["summary"],
         "ranking": deterministic_result["ranking"],
-        "query_groups": deterministic_result["query_groups"],
+        "query_groups": _compact_query_groups_for_llm(deterministic_result["query_groups"]),
         "tco_analysis": deterministic_result["tco_analysis"],
         "risk_assessment": deterministic_result["risk_assessment"],
         "table_mappings": deterministic_result["table_mappings"],

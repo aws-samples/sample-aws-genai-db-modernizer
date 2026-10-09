@@ -112,6 +112,12 @@ __BANNER__
       <p class="section-desc">Observations raised while reviewing each design, including the decisions to validate with your team before you commit to them.</p>
       <div id="pe-notes-container"></div>
     </div>
+
+    <div class="section">
+      <div class="section-header">Aurora Design</div>
+      <p class="section-desc">Tables, generated DDL and the queries the assignment routed to each Aurora engine. Aurora's schema design has no access patterns yet (tables carry over 1:1), so it doesn't appear in the explorer above.</p>
+      <div id="aurora-design-container"></div>
+    </div>
 __PROVENANCE__
   </div>
 

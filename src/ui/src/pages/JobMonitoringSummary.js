@@ -22,6 +22,7 @@ import Alert from "@cloudscape-design/components/alert";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Select from "@cloudscape-design/components/select";
 import CodeEditor from "@cloudscape-design/components/code-editor";
+import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import Modal from "@cloudscape-design/components/modal";
 
 
@@ -1033,11 +1034,11 @@ const JobMonitoringSummaryPage = memo(() => {
                         theme: 'cloud_editor_dark'
                       }}
                       editorContentHeight={800}
-                      i18nStrings={{
-                        loadingState: "Loading artifact...",
-                        errorState: "Error loading artifact",
-                        errorStateRecovery: "Retry"
-                      }}
+                      i18nStrings={codeEditorI18nStrings(t, {
+                        loadingState: t('job-monitoring.artifacts.code-editor.loading'),
+                        errorState: t('job-monitoring.artifacts.code-editor.error'),
+                        errorStateRecovery: t('job-monitoring.artifacts.code-editor.error-recovery')
+                      })}
                       loading={artifactLoading}
                       readOnly
                     />
@@ -1073,11 +1074,11 @@ const JobMonitoringSummaryPage = memo(() => {
               theme: 'cloud_editor_dark'
             }}
             editorContentHeight={600}
-            i18nStrings={{
-              loadingState: "Loading artifact...",
-              errorState: "Error loading artifact",
-              errorStateRecovery: "Retry"
-            }}
+            i18nStrings={codeEditorI18nStrings(t, {
+              loadingState: t('job-monitoring.artifacts.code-editor.loading'),
+              errorState: t('job-monitoring.artifacts.code-editor.error'),
+              errorStateRecovery: t('job-monitoring.artifacts.code-editor.error-recovery')
+            })}
             loading={artifactLoading}
             readOnly
           />

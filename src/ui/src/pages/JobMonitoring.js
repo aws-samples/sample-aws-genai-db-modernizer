@@ -22,6 +22,7 @@ import Steps from "@cloudscape-design/components/steps";
 import Select from "@cloudscape-design/components/select";
 import Modal from "@cloudscape-design/components/modal";
 import CodeEditor from "@cloudscape-design/components/code-editor";
+import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import Popover from "@cloudscape-design/components/popover";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 
@@ -991,11 +992,11 @@ const JobMonitoringPage = memo(() => {
                         theme: 'cloud_editor_dark'
                       }}
                       editorContentHeight={800}
-                      i18nStrings={{
+                      i18nStrings={codeEditorI18nStrings(t, {
                         loadingState: t("job-monitoring.artifacts.code-editor.loading"),
                         errorState: t("job-monitoring.artifacts.code-editor.error"),
                         errorStateRecovery: t("job-monitoring.artifacts.code-editor.error-recovery")
-                      }}
+                      })}
                       loading={artifactLoading}
                       readOnly
                     />
@@ -1062,11 +1063,11 @@ const JobMonitoringPage = memo(() => {
               theme: 'cloud_editor_dark'
             }}
             editorContentHeight={600}
-            i18nStrings={{
+            i18nStrings={codeEditorI18nStrings(t, {
               loadingState: t("job-monitoring.artifacts.code-editor.loading"),
               errorState: t("job-monitoring.artifacts.code-editor.error"),
               errorStateRecovery: t("job-monitoring.artifacts.code-editor.error-recovery")
-            }}
+            })}
             loading={artifactLoading}
             readOnly
           />

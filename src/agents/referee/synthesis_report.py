@@ -34,8 +34,9 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
-from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
 from src.shared.engine_names import display_source_database
 from src.shared.migration_wave_engines import cache_front_description
@@ -60,6 +61,104 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 AURORA_ENGINES = frozenset({"aurora_mysql", "aurora_postgresql"})
+
+# #478: a query the collector could not name a real table for
+# comes back with ``tables_accessed: ["unknown"]`` -- a placeholder, not a
+# fact, since the collector bug behind it (REFRESH MATERIALIZED VIEW,
+# information_schema reads it currently misses) is tracked separately. Two
+# distinct groups replace the generic "unknown"/"(no source table)" label a
+# query like this would otherwise land in: a real utility/session/DDL
+# statement (``utility_statements.is_utility_statement``, already routed to
+# the relational engine by the assignment -- SHOW/SET/EXPLAIN, catalog
+# introspection) gets its own readable group, and a query that is not one of
+# those but still names only pseudo tables (``table_resolution.PSEUDO_TABLES``
+# -- "unknown", MySQL's dummy ``DUAL``) gets a group that says the collector,
+# not the query, is why. Neither is a real access pattern a reader should see
+# ranked as a "busiest" group -- every consumer that picks top/leading groups
+# (the deterministic summary, the grounding fallback summary,
+# ``build_effective_architecture``) excludes both exact strings.
+UTILITY_GROUP_LABEL = "Utility and session statements"
+UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
+
+_RELATIONAL_REASON_MAX_CHARS = 180
+# The collector's own placeholder for a table it could not name (#483: some
+# of those statements do have a real table it missed) -- replaced with a
+# readable phrase wherever it surfaces inside copied assignment-reason
+# prose, matching word boundaries so it never touches a real identifier
+# that merely contains "unknown" as a substring.
+_UNKNOWN_WORD_RE = re.compile(r"\bunknown\b", re.IGNORECASE)
+
+
+def _dedupe_reason_clauses(reason: str) -> str:
+    """Drop redundant clauses from an assignment reason (#478).
+
+    A query's own ``assignment_reason`` can state the same base reason twice
+    -- once alone, once again as the prefix of a fuller clause (seen on the
+    real wordpress sample: "highest confidence for aurora_mysql; highest
+    confidence for aurora_mysql | [ec-no-complex-join] Excluded from
+    elasticache: ..."), from how the assignment resolver accumulates reasons
+    across co-dependency propagation. Split on "; " (how the resolver joins
+    separate reasons); drop a clause that exactly repeats an earlier one, or
+    that is only a strict prefix of a later, fuller one -- keeping the
+    fuller clause, not the redundant short one. Order preserved.
+    """
+    if not reason:
+        return reason
+    clauses = reason.split("; ")
+    kept: list[str] = []
+    for i, clause in enumerate(clauses):
+        if clause in kept:
+            continue
+        if any(later != clause and later.startswith(clause) for later in clauses[i + 1 :]):
+            continue
+        kept.append(clause)
+    return "; ".join(kept)
+
+
+def _clean_relational_reason(
+    reason: str | None, max_chars: int = _RELATIONAL_REASON_MAX_CHARS
+) -> str:
+    """A relational engine's per-query reason, ready to sit next to its excerpt.
+
+    Deduplicated (see above), the collector's "unknown" table placeholder
+    replaced by a readable phrase, and capped on a word boundary with an
+    ellipsis rather than cut mid-word.
+    """
+    cleaned = _dedupe_reason_clauses(reason or "")
+    cleaned = _UNKNOWN_WORD_RE.sub("an unresolved table", cleaned)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    truncated = cleaned[:max_chars]
+    last_space = truncated.rfind(" ")
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    return truncated.rstrip(" ;|,") + "…"
+
+
+def reason_text_for(group: dict, access_pattern: dict) -> str:
+    """An access pattern's reason text, wherever it actually lives.
+
+    A relational engine's entry (``build_query_groups``'s relational branch,
+    #478) carries ``reason_index`` into the group's own ``reasons`` list
+    instead of a copy of the string -- 146 distinct reasons backed 1281
+    access patterns on the discourse sample, so copying it onto every one of
+    them was pure duplication. The generic loop's entries (every other
+    engine) still carry the string directly as ``description``, read
+    straight from that engine's own schema design. Every consumer reads
+    through this function rather than ``access_pattern.get("description")``
+    so neither shape has to know about the other.
+    """
+    reason_index = access_pattern.get("reason_index")
+    if isinstance(reason_index, int):
+        reasons = group.get("reasons") or []
+        if 0 <= reason_index < len(reasons):
+            # A ``None`` entry (shouldn't happen, but never worth a literal
+            # "None" in a reader-facing cell) resolves the same way the JS
+            # ``reasonTextFor`` already does.
+            value = reasons[reason_index]
+            return str(value) if value else ""
+        return ""
+    return str(access_pattern.get("description") or "")
 
 
 def schema_table_defs(engine: str, schema: dict) -> list[dict]:
@@ -563,6 +662,159 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                                 "linked_patterns": [ap.get("pattern_id")],
                             }
                         )
+
+    # Relational branch (#478): a query is the atomic unit synthesis groups
+    # by, so a query the assignment routed to an Aurora engine belongs here
+    # like any other -- Aurora's schema-design contract simply has no
+    # access_patterns to drive the loop above with (#157 adds real ones
+    # later). Built from the assignment, not ``data.engines``, so a group
+    # exists even when Aurora has no schema design at all yet (only the
+    # design-dependent fields -- DDL, table definitions -- are unavailable
+    # then, not the groups; the queries still run on Aurora).
+    # Sorted, not frozenset iteration order: a frozenset's iteration order is
+    # stable within one process but not guaranteed across runs (hash
+    # randomization), so which Aurora engine's entry "wins" a shared dict
+    # key below should not depend on it.
+    # Reason text repeats far more than it varies (#478): a consolidation
+    # reason is written once per *event*, not per query, so on a large
+    # workload (discourse: 1281 relational access patterns) the distinct
+    # text is a small fraction of the total (146) -- storing it once per
+    # group and indexing into it, instead of copying the full string onto
+    # every access pattern, cut report.json from 1.28 MB to well under that.
+    # Keyed by group name (not nested in ``groups`` itself) so it survives
+    # across this whole function's two passes without becoming a serialized
+    # field a consumer could mistake for real data.
+    reason_indices: dict[str, dict[str, int]] = {}
+    for engine in sorted(AURORA_ENGINES):
+        aurora_artifacts = data.engines.get(engine)
+        schema = (aurora_artifacts.schema_design if aurora_artifacts else None) or {}
+        if schema.get("access_patterns"):
+            # Once #157 lands real access_patterns for this engine, the main
+            # loop above already covers it -- stepping aside here avoids
+            # double-building (and double-counting) its groups.
+            continue
+
+        # Some assignments carry more than one query_assignments row for the
+        # same query_id (one per table a multi-table query touches, seen on
+        # the AdventureWorks sample: 657 rows, 79 distinct queries) --
+        # tracked per group so a duplicate row for a query already recorded
+        # under this exact table group does not double its design_rps or add
+        # a second, redundant entry. The same query can still land in a
+        # *different* group legitimately (one row per table it touches).
+        seen_pattern_ids: dict[str, set[str]] = {}
+        for qa in (data.assignment or {}).get("query_assignments", []):
+            if qa.get("assigned_engine") != engine:
+                continue
+            qid = qa.get("query_id")
+            src_query = source_queries.get(qid)
+            raw_tables = (
+                qa.get("source_tables")
+                or (src_query.get("tables_accessed") if src_query else [])
+                or []
+            )
+            clean_tables = sorted({t for t in raw_tables if t and t not in PSEUDO_TABLES})
+            if clean_tables:
+                group_name = ", ".join(clean_tables)
+            elif is_utility_statement(
+                src_query.get("query_text") if src_query else None, raw_tables
+            ):
+                group_name = UTILITY_GROUP_LABEL
+            else:
+                group_name = UNRESOLVED_TABLE_GROUP_LABEL
+            # The query's own id: a short, truncated id
+            # risks two different queries silently merging under the same
+            # prefix (real on a non-cryptographic id scheme, e.g.
+            # AdventureWorks' sequential "0x...FEEE" ids); correctness over
+            # the few bytes a truncated id would have saved. Deterministic
+            # (same query_id -> same pattern_id every time), so a duplicate
+            # assignment row for the same query within the same group is
+            # recognized as the same pattern, not counted twice.
+            pattern_id = f"relational-{engine}-{qid}"
+
+            if group_name not in groups:
+                groups[group_name] = {
+                    "group_name": group_name,
+                    "engines": [],
+                    "access_patterns": [],
+                    "source_queries": [],
+                    "total_design_rps": 0,
+                }
+
+            if engine not in groups[group_name]["engines"]:
+                groups[group_name]["engines"].append(engine)
+
+            # A query naming the same tables a non-relational engine's own
+            # access pattern already grouped under this exact name reuses
+            # that group (the loop above may have created it first, with no
+            # "reasons" key at all -- only this branch ever needs one).
+            # ``setdefault``, not a plain assignment: that existing group's
+            # own entries have no "reason_index" and keep reading their
+            # reason from "description" directly, unaffected either way.
+            groups[group_name].setdefault("reasons", [])
+
+            if pattern_id in seen_pattern_ids.setdefault(group_name, set()):
+                continue
+            seen_pattern_ids[group_name].add(pattern_id)
+
+            design_rps = src_query.get("calls_per_second", 0) if src_query else 0
+            # Deduplicated, "unknown" replaced and capped on a word boundary:
+            # a co-dependency reason can repeat the same clause twice and
+            # lists every excluding engine, so it can run long -- compact,
+            # not reproduced, and never a bare "unknown" (that placeholder
+            # names a real table the collector missed for some queries,
+            # #483).
+            reason_text = _clean_relational_reason(qa.get("assignment_reason"))
+            group_reasons = groups[group_name]["reasons"]
+            idx_by_reason = reason_indices.setdefault(group_name, {})
+            reason_index = idx_by_reason.get(reason_text)
+            if reason_index is None:
+                reason_index = len(group_reasons)
+                idx_by_reason[reason_text] = reason_index
+                group_reasons.append(reason_text)
+            groups[group_name]["access_patterns"].append(
+                {
+                    "pattern_id": pattern_id,
+                    "engine": engine,
+                    "operation": (src_query.get("query_type") if src_query else None) or "QUERY",
+                    "design_rps": design_rps,
+                    # The reason text itself lives once in this group's own
+                    # "reasons" list (above) -- this is only its index into
+                    # that list, not a copy of the string (146 distinct
+                    # reasons backed 1281 access patterns on discourse).
+                    # ``reason_text_for`` resolves this back to the string;
+                    # every consumer goes through it rather than reading
+                    # ``description`` directly on a relational entry.
+                    "reason_index": reason_index,
+                    "in_scope": qa.get("in_scope", True),
+                    "query_ids": [qid],
+                }
+            )
+            # ``table_name``/``key_condition`` omitted: the former duplicates
+            # this group's own name (tables carry over 1:1, #157 adds a real
+            # target-table mapping only once Aurora has real access
+            # patterns), and the latter is always None -- neither is read by
+            # anything that renders this group.
+            groups[group_name]["total_design_rps"] += design_rps
+
+            if src_query and not any(
+                s["query_id"] == qid for s in groups[group_name]["source_queries"]
+            ):
+                groups[group_name]["source_queries"].append(
+                    {
+                        "query_id": qid,
+                        "query_text": src_query.get("query_text", "")[:200],
+                        "query_type": src_query.get("query_type"),
+                        "frequency_per_hour": src_query.get("frequency_per_hour", 0),
+                        "execution_time_ms_avg": src_query.get("execution_time_ms_avg"),
+                        # ``tables_accessed``/``linked_patterns`` omitted:
+                        # redundant here -- this group's own name already
+                        # names the tables, and a query has exactly one
+                        # access pattern in this branch (one
+                        # query_assignments row per query per group), unlike
+                        # the generic loop above where a query can be served
+                        # by several different access patterns.
+                    }
+                )
 
     # Sort by total RPS descending
     result = sorted(groups.values(), key=lambda g: g["total_design_rps"], reverse=True)
@@ -2238,6 +2490,75 @@ def _count(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
+def _table_rps_weights(query_groups: list[dict]) -> dict[str, float]:
+    """Each source table's own calls/s weight: the sum of ``total_design_rps``
+    over every query group whose (comma-joined) name contains it.
+
+    A relational group's own queries all touch every table in its join
+    together -- there is no per-table split of calls/s within one group --
+    so a table's weight is accumulated across every group it appears in,
+    over the *whole* report, not just the handful of names a caller shortens
+    at once. Used by ``_short_group_labels`` to pick which table actually
+    represents a multi-table group (#478).
+    """
+    weights: dict[str, float] = {}
+    for group in query_groups:
+        rps = group.get("total_design_rps") or 0
+        for table in str(group.get("group_name") or "").split(", "):
+            weights[table] = weights.get(table, 0.0) + rps
+    return weights
+
+
+def _short_group_labels(
+    group_names: list[str], table_weights: dict[str, float] | None = None
+) -> list[str]:
+    """Query group names, safe to join with ", " in prose (#478).
+
+    A relational engine's group name is its (sorted, comma-joined) source
+    tables -- a join across eight tables reads like eight separate groups
+    once it sits in a comma-joined list of "top groups" (the deterministic
+    summary, and the deck slide that reads straight from it). Shortened to
+    its busiest table (by ``table_weights``, see ``_table_rps_weights``) plus
+    how many more, the same "+N more" shape every other inline table list in
+    this module already uses -- not the alphabetically first one, since
+    alphabetical order has nothing to do with which table a reader would
+    recognize the group by.
+
+    Shortening each name on its own can still make two *different* groups
+    look identical: on a real sample, two groups' table sets were a strict
+    subset of one another ("a, b, c" and "a, b, c, d"), so their busiest
+    tables are the same no matter how they are ranked. Resolved in the order
+    given (the caller's own throughput order): the first group locks in its
+    shortest form; each later one grows -- one more table at a time, picked
+    by the same weight order -- until the exact *set* of tables it shows
+    (ignoring the "+N more" count, which a plain string compare does not) no
+    longer matches any already-finalized group's shown set, or it runs out
+    of tables to add.
+    """
+    weights = table_weights or {}
+    seen_shown: list[set[str]] = []
+    labels: list[str] = []
+    for name in group_names:
+        tables = name.split(", ")
+        if len(tables) <= 1:
+            labels.append(name)
+            seen_shown.append(set(tables))
+            continue
+        ranked = sorted(tables, key=lambda t: (-weights.get(t, 0.0), t))
+        n = 1
+        shown = set(ranked[:n])
+        while shown in seen_shown and n < len(tables):
+            n += 1
+            shown = set(ranked[:n])
+        if n >= len(tables):
+            label = ", ".join(tables)
+        else:
+            label = f"{' + '.join(ranked[:n])} (+{len(tables) - n} more)"
+        labels.append(label)
+        seen_shown.append(shown)
+    return labels
+
+
 def _access_pattern_scope(data: SynthesisData, rank: dict) -> tuple[int, int]:
     """``(in_scope, out_of_scope)`` access patterns of an engine's schema design.
 
@@ -2359,7 +2680,23 @@ def build_summary(
         designed = [r for r in with_workload + cache if r["target"] in designed_engines]
         if designed:
             engines = {r["target"] for r in designed}
-            groups = sum(1 for g in query_groups if engines & set(g.get("engines") or []))
+            relevant_groups = [g for g in query_groups if engines & set(g.get("engines") or [])]
+            groups = len(relevant_groups)
+            # #478: a relational engine's queries get their own
+            # query_groups entries (built from the assignment, since the
+            # engine's schema design has no access_patterns -- #157 adds
+            # real ones later) but carry no access pattern, so "N access
+            # patterns across M query groups" could read M > N once a
+            # relational engine's groups counted toward M but never toward
+            # N. Queries and groups are counted on one footing instead --
+            # every distinct in-scope query id these groups carry, for any
+            # designed engine -- and the access-pattern total is called out
+            # separately as the non-relational engines' own figure.
+            query_ids: set[str] = set()
+            for g in relevant_groups:
+                for ap in g.get("access_patterns") or []:
+                    if ap.get("engine") in engines and ap.get("in_scope", True) is not False:
+                        query_ids.update(ap.get("query_ids") or [])
             scope = {r["target"]: _access_pattern_scope(data, r) for r in designed}
             per_engine = "; ".join(
                 f"{r['target']}: {_count(r.get('target_tables', 0), *_object_noun(r['target']))}"
@@ -2370,13 +2707,19 @@ def build_summary(
                 )
                 for r in designed
             )
+            total_in = sum(n for n, _ in scope.values())
+            total_out = sum(n for _, n in scope.values())
+            ap_clause = (
+                f"; {_in_scope_phrase(total_in, total_out)} on non-relational engines"
+                if (total_in or total_out)
+                else ""
+            )
             parts.append(
                 f"Schema design produced "
-                f"{sum(r.get('target_tables', 0) for r in designed)} target objects and "
-                + _in_scope_phrase(
-                    sum(n for n, _ in scope.values()), sum(n for _, n in scope.values())
-                )
-                + f" across {groups} query groups ({per_engine})."
+                f"{sum(r.get('target_tables', 0) for r in designed)} target objects: "
+                f"{_count(len(query_ids), 'query', 'queries')} in "
+                f"{_count(groups, 'query group', 'query groups')}"
+                f"{ap_clause} ({per_engine})."
             )
     else:
         parts.append(
@@ -2419,9 +2762,17 @@ def build_summary(
         )
 
     # Query groups
-    if query_groups:
-        top_groups = [g["group_name"] for g in query_groups[:3]]
-        parts.append(f"Top query groups by throughput: {', '.join(top_groups)}.")
+    # #478: neither label is a real access pattern a reader should
+    # see ranked as a "busiest" group -- excluded before taking the top 3,
+    # not just skipped if picked.
+    full_names = [
+        g["group_name"]
+        for g in query_groups
+        if g.get("group_name") not in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL)
+    ][:3]
+    named_groups = _short_group_labels(full_names, _table_rps_weights(query_groups))
+    if named_groups:
+        parts.append(f"Top query groups by throughput: {', '.join(named_groups)}.")
 
     # Other engines: evaluated but carrying no workload in the target
     if has_assignment:
@@ -2610,17 +2961,36 @@ def generate_executive_summary(
             entry["cached_call_share_pct"] = r.get("cache_call_share_percent", 0)
         if r.get("schema_design_available"):
             entry["target_tables"] = r.get("target_tables", 0)
-            entry["access_patterns"] = r.get("access_patterns", 0)
+            # #478: a relational engine's schema design has no
+            # access_patterns (#157 adds real ones later) -- adding
+            # "access_patterns: 0" next to this engine's own "queries: 53"
+            # read as contradictory, inviting the model to describe Aurora
+            # as having "0 access patterns" despite owning most of the
+            # workload. Only non-relational engines carry this key.
+            if r["target"] not in AURORA_ENGINES:
+                entry["access_patterns"] = r.get("access_patterns", 0)
         engine_workload.append(entry)
 
-    top_groups_ctx = [
-        {
-            "name": g["group_name"],
-            "rps": round(g["total_design_rps"], 1),
-            "patterns": len(g["access_patterns"]),
-        }
-        for g in query_groups[:5]
+    # #478: neither label is a real "busiest" group (a
+    # utility/session statement or a query the collector could not resolve a
+    # table for), excluded before taking the top 5, same as the
+    # deterministic summary and the grounding fallback. A relational
+    # engine's group has no access pattern to count -- "queries" instead of
+    # "patterns" for those, so the model never calls Aurora's query count a
+    # pattern count.
+    named_groups = [
+        g
+        for g in query_groups
+        if g.get("group_name") not in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL)
     ]
+    top_groups_ctx = []
+    for g in named_groups[:5]:
+        group_ctx: dict = {"name": g["group_name"], "rps": round(g["total_design_rps"], 1)}
+        if set(g.get("engines") or []) & AURORA_ENGINES:
+            group_ctx["queries"] = len(g["access_patterns"])
+        else:
+            group_ctx["patterns"] = len(g["access_patterns"])
+        top_groups_ctx.append(group_ctx)
 
     high_risks = [
         {"severity": r["severity"], "desc": r["description"][:120]}
