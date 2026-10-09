@@ -1,6 +1,10 @@
 """Unit tests for assignment resolver signal overrides and anti-pattern penalties."""
 
-from src.agents.referee.assignment_resolver import AssignmentResolver, derive_table_assignments
+from src.agents.referee.assignment_resolver import (
+    AssignmentResolver,
+    _capability_scoped_penalty,
+    derive_table_assignments,
+)
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import QueryAssignment
 
@@ -340,6 +344,244 @@ class TestAntiPatternPenalties:
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert q1.confidence == 80  # no penalty applied
+
+    def test_cross_engine_pattern_penalty_is_not_scoped_for_a_non_capability_key(self):
+        """#477: wildcard-search is a workload-fit anti-pattern, not a capability
+
+        statement -- Aurora is not exempt from it the way it is from
+        acid-transactions, even though Aurora can run ``LIKE '%term%'``
+        natively (just not as well as OpenSearch). The capability check only
+        applies to keys in ``CAPABILITY_SIGNAL_ENGINES``; everything else
+        keeps today's flat "penalise every other engine" behaviour.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_postgresql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "wildcard-search",
+                            "query_ids": ["q1"],
+                            "table_ids": ["db.users"],
+                        }
+                    ],
+                    "anti_patterns_detected": [],
+                },
+            },
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=75),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # aurora_postgresql 75 - 40 (full cross-engine penalty, unscoped) = 35,
+        # opensearch's own 70 wins.
+        assert q1.assigned_engine == "opensearch"
+
+
+class TestCapabilityScopedCrossEnginePenalty:
+    """#477: a capability signal (e.g. "needs ACID transactions") must only
+
+    penalise engines that lack the capability, never engines that support it
+    natively -- "patterns detected by other engines" is a workload-fit signal
+    for most ``ANTI_PATTERN_PENALTIES`` keys, but ``acid-transactions`` names
+    an actual engine capability, so it needs the capability check instead of
+    the flat "penalise every other engine" rule.
+    """
+
+    def _analysis_with_pattern(self, confidence: int, pattern_type: str, qid: str) -> dict:
+        return {
+            "table_recommendations": [{"table_id": "db.users", "confidence_score": confidence}],
+            "workload_analysis": {
+                "patterns_detected": [
+                    {"pattern_type": pattern_type, "query_ids": [qid], "table_ids": ["db.users"]}
+                ],
+                "anti_patterns_detected": [],
+            },
+        }
+
+    def test_acid_transactions_does_not_penalize_aurora_postgresql(self):
+        """Aurora PostgreSQL has native ACID transactions -- no penalty (#477)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_postgresql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "acid-transactions", "q1"),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=77),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert q1.confidence == 77  # unpenalized
+
+    def test_acid_transactions_does_not_penalize_aurora_mysql(self):
+        """Aurora MySQL gets the same exemption as Aurora PostgreSQL (#477)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "acid-transactions", "q1"),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=77),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+        assert q1.confidence == 77  # unpenalized, same as aurora_postgresql
+
+    def test_acid_transactions_does_not_penalize_documentdb(self):
+        """DocumentDB has multi-document ACID transactions -- no penalty (#477)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "documentdb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "acid-transactions", "q1"),
+            "documentdb": _make_analysis("documentdb", ["db.users"], confidence=60),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "documentdb"
+        assert q1.confidence == 60  # unpenalized
+
+    def test_acid_transactions_still_penalizes_opensearch_itself(self):
+        """OpenSearch has no transactions -- its own anti-pattern self-penalty stands."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "opensearch"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=10),
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 78}],
+                "workload_analysis": {
+                    "patterns_detected": [],
+                    "anti_patterns_detected": [
+                        {"anti_pattern_type": "acid-transactions", "query_ids": ["q1"]}
+                    ],
+                },
+            },
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # OpenSearch has no transaction capability, so its own self-detected
+        # anti-pattern still applies in full: 78 - 20 = 58, still above dynamodb's 10.
+        assert q1.assigned_engine == "opensearch"
+        assert q1.confidence == 58
+
+    def test_acid_transactions_penalizes_elasticache_in_full(self):
+        """ElastiCache has no transactions and no redesign path -- full penalty stands.
+
+        ElastiCache never owns a query (it's a cache layer, #296), so this is
+        checked directly against the scoping helper rather than through
+        ``resolve()``, which would never let it win regardless of score.
+        """
+        penalty, note = _capability_scoped_penalty("acid-transactions", "elasticache", 20)
+        assert penalty == 20
+        assert note is None
+
+    def test_acid_transactions_gives_dynamodb_a_reduced_redesign_penalty(self):
+        """DynamoDB can redesign around transactions at a smaller, visible cost (#477)."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "dynamodb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "acid-transactions", "q1"),
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=69),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+        # 69 - 10 (reduced redesign penalty, half of the full 20) = 59
+        assert q1.confidence == 59
+        assert "DynamoDB needs a redesign" in q1.assignment_reason
+
+    def test_self_detected_acid_transactions_also_gets_redesign_penalty_for_dynamodb(self):
+        """The capability check applies the same way whether the penalty is
+
+        self-detected or cross-engine (#477): if DynamoDB's own analysis ever
+        flags its own query as needing transactions, it should still get the
+        reduced redesign penalty, not the full "wrong engine" one.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 69}],
+                "workload_analysis": {
+                    "patterns_detected": [],
+                    "anti_patterns_detected": [
+                        {"anti_pattern_type": "acid-transactions", "query_ids": ["q1"]}
+                    ],
+                },
+            },
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+        assert q1.confidence == 59
+
+    def test_dynamodb_keeps_the_full_complex_aggregation_penalty_regardless_of_order(self):
+        """A bigger, unscoped penalty on the same query always wins (#477).
+
+        DynamoDB's own analysis flags the same query as both
+        ``acid-transactions`` (capability-scoped, reduced to 10) and
+        ``complex-aggregation`` (not a capability key, full 50) -- the max()
+        in ``_build_anti_pattern_map`` must pick the bigger, unscoped 50 and
+        drop the redesign note, regardless of which anti-pattern is listed
+        first.
+        """
+        for order in (
+            ["acid-transactions", "complex-aggregation"],
+            ["complex-aggregation", "acid-transactions"],
+        ):
+            resolver = AssignmentResolver()
+            triage = _make_triage(["dynamodb"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "dynamodb": {
+                    "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}],
+                    "workload_analysis": {
+                        "patterns_detected": [],
+                        "anti_patterns_detected": [
+                            {"anti_pattern_type": ap_type, "query_ids": ["q1"]} for ap_type in order
+                        ],
+                    },
+                },
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "dynamodb"
+            assert q1.confidence == 40, f"order={order}"  # 90 - 50, not 90 - 10
+            assert "redesign" not in q1.assignment_reason, f"order={order}"
+
+    def test_redesign_note_is_absent_when_dynamodb_loses(self):
+        """The note never appears unless DynamoDB is the engine it's about
+
+        AND the one the query is actually assigned to (#477, PR #479 review
+        round 1 comment 2) -- otherwise it would misleadingly read as if the
+        WINNING engine (here, OpenSearch) is the one that needs a redesign.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "dynamodb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(90, "acid-transactions", "q1"),
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=20),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "opensearch"
+        assert "redesign" not in q1.assignment_reason
+        assert "DynamoDB" not in q1.assignment_reason
 
 
 class TestComputeQueryConfidence:
