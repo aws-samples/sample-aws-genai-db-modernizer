@@ -140,3 +140,47 @@ export function engineOptionsForAssignment(options, assignment) {
   const loser = AURORA_ENGINES.find((engine) => engine !== winner);
   return options.filter((option) => option.value !== loser);
 }
+
+// OpenSearch is a read model (#303): it never owns a write or a locking
+// read. Mirrors the server's write/locking-read detection
+// (is_write_query/is_locking_read in src/agents/referee/cache_overlay.py)
+// so this picker never offers an option the server would reject -- a
+// customer override that put a write on OpenSearch is rejected server-side
+// (AssignmentValidator) with no warning here otherwise.
+const WRITE_QUERY_TYPES = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UPSERT'];
+// A data-modifying CTE, CALL, TRUNCATE, COPY or a comment-led statement all
+// come through the collector as query_type "OTHER" instead (same regexes as
+// cache_overlay.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE/_LEADING_COMMENT_RE).
+const LEADING_COMMENT_RE = /^(\s*(--[^\n]*\n|#[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)+/;
+const DML_KEYWORD_RE = /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b/i;
+const LEADING_WRITE_VERB_RE = /^\s*(call|truncate|copy)\b/i;
+// Same as cache_overlay.py's _LOCKING_RE.
+const LOCKING_RE = /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i;
+
+function isWriteQuery(queryType, queryText) {
+  const qtype = String(queryType || '').toUpperCase();
+  if (WRITE_QUERY_TYPES.includes(qtype)) {
+    return true;
+  }
+  if (qtype !== 'OTHER') {
+    return false;
+  }
+  const text = String(queryText || '').replace(LEADING_COMMENT_RE, '');
+  return DML_KEYWORD_RE.test(text) || LEADING_WRITE_VERB_RE.test(text);
+}
+
+function isLockingRead(queryText) {
+  return LOCKING_RE.test(String(queryText || ''));
+}
+
+/**
+ * Drop OpenSearch from a list of engine `options` (`{ label, value }`) when
+ * this query is a write or a locking read (same detection as the server).
+ * Returns `options` unchanged for a plain read.
+ */
+export function engineOptionsForQuery(options, queryType, queryText) {
+  if (!isWriteQuery(queryType, queryText) && !isLockingRead(queryText)) {
+    return options;
+  }
+  return options.filter((option) => option.value !== 'opensearch');
+}

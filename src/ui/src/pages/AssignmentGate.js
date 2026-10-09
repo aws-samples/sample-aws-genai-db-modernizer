@@ -32,7 +32,11 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
-import { buildAssignmentSummary, engineOptionsForAssignment } from "../utils/assignmentSummary";
+import {
+  buildAssignmentSummary,
+  engineOptionsForAssignment,
+  engineOptionsForQuery,
+} from "../utils/assignmentSummary";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
@@ -990,6 +994,14 @@ const AssignmentGatePage = memo(() => {
               // "cached by <engine>" indicator, never as its own owner row.
               const cacheInfo = getQueryCacheInfo(item);
               const cacheEngineLabel = cacheInfo ? (ENGINE_COLORS[cacheInfo.engine]?.label || cacheInfo.engine) : null;
+              // #303: OpenSearch never owns a write -- hide it from this
+              // row's picker rather than offer an override the server
+              // rejects with no warning here.
+              const rowEngineOptions = engineOptionsForQuery(
+                engineOptions,
+                details?.query_type,
+                details?.query_text,
+              );
 
               return (
                 <div key={item.query_id} className={`query-list-row ${isExpanded ? 'query-list-row--expanded' : ''} ${isMoved ? 'query-list-row--moved' : ''}`}>
@@ -1015,7 +1027,7 @@ const AssignmentGatePage = memo(() => {
                             setOverrides(prev => ({ ...prev, [item.query_id]: newEngine }));
                           }
                         }}
-                        options={engineOptions}
+                        options={rowEngineOptions}
                         triggerVariant="option"
                         expandToViewport
                       />

@@ -314,6 +314,40 @@ class AssignmentResolver:
             aurora_engine_choice.engine if aurora_engine_choice else None
         )
 
+        # Capability guarantee for a homogeneous source (review of #474, round 3):
+        # this exact query already ran on the source database, so the
+        # source-compatible Aurora engine (MySQL/MariaDB -> aurora_mysql,
+        # PostgreSQL -> aurora_postgresql) is always ownable and serviceable for
+        # it -- never hard-excluded (``check_exclusions``) or capability-zeroed
+        # (``can_engine_serve_capability``) the way a purpose-built engine can
+        # be, even if a future rule would otherwise drop it. This is a presence
+        # guarantee, not a score override: it still competes on its own
+        # confidence score below, and a clearly higher-scoring engine still
+        # wins. An exact tie already goes to it, via the resolver's existing
+        # source-compatible tie-break (``break_owner_tie``'s first rule) -- not
+        # duplicated here. A heterogeneous source (#381, no entry in
+        # ``SOURCE_ENGINE_TO_AURORA``) has no such guarantee: ``aurora_engine_
+        # choice``'s winner, if any, is only a normal scored candidate here.
+        homogeneous_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+        if homogeneous_aurora and homogeneous_aurora in analysis_outputs:
+            analysis = analysis_outputs[homogeneous_aurora]
+            for query in queries:
+                qid = query["query_id"]
+                base_score = self._compute_query_confidence(
+                    qid, query, homogeneous_aurora, analysis
+                )
+                penalty = anti_pattern_map.get((qid, homogeneous_aurora), 0)
+                scores.setdefault(qid, {})[homogeneous_aurora] = max(0, base_score - penalty)
+                if qid in exclusion_notes:
+                    exclusion_notes[qid] = [
+                        n
+                        for n in exclusion_notes[qid]
+                        if f"Excluded from {homogeneous_aurora}" not in n
+                        and f"capability] {homogeneous_aurora} " not in n
+                    ]
+                    if not exclusion_notes[qid]:
+                        del exclusion_notes[qid]
+
         # Step 5: Assign co-dependent groups atomically. Only engines that may own
         # every query of the group compete (cache engines never own; engines that
         # are not a system of record own no write, #296).

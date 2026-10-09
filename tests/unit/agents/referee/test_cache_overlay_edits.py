@@ -380,6 +380,12 @@ class TestOpenSearchAbsorber:
         assert not may_absorb("opensearch", "q", {}, {}, {})
         assert may_absorb("dynamodb", "q", {}, {}, {})
 
+    def test_write_never_absorbed_by_opensearch_even_with_a_matching_capability(self):
+        """The write gate (#303) is checked before any signal/capability match."""
+        write = {"query_type": "UPDATE", "query_text": "UPDATE t SET a = 1"}
+        assert not may_absorb("opensearch", "q", write, {}, {"q": ["inverted_index"]})
+        assert may_absorb("dynamodb", "q", write, {}, {})
+
 
 class TestCustomerChoiceSurvivesRefresh:
     """A Reality Check refresh re-evaluates the overlay; the customer's choice wins."""
