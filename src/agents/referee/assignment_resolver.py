@@ -58,6 +58,8 @@ from src.contracts.assignment_models import (
     TableAssignment,
     UnresolvedNames,
 )
+from src.shared.engine_capabilities import ACID_TRANSACTION_ENGINES
+from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,79 @@ ANTI_PATTERN_PENALTIES: dict[str, int] = {
     "single-access-pattern-table": 15,  # DynamoDB is cheaper for simple patterns
     "high-volume-text-search": 35,  # OpenSearch purpose-built for this
 }
+
+# Which ANTI_PATTERN_PENALTIES keys are capability statements rather than pure
+# workload-fit anti-patterns (#477): "this query needs X" versus "this engine
+# is a worse fit for this query than a purpose-built one". The "patterns
+# detected by other engines penalise OTHER engines" step in
+# ``_build_anti_pattern_map`` must not apply a capability key's penalty to an
+# engine that has the capability natively -- unlike a fit anti-pattern
+# (``wildcard-search``, ``complex-aggregation``, ...), a capability signal
+# says nothing about whether THIS engine is a good fit, only that engines
+# without the capability need one. Mapped to ``src.shared.engine_capabilities``
+# so this stays the single fact every caller agrees on, instead of a second,
+# possibly-drifted copy.
+CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = {
+    "acid-transactions": ACID_TRANSACTION_ENGINES,
+}
+
+# Reduced penalty for an engine that lacks a capability outright but has a
+# documented, bounded way to redesign around it, so that cost stays visible
+# instead of collapsing to the same full "wrong engine" penalty as an engine
+# with no path at all (#477). DynamoDB's own ``TransactWriteItems`` (no
+# interactive BEGIN/COMMIT, each item usable at most once per transaction,
+# <=100 items, <=4 MB, one account/Region, 2x the write capacity of the same
+# writes done without it) or an idempotent multi-step flow both work, at a
+# real engineering cost. 10 is a starting point, not a calibrated number: it
+# sits below both of the catalog's nearby penalties -- ``acid-transactions``'s
+# own full 20 (an engine with no redesign path at all) and
+# ``single-access-pattern-table``'s 15 (the catalog's lightest "needs care"
+# penalty) -- but nothing in today's analysis catalog emits
+# ``acid-transactions`` as a positive pattern (PR #479 review round 1,
+# comment 3), so there is no live query to calibrate this value against yet.
+CAPABILITY_REDESIGN_PENALTIES: dict[str, dict[str, int]] = {
+    "acid-transactions": {"dynamodb": 10},
+}
+
+# The reason text for a reduced redesign penalty (#477): plain language, no
+# raw engine id, worded so it reads as "this engine needs extra work", never
+# as "this engine already relies on transactions". ``{engine}`` is replaced
+# with the engine's display name (e.g. "DynamoDB") -- see ``resolve()`` for
+# where this is attached (only to the engine the note is about, and only if
+# that engine is the one the query is actually assigned to).
+CAPABILITY_REDESIGN_NOTES: dict[str, str] = {
+    "acid-transactions": (
+        "Uses transactions: moving it to {engine} needs a redesign "
+        "({engine} transactions, up to 100 items, or retry-safe steps)"
+    ),
+}
+
+
+def _capability_scoped_penalty(
+    pattern_type: str, engine: str, penalty: int
+) -> tuple[int, str | None]:
+    """Scope a capability-shaped anti-pattern penalty to engines that need it (#477).
+
+    Returns ``(scoped_penalty, note)``. For a pattern type that is a pure
+    workload-fit anti-pattern (not in ``CAPABILITY_SIGNAL_ENGINES``), returns
+    ``penalty`` unchanged. For a capability signal: an engine with the
+    capability (``CAPABILITY_SIGNAL_ENGINES``) is exempt (penalty 0); an
+    engine without it but with a documented redesign path
+    (``CAPABILITY_REDESIGN_PENALTIES``) gets that smaller penalty plus a
+    human-readable note; every other engine keeps the full configured
+    penalty.
+    """
+    capable_engines = CAPABILITY_SIGNAL_ENGINES.get(pattern_type)
+    if capable_engines is None:
+        return penalty, None
+    if engine in capable_engines:
+        return 0, None
+    redesign_penalty = CAPABILITY_REDESIGN_PENALTIES.get(pattern_type, {}).get(engine)
+    if redesign_penalty is not None:
+        note_template = CAPABILITY_REDESIGN_NOTES.get(pattern_type)
+        note = note_template.format(engine=display_engine(engine)) if note_template else None
+        return redesign_penalty, note
+    return penalty, None
 
 
 class AssignmentResolver:
@@ -129,7 +204,7 @@ class AssignmentResolver:
         signal_overrides = self._build_signal_overrides(triage, selected_engines)
 
         # Step 2: Build per-query anti-pattern penalties from analysis
-        anti_pattern_map = self._build_anti_pattern_map(analysis_outputs)
+        anti_pattern_map, anti_pattern_notes = self._build_anti_pattern_map(analysis_outputs)
 
         # Step 3: Build co-dependency groups
         co_dep_groups = build_co_dependency_groups(queries, tables)
@@ -361,6 +436,19 @@ class AssignmentResolver:
             for qid in fallback_qids:
                 assigned[qid] = aurora_fallback
 
+        # Step 6c: Surface a reduced capability-redesign penalty's reason
+        # (#477) in the assignment reason -- but only on the engine the note
+        # is actually about, and only when the query ended up assigned to
+        # that engine. Attaching it regardless of the winner (as an earlier
+        # version of this fix did) would show up on, say, an Aurora win's
+        # reason and misleadingly read as if Aurora were the one that needed
+        # the redesign; checking ``assigned[qid]`` here means the note only
+        # ever describes the engine the query actually landed on.
+        for qid, engine in assigned.items():
+            note = anti_pattern_notes.get((qid, engine))
+            if note:
+                assigned_reason[qid] = f"{assigned_reason[qid]} | {note}"
+
         # Step 7b: Utility and metadata statements never enter engine routing
         # (#327). SHOW/SET/DESCRIBE/EXPLAIN/CREATE/ALTER/DROP and catalog
         # lookups (information_schema, pg_catalog) are database-administration
@@ -494,7 +582,7 @@ class AssignmentResolver:
     def _build_anti_pattern_map(
         self,
         analysis_outputs: dict[str, dict],
-    ) -> dict[tuple[str, str], int]:
+    ) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], str]]:
         """Build (query_id, engine) → penalty map from analysis anti-patterns.
 
         When a query appears in an anti-pattern for an engine, its confidence
@@ -502,8 +590,34 @@ class AssignmentResolver:
         queries that are fundamentally wrong for an engine (e.g., text search
         on DynamoDB) don't get assigned there just because the TABLE average
         is high.
+
+        A capability signal (``CAPABILITY_SIGNAL_ENGINES``, e.g.
+        ``acid-transactions``) is scoped through ``_capability_scoped_penalty``
+        before being recorded, whether it was self-detected or picked up from
+        the "patterns detected by other engines" step below, so an engine that
+        has the capability is never penalised for it (#477). Returns the
+        penalty map plus a ``(query_id, engine) → note`` map carrying the
+        human-readable reason for any reduced "needs a redesign" penalty, so
+        the resolver can surface it in the query's assignment reason
+        (``QueryAssignment.assignment_reason``, Step 6c below).
         """
         penalties: dict[tuple[str, str], int] = {}
+        notes: dict[tuple[str, str], str] = {}
+
+        def _record(key: tuple[str, str], pattern_type: str, raw_penalty: int) -> None:
+            _qid, target_engine = key
+            scoped_penalty, note = _capability_scoped_penalty(
+                pattern_type, target_engine, raw_penalty
+            )
+            if scoped_penalty == 0:
+                return
+            if scoped_penalty >= penalties.get(key, 0):
+                penalties[key] = scoped_penalty
+                if note:
+                    notes[key] = note
+                else:
+                    notes.pop(key, None)
+
         for engine, analysis in analysis_outputs.items():
             wa = analysis.get("workload_analysis", {})
             for ap in wa.get("anti_patterns_detected") or []:
@@ -512,9 +626,7 @@ class AssignmentResolver:
                 if penalty == 0:
                     continue
                 for qid in ap.get("query_ids") or []:
-                    key = (qid, engine)
-                    # Take the max penalty if a query hits multiple anti-patterns
-                    penalties[key] = max(penalties.get(key, 0), penalty)
+                    _record((qid, engine), ap_type, penalty)
 
             # Also check patterns_detected from OTHER engines as positive signals
             # (e.g., if OpenSearch detects wildcard-search pattern for a query,
@@ -529,10 +641,9 @@ class AssignmentResolver:
                 for qid in pattern.get("query_ids", []):
                     for other_engine in analysis_outputs:
                         if other_engine != engine:
-                            key = (qid, other_engine)
-                            penalties[key] = max(penalties.get(key, 0), penalty)
+                            _record((qid, other_engine), pattern_type, penalty)
 
-        return penalties
+        return penalties, notes
 
     def _compute_query_confidence(
         self,

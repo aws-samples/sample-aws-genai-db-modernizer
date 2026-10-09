@@ -1,6 +1,7 @@
 """Unit tests for the capability registry."""
 
 from src.agents.referee.capability_registry import (
+    ENGINE_CAPABILITIES,
     LIGHTWEIGHT_ALTERNATIVES,
     SIGNAL_TO_CAPABILITY,
     can_engine_serve_capability,
@@ -9,6 +10,24 @@ from src.agents.referee.capability_registry import (
     requires_aggregation_capability,
     suggest_lightweight_alternative,
 )
+from src.shared.engine_capabilities import ACID_TRANSACTION_ENGINES
+
+
+class TestAcidTransactionEnginesAgreeWithCapabilityRegistry:
+    """#477: ``engine_capabilities.ACID_TRANSACTION_ENGINES`` is a literal
+
+    constant, not an import, because ``src.shared`` must not depend on
+    ``src.agents`` -- but it must still agree with
+    ``capability_registry.ENGINE_CAPABILITIES``'s ``multi_doc_acid`` set, the
+    hard-constraint source of truth for the same fact, so the two cannot
+    silently drift apart.
+    """
+
+    def test_matches_multi_doc_acid_engines(self):
+        multi_doc_acid_engines = frozenset(
+            engine for engine, caps in ENGINE_CAPABILITIES.items() if "multi_doc_acid" in caps
+        )
+        assert ACID_TRANSACTION_ENGINES == multi_doc_acid_engines
 
 
 class TestDetectRequiredCapabilities:
