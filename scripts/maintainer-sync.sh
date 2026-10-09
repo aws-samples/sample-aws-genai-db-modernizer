@@ -62,8 +62,7 @@
 #                        env: SYNC_TARGET_BRANCH
 #   --message <text>  - Commit message (default: "chore: sync changes
 #                        from source branch <branch>"). A
-#                        "Source-Commit: <sha>" trailer (with a secret-scanner
-#                        allowlist marker) is always
+#                        "Source-Commit: <7-character sha>" trailer is always
 #                        appended, however the message is chosen.
 #                        env: SYNC_COMMIT_MESSAGE
 #   --force           - Overwrite a remote target branch even if it has
@@ -597,10 +596,12 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
-# detect-secrets scans commit messages and flags hex strings by entropy, so a
-# sha can be rejected as a possible key depending on its digits. The inline
-# allowlist marker keeps the full sha and passes for every value.
-FULL_COMMIT_MESSAGE=$(git interpret-trailers --trailer "Source-Commit: ${SOURCE_COMMIT}  # pragma: allowlist secret" <<< "$COMMIT_MESSAGE")
+# 7 hex characters, as GitHub shows them. detect-secrets scans commit messages
+# and flags hex strings whose entropy exceeds 3.0; a 7-character string can't
+# exceed log2(7) ~= 2.81, so the trailer never trips it, whatever the digits.
+# git lengthens the abbreviation if 7 characters would be ambiguous.
+SOURCE_COMMIT_SHORT=$(git -C "$SOURCE_REPO_PATH" rev-parse --short=7 "$SOURCE_COMMIT")
+FULL_COMMIT_MESSAGE=$(git interpret-trailers --trailer "Source-Commit: ${SOURCE_COMMIT_SHORT}" <<< "$COMMIT_MESSAGE")
 
 # First commit attempt — hooks may auto-fix files (openapi regen, formatting,
 # etc.). Its output is always shown, even on the first attempt: a hook can
