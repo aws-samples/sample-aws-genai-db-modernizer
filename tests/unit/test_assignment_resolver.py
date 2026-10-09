@@ -1,12 +1,15 @@
 """Unit tests for assignment resolver signal overrides and anti-pattern penalties."""
 
 from src.agents.referee.assignment_resolver import (
+    ANTI_PATTERN_PENALTIES,
+    CAPABILITY_SIGNAL_ENGINES,
     AssignmentResolver,
     _capability_scoped_penalty,
     derive_table_assignments,
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import QueryAssignment
+from src.shared.engine_capabilities import FUZZY_SEARCH_ENGINES, TEXT_SEARCH_ENGINES
 
 
 def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> dict:
@@ -497,13 +500,15 @@ class TestAntiPatternPenalties:
         assert q1.confidence == 80  # no penalty applied
 
     def test_cross_engine_pattern_penalty_is_not_scoped_for_a_non_capability_key(self):
-        """#477: wildcard-search is a workload-fit anti-pattern, not a capability
+        """#477: high-frequency-pk-lookup is a workload-fit anti-pattern, not a
 
-        statement -- Aurora is not exempt from it the way it is from
-        acid-transactions, even though Aurora can run ``LIKE '%term%'``
-        natively (just not as well as OpenSearch). The capability check only
-        applies to keys in ``CAPABILITY_SIGNAL_ENGINES``; everything else
-        keeps today's flat "penalise every other engine" behaviour.
+        capability statement -- Aurora is not exempt from it. The capability
+        check only applies to keys in ``CAPABILITY_SIGNAL_ENGINES``
+        (``acid-transactions``, and ``wildcard-search`` since #480); every
+        other key keeps today's flat "penalise every other engine" behaviour.
+        (Before #480, this test used ``wildcard-search`` itself as the
+        non-capability example; that is no longer true, so it now uses a
+        different, still-unscoped key.)
         """
         resolver = AssignmentResolver()
         triage = _make_triage(["opensearch", "aurora_postgresql"])
@@ -514,7 +519,7 @@ class TestAntiPatternPenalties:
                 "workload_analysis": {
                     "patterns_detected": [
                         {
-                            "pattern_type": "wildcard-search",
+                            "pattern_type": "high-frequency-pk-lookup",
                             "query_ids": ["q1"],
                             "table_ids": ["db.users"],
                         }
@@ -527,7 +532,7 @@ class TestAntiPatternPenalties:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        # aurora_postgresql 75 - 40 (full cross-engine penalty, unscoped) = 35,
+        # aurora_postgresql 75 - 30 (full cross-engine penalty, unscoped) = 45,
         # opensearch's own 70 wins.
         assert q1.assigned_engine == "opensearch"
 
@@ -733,6 +738,328 @@ class TestCapabilityScopedCrossEnginePenalty:
         assert q1.assigned_engine == "opensearch"
         assert "redesign" not in q1.assignment_reason
         assert "DynamoDB" not in q1.assignment_reason
+
+
+class TestTextSearchCapabilityScopedPenalty:
+    """OpenSearch's four search patterns (wildcard-search, full-text-search,
+
+    regex-search, fuzzy-search; os-01..os-04) are capability signals like
+    acid-transactions (#477). The first three ask whether an engine can run
+    a text/pattern-search-shaped query at all, even as an unindexed scan --
+    Aurora PostgreSQL, Aurora MySQL and DocumentDB all can
+    (``TEXT_SEARCH_ENGINES``). ``fuzzy-search`` asks a narrower question --
+    does the engine have a similarity/fuzzy-match operator at all -- which
+    only Aurora PostgreSQL's ``pg_trgm`` answers yes to
+    (``FUZZY_SEARCH_ENGINES``). OpenSearch is still the right call when
+    #326's load/size/search-depth check justifies it -- a separate,
+    untouched mechanism (Aurora's own self-detected
+    ``high-volume-text-search`` anti-pattern).
+    """
+
+    SEARCH_PATTERNS = ("wildcard-search", "full-text-search", "regex-search", "fuzzy-search")
+    TEXT_SEARCH_PATTERNS = ("wildcard-search", "full-text-search", "regex-search")
+
+    def _analysis_with_pattern(self, confidence: int, pattern_type: str, qid: str) -> dict:
+        return {
+            "table_recommendations": [{"table_id": "db.users", "confidence_score": confidence}],
+            "workload_analysis": {
+                "patterns_detected": [
+                    {"pattern_type": pattern_type, "query_ids": [qid], "table_ids": ["db.users"]}
+                ],
+                "anti_patterns_detected": [],
+            },
+        }
+
+    def test_all_four_patterns_are_capability_scoped(self):
+        for pattern_type in self.TEXT_SEARCH_PATTERNS:
+            assert ANTI_PATTERN_PENALTIES[pattern_type] == 40
+            assert CAPABILITY_SIGNAL_ENGINES[pattern_type] == TEXT_SEARCH_ENGINES
+        assert ANTI_PATTERN_PENALTIES["fuzzy-search"] == 40
+        assert CAPABILITY_SIGNAL_ENGINES["fuzzy-search"] == FUZZY_SEARCH_ENGINES
+
+    def test_does_not_penalize_aurora_postgresql(self):
+        """Aurora PostgreSQL is exempt from all four -- including fuzzy-search,
+
+        the one pattern Aurora MySQL and DocumentDB are NOT exempt from.
+        """
+        for pattern_type in self.SEARCH_PATTERNS:
+            resolver = AssignmentResolver()
+            triage = _make_triage(["opensearch", "aurora_postgresql"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "opensearch": self._analysis_with_pattern(50, pattern_type, "q1"),
+                "aurora_postgresql": _make_analysis(
+                    "aurora_postgresql", ["db.users"], confidence=77
+                ),
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "aurora_postgresql", f"pattern_type={pattern_type}"
+            assert q1.confidence == 77, f"pattern_type={pattern_type}"  # unpenalized
+            assert (
+                "runs this search pattern natively" in q1.assignment_reason
+            ), f"pattern_type={pattern_type}"
+            assert "Aurora PostgreSQL" in q1.assignment_reason, f"pattern_type={pattern_type}"
+
+    def test_does_not_penalize_aurora_mysql(self):
+        """Aurora MySQL is exempt from wildcard/full-text/regex, but not fuzzy-search
+
+        (see ``test_fuzzy_search_penalizes_aurora_mysql_in_full`` below).
+        """
+        for pattern_type in self.TEXT_SEARCH_PATTERNS:
+            resolver = AssignmentResolver()
+            triage = _make_triage(["opensearch", "aurora_mysql"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "opensearch": self._analysis_with_pattern(50, pattern_type, "q1"),
+                "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=77),
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "aurora_mysql", f"pattern_type={pattern_type}"
+            assert q1.confidence == 77, f"pattern_type={pattern_type}"  # unpenalized
+            assert (
+                "runs this search pattern natively" in q1.assignment_reason
+            ), f"pattern_type={pattern_type}"
+
+    def test_does_not_penalize_documentdb(self):
+        """DocumentDB is exempt from wildcard/full-text/regex, but not fuzzy-search
+
+        (see ``test_fuzzy_search_penalizes_documentdb_in_full`` below).
+        """
+        for pattern_type in self.TEXT_SEARCH_PATTERNS:
+            resolver = AssignmentResolver()
+            triage = _make_triage(["opensearch", "documentdb"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "opensearch": self._analysis_with_pattern(50, pattern_type, "q1"),
+                "documentdb": _make_analysis("documentdb", ["db.users"], confidence=60),
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "documentdb", f"pattern_type={pattern_type}"
+            assert q1.confidence == 60, f"pattern_type={pattern_type}"  # unpenalized
+            assert (
+                "runs this search pattern natively" in q1.assignment_reason
+            ), f"pattern_type={pattern_type}"
+
+    def test_fuzzy_search_penalizes_aurora_mysql_in_full(self):
+        """Aurora MySQL has no trigram/similarity operator -- full 40-point
+
+        penalty for fuzzy-search, unlike the other three search patterns.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "fuzzy-search", "q1"),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=70),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # aurora_mysql 70 - 40 = 30, below opensearch's own 50.
+        assert q1.assigned_engine == "opensearch"
+
+    def test_fuzzy_search_penalizes_documentdb_in_full(self):
+        """DocumentDB has no trigram/similarity operator either -- same full penalty."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "documentdb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "fuzzy-search", "q1"),
+            "documentdb": _make_analysis("documentdb", ["db.users"], confidence=70),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # documentdb 70 - 40 = 30, below opensearch's own 50.
+        assert q1.assigned_engine == "opensearch"
+
+    def test_fuzzy_search_cross_engine_three_way_race(self):
+        """Cross-engine shadow test for the narrower fuzzy-search set: in the
+
+        same ``resolve()`` call, Aurora PostgreSQL is exempt while Aurora
+        MySQL and DocumentDB both still get the full 40-point penalty.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_postgresql", "aurora_mysql", "documentdb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(10, "fuzzy-search", "q1"),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=60),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=95),
+            "documentdb": _make_analysis("documentdb", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # aurora_mysql/documentdb 95 - 40 = 55, below aurora_postgresql's unpenalized 60.
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert q1.confidence == 60
+
+    def test_penalizes_dynamodb_in_full_with_no_note(self):
+        """DynamoDB has no text-search feature at all -- full 40-point penalty, no redesign path."""
+        for pattern_type in self.SEARCH_PATTERNS:
+            resolver = AssignmentResolver()
+            triage = _make_triage(["dynamodb"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "dynamodb": {
+                    "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}],
+                    "workload_analysis": {
+                        "patterns_detected": [],
+                        "anti_patterns_detected": [
+                            {"anti_pattern_type": pattern_type, "query_ids": ["q1"]}
+                        ],
+                    },
+                },
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "dynamodb", f"pattern_type={pattern_type}"
+            assert q1.confidence == 50, f"pattern_type={pattern_type}"  # 90 - 40
+            assert (
+                "runs this search pattern natively" not in q1.assignment_reason
+            ), f"pattern_type={pattern_type}"
+
+    def test_penalizes_elasticache_in_full(self):
+        """ElastiCache has no text-search feature and no redesign path either.
+
+        Checked directly against the scoping helper, like the equivalent
+        ``acid-transactions``/ElastiCache test: ElastiCache never owns a
+        query (#296), so this never gets to compete through ``resolve()``.
+        """
+        for pattern_type in self.SEARCH_PATTERNS:
+            penalty, note = _capability_scoped_penalty(pattern_type, "elasticache", 40)
+            assert penalty == 40, f"pattern_type={pattern_type}"
+            assert note is None, f"pattern_type={pattern_type}"
+
+    def test_capable_and_incapable_engines_are_scored_independently_in_the_same_race(self):
+        """The exemption is per-engine: in the same ``resolve()`` call, Aurora
+
+        PostgreSQL's exemption must not leak onto DynamoDB, which still gets
+        the full 40-point penalty.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_postgresql", "dynamodb"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(10, "wildcard-search", "q1"),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=60),
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # dynamodb 95 - 40 = 55, below aurora_postgresql's unpenalized 60.
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert q1.confidence == 60
+
+    def test_exempt_note_is_absent_when_capable_engine_loses(self):
+        """The exempt note never appears unless the capable engine is the one
+
+        the query is actually assigned to -- otherwise it would misleadingly
+        describe the WINNING engine (here, OpenSearch itself).
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "aurora_postgresql"])
+        collector = _make_collector(["q1"])
+        analysis = {
+            "opensearch": self._analysis_with_pattern(90, "wildcard-search", "q1"),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=20),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "opensearch"
+        assert "runs this search pattern natively" not in q1.assignment_reason
+
+    def test_does_not_shadow_a_bigger_unscoped_penalty(self):
+        """A bigger, unscoped penalty on the same query always wins (#477, #480).
+
+        Aurora PostgreSQL's own analysis flags the same query as both
+        ``wildcard-search`` (capability-scoped, exempt -- 0) and
+        ``high-frequency-pk-lookup`` (not a capability key, full 30): the
+        max() in ``_build_anti_pattern_map`` must pick the unscoped 30 and
+        must not show the exempt note, regardless of which pattern is listed
+        first.
+        """
+        for order in (
+            ["wildcard-search", "high-frequency-pk-lookup"],
+            ["high-frequency-pk-lookup", "wildcard-search"],
+        ):
+            resolver = AssignmentResolver()
+            triage = _make_triage(["aurora_postgresql"])
+            collector = _make_collector(["q1"])
+            analysis = {
+                "aurora_postgresql": {
+                    "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}],
+                    "workload_analysis": {
+                        "patterns_detected": [],
+                        "anti_patterns_detected": [
+                            {"anti_pattern_type": ap_type, "query_ids": ["q1"]} for ap_type in order
+                        ],
+                    },
+                },
+            }
+
+            result = resolver.resolve(triage, analysis, collector)
+            q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+            assert q1.assigned_engine == "aurora_postgresql"
+            assert q1.confidence == 60, f"order={order}"  # 90 - 30, not 90 - 0
+            assert "runs this search pattern natively" not in q1.assignment_reason, f"order={order}"
+
+    def test_documentdb_is_hard_excluded_from_a_leading_wildcard_like(self):
+        """A literal leading wildcard (``LIKE '%x%'``) trips the HARD
+
+        ``inverted_index`` capability gate (``capability_registry``), which
+        excludes DocumentDB before this exemption is ever consulted --
+        tracked as #485, not fixed here.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "documentdb"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0][
+            "query_text"
+        ] = "SELECT * FROM users WHERE name LIKE '%term%'"
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "wildcard-search", "q1"),
+            "documentdb": _make_analysis("documentdb", ["db.users"], confidence=90),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine != "documentdb"
+        assert "documentdb lacks required capability: inverted_index" in q1.assignment_reason
+
+    def test_documentdb_is_exempt_for_a_parameterized_like(self):
+        """A query with no literal wildcard in its text (``LIKE ?``) never
+
+        trips the hard ``inverted_index`` gate -- only OpenSearch's own
+        keyword-based detection (looking for ``"like "``) flags it as
+        ``wildcard-search``. DocumentDB is then free to win it, unpenalized.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["opensearch", "documentdb"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0][
+            "query_text"
+        ] = "SELECT * FROM users WHERE name LIKE ?"
+        analysis = {
+            "opensearch": self._analysis_with_pattern(50, "wildcard-search", "q1"),
+            "documentdb": _make_analysis("documentdb", ["db.users"], confidence=77),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "documentdb"
+        assert q1.confidence == 77  # unpenalized
+        assert "runs this search pattern natively" in q1.assignment_reason
 
 
 class TestComputeQueryConfidence:
