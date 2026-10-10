@@ -67,6 +67,21 @@ DEFAULT_JOURNEY_BUDGET = 3000
 # ATX-only (it does not exist in the WebApp's DATA) and jobId is used by the shell.
 _ALWAYS_EMBED = ("jobId", "flowAggregate")
 
+# #478: cap on an Aurora schema design's generated_ddl before it is embedded in
+# this standalone export. The DDL is one string field in the schema-design
+# contract (``AuroraMySQLModelOutputContract.generated_ddl`` /
+# ``AuroraPostgreSQLModelOutputContract``), with no per-statement structure to
+# page through, so unlike journeys there is nothing to sample -- the whole
+# field is kept, just truncated past this length with a note, so a workload
+# with hundreds of tables cannot blow up this one export the way the journey
+# budget guards against hundreds of thousands of journeys. Matches
+# ExportReport.js's own DDL_DISPLAY_CAP exactly (the two
+# caps disagreeing -- 200,000 here, 20,000 there -- meant this embedding cap
+# almost never actually bit, since the JS display cap always truncated
+# first); comfortably covers the ~13 KB the wordpress sample produces (21
+# tables).
+MAX_EMBEDDED_DDL_CHARS = 20_000
+
 # Fields of a journey's ``source`` section the report actually reads.
 _SOURCE_FIELDS = (
     "query_text",
@@ -200,6 +215,100 @@ def _read_schema_designs(store: Any, database_name: str, job_id: str) -> list[di
         except Exception as exc:  # noqa: BLE001 - one unreadable design must not lose the rest
             logger.warning("Skipping schema design %s: %s", key, exc)
     return designs
+
+
+def _cap_generated_ddl(designs: list[dict], max_chars: int = MAX_EMBEDDED_DDL_CHARS) -> list[dict]:
+    """Truncate an oversized ``content.generated_ddl`` before embedding (#478).
+
+    Only Aurora designs carry this field, and it is otherwise embedded
+    verbatim (unlike journeys, there is no per-item budget to apply -- it is
+    one string). A design under the cap is returned unchanged (not copied),
+    so this is cheap for the common case.
+    """
+    capped = []
+    for design in designs:
+        content = design.get("content")
+        ddl = content.get("generated_ddl") if isinstance(content, dict) else None
+        if isinstance(content, dict) and isinstance(ddl, str) and len(ddl) > max_chars:
+            design = {
+                **design,
+                "content": {
+                    **content,
+                    "generated_ddl": (
+                        ddl[:max_chars]
+                        + f"\n-- truncated: {len(ddl) - max_chars} more characters omitted "
+                        "from this export --"
+                    ),
+                },
+            }
+        capped.append(design)
+    return capped
+
+
+# #478: query_groups was 89% of report.json on the discourse
+# sample. Most of that is per-query detail (``access_patterns``,
+# ``source_queries``) this export embeds once, up front -- unlike journeys,
+# which have their own sampled budget (``_apply_budget``), a query group had
+# none, so a handful of very busy groups (a co-dependency join, or an
+# Aurora table everything reads) could carry hundreds of entries each.
+MAX_ENTRIES_PER_QUERY_GROUP = 50
+
+
+def _query_count_by_engine(access_patterns: list[dict]) -> dict[str, int]:
+    """Distinct query ids per engine across an (unprojected) group's access patterns."""
+    ids_by_engine: dict[str, set[str]] = {}
+    for ap in access_patterns:
+        engine = ap.get("engine")
+        if not engine:
+            continue
+        ids_by_engine.setdefault(engine, set()).update(ap.get("query_ids") or [])
+    return {engine: len(ids) for engine, ids in ids_by_engine.items()}
+
+
+def _project_query_groups_for_export(
+    query_groups: list[dict], max_entries: int = MAX_ENTRIES_PER_QUERY_GROUP
+) -> list[dict]:
+    """Cap each group's ``access_patterns``/``source_queries`` for the export.
+
+    Keeps the busiest ``max_entries`` access patterns (by ``design_rps``,
+    descending -- already how ``build_query_groups`` sorts groups
+    themselves) and only the source queries still referenced by one of
+    them, so a reader never sees a query excerpt with nothing linking it to
+    a figure. A group under the cap is returned unchanged (not copied).
+    Only touches this export's embedded copy -- the live Results page's own
+    ``/results`` fetch is unprojected.
+
+    A trimmed group also carries ``query_count_by_engine`` -- each engine's
+    *original* distinct-query count, from before trimming (without it, the
+    client summed only the survivors for its "N queries on
+    Aurora" heading -- discourse showed 1213, not the true 1281 -- and a
+    trimmed group's "+N more" note never fired, since every group already
+    had <= ``max_entries`` entries by the time the client looked). Omitted
+    on an untrimmed group: its own ``access_patterns`` length is already
+    the true count there.
+    """
+    projected = []
+    for group in query_groups:
+        aps = group.get("access_patterns")
+        if not isinstance(aps, list) or len(aps) <= max_entries:
+            projected.append(group)
+            continue
+        query_count_by_engine = _query_count_by_engine(aps)
+        kept_aps = sorted(aps, key=lambda ap: ap.get("design_rps") or 0, reverse=True)[:max_entries]
+        kept_qids = {qid for ap in kept_aps for qid in (ap.get("query_ids") or [])}
+        sqs = group.get("source_queries")
+        kept_sqs = (
+            [sq for sq in sqs if sq.get("query_id") in kept_qids] if isinstance(sqs, list) else sqs
+        )
+        projected.append(
+            {
+                **group,
+                "access_patterns": kept_aps,
+                "source_queries": kept_sqs,
+                "query_count_by_engine": query_count_by_engine,
+            }
+        )
+    return projected
 
 
 def _project_collector(collector: dict) -> dict:
@@ -451,6 +560,11 @@ def build_export_data(
             **report,
             "cache_overlay": {k: v for k, v in cache_overlay.items() if k != "notes"},
         }
+    if report.get("query_groups"):
+        report = {
+            **report,
+            "query_groups": _project_query_groups_for_export(report["query_groups"]),
+        }
 
     triage: dict | None = None
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
@@ -468,7 +582,7 @@ def build_export_data(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not read collector %s: %s", collector_key, exc)
 
-    schema_designs = _read_schema_designs(store, database_name, job_id)
+    schema_designs = _cap_generated_ddl(_read_schema_designs(store, database_name, job_id))
     if not schema_designs:
         logger.warning(
             "No schema-design artifacts for job %s: the Access Pattern Explorer and "

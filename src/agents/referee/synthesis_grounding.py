@@ -486,6 +486,18 @@ SUMMARY_GROUNDING_RULE = (
 
 _TOP_GROUPS_PER_ENGINE = 5
 
+# #478: a relational engine's query_groups entries built
+# from the assignment (not a real schema-design access pattern -- #157 adds
+# those later) label a query with no real source table one of these two
+# ways instead of a generic "unknown" (synthesis_report.py carries the exact
+# same two strings as UTILITY_GROUP_LABEL/UNRESOLVED_TABLE_GROUP_LABEL;
+# duplicated here, not imported, to avoid a circular import --
+# synthesis_report already imports from this module). Neither is a real
+# access pattern a reader should see named as a "busiest" group.
+_GROUPS_NEVER_TOP = frozenset(
+    {"Utility and session statements", "Table not identified by the collector"}
+)
+
 
 def _strip_db(table: str, database_name: str) -> str:
     prefix = f"{database_name}."
@@ -583,11 +595,12 @@ def build_effective_architecture(
             continue
         r = next((r for r in ranking if r["target"] == engine), {})
         groups = group_rps.get(engine, {})
+        ranked_groups = sorted(groups, key=lambda n: groups[n], reverse=True)
         entry: dict = {
             "engine": engine,
             "display_name": display_name(engine),
             "tables": [_strip_db(t, database_name) for t in engine_tables.get(engine, [])],
-            "top_query_groups": sorted(groups, key=lambda n: groups[n], reverse=True)[
+            "top_query_groups": [n for n in ranked_groups if n not in _GROUPS_NEVER_TOP][
                 :_TOP_GROUPS_PER_ENGINE
             ],
         }
@@ -1146,7 +1159,11 @@ def build_fallback_summary(effective_architecture: dict | None) -> str | None:
             if not tables:
                 continue
             load = f"{tables} source table{'s' if tables != 1 else ''}"
-        groups = [g for g in entry.get("top_query_groups") or [] if g and g != "ungrouped"]
+        groups = [
+            g
+            for g in entry.get("top_query_groups") or []
+            if g and g != "ungrouped" and g not in _GROUPS_NEVER_TOP
+        ]
         led = f", led by {_join(groups[:_MAX_GROUPS_IN_SUMMARY])}" if groups else ""
         parts.append(f"{name} serves {load}{led}.")
     moved = [

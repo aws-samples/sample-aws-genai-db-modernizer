@@ -124,6 +124,27 @@ def fmt_num(value: Any, decimals: int = 2) -> str:
     return "0" if text in ("-0", "") else text
 
 
+def clip(text: str, n: int) -> str:
+    """Truncate on a word boundary — long descriptions and reasons read like a
+    rendering bug when cut mid-word ("...DocumentDB versi").
+
+    A single very long word at the cut point (an identifier, path or URL with no
+    space to back up to) used to back the whole cut up to the word boundary
+    *before* it, silently surrendering most of the character budget to that one
+    word (#434 review); hard-cut at ``n`` instead whenever backing up would lose
+    more than half of it. Shared with ``pptx_report.py`` (deck slides hit the
+    same long-text problem); the Engineering Report's "Queries on Aurora by
+    table" section's joined reasons hit it too (#478).
+    """
+    text = " ".join(text.split())
+    if len(text) <= n:
+        return text
+    cut = text[:n].rsplit(" ", 1)[0]
+    if len(cut) < n // 2:
+        cut = text[:n]
+    return cut.rstrip(" ,;:.") + "…"
+
+
 def _fmt_usd(x: Any) -> str:
     return f"${x:,.2f}" if isinstance(x, (int, float)) else "-"
 
@@ -1850,6 +1871,115 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
+# #478: a relational engine's query_groups entry for a
+# query with no real source table is labelled one of these two ways, never
+# a generic "unknown" -- a real utility/session/DDL statement
+# (synthesis_report.UTILITY_GROUP_LABEL, already routed to the relational
+# engine by the assignment: SHOW/SET/EXPLAIN, catalog introspection) or a
+# query the collector could not resolve a table for at all
+# (synthesis_report.UNRESOLVED_TABLE_GROUP_LABEL). Duplicated here as exact
+# literals rather than imported -- src/report has no existing dependency on
+# src/agents.referee and this file already duplicates engine-literal
+# constants rather than take one on (see ``_RELATIONAL_ENGINES`` below).
+_UTILITY_GROUP_LABEL = "Utility and session statements"
+_UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
+
+
+def _reason_text_for(group: dict[str, Any], access_pattern: dict[str, Any]) -> str:
+    """An access pattern's reason text (synthesis_report.reason_text_for,
+    duplicated here for the same reason the two labels above are: #478 round
+    5 review).
+
+    A relational engine's entry (``build_query_groups``'s relational branch)
+    carries ``reason_index`` into its group's own ``reasons`` list instead of
+    a copy of the string -- 146 distinct reasons backed 1281 access patterns
+    on the discourse sample, so copying one onto every entry was pure
+    duplication. Every other engine's entry still carries the string
+    directly as ``description``.
+    """
+    reason_index = access_pattern.get("reason_index")
+    if isinstance(reason_index, int):
+        reasons = group.get("reasons") or []
+        if 0 <= reason_index < len(reasons):
+            # A ``None`` entry resolves the same way the JS ``reasonTextFor``
+            # already does: never a literal "None".
+            value = reasons[reason_index]
+            return str(value) if value else ""
+        return ""
+    return str(access_pattern.get("description") or "")
+
+
+def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report subsection: "Queries on Aurora by table" (#478).
+
+    A query the assignment routed to a relational engine is a ``query_groups``
+    entry like any other (build_query_groups's relational branch, since the
+    engine's schema design has no access_patterns of its own -- #157 adds
+    real ones later), but it reads oddly folded into the generic "## Query
+    groups" table above when a group is shared with, say, the cache layer
+    serving reads on the same source table: that table's row would merge the
+    two engines' access-pattern/source-query counts into one figure. This
+    subsection is scoped to one Aurora engine's own access_patterns within
+    each group instead, so its numbers are never someone else's.
+    """
+    out: list[str] = []
+    groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
+    all_patterns = [
+        ap for g in groups for ap in (g.get("access_patterns") or []) if isinstance(ap, dict)
+    ]
+    engines_present: list[str] = sorted(
+        {str(ap["engine"]) for ap in all_patterns if ap.get("engine") in _RELATIONAL_ENGINES}
+    )
+    if not engines_present:
+        return out
+
+    out += ["## Queries on Aurora by table", ""]
+    for eng in engines_present:
+        rows: list[tuple[str, int, float, list[str]]] = []
+        for g in groups:
+            aps = [
+                ap
+                for ap in (g.get("access_patterns") or [])
+                if isinstance(ap, dict) and ap.get("engine") == eng
+            ]
+            if not aps:
+                continue
+            total_rps = sum(ap.get("design_rps") or 0 for ap in aps)
+            query_ids: set[str] = set()
+            for ap in aps:
+                query_ids.update(ap.get("query_ids") or [])
+            reasons = sorted({text for ap in aps if (text := _reason_text_for(g, ap))})
+            rows.append((str(g.get("group_name", "?")), len(query_ids), total_rps, reasons))
+        if not rows:
+            continue
+        # Real table rows first, by calls/s descending; the two blame labels
+        # always last (#478: neither is a busiest access pattern, just a
+        # bucket for what the collector/utility traffic is).
+        rows.sort(
+            key=lambda r: (
+                r[0] in (_UTILITY_GROUP_LABEL, _UNRESOLVED_TABLE_GROUP_LABEL),
+                -r[2],
+            )
+        )
+        total_queries = sum(r[1] for r in rows)
+        out += [
+            f"### {escaping.md_text(display_engine(eng))} "
+            f"({total_queries} {plural_noun(total_queries, 'query', 'queries')})",
+            "",
+            "| Table | Queries | Calls/s | Reason |",
+            "|---|---|---|---|",
+        ]
+        for table, n_queries, total_rps, reasons in rows:
+            reason_text = clip("; ".join(reasons), 200)
+            out.append(
+                f"| {escaping.md_cell(table)} | {n_queries} "
+                f"| {escaping.md_cell(fmt_num(total_rps))} "
+                f"| {escaping.md_cell(reason_text or '-')} |"
+            )
+        out.append("")
+    return out
+
+
 def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report section for the cache layer (#296); empty without one.
 
@@ -2028,19 +2158,33 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         ap_scope = access_pattern_scope(report)
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
-            n_aps = dz.get("access_pattern_count", 0)
-            # The deck and the summary count in-scope patterns only; say how this
-            # total splits so the two numbers reconcile (#255).
-            n_out = ap_scope.get(eng, (0, 0))[1]
-            split = (
-                f": {n_aps - n_out} in scope, {n_out} out of scope"
-                if n_out and isinstance(n_aps, int) and n_aps >= n_out
-                else ""
-            )
+            n_in, n_out = ap_scope.get(eng, (0, 0))
+            # #478: a relational engine's query_groups entries (built
+            # from the assignment -- its schema design has no access_patterns
+            # of its own, #157 adds real ones later) are queries, not access
+            # patterns; access_pattern_scope counts them the same way either
+            # way (unique engine/pattern_id pairs from query_groups), so the
+            # heading just names the unit differently instead of reaching for
+            # a second, separately-computed count that could disagree.
+            if eng in _RELATIONAL_ENGINES:
+                n_queries = n_in + n_out
+                unit_text = f"{n_queries} {plural_noun(n_queries, 'query', 'queries')}"
+                eng_heading = escaping.md_text(display_engine(eng))
+            else:
+                n_aps = dz.get("access_pattern_count", 0)
+                # The deck and the summary count in-scope patterns only; say how
+                # this total splits so the two numbers reconcile (#255).
+                split = (
+                    f": {n_aps - n_out} in scope, {n_out} out of scope"
+                    if n_out and isinstance(n_aps, int) and n_aps >= n_out
+                    else ""
+                )
+                unit_text = f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split}"
+                eng_heading = escaping.md_text(eng)
             out += [
-                f"### {escaping.md_text(eng)} ({len(tables)} target "
+                f"### {eng_heading} ({len(tables)} target "
                 f"{plural_noun(len(tables), 'object')}, "
-                f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split})",
+                f"{unit_text})",
                 "",
             ]
             if tables:
@@ -2117,13 +2261,33 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     "",
                 ]
 
-    groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
+    all_groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
+    # #478: a group served only by relational engine(s) is
+    # already shown in full, per table, by the "Queries on Aurora by table"
+    # subsection below -- listing it again here just duplicated it (and, on
+    # a large relational workload, bloated this file: 359 extra rows on the
+    # discourse sample). A group a relational engine shares with another
+    # engine (e.g. the cache layer reading the same source table) stays,
+    # since its non-relational side belongs here.
+    groups = [
+        g for g in all_groups if not set(g.get("engines") or []).issubset(_RELATIONAL_ENGINES)
+    ]
     if groups:
         # "Query groups", as the deck summary calls them: the assignment's
         # co-dependency groups (tables that must move together) are a different,
         # usually much smaller count the deck also shows (#258).
         co_dep = (report.get("assignment_summary") or {}).get("co_dependency_groups")
-        out += [f"## Query groups ({len(groups)})", ""]
+        # #478: the groups excluded just above (pure-Aurora,
+        # already shown in full by "Queries on Aurora by table") would
+        # otherwise look like missing data to a reader who only sees this
+        # heading's count -- point at where they actually are instead.
+        omitted_aurora = len(all_groups) - len(groups)
+        aurora_pointer = (
+            f" (plus {omitted_aurora} Aurora {plural_noun(omitted_aurora, 'group')} below)"
+            if omitted_aurora > 0
+            else ""
+        )
+        out += [f"## Query groups ({len(groups)}){aurora_pointer}", ""]
         if isinstance(co_dep, int):
             out += [
                 "Queries grouped by the access patterns that serve them. These are not the "
@@ -2137,7 +2301,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         ]
         for g in groups:
             engines = (
-                ", ".join(g.get("engines") or [])
+                ", ".join(display_engine(e) for e in g.get("engines") or [])
                 if isinstance(g.get("engines"), list)
                 else str(g.get("engines", "-"))
             )
@@ -2150,6 +2314,8 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(fmt_num(g.get('total_design_rps', '-')))} |"
             )
         out.append("")
+
+    out += _aurora_queries_by_table_md(report)
 
     risks = filtered_risks(report)
     if risks:

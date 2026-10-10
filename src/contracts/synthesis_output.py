@@ -110,6 +110,68 @@ Version History:
   and the chat summary read ``safety_net_notes``. No model field added (the
   key is unstructured, like ``notes`` and ``dropped_query_ids`` before it);
   absent on a report with no cache overlay or no safety-net drop.
+- 1.9 (2026-10-10, #478, independent review): ``query_groups``
+  (``list[QueryGroup]``, each ``access_patterns`` entry already
+  ``dict[str, Any]``) can now hold entries for an Aurora engine
+  (``aurora_mysql``/``aurora_postgresql``). Aurora's schema-design contract
+  has no ``access_patterns`` field (#157 adds real ones later), so without
+  this an engine that can own half a typical workload never appeared in
+  ``query_groups`` at all -- but a query is the atomic unit synthesis
+  groups by, so an Aurora-routed query belongs here like any other, not in
+  a separate field. Built from the assignment, not the schema design, so a
+  group exists for Aurora's queries even when Aurora has no schema design
+  yet (only the design-dependent fields -- DDL, table definitions,
+  optimizations -- are unavailable then, not the groups).
+
+  Each such entry's ``pattern_id`` is ``"relational-<engine>-<query_id>"``
+  (the query's own id, not a truncated prefix of it -- a truncated id risks
+  two different queries silently merging under a shared prefix on a
+  non-cryptographic id scheme). It carries no ``description`` of its own;
+  instead ``reason_index`` indexes into a new ``reasons: list[str]`` on its
+  own ``QueryGroup`` -- a consolidation reason is written once per *event*,
+  not per query, so the distinct text is a small fraction of the total (on
+  one sample, 146 distinct reasons backed 1281 access patterns): storing it
+  once per group and indexing into it, instead of copying the full string
+  onto every access pattern, cut that report's size by roughly 5%.
+  ``reason_text_for(group, access_pattern)`` (``synthesis_report.py``, and
+  duplicated as ``_reason_text_for``/``reasonTextFor`` in
+  ``src/report/renderers.py`` and ``src/ui/src/utils/auroraDesign.js`` --
+  neither package imports the other, same as the two group-name constants
+  below) resolves it, has the collector's ``"unknown"`` table placeholder
+  replaced by a readable phrase (#483: some of those statements do have a
+  real table the collector missed), and is capped at 180 characters on a
+  word boundary with an ellipsis. ``table_name``/``key_condition`` are
+  omitted (redundant with the group's own name, and always ``None``,
+  respectively). A query with no real source table -- the collector's
+  ``tables_accessed: ["unknown"]`` fallback, or only a parsed ``DUAL`` --
+  groups under ``"Table not identified by the collector"``, or under
+  ``"Utility and session statements"`` when it is a real utility/session
+  statement (``utility_statements.is_utility_statement``, already routed to
+  the relational engine by the assignment: SHOW/SET/EXPLAIN, catalog
+  introspection) -- never a literal "unknown". Every consumer that walks
+  ``query_groups`` generically (``access_pattern_scope``, the deterministic
+  summary's query/group counts and "top query groups" sentence, the
+  Bedrock executive-summary context, ``build_effective_architecture``'s
+  per-engine ``top_query_groups``, the grounding fallback summary, the
+  engineering report's generic "Query groups" table and its dedicated
+  "Queries on Aurora by table" subsection) was updated so a relational
+  engine's queries are counted as queries, not conflated with
+  access-pattern counts, neither label is ever named as a busiest group,
+  and a multi-table group name is shortened to its busiest table (by the
+  calls/s each table's own groups carry, see ``_table_rps_weights``), not
+  its alphabetically first one, before it is joined into a comma-separated
+  list -- and two names that would otherwise shorten to the exact same
+  table(s) grow until they no longer do. The synthesis LLM input's own
+  compact form of each group (``prepare_synthesis_llm_input``) carries
+  ``calls_per_second_by_engine`` (a dict), not one combined scalar --
+  summing two engines' own figures (one engine's design RPS already
+  includes peak/growth factors from its own analysis, another's is the
+  collector's raw measured rate) invited ranking throughput across engines
+  that are not on the same scale. Backward compatible: a report with no
+  Aurora engine, or one still on an older synthesis build, has no such
+  entries, same as today; an access pattern with no ``reason_index`` reads
+  its reason from ``description`` directly, same as every non-relational
+  engine's entry always has.
 """
 
 from datetime import datetime

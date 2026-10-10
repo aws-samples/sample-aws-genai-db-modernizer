@@ -225,6 +225,151 @@ def test_no_schema_designs_degrades_instead_of_raising(caplog):
 
 
 # ---------------------------------------------------------------------------
+# #478 — Aurora design: generated_ddl is capped before embedding
+# ---------------------------------------------------------------------------
+
+
+def test_oversized_generated_ddl_is_capped_with_a_note():
+    objects = _objects()
+    huge_ddl = "x" * (ar.MAX_EMBEDDED_DDL_CHARS + 500)
+    objects[f"{DB}/{JOB}/schema-aurora_mysql/v1/schema_output.json"] = {
+        "table_definitions": [{"table_name": "posts", "columns": [{"name": "id"}]}],
+        "generated_ddl": huge_ddl,
+        "trade_offs": [{"description": "carry-over"}],
+    }
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    aurora = next(d for d in data["schemaDesigns"] if d["target_type"] == "aurora_mysql")
+    ddl = aurora["content"]["generated_ddl"]
+    assert len(ddl) < len(huge_ddl)
+    assert ddl.startswith("x" * 100)
+    assert "truncated" in ddl
+    assert "500 more characters omitted" in ddl
+
+
+def test_small_generated_ddl_is_left_untouched():
+    objects = _objects()
+    objects[f"{DB}/{JOB}/schema-aurora_mysql/v1/schema_output.json"] = {
+        "table_definitions": [{"table_name": "posts", "columns": [{"name": "id"}]}],
+        "generated_ddl": "CREATE TABLE posts (id INT);",
+        "trade_offs": [{"description": "carry-over"}],
+    }
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    aurora = next(d for d in data["schemaDesigns"] if d["target_type"] == "aurora_mysql")
+    assert aurora["content"]["generated_ddl"] == "CREATE TABLE posts (id INT);"
+
+
+# ---------------------------------------------------------------------------
+# #478 — query_groups projected for the export
+# ---------------------------------------------------------------------------
+
+
+def test_oversized_query_group_is_capped_to_its_busiest_entries():
+    objects = _objects()
+    many_aps = [
+        {
+            "pattern_id": f"AP-{i}",
+            "engine": "dynamodb",
+            "design_rps": float(i),
+            "query_ids": [f"q{i}"],
+        }
+        for i in range(60)
+    ]
+    many_sqs = [{"query_id": f"q{i}", "query_text": f"SELECT {i}"} for i in range(60)]
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        query_groups=[
+            {
+                "group_name": "Busy group",
+                "engines": ["dynamodb"],
+                "access_patterns": many_aps,
+                "source_queries": many_sqs,
+                "total_design_rps": sum(range(60)),
+            }
+        ]
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    (group,) = data["results"]["synthesis"]["query_groups"]
+    assert len(group["access_patterns"]) == 50
+    # The busiest 50 by design_rps, not an arbitrary slice.
+    assert {ap["pattern_id"] for ap in group["access_patterns"]} == {
+        f"AP-{i}" for i in range(10, 60)
+    }
+    # Only source queries one of the kept patterns still references.
+    kept_qids = {sq["query_id"] for sq in group["source_queries"]}
+    assert kept_qids == {f"q{i}" for i in range(10, 60)}
+    # #478: the original count survives trimming -- without
+    # it, a reader summing "queries on Aurora" across groups undercounts
+    # (discourse showed 1213, not the true 1281) and the "+N more" note
+    # never fires, since every group already looks <= the cap by the time
+    # the client checks its own (post-trim) array length.
+    assert group["query_count_by_engine"] == {"dynamodb": 60}
+
+
+def test_oversized_multi_engine_group_keeps_each_engines_true_count():
+    objects = _objects()
+    aps = [
+        {
+            "pattern_id": f"EC-{i}",
+            "engine": "elasticache",
+            "design_rps": 100.0,
+            "query_ids": [f"e{i}"],
+        }
+        for i in range(5)
+    ] + [
+        {
+            "pattern_id": f"AM-{i}",
+            "engine": "aurora_mysql",
+            "design_rps": float(i),
+            "query_ids": [f"a{i}"],
+        }
+        for i in range(55)
+    ]
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        query_groups=[
+            {
+                "group_name": "wordpress.wp_posts",
+                "engines": ["elasticache", "aurora_mysql"],
+                "access_patterns": aps,
+                "source_queries": [],
+                "total_design_rps": 500 + sum(range(55)),
+            }
+        ]
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    (group,) = data["results"]["synthesis"]["query_groups"]
+    assert len(group["access_patterns"]) == 50
+    # Each engine's own original total, not conflated with the other's.
+    assert group["query_count_by_engine"] == {"elasticache": 5, "aurora_mysql": 55}
+
+
+def test_a_group_under_the_cap_is_left_untouched():
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(
+        query_groups=[
+            {
+                "group_name": "Small group",
+                "engines": ["dynamodb"],
+                "access_patterns": [
+                    {
+                        "pattern_id": "AP-1",
+                        "engine": "dynamodb",
+                        "design_rps": 1.0,
+                        "query_ids": ["q1"],
+                    }
+                ],
+                "source_queries": [{"query_id": "q1", "query_text": "SELECT 1"}],
+                "total_design_rps": 1.0,
+            }
+        ]
+    )
+    data = ar.build_export_data(FakeStore(objects), JOB, DB)
+    (group,) = data["results"]["synthesis"]["query_groups"]
+    assert len(group["access_patterns"]) == 1
+    # No payload added for a group the cap never touched -- its own
+    # access_patterns length is already the true count.
+    assert "query_count_by_engine" not in group
+
+
+# ---------------------------------------------------------------------------
 # reality_check — Defect 3
 # ---------------------------------------------------------------------------
 

@@ -15,10 +15,22 @@ import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
 import { analysisConfidence, confidenceText, hasRoutedConfidence } from './rankingConfidence';
 import { displayEngine } from './engineNames';
+import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
 
 // A wave with more tables than this shows "+N more" rather than every name
 // inline (#225 -- discourse wave 4 lists 226 tables).
 const MAX_INLINE_TABLES = 20;
+
+// Mirrors AURORA_ENGINES in src/agents/referee/synthesis_report.py (#478):
+// a relational engine's query_groups entries are built
+// from the assignment, not a real access pattern (it has none -- #157 adds
+// real ones later), so a group served only by relational engine(s) says
+// "queries" here, not "patterns".
+const RELATIONAL_ENGINES = ['aurora_mysql', 'aurora_postgresql'];
+const isRelationalGroup = (engines) => {
+  const list = Array.isArray(engines) ? engines : [];
+  return list.length > 0 && list.every((e) => RELATIONAL_ENGINES.includes(e));
+};
 
 const tablesSummary = (tables) => {
   const shown = tables.slice(0, MAX_INLINE_TABLES).join(', ');
@@ -109,6 +121,16 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   const tradeoffs = asArray(synthesis.trade_offs);
   const tcoAnalysis = synthesis.tco_analysis || {};
   const queryGroups = asArray(synthesis.query_groups);
+  // #478: neither "blame" label (a utility/session statement,
+  // or a query the collector could not resolve a table for -- see
+  // AURORA_BLAME_LABELS in ./auroraDesign) is a real query group a reader
+  // should see take a "top 10" slot ahead of groups that name real tables;
+  // sorted last here so they only appear once every real group already has.
+  const sortedQueryGroups = [...queryGroups].sort((a, b) => {
+    const aBlame = AURORA_BLAME_LABELS.includes(a.group_name) ? 1 : 0;
+    const bBlame = AURORA_BLAME_LABELS.includes(b.group_name) ? 1 : 0;
+    return aBlame - bBlame;
+  });
   // #225: the incremental migration roadmap synthesis writes to report.json.
   // Omitted (not a guessed placeholder) when the report has none.
   const migrationWaves = asArray(synthesis.migration_waves);
@@ -407,14 +429,15 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
 
   <div class="container">
-    ${queryGroups.slice(0, 10).map(group => {
+    ${sortedQueryGroups.slice(0, 10).map(group => {
       const patterns = asArray(group.access_patterns);
+      const unit = isRelationalGroup(group.engines) ? 'queries' : 'patterns';
       return html`
       <div style="margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #eee;">
-        <h3>${group.group_name} (${patterns.length} patterns)</h3>
+        <h3>${group.group_name} (${patterns.length} ${unit})</h3>
         <div style="margin: 15px 0;">
           <strong>Target Engines:</strong>
-          ${asArray(group.engines).map((engine, i) => html`${i > 0 ? ' ' : ''}<span class="badge badge-blue">${engine}</span>`)}
+          ${asArray(group.engines).map((engine, i) => html`${i > 0 ? ' ' : ''}<span class="badge badge-blue">${displayEngine(engine)}</span>`)}
         </div>
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 15px 0;">
           <div>
@@ -442,9 +465,9 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
               <tr>
                 <td><code>${pattern.pattern_id || 'N/A'}</code></td>
                 <td><span class="badge badge-grey">${pattern.operation || 'N/A'}</span></td>
-                <td><code>${pattern.table_name || 'N/A'}</code></td>
+                <td><code>${pattern.table_name || group.group_name || 'N/A'}</code></td>
                 <td>${fixed(pattern.design_rps, 2, '0')}</td>
-                <td>${pattern.description || 'N/A'}</td>
+                <td>${reasonTextFor(group, pattern) || 'N/A'}</td>
               </tr>
             `)}
           </tbody>

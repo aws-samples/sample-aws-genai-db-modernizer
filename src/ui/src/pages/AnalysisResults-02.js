@@ -40,6 +40,8 @@ import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
+import { buildAuroraDesigns } from "../utils/auroraDesign";
+import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
@@ -453,6 +455,18 @@ const AnalysisResultsPage = memo(() => {
     });
     return map;
   }, [activeDesigns]);
+
+  // #478: Aurora's schema-design contract has no access_patterns (tables
+  // carry over 1:1; #157 adds real access patterns later), so the explorer
+  // above never shows it. The relational branch in build_query_groups
+  // (src/agents/referee/synthesis_report.py) already puts every query the
+  // assignment routed to an Aurora engine into synthesis.query_groups, so
+  // this section needs no extra fetch -- just the schema designs already
+  // loaded and that same query_groups list.
+  const auroraDesigns = useMemo(
+    () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups),
+    [activeDesigns, synthesis]
+  );
 
   // Query details lookup: query_id → { query_text, query_type, tables_accessed, calls_per_second }
   const queryLookup = useMemo(() => {
@@ -2488,6 +2502,210 @@ const AnalysisResultsPage = memo(() => {
               </Container>
             )}
 
+            {/* Aurora design (#478): Aurora's schema design has no
+                access_patterns, so it never shows up in the explorer above --
+                this section is its own view of what the design already has:
+                tables, DDL, optimizations and the queries the assignment
+                routed here. */}
+            {auroraDesigns.length > 0 && (
+              <Container
+                header={
+                  <Header
+                    variant="h2"
+                    description={t('analysis-results-v2.aurora-design.description')}
+                  >
+                    {t('analysis-results-v2.aurora-design.title')}
+                  </Header>
+                }
+              >
+                <Tabs
+                  tabs={auroraDesigns.map(design => {
+                    const queryCount = design.queryGroups.reduce((sum, g) => sum + g.queries.length, 0);
+                    return {
+                      id: design.engine,
+                      label: t('analysis-results-v2.aurora-design.tab-label', {
+                        name: design.displayName,
+                        count: design.tables.length,
+                      }),
+                      content: (
+                        <SpaceBetween size="l">
+                          {design.migrationStrategy && (
+                            <Box fontSize="body-s" color="text-body-secondary">
+                              {t(
+                                `analysis-results-v2.aurora-design.migration-strategy-${design.migrationStrategy}`,
+                                { defaultValue: design.migrationStrategy }
+                              )}
+                            </Box>
+                          )}
+
+                          <ExpandableSection
+                            headerText={t('analysis-results-v2.aurora-design.tables-header', { count: design.tables.length })}
+                            defaultExpanded={false}
+                          >
+                            {design.tables.length === 0 ? (
+                              <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results-v2.aurora-design.no-tables')}</Box>
+                            ) : (
+                              <SpaceBetween size="s">
+                                {design.tables.map(table => (
+                                  <ExpandableSection
+                                    key={table.tableName}
+                                    headerText={table.tableName}
+                                    variant="footer"
+                                    defaultExpanded={false}
+                                  >
+                                    <SpaceBetween size="s">
+                                      <Table
+                                        variant="embedded"
+                                        columnDefinitions={[
+                                          { id: 'name', header: t('analysis-results-v2.aurora-design.col-column'), cell: c => c.name },
+                                          { id: 'type', header: t('analysis-results-v2.aurora-design.col-aurora-type'), cell: c => c.auroraType },
+                                        ]}
+                                        items={table.columns}
+                                      />
+                                      <KeyValuePairs
+                                        columns={1}
+                                        items={[
+                                          {
+                                            label: t('analysis-results-v2.aurora-design.primary-key'),
+                                            value: table.primaryKey.join(', ') || '—',
+                                          },
+                                          ...(table.indexes.length > 0 ? [{
+                                            label: t('analysis-results-v2.aurora-design.indexes', { count: table.indexes.length }),
+                                            value: (
+                                              <SpaceBetween size="xxs">
+                                                {table.indexes.map((ix, idx) => (
+                                                  <Box key={idx} fontFamily="monospace" fontSize="body-s">{ix}</Box>
+                                                ))}
+                                              </SpaceBetween>
+                                            ),
+                                          }] : []),
+                                          ...(table.foreignKeys.length > 0 ? [{
+                                            label: t('analysis-results-v2.aurora-design.foreign-keys', { count: table.foreignKeys.length }),
+                                            value: (
+                                              <SpaceBetween size="xxs">
+                                                {table.foreignKeys.map((fk, idx) => (
+                                                  <Box key={idx} fontFamily="monospace" fontSize="body-s">{fk}</Box>
+                                                ))}
+                                              </SpaceBetween>
+                                            ),
+                                          }] : []),
+                                        ]}
+                                      />
+                                    </SpaceBetween>
+                                  </ExpandableSection>
+                                ))}
+                              </SpaceBetween>
+                            )}
+                          </ExpandableSection>
+
+                          {design.ddl && (
+                            <ExpandableSection
+                              headerText={t('analysis-results-v2.aurora-design.ddl-header')}
+                              defaultExpanded={false}
+                            >
+                              {aceLoading ? (
+                                <Box textAlign="center" padding="l">
+                                  <StatusIndicator type="loading">{t('analysis-results-v2.query-journey.loading-editor')}</StatusIndicator>
+                                </Box>
+                              ) : (
+                                <CodeEditor
+                                  ace={ace}
+                                  language="sql"
+                                  value={design.ddl}
+                                  preferences={{ wrapLines: false, theme: 'cloud_editor_dark' }}
+                                  editorContentHeight={400}
+                                  i18nStrings={codeEditorI18nStrings(t, {
+                                    loadingState: t('analysis-results-v2.query-journey.loading'),
+                                    errorState: t('analysis-results-v2.query-journey.error'),
+                                    errorStateRecovery: t('common.actions.retry'),
+                                  })}
+                                  readOnly
+                                />
+                              )}
+                            </ExpandableSection>
+                          )}
+
+                          {design.optimizations.length > 0 && (
+                            <ExpandableSection
+                              headerText={t('analysis-results-v2.aurora-design.optimizations-header', { count: design.optimizations.length })}
+                              defaultExpanded={false}
+                            >
+                              <SpaceBetween size="xs">
+                                {design.optimizations.map((opt, idx) => (
+                                  <Box key={idx} padding={{ vertical: 'xs', horizontal: 's' }}
+                                    style={{ borderLeft: '3px solid #0972d3', backgroundColor: '#f2f8fd', borderRadius: '4px' }}>
+                                    <SpaceBetween size="xxs">
+                                      <Box fontSize="body-s" fontWeight="bold">
+                                        {opt.target ? `${opt.category ? `${opt.category}: ` : ''}${opt.target}` : opt.category}
+                                      </Box>
+                                      <Box fontSize="body-s">{opt.recommendation}</Box>
+                                      {opt.rationale && (
+                                        <Box fontSize="body-s" color="text-body-secondary">{opt.rationale}</Box>
+                                      )}
+                                    </SpaceBetween>
+                                  </Box>
+                                ))}
+                              </SpaceBetween>
+                            </ExpandableSection>
+                          )}
+
+                          <ExpandableSection
+                            headerText={t('analysis-results-v2.aurora-design.queries-header', { count: queryCount })}
+                            defaultExpanded={queryCount > 0}
+                          >
+                            {design.queryGroups.length === 0 ? (
+                              <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results-v2.aurora-design.no-queries')}</Box>
+                            ) : (
+                              <SpaceBetween size="s">
+                                {design.queryGroups.map(group => (
+                                  <ExpandableSection
+                                    key={group.sourceTable}
+                                    headerText={t('analysis-results-v2.aurora-design.source-table-header', {
+                                      table: group.sourceTable,
+                                      count: group.queries.length,
+                                    })}
+                                    variant="footer"
+                                    defaultExpanded={false}
+                                  >
+                                    <Table
+                                      variant="embedded"
+                                      columnDefinitions={[
+                                        {
+                                          id: 'excerpt',
+                                          header: t('analysis-results-v2.aurora-design.col-query'),
+                                          cell: q => <Box fontFamily="monospace" fontSize="body-s">{q.excerpt}</Box>,
+                                        },
+                                        {
+                                          id: 'type',
+                                          header: t('analysis-results-v2.aurora-design.col-type'),
+                                          cell: q => q.queryType || '—',
+                                        },
+                                        {
+                                          id: 'rps',
+                                          header: t('analysis-results-v2.aurora-design.col-calls-per-second'),
+                                          cell: q => (typeof q.callsPerSecond === 'number' ? q.callsPerSecond.toFixed(2) : '—'),
+                                        },
+                                        {
+                                          id: 'reason',
+                                          header: t('analysis-results-v2.aurora-design.col-reason'),
+                                          cell: q => q.reason || '—',
+                                        },
+                                      ]}
+                                      items={group.queries}
+                                    />
+                                  </ExpandableSection>
+                                ))}
+                              </SpaceBetween>
+                            )}
+                          </ExpandableSection>
+                        </SpaceBetween>
+                      ),
+                    };
+                  })}
+                />
+              </Container>
+            )}
+
           </SpaceBetween>
         }
         contentType="default"
@@ -2654,11 +2872,11 @@ const AnalysisResultsPage = memo(() => {
                       theme: 'cloud_editor_dark'
                     }}
                     editorContentHeight={600}
-                    i18nStrings={{
+                    i18nStrings={codeEditorI18nStrings(t, {
                       loadingState: t('analysis-results-v2.query-journey.loading'),
                       errorState: t('analysis-results-v2.query-journey.error'),
                       errorStateRecovery: t('common.actions.retry')
-                    }}
+                    })}
                     loading={queryJourneyLoading}
                     readOnly
                   />
