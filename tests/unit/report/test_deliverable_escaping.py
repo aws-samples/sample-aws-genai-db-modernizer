@@ -358,6 +358,30 @@ class TestEngineeringReportEscaping:
         assert "`Evil\\|&lt;b&gt;x&lt;/b&gt;`" in cells[0]
         assert "`src\\|&lt;i&gt;y&lt;/i&gt;`" in cells[2]
 
+    def test_migration_map_keeps_its_columns_for_pipe_and_angle_brackets(self) -> None:
+        """#466: the Migration map renders source and target table names as code spans
+        too, so they go through md_cell like the schema table's (#457): the row keeps
+        its columns and no raw angle bracket remains."""
+        report = {
+            "table_mappings": [
+                {
+                    "source_table": "Evil|<b>x</b>",
+                    "recommended_database": "dynamodb",
+                    "target_table": "tgt|<i>y</i>",
+                    "aggregate_pattern": "single",
+                    "confidence_score": 0.9,
+                }
+            ]
+        }
+        lines = renderers.render_engineering_report_md(report).splitlines()
+        header = lines.index("| Source table | Target engine | Target | Pattern | Confidence |")
+        row = lines[header + 2]
+        cells = re.split(r"(?<!\\)\|", row)[1:-1]
+        assert len(cells) == 5, row
+        assert "<" not in row and ">" not in row
+        assert "`Evil\\|&lt;b&gt;x&lt;/b&gt;`" in cells[0]
+        assert "`tgt\\|&lt;i&gt;y&lt;/i&gt;`" in cells[2]
+
     def test_no_raw_newline_injected_mid_value(self) -> None:
         md = renderers.render_engineering_report_md(_report_with_injection())
         # None of the single-value interpolations should have introduced the CR/LF
