@@ -15,6 +15,14 @@ const NODE_COLORS = {
   opensearch: '#2ea597',    // Teal
   neptune: '#7d2105',       // Dark red
   keyspaces: '#8b6ccb',     // Purple
+  // The pipeline emits aurora_mysql / aurora_postgresql, never a bare "aurora",
+  // so both used to miss this map and fall back to the default blue (#0972D3) --
+  // close enough to DynamoDB's #3184e8 that Aurora read as DynamoDB even though
+  // it owns most queries. #9c5700 is the colour the live UI already gives these
+  // two engines (AssignmentGate.js ENGINE_COLORS), so the Sankey now matches the
+  // rest of the page instead of the exported report's own indigo shades.
+  aurora_mysql: '#9c5700',        // Aurora MySQL
+  aurora_postgresql: '#9c5700',   // Aurora PostgreSQL
   aurora: '#ec7211'         // Orange
 };
 
