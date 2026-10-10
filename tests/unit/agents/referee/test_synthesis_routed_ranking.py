@@ -111,7 +111,10 @@ class TestConfidences:
         r = _by_target(build_ranking(_data(ASSIGNMENT)))
         assert r["opensearch"]["analysis_confidence"] == 25
         assert r["opensearch"]["confidence_score"] == 25  # backward compatible
-        assert r["opensearch"]["routed_confidence"] == 100  # 90 + text-search bonus, capped
+        # OpenSearch ignores the "posts" table-level average (#475: that
+        # number reflects whether ANY query against the table needs search,
+        # not whether this one does) -- basic-CRUD baseline + text-search bonus.
+        assert r["opensearch"]["routed_confidence"] == 60
         assert r["opensearch"]["routed_confidence_basis"] == "owned_queries"
         assert r["opensearch"]["routed_queries"] == 1
         assert r["opensearch"]["routed_tables"] == 1
@@ -133,13 +136,13 @@ class TestRationale:
             for d in build_architecture_recommendation(_data(ASSIGNMENT), ranking, [])["databases"]
         }
         assert dbs["opensearch"]["rationale"].startswith(
-            "100% mean fit across 1 query (1 rated table), led by full-text search (1 of 1)."
+            "60% mean fit across 1 query (1 rated table), led by full-text search (1 of 1)."
         )
         assert dbs["dynamodb"]["rationale"].startswith(
             "100% mean fit across 6 queries (1 rated table), led by key-value lookups (6 of 6)."
         )
         assert "average confidence across" not in dbs["opensearch"]["rationale"]
-        assert dbs["opensearch"]["routed_confidence"] == 100
+        assert dbs["opensearch"]["routed_confidence"] == 60
 
     def test_cache_rationale_states_its_cache_fit(self):
         ranking = build_ranking(_data(ASSIGNMENT))
