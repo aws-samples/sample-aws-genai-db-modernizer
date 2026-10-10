@@ -53,8 +53,11 @@ class TestOwnerFit:
             _qa("k2", "dynamodb"),
         )
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
-        # text_search matches OpenSearch's capability: 80 + bonus, capped at 100
-        assert fits["opensearch"].confidence == min(100, 80 + SIGNAL_MATCH_BONUS)
+        # OpenSearch never uses the table-level average as its own fit (#475:
+        # that number reflects whether ANY query against the table needs
+        # search, not whether this one does) -- the basic-CRUD baseline plus
+        # the text_search capability-match bonus, not 80 + bonus.
+        assert fits["opensearch"].confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
         assert fits["opensearch"].basis == BASIS_OWNED
         assert fits["opensearch"].queries == 2
         assert fits["opensearch"].tables == 1
@@ -76,7 +79,7 @@ class TestOwnerFit:
         a = _assignment(_qa("s1", "opensearch"), _qa("k1", "opensearch", in_scope=False))
         fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["opensearch"]
         assert fit.queries == 1
-        assert fit.confidence == min(100, 80 + SIGNAL_MATCH_BONUS)
+        assert fit.confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
 
     def test_engine_with_no_routed_query_has_none(self):
         a = _assignment(_qa("s1", "opensearch"))
@@ -96,10 +99,12 @@ class TestCustomerOverride:
             _qa("k2", "dynamodb"),
         )
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
-        # OpenSearch rates users 10 and serves key-value lookups (get by _id): 10 + bonus.
+        # OpenSearch ignores the "users" table-level average (#475) and uses
+        # the basic-CRUD baseline instead: it still serves key-value lookups
+        # (get by _id), so the signal-match bonus applies on top.
         # The stored confidence (95) and DynamoDB's fit (90+) are not used.
         assert fits["opensearch"].queries == 1
-        assert fits["opensearch"].confidence == 10 + SIGNAL_MATCH_BONUS
+        assert fits["opensearch"].confidence == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
         assert fits["dynamodb"].queries == 1
 
 
@@ -147,19 +152,72 @@ class TestTableEvidence:
         assert fit.unbacked_queries == 3
 
     def test_names_that_are_not_source_tables_do_not_count(self):
+        """Table-backed evidence, for an engine OUTSIDE ``PATTERN_ONLY_ENGINES``
+        (dynamodb, not opensearch -- #475 review, finding 4: opensearch's own
+        fit never reads a table recommendation, so it has no table-backed
+        evidence to test here; see ``TestPatternEvidence`` below instead).
+        """
         queries = [_q("a", "posts", "pg_type"), _q("b", "w")]
-        a = _assignment(_qa("a", "opensearch"), _qa("b", "opensearch"))
+        a = _assignment(_qa("a", "dynamodb"), _qa("b", "dynamodb"))
         fit = routed_fits(a, TRIAGE, queries, ANALYSIS, source_tables=["posts", "users", "meta"])[
-            "opensearch"
+            "dynamodb"
         ]
         assert fit.tables == 1
         assert fit.evidence == "partial"
         assert fit.unbacked_queries == 1
 
     def test_fully_backed(self):
-        a = _assignment(_qa("s1", "opensearch"), _qa("s2", "opensearch"))
-        fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS, source_tables=["posts"])["opensearch"]
+        """Same note as above: dynamodb, not opensearch (#475 review, finding 4)."""
+        a = _assignment(_qa("s1", "dynamodb"), _qa("s2", "dynamodb"))
+        fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS, source_tables=["posts"])["dynamodb"]
         assert (fit.evidence, fit.unbacked_queries, fit.tables) == ("table", 0, 1)
+
+
+class TestPatternEvidence:
+    """#475 review, finding 4: a ``PATTERN_ONLY_ENGINES`` engine's evidence is
+    whether the query matches one of its OWN detected patterns, never
+    whether a table recommendation merely exists for it.
+    """
+
+    def test_pattern_matched_query_is_fully_backed(self):
+        queries = [_q("s1", "posts")]
+        triage = {"signals": [{"signal": "text_search", "query_ids": ["s1"]}]}
+        analysis = {
+            "opensearch": {
+                "table_recommendations": [{"table_id": "posts", "confidence_score": 80}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "full-text-search",
+                            "query_ids": ["s1"],
+                            "table_ids": ["posts"],
+                        }
+                    ]
+                },
+            }
+        }
+        a = _assignment(_qa("s1", "opensearch"))
+        fit = routed_fits(a, triage, queries, analysis, source_tables=["posts"])["opensearch"]
+        assert fit.evidence == "pattern"
+        assert fit.unbacked_queries == 0
+
+    def test_table_recommendation_alone_is_not_evidence(self):
+        """A table recommendation exists for ``posts``, but s1 is not in any
+        OpenSearch pattern's query_ids -- not evidence, unlike every other
+        engine, where the same table recommendation would be.
+        """
+        queries = [_q("s1", "posts")]
+        triage = {"signals": [{"signal": "text_search", "query_ids": ["s1"]}]}
+        analysis = {
+            "opensearch": {
+                "table_recommendations": [{"table_id": "posts", "confidence_score": 80}],
+                "workload_analysis": {"patterns_detected": []},
+            }
+        }
+        a = _assignment(_qa("s1", "opensearch"))
+        fit = routed_fits(a, triage, queries, analysis, source_tables=["posts"])["opensearch"]
+        assert fit.evidence == "signal_only"
+        assert fit.unbacked_queries == 1
 
 
 class TestCacheLayer:

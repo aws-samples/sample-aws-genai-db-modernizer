@@ -15,6 +15,11 @@ Version History:
   without this field Pydantic silently dropped it, so the OpenSearch justification
   floor's reasoning (#326) and the generalized cost-share floor (#167) never reached
   the deliverables (review of #375, finding 5)
+- 1.6 (2026-10-11): Consolidation.workload_justified records whether the source
+  engine's FIRST-ASSIGNMENT workload ever cleared the #326 floor (None when no
+  floor applies) -- an engine that never did is removed later with no saving
+  claimed for it, not presented as giving up something that earned its place
+  (review of #475, finding 3)
 """
 
 from pydantic import BaseModel, Field
@@ -77,6 +82,16 @@ class Consolidation(BaseModel):
     retention_reason: str | None = Field(
         None, description="Why retained queries could not be moved"
     )
+    workload_justified: bool | None = Field(
+        None,
+        description=(
+            "Whether from_engine's FIRST-ASSIGNMENT workload ever cleared the #326 "
+            "justification floor (real search depth plus traffic or corpus size). "
+            "None when no floor applies to this engine (only OpenSearch has one); "
+            "False means it was never justified, so this consolidation's removal "
+            "is not an infrastructure saving to claim (#475)"
+        ),
+    )
 
 
 class LightweightRecommendation(BaseModel):
@@ -110,7 +125,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.5", description="Contract version")
+    contract_version: str = Field(default="1.6", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )

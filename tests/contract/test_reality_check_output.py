@@ -95,6 +95,26 @@ class TestConsolidation:
         )
         assert c.from_engine == "opensearch"
         assert c.saved_cost_estimate == 450.0
+        # workload_justified (#475) defaults to None when a caller omits it
+        # (no floor applies, or the caller hasn't been updated to carry it).
+        assert c.workload_justified is None
+
+    def test_workload_justified_false_is_not_dropped(self):
+        """A review of #475 found Pydantic silently dropping a field a caller
+        wrote but the model never declared (#375's own ``cost_justification``
+        precedent) -- this field must round-trip, including the ``False``
+        value that actually changes a report's wording.
+        """
+        c = Consolidation(
+            from_engine="opensearch",
+            to_engine="dynamodb",
+            query_count=1,
+            reason="opensearch provides no unique capabilities",
+            saved_cost_estimate=450.0,
+            workload_justified=False,
+        )
+        assert c.workload_justified is False
+        assert c.model_dump()["workload_justified"] is False
 
     def test_query_count_must_be_positive(self):
         with pytest.raises(ValidationError):
@@ -201,7 +221,7 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.5"
+        assert output.contract_version == "1.6"
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.

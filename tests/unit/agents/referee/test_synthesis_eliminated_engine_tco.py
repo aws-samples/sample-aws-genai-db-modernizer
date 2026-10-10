@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.agents.referee.synthesis_grounding import never_justified_engines
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
 
@@ -90,3 +91,86 @@ def test_eliminated_engines_own_cost_is_traceable_in_tco_facts(store):
     # The eliminated engine's own cost never counts toward the projected total --
     # only engines still in the effective architecture do.
     assert tco["projected_monthly_cost"] == pytest.approx(15.2 + 121.06, abs=0.01)
+
+
+def test_never_justified_engine_cost_is_excluded_from_tco_facts(store):
+    """#475 review, finding 3: an engine none of whose first-assignment
+    queries ever cleared the #326 floor was never justified by the
+    workload, so its removal is not a saving to carry into the TCO facts --
+    ``eliminated_engine_costs`` must not list it, even though its own cost
+    estimate exists and is traceable (as the test above shows for a
+    justified removal).
+    """
+    store.write_json(
+        f"{DB}/{JOB}/reality-check/output.json",
+        {
+            "consolidations": [
+                {
+                    "from_engine": "opensearch",
+                    "to_engine": "dynamodb",
+                    "query_count": 1,
+                    "reason": "1 opensearch query moved to dynamodb",
+                    "saved_cost_estimate": 450.0,
+                    "action": "full",
+                    "workload_justified": False,
+                }
+            ],
+            "architectural_patterns": [],
+        },
+    )
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+    tco = result["tco_analysis"]
+    assert "eliminated_engine_costs" not in tco
+    assert tco["projected_monthly_cost"] == pytest.approx(15.2 + 121.06, abs=0.01)
+
+
+class TestNeverJustifiedEngines:
+    """Direct tests of ``never_justified_engines`` (#475 review, finding 3)."""
+
+    def test_empty_without_a_reality_check(self):
+        assert never_justified_engines(None) == set()
+
+    def test_engine_with_every_consolidation_unjustified(self):
+        reality_check = {
+            "consolidations": [
+                {"from_engine": "opensearch", "to_engine": "dynamodb", "workload_justified": False},
+                {
+                    "from_engine": "opensearch",
+                    "to_engine": "aurora_mysql",
+                    "workload_justified": False,
+                },
+            ]
+        }
+        assert never_justified_engines(reality_check) == {"opensearch"}
+
+    def test_engine_with_one_justified_consolidation_is_excluded(self):
+        """One justified record is enough: the engine earned its place at
+        least once, so it is not in this set even if a later consolidation
+        record for it carries ``False`` (e.g. the floor rejecting queries it
+        later absorbed).
+        """
+        reality_check = {
+            "consolidations": [
+                {"from_engine": "opensearch", "to_engine": "dynamodb", "workload_justified": True},
+                {
+                    "from_engine": "opensearch",
+                    "to_engine": "aurora_mysql",
+                    "workload_justified": False,
+                },
+            ]
+        }
+        assert never_justified_engines(reality_check) == set()
+
+    def test_engine_with_no_floor_is_excluded(self):
+        """``None`` (no floor applies, e.g. documentdb) never counts as
+        unjustified -- only an explicit ``False`` does."""
+        reality_check = {
+            "consolidations": [
+                {
+                    "from_engine": "documentdb",
+                    "to_engine": "aurora_mysql",
+                    "workload_justified": None,
+                }
+            ]
+        }
+        assert never_justified_engines(reality_check) == set()

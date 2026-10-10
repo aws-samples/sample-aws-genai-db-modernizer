@@ -147,6 +147,35 @@ def eliminated_engines(
     return out
 
 
+def never_justified_engines(reality_check: dict | None) -> set[str]:
+    """Engines whose removal must never be presented as an infrastructure saving.
+
+    An engine is in this set when every one of its consolidation records
+    carries ``workload_justified: False`` (``reality_check._workload_ever_
+    justified``, #475 review finding 3) -- none of its FIRST-ASSIGNMENT
+    queries ever cleared the #326 floor, so it was never justified by the
+    workload to begin with, and removing it is not a saving to quote in the
+    TCO facts (``synthesis_handler._eliminated_engine_costs`` excludes these
+    from ``eliminated_costs``, the same way ``_build_recommendations`` skips
+    the dollar figure in prose). An engine with no consolidation record at
+    all, or with ``workload_justified`` ``True``/``None`` on any one of its
+    records, is not in this set.
+    """
+    if not reality_check:
+        return set()
+    consolidations = reality_check.get("consolidations") or []
+    by_engine: dict[str, list[bool | None]] = {}
+    for c in consolidations:
+        engine = c.get("from_engine")
+        if engine:
+            by_engine.setdefault(engine, []).append(c.get("workload_justified"))
+    return {
+        engine
+        for engine, verdicts in by_engine.items()
+        if verdicts and all(v is False for v in verdicts)
+    }
+
+
 # Cue words in the <= 3 words before an eliminated-engine mention. The nearest cue
 # decides: a trade-off/history cue keeps the sentence ("Without OpenSearch",
 # "consolidating OpenSearch into ..."), a recommend cue drops it ("with OpenSearch",

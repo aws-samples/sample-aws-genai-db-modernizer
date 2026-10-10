@@ -8,10 +8,14 @@ routed workload instead:
 - **Owner engines**: the mean per-query fit of the in-scope queries the effective
   assignment routes to the engine (``assigned_engine``, so a customer override
   counts for the engine the query now has). The fit is Reality Check's
-  ``_engine_fit_score`` (table confidence over the query's ``tables_accessed``,
-  plus or minus the capability-signal bonus), recomputed here. The per-query
-  ``confidence`` stored on the assignment is not used: Reality Check does not
-  update it when it moves a query, so it would describe the engine the query left.
+  ``_engine_fit_score``: table confidence over the query's ``tables_accessed``
+  plus or minus the capability-signal bonus for most engines, but for
+  ``PATTERN_ONLY_ENGINES`` (OpenSearch, #475) the query's own matched pattern
+  score (or the flat basic-CRUD baseline when it has none) instead -- table
+  confidence never applies to those engines, since it reflects the table as a
+  whole, not this query. The per-query ``confidence`` stored on the assignment
+  is not used: Reality Check does not update it when it moves a query, so it
+  would describe the engine the query left.
 - **Cache layer** (owns no query, #296): the mean fit of the in-scope reads it
   fronts (``cache_engine``). The table part is the cache analysis's confidence for
   the tables of the cached reads. The bonus comes from the overlay's own
@@ -23,13 +27,18 @@ routed workload instead:
   would penalise the cache for a capability the owner provides on a miss.
   Basis ``cached_reads`` says which of the two a figure is.
 
-**Evidence.** A fit is backed by table-level evidence only when a query touches a
-real source table the engine's analysis rated. A query whose ``tables_accessed`` is
-the collector's ``"unknown"`` placeholder (or any name that is not a source table)
-falls back to Reality Check's basic CRUD baseline plus the signal bonus, so its fit
-is a constant, not a measurement. ``evidence`` is ``"table"`` when every routed
-query is table-backed, ``"partial"`` when some are, ``"signal_only"`` when none is;
-``unbacked_queries`` counts the rest. Pseudo-tables never count in ``tables``.
+**Evidence.** For most engines, a fit is backed by table-level evidence only when a
+query touches a real source table the engine's analysis rated; a query whose
+``tables_accessed`` is the collector's ``"unknown"`` placeholder (or any name that
+is not a source table) falls back to Reality Check's basic CRUD baseline plus the
+signal bonus, so its fit is a constant, not a measurement. ``evidence`` is
+``"table"`` when every routed query is table-backed, ``"partial"`` when some are,
+``"signal_only"`` when none is; ``unbacked_queries`` counts the rest. For
+``PATTERN_ONLY_ENGINES`` (OpenSearch), table recommendations exist but
+``_engine_fit_score`` never reads them (see above), so "backed" instead means the
+query matches one of the engine's own detected patterns -- real, query-level
+evidence -- and ``evidence`` is ``"pattern"`` (not ``"table"``) when every routed
+query matches one. Pseudo-tables never count in ``tables``.
 
 An engine with no routed query has no routed confidence (``None``).
 """
@@ -42,12 +51,17 @@ from dataclasses import dataclass
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.reality_check import _build_query_signals, _engine_fit_score
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.signal_labels import WORKLOAD_CHARACTERISTIC_SIGNALS
 
 BASIS_OWNED = "owned_queries"
 BASIS_CACHED = "cached_reads"
 
 EVIDENCE_TABLE = "table"
+# A ``PATTERN_ONLY_ENGINES`` engine's own matched-pattern evidence (#475
+# review, finding 4) -- never ``EVIDENCE_TABLE``, since ``_engine_fit_score``
+# never reads a table recommendation for these engines.
+EVIDENCE_PATTERN = "pattern"
 EVIDENCE_PARTIAL = "partial"
 EVIDENCE_SIGNAL_ONLY = "signal_only"
 
@@ -154,12 +168,27 @@ def routed_fits(
             result[engine] = RoutedFit(None, basis, 0, 0)
             continue
 
-        rated = {r.get("table_id") for r in outputs[engine].get("table_recommendations") or []}
         ids = [qa["query_id"] for qa in routed]
         tables = set().union(*(real_tables(qid) for qid in ids))
-        unbacked = sum(1 for qid in ids if not (real_tables(qid) & rated))
+        if engine in PATTERN_ONLY_ENGINES:
+            # #475 review, finding 4: ``_engine_fit_score`` never reads a
+            # table recommendation for this engine, so a table existing is
+            # not evidence -- the query matching one of the engine's own
+            # detected patterns is.
+            pattern_matched_qids = {
+                qid
+                for pattern in outputs[engine].get("workload_analysis", {}).get("patterns_detected")
+                or []
+                for qid in (pattern.get("query_ids") or [])
+            }
+            backed_label = EVIDENCE_PATTERN
+            unbacked = sum(1 for qid in ids if qid not in pattern_matched_qids)
+        else:
+            rated = {r.get("table_id") for r in outputs[engine].get("table_recommendations") or []}
+            backed_label = EVIDENCE_TABLE
+            unbacked = sum(1 for qid in ids if not (real_tables(qid) & rated))
         evidence = (
-            EVIDENCE_TABLE
+            backed_label
             if unbacked == 0
             else EVIDENCE_SIGNAL_ONLY if unbacked == len(ids) else EVIDENCE_PARTIAL
         )

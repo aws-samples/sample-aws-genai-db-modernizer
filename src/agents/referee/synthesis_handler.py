@@ -28,6 +28,7 @@ from src.agents.referee.synthesis_grounding import (
     check_summary_wave_order,
     eliminated_engines,
     engine_table_scope,
+    never_justified_engines,
     recompute_reality_check_patterns,
 )
 from src.agents.referee.synthesis_report import (
@@ -146,7 +147,19 @@ def run_synthesis_deterministic(
     # #380: an eliminated engine's own analysed cost, read directly -- ``data.engines``
     # has already dropped it (ADR-029 Layer E, #202) by this point, so a dollar figure
     # a recommendation quotes for it is also traceable in the TCO facts, not just prose.
-    eliminated_costs = _eliminated_engine_costs(store, database_name, job_id, eliminated)
+    # #475 review, finding 3: an engine none of whose first-assignment queries ever
+    # cleared the #326 floor was never justified by the workload, so its removal is
+    # not a "saving" to carry into the TCO facts -- excluded here, the same way
+    # ``_build_recommendations`` skips the dollar figure in prose. Only ``eliminated_
+    # costs`` is filtered: ``eliminated`` itself still names the engine for every
+    # other consumer (risk assessment, the deliverables' "eliminated_engines" field).
+    never_justified = never_justified_engines(reality_check_output)
+    eliminated_costs = _eliminated_engine_costs(
+        store,
+        database_name,
+        job_id,
+        {e: a for e, a in eliminated.items() if e not in never_justified},
+    )
     tco = build_tco_analysis(data, eliminated_costs=eliminated_costs)
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).

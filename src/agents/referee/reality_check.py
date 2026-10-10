@@ -33,6 +33,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
 # ---------------------------------------------------------------------------
@@ -447,6 +448,34 @@ def opensearch_justification(
     return verdicts
 
 
+def _workload_ever_justified(
+    engine: str,
+    first_assignment_qas: list[dict],
+    query_map: dict[str, dict],
+    source_engine: str | None,
+) -> bool | None:
+    """Whether ``engine``'s FIRST-ASSIGNMENT workload ever earned its place (#475 review).
+
+    ``None`` when no justification floor applies to ``engine`` at all (only
+    OpenSearch has one, #326) -- the caller must not claim or deny a saving
+    based on this when it's ``None``. ``True`` when at least one of the
+    engine's own first-assignment queries clears ``opensearch_justification``
+    (real search depth plus traffic or corpus size); ``False`` when none do.
+
+    Judged once, here, against the engine's queries *before* any reality
+    check pass moves anything -- a later pass fully consolidating this
+    engine away is removing something that was never justified by the
+    workload in the first place, not something that earned its place and
+    then stopped being worth its cost. ``_build_recommendations`` reads this
+    (carried on each consolidation record) to avoid presenting that removal
+    as an infrastructure saving.
+    """
+    if engine != "opensearch" or not first_assignment_qas:
+        return None
+    verdicts = opensearch_justification(first_assignment_qas, query_map, source_engine)
+    return any(justified for justified, _ in verdicts.values())
+
+
 def may_absorb(
     engine: str,
     qid: str,
@@ -586,6 +615,16 @@ def run_reality_check(
     engine_queries: dict[str, list[dict]] = defaultdict(list)
     for qa in query_assignments:
         engine_queries[qa["assigned_engine"]].append(qa)
+
+    # Snapshot now, before any pass below mutates ``engine_queries`` (#475
+    # review finding 3): each engine's first-assignment workload-justified
+    # verdict (``None`` where no floor applies), carried onto every
+    # consolidation record for that engine so a full consolidation of one
+    # that never earned its place is never presented as a saving.
+    workload_justified: dict[str, bool | None] = {
+        engine: _workload_ever_justified(engine, list(qas), query_map, resolved_source_engine)
+        for engine, qas in engine_queries.items()
+    }
 
     # Build set of queries with mandatory signal overrides (cannot be consolidated)
     mandatory_query_ids: set[str] = {
@@ -750,7 +789,7 @@ def run_reality_check(
     revised = deepcopy(query_assignments)
     absorbed_by_id = {aq["query_id"]: aq for aq in aurora_absorption.absorbed_queries}
     absorption_consolidations = _apply_aurora_absorption(
-        revised, aurora_absorption, engine_queries, mandatory_committed_engines
+        revised, aurora_absorption, engine_queries, mandatory_committed_engines, workload_justified
     )
 
     # -------------------------------------------------------------------
@@ -903,6 +942,7 @@ def run_reality_check(
                         if is_partial
                         else None
                     ),
+                    "workload_justified": workload_justified.get(engine),
                 }
                 consolidations.append(consolidation_entry)
 
@@ -950,8 +990,31 @@ def run_reality_check(
     # gets the dedicated floor from #326 (traffic, search depth, native
     # source support); any other mandatory engine is judged on cost share
     # alone (#167).
+    #
+    # OpenSearch's own floor runs whenever it is committed at all, not only
+    # when a signal override made it "mandatory" (#475 review, finding 4
+    # follow-up, measured on wordpress): once OpenSearch's own matched-pattern
+    # score (finding 4's fix) lets it win ownership through Pass 0/2's
+    # score-based consolidation alone -- no signal override involved -- this
+    # loop would otherwise never run for it at all, reopening the exact gap
+    # #475 closed by keeping that score low in the first place. A query that
+    # reaches OpenSearch on fit score alone must still clear the same #326
+    # bar as one that reaches it through the signal override; every other
+    # mandatory engine's cost-share floor (#167) is unaffected and still only
+    # runs for an actual signal override.
     # -------------------------------------------------------------------
-    for engine in sorted(mandatory_committed_engines & committed_engines):
+    floor_scope = mandatory_committed_engines | ({"opensearch"} & committed_engines)
+    for engine in sorted(floor_scope & committed_engines):
+        # Grouped by actual CURRENT ownership, not by any one signal (#475
+        # review, suggestion 1) -- deliberately different from the
+        # resolver's own ``opensearch_justification`` call
+        # (``assignment_resolver._build_signal_overrides``), which groups by
+        # the signal's own candidate queries before any assignment exists.
+        # This floor asks a later question: does the engine's workload AS IT
+        # STANDS NOW (after absorption may have added or Pass 0/2 may have
+        # removed queries) still earn its place -- so it has to look at
+        # everything the engine currently owns, not just how it first got
+        # there.
         current_qas = [qa for qa in revised if qa["assigned_engine"] == engine]
         if not current_qas:
             continue
@@ -1071,6 +1134,7 @@ def run_reality_check(
                         if floor_unplaced
                         else None
                     ),
+                    "workload_justified": workload_justified.get(engine),
                 }
             )
         assessment = unique_value_assessment.setdefault(engine, {})
@@ -1081,6 +1145,30 @@ def run_reality_check(
             engine_queries[engine] = [
                 qa for qa in engine_queries.get(engine, []) if qa["query_id"] not in moved_ids
             ]
+
+    # Reconcile before Pass 3/4 (#475 review follow-up): this floor now runs
+    # for OpenSearch whenever it is committed, not only when it is
+    # "mandatory" (see above), so a query Pass 2 just placed on OpenSearch
+    # can be moved AGAIN by this same floor within this one call -- a
+    # two-hop move (e.g. aurora_mysql -> opensearch -> dynamodb) that no
+    # single consolidation record describes, which left a stale, orphaned
+    # "aurora_mysql -> opensearch" record ``moved_queries()``
+    # (``reality_check_request.py``) could never resolve back to any
+    # query (0 found for its claimed count). ``reconcile_consolidations``
+    # is designed for exactly this (Pass 2, Pass 1 and later steps all
+    # moving queries and editing records on their own, #218) -- it already
+    # ran once, later, via the handler's own ``_settle_records``, but only
+    # for the ``none``/``bedrock`` llm_mode paths that reach it; ``external``
+    # mode writes its LLM request from this function's own return value
+    # first, so it never saw settled records before. Running it here as
+    # well is idempotent (reconciling an already-reconciled list is a
+    # no-op) and makes every mode see the same settled records.
+    consolidations = reconcile_consolidations(
+        query_assignments,
+        revised,
+        absorption_consolidations + consolidations,
+        unique_value_assessment,
+    )
 
     # Pass 3: Detect architectural patterns
     patterns = _detect_architectural_patterns(revised, committed_engines, engine_queries)
@@ -1093,8 +1181,6 @@ def run_reality_check(
         engine_queries,
         _engine_infra_cost(analysis_outputs),
     )
-
-    consolidations = absorption_consolidations + consolidations
 
     return {
         "revised_assignments": revised,
@@ -1170,8 +1256,17 @@ def _apply_aurora_absorption(
     absorption: AuroraAbsorptionResult,
     engine_queries: dict[str, list[dict]],
     mandatory_committed_engines: set[str],
+    workload_justified: dict[str, bool | None] | None = None,
 ) -> list[dict]:
-    """Move absorbed queries in ``revised`` (in place) and return their consolidations (#168)."""
+    """Move absorbed queries in ``revised`` (in place) and return their consolidations (#168).
+
+    ``workload_justified`` (#475 review, defaults to empty so a caller with
+    no first-assignment context -- ``rerun_aurora_absorption``, the LLM
+    correction path -- gets ``None`` for every engine, same as having no
+    opinion) carries each engine's ``_workload_ever_justified`` verdict onto
+    its consolidation record.
+    """
+    workload_justified = workload_justified or {}
     absorbed_by_id = {aq["query_id"]: aq for aq in absorption.absorbed_queries}
     for qa in revised:
         aq = absorbed_by_id.get(qa["query_id"])
@@ -1212,6 +1307,7 @@ def _apply_aurora_absorption(
                 "retention_reason": (
                     None if is_full else "Specialist engine scores well ahead of Aurora"
                 ),
+                "workload_justified": workload_justified.get(from_engine),
             }
         )
     return consolidations
@@ -1428,7 +1524,12 @@ def _engine_fit_score(
     """Score how well an engine fits a query (0-100).
 
     Combines:
-    - Table-level confidence from analysis (weighted average across accessed tables)
+    - For most engines: table-level confidence from analysis (weighted
+      average across accessed tables).
+    - For a ``PATTERN_ONLY_ENGINES`` engine (OpenSearch, #475) instead: the
+      query's own matched pattern when it has one, else the flat basic-CRUD
+      baseline below -- never table confidence (see the comment at
+      ``table_recs`` below for why).
     - Signal-capability bonus (engine has specific capability the query needs)
     - Basic CRUD baseline (any engine with key-value/range can do simple ops)
 
@@ -1439,14 +1540,39 @@ def _engine_fit_score(
     engine_caps = ENGINE_CAPABILITIES.get(engine, set())
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
 
-    # Start with table-level confidence from analysis
+    # ``PATTERN_ONLY_ENGINES`` (OpenSearch, #475): a table's recommendation
+    # reflects whether ANY query against it needs search/time-series
+    # handling, not whether THIS query does, so it never stands in for this
+    # query's own fit -- table_scores stays empty, and pattern_scores (the
+    # query's own matched pattern, mirroring the resolver's own first branch,
+    # ``AssignmentResolver._compute_query_confidence``) is checked instead,
+    # below. Every other engine keeps using table_scores as before; adding
+    # pattern_scores there too would double-count the same evidence. Both
+    # kinds of engine still fall through to the flat basic-CRUD baseline
+    # when they have neither (unaffected by the table-wide bleed above,
+    # since it's a constant, not an average over other queries' evidence),
+    # plus the signal-capability bonus/penalty below.
     target_analysis = analysis_outputs.get(engine, {})
     table_recs = {r["table_id"]: r for r in target_analysis.get("table_recommendations", [])}
-    table_scores = [
-        table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs
-    ]
+    table_scores = (
+        [table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs]
+        if engine not in PATTERN_ONLY_ENGINES
+        else []
+    )
 
-    if table_scores:
+    pattern_scores: list[int] = []
+    if engine in PATTERN_ONLY_ENGINES:
+        for pattern in target_analysis.get("workload_analysis", {}).get("patterns_detected") or []:
+            if qid in (pattern.get("query_ids") or []):
+                pattern_scores.extend(
+                    table_recs[t].get("confidence_score", 0)
+                    for t in (pattern.get("table_ids") or [])
+                    if t in table_recs
+                )
+
+    if pattern_scores:
+        base_score = sum(pattern_scores) / len(pattern_scores)
+    elif table_scores:
         base_score = sum(table_scores) / len(table_scores)
     elif {"key_value_lookup", "range_query"} & engine_caps:
         base_score = BASIC_CRUD_SCORE
@@ -1824,10 +1950,20 @@ def reconcile_consolidations(
 
     recorded_saving: dict[str, float] = {}
     first_record: dict[tuple[str, str], dict] = {}
+    # Engine-level ``workload_justified`` verdict (#475 review round 2,
+    # finding A), read off whichever input record for that ``from_engine``
+    # happens to carry it -- every record a creation site builds for the
+    # same engine already carries the identical, once-computed verdict
+    # (``_workload_ever_justified``), so the first one found is as good as
+    # any. ``None`` (no entry at all) stays the default below: not every
+    # engine has a floor to judge it against.
+    workload_justified_by_engine: dict[str, bool | None] = {}
     for c in consolidations:
         src = c["from_engine"]
         recorded_saving[src] = max(recorded_saving.get(src, 0), c.get("saved_cost_estimate") or 0)
         first_record.setdefault((src, c["to_engine"]), c)
+        if src not in workload_justified_by_engine and "workload_justified" in c:
+            workload_justified_by_engine[src] = c["workload_justified"]
     ordered = [p for p in first_record if p in moves] + [p for p in moves if p not in first_record]
 
     reconciled: list[dict] = []
@@ -1876,8 +2012,16 @@ def reconcile_consolidations(
                     f"{record['reason']} ({_queries(len(floor_overlap))} of these, "
                     f"moved by the justification floor: {justification})"
                 )
+        never_justified = workload_justified_by_engine.get(src) is False
         saved = 0.0
-        if full and src not in savings_claimed:
+        # No saving when ``src`` was never justified by its own
+        # FIRST-ASSIGNMENT workload (#475 review round 2, finding A/
+        # suggestion): claiming a dollar figure here is exactly the
+        # "Removes $X/mo" claim ``_build_recommendations`` already refuses
+        # to make for this engine, and this field also reaches the
+        # handler's own log line and the context graph
+        # (``src/graph/populators.py``) directly, not only that prose.
+        if full and src not in savings_claimed and not never_justified:
             savings_claimed.add(src)
             saved = recorded_saving.get(src) or (
                 ENGINE_BASE_COST.get(src, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
@@ -1889,6 +2033,15 @@ def reconcile_consolidations(
                 "saved_cost_estimate": saved,
                 "queries_retained": retained,
                 "retention_reason": record.get("retention_reason") if retained else None,
+                # Copied from the engine-level verdict, not just whatever
+                # ``first_record`` happened to carry (#475 review round 2,
+                # finding A): a (src, dst) pair this function synthesizes
+                # fresh -- no input record ever described that exact
+                # pair -- would otherwise have no ``workload_justified`` at
+                # all, so ``never_justified_engines`` (synthesis_grounding.py)
+                # would miss it and the TCO could list a saving again while
+                # the prose already refuses to claim one.
+                "workload_justified": workload_justified_by_engine.get(src),
             }
         )
         reconciled.append(record)
@@ -1961,6 +2114,13 @@ def _build_recommendations(
     facts. The real figure, when available, replaces it; when an engine has
     no analysed cost estimate, the sentence stays purely qualitative with no
     dollar figure at all, rather than fall back to the placeholder.
+
+    A consolidation whose ``workload_justified`` is ``False`` (#475 review,
+    finding 3; set by ``_workload_ever_justified``) never claims a saving at
+    all, even when a real cost estimate exists: none of that engine's
+    FIRST-ASSIGNMENT queries ever cleared the #326 floor, so its removal is
+    not an infrastructure saving -- the engine was never justified by the
+    workload to begin with.
     """
     recs = []
     engine_infra_cost = engine_infra_cost or {}
@@ -1974,6 +2134,18 @@ def _build_recommendations(
             outcome = (
                 f"No operational savings are claimed: this move does not remove {source} "
                 "from the architecture."
+            )
+        elif c.get("workload_justified") is False:
+            # #475 review, finding 3: none of this engine's FIRST-ASSIGNMENT
+            # queries ever cleared the #326 floor (real search depth plus
+            # traffic or corpus size) -- it was never justified by the
+            # workload, so removing it now is not an infrastructure saving to
+            # claim, even though a real cost estimate exists for it.
+            outcome = (
+                f"No saving is claimed: {source} was never justified by the workload "
+                "-- none of its first-assignment queries clear the real-search-depth "
+                "plus traffic-or-result-size floor a standing deployment needs, so no "
+                "infrastructure cost was ever justified for it."
             )
         elif saved:
             real_cost = engine_infra_cost.get(source)

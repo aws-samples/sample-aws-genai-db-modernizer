@@ -129,3 +129,32 @@ TEXT_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_my
 # those two, so this is its own, narrower set rather than reusing
 # ``TEXT_SEARCH_ENGINES``.
 FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
+
+# Engines whose per-query fit is a property of the query, not the table they
+# happen to touch (#475). OpenSearch's own analysis
+# (``opensearch_analysis_tools.classify_table_workload``) classifies a WHOLE
+# table as SEARCH or TIMESERIES the moment *any* query against it matches a
+# search/time-series pattern, and that classification's confidence folds in
+# table-general bonuses (text ratio, foreign keys, latency, size) that have
+# nothing to do with any one query. Unlike Aurora/DynamoDB/DocumentDB --
+# whose table-level recommendation really does reflect structural fit that
+# generalizes across a table's queries -- a table classified SEARCH because
+# one query needs full-text search says nothing about a neighboring plain
+# primary-key lookup on the same table.
+#
+# Both the assignment resolver's per-query confidence
+# (``assignment_resolver._compute_query_confidence``) and the reality
+# check's per-query fit score (``reality_check._engine_fit_score``) key off
+# this set, with the same precedence: an engine in it never gets a
+# non-zero score from a table-wide average. It first checks whether the
+# query itself appears in one of the engine's own detected patterns (real,
+# query-level evidence); only when that doesn't match does the resolver
+# score 0 and the reality check fall to its flat basic-CRUD baseline plus
+# any triage-signal-capability bonus (the reality check's own, pre-existing
+# floor for "any engine with key-value/range can do simple ops" -- the
+# resolver has no equivalent concept, so it scores 0 instead). This is the
+# resolver's and the reality check's atomic unit -- the query, not the
+# table -- applied consistently in both places so a query that correctly
+# starts off OpenSearch in the first assignment is not routed back onto it
+# by the reality check's own consolidation pass.
+PATTERN_ONLY_ENGINES: frozenset[str] = frozenset({"opensearch"})

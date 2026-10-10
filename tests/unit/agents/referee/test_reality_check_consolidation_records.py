@@ -340,6 +340,54 @@ class TestReconcile:
         assert "2 queries of these, moved by the justification floor" in record["reason"]
         assert "no search predicate" in record["reason"]
 
+    def test_workload_justified_is_copied_onto_a_record_this_function_creates(self) -> None:
+        """#475 review round 2, finding A: OpenSearch's workload splits to two
+        destinations, but only ONE raw record exists before reconciliation
+        (e.g. one hop was absorbed into another engine's own record, or
+        never recorded at all) -- the (opensearch, aurora_mysql) pair this
+        function synthesizes fresh must still carry the engine-level
+        verdict, not silently drop it to ``None`` (which would read as "no
+        floor applies" instead of "never justified").
+        """
+        before = [_qa(q, "opensearch") for q in ("a", "b")]
+        after = [_qa("a", "dynamodb"), _qa("b", "aurora_mysql")]
+        # Only the (opensearch, dynamodb) pair has a raw record; (opensearch,
+        # aurora_mysql) has none at all.
+        records = [
+            {**_record("opensearch", "dynamodb", 1, saved=450), "workload_justified": False},
+        ]
+        final = reconcile_consolidations(before, after, records)
+        by_dst = {c["to_engine"]: c for c in final}
+        assert by_dst["dynamodb"]["workload_justified"] is False
+        assert by_dst["aurora_mysql"]["workload_justified"] is False
+        # Never justified: no saving claimed for either record, even though
+        # one of them (whichever "full" lands on) would otherwise be the one
+        # ``savings_claimed`` picks.
+        assert all(c["saved_cost_estimate"] == 0 for c in final)
+
+    def test_tco_and_prose_agree_on_a_split_unjustified_workload(self) -> None:
+        """The full chain the review asked for: TCO's ``eliminated_engine_
+        costs`` (via ``never_justified_engines``) and the prose
+        (``_build_recommendations``) must agree that no saving exists,
+        for BOTH of the two records this split produces.
+        """
+        from src.agents.referee.synthesis_grounding import never_justified_engines
+
+        before = [_qa(q, "opensearch") for q in ("a", "b")]
+        after = [_qa("a", "dynamodb"), _qa("b", "aurora_mysql")]
+        records = [
+            {**_record("opensearch", "dynamodb", 1, saved=450), "workload_justified": False},
+        ]
+        final = reconcile_consolidations(before, after, records)
+
+        assert never_justified_engines({"consolidations": final}) == {"opensearch"}
+        recs = _build_recommendations([], final, [], {}, {"opensearch": 240.96})
+        os_recs = [r for r in recs if "opensearch" in r.lower()]
+        assert len(os_recs) == 2
+        for r in os_recs:
+            assert "No saving is claimed" in r
+            assert "Removes $" not in r
+
     def test_counts_of_one_are_singular(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
         after = [_qa("a", "dynamodb"), _qa("b", "dynamodb"), _qa("c", "aurora_mysql")]

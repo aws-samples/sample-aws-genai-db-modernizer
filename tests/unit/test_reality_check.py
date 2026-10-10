@@ -6,24 +6,41 @@ from src.agents.referee.reality_check import (
     TINY_MANDATORY_QUERY_THRESHOLD,
     _can_engine_serve_query,
     _engine_fit_score,
+    _find_best_absorber_for_query,
     _run_aurora_absorption_pass,
+    _workload_ever_justified,
     run_reality_check,
 )
 
 
-def _make_assignment(query_engine_pairs: list[tuple[str, str]]) -> dict:
-    """Build a minimal assignment dict."""
-    return {
-        "version": 1,
-        "query_assignments": [
-            {
-                "query_id": qid,
-                "assigned_engine": engine,
-                "assignment_reason": "test",
-            }
-            for qid, engine in query_engine_pairs
-        ],
-    }
+def _make_assignment(
+    query_engine_pairs: list[tuple[str, str]],
+    signal_overrides: dict[str, str] | None = None,
+) -> dict:
+    """Build a minimal assignment dict.
+
+    ``signal_overrides`` (``query_id -> signal name``) marks a query the way
+    the real resolver does (#475 review): ``signal_override`` set, plus an
+    ``assignment_reason`` starting with "signal override" --
+    ``_is_signal_override`` checks both. Omitting it (the default) means a
+    query is NOT mandatory, even if its engine happens to be a specialist
+    like OpenSearch -- tests that need Pass 0's mandatory protection must
+    opt in here instead of relying on an inflated fit score to look unique
+    by accident.
+    """
+    signal_overrides = signal_overrides or {}
+    query_assignments = []
+    for qid, engine in query_engine_pairs:
+        signal = signal_overrides.get(qid)
+        qa = {
+            "query_id": qid,
+            "assigned_engine": engine,
+            "assignment_reason": f"signal override: {signal}" if signal else "test",
+        }
+        if signal:
+            qa["signal_override"] = signal
+        query_assignments.append(qa)
+    return {"version": 1, "query_assignments": query_assignments}
 
 
 def _make_triage(signals: list[dict] | None = None) -> dict:
@@ -131,6 +148,110 @@ class TestEngineFitScore:
         )
         assert score == 90
 
+    def test_opensearch_ignores_table_level_confidence(self):
+        """#475: a table's confidence from analysis reflects whether ANY
+        query against it needs search/time-series handling, not whether
+        THIS query does -- OpenSearch never uses it as its own fit score.
+        The flat basic-CRUD baseline still applies (unaffected: it's a
+        constant, not an average over other queries' evidence).
+        """
+        score = _engine_fit_score(
+            "opensearch",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts"]}},
+            {
+                "opensearch": {
+                    # Classified SEARCH (confidence 95) because some OTHER
+                    # query on db.posts needs full-text search -- q1 itself
+                    # carries no signal at all.
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+                }
+            },
+        )
+        assert score == BASIC_CRUD_SCORE
+
+    def test_non_pattern_only_engine_keeps_table_level_confidence(self):
+        """The fallback removed for OpenSearch is untouched for every other
+        engine (#475): DynamoDB's table-level recommendation really does
+        generalize across a table's queries.
+        """
+        score = _engine_fit_score(
+            "dynamodb",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts"]}},
+            {
+                "dynamodb": {
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+                }
+            },
+        )
+        assert score == 95
+
+    def test_opensearch_uses_its_own_matched_pattern_score(self):
+        """#475 review, finding 4: OpenSearch's fit is not a flat basic-CRUD
+        score whenever it lacks table-level evidence -- it first checks
+        whether the query itself appears in one of OpenSearch's own
+        detected patterns (mirroring the resolver's own first branch,
+        ``AssignmentResolver._compute_query_confidence``), and uses that
+        pattern's own table confidence, not the query's ``tables_accessed``
+        (``db.other`` below is never consulted; only the pattern's own
+        ``db.posts``).
+        """
+        score = _engine_fit_score(
+            "opensearch",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts", "db.other"]}},
+            {
+                "opensearch": {
+                    "table_recommendations": [
+                        {"table_id": "db.posts", "confidence_score": 85},
+                        {"table_id": "db.other", "confidence_score": 10},
+                    ],
+                    "workload_analysis": {
+                        "patterns_detected": [
+                            {
+                                "pattern_type": "full-text-search",
+                                "query_ids": ["q1"],
+                                "table_ids": ["db.posts"],
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+        assert score == 85
+
+    def test_opensearch_pattern_match_takes_priority_over_basic_crud(self):
+        """A matched pattern's score is used even when it is below the flat
+        basic-CRUD baseline -- real, query-level evidence always wins over
+        the fallback constant.
+        """
+        score = _engine_fit_score(
+            "opensearch",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts"]}},
+            {
+                "opensearch": {
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 15}],
+                    "workload_analysis": {
+                        "patterns_detected": [
+                            {
+                                "pattern_type": "wildcard-search",
+                                "query_ids": ["q1"],
+                                "table_ids": ["db.posts"],
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+        assert score == 15
+        assert score != BASIC_CRUD_SCORE
+
 
 class TestCanEngineServeQuery:
     """Test the capability check."""
@@ -169,7 +290,8 @@ class TestRunRealityCheck:
     def test_no_consolidation_when_engines_have_unique_value(self):
         """Two engines with different signal specializations should both survive."""
         assignment = _make_assignment(
-            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")]
+            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -260,7 +382,8 @@ class TestRunRealityCheck:
                 ("q1", "dynamodb"),
                 ("q2", "dynamodb"),
                 ("q3", "opensearch"),
-            ]
+            ],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -298,7 +421,8 @@ class TestRunRealityCheck:
     def test_text_search_not_consolidated_to_dynamodb(self):
         """Text search queries must stay in OpenSearch even with high table confidence."""
         assignment = _make_assignment(
-            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")]
+            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -405,6 +529,50 @@ class TestRunRealityCheck:
             "elasticache",
             "dynamodb",
         ]
+
+    def test_absorber_prefers_dynamodb_over_opensearchs_inflated_table_score(self):
+        """#475 (discourse/wordpress evidence): the consolidation absorber
+        must not pick OpenSearch for a plain ``COUNT(*)`` just because
+        OpenSearch's table-level recommendation is inflated by a DIFFERENT,
+        genuinely search-shaped query on the same table. Before this fix,
+        this is exactly how a maintainer's wordpress run moved plain
+        ``SQL_CALC_FOUND_ROWS``/``COUNT(*)`` queries from Aurora MySQL onto
+        OpenSearch during consolidation (``_find_best_absorber_for_query``
+        is the function Pass 2 calls to pick an absorber).
+        """
+        qa = {"query_id": "q2", "assigned_engine": "documentdb"}
+        # "aggregations" is broad enough to make OpenSearch an eligible
+        # absorber at all (``SPECIALIST_ABSORB_SIGNALS``), the same signal a
+        # plain COUNT(*) carries in the real pipeline -- this is not itself
+        # the bug, so both candidates compete on fit score alone.
+        query_signals = {"q2": ["aggregations"]}
+        query_map = {"q2": {"tables_accessed": ["db.posts"], "query_type": "SELECT"}}
+        analysis_outputs = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 90}]
+            },
+            # Classified SEARCH (confidence 95) purely because some OTHER
+            # query on db.posts needs full-text search -- q2 itself carries
+            # no search signal at all.
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+            },
+        }
+
+        absorber = _find_best_absorber_for_query(
+            qa,
+            committed_engines={"dynamodb", "opensearch"},
+            source_engine="documentdb",
+            query_signals=query_signals,
+            query_map=query_map,
+            analysis_outputs=analysis_outputs,
+            engine_queries={"dynamodb": [], "opensearch": []},
+            mandatory_committed_engines=set(),
+            primary_engine="dynamodb",
+        )
+
+        assert absorber is not None
+        assert absorber["target_engine"] == "dynamodb"
 
 
 class TestAuroraAbsorptionPass:
@@ -1211,6 +1379,256 @@ class TestOpenSearchJustificationFloor:
         )
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert engine_of["search"] == "dynamodb"
+
+    def test_never_justified_removal_claims_no_saving(self):
+        """#475 review, finding 3: when none of OpenSearch's FIRST-ASSIGNMENT
+        queries ever clear the floor, the recommendation text must not
+        present its removal as an infrastructure saving -- even though a
+        real cost estimate exists (``_engine_infra_cost`` is not patched out
+        of this fixture's bare ``analysis`` dict here, so the "Removes $"
+        branch is the only other thing that could fire).
+        """
+        result = self._run("SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?", 0.07)
+        os_recs = [r for r in result["recommendations"] if "opensearch" in r.lower()]
+        assert os_recs, result["recommendations"]
+        assert "No saving is claimed" in os_recs[0]
+        assert "never justified by the workload" in os_recs[0]
+        assert "Removes $" not in os_recs[0]
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert all(c.get("workload_justified") is False for c in from_os)
+
+    def test_justified_removal_still_claims_the_real_saving(self):
+        """The new wording only fires when nothing ever justified the engine
+        -- a genuinely justified-then-redundant removal still names the real
+        dollar figure (unaffected: #475 review, finding 3's negative case).
+        """
+        result = self._run("SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)", 5.0)
+        assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])
+        # dynamodb's own analysis has no cost_estimate in this fixture, so the
+        # "no specific infrastructure-cost figure" branch names it instead --
+        # neither claims a saving it can't ground, nor the new wording, since
+        # dynamodb is never subject to the opensearch-only #326 floor.
+        assert all(c.get("workload_justified") is None for c in result["consolidations"])
+
+
+class TestOpenSearchFloorAppliesWithoutMandatoryStatus:
+    """#475 review round 1 follow-up: the #326 floor must run for OpenSearch
+    whenever it is committed at all, not only when a signal override made
+    it "mandatory" -- otherwise a query that wins OpenSearch purely on fit
+    score (its own matched pattern, no override involved) is never
+    re-examined, reopening the gap this PR closes.
+    """
+
+    def test_opensearch_wins_on_score_alone_and_the_floor_still_moves_it(self):
+        assignment = {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": f"dq{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                for i in range(20)
+            ]
+            + [
+                {
+                    "query_id": "search",
+                    "assigned_engine": "opensearch",
+                    "assignment_reason": "highest confidence for opensearch",
+                }
+            ],
+        }
+        # No text_search (or any) signal for "search" at all: it is not a
+        # signal override, so it never becomes "mandatory".
+        triage = {
+            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "opensearch"}],
+            "signals": [],
+        }
+        collector = {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": f"dq{i}", "tables_accessed": ["db.posts"], "query_type": "SELECT"}
+                    for i in range(20)
+                ]
+                + [
+                    {
+                        "query_id": "search",
+                        "tables_accessed": ["db.users"],
+                        "query_type": "SELECT",
+                        # No search predicate at all -- shallow, whatever the score says.
+                        "query_text": (
+                            "SELECT a.id FROM db.users a LEFT JOIN db.groups g ON g.id=a.group_id"
+                        ),
+                        "calls_per_second": 0.3,
+                    }
+                ]
+            }
+        }
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 80}]
+            },
+            # OpenSearch's own matched pattern gives it a genuinely high,
+            # query-level score (not a table-wide bleed) -- high enough that
+            # Pass 0 would call it "unique" and never flag it for ordinary
+            # consolidation. Only the floor (now checking every committed
+            # OpenSearch, not just mandatory ones) catches it.
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 95}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "wildcard-search",
+                            "query_ids": ["search"],
+                            "table_ids": ["db.users"],
+                        }
+                    ]
+                },
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        assert result["unique_value_assessment"]["opensearch"]["unique_ratio"] == 1.0
+        assert not result["unique_value_assessment"]["opensearch"]["is_mandatory"]
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] != "opensearch"
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert from_os
+        assert all(c.get("workload_justified") is False for c in from_os)
+        assert all(c["saved_cost_estimate"] == 0 for c in from_os)
+        assert any("justification floor" in c["reason"] for c in from_os)
+
+
+class TestInCallReconcileAvoidsOrphanedRecords:
+    """#475 review round 1 follow-up: widening the floor to any committed
+    OpenSearch means a query Pass 2 just placed on OpenSearch can be moved
+    AGAIN by the same floor within one call -- a two-hop move no single
+    consolidation record describes, unless ``run_reality_check`` reconciles
+    before returning. Reverting that reconciliation call breaks this test
+    (and ``test_reality_check_request.py``'s external-mode fixtures) by
+    leaving a stale record ``moved_queries()`` cannot resolve back to any
+    query.
+    """
+
+    def test_queries_absorbed_then_floor_rejected_land_on_one_clean_record(self):
+        # dynamodb and documentdb own enough queries, matching OpenSearch's
+        # own "aggregations" capability closely enough, that OpenSearch
+        # looks like a plausible absorber for aurora_mysql's redundant
+        # COUNT(*) queries during Pass 2 -- then the floor (shallow, no
+        # search depth) rejects all of OpenSearch's resulting membership and
+        # redirects it onward in the SAME call.
+        assignment = {
+            "version": 1,
+            "query_assignments": [
+                {"query_id": "d0", "assigned_engine": "dynamodb", "assignment_reason": "t"},
+                {"query_id": "am0", "assigned_engine": "aurora_mysql", "assignment_reason": "t"},
+                {
+                    "query_id": "search",
+                    "assigned_engine": "opensearch",
+                    "assignment_reason": "highest confidence for opensearch",
+                },
+            ],
+        }
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "aurora_mysql"},
+                {"agent_type": "opensearch"},
+            ],
+            "signals": [
+                {"signal": "aggregations", "targets": ["dynamodb"], "query_ids": ["am0"]},
+            ],
+        }
+        collector = {
+            "metadata": {"source_database": {"engine": "mysql"}},
+            "queries": {
+                "query_patterns": [
+                    {"query_id": "d0", "tables_accessed": ["db.a"], "query_type": "SELECT"},
+                    {
+                        "query_id": "am0",
+                        "tables_accessed": ["db.posts"],
+                        "query_type": "SELECT",
+                        "query_text": "SELECT COUNT(*) FROM db.posts",
+                    },
+                    {
+                        "query_id": "search",
+                        "tables_accessed": ["db.users"],
+                        "query_type": "SELECT",
+                        "query_text": (
+                            "SELECT a.id FROM db.users a LEFT JOIN db.groups g ON g.id=a.group_id"
+                        ),
+                        "calls_per_second": 0.3,
+                    },
+                ]
+            },
+        }
+        analysis = {
+            "dynamodb": {"table_recommendations": [{"table_id": "db.a", "confidence_score": 80}]},
+            "aurora_mysql": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 60}]
+            },
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 95}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "wildcard-search",
+                            "query_ids": ["search"],
+                            "table_ids": ["db.users"],
+                        }
+                    ]
+                },
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] != "opensearch"
+        # Every record is self-consistent with the final assignment: no
+        # record claims more queries moved to an engine than actually sit
+        # there, and none describes a query that never actually took that
+        # path (the orphaned-record bug this guards against).
+        for c in result["consolidations"]:
+            moved = [
+                qa
+                for qa in result["revised_assignments"]
+                if qa["query_id"]
+                in {
+                    q["query_id"]
+                    for q in assignment["query_assignments"]
+                    if q["assigned_engine"] == c["from_engine"]
+                }
+                and qa["assigned_engine"] == c["to_engine"]
+            ]
+            assert len(moved) == c["query_count"], c
+
+
+class TestWorkloadEverJustified:
+    """Direct tests of ``_workload_ever_justified`` (#475 review, finding 3)."""
+
+    def test_none_when_no_floor_applies(self):
+        qas = [{"query_id": "q1"}]
+        query_map = {"q1": {"query_text": "SELECT * FROM t WHERE id = $1", "calls_per_second": 50}}
+        assert _workload_ever_justified("dynamodb", qas, query_map, None) is None
+
+    def test_none_when_engine_owns_nothing(self):
+        assert _workload_ever_justified("opensearch", [], {}, None) is None
+
+    def test_false_when_no_first_assignment_query_clears_the_floor(self):
+        qas = [{"query_id": "q1"}]
+        query_map = {
+            "q1": {"query_text": "SELECT * FROM t WHERE name LIKE ?", "calls_per_second": 0.1}
+        }
+        assert _workload_ever_justified("opensearch", qas, query_map, None) is False
+
+    def test_true_when_any_first_assignment_query_clears_the_floor(self):
+        qas = [{"query_id": "shallow"}, {"query_id": "deep"}]
+        query_map = {
+            "shallow": {"query_text": "SELECT * FROM t WHERE name LIKE ?", "calls_per_second": 0.1},
+            "deep": {
+                "query_text": "SELECT * FROM t WHERE MATCH(a,b) AGAINST (?)",
+                "calls_per_second": 5.0,
+            },
+        }
+        assert _workload_ever_justified("opensearch", qas, query_map, None) is True
 
 
 class TestOpenSearchJustificationFunction:

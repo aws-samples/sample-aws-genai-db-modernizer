@@ -160,7 +160,7 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     assert roles["elasticache"] == "Cache layer"
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(46% of queries) and dynamodb for primary data storage and elasticache "
+        "(41% of queries) and dynamodb for primary data storage and elasticache "
         "for caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )
