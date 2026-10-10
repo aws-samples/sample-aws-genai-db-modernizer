@@ -2010,10 +2010,13 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             "|---|---|---|---|---|",
         ]
         for m in mappings:
+            # Code-span cells go through md_cell too, as in the schema table below (#466).
+            source = escaping.md_cell(f"`{escaping.md_code(m.get('source_table', '?'))}`")
+            target = escaping.md_cell(f"`{escaping.md_code(m.get('target_table', '-'))}`")
             out.append(
-                f"| `{escaping.md_code(m.get('source_table', '?'))}` "
+                f"| {source} "
                 f"| {escaping.md_cell(m.get('recommended_database', '?'))} "
-                f"| `{escaping.md_code(m.get('target_table', '-'))}` "
+                f"| {target} "
                 f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
                 f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
             )
