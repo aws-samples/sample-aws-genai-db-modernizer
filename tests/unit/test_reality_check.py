@@ -6,24 +6,40 @@ from src.agents.referee.reality_check import (
     TINY_MANDATORY_QUERY_THRESHOLD,
     _can_engine_serve_query,
     _engine_fit_score,
+    _find_best_absorber_for_query,
     _run_aurora_absorption_pass,
     run_reality_check,
 )
 
 
-def _make_assignment(query_engine_pairs: list[tuple[str, str]]) -> dict:
-    """Build a minimal assignment dict."""
-    return {
-        "version": 1,
-        "query_assignments": [
-            {
-                "query_id": qid,
-                "assigned_engine": engine,
-                "assignment_reason": "test",
-            }
-            for qid, engine in query_engine_pairs
-        ],
-    }
+def _make_assignment(
+    query_engine_pairs: list[tuple[str, str]],
+    signal_overrides: dict[str, str] | None = None,
+) -> dict:
+    """Build a minimal assignment dict.
+
+    ``signal_overrides`` (``query_id -> signal name``) marks a query the way
+    the real resolver does (#475 review): ``signal_override`` set, plus an
+    ``assignment_reason`` starting with "signal override" --
+    ``_is_signal_override`` checks both. Omitting it (the default) means a
+    query is NOT mandatory, even if its engine happens to be a specialist
+    like OpenSearch -- tests that need Pass 0's mandatory protection must
+    opt in here instead of relying on an inflated fit score to look unique
+    by accident.
+    """
+    signal_overrides = signal_overrides or {}
+    query_assignments = []
+    for qid, engine in query_engine_pairs:
+        signal = signal_overrides.get(qid)
+        qa = {
+            "query_id": qid,
+            "assigned_engine": engine,
+            "assignment_reason": f"signal override: {signal}" if signal else "test",
+        }
+        if signal:
+            qa["signal_override"] = signal
+        query_assignments.append(qa)
+    return {"version": 1, "query_assignments": query_assignments}
 
 
 def _make_triage(signals: list[dict] | None = None) -> dict:
@@ -131,6 +147,47 @@ class TestEngineFitScore:
         )
         assert score == 90
 
+    def test_opensearch_ignores_table_level_confidence(self):
+        """#475: a table's confidence from analysis reflects whether ANY
+        query against it needs search/time-series handling, not whether
+        THIS query does -- OpenSearch never uses it as its own fit score.
+        The flat basic-CRUD baseline still applies (unaffected: it's a
+        constant, not an average over other queries' evidence).
+        """
+        score = _engine_fit_score(
+            "opensearch",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts"]}},
+            {
+                "opensearch": {
+                    # Classified SEARCH (confidence 95) because some OTHER
+                    # query on db.posts needs full-text search -- q1 itself
+                    # carries no signal at all.
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+                }
+            },
+        )
+        assert score == BASIC_CRUD_SCORE
+
+    def test_non_pattern_only_engine_keeps_table_level_confidence(self):
+        """The fallback removed for OpenSearch is untouched for every other
+        engine (#475): DynamoDB's table-level recommendation really does
+        generalize across a table's queries.
+        """
+        score = _engine_fit_score(
+            "dynamodb",
+            {"query_id": "q1"},
+            {},
+            {"q1": {"tables_accessed": ["db.posts"]}},
+            {
+                "dynamodb": {
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+                }
+            },
+        )
+        assert score == 95
+
 
 class TestCanEngineServeQuery:
     """Test the capability check."""
@@ -169,7 +226,8 @@ class TestRunRealityCheck:
     def test_no_consolidation_when_engines_have_unique_value(self):
         """Two engines with different signal specializations should both survive."""
         assignment = _make_assignment(
-            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")]
+            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -260,7 +318,8 @@ class TestRunRealityCheck:
                 ("q1", "dynamodb"),
                 ("q2", "dynamodb"),
                 ("q3", "opensearch"),
-            ]
+            ],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -298,7 +357,8 @@ class TestRunRealityCheck:
     def test_text_search_not_consolidated_to_dynamodb(self):
         """Text search queries must stay in OpenSearch even with high table confidence."""
         assignment = _make_assignment(
-            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")]
+            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "opensearch")],
+            signal_overrides={"q3": "text_search"},
         )
         triage = _make_triage(
             [
@@ -405,6 +465,50 @@ class TestRunRealityCheck:
             "elasticache",
             "dynamodb",
         ]
+
+    def test_absorber_prefers_dynamodb_over_opensearchs_inflated_table_score(self):
+        """#475 (discourse/wordpress evidence): the consolidation absorber
+        must not pick OpenSearch for a plain ``COUNT(*)`` just because
+        OpenSearch's table-level recommendation is inflated by a DIFFERENT,
+        genuinely search-shaped query on the same table. Before this fix,
+        this is exactly how a maintainer's wordpress run moved plain
+        ``SQL_CALC_FOUND_ROWS``/``COUNT(*)`` queries from Aurora MySQL onto
+        OpenSearch during consolidation (``_find_best_absorber_for_query``
+        is the function Pass 2 calls to pick an absorber).
+        """
+        qa = {"query_id": "q2", "assigned_engine": "documentdb"}
+        # "aggregations" is broad enough to make OpenSearch an eligible
+        # absorber at all (``SPECIALIST_ABSORB_SIGNALS``), the same signal a
+        # plain COUNT(*) carries in the real pipeline -- this is not itself
+        # the bug, so both candidates compete on fit score alone.
+        query_signals = {"q2": ["aggregations"]}
+        query_map = {"q2": {"tables_accessed": ["db.posts"], "query_type": "SELECT"}}
+        analysis_outputs = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 90}]
+            },
+            # Classified SEARCH (confidence 95) purely because some OTHER
+            # query on db.posts needs full-text search -- q2 itself carries
+            # no search signal at all.
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
+            },
+        }
+
+        absorber = _find_best_absorber_for_query(
+            qa,
+            committed_engines={"dynamodb", "opensearch"},
+            source_engine="documentdb",
+            query_signals=query_signals,
+            query_map=query_map,
+            analysis_outputs=analysis_outputs,
+            engine_queries={"dynamodb": [], "opensearch": []},
+            mandatory_committed_engines=set(),
+            primary_engine="dynamodb",
+        )
+
+        assert absorber is not None
+        assert absorber["target_engine"] == "dynamodb"
 
 
 class TestAuroraAbsorptionPass:

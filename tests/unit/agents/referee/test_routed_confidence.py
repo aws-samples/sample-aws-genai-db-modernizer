@@ -53,8 +53,11 @@ class TestOwnerFit:
             _qa("k2", "dynamodb"),
         )
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
-        # text_search matches OpenSearch's capability: 80 + bonus, capped at 100
-        assert fits["opensearch"].confidence == min(100, 80 + SIGNAL_MATCH_BONUS)
+        # OpenSearch never uses the table-level average as its own fit (#475:
+        # that number reflects whether ANY query against the table needs
+        # search, not whether this one does) -- the basic-CRUD baseline plus
+        # the text_search capability-match bonus, not 80 + bonus.
+        assert fits["opensearch"].confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
         assert fits["opensearch"].basis == BASIS_OWNED
         assert fits["opensearch"].queries == 2
         assert fits["opensearch"].tables == 1
@@ -76,7 +79,7 @@ class TestOwnerFit:
         a = _assignment(_qa("s1", "opensearch"), _qa("k1", "opensearch", in_scope=False))
         fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["opensearch"]
         assert fit.queries == 1
-        assert fit.confidence == min(100, 80 + SIGNAL_MATCH_BONUS)
+        assert fit.confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
 
     def test_engine_with_no_routed_query_has_none(self):
         a = _assignment(_qa("s1", "opensearch"))
@@ -96,10 +99,12 @@ class TestCustomerOverride:
             _qa("k2", "dynamodb"),
         )
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
-        # OpenSearch rates users 10 and serves key-value lookups (get by _id): 10 + bonus.
+        # OpenSearch ignores the "users" table-level average (#475) and uses
+        # the basic-CRUD baseline instead: it still serves key-value lookups
+        # (get by _id), so the signal-match bonus applies on top.
         # The stored confidence (95) and DynamoDB's fit (90+) are not used.
         assert fits["opensearch"].queries == 1
-        assert fits["opensearch"].confidence == 10 + SIGNAL_MATCH_BONUS
+        assert fits["opensearch"].confidence == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
         assert fits["dynamodb"].queries == 1
 
 

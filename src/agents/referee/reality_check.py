@@ -33,6 +33,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
 # ---------------------------------------------------------------------------
@@ -1439,12 +1440,22 @@ def _engine_fit_score(
     engine_caps = ENGINE_CAPABILITIES.get(engine, set())
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
 
-    # Start with table-level confidence from analysis
+    # Start with table-level confidence from analysis -- except for
+    # ``PATTERN_ONLY_ENGINES`` (#475): OpenSearch's table-level recommendation
+    # reflects whether ANY query against the table needs search/time-series
+    # handling, not whether THIS query does, so it never stands in for this
+    # query's own fit here. Those engines still get the flat basic-CRUD
+    # baseline below when they have the capability (unaffected by the same
+    # table-wide bleed, since it's a constant, not an average over other
+    # queries' evidence), plus the signal-capability bonus/penalty just like
+    # every other engine.
     target_analysis = analysis_outputs.get(engine, {})
     table_recs = {r["table_id"]: r for r in target_analysis.get("table_recommendations", [])}
-    table_scores = [
-        table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs
-    ]
+    table_scores = (
+        [table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs]
+        if engine not in PATTERN_ONLY_ENGINES
+        else []
+    )
 
     if table_scores:
         base_score = sum(table_scores) / len(table_scores)

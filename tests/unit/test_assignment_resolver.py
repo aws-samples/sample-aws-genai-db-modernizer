@@ -41,6 +41,20 @@ def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> di
     }
 
 
+def _give_real_search_depth(collector: dict, query_id: str = "q1", cps: float = 5.0) -> None:
+    """Mutate a collector fixture's query so ``opensearch_justification`` (#326)
+    agrees it clears the floor: a real relevance-ranking match (``MATCH ...
+    AGAINST``), not a bare ``LIKE``, at traffic above the 1 call/s floor.
+    Needed because the text_search signal override is now gated on this
+    (#475) -- a test that means to exercise the override itself, rather than
+    the justification floor, must give it a query the floor accepts.
+    """
+    for q in collector["queries"]["query_patterns"]:
+        if q["query_id"] == query_id:
+            q["query_text"] = "SELECT * FROM db.users WHERE MATCH(bio) AGAINST (?)"
+            q["calls_per_second"] = cps
+
+
 def _make_triage(engines: list[str], signals: list[dict] | None = None) -> dict:
     return {
         "selected_agents": [{"agent_type": e} for e in engines],
@@ -78,6 +92,7 @@ class TestSignalOverrides:
             ],
         )
         collector = _make_collector(["q1", "q2"])
+        _give_real_search_depth(collector)
         analysis = {
             "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
             "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
@@ -132,6 +147,7 @@ class TestSignalOverrides:
             ],
         )
         collector = _make_collector(["q1", "q2", "q3"])
+        _give_real_search_depth(collector)
         analysis = {
             "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
             "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
@@ -219,6 +235,7 @@ class TestOpenSearchNeverOwnsAWrite:
             ],
         )
         collector = _make_collector(["q1"])  # defaults to query_type SELECT
+        _give_real_search_depth(collector)
         analysis = {
             "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
             "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
@@ -440,7 +457,22 @@ class TestAntiPatternPenalties:
                     ],
                 },
             },
-            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=60),
+            # OpenSearch's own pattern match for q1 (#475: it only scores a
+            # query that appears in one of its own detected patterns, never
+            # a table-wide average).
+            "opensearch": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "full-text-search",
+                            "query_ids": ["q1"],
+                            "table_ids": ["db.users"],
+                        }
+                    ],
+                    "anti_patterns_detected": [],
+                },
+            },
         }
 
         result = resolver.resolve(triage, analysis, collector)
@@ -613,7 +645,16 @@ class TestCapabilityScopedCrossEnginePenalty:
             "opensearch": {
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 78}],
                 "workload_analysis": {
-                    "patterns_detected": [],
+                    # OpenSearch's own pattern match for q1 (#475): a base
+                    # score only when the query appears in one of its own
+                    # detected patterns, never a table-wide average.
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "full-text-search",
+                            "query_ids": ["q1"],
+                            "table_ids": ["db.users"],
+                        }
+                    ],
                     "anti_patterns_detected": [
                         {"anti_pattern_type": "acid-transactions", "query_ids": ["q1"]}
                     ],
@@ -1117,6 +1158,169 @@ class TestComputeQueryConfidence:
         # Should use tables_accessed (db.users=75), not global average
         assert q1.confidence == 75
 
+    def test_opensearch_scores_zero_without_its_own_pattern_match(self):
+        """OpenSearch's fit is a query-level property, not a table one (#475):
+        the resolver's atomic unit is the query. A table classified
+        SEARCH/TIMESERIES because some OTHER query needs it must not hand
+        this query a non-zero score through the table-average fallback that
+        every other engine still uses.
+        """
+        resolver = AssignmentResolver()
+        analysis = _make_analysis("opensearch", ["db.users"], confidence=90)
+        query = {"query_id": "q1", "tables_accessed": ["db.users"]}
+        score = resolver._compute_query_confidence("q1", query, "opensearch", analysis)
+        assert score == 0
+
+    def test_non_pattern_only_engine_still_gets_the_table_average_fallback(self):
+        """The fallback removed for ``PATTERN_ONLY_ENGINES`` is untouched for
+        every other engine (#475): Aurora/DynamoDB/DocumentDB's table-level
+        recommendation really does generalize across a table's queries.
+        """
+        resolver = AssignmentResolver()
+        analysis = _make_analysis("dynamodb", ["db.users"], confidence=90)
+        query = {"query_id": "q1", "tables_accessed": ["db.users"]}
+        score = resolver._compute_query_confidence("q1", query, "dynamodb", analysis)
+        assert score == 90
+
+
+class TestOpenSearchScoresTheQueryNotTheTable:
+    """#475: OpenSearch won 144 plain-lookup reads in a maintainer's
+    discourse run because its own analysis classifies a WHOLE TABLE as
+    SEARCH the moment any one query against it needs full-text/wildcard/
+    regex search, and that table-wide confidence then leaked into every
+    other, unrelated query on the same table through
+    ``_compute_query_confidence``'s table-average fallback. The resolver's
+    atomic unit is the query, not the table it happens to touch.
+    """
+
+    def test_plain_lookup_does_not_inherit_a_neighbors_search_classification(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["aurora_mysql", "opensearch"])
+        collector = _make_collector(["q1", "q2"], tables=["db.posts"])
+        for q in collector["queries"]["query_patterns"]:
+            if q["query_id"] == "q2":
+                q["query_text"] = "SELECT * FROM db.posts WHERE title LIKE ?"
+        analysis = {
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.posts"], confidence=60),
+            "opensearch": {
+                # The table is classified SEARCH (confidence 95) purely
+                # because q2 needs wildcard search -- q1 never appears in
+                # this pattern's query_ids.
+                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "wildcard-search",
+                            "query_ids": ["q2"],
+                            "table_ids": ["db.posts"],
+                        }
+                    ],
+                    "anti_patterns_detected": [],
+                },
+            },
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+        assert q1.assigned_engine != "opensearch"
+
+
+class TestTextSearchOverrideNeedsJustification:
+    """#475/#326/#480: the text_search signal override only pins OpenSearch
+    when ``reality_check.opensearch_justification`` agrees the query has
+    real search depth and clears the traffic/corpus floor -- the same rule
+    the reality check later applies, so the override and the floor never
+    disagree. A signal alone (any ``LIKE``, including a parameterized
+    ``LIKE ?``) is not enough.
+    """
+
+    def test_shallow_low_traffic_like_does_not_override(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "LIKE query",
+                }
+            ],
+        )
+        collector = _make_collector(["q1"])
+        for q in collector["queries"]["query_patterns"]:
+            q["query_text"] = "SELECT * FROM db.users WHERE name LIKE ?"
+            q["calls_per_second"] = 0.1
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine != "opensearch"
+        assert q1.signal_override is None
+        assert "signal override" not in q1.assignment_reason
+
+    def test_tsvector_construction_with_no_match_operator_does_not_override(self):
+        """A bare ``to_tsvector(...)`` with no ``@@`` is index/document
+        construction, not a search (#475 discourse evidence) -- never
+        justified regardless of traffic.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "to_tsvector(...)",
+                }
+            ],
+        )
+        collector = _make_collector(["q1"])
+        for q in collector["queries"]["query_patterns"]:
+            q["query_text"] = "SELECT to_tsvector($1, $2)"
+            q["calls_per_second"] = 20.0
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine != "opensearch"
+        assert q1.signal_override is None
+
+    def test_real_search_depth_at_sufficient_traffic_still_overrides(self):
+        """The gate is a floor, not a ban: a genuine, well-trafficked search
+        still gets pinned."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(
+            ["dynamodb", "opensearch"],
+            signals=[
+                {
+                    "signal": "text_search",
+                    "targets": ["opensearch"],
+                    "query_ids": ["q1"],
+                    "evidence": "MATCH ... AGAINST",
+                }
+            ],
+        )
+        collector = _make_collector(["q1"])
+        _give_real_search_depth(collector)
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
+            "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "opensearch"
+        assert q1.signal_override == "text_search"
+
 
 class TestAssignmentReasons:
     """Test that assignment reasons are descriptive."""
@@ -1128,6 +1332,7 @@ class TestAssignmentReasons:
             signals=[{"signal": "text_search", "targets": ["opensearch"], "query_ids": ["q1"]}],
         )
         collector = _make_collector(["q1"])
+        _give_real_search_depth(collector)
         analysis = {
             "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
             "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),
@@ -1145,6 +1350,7 @@ class TestAssignmentReasons:
             signals=[{"signal": "text_search", "targets": ["opensearch"], "query_ids": ["q1"]}],
         )
         collector = _make_collector(["q1", "q2"])
+        _give_real_search_depth(collector)
         analysis = {
             "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=90),
             "opensearch": _make_analysis("opensearch", ["db.users"], confidence=50),

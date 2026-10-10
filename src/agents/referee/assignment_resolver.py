@@ -45,6 +45,7 @@ from src.agents.referee.capability_registry import (
     detect_required_capabilities,
 )
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
+from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
@@ -61,6 +62,7 @@ from src.contracts.assignment_models import (
 from src.shared.engine_capabilities import (
     ACID_TRANSACTION_ENGINES,
     FUZZY_SEARCH_ENGINES,
+    PATTERN_ONLY_ENGINES,
     TEXT_SEARCH_ENGINES,
 )
 from src.shared.engine_names import display_engine
@@ -78,6 +80,24 @@ SIGNAL_ENGINE_OVERRIDES: dict[str, str] = {
     "text_search": "opensearch",
     "graph_traversal": "neptune",
 }
+
+# Engines excluded from the SIGNAL_ENGINE_OVERRIDES entry above unless the
+# #326 justification floor agrees the signal is real (#475): a text_search
+# signal alone pinned any `LIKE`, including a parameterized `LIKE ?` with no
+# visible wildcard, to OpenSearch regardless of traffic or search depth --
+# exactly the mechanism that kept 4 shallow, low-traffic admin-search queries
+# on a standing OpenSearch domain in a maintainer's run (#326). Reusing
+# ``reality_check.opensearch_justification`` keeps the override and the
+# reality-check floor applying the same rule, instead of two copies that can
+# drift. Scoped by override engine, not by signal name, so a future signal
+# that also maps to opensearch gets the same gate for free.
+JUSTIFICATION_GATED_OVERRIDE_ENGINES: frozenset[str] = frozenset({"opensearch"})
+
+# ``PATTERN_ONLY_ENGINES`` (query-is-the-atomic-unit scoring, #475) is
+# imported from ``src.shared.engine_capabilities`` -- the reality check's own
+# per-query fit score (``reality_check._engine_fit_score``) needs the exact
+# same set, so it lives in the cross-module home both already use for
+# engine-capability facts, not a second, possibly-drifted copy here.
 
 # Analysis anti-pattern types that indicate an engine is the WRONG fit for a query.
 # When a query appears in one of these anti-patterns for an engine, that engine's
@@ -246,9 +266,15 @@ class AssignmentResolver:
         # selected_agents can be a list of strings or dicts with agent_type
         raw_selected = triage.get("selected_agents", [])
         selected_engines = {a["agent_type"] if isinstance(a, dict) else a for a in raw_selected}
+        # Computed early (moved up from Step 4b below, #475) so Step 1 can gate
+        # a justification-gated signal override by the same source engine the
+        # #326 justification floor itself keys off.
+        source_engine = source_database_engine(collector_output)
 
         # Step 1: Build signal-based overrides from triage
-        signal_overrides = self._build_signal_overrides(triage, selected_engines)
+        signal_overrides = self._build_signal_overrides(
+            triage, selected_engines, queries, source_engine
+        )
 
         # Step 2: Build per-query anti-pattern penalties from analysis
         anti_pattern_map, anti_pattern_notes = self._build_anti_pattern_map(analysis_outputs)
@@ -326,7 +352,6 @@ class AssignmentResolver:
         # step after this one (co-dependency groups, ties, the Aurora fallback, the
         # utility-statement pin, table derivation) only ever sees the winner, the same
         # as a homogeneous source only ever had one Aurora candidate to begin with.
-        source_engine = source_database_engine(collector_output)
         aurora_engine_choice: AuroraEngineChoice | None = None
         both_aurora = AURORA_ENGINES & set(analysis_outputs)
         if source_engine not in SOURCE_ENGINE_TO_AURORA and len(both_aurora) == 2:
@@ -637,6 +662,8 @@ class AssignmentResolver:
         self,
         triage: dict,
         selected_engines: set[str],
+        queries: list[dict],
+        source_engine: str,
     ) -> dict[str, dict]:
         """Build query_id → {engine, signal} overrides from triage signals.
 
@@ -644,8 +671,18 @@ class AssignmentResolver:
         - The signal type has a known engine mapping (SIGNAL_ENGINE_OVERRIDES)
         - The target engine was selected by triage (available for assignment)
         - The signal has specific query_ids attached
+        - For a ``JUSTIFICATION_GATED_OVERRIDE_ENGINES`` target (opensearch,
+          #475): the #326 justification floor
+          (``reality_check.opensearch_justification``) agrees, per query,
+          that the signal reflects real search depth and enough traffic or
+          corpus size -- a signal alone (e.g. any ``LIKE``, including a
+          parameterized ``LIKE ?`` with no visible wildcard) is not enough to
+          pin a standing engine regardless of load. A query the floor
+          rejects is not forced anywhere; it falls through to normal
+          confidence scoring instead.
         """
         overrides: dict[str, dict] = {}
+        query_map: dict[str, dict] | None = None
         for signal in triage.get("signals", []):
             signal_name = signal.get("signal", "")
             override_engine = SIGNAL_ENGINE_OVERRIDES.get(signal_name)
@@ -653,7 +690,15 @@ class AssignmentResolver:
                 continue
             if override_engine not in selected_engines:
                 continue
-            for qid in signal.get("query_ids", []):
+            qids = list(signal.get("query_ids", []))
+            if override_engine in JUSTIFICATION_GATED_OVERRIDE_ENGINES:
+                if query_map is None:
+                    query_map = {q["query_id"]: q for q in queries}
+                verdicts = opensearch_justification(
+                    [{"query_id": qid} for qid in qids], query_map, source_engine
+                )
+                qids = [qid for qid in qids if verdicts.get(qid, (False, ""))[0]]
+            for qid in qids:
                 overrides[qid] = {
                     "engine": override_engine,
                     "signal": signal_name,
@@ -745,7 +790,11 @@ class AssignmentResolver:
         """Compute base confidence (0–100) for a query→engine pair.
 
         Uses query-level pattern matching first, then falls back to
-        table-level averaging only if the query isn't found in any pattern.
+        table-level averaging only if the query isn't found in any pattern --
+        except for ``PATTERN_ONLY_ENGINES`` (#475), which never fall back:
+        the resolver's atomic unit is the query, not the table, and for these
+        engines a table-wide classification earned by a different query is
+        not evidence about this one.
         """
         table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
         wa = analysis.get("workload_analysis", {})
@@ -765,6 +814,9 @@ class AssignmentResolver:
             ]
             if matched_scores:
                 return int(sum(matched_scores) / len(matched_scores))
+
+        if engine in PATTERN_ONLY_ENGINES:
+            return 0
 
         # Second: use the query's tables_accessed to look up table recommendations
         query_tables = query.get("tables_accessed", [])

@@ -314,10 +314,14 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
 
     # v1 -> final per-engine query counts, so the gate can show the shift
     # instead of a maintainer having to open the artifact themselves.
+    # #475: OpenSearch's first-assignment count on wordpress dropped from 10
+    # to 1 (base-score inflation and the ungated text_search override both
+    # fixed), with the 9 non-search reads it used to win now correctly on
+    # aurora_mysql.
     assert rc["before_distribution"] == {
         "dynamodb": 33,
-        "aurora_mysql": 58,
-        "opensearch": 10,
+        "aurora_mysql": 67,
+        "opensearch": 1,
         "documentdb": 6,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
