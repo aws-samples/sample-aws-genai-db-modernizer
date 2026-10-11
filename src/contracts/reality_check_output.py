@@ -20,6 +20,15 @@ Version History:
   floor applies) -- an engine that never did is removed later with no saving
   claimed for it, not presented as giving up something that earned its place
   (review of #475, finding 3)
+- 1.7 (2026-10-12): UniqueValueAssessment.tie_unresolved, floor_unplaced_queries
+  and floor_unplaced_reason declared explicitly -- without them Pydantic
+  silently dropped the same way cost_justification did in 1.5. tie_unresolved
+  marks an engine Phase 1 found tied with another on burden-per-unique-query,
+  with no ADR-031 rule yet to decide between them (#503), so both are kept;
+  floor_unplaced_queries/_reason record a mandatory engine's queries that
+  fail the justification floor (#326, #167) but have no eligible destination
+  either, so the engine is kept with the reason stated rather than silently
+  unchanged (review of #502, round 6)
 """
 
 from pydantic import BaseModel, Field
@@ -60,6 +69,31 @@ class UniqueValueAssessment(BaseModel):
             "workload share -- set when a mandatory signal override alone did not excuse it "
             "from the operational-burden review (#326 for opensearch, #167 for any other "
             "mandatory engine)"
+        ),
+    )
+    tie_unresolved: bool = Field(
+        default=False,
+        description=(
+            "Phase 1 found this engine tied with another on burden-per-unique-query, and "
+            "the tiebreak (fewer destination engines, then least total fit lost) was also "
+            "an exact tie -- no ADR-031 rule yet decides between two such engines (#503), "
+            "so both stay committed rather than one being picked arbitrarily"
+        ),
+    )
+    floor_unplaced_queries: list[str] = Field(
+        default_factory=list,
+        description=(
+            "This engine's queries that failed the mandatory-engine justification floor "
+            "(#326, #167) but had no eligible destination engine either, so the engine "
+            "keeps them"
+        ),
+    )
+    floor_unplaced_reason: str | None = Field(
+        None,
+        description=(
+            "Why floor_unplaced_queries stayed: no committed engine was eligible to serve "
+            "them, stated explicitly rather than leaving the engine unchanged with no "
+            "recorded reason"
         ),
     )
 
@@ -125,7 +159,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.6", description="Contract version")
+    contract_version: str = Field(default="1.7", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )

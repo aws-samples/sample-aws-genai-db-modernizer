@@ -54,11 +54,14 @@ class TestServiceabilityGateAggregationAndJoins:
             [f"dq{i}" for i in range(20)] + [f"aq{i}" for i in range(4)] + ["agg1"]
         )
         analysis = {
+            # DynamoDB clearly, not just marginally, outscores Aurora MySQL on
+            # their shared table -- a 30-point gap, not a tie, so the move
+            # below is a real score comparison, not a tie-break artifact.
             "dynamodb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
             },
             "aurora_mysql": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
             },
         }
 
@@ -83,12 +86,13 @@ class TestServiceabilityGateAggregationAndJoins:
             "query_capabilities": {},
         }
         collector = _make_collector([f"dq{i}" for i in range(20)] + ["aq1"])
+        # A clear, not a tied, score gap -- see test_sum_join_query_blocked_from_dynamodb.
         analysis = {
             "dynamodb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
             },
             "aurora_mysql": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
             },
         }
 

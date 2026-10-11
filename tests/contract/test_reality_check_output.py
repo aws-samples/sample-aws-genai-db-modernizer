@@ -221,7 +221,7 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.6"
+        assert output.contract_version == "1.7"
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.

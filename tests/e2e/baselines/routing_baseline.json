@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "Round-1 review of #500: the pattern-match bonus and its 100-point cap are removed outright, not just capped differently -- #302 scores every query from its own tables only; per-query pattern evidence is deferred to #491's engine-neutral detectors inside the weighted pattern dimension, never a flat bonus on top. wordpress v2 (aurora_mysql/dynamodb/documentdb): main 49/58/0 -> #487 44/63/0 -> this PR 30/56/21. DocumentDB's surviving share is a reality-check Pass 0 order-dependence bug (Aurora MySQL is checked first and partially consolidated, so DocumentDB is never re-checked), filed as #501 and fixed in a PR stacked on this one -- not a scoring edge, so the three-engine shape is not asserted as the intended target, only measured. discourse v2 (aurora_postgresql/dynamodb): main 1280/374 (77.4%/22.6%) -> #487 1306/348 (78.9%/21.1%) -> this PR 1091/563 (66.0%/34.0%) -- Aurora PostgreSQL's share drops, not rises, once the bonus's ties (previously decided by the source-compatible rule) are gone and each query's own table score decides every pick outright.",
+  "reason": "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one.",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -16,7 +16,11 @@
     "Review of #375: finding 1 (critical) -- utility statements now get a sql_admin hard capability only Aurora has, so the serviceability gate keeps them on the source-compatible engine through the reality check instead of undoing the #327 pin; finding 2 extends the detector to pg_* catalog tables without the pg_catalog. prefix, transaction control (BEGIN/COMMIT/ROLLBACK/SAVEPOINT/RELEASE), TRUNCATE, and leading comments; finding 3 fixes complex_joins to fire on a 3-table join (join_count >= 2), not just 4+; finding 4 makes the OpenSearch search-depth decision per query (a search predicate plus ranking/fuzzy/facets in the SAME query, never a bare GROUP BY or CREATE EXTENSION/to_tsvector construction) and adds a corpus-size floor; finding 6 extends the aggregation capability to GROUP_CONCAT/STRING_AGG/ARRAY_AGG/window functions via the shared is_dedup_only_group_by; finding 8 applies the same hard-capability gate at the initial v1 assignment, not just inside the reality check. Combined, this moves far more wordpress queries onto aurora_mysql (28 -> 49) since real aggregates and 3-table joins no longer round-trip through DynamoDB even transiently, and keeps every utility statement on the source-compatible engine on both samples (0 off-Aurora, was 13 on wordpress / 3 on discourse).",
     "Review of #375 (second recheck): B1 fixes two real bugs in the OpenSearch search-depth rule -- the fuzzy-match regex was inverted (it matched a LIKE pattern's own wildcard and missed the real pg_trgm % operator), and the floor is now decided per query (one shallow query no longer sinks a deep one, and vice versa), with the corpus proxy's comment now explicit that it measures result size, not corpus size; B2 blocks a join ever being consolidated onto DynamoDB from a non-Aurora engine in the reality check, and adds a computed_join hard capability so a join on a function call (lower(name) = ...) never lands on a key-value store at any stage; B3 changes commit 2fb429e's trailer from 'Closes #340 (routing part)' to 'Refs #340' so merging does not close the Epic, and the PR body no longer contains a literal 'Closes #167' substring that GitHub's auto-linker picked up despite the Refs wording. Also: the floor's justification text now only attaches to the consolidation record it actually caused, the OpenSearch/cost-share floor reasons use display names, and the 'Saves ~/mo' recommendation line is now labelled as an operational-overhead placeholder, not the real infrastructure cost. Routing numbers: wordpress unchanged (aurora_mysql 49, dynamodb 58); discourse aurora_postgresql 1281 -> 1283 (the two previously-misrouted joins).",
     "#302: a query's own tables_accessed (not a pattern's full table list) now decides its base score, with a matched pattern as a bonus rather than an override. This moves many queries whose score was previously averaged over a broad pattern's unrelated tables (most of a workload, for a common pattern like pagination or simple-join) back onto the engine their own tables actually support. wordpress: aurora_mysql v1 58->67->76 (pre-#487, #487, #302), DocumentDB now survives Reality Check with 18 of 107 queries instead of being fully absorbed. discourse: DynamoDB's final share goes 22.4%->28.2% (371->466 queries) as several dozen queries move back onto DynamoDB or Aurora PostgreSQL from scores that were previously deflated by averaging over an unrelated, much larger table set.",
-    "Round-1 review of #500: the pattern-match bonus and its 100-point cap are removed outright, not just capped differently -- #302 scores every query from its own tables only; per-query pattern evidence is deferred to #491's engine-neutral detectors inside the weighted pattern dimension, never a flat bonus on top. wordpress v2 (aurora_mysql/dynamodb/documentdb): main 49/58/0 -> #487 44/63/0 -> this PR 30/56/21. DocumentDB's surviving share is a reality-check Pass 0 order-dependence bug (Aurora MySQL is checked first and partially consolidated, so DocumentDB is never re-checked), filed as #501 and fixed in a PR stacked on this one -- not a scoring edge, so the three-engine shape is not asserted as the intended target, only measured. discourse v2 (aurora_postgresql/dynamodb): main 1280/374 (77.4%/22.6%) -> #487 1306/348 (78.9%/21.1%) -> this PR 1091/563 (66.0%/34.0%) -- Aurora PostgreSQL's share drops, not rises, once the bonus's ties (previously decided by the source-compatible rule) are gone and each query's own table score decides every pick outright."
+    "Round-1 review of #500: the pattern-match bonus and its 100-point cap are removed outright, not just capped differently -- #302 scores every query from its own tables only; per-query pattern evidence is deferred to #491's engine-neutral detectors inside the weighted pattern dimension, never a flat bonus on top. wordpress v2 (aurora_mysql/dynamodb/documentdb): main 49/58/0 -> #487 44/63/0 -> this PR 30/56/21. DocumentDB's surviving share is a reality-check Pass 0 order-dependence bug (Aurora MySQL is checked first and partially consolidated, so DocumentDB is never re-checked), filed as #501 and fixed in a PR stacked on this one -- not a scoring edge, so the three-engine shape is not asserted as the intended target, only measured. discourse v2 (aurora_postgresql/dynamodb): main 1280/374 (77.4%/22.6%) -> #487 1306/348 (78.9%/21.1%) -> this PR 1091/563 (66.0%/34.0%) -- Aurora PostgreSQL's share drops, not rises, once the bonus's ties (previously decided by the source-compatible rule) are gone and each query's own table score decides every pick outright.",
+    "#501: Pass 0 now re-checks every surviving engine after partial consolidation, against the TRUE committed set rather than a set still mid-elimination, and a query never moves to an engine that scores it lower than the one it is already on. wordpress: documentdb drops from 21 (an evaluation-order artifact -- it dodged the TARGET_ENGINE_COUNT check only because Aurora MySQL's slot looked vacated when documentdb was checked) to 4 queries that genuinely have no as-good alternative (one gated by a hard aggregation capability, three by score); its other 17 queries move to Aurora MySQL (now correctly available as an alternative) or DynamoDB. discourse: documentdb goes from 0 (fully, and incorrectly, absorbed under the old order-dependent and never-worse-unaware logic) to 183 -- the never-worse rule alone finds no committed engine scores these queries as well as DocumentDB already does (sampled scores confirm a real, if narrow, 2-10 point edge); only 11 of its 194 original queries actually have a better home now.",
+    "#502 review correction: removed the min_fit score floor on consolidation moves (a query being removed goes to its highest-scoring remaining engine that can serve it, even at a lower score -- the point of consolidating down to fewer engines) and replaced it with a never-pad-to-justify rule (an engine's own re-check uses only its native queries, never anything another engine's consolidation redistributed onto it this run). wordpress: DocumentDB is now fully removed -- its 8 native queries have no unique value once Aurora MySQL is correctly counted as a real alternative (7 move to Aurora MySQL, 1 to DynamoDB, dynamodb back to 57/aurora_mysql 50). discourse: unchanged from #500 (aurora_postgresql 1091, dynamodb 563, documentdb 0) -- DocumentDB was never order-dependent there, so the earlier 183-query retention was entirely the now-removed score floor, not a real finding.",
+    "#502 redesign: two phases -- Phase 1 settles which engines earn a place from their own native queries alone, order-independent to a fixed point (no engine protected for being cheapest or primary); Phase 2 places every query on its highest-scoring settled engine using the resolver's own per-query scores (ADR-031), not the reality check's separate fit scorer. wordpress collapses to a single owner engine (aurora_mysql 107/107) plus the ElastiCache cache layer: DynamoDB's 38 native queries score it meaningfully better than Aurora MySQL on only 2 of them once judged by the resolver's own scores, so the fixed per-engine operational burden is not worth it once Aurora MySQL can serve the rest -- DocumentDB was already being removed for the same reason. discourse keeps two engines (aurora_postgresql 991/1654 = 59.9%, dynamodb 663/1654 = 40.1%, up from 66.0%/34.0%): DynamoDB has far more queries that genuinely score it higher here, so it clears the same burden check wordpress's DynamoDB does not. Both are real, data-driven results, not a universal collapse -- the sample with much less of an actual DynamoDB-shaped workload (wordpress) ends up on fewer engines.",
+    "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one."
   ],
   "samples": {
     "wordpress": {
@@ -25,17 +29,15 @@
       "assignment_version": 2,
       "queries_in_scope": 107,
       "owner_share_percent": {
-        "aurora_mysql": 28.0,
-        "documentdb": 19.6,
-        "dynamodb": 52.3
+        "aurora_mysql": 59.8,
+        "dynamodb": 40.2
       },
       "owner_queries": {
-        "aurora_mysql": 30,
-        "documentdb": 21,
-        "dynamodb": 56
+        "aurora_mysql": 64,
+        "dynamodb": 43
       },
-      "source_compatible_share_percent": 28.0,
-      "owner_engines": 3,
+      "source_compatible_share_percent": 59.8,
+      "owner_engines": 2,
       "cache_overlay": {
         "queries": 20,
         "call_share_percent": 83.4
@@ -45,7 +47,7 @@
           "engines": [
             "aurora_mysql"
           ],
-          "workload_percent": 28.0,
+          "workload_percent": 59.8,
           "cached_call_share_percent": 0.0,
           "table_count": 50
         },
@@ -59,12 +61,11 @@
         },
         {
           "engines": [
-            "dynamodb",
-            "documentdb"
+            "dynamodb"
           ],
-          "workload_percent": 71.9,
+          "workload_percent": 40.2,
           "cached_call_share_percent": 0.0,
-          "table_count": 11
+          "table_count": 5
         }
       ],
       "utility_queries_off_aurora": 0
@@ -75,15 +76,17 @@
       "assignment_version": 2,
       "queries_in_scope": 1654,
       "owner_share_percent": {
-        "aurora_postgresql": 66.0,
+        "aurora_postgresql": 54.2,
+        "documentdb": 11.7,
         "dynamodb": 34.0
       },
       "owner_queries": {
-        "aurora_postgresql": 1091,
+        "aurora_postgresql": 897,
+        "documentdb": 194,
         "dynamodb": 563
       },
-      "source_compatible_share_percent": 66.0,
-      "owner_engines": 2,
+      "source_compatible_share_percent": 54.2,
+      "owner_engines": 3,
       "cache_overlay": {
         "queries": 3,
         "call_share_percent": 25.1
@@ -93,7 +96,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 66.0,
+          "workload_percent": 54.2,
           "cached_call_share_percent": 0.0,
           "table_count": 312
         },
@@ -107,11 +110,12 @@
         },
         {
           "engines": [
-            "dynamodb"
+            "dynamodb",
+            "documentdb"
           ],
-          "workload_percent": 34.0,
+          "workload_percent": 45.7,
           "cached_call_share_percent": 0.0,
-          "table_count": 108
+          "table_count": 181
         }
       ],
       "utility_queries_off_aurora": 0

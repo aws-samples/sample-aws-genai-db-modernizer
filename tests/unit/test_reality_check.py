@@ -1,5 +1,7 @@
 """Unit tests for the reality check agent core logic."""
 
+import itertools
+
 from src.agents.referee.reality_check import (
     BASIC_CRUD_SCORE,
     SIGNAL_MATCH_BONUS,
@@ -7,7 +9,9 @@ from src.agents.referee.reality_check import (
     _can_engine_serve_query,
     _engine_fit_score,
     _find_best_absorber_for_query,
+    _place_settled_queries,
     _run_aurora_absorption_pass,
+    _settle_committed_engines,
     _workload_ever_justified,
     run_reality_check,
 )
@@ -328,18 +332,21 @@ class TestRunRealityCheck:
         )
         triage = _make_triage()
         collector = _make_collector(["q1", "q2", "q3", "q4"])
-        # Both engines score equally on all tables — documentdb is redundant
+        # dynamodb scores a couple of points higher on their shared table --
+        # under the 15-point margin, so documentdb is still "redundant," but
+        # the pick is a real score comparison, not an exact tie (no engine is
+        # favoured for being cheaper; #502 review).
         analysis = {
             "dynamodb": {
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
             },
             "documentdb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 78}]
             },
         }
 
         result = run_reality_check(assignment, triage, analysis, collector)
-        # documentdb should be consolidated (it's more expensive and redundant)
+        # documentdb should be consolidated (it has no unique value here)
         assert len(result["consolidations"]) > 0
         consolidated_from = {c["from_engine"] for c in result["consolidations"]}
         assert "documentdb" in consolidated_from
@@ -354,13 +361,14 @@ class TestRunRealityCheck:
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
             },
             "documentdb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 78}]
             },
         }
 
         result = run_reality_check(assignment, triage, analysis, collector)
         engines_after = {qa["assigned_engine"] for qa in result["revised_assignments"]}
-        # After consolidation, all queries should be in dynamodb (cheaper)
+        # After consolidation, all queries should be on dynamodb -- it scores
+        # a couple of points higher on their shared table (not an exact tie).
         if result["consolidations"]:
             assert "dynamodb" in engines_after
 
@@ -506,30 +514,6 @@ class TestRunRealityCheck:
         q2 = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "q2")
         assert q2["assigned_engine"] == "opensearch"
 
-    def test_pass0_evaluates_most_expensive_engine_first(self):
-        """Pass 0 removes the most expensive redundant engine before cheaper ones (#164)."""
-        assignment = _make_assignment(
-            [
-                ("q1", "dynamodb"),
-                ("q2", "elasticache"),
-                ("q3", "opensearch"),
-                ("q4", "documentdb"),
-                ("q5", "aurora_mysql"),
-            ]
-        )
-        collector = _make_collector(["q1", "q2", "q3", "q4", "q5"])
-
-        result = run_reality_check(assignment, _make_triage(), {}, collector)
-
-        # dynamodb is the primary and is evaluated last; the rest go by cost, highest first
-        assert list(result["unique_value_assessment"]) == [
-            "aurora_mysql",
-            "documentdb",
-            "opensearch",
-            "elasticache",
-            "dynamodb",
-        ]
-
     def test_absorber_prefers_dynamodb_over_opensearchs_inflated_table_score(self):
         """#475 (discourse/wordpress evidence): the consolidation absorber
         must not pick OpenSearch for a plain ``COUNT(*)`` just because
@@ -539,25 +523,33 @@ class TestRunRealityCheck:
         ``SQL_CALC_FOUND_ROWS``/``COUNT(*)`` queries from Aurora MySQL onto
         OpenSearch during consolidation (``_find_best_absorber_for_query``
         is the function Pass 2 calls to pick an absorber).
+
+        #502 review round 5, finding N3: this function now ranks by the
+        resolver's own per-query score (``trace_by_query``), not the
+        analysis-confidence average ``_engine_fit_score`` used to compute --
+        exactly the averaging #500 already fixed on the resolver's own side,
+        so the trace built here gives OpenSearch its real, per-query score
+        (32: no search signal of its own) rather than a table-wide average.
         """
         qa = {"query_id": "q2", "assigned_engine": "documentdb"}
         # "aggregations" is broad enough to make OpenSearch an eligible
         # absorber at all (``SPECIALIST_ABSORB_SIGNALS``), the same signal a
         # plain COUNT(*) carries in the real pipeline -- this is not itself
-        # the bug, so both candidates compete on fit score alone.
+        # the bug, so both candidates compete on resolver score alone.
         query_signals = {"q2": ["aggregations"]}
         query_map = {"q2": {"tables_accessed": ["db.posts"], "query_type": "SELECT"}}
         analysis_outputs = {
             "dynamodb": {
                 "table_recommendations": [{"table_id": "db.posts", "confidence_score": 90}]
             },
-            # Classified SEARCH (confidence 95) purely because some OTHER
-            # query on db.posts needs full-text search -- q2 itself carries
-            # no search signal at all.
             "opensearch": {
                 "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
             },
         }
+        # q2's own resolver score: dynamodb scores it well, OpenSearch scores
+        # it on its own merits (no search signal of its own), not on some
+        # other query's table-wide average.
+        trace_by_query = {"q2": {"engines": {"dynamodb": 90, "opensearch": 32}}}
 
         absorber = _find_best_absorber_for_query(
             qa,
@@ -569,6 +561,7 @@ class TestRunRealityCheck:
             engine_queries={"dynamodb": [], "opensearch": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
+            trace_by_query=trace_by_query,
         )
 
         assert absorber is not None
@@ -904,13 +897,17 @@ class TestAuroraAbsorptionPass:
 class TestAuroraAbsorptionIntegration:
     """Test Aurora absorption through the full run_reality_check() flow."""
 
-    def test_documentdb_absorbed_into_aurora_full_flow(self):
-        """DocumentDB with 5 low-delta queries gets absorbed into Aurora via full pipeline.
-
-        Setup ensures both engines survive Pass 0 before Pass 1 can run:
+    def test_documentdb_with_a_genuine_edge_is_kept_not_absorbed(self):
+        """#502 review: the old Aurora-absorption pass folded a specialist into
+        Aurora whenever Aurora scored >=50 and the specialist's own edge was
+        under 30 points -- a looser, Aurora-specific margin than the 15-point
+        rule every other engine was judged by. That leniency is gone: one
+        unified margin applies everywhere, so DocumentDB's genuine 17-point
+        edge over Aurora on its own table now keeps it, same as it would for
+        any other engine.
         - Aurora queries use db.main (Aurora=80, DocDB=50 → delta=30 for Aurora, unique)
-        - DocDB queries use db.docs (Aurora=65, DocDB=82 → delta=17 for DocDB, unique in Pass 0)
-        - In Pass 1: DocDB has 5 queries < threshold(10), aurora_fit=65 >= 50, delta=17 < 30 → absorbed
+        - DocDB queries use db.docs (Aurora=65, DocDB=82 → delta=17 for DocDB, >= the
+          15-point threshold, so DocumentDB is kept, not consolidated away)
         """
         aurora_query_ids = [f"aq{i}" for i in range(30)]
         doc_query_ids = [f"dq{i}" for i in range(1, 6)]
@@ -963,18 +960,12 @@ class TestAuroraAbsorptionIntegration:
             collector_output=collector,
         )
 
-        # DocumentDB should be absorbed via Pass 1
+        # DocumentDB is kept -- its 17-point edge on db.docs is genuine
+        # unique value under the one rule every engine is judged by now.
         aurora_info = result.get("aurora_absorption", {})
-        assert "documentdb" in aurora_info.get("engines_eliminated", [])
-
-        # Check at least one absorption consolidation record exists with action "full"
-        absorption_consolidations = [
-            c
-            for c in result["consolidations"]
-            if c["to_engine"] == "aurora_postgresql" and c["from_engine"] == "documentdb"
-        ]
-        assert len(absorption_consolidations) >= 1
-        assert any(c["action"] == "full" for c in absorption_consolidations)
+        assert "documentdb" not in aurora_info.get("engines_eliminated", [])
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert {engine_of[qid] for qid in doc_query_ids} == {"documentdb"}
 
     def test_dynamodb_protected_by_high_delta(self):
         """DynamoDB with high-value PK lookups survives absorption despite low count."""
@@ -1024,11 +1015,21 @@ class TestAbsorptionAppliedToAssignments:
 
     @staticmethod
     def _run_partial_scenario() -> dict:
-        """Aurora owns 30 join queries; ElastiCache has 5 absorbable and 3 protected queries."""
+        """Aurora owns 30 join queries; DocumentDB has 5 redundant queries
+        (no better than Aurora on db.cache) and 3 with a genuine edge on
+        db.sessions that keeps it committed.
+
+        ``query_capabilities`` (not just the ``complex_joins`` signal) is
+        what makes Aurora's 30 queries irreplaceable (#502 review): Phase 1
+        now judges engines by the resolver's own scores, which carry no
+        signal-match bonus of their own, so a signal with no corresponding
+        hard capability requirement protects nothing by itself.
+        """
         aurora_ids = [f"aq{i}" for i in range(30)]
+        doc_ids = [f"dq{i}" for i in range(1, 9)]
         assignment = _make_assignment(
             [(qid, "aurora_postgresql") for qid in aurora_ids]
-            + [(f"ec{i}", "elasticache") for i in range(1, 9)]
+            + [(qid, "documentdb") for qid in doc_ids]
         )
         triage = {
             "signals": [
@@ -1037,7 +1038,8 @@ class TestAbsorptionAppliedToAssignments:
                     "targets": ["aurora_postgresql"],
                     "query_ids": aurora_ids,
                 }
-            ]
+            ],
+            "query_capabilities": {qid: ["complex_joins"] for qid in aurora_ids},
         }
         collector = {
             "queries": {
@@ -1046,7 +1048,7 @@ class TestAbsorptionAppliedToAssignments:
                 ]
                 + [
                     {
-                        "query_id": f"ec{i}",
+                        "query_id": f"dq{i}",
                         "tables_accessed": ["db.cache" if i < 6 else "db.sessions"],
                     }
                     for i in range(1, 9)
@@ -1060,7 +1062,7 @@ class TestAbsorptionAppliedToAssignments:
                     {"table_id": "db.sessions", "confidence_score": 20},
                 ]
             },
-            "elasticache": {
+            "documentdb": {
                 "table_recommendations": [
                     {"table_id": "db.cache", "confidence_score": 55},
                     {"table_id": "db.sessions", "confidence_score": 85},
@@ -1071,16 +1073,16 @@ class TestAbsorptionAppliedToAssignments:
 
     def test_partial_absorption_moves_absorbed_queries(self):
         result = self._run_partial_scenario()
-        assert result["aurora_absorption"]["engines_reduced"] == ["elasticache"]
+        assert result["aurora_absorption"]["engines_reduced"] == ["documentdb"]
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert [engine_of[f"ec{i}"] for i in range(1, 6)] == ["aurora_postgresql"] * 5
-        assert [engine_of[f"ec{i}"] for i in range(6, 9)] == ["elasticache"] * 3
+        assert [engine_of[f"dq{i}"] for i in range(1, 6)] == ["aurora_postgresql"] * 5
+        assert [engine_of[f"dq{i}"] for i in range(6, 9)] == ["documentdb"] * 3
 
     def test_partial_absorption_records_reason_on_moved_queries(self):
         result = self._run_partial_scenario()
-        moved = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "ec1")
-        assert moved["assignment_reason"].startswith("reality check: absorbed from elasticache")
+        moved = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "dq1")
+        assert moved["assignment_reason"].startswith("reality check: consolidated from documentdb")
 
     def test_full_absorption_counts_each_query_once(self):
         """A fully absorbed engine yields one consolidation record set, not two."""
@@ -1102,13 +1104,17 @@ class TestAbsorptionAppliedToAssignments:
             "aurora_postgresql": {
                 "table_recommendations": [
                     {"table_id": "db.main", "confidence_score": 80},
-                    {"table_id": "db.docs", "confidence_score": 65},
+                    # Within the 15-point margin of DocumentDB's own 72 --
+                    # genuinely redundant, not a near-miss "unique" edge
+                    # (#502 review: one unified margin, no Aurora-specific
+                    # leniency to let a wider gap still count as absorbable).
+                    {"table_id": "db.docs", "confidence_score": 70},
                 ]
             },
             "documentdb": {
                 "table_recommendations": [
                     {"table_id": "db.main", "confidence_score": 50},
-                    {"table_id": "db.docs", "confidence_score": 82},
+                    {"table_id": "db.docs", "confidence_score": 72},
                 ]
             },
         }
@@ -1284,13 +1290,25 @@ def test_tiny_opensearch_absorbed_end_to_end():
     assert from_os[0]["to_engine"] == "aurora_mysql"
     assert from_os[0]["action"] == "full"
     assert from_os[0]["query_count"] == 3
-    assert "text_search_basic" in from_os[0]["reason"]
+    # The fixture's os_ids carry no query_text at all, so the floor's shallow
+    # branch applies (no search predicate), not the native-source-override
+    # branch "text_search_basic" would come from.
+    assert "no search predicate" in from_os[0]["reason"]
 
 
 class TestOpenSearchJustificationFloor:
     """OpenSearch is only kept as a standing engine when it earns its place (#326)."""
 
-    def _run(self, os_query_text: str, os_cps: float, source_engine: str | None = None):
+    def _run(
+        self,
+        os_query_text: str,
+        os_cps: float,
+        source_engine: str | None = None,
+        include_aurora: bool = False,
+    ):
+        from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+
+        aurora_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine or "") if include_aurora else None
         assignment = {
             "version": 1,
             "query_assignments": [
@@ -1304,10 +1322,23 @@ class TestOpenSearchJustificationFloor:
                     "assignment_reason": "signal override: text_search → opensearch",
                     "signal_override": "text_search",
                 }
-            ],
+            ]
+            + (
+                [
+                    {
+                        "query_id": "a_mand",
+                        "assigned_engine": aurora_engine,
+                        "assignment_reason": "signal override: sql_admin",
+                        "signal_override": "sql_admin",
+                    }
+                ]
+                if aurora_engine
+                else []
+            ),
         }
         triage = {
-            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "opensearch"}],
+            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "opensearch"}]
+            + ([{"agent_type": aurora_engine}] if aurora_engine else []),
             "signals": [
                 {"signal": "text_search", "targets": ["opensearch"], "query_ids": ["search"]}
             ],
@@ -1327,6 +1358,17 @@ class TestOpenSearchJustificationFloor:
                         "calls_per_second": os_cps,
                     }
                 ]
+                + (
+                    [
+                        {
+                            "query_id": "a_mand",
+                            "tables_accessed": ["db.admin"],
+                            "query_text": "SHOW FULL FIELDS FROM db.admin",
+                        }
+                    ]
+                    if aurora_engine
+                    else []
+                )
             }
         }
         if source_engine:
@@ -1339,6 +1381,14 @@ class TestOpenSearchJustificationFloor:
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
             },
         }
+        if aurora_engine:
+            # Aurora has its own text-search capability (``inverted_index`` in
+            # the capability registry -- tsvector/FULLTEXT), unlike DynamoDB,
+            # which the resolver's own capability gate excludes outright for
+            # these queries (#502 review round 6, finding 2).
+            analysis[aurora_engine] = {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            }
         return run_reality_check(assignment, triage, analysis, collector)
 
     def test_like_prefix_query_at_low_traffic_is_dropped(self):
@@ -1366,19 +1416,75 @@ class TestOpenSearchJustificationFloor:
         assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])
 
     def test_native_postgres_tsvector_at_low_traffic_prefers_aurora(self):
-        """discourse shape: to_tsvector construction, native to Postgres, at tiny traffic."""
-        result = self._run("SELECT to_tsvector($1, $2)", 0.03, source_engine="postgresql")
+        """discourse shape: to_tsvector construction, native to Postgres, at tiny traffic.
+
+        Aurora PostgreSQL is committed here (``include_aurora=True``) and has
+        its own text-search capability (``inverted_index`` in the capability
+        registry, via tsvector) -- unlike DynamoDB, which the resolver's own
+        capability gate excludes outright for this query (#502 review round
+        5, finding N3: confirmed directly against the real resolver trace --
+        ``{"gate": "capability"}``). The floor moves the query to the
+        source-compatible Aurora engine rather than leaving it on
+        OpenSearch, which still fails its own traffic-based justification.
+        """
+        result = self._run(
+            "SELECT to_tsvector($1, $2)", 0.03, source_engine="postgresql", include_aurora=True
+        )
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert engine_of["search"] == "dynamodb"
+        assert engine_of["search"] == "aurora_postgresql"
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert len(from_os) == 1
+        assert from_os[0]["to_engine"] == "aurora_postgresql"
 
     def test_real_depth_insufficient_traffic_for_native_source_is_dropped(self):
         """A tsvector/MATCH query from a native source needs much higher traffic to justify
-        OpenSearch over the source engine's own text_search_basic."""
+        OpenSearch over the source engine's own text_search_basic.
+
+        Same reasoning as above: Aurora MySQL is committed and has its own
+        text-search capability, unlike DynamoDB, so the floor moves the
+        query there instead of leaving it on OpenSearch.
+        """
+        result = self._run(
+            "SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)",
+            5.0,
+            source_engine="mysql",
+            include_aurora=True,
+        )
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "aurora_mysql"
+        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
+        assert len(from_os) == 1
+        assert from_os[0]["to_engine"] == "aurora_mysql"
+
+    def test_native_postgres_tsvector_with_no_eligible_destination_is_kept(self):
+        """#502 review round 6, finding 2: without Aurora committed, DynamoDB
+        is the only other engine and the resolver's own capability gate
+        excludes it outright for a tsvector query (confirmed directly
+        against the trace -- ``{"gate": "capability"}``), so there is
+        nowhere eligible to send it. The floor must report this explicitly
+        -- a reason naming the lack of an eligible engine -- rather than
+        silently leaving ``revised_assignments`` unchanged with no trace of
+        why.
+        """
+        result = self._run("SELECT to_tsvector($1, $2)", 0.03, source_engine="postgresql")
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["search"] == "opensearch"
+        assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])
+        kept = result["unique_value_assessment"]["opensearch"]
+        assert kept.get("floor_unplaced_queries") == ["search"]
+        assert "no eligible engine" in kept.get("floor_unplaced_reason", "")
+
+    def test_real_depth_with_no_eligible_destination_is_kept(self):
+        """Same as above for the MATCH ... AGAINST / mysql shape, without Aurora."""
         result = self._run(
             "SELECT * FROM posts WHERE MATCH(title, body) AGAINST (?)", 5.0, source_engine="mysql"
         )
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert engine_of["search"] == "dynamodb"
+        assert engine_of["search"] == "opensearch"
+        assert not any(c["from_engine"] == "opensearch" for c in result["consolidations"])
+        kept = result["unique_value_assessment"]["opensearch"]
+        assert kept.get("floor_unplaced_queries") == ["search"]
+        assert "no eligible engine" in kept.get("floor_unplaced_reason", "")
 
     def test_never_justified_removal_claims_no_saving(self):
         """#475 review, finding 3: when none of OpenSearch's FIRST-ASSIGNMENT
@@ -2018,3 +2124,1075 @@ class TestUtilityStatementsSurviveRealityCheck:
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert engine_of["show1"] == "aurora_mysql"
         assert engine_of["set1"] == "aurora_mysql"
+
+
+# ---------------------------------------------------------------------------
+# #501: Pass 0's elimination order must never decide whether a small engine
+# survives, and a query must never be moved to an engine that scores it worse
+# than the engine it is already on.
+# ---------------------------------------------------------------------------
+
+
+def _make_small_engine_scenario(
+    order: tuple[str, str, str] = ("dynamodb", "aurora_mysql", "documentdb"),
+    equal_cost: bool = False,
+    include_tied_aurora_queries: bool = True,
+) -> tuple[dict, dict, dict, dict]:
+    """The wordpress #502 shape: a cheap engine (dynamodb), an expensive
+    engine with a couple of hard-capability-only queries (aurora_mysql,
+    protected by ``sql_admin``), and a smaller engine (documentdb) with a
+    thin, barely-"unique"-by-margin workload that the ``TARGET_ENGINE_COUNT``
+    burden check removes once there are 3 committed engines.
+
+    documentdb's 3 queries score 80 on documentdb itself, 60 on dynamodb and
+    85 on aurora_mysql -- Phase 1 judges each engine against the full
+    committed set from the start (#502review), so this is no longer about
+    hiding an alternative; it is a genuine "a $200/mo engine with 3 queries
+    isn't worth it once two cheaper engines already cover them" call.
+
+    ``order`` is the order the three engines' query blocks appear in
+    ``query_assignments`` -- Phase 1 settles the SAME committed engine set
+    and Phase 2 the SAME placement regardless of this order (that is what
+    the permutation tests below check). ``equal_cost`` ties aurora_mysql's
+    and documentdb's ``ENGINE_BASE_COST``, removing cost as a tiebreaker too.
+
+    ``include_tied_aurora_queries`` adds ``a1``-``a4`` (tables Aurora MySQL
+    and DynamoDB score identically, 80), which is what forces Aurora MySQL's
+    own consolidation to be partial rather than skipped outright. An
+    order-independence check that also ties Aurora MySQL's and DocumentDB's
+    cost does not want that extra, genuinely-tied group in play too --
+    which of two engines with an identical score for the same queries ends
+    up keeping them is a separate, pre-existing ambiguity (#503), not the
+    one this scenario is isolating.
+    """
+    aurora_block = [("util1", "aurora_mysql"), ("util2", "aurora_mysql")]
+    if include_tied_aurora_queries:
+        aurora_block = [
+            ("a1", "aurora_mysql"),
+            ("a2", "aurora_mysql"),
+            ("a3", "aurora_mysql"),
+            ("a4", "aurora_mysql"),
+        ] + aurora_block
+    blocks = {
+        "dynamodb": [("d1", "dynamodb"), ("d2", "dynamodb"), ("d3", "dynamodb")],
+        "aurora_mysql": aurora_block,
+        "documentdb": [("b1", "documentdb"), ("b2", "documentdb"), ("b3", "documentdb")],
+    }
+    pairs = [pair for engine in order for pair in blocks[engine]]
+    assignment = _make_assignment(pairs)
+
+    triage = {
+        "selected_agents": [
+            {"agent_type": "dynamodb"},
+            {"agent_type": "aurora_mysql"},
+            {"agent_type": "documentdb"},
+        ],
+        "signals": [],
+        "query_capabilities": {"util1": ["sql_admin"], "util2": ["sql_admin"]},
+    }
+
+    extra: dict[str, dict[str, object]] = {}
+    for qid in ("d1", "d2", "d3"):
+        extra[qid] = {"tables_accessed": ["db.d"]}
+    for qid in ("a1", "a2", "a3", "a4"):
+        extra[qid] = {"tables_accessed": ["db.a"]}
+    extra["util1"] = {"tables_accessed": ["db.util"], "query_text": "SHOW FULL FIELDS FROM db.util"}
+    extra["util2"] = {
+        "tables_accessed": ["db.util"],
+        "query_text": "SET SESSION SQL_BIG_SELECTS = ?",
+    }
+    for qid in ("b1", "b2", "b3"):
+        extra[qid] = {"tables_accessed": ["db.b"]}
+    collector = _make_collector([qid for qid, _ in pairs], extra=extra)
+
+    analysis = {
+        "dynamodb": {
+            "table_recommendations": [
+                {"table_id": "db.d", "confidence_score": 90},
+                {"table_id": "db.a", "confidence_score": 80},
+                {"table_id": "db.util", "confidence_score": 30},
+                {"table_id": "db.b", "confidence_score": 60},
+            ]
+        },
+        "aurora_mysql": {
+            "table_recommendations": [
+                {"table_id": "db.d", "confidence_score": 50},
+                {"table_id": "db.a", "confidence_score": 80},
+                {"table_id": "db.util", "confidence_score": 60},
+                {"table_id": "db.b", "confidence_score": 85},
+            ]
+        },
+        "documentdb": {
+            "table_recommendations": [
+                {"table_id": "db.b", "confidence_score": 80},
+            ]
+        },
+    }
+
+    return assignment, triage, collector, analysis
+
+
+class TestRealityCheckRechecksSmallEngines:
+    """#502: Phase 1 settles the committed engine set before anything is
+    placed, judging every engine against the full committed set from the
+    start -- not a sequential pass that can shrink the alternatives one
+    engine sees before another is even checked. DocumentDB's thin,
+    barely-"unique"-by-margin workload fails the TARGET_ENGINE_COUNT burden
+    check once DynamoDB and Aurora MySQL already cover it, so it is
+    removed -- not kept on an evaluation-order technicality."""
+
+    def test_wordpress_shape_removes_documentdb(self):
+        assignment, triage, collector, analysis = _make_small_engine_scenario()
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # DocumentDB provides no unique value once judged against the full
+        # committed set from the start: it is removed, not kept on a
+        # 2-engine technicality.
+        assert engine_of["b1"] == "aurora_mysql"
+        assert engine_of["b2"] == "aurora_mysql"
+        assert engine_of["b3"] == "aurora_mysql"
+        after_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert "documentdb" not in after_engines
+
+        # Aurora MySQL's own redundant queries are an exact tie with
+        # DynamoDB (both score 80). Neither engine is source-compatible
+        # here, so ``_pick_winner`` falls to its second tie rule: the
+        # query's current engine wins a tie ("stability"), not an
+        # alphabetical rule -- aurora_mysql keeps a1-a4 because that is
+        # where they already are, not because its name sorts first. Its
+        # sql_admin-only queries stay put regardless.
+        assert engine_of["a1"] == "aurora_mysql"
+        assert engine_of["util1"] == "aurora_mysql"
+        assert engine_of["util2"] == "aurora_mysql"
+
+
+class TestRemovalTiesAreResolvedByDataNotName:
+    """#502 review round 5, finding N1: the reviewer's reproduction --
+    "two engines at 150 per unique query".
+
+    DynamoDB and DocumentDB (its ``ENGINE_BASE_COST`` monkeypatched to 0,
+    tying it with DynamoDB's) each have exactly 2 queries that clear
+    ``UNIQUE_DELTA_THRESHOLD`` against their only eligible alternative,
+    Aurora MySQL (90 vs 70, delta 20). With 3 engines committed (over
+    ``TARGET_ENGINE_COUNT``), both get the identical rank key: ``(0 + 300)
+    / 2 = 150``. The round-4 draft broke this tie by engine name
+    (``documentdb`` sorts before ``dynamodb``), removing DocumentDB on an
+    arbitrary technicality. ``_removal_tiebreak_key`` resolves ties by
+    data instead -- simulating each removal and comparing (fewer distinct
+    destination engines, then a higher total placed resolver score) -- and
+    here BOTH engines redistribute to the exact same single destination
+    (Aurora MySQL) for the exact same total score (140), so the tie
+    survives even that: neither is removed, both stay committed, and both
+    are flagged ``tie_unresolved`` in the assessment rather than one being
+    picked by name.
+    """
+
+    def test_two_engines_tied_at_150_per_unique_query_are_both_kept(self, monkeypatch):
+        import src.agents.referee.reality_check as reality_check
+
+        monkeypatch.setitem(reality_check.ENGINE_BASE_COST, "documentdb", 0)
+
+        engine_queries = {
+            "dynamodb": [
+                {"query_id": "d1", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+                {"query_id": "d2", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+            ],
+            "documentdb": [
+                {"query_id": "m1", "assigned_engine": "documentdb", "assignment_reason": "test"},
+                {"query_id": "m2", "assigned_engine": "documentdb", "assignment_reason": "test"},
+            ],
+            "aurora_mysql": [
+                {
+                    "query_id": "a_mand",
+                    "assigned_engine": "aurora_mysql",
+                    "assignment_reason": "signal override: test",
+                    "signal_override": "test",
+                }
+            ],
+        }
+        current_engine_by_qid = {
+            "d1": "dynamodb",
+            "d2": "dynamodb",
+            "m1": "documentdb",
+            "m2": "documentdb",
+            "a_mand": "aurora_mysql",
+        }
+        trace_by_query = {
+            "d1": {"engines": {"dynamodb": 90, "aurora_mysql": 70}},
+            "d2": {"engines": {"dynamodb": 90, "aurora_mysql": 70}},
+            "m1": {"engines": {"documentdb": 90, "aurora_mysql": 70}},
+            "m2": {"engines": {"documentdb": 90, "aurora_mysql": 70}},
+        }
+
+        committed, assessment = _settle_committed_engines(
+            engine_queries=engine_queries,
+            mandatory_query_ids={"a_mand"},
+            mandatory_committed_engines={"aurora_mysql"},
+            trace_by_query=trace_by_query,
+            current_engine_by_qid=current_engine_by_qid,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            max_rounds=5,
+        )
+
+        assert committed == {"dynamodb", "documentdb", "aurora_mysql"}
+        assert assessment["dynamodb"]["tie_unresolved"] is True
+        assert assessment["documentdb"]["tie_unresolved"] is True
+
+    def test_fewer_destinations_tie_broken_by_least_total_fit_lost(self, monkeypatch):
+        """#502 review round 6: the reviewer's reproduction.
+
+        DynamoDB has 2 queries at 90 vs 70 (fit lost 20 each, 40 total).
+        DocumentDB (``ENGINE_BASE_COST`` monkeypatched to 0, tying it with
+        DynamoDB's) has those same 2 queries' shape PLUS 4 more at 75 vs 70
+        (fit lost 5 each) -- redundant, not unique (delta 5 < 15), so they
+        do not change DocumentDB's rank key (still (0 + 300) / 2 = 150, tied
+        with DynamoDB's), but they DO add to DocumentDB's total fit lost:
+        40 (from its 2 unique queries) + 4 * 5 = 60. Both candidates land
+        every query on the same single destination (Aurora MySQL), so they
+        tie on destinations (1 each) -- the decisive measure is total fit
+        lost, and DynamoDB's (40) is less than DocumentDB's (60), so
+        DynamoDB -- not DocumentDB -- is the one removed. (The round-5
+        tiebreaker, which compared total placed score instead of fit lost,
+        would have agreed by coincidence here since every query lands at
+        the same destination score; the distinguishing scenario is any
+        case where the two candidates' OWN scores differ, which this fixed
+        version accounts for and the round-5 version did not.)
+        """
+        import src.agents.referee.reality_check as reality_check
+
+        monkeypatch.setitem(reality_check.ENGINE_BASE_COST, "documentdb", 0)
+
+        engine_queries = {
+            "dynamodb": [
+                {"query_id": "d1", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+                {"query_id": "d2", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+            ],
+            "documentdb": [
+                {"query_id": f"m{i}", "assigned_engine": "documentdb", "assignment_reason": "test"}
+                for i in range(1, 7)
+            ],
+            "aurora_mysql": [
+                {
+                    "query_id": "a_mand",
+                    "assigned_engine": "aurora_mysql",
+                    "assignment_reason": "signal override: test",
+                    "signal_override": "test",
+                }
+            ],
+        }
+        current_engine_by_qid = {
+            "d1": "dynamodb",
+            "d2": "dynamodb",
+            **{f"m{i}": "documentdb" for i in range(1, 7)},
+            "a_mand": "aurora_mysql",
+        }
+        trace_by_query = {
+            "d1": {"engines": {"dynamodb": 90, "aurora_mysql": 70}},
+            "d2": {"engines": {"dynamodb": 90, "aurora_mysql": 70}},
+            "m1": {"engines": {"documentdb": 90, "aurora_mysql": 70}},
+            "m2": {"engines": {"documentdb": 90, "aurora_mysql": 70}},
+            "m3": {"engines": {"documentdb": 75, "aurora_mysql": 70}},
+            "m4": {"engines": {"documentdb": 75, "aurora_mysql": 70}},
+            "m5": {"engines": {"documentdb": 75, "aurora_mysql": 70}},
+            "m6": {"engines": {"documentdb": 75, "aurora_mysql": 70}},
+        }
+
+        committed, assessment = _settle_committed_engines(
+            engine_queries=engine_queries,
+            mandatory_query_ids={"a_mand"},
+            mandatory_committed_engines={"aurora_mysql"},
+            trace_by_query=trace_by_query,
+            current_engine_by_qid=current_engine_by_qid,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            max_rounds=5,
+        )
+
+        assert committed == {"documentdb", "aurora_mysql"}
+        assert "dynamodb" not in committed
+        assert not assessment["dynamodb"].get("tie_unresolved")
+        assert not assessment["documentdb"].get("tie_unresolved")
+
+
+class TestSettledEngineSetIsOrderIndependent:
+    """#502: Phase 1 must settle on the SAME committed engine set and Phase 2
+    on the SAME placement no matter what order the engines' queries happen
+    to appear in the input assignment. Checked exhaustively (every
+    permutation of the engine blocks), not just the two orderings that
+    happened to expose the original #501 bug."""
+
+    def test_all_permutations_of_the_wordpress_shape_agree(self):
+        engines = ("dynamodb", "aurora_mysql", "documentdb")
+        results = []
+        for order in itertools.permutations(engines):
+            assignment, triage, collector, analysis = _make_small_engine_scenario(order=order)
+            result = run_reality_check(assignment, triage, analysis, collector)
+            engine_of = {
+                qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]
+            }
+            results.append(engine_of)
+
+        assert all(
+            r == results[0] for r in results[1:]
+        ), f"placement differs by input order: {results}"
+        # And it is the correct (not just the identical) answer every time.
+        assert results[0]["b1"] == "aurora_mysql"
+        assert "documentdb" not in set(results[0].values())
+
+    def test_all_permutations_with_two_equal_cost_engines_agree(self):
+        """Aurora MySQL and DocumentDB given the identical ENGINE_BASE_COST
+        removes cost as a tiebreaker too, on top of permuting input order."""
+        import src.agents.referee.reality_check as reality_check
+
+        engines = ("dynamodb", "aurora_mysql", "documentdb")
+        original_cost = reality_check.ENGINE_BASE_COST["documentdb"]
+        reality_check.ENGINE_BASE_COST["documentdb"] = reality_check.ENGINE_BASE_COST[
+            "aurora_mysql"
+        ]
+        try:
+            results = []
+            for order in itertools.permutations(engines):
+                assignment, triage, collector, analysis = _make_small_engine_scenario(
+                    order=order, include_tied_aurora_queries=False
+                )
+                result = run_reality_check(assignment, triage, analysis, collector)
+                engine_of = {
+                    qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]
+                }
+                results.append(engine_of)
+        finally:
+            reality_check.ENGINE_BASE_COST["documentdb"] = original_cost
+
+        assert all(
+            r == results[0] for r in results[1:]
+        ), f"placement differs by input order: {results}"
+        assert results[0]["b1"] == "aurora_mysql"
+        assert "documentdb" not in set(results[0].values())
+
+    def test_all_permutations_of_four_engines_agree(self):
+        """A fourth engine (opensearch, mandatory via a text_search signal
+        override) added to the wordpress shape -- still every one of the
+        4! = 24 possible input orders must settle on the same engine set
+        and placement."""
+        aurora_block = [
+            ("a1", "aurora_mysql"),
+            ("a2", "aurora_mysql"),
+            ("a3", "aurora_mysql"),
+            ("a4", "aurora_mysql"),
+            ("util1", "aurora_mysql"),
+            ("util2", "aurora_mysql"),
+        ]
+        documentdb_block = [("b1", "documentdb"), ("b2", "documentdb"), ("b3", "documentdb")]
+        dynamodb_block = [("d1", "dynamodb"), ("d2", "dynamodb"), ("d3", "dynamodb")]
+        search_block = [("s1", "opensearch")]
+        blocks = {
+            "dynamodb": dynamodb_block,
+            "aurora_mysql": aurora_block,
+            "documentdb": documentdb_block,
+            "opensearch": search_block,
+        }
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "aurora_mysql"},
+                {"agent_type": "documentdb"},
+                {"agent_type": "opensearch"},
+            ],
+            "signals": [{"signal": "text_search", "targets": ["opensearch"], "query_ids": ["s1"]}],
+            "query_capabilities": {"util1": ["sql_admin"], "util2": ["sql_admin"]},
+        }
+        extra: dict[str, dict[str, object]] = {
+            "d1": {"tables_accessed": ["db.d"]},
+            "d2": {"tables_accessed": ["db.d"]},
+            "d3": {"tables_accessed": ["db.d"]},
+            "a1": {"tables_accessed": ["db.a"]},
+            "a2": {"tables_accessed": ["db.a"]},
+            "a3": {"tables_accessed": ["db.a"]},
+            "a4": {"tables_accessed": ["db.a"]},
+            "util1": {
+                "tables_accessed": ["db.util"],
+                "query_text": "SHOW FULL FIELDS FROM db.util",
+            },
+            "util2": {
+                "tables_accessed": ["db.util"],
+                "query_text": "SET SESSION SQL_BIG_SELECTS = ?",
+            },
+            "b1": {"tables_accessed": ["db.b"]},
+            "b2": {"tables_accessed": ["db.b"]},
+            "b3": {"tables_accessed": ["db.b"]},
+            "s1": dict(_REAL_SEARCH_DEPTH_QUERY, tables_accessed=["db.s"]),
+        }
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 90},
+                    {"table_id": "db.a", "confidence_score": 80},
+                    {"table_id": "db.util", "confidence_score": 30},
+                    {"table_id": "db.b", "confidence_score": 60},
+                    {"table_id": "db.s", "confidence_score": 50},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 50},
+                    {"table_id": "db.a", "confidence_score": 80},
+                    {"table_id": "db.util", "confidence_score": 60},
+                    {"table_id": "db.b", "confidence_score": 85},
+                    {"table_id": "db.s", "confidence_score": 55},
+                ]
+            },
+            "documentdb": {"table_recommendations": [{"table_id": "db.b", "confidence_score": 80}]},
+            "opensearch": {"table_recommendations": [{"table_id": "db.s", "confidence_score": 90}]},
+        }
+
+        results = []
+        for order in itertools.permutations(blocks):
+            pairs = [pair for engine in order for pair in blocks[engine]]
+            assignment = _make_assignment(pairs, signal_overrides={"s1": "text_search"})
+            collector = _make_collector([qid for qid, _ in pairs], extra=extra)
+            result = run_reality_check(assignment, triage, analysis, collector)
+            engine_of = {
+                qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]
+            }
+            results.append(engine_of)
+
+        assert all(
+            r == results[0] for r in results[1:]
+        ), f"placement differs by input order: {results}"
+        # opensearch's mandatory query is never consolidated away.
+        assert results[0]["s1"] == "opensearch"
+        assert "documentdb" not in set(results[0].values())
+
+    def test_reversed_evaluation_order_within_a_round_agrees_too(self, monkeypatch):
+        """#502 review item 7: input order is not the only axis that must not
+        matter -- the order a round evaluates each committed engine's
+        removability in (``_round_evaluation_order``) must not matter
+        either, since every engine is judged against the same frozen
+        snapshot regardless of when it is checked. Forcing the opposite
+        (reverse-alphabetical) evaluation order must settle on the exact
+        same committed engine set and placement as the default order."""
+        import src.agents.referee.reality_check as reality_check
+
+        assignment, triage, collector, analysis = _make_small_engine_scenario()
+        baseline = run_reality_check(assignment, triage, analysis, collector)
+        baseline_engine_of = {
+            qa["query_id"]: qa["assigned_engine"] for qa in baseline["revised_assignments"]
+        }
+
+        monkeypatch.setattr(
+            reality_check,
+            "_round_evaluation_order",
+            lambda snapshot: sorted(snapshot, reverse=True),
+        )
+        reversed_result = run_reality_check(assignment, triage, analysis, collector)
+        reversed_engine_of = {
+            qa["query_id"]: qa["assigned_engine"] for qa in reversed_result["revised_assignments"]
+        }
+
+        assert reversed_engine_of == baseline_engine_of
+        assert "documentdb" not in set(reversed_engine_of.values())
+
+
+class TestRealityCheckAcceptsALowerScoreWhenConsolidating:
+    """#502 review (correcting an earlier #501 draft): once an engine is
+    being removed, its queries move to their highest-scoring remaining
+    engine that can serve them, even if that scores them a little lower --
+    accepting a slightly worse fit in exchange for fewer engines is the
+    entire point of the CTO review. There is no score floor on a
+    consolidation move; capability gates and the ownership/write gate are
+    the only things that can keep a query off a committed engine."""
+
+    def test_query_moves_to_a_lower_scoring_engine_when_its_own_engine_is_removed(self):
+        assignment = _make_assignment(
+            [
+                ("d1", "dynamodb"),
+                ("d2", "dynamodb"),
+                ("d3", "dynamodb"),
+                ("qx", "aurora_mysql"),
+            ]
+        )
+        triage = _make_triage()
+        collector = _make_collector(
+            ["d1", "d2", "d3", "qx"],
+            extra={
+                "d1": {"tables_accessed": ["db.d"]},
+                "d2": {"tables_accessed": ["db.d"]},
+                "d3": {"tables_accessed": ["db.d"]},
+                "qx": {"tables_accessed": ["db.a"]},
+            },
+        )
+        # qx: aurora_mysql scores 80, dynamodb only 70 -- a 10-point gap,
+        # under the 15-point "unique" margin, so aurora_mysql (and qx with
+        # it) is redundant. DynamoDB is a worse home for qx than Aurora
+        # MySQL was, but it is the only committed engine once Aurora MySQL
+        # is removed, so qx moves there anyway.
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 90},
+                    {"table_id": "db.a", "confidence_score": 70},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.a", "confidence_score": 80},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # qx moves to DynamoDB -- Aurora MySQL earned no unique value, so it
+        # is removed, and its queries go to whichever committed engine can
+        # serve them, even at a lower score.
+        assert engine_of["qx"] == "dynamodb"
+        assert any(
+            c["from_engine"] == "aurora_mysql" and c["to_engine"] == "dynamodb"
+            for c in result["consolidations"]
+        )
+
+
+class TestRealityCheckNeverPadsASmallEngineToJustifyIt:
+    """#502 review: Phase 1 judges an engine on its own native queries,
+    snapshotted before anything is placed -- it never sees, let alone
+    counts, a query another engine's placement might later put on it. An
+    engine that would only look justified by absorbing someone else's
+    redundant queries is removed on its own (native) merits, every time."""
+
+    def test_a_small_engine_is_removed_even_though_another_engines_queries_score_it_highest(self):
+        # dynamodb: cheap, well used. aurora_mysql: expensive, with two
+        # sql_admin-only queries nothing else can serve (irreplaceable, so
+        # it is never a removal candidate) plus four ordinary queries.
+        # documentdb: a single native query, only barely "unique" against
+        # the full committed set (the smallest possible 15-point margin) --
+        # on its own it cannot clear the TARGET_ENGINE_COUNT burden check
+        # once 3 engines are committed. DocumentDB also happens to score
+        # Aurora MySQL's four ordinary queries highest of anyone -- if that
+        # counted toward DocumentDB's own justification, it would look
+        # well used. It does not count: Phase 1 never looks at it.
+        assignment = _make_assignment(
+            [("d1", "dynamodb"), ("d2", "dynamodb"), ("d3", "dynamodb")]
+            + [(f"a{i}", "aurora_mysql") for i in range(1, 5)]
+            + [("util1", "aurora_mysql"), ("util2", "aurora_mysql")]
+            + [("b1", "documentdb")]
+        )
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "aurora_mysql"},
+                {"agent_type": "documentdb"},
+            ],
+            "signals": [],
+            "query_capabilities": {"util1": ["sql_admin"], "util2": ["sql_admin"]},
+        }
+        collector = _make_collector(
+            ["d1", "d2", "d3", *[f"a{i}" for i in range(1, 5)], "util1", "util2", "b1"],
+            extra={
+                "d1": {"tables_accessed": ["db.d"]},
+                "d2": {"tables_accessed": ["db.d"]},
+                "d3": {"tables_accessed": ["db.d"]},
+                **{f"a{i}": {"tables_accessed": ["db.a"]} for i in range(1, 5)},
+                "util1": {
+                    "tables_accessed": ["db.util"],
+                    "query_text": "SHOW FULL FIELDS FROM db.util",
+                },
+                "util2": {
+                    "tables_accessed": ["db.util"],
+                    "query_text": "SET SESSION SQL_BIG_SELECTS = ?",
+                },
+                "b1": {"tables_accessed": ["db.b"]},
+            },
+        )
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 90},
+                    {"table_id": "db.a", "confidence_score": 75},
+                    {"table_id": "db.util", "confidence_score": 30},
+                    {"table_id": "db.b", "confidence_score": 55},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.a", "confidence_score": 80},
+                    {"table_id": "db.util", "confidence_score": 60},
+                ]
+            },
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.a", "confidence_score": 95},
+                    {"table_id": "db.b", "confidence_score": 70},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # documentdb is removed -- its one native query (b1) alone cannot
+        # justify it, and Aurora MySQL's four queries scoring highest on
+        # documentdb never factors into that decision at all. Aurora MySQL
+        # itself is never a removal candidate (util1/util2 are
+        # irreplaceable), so a1-a4 simply stay there -- there was never a
+        # "received queries" moment for documentdb to be padded by.
+        assert "documentdb" not in engine_of.values()
+        for i in range(1, 5):
+            assert engine_of[f"a{i}"] == "aurora_mysql"
+        assert engine_of["util1"] == "aurora_mysql"
+        assert engine_of["util2"] == "aurora_mysql"
+
+
+class TestMandatoryEngineAbsorbsATiedEngine:
+    """#502 review (C3, round 5: state the behaviour factually): the
+    original 80/80 tie fixture, restored explicitly.
+
+    DynamoDB holds 39 ordinary queries that score IDENTICALLY (80/80, delta
+    0) on DocumentDB. DocumentDB holds a single query protected by a
+    mandatory signal override (ADR #296) -- its own survival is decided
+    SOLELY by that one query, before Phase 1 even looks at what DynamoDB
+    holds. ``UNIQUE_DELTA_THRESHOLD`` is 15: a query counts as "unique" for
+    its engine only when that engine leads every eligible alternative by at
+    least 15 points. A tie (delta 0) is nowhere near that lead, so none of
+    DynamoDB's 39 queries counts as unique for it; DynamoDB is therefore
+    fully redundant and is removed -- with only 2 engines committed, this
+    does not even reach the ``TARGET_ENGINE_COUNT``/burden check (#494).
+
+    DynamoDB's 39 queries then land on DocumentDB in Phase 2, because
+    DocumentDB is the only committed engine left eligible for them. That is
+    NOT "padding" DocumentDB to justify it -- DocumentDB was already
+    committed on its own mandatory query, independent of anything DynamoDB
+    holds; absorbing DynamoDB's redundant queries afterward is a normal,
+    downstream consequence of Phase 2 placement once DynamoDB has nowhere
+    else to go, not a reason manufactured to keep DocumentDB around.
+    Whether a mandatory engine absorbing a much larger engine this way is
+    desirable at all is a separate, pending maintainer decision -- this PR
+    does not change the behaviour, only states it explicitly instead of
+    leaving it implicit.
+    """
+
+    def test_dynamodb_is_removed_in_favor_of_a_mandatory_documentdb_at_equal_scores(self):
+        dynamodb_pairs = [(f"d{i}", "dynamodb") for i in range(1, 40)]
+        assignment = _make_assignment(
+            dynamodb_pairs + [("m1", "documentdb")],
+            signal_overrides={"m1": "flexible_schema"},
+        )
+        triage = {
+            "selected_agents": [{"agent_type": "dynamodb"}, {"agent_type": "documentdb"}],
+            "signals": [],
+        }
+        collector = _make_collector(
+            [f"d{i}" for i in range(1, 40)] + ["m1"],
+            extra={
+                **{f"d{i}": {"tables_accessed": ["db.d"]} for i in range(1, 40)},
+                "m1": {"tables_accessed": ["db.m"]},
+            },
+        )
+        analysis = {
+            "dynamodb": {"table_recommendations": [{"table_id": "db.d", "confidence_score": 80}]},
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 80},
+                    {"table_id": "db.m", "confidence_score": 80},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # DynamoDB is removed -- every one of its 39 queries ties DocumentDB
+        # exactly, so none clears the "strictly higher" bar that would make
+        # it unique. DocumentDB absorbs them because it is the only engine
+        # left, not because it needed them to survive.
+        assert "dynamodb" not in engine_of.values()
+        for i in range(1, 40):
+            assert engine_of[f"d{i}"] == "documentdb"
+        assert engine_of["m1"] == "documentdb"
+        assert result["unique_value_assessment"]["documentdb"]["is_mandatory"] is True
+
+
+class TestGroupKeepsItsEngineWhenNoSingleSurvivorFitsEveryMember:
+    """#502 review round 5, finding G: Phase 1 is group-aware.
+
+    The round-4 draft judged an engine's native queries one at a time (the
+    per-query ``_query_eligible_engines`` gate), so Phase 1 could judge an
+    engine "safe to remove" even when one of its co-dependency groups had
+    no single surviving engine eligible for every member -- Phase 2 would
+    then either strand the group (the original bug) or split it apart (the
+    round-4 "fix", itself against the rule that a group moves as one unit).
+    Phase 1 now uses the SAME group-aware eligibility
+    (``_group_eligible_engines``) Phase 2 does: an engine holding a member
+    of a group is irreplaceable for that group -- and so never removed --
+    unless some OTHER committed engine is eligible for every member at
+    once, members on other engines included.
+
+    Here, g1 and g2 are one co-dependency group, both currently on
+    DocumentDB. The resolver has no score for g1 on Aurora MySQL at all,
+    and no score for g2 on DynamoDB at all (set up directly in the trace,
+    the same technique used elsewhere in this file) -- DynamoDB alone could
+    take g1, Aurora MySQL alone could take g2, but no single survivor
+    covers both. (Only one Aurora engine is ever committed at once --
+    ADR-031 Decision 6 -- so the two alternatives here are DynamoDB and
+    Aurora MySQL, not two Aurora engines.) DocumentDB is therefore
+    irreplaceable for this group and stays committed; the group stays on
+    DocumentDB in Phase 2 as well, not split and not stranded.
+    """
+
+    GROUP = {
+        "key": "deadbeefcafe",
+        "scores": {"documentdb": 80, "dynamodb": 70, "aurora_mysql": 70},
+    }
+    TRACE_BY_QUERY = {
+        # Aurora MySQL omitted here: no resolver score for g1 on it at all.
+        "g1": {"engines": {"documentdb": 80, "dynamodb": 70}, "group": GROUP},
+        # DynamoDB omitted here: no resolver score for g2 on it at all.
+        "g2": {"engines": {"documentdb": 80, "aurora_mysql": 70}, "group": GROUP},
+    }
+    CURRENT_ENGINE_BY_QID = {
+        "g1": "documentdb",
+        "g2": "documentdb",
+        "d_mand": "dynamodb",
+        "a_mand": "aurora_mysql",
+    }
+    MANDATORY_QUERY_IDS = {"d_mand", "a_mand"}
+    ENGINE_QUERIES = {
+        "documentdb": [
+            {"query_id": "g1", "assigned_engine": "documentdb", "assignment_reason": "test"},
+            {"query_id": "g2", "assigned_engine": "documentdb", "assignment_reason": "test"},
+        ],
+        # One mandatory (signal-override) query each, purely so DynamoDB and
+        # Aurora MySQL are legitimately committed from the start and never
+        # removal candidates themselves -- isolating the test to DocumentDB's
+        # fate over the g1/g2 group.
+        "dynamodb": [
+            {
+                "query_id": "d_mand",
+                "assigned_engine": "dynamodb",
+                "assignment_reason": "signal override: test",
+                "signal_override": "test",
+            }
+        ],
+        "aurora_mysql": [
+            {
+                "query_id": "a_mand",
+                "assigned_engine": "aurora_mysql",
+                "assignment_reason": "signal override: test",
+                "signal_override": "test",
+            }
+        ],
+    }
+
+    def test_documentdb_is_not_removable(self):
+        committed_engines, assessment = _settle_committed_engines(
+            engine_queries=self.ENGINE_QUERIES,
+            mandatory_query_ids=self.MANDATORY_QUERY_IDS,
+            mandatory_committed_engines={"dynamodb", "aurora_mysql"},
+            trace_by_query=self.TRACE_BY_QUERY,
+            current_engine_by_qid=self.CURRENT_ENGINE_BY_QID,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            max_rounds=5,
+        )
+
+        assert committed_engines == {"documentdb", "dynamodb", "aurora_mysql"}
+        assert assessment["documentdb"]["irreplaceable_queries"] == ["g1", "g2"]
+
+    def test_group_stays_on_documentdb_in_phase_two(self):
+        query_assignments = [
+            *self.ENGINE_QUERIES["documentdb"],
+            *self.ENGINE_QUERIES["dynamodb"],
+            *self.ENGINE_QUERIES["aurora_mysql"],
+        ]
+        committed_engines = {"documentdb", "dynamodb", "aurora_mysql"}
+
+        revised, consolidations = _place_settled_queries(
+            query_assignments=query_assignments,
+            committed_engines=committed_engines,
+            mandatory_query_ids=self.MANDATORY_QUERY_IDS,
+            current_engine_by_qid=self.CURRENT_ENGINE_BY_QID,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=self.TRACE_BY_QUERY,
+            source_compatible_engine=None,
+            workload_justified={},
+        )
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in revised}
+
+        # The group is kept together on its current engine, not split and
+        # not stranded.
+        assert engine_of["g1"] == "documentdb"
+        assert engine_of["g2"] == "documentdb"
+        assert consolidations == []
+
+
+class TestJustificationFloorMovesACoDependencyGroupTogether:
+    """#502 review round 6, finding 3: the justification floor routes a
+    grouped query through ``_group_eligible_engines`` too, so a
+    co-dependency group moves as ONE unit there as well -- not split by
+    picking each member's own best individual absorber.
+
+    DocumentDB is mandatory (a signal override) and holds a co-dependency
+    group (g1, g2) plus nothing else, at a cost share far below
+    ``MANDATORY_ENGINE_MAX_QUERY_SHARE`` -- it fails the floor outright.
+    g1's OWN per-query resolver score strongly favors DynamoDB (85 vs 52);
+    g2's OWN per-query score strongly favors Aurora MySQL (90 vs 52) --
+    picking each member's own best absorber independently would split the
+    group across both engines. The group's OWN aggregate score instead
+    favors Aurora MySQL for the whole group (71.0, vs DynamoDB's 68.5), so
+    both members move there together.
+    """
+
+    def test_group_members_move_to_the_same_engine(self):
+        n_dynamo = 40
+        assignment = {
+            "version": 1,
+            "query_assignments": (
+                [
+                    {"query_id": f"d{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                    for i in range(n_dynamo)
+                ]
+                + [
+                    {
+                        "query_id": "util1",
+                        "assigned_engine": "aurora_mysql",
+                        "assignment_reason": "t",
+                    },
+                    {
+                        "query_id": "util2",
+                        "assigned_engine": "aurora_mysql",
+                        "assignment_reason": "t",
+                    },
+                ]
+                + [
+                    {
+                        "query_id": qid,
+                        "assigned_engine": "documentdb",
+                        "assignment_reason": "signal override: flexible_schema",
+                        "signal_override": "flexible_schema",
+                    }
+                    for qid in ("g1", "g2")
+                ]
+            ),
+        }
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "aurora_mysql"},
+                {"agent_type": "documentdb"},
+            ],
+            "signals": [],
+            "query_capabilities": {"util1": ["sql_admin"], "util2": ["sql_admin"]},
+        }
+        collector = {
+            "queries": {
+                "query_patterns": (
+                    [
+                        {"query_id": f"d{i}", "tables_accessed": ["db.d"], "query_type": "SELECT"}
+                        for i in range(n_dynamo)
+                    ]
+                    + [
+                        {
+                            "query_id": "util1",
+                            "tables_accessed": ["db.util"],
+                            "query_text": "SHOW FULL FIELDS FROM db.util",
+                        },
+                        {
+                            "query_id": "util2",
+                            "tables_accessed": ["db.util"],
+                            "query_text": "SET SESSION SQL_BIG_SELECTS = ?",
+                        },
+                    ]
+                    + [
+                        {
+                            "query_id": "g1",
+                            "tables_accessed": ["db.shared", "db.g1"],
+                            "query_type": "SELECT",
+                            "has_joins": True,
+                            "has_aggregations": True,
+                        },
+                        {
+                            "query_id": "g2",
+                            "tables_accessed": ["db.shared", "db.g2"],
+                            "query_type": "SELECT",
+                            "has_joins": True,
+                            "has_aggregations": True,
+                        },
+                    ]
+                )
+            }
+        }
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 90},
+                    {"table_id": "db.util", "confidence_score": 30},
+                    {"table_id": "db.shared", "confidence_score": 85},
+                    {"table_id": "db.g1", "confidence_score": 85},
+                    {"table_id": "db.g2", "confidence_score": 20},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.d", "confidence_score": 50},
+                    {"table_id": "db.util", "confidence_score": 60},
+                    {"table_id": "db.shared", "confidence_score": 85},
+                    {"table_id": "db.g1", "confidence_score": 20},
+                    {"table_id": "db.g2", "confidence_score": 95},
+                ]
+            },
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.shared", "confidence_score": 70},
+                    {"table_id": "db.g1", "confidence_score": 70},
+                    {"table_id": "db.g2", "confidence_score": 70},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # Both members move together, to the engine the GROUP's own
+        # aggregate score favors -- not split onto each member's own best
+        # individual absorber (which would have been g1 -> dynamodb,
+        # g2 -> aurora_mysql).
+        assert engine_of["g1"] == engine_of["g2"]
+        assert engine_of["g1"] == "aurora_mysql"
+        from_docdb = [c for c in result["consolidations"] if c["from_engine"] == "documentdb"]
+        assert len(from_docdb) == 1
+        assert from_docdb[0]["to_engine"] == "aurora_mysql"
+        assert from_docdb[0]["query_count"] == 2
+
+
+class TestPhaseOneTieSurfacesBeyondUniqueValueAssessment:
+    """#502 review round 6, finding 4: a Phase 1 tie_unresolved pair is now
+    stated in the human-readable ``recommendations`` -- the trace a customer
+    actually reads -- not just the internal ``unique_value_assessment``
+    dict (and that dict's own fields are now declared on the Pydantic
+    contract, round 6's other fix, so they stop being silently dropped the
+    way ``cost_justification`` was before #375's 1.5 fix).
+
+    No ``Consolidation`` record is created for the tie: a consolidation
+    record's ``query_count`` must equal the number of queries that
+    actually moved (``tests/unit/agents/referee/test_reality_check_llm_seam.py::
+    test_each_consolidation_lists_its_moved_queries``), and a tie, by
+    definition, moves none -- forcing a record here would violate that
+    invariant and mislead ``_build_recommendations``'s per-consolidation
+    text (which assumes ``from_engine`` left the architecture).
+    """
+
+    def test_tie_appears_in_recommendations_not_only_in_the_assessment(self, monkeypatch):
+        import src.agents.referee.reality_check as reality_check
+
+        monkeypatch.setitem(reality_check.ENGINE_BASE_COST, "documentdb", 0)
+
+        assignment = {
+            "version": 1,
+            "query_assignments": (
+                [
+                    {"query_id": f"dd{i}", "assigned_engine": "dynamodb", "assignment_reason": "t"}
+                    for i in range(2)
+                ]
+                + [
+                    {
+                        "query_id": f"mm{i}",
+                        "assigned_engine": "documentdb",
+                        "assignment_reason": "t",
+                    }
+                    for i in range(2)
+                ]
+                + [
+                    {
+                        "query_id": "a_mand",
+                        "assigned_engine": "aurora_mysql",
+                        "assignment_reason": "signal override: sql_admin",
+                        "signal_override": "sql_admin",
+                    }
+                ]
+            ),
+        }
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "documentdb"},
+                {"agent_type": "aurora_mysql"},
+            ],
+            "signals": [],
+        }
+        collector = {
+            "queries": {
+                "query_patterns": (
+                    [
+                        {
+                            "query_id": f"dd{i}",
+                            "tables_accessed": [f"db.dd{i}"],
+                            "query_type": "SELECT",
+                        }
+                        for i in range(2)
+                    ]
+                    + [
+                        {
+                            "query_id": f"mm{i}",
+                            "tables_accessed": [f"db.mm{i}"],
+                            "query_type": "SELECT",
+                        }
+                        for i in range(2)
+                    ]
+                    + [
+                        {
+                            "query_id": "a_mand",
+                            "tables_accessed": ["db.admin"],
+                            "query_text": "SHOW FULL FIELDS FROM db.admin",
+                        }
+                    ]
+                )
+            }
+        }
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.dd0", "confidence_score": 90},
+                    {"table_id": "db.dd1", "confidence_score": 90},
+                ]
+            },
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.mm0", "confidence_score": 90},
+                    {"table_id": "db.mm1", "confidence_score": 90},
+                ]
+            },
+            "aurora_mysql": {
+                "table_recommendations": [
+                    {"table_id": "db.dd0", "confidence_score": 70},
+                    {"table_id": "db.dd1", "confidence_score": 70},
+                    {"table_id": "db.mm0", "confidence_score": 70},
+                    {"table_id": "db.mm1", "confidence_score": 70},
+                ]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+
+        # Both engines are kept -- the tie is not resolved by removing either.
+        assert engine_of["dd0"] == "dynamodb"
+        assert engine_of["mm0"] == "documentdb"
+        assert result["unique_value_assessment"]["dynamodb"]["tie_unresolved"] is True
+        assert result["unique_value_assessment"]["documentdb"]["tie_unresolved"] is True
+
+        # No consolidation record exists for this pair -- nothing moved.
+        assert not any(
+            {c["from_engine"], c["to_engine"]} == {"dynamodb", "documentdb"}
+            for c in result["consolidations"]
+        )
+
+        # But the tie is stated in the human-readable recommendations.
+        assert any("DocumentDB and DynamoDB are tied" in rec for rec in result["recommendations"])

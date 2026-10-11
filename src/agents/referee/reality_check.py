@@ -21,8 +21,11 @@ that feed into synthesis.
 
 from __future__ import annotations
 
+import itertools
 import re
+import warnings
 from collections import defaultdict
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -33,6 +36,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
+from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
@@ -573,6 +577,773 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
 }
 
 
+def _resolver_score(trace_by_query: dict[str, dict], qid: str, engine: str) -> float | None:
+    """``engine``'s score for ``qid``, exactly as ``AssignmentResolver.resolve()``
+    used it (``RoutingTrace.by_query[qid]["engines"][engine]``) -- ``None`` when
+    the resolver's own hard exclusion/capability/write gate ruled ``engine`` out
+    for this query entirely, never a recompute via a different scorer (#502
+    review: Phase 1 and Phase 2 must read the identical scores, not Phase 1
+    using the reality check's own, separate ``_engine_fit_score``).
+    """
+    payload = trace_by_query.get(qid)
+    if not payload:
+        return None
+    value = payload.get("engines", {}).get(engine)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        if "gate" in value:
+            return None
+        used = value.get("used")
+        return float(used) if isinstance(used, (int, float)) else None
+    return None
+
+
+def _query_eligible_engines(
+    qid: str,
+    qa: dict,
+    current_engine: str,
+    candidates: Iterable[str],
+    trace_by_query: dict[str, dict],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+) -> list[str]:
+    """``candidates`` that may actually own ``qid`` -- the ONE eligibility
+    rule Phase 1 (which engines earn a place) and Phase 2 (where every
+    query lands) both apply, so a query can never be judged eligible for
+    one phase's purposes and ineligible for the other's (#502 review:
+    this gap is exactly how a query could end up stranded on an engine
+    Phase 1 had already removed).
+
+    Four gates, all of which must pass:
+    - the resolver's own score exists at all (``_resolver_score`` is not
+      ``None``) -- the resolver's own hard exclusion/capability/write gate
+      ruled the engine out for this query, so there is nothing for Phase 2
+      to place it with even if the checks below would otherwise allow it;
+    - the ownership/write gate and specialist-absorb restriction
+      (``may_absorb``) -- a specialist engine (OpenSearch) only ever
+      receives a query that matches its own specialty;
+    - the hard capability gate (``can_engine_serve_capability``);
+    - the join-on-DynamoDB block (review of #375, finding B2): a join
+      query consolidated away from a non-Aurora engine never lands on
+      DynamoDB. A join already on DynamoDB, or arrived there from Aurora,
+      is unaffected -- this only blocks a *consolidation* onto it, so
+      ``current_engine`` (where the query sits right now) decides whether
+      the block applies, not just which engine is being considered.
+    """
+    required_caps = (query_capabilities or {}).get(qid, [])
+    query = query_map.get(qid, qa)
+    # Named for what it gates, not what it checks (#502 review round 5):
+    # this is true exactly when considering ``e`` for ``qid`` would be a
+    # *consolidation onto* ``e`` away from an engine that is neither
+    # DynamoDB nor Aurora -- the join-on-DynamoDB block below only applies
+    # to that case, never to a join query already on DynamoDB or Aurora.
+    leaving_non_aurora_non_dynamodb_engine = (
+        current_engine != "dynamodb" and current_engine not in AURORA_ENGINES
+    )
+
+    def ok(e: str) -> bool:
+        if _resolver_score(trace_by_query, qid, e) is None:
+            return False
+        # The engine already (legitimately) owning this query is always
+        # eligible to keep it: ``may_absorb``'s specialist-absorb
+        # restriction is about CONSOLIDATING a query onto an engine, never
+        # about an engine continuing to hold what it already has (#502
+        # review: applying it unconditionally stripped OpenSearch of its
+        # own already-matched query whenever no triage signal/capability
+        # happened to be attached to it, moving it away for no score
+        # reason at all).
+        if e != current_engine and not may_absorb(e, qid, query, query_signals, query_capabilities):
+            return False
+        if not can_engine_serve_capability(e, required_caps):
+            return False
+        if (
+            e == "dynamodb"
+            and leaving_non_aurora_non_dynamodb_engine
+            and _query_has_join(query_map.get(qid, {}))
+        ):
+            return False
+        return True
+
+    return [e for e in candidates if ok(e)]
+
+
+def _group_eligible_engines(
+    qid: str,
+    trace_by_query: dict[str, dict],
+    current_engine_by_qid: dict[str, str],
+    candidates: Iterable[str],
+    mandatory_query_ids: set[str],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+) -> list[str]:
+    """``candidates`` eligible to hold ``qid`` -- group-aware (#502 review
+    round 5, finding G).
+
+    A co-dependency group moves as one unit, so an engine is eligible for a
+    grouped query only if it is eligible for EVERY non-mandatory member of
+    that group, including members currently sitting on a different engine,
+    not just ``qid`` itself (``_query_eligible_engines`` on its own only
+    ever asks about one query). An engine that cannot take the whole group
+    is irreplaceable for it -- never split a group to make an engine look
+    safe to remove, or to decide where it lands.
+
+    A mandatory member (a signal override, ADR #296) never travels with its
+    group, so it is excluded from the "every member" requirement here, the
+    same way Phase 2 already excludes it when it applies the group's move.
+
+    This is the ONE eligibility entry point both Phase 1
+    (``_evaluate_engine_removal``, ``_settle_committed_engines``) and
+    Phase 2 (``_place_settled_queries``) use, for grouped and ungrouped
+    queries alike -- ``_query_eligible_engines`` itself is the single-query
+    primitive this calls, never a second, divergent rule.
+    """
+    candidates = list(candidates)
+    current_engine = current_engine_by_qid.get(qid, "")
+    group_info = trace_by_query.get(qid, {}).get("group")
+    if not group_info:
+        return _query_eligible_engines(
+            qid,
+            query_map.get(qid, {"query_id": qid}),
+            current_engine,
+            candidates,
+            trace_by_query,
+            query_signals,
+            query_map,
+            query_capabilities,
+        )
+    group_key = group_info["key"]
+    members = [
+        mqid
+        for mqid, mpayload in trace_by_query.items()
+        if (mg := mpayload.get("group")) and mg["key"] == group_key
+        if mqid not in mandatory_query_ids
+    ]
+    return [
+        e
+        for e in candidates
+        if all(
+            e
+            in _query_eligible_engines(
+                m_qid,
+                query_map.get(m_qid, {"query_id": m_qid}),
+                current_engine_by_qid.get(m_qid, ""),
+                {e},
+                trace_by_query,
+                query_signals,
+                query_map,
+                query_capabilities,
+            )
+            for m_qid in members
+        )
+    ]
+
+
+def _evaluate_engine_removal(
+    engine: str,
+    native_qas: list[dict],
+    other_committed: set[str],
+    mandatory_query_ids: set[str],
+    trace_by_query: dict[str, dict],
+    current_engine_by_qid: dict[str, str],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+    committed_count: int,
+) -> tuple[bool, dict, float]:
+    """Phase 1's per-engine question (#502 review): judged on ``engine``'s
+    own native queries alone, using the resolver's own per-query scores
+    (``_resolver_score``) -- never the reality check's separate fit
+    scorer, and never a query another engine's placement happened to land
+    on it this run. No engine is protected for being cheapest or
+    "primary": the only queries that keep an engine committed outright
+    are a mandatory signal override (ADR #296) or a query no other
+    committed engine can serve at all (the shared, group-aware
+    eligibility gate ``_group_eligible_engines`` -- #502 review round 5,
+    finding G: a co-dependency group with a member on ``engine`` is
+    irreplaceable for ``engine`` unless some survivor is eligible for
+    EVERY member of that group, not just the one native to ``engine`` --
+    never a score comparison). Short of that, the engine is removed
+    unless at least one native query scores it ``UNIQUE_DELTA_THRESHOLD``
+    points above every engine that could take it, and -- once more than
+    ``TARGET_ENGINE_COUNT`` engines are already committed -- that unique
+    value is worth the fixed cost of keeping it (#494: unchanged, flat
+    ``EXTRA_ENGINE_BURDEN_MONTHLY`` and ``> 100`` cut-off).
+
+    Also returns a rank key (burden per unique query) ``_settle_committed_engines``
+    uses to decide WHICH removable engine to remove first when more than
+    one is removable in the same round -- the worst value for the fixed
+    operational cost, not evaluation order.
+    """
+    if not native_qas:
+        return (
+            True,
+            {
+                "total_queries": 0,
+                "irreplaceable_queries": [],
+                "unique_queries": [],
+                "redundant_queries": [],
+                "unique_ratio": 0,
+                "avg_delta": 0,
+            },
+            0.0,
+        )
+
+    irreplaceable: list[str] = []
+    unique_by_score: list[str] = []
+    redundant: list[str] = []
+    deltas: list[float] = []
+
+    for qa in native_qas:
+        qid = qa["query_id"]
+        if qid in mandatory_query_ids:
+            irreplaceable.append(qid)
+            continue
+        eligible_alts = _group_eligible_engines(
+            qid,
+            trace_by_query,
+            current_engine_by_qid,
+            other_committed,
+            mandatory_query_ids,
+            query_signals,
+            query_map,
+            query_capabilities,
+        )
+        if not eligible_alts:
+            irreplaceable.append(qid)
+            continue
+        this_score = _resolver_score(trace_by_query, qid, engine) or 0
+        best_alt = max(_resolver_score(trace_by_query, qid, alt) or 0 for alt in eligible_alts)
+        delta = this_score - best_alt
+        deltas.append(delta)
+        if delta >= UNIQUE_DELTA_THRESHOLD:
+            unique_by_score.append(qid)
+        else:
+            redundant.append(qid)
+
+    avg_delta = sum(deltas) / len(deltas) if deltas else 0
+    assessment = {
+        "total_queries": len(native_qas),
+        "irreplaceable_queries": irreplaceable,
+        "unique_queries": unique_by_score,
+        "redundant_queries": redundant,
+        "unique_ratio": (
+            (len(irreplaceable) + len(unique_by_score)) / len(native_qas) if native_qas else 0
+        ),
+        "avg_delta": round(avg_delta, 1),
+    }
+
+    total_burden = ENGINE_BASE_COST.get(engine, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
+    rank_key = total_burden / max(len(unique_by_score), 1)
+
+    if irreplaceable:
+        return False, assessment, 0.0
+    if not unique_by_score:
+        return True, assessment, rank_key
+    if committed_count > TARGET_ENGINE_COUNT and rank_key > 100:
+        return True, assessment, rank_key
+    return False, assessment, 0.0
+
+
+def _round_evaluation_order(snapshot: set[str]) -> list[str]:
+    """The order a round evaluates each committed engine's removability in.
+
+    Alphabetical by default -- a plain, deterministic choice, not a rule
+    any engine's removal depends on (every engine is judged against the
+    SAME frozen snapshot regardless of the order it is checked in; see
+    ``_settle_committed_engines``). A separate, overridable function so a
+    test can force a different evaluation order and confirm the settled
+    engine set does not change (#502 review item 7: order-independence
+    should hold for evaluation order, not just input order).
+    """
+    return sorted(snapshot)
+
+
+def _removal_tiebreak_key(
+    engine: str,
+    native_qas: list[dict],
+    survivors: set[str],
+    mandatory_query_ids: set[str],
+    trace_by_query: dict[str, dict],
+    current_engine_by_qid: dict[str, str],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+) -> tuple[int, float]:
+    """Data-driven tiebreaker between two candidates tied on burden-per-unique-
+    query (#502 review round 5, finding N1; round 6 corrected the second
+    measure) -- no engine name involved.
+
+    Simulates ``engine``'s removal: for every one of its native,
+    non-mandatory queries, finds the highest-scoring eligible survivor
+    (group-aware, same rule as everywhere else) it would actually land on.
+    Returns ``(n_destinations, total_fit_lost)`` -- sorting candidates
+    ascending on this prefers fewer distinct destination engines first (the
+    more consolidated outcome), then the LEAST total fit lost (``engine``'s
+    own score minus the destination's score, summed over every one of its
+    queries, not just the ones that cleared ``UNIQUE_DELTA_THRESHOLD`` --
+    an engine with a pile of barely-redundant queries loses more by being
+    removed than one with the same unique-query count and nothing else).
+    Two candidates that still tie on BOTH measures are genuinely
+    indistinguishable by any data this review has identified; the caller
+    reports that rather than picking one.
+    """
+    destinations: set[str] = set()
+    total_fit_lost = 0.0
+    for qa in native_qas:
+        qid = qa["query_id"]
+        if qid in mandatory_query_ids:
+            continue
+        alts = _group_eligible_engines(
+            qid,
+            trace_by_query,
+            current_engine_by_qid,
+            survivors,
+            mandatory_query_ids,
+            query_signals,
+            query_map,
+            query_capabilities,
+        )
+        if not alts:
+            continue
+        own_score = _resolver_score(trace_by_query, qid, engine) or 0
+        best_alt = max(alts, key=lambda a: _resolver_score(trace_by_query, qid, a) or 0)
+        best_score = _resolver_score(trace_by_query, qid, best_alt) or 0
+        destinations.add(best_alt)
+        total_fit_lost += own_score - best_score
+    return len(destinations), total_fit_lost
+
+
+def _settle_committed_engines(
+    engine_queries: dict[str, list[dict]],
+    mandatory_query_ids: set[str],
+    mandatory_committed_engines: set[str],
+    trace_by_query: dict[str, dict],
+    current_engine_by_qid: dict[str, str],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+    max_rounds: int,
+) -> tuple[set[str], dict[str, dict]]:
+    """Phase 1 (#502 review): settle which engines earn a place, independent
+    of the order they happen to be evaluated in.
+
+    Every engine in a round is judged against the SAME frozen snapshot of
+    the committed set at the round's start, using the resolver's own
+    per-query scores -- the verdict for any engine never depends on which
+    other engine was checked first. Only ONE engine is actually removed per
+    round: the removable candidate with the worst burden-per-unique-query
+    (the least economically justified, a data-driven key, not evaluation
+    order), and only if removing it alone leaves every one of its native
+    queries -- and every co-dependency group with a member on it, as a
+    whole unit (``_group_eligible_engines``, #502 review round 5, finding
+    G) -- with an eligible home among everyone else still committed.
+    Removing just one at a time, then re-evaluating everyone fresh against
+    the smaller set, is what review round 3 found round-1's "remove every
+    candidate in the round at once" batching got wrong: a cheap, high-volume
+    engine could be charged the ``TARGET_ENGINE_COUNT`` burden only because
+    another engine, being removed in the very same round, was still being
+    counted toward the total. Repeats until a round removes nothing, capped
+    at ``max_rounds`` (a warning, not a crash, if that cap is ever hit).
+
+    When two or more candidates tie on burden-per-unique-query, which one
+    actually gets removed is NOT decided by engine name (#502 review round
+    5, finding N1: that is an arbitrary rule, and changing the input order
+    of two equal-cost engines proved it mattered). ``_removal_tiebreak_key``
+    resolves the tie by simulating each removal and comparing the result;
+    if two candidates are still indistinguishable after that, this function
+    removes neither of them this round -- both stay committed, flagged
+    ``tie_unresolved`` in the assessment, and a different, non-tied,
+    lower-ranked candidate (if any) is tried instead.
+    """
+    committed = {e for e in engine_queries if engine_queries.get(e)}
+    assessment: dict[str, dict] = {}
+    round_num = 0
+    converged = False
+    while round_num < max_rounds:
+        round_num += 1
+        snapshot = set(committed)
+        candidates: list[tuple[float, str]] = []
+        for engine in _round_evaluation_order(snapshot):
+            other = snapshot - {engine}
+            removable, info, rank_key = _evaluate_engine_removal(
+                engine,
+                engine_queries.get(engine, []),
+                other,
+                mandatory_query_ids,
+                trace_by_query,
+                current_engine_by_qid,
+                query_signals,
+                query_map,
+                query_capabilities,
+                len(snapshot),
+            )
+            # #502 review: no engine is "primary" anymore -- every engine is
+            # judged the same way. The contract field stays (a breaking
+            # contract change is its own proposal, per CONTRIBUTING.md) but
+            # is always False now rather than naming a protected engine.
+            info["is_primary"] = False
+            info["is_mandatory"] = engine in mandatory_committed_engines
+            assessment[engine] = info
+            if removable:
+                candidates.append((rank_key, engine))
+        if not candidates:
+            converged = True
+            break
+
+        # Remove exactly one engine this round: the worst-ranked (highest
+        # burden-per-unique-query) candidate that is actually safe on its
+        # own. A tie in rank is resolved by data (``_removal_tiebreak_key``),
+        # never by engine name; a tie that survives that too is reported,
+        # not broken (both candidates stay committed this round).
+        by_rank: dict[float, list[str]] = defaultdict(list)
+        for rank_key, engine_name in candidates:
+            by_rank[rank_key].append(engine_name)
+
+        removed_one = False
+        for rank_key in sorted(by_rank, reverse=True):
+            tied = by_rank[rank_key]
+            survivors_by_candidate = {c: snapshot - {c} for c in tied}
+            if len(tied) > 1:
+                extra = {
+                    c: _removal_tiebreak_key(
+                        c,
+                        engine_queries.get(c, []),
+                        survivors_by_candidate[c],
+                        mandatory_query_ids,
+                        trace_by_query,
+                        current_engine_by_qid,
+                        query_signals,
+                        query_map,
+                        query_capabilities,
+                    )
+                    for c in tied
+                }
+                best = min(extra.values())
+                decisive = sorted(c for c in tied if extra[c] == best)
+                if len(decisive) > 1:
+                    for c in decisive:
+                        assessment[c]["tie_unresolved"] = True
+                    continue
+            else:
+                decisive = tied
+            candidate = decisive[0]
+            survivors = survivors_by_candidate[candidate]
+            native_qas = engine_queries.get(candidate, [])
+            if all(
+                _group_eligible_engines(
+                    qa["query_id"],
+                    trace_by_query,
+                    current_engine_by_qid,
+                    survivors,
+                    mandatory_query_ids,
+                    query_signals,
+                    query_map,
+                    query_capabilities,
+                )
+                for qa in native_qas
+                if qa["query_id"] not in mandatory_query_ids
+            ):
+                committed.discard(candidate)
+                removed_one = True
+                break
+        if not removed_one:
+            converged = True
+            break
+
+    if not converged:
+        warnings.warn(
+            f"_settle_committed_engines did not converge within {max_rounds} rounds "
+            f"(stopped with {sorted(committed)} still committed) -- stopping instead of "
+            "looping forever; this should not happen outside a pathological input.",
+            stacklevel=2,
+        )
+    return committed, assessment
+
+
+def _pick_winner(
+    scores: dict[str, float],
+    current_engines: set[str],
+    source_compatible_engine: str | None,
+) -> tuple[str, str | None]:
+    """Highest score wins. Returns ``(winner, tie_kind)``; ``tie_kind`` is
+    ``None`` when one engine strictly scores highest (no tie to resolve).
+
+    Tie order (#502 review round 3), none of it alphabetical:
+    1. the source-compatible engine (ADR-031), when it is tied for the top
+       score -- ``tie_kind="source_compatible"``;
+    2. otherwise, the query's own current engine (or, for a co-dependency
+       group, any member's), when IT is tied for the top -- a tie is not
+       "strictly higher," so it is never an opportunity for some other
+       engine to pick up queries it did not already have;
+       ``tie_kind="stability"``;
+    3. otherwise there is no ADR-031 rule for this tie yet (#503): a
+       deterministic choice is still returned (engines are sorted by name
+       only so two runs on the same input agree, not because the name
+       decides anything), but it is reported honestly as
+       ``tie_kind="tie_unresolved"`` rather than presented as a real rule.
+    """
+    top = max(scores.values())
+    tied = sorted(e for e, s in scores.items() if s == top)
+    if len(tied) == 1:
+        return tied[0], None
+    if source_compatible_engine and source_compatible_engine in tied:
+        return source_compatible_engine, "source_compatible"
+    staying = sorted(set(tied) & current_engines)
+    if staying:
+        return staying[0], "stability"
+    return tied[0], "tie_unresolved"
+
+
+def _place_settled_queries(
+    query_assignments: list[dict],
+    committed_engines: set[str],
+    mandatory_query_ids: set[str],
+    current_engine_by_qid: dict[str, str],
+    query_signals: dict[str, list[str]],
+    query_map: dict[str, dict],
+    query_capabilities: dict[str, list[str]] | None,
+    trace_by_query: dict[str, dict],
+    source_compatible_engine: str | None,
+    workload_justified: dict[str, bool | None],
+) -> tuple[list[dict], list[dict]]:
+    """Phase 2 (#502 review): place every query on its highest-scoring
+    engine within the settled committed set, using the SAME per-query
+    scores (``trace_by_query``, built once in ``run_reality_check`` and
+    shared with Phase 1) and the SAME, group-aware eligibility rule
+    (``_group_eligible_engines``) Phase 1 used to decide which engines
+    earn a place -- never the reality check's own, separate fit scorer,
+    and never a different eligibility answer than Phase 1 already relied
+    on when it decided an engine was safe to remove.
+
+    A query whose engine survived Phase 1 stays there unless another
+    eligible, surviving engine scores it strictly higher (see
+    ``_pick_winner`` for the tie order). A co-dependency group moves as
+    one unit, by the SAME group score the resolver itself compared when it
+    first placed the group, onto an engine ``_group_eligible_engines`` says
+    is eligible for every member -- Phase 1 never removes an engine while
+    one of its groups has no such survivor (#502 review round 5, finding
+    G), so this should never come up empty; if it somehow did, the group
+    stays exactly where it is (the same "should not happen" outcome as an
+    individual query with nothing eligible), never split apart to force a
+    placement. Because every query is placed fresh against the final
+    committed set, not incrementally against a list that can go stale, no
+    query should ever end up on a removed engine; ``run_reality_check``
+    asserts that invariant right after this call rather than trusting it
+    silently.
+    """
+    revised = deepcopy(query_assignments)
+    revised_by_id = {qa["query_id"]: qa for qa in revised}
+    moves: dict[tuple[str, str], list[str]] = defaultdict(list)
+    tie_unresolved_moves: dict[tuple[str, str], int] = defaultdict(int)
+
+    def _place_individual(qid: str, qa: dict) -> None:
+        """Place one (ungrouped, or mandatory-stripped) query on its
+        highest-scoring committed, eligible engine."""
+        current_engine = qa["assigned_engine"]
+        eligible_engines = _group_eligible_engines(
+            qid,
+            trace_by_query,
+            current_engine_by_qid,
+            committed_engines,
+            mandatory_query_ids,
+            query_signals,
+            query_map,
+            query_capabilities,
+        )
+        eligible_scores: dict[str, float] = {
+            e: score
+            for e in eligible_engines
+            if (score := _resolver_score(trace_by_query, qid, e)) is not None
+        }
+        if not eligible_scores:
+            return  # nothing eligible at all; leave it where it is (should not happen)
+        winner, tie_kind = _pick_winner(eligible_scores, {current_engine}, source_compatible_engine)
+        if winner == current_engine:
+            return
+        current_score = eligible_scores.get(current_engine, "n/a")
+        tie_note = (
+            " (tie_unresolved between engines, pending #503)"
+            if tie_kind == "tie_unresolved"
+            else ""
+        )
+        qa["assigned_engine"] = winner
+        qa["assignment_reason"] = (
+            f"reality check: consolidated from {current_engine} → {winner} "
+            f"(no unique value — {current_engine} scores {current_score}, "
+            f"{winner} scores {eligible_scores[winner]}{tie_note})"
+        )
+        moves[(current_engine, winner)].append(qid)
+        if tie_kind == "tie_unresolved":
+            tie_unresolved_moves[(current_engine, winner)] += 1
+
+    handled_groups: set[str] = set()
+    for qid, payload in trace_by_query.items():
+        qa = revised_by_id.get(qid)
+        if qa is None or qid in mandatory_query_ids:
+            continue  # unknown query, or protected by a mandatory signal override (ADR #296)
+
+        group_info = payload.get("group")
+        if group_info:
+            group_key = group_info["key"]
+            if group_key in handled_groups:
+                continue
+            handled_groups.add(group_key)
+            members = [
+                (mqid, revised_by_id[mqid]["assigned_engine"])
+                for mqid, mpayload in trace_by_query.items()
+                if (mgroup := mpayload.get("group")) and mgroup["key"] == group_key
+                if mqid in revised_by_id and mqid not in mandatory_query_ids
+            ]
+            if not members:
+                continue
+            # The same group-aware eligibility rule Phase 1 used to decide
+            # this group's current engine was safe to keep or remove (#502
+            # review round 5, finding G) -- not a second, Phase-2-only
+            # notion of "eligible for the group" that could disagree with
+            # Phase 1's.
+            eligible_group_engines = _group_eligible_engines(
+                qid,
+                trace_by_query,
+                current_engine_by_qid,
+                committed_engines,
+                mandatory_query_ids,
+                query_signals,
+                query_map,
+                query_capabilities,
+            )
+            eligible = {
+                e: s for e, s in group_info["scores"].items() if e in eligible_group_engines
+            }
+            if not eligible:
+                # Should not happen: Phase 1 never removes an engine while
+                # one of its co-dependency groups has no eligible survivor
+                # for every member (finding G) -- so this group's current
+                # engine is always still committed and always eligible for
+                # it. Leave the group exactly where it is, the same
+                # "should not happen" outcome ``_place_individual`` uses,
+                # never split apart to force a placement.
+                continue
+            current_engines = {e for _, e in members}
+            winner, tie_kind = _pick_winner(eligible, current_engines, source_compatible_engine)
+            for member_qid, member_engine in members:
+                member_qa = revised_by_id[member_qid]
+                if member_engine == winner:
+                    continue
+                member_qa["assigned_engine"] = winner
+                tie_note = (
+                    " (tie_unresolved between engines, pending #503)"
+                    if tie_kind == "tie_unresolved"
+                    else ""
+                )
+                member_qa["assignment_reason"] = (
+                    f"reality check: consolidated from {member_engine} → {winner} "
+                    f"(no unique value — co-dependency group moves together{tie_note})"
+                )
+                moves[(member_engine, winner)].append(member_qid)
+                if tie_kind == "tie_unresolved":
+                    tie_unresolved_moves[(member_engine, winner)] += 1
+            continue
+
+        _place_individual(qid, qa)
+
+    final_counts: dict[str, int] = defaultdict(int)
+    for qa in revised:
+        final_counts[qa["assigned_engine"]] += 1
+
+    # Queries that stayed on an engine that lost at least one query this
+    # phase -- either because no committed engine scores them as well (a
+    # capability/ownership gate, or genuinely the best fit) or because they
+    # are protected by a mandatory signal override. Reported once per
+    # ``from_engine``, the same set on every one of its consolidation
+    # records, matching the existing convention for a partial move.
+    native_qids_by_engine: dict[str, list[str]] = defaultdict(list)
+    for qa in query_assignments:
+        native_qids_by_engine[qa["assigned_engine"]].append(qa["query_id"])
+    moved_from: dict[str, set[str]] = defaultdict(set)
+    for (frm, _to), qids in moves.items():
+        moved_from[frm].update(qids)
+
+    consolidations: list[dict[str, Any]] = []
+    for (frm, to), qids in sorted(moves.items()):
+        is_full = final_counts.get(frm, 0) == 0
+        retained_qids = (
+            [] if is_full else sorted(set(native_qids_by_engine.get(frm, [])) - moved_from[frm])
+        )
+        retained_mandatory = [q for q in retained_qids if q in mandatory_query_ids]
+        retained_other = [q for q in retained_qids if q not in mandatory_query_ids]
+        n_tie_unresolved = tie_unresolved_moves.get((frm, to), 0)
+        consolidations.append(
+            {
+                "from_engine": frm,
+                "to_engine": to,
+                "query_count": len(qids),
+                "reason": (
+                    f"{frm} provides no unique capabilities — {len(qids)} queries can be "
+                    f"served by {to}"
+                    + (f" ({len(retained_qids)} retained)" if retained_qids else "")
+                    + (
+                        f" ({n_tie_unresolved} decided by an unresolved tie between engines, "
+                        "pending #503)"
+                        if n_tie_unresolved
+                        else ""
+                    )
+                ),
+                "saved_cost_estimate": 0,
+                "action": "full" if is_full else "partial",
+                "queries_retained": retained_qids,
+                "retention_reason": (
+                    "; ".join(
+                        r
+                        for r, present in (
+                            ("Mandatory signal queries stay on their engine", retained_mandatory),
+                            (
+                                "No remaining engine scores these queries as well as this "
+                                "one does",
+                                retained_other,
+                            ),
+                        )
+                        if present
+                    )
+                    if retained_qids
+                    else None
+                ),
+                "workload_justified": workload_justified.get(frm),
+            }
+        )
+
+    # Set the saved-cost estimate on the first full-removal record for an
+    # engine that ends this run owning nothing at all (matches the existing
+    # convention: the figure belongs to the engine being eliminated, counted
+    # once, not once per destination it was split across).
+    saved_for: dict[str, float] = {}
+    for c in consolidations:
+        if c["action"] == "full" and c["from_engine"] not in saved_for:
+            saved_for[c["from_engine"]] = (
+                ENGINE_BASE_COST.get(c["from_engine"], 100) + EXTRA_ENGINE_BURDEN_MONTHLY
+            )
+            c["saved_cost_estimate"] = saved_for[c["from_engine"]]
+
+    # #502 review round 3: Phase 1 and Phase 2 must agree on eligibility --
+    # verified here, not just assumed, since the earlier draft's two
+    # different eligibility checks let a query silently stay on an engine
+    # Phase 1 had already removed.
+    stranded = sorted(
+        qa["query_id"] for qa in revised if qa["assigned_engine"] not in committed_engines
+    )
+    if stranded:
+        raise RuntimeError(
+            f"reality check: {len(stranded)} queries ended on a removed engine "
+            f"(Phase 1/Phase 2 eligibility disagreement): {stranded[:10]}"
+        )
+
+    return revised, consolidations
+
+
 def run_reality_check(
     assignment: dict,
     triage: dict,
@@ -637,346 +1408,71 @@ def run_reality_check(
         if qa["query_id"] in mandatory_query_ids:
             mandatory_committed_engines.add(qa["assigned_engine"])
 
-    # Identify the primary engine — prefer low-cost (serverless) engines,
-    # then break ties by query count. A $0 DynamoDB with 24 queries is a
-    # better primary than a $200 DocumentDB with 28 queries.
-    primary_engine_name = ""
-    if engine_queries:
-        primary_engine_name = min(
-            engine_queries,
-            key=lambda e: (ENGINE_BASE_COST.get(e, 100), -len(engine_queries[e])),
-        )
+    # Re-run the resolver once, with a trace attached, so Phase 1 and Phase
+    # 2 read the IDENTICAL per-query scores (#502 review: Phase 1 judging
+    # engines by the reality check's own, separate scorer, rather than
+    # this same trace, is exactly what produced results the scores did not
+    # support). Pure and deterministic on the exact artifacts that produced
+    # ``query_assignments`` -- see ``tests/e2e/routing_snapshot.py`` for the
+    # same technique and its own consistency guard.
+    from src.agents.referee.assignment_resolver import AssignmentResolver, RoutingTrace
+
+    _trace = RoutingTrace()
+    AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
+    trace_by_query = _trace.by_query
+    # Each query's engine as it stands before either phase runs -- stable
+    # throughout both, since neither phase mutates ``query_assignments``
+    # itself (Phase 2 works on a ``deepcopy``). Shared by both phases'
+    # group-aware eligibility checks (``_group_eligible_engines``, #502
+    # review round 5, finding G) so a co-dependency group's members are
+    # always looked up by the SAME current engine, even when they are
+    # native to a different engine than the one being evaluated for removal.
+    current_engine_by_qid = {qa["query_id"]: qa["assigned_engine"] for qa in query_assignments}
 
     # -------------------------------------------------------------------
-    # Pass 0: Unique Value Assessment (iterative elimination)
-    #
-    # Ask: "If we REMOVED this engine, could all its non-mandatory queries
-    # be served by the remaining engines?" If yes, the engine is redundant.
-    #
-    # We evaluate engines from most expensive to cheapest, removing one at
-    # a time. This ensures we keep the cheapest viable set.
+    # Phase 1 (#502 review): settle which engines earn a place, judged on
+    # each engine's own native queries alone, order-independent, repeated
+    # to a fixed point. No engine is protected for being cheapest or
+    # "primary" -- the only unconditional protections are a mandatory
+    # signal override (ADR #296) and a query (or co-dependency group) no
+    # other committed engine can serve at all, both handled inside
+    # ``_evaluate_engine_removal`` itself.
     # -------------------------------------------------------------------
-
-    # Sort engines by operational cost (most expensive first).
-    # Mandatory engines with signal overrides are evaluated last (protected).
-    all_engines_sorted = sorted(
-        [e for e in engine_queries if engine_queries[e]],
-        key=lambda e: (
-            0 if e in mandatory_committed_engines else 1,  # mandatory = protected
-            0 if e == primary_engine_name else 1,  # primary = protected
-            ENGINE_BASE_COST.get(e, 100),  # most expensive first (reversed below)
-        ),
-        reverse=True,  # evaluate most expensive non-mandatory first
-    )
-
-    unique_value_assessment: dict[str, dict] = {}
-    engines_to_consolidate: list[str] = []
-    surviving_engines = set(all_engines_sorted)  # engines still in the mix
-
-    for engine in all_engines_sorted:
-        qas = engine_queries[engine]
-
-        # For each query, compute this engine's fit score vs best alternative.
-        # A query is "unique" if this engine's score exceeds the best alt by UNIQUE_DELTA_THRESHOLD.
-        other_engines = surviving_engines - {engine}
-        unique_queries = []
-        redundant_queries = []
-        query_deltas = []  # (query_id, this_score, best_alt_score, delta)
-
-        for qa in qas:
-            if qa["query_id"] in mandatory_query_ids:
-                unique_queries.append(qa["query_id"])
-                continue
-
-            this_score = _engine_fit_score(engine, qa, query_signals, query_map, analysis_outputs)
-            best_alt_score = 0
-            for alt_engine in other_engines:
-                # Only an engine that could absorb the query is an alternative to it
-                if not may_absorb(
-                    alt_engine,
-                    qa["query_id"],
-                    query_map.get(qa["query_id"], qa),
-                    query_signals,
-                    query_capabilities,
-                ):
-                    continue
-                alt_score = _engine_fit_score(
-                    alt_engine, qa, query_signals, query_map, analysis_outputs
-                )
-                best_alt_score = max(best_alt_score, alt_score)
-
-            delta = this_score - best_alt_score
-            query_deltas.append((qa["query_id"], this_score, best_alt_score, delta))
-
-            if delta >= UNIQUE_DELTA_THRESHOLD:
-                unique_queries.append(qa["query_id"])
-            else:
-                redundant_queries.append(qa["query_id"])
-
-        # Average delta across all non-mandatory queries (diagnostic metric)
-        non_mandatory_deltas = [d for _, _, _, d in query_deltas]
-        avg_delta = (
-            sum(non_mandatory_deltas) / len(non_mandatory_deltas) if non_mandatory_deltas else 0
-        )
-
-        unique_value_assessment[engine] = {
-            "total_queries": len(qas),
-            "unique_queries": unique_queries,
-            "redundant_queries": redundant_queries,
-            "unique_ratio": len(unique_queries) / len(qas) if qas else 0,
-            "avg_delta": round(avg_delta, 1),
-            "is_primary": engine == primary_engine_name,
-            "is_mandatory": engine in mandatory_committed_engines,
-        }
-
-        # Decision: consolidate this engine?
-        # The primary engine never consolidates. A mandatory engine keeps only its
-        # mandatory queries protected (#296): its other queries are judged like any
-        # engine's, so one text-search query no longer shields a hundred others.
-        # Pass 2 never moves mandatory queries, so the engine stays (partially
-        # consolidated) whenever its non-mandatory queries go.
-        if engine == primary_engine_name:
-            continue
-
-        if engine in mandatory_committed_engines:
-            unique_queries = [q for q in unique_queries if q not in mandatory_query_ids]
-            if not redundant_queries and not unique_queries:
-                continue  # nothing but mandatory queries
-
-        if not unique_queries:
-            # All queries can be served equally well elsewhere — remove
-            engines_to_consolidate.append(engine)
-            surviving_engines.discard(engine)
-            continue
-
-        # Has some unique queries. But if we're over TARGET_ENGINE_COUNT,
-        # check if the unique count justifies the operational burden.
-        if len(surviving_engines) > TARGET_ENGINE_COUNT:
-            base_cost = ENGINE_BASE_COST.get(engine, 100)
-            total_burden = base_cost + EXTRA_ENGINE_BURDEN_MONTHLY
-            burden_per_unique = total_burden / max(len(unique_queries), 1)
-            if burden_per_unique > 100:
-                engines_to_consolidate.append(engine)
-                surviving_engines.discard(engine)
-
-    # -------------------------------------------------------------------
-    # Pass 1: Aurora Absorption
-    #
-    # If Aurora is already committed, absorb orphan queries from engines
-    # with < AURORA_ABSORPTION_QUERY_THRESHOLD queries, provided Aurora
-    # can serve them adequately (fit >= 50, specialist delta < 30).
-    # -------------------------------------------------------------------
-
-    aurora_absorption = _run_aurora_absorption_pass(
-        engine_queries=engine_queries,
-        surviving_engines=surviving_engines,
-        mandatory_committed_engines=mandatory_committed_engines,
-        query_signals=query_signals,
-        query_map=query_map,
-        analysis_outputs=analysis_outputs,
-        query_capabilities=query_capabilities or {},
-        source_engine=resolved_source_engine,
-    )
-
-    # Apply absorption: mark eliminated engines for consolidation
-    for engine in aurora_absorption.engines_eliminated:
-        if engine not in engines_to_consolidate:
-            engines_to_consolidate.append(engine)
-        surviving_engines.discard(engine)
-
-    # Move absorbed queries now. Pass 2 skips them, so each query is
-    # placed (and counted in consolidations) exactly once.
-    revised = deepcopy(query_assignments)
-    absorbed_by_id = {aq["query_id"]: aq for aq in aurora_absorption.absorbed_queries}
-    absorption_consolidations = _apply_aurora_absorption(
-        revised, aurora_absorption, engine_queries, mandatory_committed_engines, workload_justified
+    max_rounds = len(engine_queries) + 2
+    committed_engines, unique_value_assessment = _settle_committed_engines(
+        engine_queries,
+        mandatory_query_ids,
+        mandatory_committed_engines,
+        trace_by_query,
+        current_engine_by_qid,
+        query_signals,
+        query_map,
+        query_capabilities,
+        max_rounds,
     )
 
     # -------------------------------------------------------------------
-    # Pass 2: Consolidation — distribute queries from redundant engines
+    # Phase 2 (#502 review): place every query on its highest-scoring
+    # engine within the settled set, using the SAME resolver scores and
+    # the SAME eligibility rule Phase 1 used (ADR-031) -- never a query
+    # ends on an engine Phase 1 removed, because placement happens once,
+    # fresh, against the final set, not incrementally against a list that
+    # can go stale.
     # -------------------------------------------------------------------
-
-    # Committed engines = all engines NOT being consolidated
-    committed_engines = {
-        e for e in engine_queries if e not in engines_to_consolidate and engine_queries[e]
-    }
-
-    consolidations: list[dict[str, Any]] = []
-
-    lightweight_recommendations = []
-
-    for engine in list(engines_to_consolidate):
-        qas = engine_queries[engine]
-        if not qas:
-            continue
-
-        # Filter out mandatory queries — they can't be moved
-        movable_qas = [
-            qa
-            for qa in qas
-            if qa["query_id"] not in mandatory_query_ids and qa["query_id"] not in absorbed_by_id
-        ]
-        if not movable_qas:
-            if any(qa["query_id"] in mandatory_query_ids for qa in qas):
-                # Only mandatory queries left: the engine stays committed (#296)
-                engines_to_consolidate.remove(engine)
-                committed_engines.add(engine)
-            continue
-
-        base_cost = ENGINE_BASE_COST.get(engine, 100)
-
-        # Serviceability gate: separate queries into serviceable and unserviceable
-        serviceable_qas = []
-        unserviceable_qas = []
-        for qa in movable_qas:
-            qid = qa["query_id"]
-            required_caps = query_capabilities.get(qid, [])
-            # Check if ANY committed engine can serve this query's capabilities
-            any_can_serve = any(
-                can_engine_serve_capability(e, required_caps)
-                for e in committed_engines
-                if e != engine
-            )
-            if any_can_serve or not required_caps:
-                serviceable_qas.append(qa)
-            else:
-                unserviceable_qas.append(qa)
-
-        # Mandatory queries stay on the engine, so it stays too (#296)
-        retained_mandatory = [qa for qa in qas if qa["query_id"] in mandatory_query_ids]
-
-        # If all queries are unserviceable, engine must stay
-        if not serviceable_qas and unserviceable_qas:
-            engines_to_consolidate.remove(engine)
-            committed_engines.add(engine)
-            assessment = unique_value_assessment.get(engine, {})
-            assessment["consolidation_blocked"] = (
-                f"{len(unserviceable_qas)} queries require capabilities no other engine provides"
-            )
-            continue
-
-        # Per-query placement into committed engines (only serviceable queries)
-        placement: dict[str, list[tuple[dict, str]]] = {}
-        all_placed = True
-        for qa in serviceable_qas:
-            absorber = _find_best_absorber_for_query(
-                qa,
-                committed_engines,
-                engine,
-                query_signals,
-                query_map,
-                analysis_outputs,
-                engine_queries,
-                mandatory_committed_engines,
-                primary_engine_name,
-                query_capabilities,
-            )
-            if absorber:
-                target = absorber["target_engine"]
-                if target not in placement:
-                    placement[target] = []
-                placement[target].append((qa, absorber["reason"]))
-            else:
-                all_placed = False
-                break
-
-        if all_placed and placement:
-            # Apply all placements
-            for target_engine, placed_qas in placement.items():
-                placed_ids = {qa["query_id"] for qa, _ in placed_qas}
-                for qa in revised:
-                    if qa["assigned_engine"] == engine and qa["query_id"] in placed_ids:
-                        reason_text = next(
-                            r for q, r in placed_qas if q["query_id"] == qa["query_id"]
-                        )
-                        qa["assigned_engine"] = target_engine
-                        qa["assignment_reason"] = (
-                            f"reality check: consolidated from {engine} → {target_engine} "
-                            f"(no unique value — {reason_text})"
-                        )
-
-            total_moved = sum(len(v) for v in placement.values())
-            is_partial = bool(unserviceable_qas or retained_mandatory)
-            retained_qas = unserviceable_qas + retained_mandatory
-
-            # Record consolidations per target
-            for target_engine, placed_qas in placement.items():
-                consolidation_entry = {
-                    "from_engine": engine,
-                    "to_engine": target_engine,
-                    "query_count": len(placed_qas),
-                    "reason": (
-                        f"{engine} provides no unique capabilities — "
-                        f"{total_moved} queries can be served by existing engines"
-                        + (
-                            f" ({len(unserviceable_qas)} retained due to capability requirements)"
-                            if unserviceable_qas
-                            else ""
-                        )
-                        + (
-                            f" ({len(retained_mandatory)} mandatory signal queries retained)"
-                            if retained_mandatory
-                            else ""
-                        )
-                    ),
-                    "saved_cost_estimate": 0,
-                    "action": "partial" if is_partial else "full",
-                    "queries_retained": (
-                        [qa["query_id"] for qa in retained_qas] if is_partial else []
-                    ),
-                    "retention_reason": (
-                        "; ".join(
-                            r
-                            for r, present in (
-                                (
-                                    "Queries require capabilities no committed engine provides",
-                                    unserviceable_qas,
-                                ),
-                                (
-                                    "Mandatory signal queries stay on their engine",
-                                    retained_mandatory,
-                                ),
-                            )
-                            if present
-                        )
-                        if is_partial
-                        else None
-                    ),
-                    "workload_justified": workload_justified.get(engine),
-                }
-                consolidations.append(consolidation_entry)
-
-            # Set saved cost on first consolidation entry for this engine
-            if not is_partial and total_moved == len(movable_qas):
-                total_saved = base_cost + EXTRA_ENGINE_BURDEN_MONTHLY
-                for c in consolidations:
-                    if c["from_engine"] == engine:
-                        c["saved_cost_estimate"] = total_saved
-                        total_saved = 0
-
-            # Partial consolidation: engine stays but with fewer queries
-            if is_partial:
-                engines_to_consolidate.remove(engine)
-                committed_engines.add(engine)
-
-                # Suggest lightweight alternative if orphan set is small
-                lw_rec = (
-                    _suggest_lightweight_for_orphans(
-                        unserviceable_qas, len(movable_qas), query_capabilities, engine
-                    )
-                    if unserviceable_qas
-                    else None
-                )
-                if lw_rec:
-                    lightweight_recommendations.append(lw_rec)
-        else:
-            # Could not place all queries — engine stays but flag it
-            engines_to_consolidate.remove(engine)
-            committed_engines.add(engine)
-            assessment = unique_value_assessment.get(engine, {})
-            assessment["consolidation_blocked"] = (
-                "Some queries could not be placed in any committed engine"
-            )
+    source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
+    revised, consolidations = _place_settled_queries(
+        query_assignments,
+        committed_engines,
+        mandatory_query_ids,
+        current_engine_by_qid,
+        query_signals,
+        query_map,
+        query_capabilities,
+        trace_by_query,
+        source_compatible_engine,
+        workload_justified,
+    )
+    lightweight_recommendations: list[dict] = []
 
     # -------------------------------------------------------------------
     # Mandatory-engine justification floor (#326, #167)
@@ -1040,7 +1536,66 @@ def run_reality_check(
 
         floor_placement: dict[str, list[tuple[dict, str]]] = defaultdict(list)
         floor_unplaced: list[dict] = []
+        to_move_by_id = {qa["query_id"]: qa for qa in to_move_qas}
+        handled_floor_groups: set[str] = set()
         for qa in to_move_qas:
+            qid = qa["query_id"]
+            group_info = trace_by_query.get(qid, {}).get("group")
+            if group_info:
+                # #502 review round 6, finding 3: route a grouped query
+                # through ``_group_eligible_engines`` too, so a
+                # co-dependency group fails the floor and moves as ONE
+                # unit here, the same rule Phase 1 and Phase 2 already
+                # apply -- never split by picking each member's own best
+                # absorber independently.
+                group_key = group_info["key"]
+                if group_key in handled_floor_groups:
+                    continue
+                handled_floor_groups.add(group_key)
+                members = [
+                    mqid
+                    for mqid, mpayload in trace_by_query.items()
+                    if (mg := mpayload.get("group")) and mg["key"] == group_key
+                ]
+                member_qas = [to_move_by_id[m] for m in members if m in to_move_by_id]
+                if len(member_qas) != len(members):
+                    # Not every member of this group is failing the floor
+                    # on ``engine`` right now -- moving only part of a
+                    # group is never allowed, so leave the whole group
+                    # where it is rather than split it.
+                    floor_unplaced.extend(member_qas)
+                    continue
+                eligible = _group_eligible_engines(
+                    qid,
+                    trace_by_query,
+                    current_engine_by_qid,
+                    floor_candidates,
+                    mandatory_query_ids,
+                    query_signals,
+                    query_map,
+                    query_capabilities,
+                )
+                if not eligible:
+                    floor_unplaced.extend(member_qas)
+                    continue
+                # ``sorted()`` first so an exact score tie resolves the same
+                # way every run, never by set iteration order (#288).
+                winner = max(
+                    sorted(eligible),
+                    key=lambda e: group_info["scores"].get(
+                        e, _resolver_score(trace_by_query, qid, e)
+                    )
+                    or 0,
+                )
+                winner_fit = round(
+                    group_info["scores"].get(winner, _resolver_score(trace_by_query, qid, winner))
+                    or 0
+                )
+                reason = f"fit={winner_fit}, co-dependency group moves together"
+                for member_qa in member_qas:
+                    floor_placement[winner].append((member_qa, reason))
+                continue
+
             absorber = _find_best_absorber_for_query(
                 qa,
                 floor_candidates,
@@ -1051,6 +1606,7 @@ def run_reality_check(
                 engine_queries,
                 set(),
                 "",
+                trace_by_query,
                 query_capabilities,
             )
             if absorber is None:
@@ -1060,6 +1616,22 @@ def run_reality_check(
 
         moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _ in placed}
         if not moved_ids:
+            # #502 review round 6, finding 2: every query that failed the
+            # floor also had no eligible destination (``floor_unplaced``
+            # covers all of ``to_move_qas``) -- record WHY the engine is
+            # kept rather than silently leaving it unchanged with no trace
+            # of this gate having run at all.
+            if floor_unplaced:
+                assessment = unique_value_assessment.setdefault(engine, {})
+                assessment["floor_unplaced_queries"] = sorted(
+                    qa["query_id"] for qa in floor_unplaced
+                )
+                n = len(floor_unplaced)
+                assessment["floor_unplaced_reason"] = (
+                    f"kept: no eligible engine can serve {n} "
+                    f"quer{'y' if n == 1 else 'ies'} that failed "
+                    f"{display_engine(engine)}'s justification floor"
+                )
             continue
 
         for target_engine, placed in floor_placement.items():
@@ -1166,7 +1738,7 @@ def run_reality_check(
     consolidations = reconcile_consolidations(
         query_assignments,
         revised,
-        absorption_consolidations + consolidations,
+        consolidations,
         unique_value_assessment,
     )
 
@@ -1180,8 +1752,23 @@ def run_reality_check(
         patterns,
         engine_queries,
         _engine_infra_cost(analysis_outputs),
+        unique_value_assessment,
     )
 
+    # #502 review: Phase 1+2 above replace the old Aurora-absorption pass
+    # (a small engine Aurora can serve is just one case the general
+    # settle-then-place design already covers) -- this key stays, reporting
+    # the same facts in the general case rather than fabricating an
+    # Aurora-specific mechanism that no longer runs.
+    final_counts: dict[str, int] = defaultdict(int)
+    for qa in revised:
+        final_counts[qa["assigned_engine"]] += 1
+    source_aurora_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
+    aurora_engine_name = (
+        source_aurora_engine
+        if source_aurora_engine in committed_engines
+        else next((e for e in AURORA_ENGINES if e in committed_engines), "")
+    )
     return {
         "revised_assignments": revised,
         "consolidations": consolidations,
@@ -1190,10 +1777,16 @@ def run_reality_check(
         "unique_value_assessment": unique_value_assessment,
         "lightweight_recommendations": lightweight_recommendations,
         "aurora_absorption": {
-            "aurora_engine": aurora_absorption.aurora_engine,
-            "engines_eliminated": aurora_absorption.engines_eliminated,
-            "engines_reduced": aurora_absorption.engines_reduced,
-            "absorbed_count": len(aurora_absorption.absorbed_queries),
+            "aurora_engine": aurora_engine_name,
+            "engines_eliminated": sorted(set(engine_queries) - committed_engines),
+            "engines_reduced": sorted(
+                e
+                for e in committed_engines
+                if final_counts.get(e, 0) < len(engine_queries.get(e, []))
+            ),
+            "absorbed_count": sum(
+                c["query_count"] for c in consolidations if c["to_engine"] == aurora_engine_name
+            ),
         },
     }
 
@@ -1652,15 +2245,28 @@ def _find_best_absorber_for_query(
     engine_queries: dict[str, list[dict]],
     mandatory_committed_engines: set[str],
     primary_engine: str,
+    trace_by_query: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None = None,
 ) -> dict | None:
     """Find the best committed engine to absorb a single query.
 
-    Ranks by: fit score (highest wins), with mandatory secondary engines
-    getting a tiebreaker bonus (data already flowing via sync).
+    Ranks by: resolver score (highest wins, ``_resolver_score`` against
+    ``trace_by_query`` -- #502 review round 5, finding N3: the
+    mandatory-engine justification floor, the only caller of this
+    function, used the reality check's own ``_engine_fit_score`` here, a
+    second scorer disagreeing with the one Phase 1 and Phase 2 already
+    use; the earlier Aurora-absorption pass this PR does not touch still
+    has its own, separate ``_engine_fit_score`` calls -- #490's full
+    scorer unification is later, broader work), with mandatory secondary
+    engines getting a tiebreaker bonus (data already flowing via sync).
 
     Respects the serviceability gate: if query_capabilities are provided,
     only considers engines that can serve the query's hard requirements.
+
+    No score floor (#502 review): a query being consolidated moves to its
+    highest-scoring remaining engine that can serve it, even if that scores
+    it a little lower than the engine it is leaving -- accepting a slightly
+    worse fit in exchange for fewer engines is the point of this CTO review.
     """
     qid = qa["query_id"]
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
@@ -1697,7 +2303,15 @@ def _find_best_absorber_for_query(
         ):
             continue
 
-        fit = _engine_fit_score(target_engine, qa, query_signals, query_map, analysis_outputs)
+        # #502 review round 5, finding N3: ranked by the resolver's own
+        # score, not a second, separate scorer -- ``None`` means the
+        # resolver's own hard exclusion/capability/write gate already
+        # ruled this engine out for this query, so there is nothing to
+        # absorb it with.
+        resolver_fit = _resolver_score(trace_by_query, qa["query_id"], target_engine)
+        if resolver_fit is None:
+            continue
+        fit = round(resolver_fit)
 
         # Even low-fit engines can absorb if they have basic capabilities
         if fit <= 0 and not _can_engine_serve_query(
@@ -1882,6 +2496,7 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
         patterns,
         {},
         _engine_infra_cost(result.get("analysis_outputs")),
+        result.get("unique_value_assessment"),
     )
 
 
@@ -2098,6 +2713,7 @@ def _build_recommendations(
     patterns: list[dict],
     original_engine_queries: dict[str, list[dict]],
     engine_infra_cost: dict[str, float] | None = None,
+    unique_value_assessment: dict[str, dict] | None = None,
 ) -> list[str]:
     """Build human-readable recommendations.
 
@@ -2121,6 +2737,16 @@ def _build_recommendations(
     FIRST-ASSIGNMENT queries ever cleared the #326 floor, so its removal is
     not an infrastructure saving -- the engine was never justified by the
     workload to begin with.
+
+    ``unique_value_assessment`` (optional, #502 review round 6, finding 4)
+    surfaces any Phase 1 ``tie_unresolved`` pair here too, in the
+    human-readable text a customer actually reads -- not just the internal
+    ``unique_value_assessment`` dict. A tie is NOT a consolidation (neither
+    engine moves, nothing changed), so it gets no ``Consolidation`` record:
+    every other record upholds the invariant that the queries it names
+    actually moved (``len(moved_queries(c, ...)) == c["query_count"]``,
+    enforced in ``tests/unit/agents/referee/test_reality_check_llm_seam.py``),
+    and a tie, by definition, moves none.
     """
     recs = []
     engine_infra_cost = engine_infra_cost or {}
@@ -2177,6 +2803,19 @@ def _build_recommendations(
 
     # Pattern recommendations
     recs.extend(format_pattern_recommendation(p) for p in patterns)
+
+    # Phase 1 ties (#502 review round 6, finding 4): stated here, not just
+    # in unique_value_assessment, since this is the text a customer reads.
+    tied_engines = sorted(
+        e for e, info in (unique_value_assessment or {}).items() if info.get("tie_unresolved")
+    )
+    for engine_a, engine_b in itertools.combinations(tied_engines, 2):
+        recs.append(
+            f"{display_engine(engine_a)} and {display_engine(engine_b)} are tied on "
+            "operational cost per unique query, and no rule yet exists to decide between "
+            "two such engines (#503) -- both are kept rather than one being removed "
+            "arbitrarily."
+        )
 
     if not recs:
         recs.append("No consolidation opportunities found — current assignment is optimal.")

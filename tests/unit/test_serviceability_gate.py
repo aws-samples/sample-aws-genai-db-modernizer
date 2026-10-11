@@ -322,6 +322,7 @@ class TestFindBestAbsorberWithCapabilities:
             engine_queries={"dynamodb": [], "documentdb": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
+            trace_by_query={},
             query_capabilities=query_capabilities,
         )
 
@@ -345,6 +346,7 @@ class TestFindBestAbsorberWithCapabilities:
             engine_queries={"dynamodb": [], "opensearch": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
+            trace_by_query={"q-1": {"engines": {"opensearch": 50}}},
             query_capabilities=query_capabilities,
         )
 

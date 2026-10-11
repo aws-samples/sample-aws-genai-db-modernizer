@@ -355,6 +355,12 @@ class TestOpenSearchAbsorber:
             "opensearch": {"table_recommendations": [{"table_id": "t", "confidence_score": 95}]},
             "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]},
         }
+        # OpenSearch only ever competes once ``may_absorb`` lets it through
+        # (a plain lookup never does, regardless of score); when it does,
+        # it genuinely scores higher (#502 review round 5, finding N3
+        # swapped the scorer here from analysis-confidence to resolver
+        # score).
+        trace_by_query = {"q": {"engines": {"dynamodb": 40, "opensearch": 95}}}
         return _find_best_absorber_for_query(
             {"query_id": "q"},
             {"opensearch", "dynamodb"},
@@ -365,6 +371,7 @@ class TestOpenSearchAbsorber:
             {},
             set(),
             "dynamodb",
+            trace_by_query,
         )["target_engine"]
 
     def test_plain_lookup_never_goes_to_opensearch(self):

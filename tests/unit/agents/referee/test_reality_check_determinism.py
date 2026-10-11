@@ -178,6 +178,10 @@ class TestAbsorberTieBreakIsOrderIndependent:
             },
             set(),
             "dynamodb",
+            # Both candidates tied on resolver score too (#502 review round
+            # 5, finding N3 swapped the scorer here) -- the tie this test
+            # checks is in the overlap/existing-queries tiebreak, not score.
+            {"q1": {"engines": {"aurora_postgresql": 80, "dynamodb": 80}}},
         )
         assert absorber is not None
         return str(absorber["target_engine"])

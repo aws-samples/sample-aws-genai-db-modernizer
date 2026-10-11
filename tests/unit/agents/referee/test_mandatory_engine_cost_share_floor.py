@@ -93,12 +93,17 @@ class TestMandatoryEngineCostShareFloor:
             "signals": [],
         }
         collector = _make_collector([f"dq{i}" for i in range(39)] + ["doc1"])
+        # DynamoDB clearly, not just marginally, outscores DocumentDB on their
+        # shared table -- a 20-point gap, so DynamoDB keeps its 39 queries on
+        # unique value, not on being spared from the removal question. doc1
+        # survives Phase 1 only because it is mandatory (irreplaceable); the
+        # cost-share floor below is what actually has to decide its fate.
         analysis = {
             "dynamodb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
             },
             "documentdb": {
-                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
             },
         }
 

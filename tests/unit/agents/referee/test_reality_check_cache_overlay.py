@@ -82,7 +82,15 @@ class TestMandatoryProtectsOnlyItsQueries:
         # (#326): this fixture tests mandatory-protection mechanics (#296), not
         # the justification floor itself.
         _patch_to_real_search(collector, "search")
-        result = run_reality_check(assignment, triage, {}, collector)
+        # DynamoDB has a real, non-empty table recommendation -- Phase 2
+        # places the "others" there on an actual score, not a 0-vs-0 tie
+        # that empty analysis_outputs would otherwise produce.
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 80}]
+            }
+        }
+        result = run_reality_check(assignment, triage, analysis, collector)
         return result, others
 
     def test_non_mandatory_queries_are_consolidated(self):
@@ -145,6 +153,12 @@ class TestNoCacheAbsorber:
             "elasticache": {"table_recommendations": [{"table_id": "t", "confidence_score": 99}]},
             "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]},
         }
+        # ElastiCache is excluded by the write/cache-ownership gate before
+        # any score is even looked at (``can_own``), regardless of its
+        # inflated confidence_score above -- dynamodb just needs a real
+        # resolver score to be considered at all (#502 review round 5,
+        # finding N3 swapped the scorer here).
+        trace_by_query = {qa["query_id"]: {"engines": {"dynamodb": 40}}}
         return _find_best_absorber_for_query(
             qa,
             {"elasticache", "dynamodb"},
@@ -155,6 +169,7 @@ class TestNoCacheAbsorber:
             {},
             set(),
             "dynamodb",
+            trace_by_query,
         )
 
     def test_elasticache_never_absorbs_a_read(self):

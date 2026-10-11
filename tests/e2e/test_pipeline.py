@@ -160,8 +160,8 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     common = ["--job-id", run.job_id, "--db", run.db, "--engine", "dynamodb"]
     common += ["--artifact-root", str(root)]
 
-    def script(*extra: str) -> tuple[int, dict]:
-        proc = subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
+    def run_script(*extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # nosec B603 -- fixed interpreter plus this repo's own script args
             [sys.executable, "scripts/run_schema_design.py", *common, *extra],
             cwd=REPO,
             capture_output=True,
@@ -169,6 +169,9 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
             env=_env(),
             timeout=300,
         )
+
+    def script(*extra: str) -> tuple[int, dict]:
+        proc = run_script(*extra)
         return proc.returncode, json.loads(proc.stdout.strip().splitlines()[-1])
 
     code, split = script("--split")

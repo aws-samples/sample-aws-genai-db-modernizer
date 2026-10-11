@@ -564,15 +564,21 @@ def test_reality_check_status_line_never_leaks_an_issue_tag(tmp_path, monkeypatc
             ]
         }
     }
-    recommendation = [{"table_id": "db.users", "confidence_score": 80}]
+    # DynamoDB clearly, not just marginally, outscores DocumentDB on their
+    # shared table -- a 20-point gap, so DynamoDB's 39 queries stay on
+    # unique value, not on an exact-tie artifact. doc1 survives Phase 1 only
+    # because it is mandatory; this is the mandatory-engine cost-share
+    # floor's own scenario to resolve, which is what this test checks.
     store.write_json(f"{db}/{job}/assignment/v1/assignment.json", assignment)
     store.write_json(f"{db}/{job}/referee-triage/triage.json", triage)
     store.write_json(f"{db}/{job}/collector/output.json", collector)
     store.write_json(
-        f"{db}/{job}/analysis-dynamodb/analysis.json", {"table_recommendations": recommendation}
+        f"{db}/{job}/analysis-dynamodb/analysis.json",
+        {"table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]},
     )
     store.write_json(
-        f"{db}/{job}/analysis-documentdb/analysis.json", {"table_recommendations": recommendation}
+        f"{db}/{job}/analysis-documentdb/analysis.json",
+        {"table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]},
     )
 
     det = run_reality_check_deterministic(job, db, store, assignment_version=1)
