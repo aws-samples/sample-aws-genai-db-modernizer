@@ -4,6 +4,8 @@
 **Date:** 2026-04-24
 **Deciders:** Database Modernizer Assessment Architecture Team
 
+> Superseded in part by [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md): the reality check's own capability table and scoring logic are replaced by the shared per-query score the first assignment uses.
+
 ## Context
 
 The original pipeline flow was: Collector → Triage → Analysis (parallel) → Schema Design (parallel) → Synthesis. This had two problems:

@@ -5,6 +5,8 @@
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-006 (Analysis Agent Architecture)
 
+> Superseded in part by [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md): per-engine pattern catalogs with independent detection code are replaced by one engine-neutral catalog and detector per pattern.
+
 ---
 
 ## Context

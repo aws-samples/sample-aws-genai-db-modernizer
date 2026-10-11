@@ -4,6 +4,8 @@
 **Date:** 2026-05-29
 **Deciders:** Database Modernizer Assessment Architecture Team
 
+> Superseded in part by [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md): the Aurora-specific absorption pass and its own fitness gate are replaced by the reality check's shared per-query scoring path.
+
 ## Context
 
 With Aurora PostgreSQL and Aurora MySQL added as target engines (ADR-018 established the reality check flow), the pipeline now has a "jack-of-all-trades" engine available. Aurora can serve virtually any relational workload pattern: joins, aggregations, transactions, text search (basic), pagination, and CRUD.

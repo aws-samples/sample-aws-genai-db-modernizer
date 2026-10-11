@@ -5,6 +5,8 @@
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-025 (Consolidate the Deterministic Core), ADR-024 (Consolidate the Analysis Fleet), ADR-018 (Reality Check and Human Approval Gate), ADR-021 (Aurora Absorption Pass)
 
+> Superseded in part by [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md): the reality check's internal scoring logic described here is replaced by the shared per-query score the first assignment uses.
+
 ---
 
 ## Context
