@@ -398,6 +398,23 @@ This runs the deterministic pipeline (Collect, Triage, Analyze, Assign, Reality 
 
 In a terminal the script prints its full progress. When stdout is not a terminal (a pipe, CI, or a headless Claude Code session), stdout has only the `{"phase": ...}` status lines and a final `{"log": ...}` line; the progress goes to `artifacts/<db>/<job>/_logs/run_assessment.log`. Add `--verbose` to get the full progress on stdout anyway.
 
+### Routing regression guards
+
+A routing change (a referee/resolver fix, a refactor that must not move anything, the catalog work in #489) is checked two ways, both in `tests/e2e/` and both part of `make e2e`. Neither is an identity gate: a routing refactor is expected to change which engine some queries land on, and that is fine. Their job is to show and explain every change, not to forbid one.
+
+`test_routing_baseline.py` (`baselines/routing_baseline.json`) checks coarse shape: owner shares, wave structure, cache overlay -- within a tolerance, so it tolerates noise but can miss moves that cancel out between engines.
+
+`test_routing_snapshot.py` (`baselines/routing_snapshot.json`) reports every per-query change, grouped by which step produced it: each candidate engine's score through the resolver's base fit / anti-pattern penalty / hard-exclusion-or-write-gate steps (the score `resolve()` actually used, not a recompute -- `base`/`penalty` are kept only as diagnostics, with any gap recorded rather than raised), the resolver's first pick (plus its co-dependency group, signal, or tie-break rule, when one applies), the reality check's final pick and parsed fit score, the cache overlay engine, and the consolidation records (keyed by from/to/action, including which queries were retained and why). The failure message groups by step and shows a short excerpt of each changed query's text. The snapshot file itself is written one query per line with sorted keys, so a `git diff` or GitHub's file view lists exactly which queries moved instead of one unreadable multi-hundred-KB line.
+
+For a fixture not bundled in the repo (e.g. AdventureWorks later), point `ROUTING_SNAPSHOT_EXTRA` at a local `collection.json`; `ROUTING_SNAPSHOT_EXTRA_DB` names the database/engine family passed to the pipeline (default `extra`). Setting `ROUTING_SNAPSHOT_EXTRA` switches `--write` entirely to writing `routing_snapshot_<db>.json` next to that input file -- never committed, and never touching the committed `baselines/routing_snapshot.json`; unset it to go back to writing the committed baseline.
+
+A PR that changes routing regenerates whichever snapshot(s) moved, with a reason, and pastes the printed diff into the PR description so a reviewer sees exactly what moved without re-deriving it themselves:
+
+```bash
+uv run python -m tests.e2e.routing_baseline --write --reason "why it moved (#NNN)"
+uv run python -m tests.e2e.routing_snapshot --write --reason "why it moved (#NNN)"
+```
+
 ---
 
 ## Documentation

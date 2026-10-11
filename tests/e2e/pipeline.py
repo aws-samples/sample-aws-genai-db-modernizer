@@ -80,8 +80,19 @@ def unzip_sample(name: str, dest: Path) -> Path:
 
 def run_pipeline(sample: str, artifact_root: Path, job_id: str) -> PipelineResult:
     db = SAMPLES[sample]
-    result = PipelineResult(db=db, job_id=job_id, artifact_root=artifact_root)
     src = unzip_sample(sample, artifact_root.parent / f"input-{sample}")
+    return run_pipeline_from_file(src, db, artifact_root, job_id)
+
+
+def run_pipeline_from_file(src: Path, db: str, artifact_root: Path, job_id: str) -> PipelineResult:
+    """Run the deterministic pipeline on an already-extracted ``collection.json``.
+
+    Shared by ``run_pipeline`` (the bundled wordpress/discourse zips) and
+    ``tests/e2e/routing_snapshot.py``'s ``ROUTING_SNAPSHOT_EXTRA`` fixture — a
+    local, never-committed collection for a sample not bundled in the repo
+    (e.g. AdventureWorks).
+    """
+    result = PipelineResult(db=db, job_id=job_id, artifact_root=artifact_root)
     common = ["--job-id", job_id, "--db", db, "--artifact-root", str(artifact_root)]
 
     _run("collect", ["scripts/run_collect.py", "--file", str(src), *common], result)

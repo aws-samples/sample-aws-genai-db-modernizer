@@ -23,10 +23,16 @@ The key insight: assignment happens QUERY BY QUERY, not table by table.
 Triage signals like text_search→opensearch override table-level averages
 because the signal is about the query's workload pattern, not the table's
 general suitability.
+
+``resolve()`` accepts an optional ``routing_trace: RoutingTrace`` (#497), off by
+default, that records each query's full per-engine score ladder for
+``tests/e2e/routing_snapshot.py``'s per-query regression snapshot. See
+``RoutingTrace`` below.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
@@ -216,6 +222,55 @@ def _capability_scoped_penalty(
     return penalty, None
 
 
+class RoutingTrace:
+    """Opt-in sink for ``AssignmentResolver.resolve()``'s per-query score ladder (#497).
+
+    Pass an instance as ``resolve(..., routing_trace=...)`` to have the resolver record,
+    for every query, each candidate engine's score -- always ``scores[qid][engine]``,
+    the value ``resolve()`` itself used, never a recompute -- plus ``base`` (a fresh,
+    pure ``_compute_query_confidence`` call) and ``penalty`` as diagnostics, and ``adj``
+    when the used score disagrees with ``max(0, base - penalty)`` (there should never
+    be a gap, but a future change could open one; recording it, rather than raising,
+    means the snapshot's diff is what surfaces it instead of a crash), or the hard
+    exclusion/capability/write gate that zeroed it instead. Also records the engine
+    ``resolve()`` picked and why, the co-dependency group a query belonged to (if any,
+    via ``record_group``) and the tie-break rule that decided it (if any, via
+    ``record_tie``). Default is ``routing_trace=None`` (nothing recorded): every method
+    here only reads values ``resolve()`` already computed (or recomputes the pure,
+    side-effect-free ``_compute_query_confidence`` as a diagnostic), so passing a
+    ``routing_trace`` never changes ``scores``, ``assigned`` or the returned
+    ``Assignment``. Built for ``tests/e2e/routing_snapshot.py``; see that module for
+    the schema of what gets recorded.
+    """
+
+    def __init__(self) -> None:
+        self.by_query: dict[str, dict] = {}
+        # query_id -> {"key": <12-hex group key>, "scores": {engine: group_score}}
+        self.group_by_query: dict[str, dict] = {}
+        # query_id -> the tie-break rule text from ``break_owner_tie``
+        self.tie_break_by_query: dict[str, str] = {}
+
+    def record(self, query_id: str, payload: dict) -> None:
+        self.by_query[query_id] = payload
+
+    def record_group(self, group: Iterable[str], group_score: Mapping[str, float]) -> None:
+        """A co-dependency group's membership and every candidate's group score.
+
+        Called once per group in ``resolve()``'s Step 5, before a tie (if any) is
+        resolved -- ``group_score`` is every candidate engine's score for the whole
+        group (the mean ``resolve()`` actually compared), not just the winner's.
+        """
+        members = sorted(group)
+        key = hashlib.sha256(",".join(members).encode()).hexdigest()[:12]
+        payload = {"key": key, "scores": {e: round(s, 2) for e, s in group_score.items()}}
+        for qid in members:
+            self.group_by_query[qid] = payload
+
+    def record_tie(self, query_id: str, rule: str) -> None:
+        """The tie-break rule ``break_owner_tie`` used to decide ``query_id``."""
+        self.tie_break_by_query[query_id] = rule
+
+
 class AssignmentResolver:
     """Generates default query→engine assignments from analysis outputs."""
 
@@ -224,6 +279,8 @@ class AssignmentResolver:
         triage: dict,
         analysis_outputs: dict[str, dict],
         collector_output: dict,
+        *,
+        routing_trace: RoutingTrace | None = None,
     ) -> Assignment:
         """Produce initial assignment based on query-level scoring.
 
@@ -429,6 +486,8 @@ class AssignmentResolver:
                 e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group)
                 for e in candidates
             }
+            if routing_trace is not None:
+                routing_trace.record_group(group, group_score)
             top = max(group_score.values())
             best = [e for e in candidates if group_score[e] == top]
             if len(best) > 1:
@@ -485,6 +544,8 @@ class AssignmentResolver:
                     best, qids, query_by_id, source_aurora, table_traffic, engine_counts
                 )
                 for qid in qids:
+                    if routing_trace is not None:
+                        routing_trace.record_tie(qid, why)
                     assigned[qid] = winner
                     if kind == "individual":
                         assigned_confidence[qid] = top_score
@@ -557,6 +618,71 @@ class AssignmentResolver:
                         f"relational engine ({utility_engine})"
                     )
                     assigned_signal.pop(qid, None)
+
+        # Step 7c: Populate the opt-in routing trace (#497), off by default
+        # (``routing_trace is None``). Reads ``exclusion_notes``, ``anti_pattern_map``
+        # and ``assigned``/``assigned_reason`` as finalized above. The score recorded
+        # for a non-gated engine is always ``scores[qid][engine]`` -- the value
+        # Step 5/6 above actually compared when choosing an engine, including #381's
+        # Aurora-engine collapse and the #474 homogeneous-engine guarantee -- never a
+        # recompute. ``base`` (a fresh, pure, side-effect-free
+        # ``_compute_query_confidence`` call) and ``penalty`` are kept alongside as
+        # diagnostics; a gap between the used score and ``max(0, base - penalty)``
+        # (there should never be one, but a future change to either side could
+        # silently open one) is recorded as ``adj`` rather than raised, so the
+        # snapshot and its diff -- not a crash -- are what surface it (#497 review).
+        if routing_trace is not None:
+            for query in queries:
+                qid = query["query_id"]
+                notes = exclusion_notes.get(qid, [])
+                ladder: dict[str, object] = {}
+                for engine, analysis in analysis_outputs.items():
+                    gate = None
+                    for note in notes:
+                        if f"Excluded from {engine}:" in note:
+                            gate = "hard_exclusion"
+                            break
+                        if note.startswith(f"[capability] {engine} "):
+                            gate = "capability"
+                            break
+                    if gate:
+                        ladder[engine] = {"gate": gate}
+                        continue
+                    base = self._compute_query_confidence(qid, query, engine, analysis)
+                    penalty = anti_pattern_map.get((qid, engine), 0)
+                    used = scores.get(qid, {}).get(engine, 0)
+                    adj = used - max(0, base - penalty)
+                    if not can_own(engine, query):
+                        entry: dict[str, object] = {
+                            "gate": "write_gate",
+                            "base": base,
+                            "used": used,
+                        }
+                        if adj:
+                            entry["adj"] = adj
+                        ladder[engine] = entry
+                    elif penalty or adj:
+                        entry = {"base": base, "penalty": penalty, "used": used}
+                        if adj:
+                            entry["adj"] = adj
+                        ladder[engine] = entry
+                    else:
+                        ladder[engine] = used
+                payload: dict[str, object] = {
+                    "engines": ladder,
+                    "assigned_engine": assigned.get(qid, ""),
+                    "assigned_reason": assigned_reason.get(qid, ""),
+                }
+                group_info = routing_trace.group_by_query.get(qid)
+                if group_info is not None:
+                    payload["group"] = group_info
+                signal = assigned_signal.get(qid)
+                if signal is not None:
+                    payload["signal"] = signal
+                tie_rule = routing_trace.tie_break_by_query.get(qid)
+                if tie_rule is not None:
+                    payload["tie_break"] = tie_rule
+                routing_trace.record(qid, payload)
 
         # Step 8: Cache overlay (#296): hot bounded reads get cache_engine; the
         # owner stays the engine assigned above.

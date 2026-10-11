@@ -1,9 +1,12 @@
 """Unit tests for assignment resolver signal overrides and anti-pattern penalties."""
 
+from unittest.mock import patch
+
 from src.agents.referee.assignment_resolver import (
     ANTI_PATTERN_PENALTIES,
     CAPABILITY_SIGNAL_ENGINES,
     AssignmentResolver,
+    RoutingTrace,
     _capability_scoped_penalty,
     derive_table_assignments,
 )
@@ -1691,3 +1694,41 @@ class TestHardCapabilityGateAtInitialAssignment:
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert q1.assigned_engine == "aurora_mysql"
+
+
+class TestRoutingTraceAdjustment:
+    """#497 review: a gap between the score resolve() used and a fresh base/penalty
+    recompute must show up as a recorded "adj" in the trace, never raise."""
+
+    def test_a_drifted_recompute_produces_an_adj_diagnostic_not_a_crash(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb"])
+        collector = _make_collector(["q1"])
+        analysis = {"dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=70)}
+
+        original = AssignmentResolver._compute_query_confidence
+        calls = {"n": 0}
+
+        def drifting(self, query_id, query, engine, analysis_output):
+            calls["n"] += 1
+            base = original(self, query_id, query, engine, analysis_output)
+            # The first call is resolve()'s own Step 4 scoring; only the second
+            # (the trace's Step 7c diagnostic recompute) drifts, simulating a
+            # future change that silently diverges from what Step 4 used.
+            return base + 5 if calls["n"] > 1 else base
+
+        trace = RoutingTrace()
+        with patch.object(AssignmentResolver, "_compute_query_confidence", drifting):
+            result = resolver.resolve(triage, analysis, collector, routing_trace=trace)
+
+        # No crash, and the real assignment is unaffected by the trace's own
+        # diagnostic recompute.
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "dynamodb"
+        assert q1.confidence == 70
+
+        entry = trace.by_query["q1"]["engines"]["dynamodb"]
+        assert isinstance(entry, dict)
+        assert entry["base"] == 75
+        assert entry["used"] == 70
+        assert entry["adj"] == -5
