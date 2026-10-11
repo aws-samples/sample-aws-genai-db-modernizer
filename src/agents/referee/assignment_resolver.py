@@ -929,45 +929,69 @@ class AssignmentResolver:
     ) -> int:
         """Compute base confidence (0–100) for a query→engine pair.
 
-        Uses query-level pattern matching first, then falls back to
-        table-level averaging only if the query isn't found in any pattern --
-        except for ``PATTERN_ONLY_ENGINES`` (#475), which never fall back:
-        the resolver's atomic unit is the query, not the table, and for these
-        engines a table-wide classification earned by a different query is
-        not evidence about this one.
+        The query's own ``tables_accessed`` decide the base score (#302):
+        a table-level recommendation only ever informs a query through
+        tables THAT QUERY itself touches, never through a pattern's full
+        ``table_ids`` list, which can span every table any query matching
+        that pattern type touches anywhere in the schema (a broad pattern
+        like "pagination" matches most queries in a workload, so its own
+        table list is close to the whole schema, not this one query's
+        tables).
+
+        Per-query pattern evidence is not added here (maintainer decision,
+        PR #500 review round 1): a flat bonus is not itself per-query
+        evidence, and it double-counts the pattern dimension the table
+        confidence already weighs in (40% by default, ADR-017/ADR-031). A
+        near-universal, low-confidence pattern (DynamoDB's
+        ``low-frequency-read``, matched by most of a workload) would still
+        trigger the same flat bonus as a precise, high-confidence one, which
+        favours whichever engine happens to have the broadest catch-all
+        pattern rather than reflecting real fit. Per-query pattern evidence
+        is coming with the engine-neutral detectors (#491), inside the
+        weighted pattern dimension rather than on top of it.
+
+        ``PATTERN_ONLY_ENGINES`` (#475) keep their own, unchanged rule,
+        untouched by this fix: a table-wide classification earned by a
+        different query is not evidence about this one at all for these
+        engines, so they score their own matched pattern directly, or 0 --
+        never a ``tables_accessed`` average. Using ``tables_accessed`` as
+        these engines' base too would reintroduce #475's table-wide
+        classification bleed (OpenSearch classifies a whole table as
+        SEARCH/TIMESERIES the moment any one query against it matches,
+        which says nothing about a neighboring plain lookup on the same
+        table).
         """
         table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
         wa = analysis.get("workload_analysis", {})
 
-        # First: check if this query appears in any detected PATTERN for this engine.
-        # If so, use the confidence of the tables involved in that pattern.
-        pattern_tables: list[str] = []
-        for pattern in wa.get("patterns_detected", []):
-            if query_id in (pattern.get("query_ids") or []):
-                pattern_tables.extend(pattern.get("table_ids") or [])
-
-        pattern_tables = list(dict.fromkeys(pattern_tables))
-
-        if pattern_tables:
+        if engine in PATTERN_ONLY_ENGINES:
+            pattern_tables = list(
+                dict.fromkeys(
+                    t
+                    for pattern in wa.get("patterns_detected", [])
+                    if query_id in (pattern.get("query_ids") or [])
+                    for t in (pattern.get("table_ids") or [])
+                )
+            )
+            if not pattern_tables:
+                return 0
             matched_scores = [
                 table_recs[t].get("confidence_score", 0) for t in pattern_tables if t in table_recs
             ]
-            if matched_scores:
-                return int(sum(matched_scores) / len(matched_scores))
+            return int(sum(matched_scores) / len(matched_scores)) if matched_scores else 0
 
-        if engine in PATTERN_ONLY_ENGINES:
-            return 0
-
-        # Second: use the query's tables_accessed to look up table recommendations
+        # The query's own tables_accessed decide the base score -- no
+        # pattern-match bonus on top (see the docstring above).
         query_tables = query.get("tables_accessed", [])
-        if query_tables:
-            matched_scores = [
-                table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs
-            ]
-            if matched_scores:
-                return int(sum(matched_scores) / len(matched_scores))
+        matched_scores = [
+            table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs
+        ]
+        if matched_scores:
+            return int(sum(matched_scores) / len(matched_scores))
 
-        # Last resort: average across all table recommendations
+        # Last resort, when the query has no tables of its own at all (or
+        # none the analysis rated): average across every table
+        # recommendation, unchanged from before #302.
         if table_recs:
             scores = [r.get("confidence_score", 0) for r in table_recs.values()]
             return int(sum(scores) / len(scores))

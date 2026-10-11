@@ -1107,10 +1107,21 @@ class TestTextSearchCapabilityScopedPenalty:
 
 
 class TestComputeQueryConfidence:
-    """Test the 3-tier confidence lookup."""
+    """Test the confidence lookup (#302: the query's own tables_accessed
+    decide the base score; a pattern match contributes nothing on top --
+    maintainer decision, PR #500 review round 1: a flat bonus is not itself
+    per-query evidence, and double-counts the pattern dimension the table
+    confidence already weighs in. Per-query pattern evidence is coming with
+    the engine-neutral detectors, #491.
+    """
 
-    def test_pattern_match_takes_priority(self):
-        """Queries found in patterns use pattern table confidence."""
+    def test_pattern_match_no_longer_affects_the_score_at_all(self):
+        """#302 (PR #500 review round 1): a query's own tables_accessed
+        decide the base score whether or not the query also matches a
+        pattern -- the pattern's own table_ids (``db.users`` alone here)
+        never replace the query's own average over BOTH its tables, and
+        the match itself adds nothing on top either.
+        """
         resolver = AssignmentResolver()
         triage = _make_triage(["dynamodb"])
         collector = _make_collector(["q1"], tables=["db.users", "db.posts"])
@@ -1135,8 +1146,9 @@ class TestComputeQueryConfidence:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        # Should use pattern-matched table (db.users=90), not average of both
-        assert q1.confidence == 90
+        # Base = mean(90, 30) = 60 over q1's OWN tables -- not 90 (the
+        # pattern's own table alone) and not 80 (60 + a bonus).
+        assert q1.confidence == 60
 
     def test_tables_accessed_fallback(self):
         """Queries not in patterns fall back to tables_accessed lookup."""
@@ -1161,6 +1173,61 @@ class TestComputeQueryConfidence:
         # Should use tables_accessed (db.users=75), not global average
         assert q1.confidence == 75
 
+    def test_pattern_match_on_a_table_outside_the_querys_own_tables_has_no_effect(self):
+        """#302 (the discourse shape): a broad pattern (e.g. "pagination")
+        can list table_ids spanning hundreds of unrelated tables -- a query
+        matched by it must never have its score averaged over that whole
+        list, and the match itself contributes nothing: only the query's
+        OWN table decides the score, even though the pattern's own
+        table_ids never include ``db.users`` at all.
+        """
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb"])
+        collector = _make_collector(["q1"], tables=["db.users"])
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [
+                    {"table_id": "db.users", "confidence_score": 70},
+                    {"table_id": "db.other_1", "confidence_score": 5},
+                    {"table_id": "db.other_2", "confidence_score": 5},
+                ],
+                "workload_analysis": {
+                    "patterns_detected": [
+                        {
+                            "pattern_type": "pagination",
+                            "query_ids": ["q1"],
+                            # A broad pattern's own table_ids never include
+                            # db.users -- the query's real table.
+                            "table_ids": ["db.other_1", "db.other_2"],
+                        }
+                    ],
+                    "anti_patterns_detected": [],
+                },
+            },
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        # Base = db.users (70) alone -- never averaged down to ~27 by the
+        # pattern's own unrelated tables, and never boosted above 70 either.
+        assert q1.confidence == 70
+
+    def test_last_resort_averages_every_table_when_the_query_has_none_of_its_own(self):
+        """When a query's own ``tables_accessed`` is empty (or none of its
+        tables were rated), the last resort averages across every table
+        recommendation for the engine -- unchanged by #302.
+        """
+        resolver = AssignmentResolver()
+        analysis = {
+            "table_recommendations": [
+                {"table_id": "db.users", "confidence_score": 80},
+                {"table_id": "db.posts", "confidence_score": 40},
+            ],
+        }
+        query = {"query_id": "q1", "tables_accessed": []}
+        score = resolver._compute_query_confidence("q1", query, "dynamodb", analysis)
+        assert score == 60  # mean(80, 40)
+
     def test_opensearch_scores_zero_without_its_own_pattern_match(self):
         """OpenSearch's fit is a query-level property, not a table one (#475):
         the resolver's atomic unit is the query. A table classified
@@ -1184,6 +1251,36 @@ class TestComputeQueryConfidence:
         query = {"query_id": "q1", "tables_accessed": ["db.users"]}
         score = resolver._compute_query_confidence("q1", query, "dynamodb", analysis)
         assert score == 90
+
+    def test_pattern_only_engine_is_unaffected_by_the_302_fix(self):
+        """#302 explicitly leaves ``PATTERN_ONLY_ENGINES`` (#475) alone: an
+        own-pattern match still returns the pattern's own table score
+        directly, with no ``tables_accessed`` base at all -- using
+        tables_accessed as a base for OpenSearch would reintroduce #475's
+        table-wide classification bleed.
+        """
+        resolver = AssignmentResolver()
+        analysis = {
+            "table_recommendations": [
+                {"table_id": "db.users", "confidence_score": 70},
+                {"table_id": "db.posts", "confidence_score": 10},
+            ],
+            "workload_analysis": {
+                "patterns_detected": [
+                    {
+                        "pattern_type": "full-text-search",
+                        "query_ids": ["q1"],
+                        "table_ids": ["db.users"],
+                    }
+                ],
+                "anti_patterns_detected": [],
+            },
+        }
+        # tables_accessed includes db.posts too, but opensearch must never
+        # average over it, nor add a bonus on top of the pattern's own score.
+        query = {"query_id": "q1", "tables_accessed": ["db.users", "db.posts"]}
+        score = resolver._compute_query_confidence("q1", query, "opensearch", analysis)
+        assert score == 70
 
 
 class TestOpenSearchScoresTheQueryNotTheTable:

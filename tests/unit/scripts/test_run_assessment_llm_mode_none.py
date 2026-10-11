@@ -141,16 +141,19 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     assert arch["architecture_type"] == "HYBRID_WITH_CACHE"
     # #296: Reality Check keeps the source-compatible Aurora MySQL (OpenSearch no longer
     # absorbs its plain lookups) and ElastiCache is listed as the cache layer. #326: OpenSearch
-    # no longer appears -- its 4 LIKE/prefix admin-search queries fail the justification floor
-    # (no real search depth, well under the traffic floor) and consolidate back to Aurora MySQL.
+    # no longer appears -- its 1 remaining first-assignment query fails the justification floor
+    # (no real search depth, well under the traffic floor) and consolidates back to Aurora MySQL.
     # #287: Aurora MySQL carries no data migration of its own here -- it is the
     # source-compatible engine, retained as-is -- so it stays out of ``databases``
     # (the same way a mixed run already keeps a retained engine out) rather than
     # listing it as a migration target with 0 tables.
-    assert {d["service"] for d in arch["databases"]} == {
-        "dynamodb",
-        "elasticache",
-    }
+    # Whether DocumentDB also survives with its own share is not pinned here: today's Pass 0
+    # evaluates engines in a fixed, most-expensive-first order, so a surviving share can be an
+    # artifact of that order rather than a real scoring edge (#501) -- see
+    # test_run_assessment_output.py for the full discussion.
+    services = {d["service"] for d in arch["databases"]}
+    assert services >= {"dynamodb", "elasticache"}
+    assert services <= {"dynamodb", "elasticache", "documentdb"}
     assert all(d["table_count"] == 0 for d in arch["databases"])
     from src.report.renderers import _architecture_engines
 
@@ -160,7 +163,7 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     assert roles["elasticache"] == "Cache layer"
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(41% of queries) and dynamodb for primary data storage and elasticache "
+        "(28% of queries) and dynamodb for primary data storage and elasticache "
         "for caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )

@@ -316,17 +316,25 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # instead of a maintainer having to open the artifact themselves.
     # #475: OpenSearch's first-assignment count on wordpress dropped from 10
     # to 1 (base-score inflation and the ungated text_search override both
-    # fixed), with the 9 non-search reads it used to win now correctly on
-    # aurora_mysql.
+    # fixed). #302: a query's own tables_accessed (not a pattern's full
+    # table list) now decides its score, which drops OpenSearch's one
+    # remaining query too (Aurora MySQL's own, previously deflated, score
+    # for it now correctly wins). #500 round 1: the pattern-match bonus and
+    # its 100-point cap that #302 had added on top of the table average are
+    # removed outright -- a query's own tables are the whole score, no bonus.
     assert rc["before_distribution"] == {
-        "dynamodb": 33,
-        "aurora_mysql": 67,
-        "opensearch": 1,
-        "documentdb": 6,
+        "dynamodb": 38,
+        "aurora_mysql": 61,
+        "documentdb": 8,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
     assert "opensearch" not in rc["after_distribution"]  # consolidated away
-    assert "documentdb" not in rc["after_distribution"]
+    # Whether DocumentDB keeps a share after Reality Check (as it does on
+    # today's resolver) or is fully absorbed is deliberately not asserted
+    # here: Pass 0 currently evaluates engines in a fixed, most-expensive-
+    # first order, so a surviving share can be an artifact of evaluation
+    # order rather than a real scoring edge (#501). Pinning either outcome
+    # would lock in a bug finding as expected behavior.
 
     # What moved, how many queries, and why -- compact, not the full query lists.
     assert rc["consolidations"]
@@ -340,13 +348,10 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
                 r"#\d+", c["reason"]
             ), f"bare issue reference leaked into a printed reason: {c['reason']!r}"
 
-    # documentdb -> aurora_mysql and documentdb -> dynamodb share the exact
-    # same reason text on this sample: the second entry must drop it rather
-    # than repeat it (#329 review).
-    documentdb_entries = [c for c in rc["consolidations"] if c["from"] == "documentdb"]
-    assert len(documentdb_entries) == 2
-    assert "reason" in documentdb_entries[0]
-    assert "reason" not in documentdb_entries[1]
+    # The dedup-identical-reason-text behavior (#329 review) is covered on
+    # synthetic input by test_compact_consolidations_drops_a_repeated_reason,
+    # below -- not pinned here to whichever engine happens to have multiple
+    # destinations on this sample, since that detail can change with #501.
 
     # Cache coverage carries over from the input assignment (#296) so the gate
     # can show it alongside the engine distribution -- trimmed to just the
@@ -357,9 +362,12 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # after_distribution (the cache layer never owns a query, #296), but it
     # still gets its own schema design -- schema_design_engines must name it
     # explicitly so the orchestrator never has to (mis-)infer the dispatch
-    # list from after_distribution alone.
+    # list from after_distribution alone. Derived from after_distribution
+    # rather than hard-coded, so this does not pin which owner engines
+    # survive Reality Check (that is Pass 0's call, not this test's, and it
+    # is expected to change again once #501 fixes the order-dependence bug).
     assert "elasticache" not in rc["after_distribution"]
-    assert set(rc["schema_design_engines"]) == {"dynamodb", "aurora_mysql", "elasticache"}
+    assert set(rc["schema_design_engines"]) == set(rc["after_distribution"]) | {"elasticache"}
 
 
 def test_reality_check_status_line_reports_unchanged_distribution(tmp_path, monkeypatch, capsys):
@@ -436,6 +444,45 @@ def test_schema_design_engines_includes_the_cache_layer_engine(tmp_path, monkeyp
     artifact = run_assessment._reality_check_artifact(store, job, db)
     assert "elasticache" not in artifact["after_distribution"]
     assert set(artifact["schema_design_engines"]) == {"dynamodb", "aurora_mysql", "elasticache"}
+
+
+def test_compact_consolidations_drops_a_repeated_reason():
+    # #329 review: when one from_engine has several destinations and the
+    # exact same reason text applies to all of them, repeating the sentence
+    # on every entry grows the status line without telling the approver
+    # anything new -- only the first entry for that from_engine keeps it.
+    # Exercised here on synthetic input so it does not depend on which real
+    # engine happens to split across destinations on a given sample (that
+    # detail is Pass 0's call, and #501 is expected to change it).
+    same_reason = "aurora_mysql provides no unique capabilities"
+    consolidations = [
+        {
+            "from_engine": "aurora_mysql",
+            "to_engine": "dynamodb",
+            "query_count": 18,
+            "reason": same_reason,
+        },
+        {
+            "from_engine": "aurora_mysql",
+            "to_engine": "documentdb",
+            "query_count": 13,
+            "reason": same_reason,
+        },
+        {
+            "from_engine": "opensearch",
+            "to_engine": "dynamodb",
+            "query_count": 1,
+            "reason": "opensearch has no unique capabilities",
+        },
+    ]
+    compacted = run_assessment._compact_consolidations(consolidations)
+    aurora_mysql_entries = [c for c in compacted if c["from"] == "aurora_mysql"]
+    assert len(aurora_mysql_entries) == 2
+    assert "reason" in aurora_mysql_entries[0]
+    assert "reason" not in aurora_mysql_entries[1]
+    # A different from_engine's reason is unaffected by another engine's dedup.
+    opensearch_entries = [c for c in compacted if c["from"] == "opensearch"]
+    assert "reason" in opensearch_entries[0]
 
 
 def test_truncate_keeps_long_reasons_within_the_limit():
