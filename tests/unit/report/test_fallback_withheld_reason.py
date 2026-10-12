@@ -1,12 +1,13 @@
-"""Why the generated executive summary was withheld (#393 review).
+"""Why the generated executive summary was withheld (#393 review, #536 added a reason).
 
-Three independent checks can reject it (``apply_synthesis_llm_output``:
+Four independent checks can reject it (``apply_synthesis_llm_output``:
 ``check_summary_grounding``, ``check_summary_internal_leaks``,
-``check_summary_wave_order``), each with its own ``[high confidence] ...`` message in
-``summary_validation_warnings``. The decision report used to always say the narrative
-"named a table under an engine that does not serve it", even when a different check
-(an internal field name, or a stated migration order contradicting the roadmap) was
-the one that actually rejected it.
+``check_summary_wave_order``, ``check_summary_risk_counts``), each with its own
+``[high confidence] ...`` message in ``summary_validation_warnings``. The decision
+report used to always say the narrative "named a table under an engine that does not
+serve it", even when a different check (an internal field name, a stated migration
+order contradicting the roadmap, or a risk count/severity contradicting
+``risk_assessment``) was the one that actually rejected it.
 """
 
 from __future__ import annotations
@@ -45,6 +46,15 @@ class TestFallbackWithheldReason:
         ]
         assert fallback_withheld_reason(_report(warnings)) == (
             "stated a migration order that contradicts the roadmap"
+        )
+
+    def test_risk_count_reason(self) -> None:
+        warnings = [
+            '[high confidence] Summary says "two HIGH-severity risks", but '
+            "the risk register has 1 HIGH risk: some sentence."
+        ]
+        assert fallback_withheld_reason(_report(warnings)) == (
+            "stated a risk count or severity that doesn't match the risk assessment"
         )
 
     def test_multiple_reasons_are_joined(self) -> None:

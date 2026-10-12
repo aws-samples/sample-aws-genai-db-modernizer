@@ -308,6 +308,20 @@ class TestFinalize:
         assert out["summary_source"] == "deterministic_fallback"
         assert any("tco_analysis" in w for w in out["summary_validation_warnings"])
 
+    def test_wrong_risk_count_rejects_the_summary(self, det) -> None:
+        """#536: a stated risk severity count that contradicts risk_assessment.risks
+        is rejected the same way a wrong table attribution is, even when the table
+        claims in the summary are all correct."""
+        det["risk_assessment"] = {
+            "overall_risk_level": "HIGH",
+            "risks": [{"severity": "HIGH", "description": "r1"}],
+        }
+        llm = "DynamoDB serves the order and product lookups; there are two HIGH-severity risks."
+        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
+        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
+        assert out["summary_source"] == "deterministic_fallback"
+        assert any("the risk register has" in w for w in out["summary_validation_warnings"])
+
     def test_low_confidence_finding_keeps_the_llm_text(self, det) -> None:
         llm = "Aurora MySQL keeps the orders table hot."  # one-word stem: warning only
         out = apply_synthesis_llm_output(det, {"executive_summary": llm})

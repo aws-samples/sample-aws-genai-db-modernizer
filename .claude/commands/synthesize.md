@@ -54,6 +54,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
         (`tco_analysis`, `cost_breakdown`, `table_mappings`, `risk_assessment`,
         `query_groups`, `schema_designs`, `recommended_architecture`, `migration_waves`,
         `assignment_summary`, `effective_architecture`) also rejects the whole summary
+      - Risk counts and severities must match `risk_assessment.risks` (open risks) and
+        `resolved_risks` (resolved); a wrong count or severity also rejects the whole
+        summary
       - Reference the deterministic summary provided for factual grounding
       - A workload share the request already gives you (e.g. `workload_percent: 77.7`)
         is quoted exactly as given (`77.7%`), never re-rounded or re-worded ("about 78

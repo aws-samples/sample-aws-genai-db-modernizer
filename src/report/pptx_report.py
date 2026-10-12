@@ -59,6 +59,14 @@ from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
 
+# SEVERITY_ORDER, UNRATED and _severity come from src.shared.risk_severity (#536
+# S1): a risk whose severity is none of SEVERITY_ORDER is shown, not dropped
+# (#249 review), the same shared counter renderers.py and the summary grounding
+# check use.
+from src.shared.risk_severity import SEVERITY_ORDER, UNRATED
+from src.shared.risk_severity import count_by_severity as _count_by_severity
+from src.shared.risk_severity import severity_of as _severity
+
 from .renderers import (
     NO_OPEN_RISKS_CAVEAT,
     SHARED_TABLES_LABEL,
@@ -553,16 +561,6 @@ _REATTRIBUTED_LEAD = re.compile(
 )
 
 
-SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-# Risks whose severity is none of SEVERITY_ORDER are shown, not dropped (#249 review).
-UNRATED = "UNRATED"
-
-
-def _severity(risk: dict[str, Any]) -> str:
-    level = str(risk.get("severity") or "").upper()
-    return level if level in SEVERITY_ORDER else UNRATED
-
-
 def _risk_query_count(risk: dict[str, Any]) -> int:
     """Affected queries: the "(N remaining)" count in the description, else ``query_ids``."""
     _, n_q = clean_risk_text(str(risk.get("description") or ""))
@@ -992,10 +990,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
 
     # ---- risks --------------------------------------------------------------
     risks = sorted(filtered_risks(rep), key=lambda r: str(r.get("risk_id")))
-    sev: dict[str, int] = {}
-    for r in risks:
-        k = _severity(r)
-        sev[k] = sev.get(k, 0) + 1
+    sev: dict[str, int] = _count_by_severity(risks)
     # #270: CRITICAL is at least as severe as HIGH, so every count that singles
     # out "HIGH" to flag what needs escalating -- the Scope/no-migration
     # decision cards, the engine table, the per-wave counts and the worst-

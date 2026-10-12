@@ -25,6 +25,7 @@ from src.agents.referee.synthesis_grounding import (
     build_fallback_summary,
     check_summary_grounding,
     check_summary_internal_leaks,
+    check_summary_risk_counts,
     check_summary_wave_order,
     eliminated_engines,
     engine_table_scope,
@@ -441,11 +442,13 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
 
     If ``llm_output`` contains an ``executive_summary`` it is post-checked against the
     effective assignment (``check_summary_grounding``), against this codebase's own
-    internal field names (``check_summary_internal_leaks``), and against the
-    deterministic wave order (``check_summary_wave_order``, #393). It is used unless a
-    check finds a high-confidence problem (a table named under an engine none of whose
-    in-scope queries touch it, an internal field name, or a stated migration order that
-    contradicts ``migration_waves``); lower-confidence findings are only recorded. On
+    internal field names (``check_summary_internal_leaks``), against the deterministic
+    wave order (``check_summary_wave_order``, #393), and against ``risk_assessment``'s
+    own risk counts and severities (``check_summary_risk_counts``, #536). It is used
+    unless a check finds a high-confidence problem (a table named under an engine none
+    of whose in-scope queries touch it, an internal field name, a stated migration
+    order that contradicts ``migration_waves``, or a stated risk count/severity that
+    contradicts ``risk_assessment``); lower-confidence findings are only recorded. On
     rejection: ``executive_summary`` stays
     deterministic, and the LLM text plus the warnings are kept for audit in
     ``summary_llm`` / ``summary_validation_warnings`` (#205). ``summary_source``
@@ -477,6 +480,13 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
     # choice (``prepare_synthesis_llm_input``'s own docstring).
     findings = findings + check_summary_wave_order(
         str(llm_summary or ""), deterministic_result.get("migration_waves")
+    )
+    # #536: a fourth, independent check -- a stated risk count or severity
+    # ("two HIGH-severity risks") that contradicts risk_assessment.risks is always
+    # high-confidence, the same way a wrong migration order is: it is a fact a
+    # model never gets to restate incorrectly.
+    findings = findings + check_summary_risk_counts(
+        str(llm_summary or ""), deterministic_result.get("risk_assessment")
     )
     deterministic_result["summary_llm"] = llm_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]

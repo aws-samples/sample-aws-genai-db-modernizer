@@ -31,6 +31,7 @@ from collections.abc import Iterable
 
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.engine_names import display_engine
+from src.shared.risk_severity import count_by_severity
 
 # How each engine is written in prose, for *recognising* a mention -- deliberately
 # a separate list from the display names in src.shared.engine_names (used below by
@@ -1134,6 +1135,179 @@ def check_summary_wave_order(summary: str, migration_waves: list[dict] | None) -
             if not ordered_pair_is_wrong(earlier, later):
                 continue
             findings.append(_wave_order_finding(earlier, later, wave_of, sentence))
+    return findings
+
+
+# #536: the executive summary's risk counts and severities must match
+# ``risk_assessment.risks`` (open) or ``resolved_risks`` (resolved). Checked only
+# against a small, fixed set of unambiguous sentence shapes below: matching
+# broadly and excluding wave-scoped, conditional, historical or engine-scoped
+# counts case by case never converges, and a false rejection throws away a
+# correct model summary -- costlier than a missed miscount. A clause that is
+# not one of these shapes is simply left unchecked.
+# fmt: off
+_NUM: dict[str, int] = {
+    "zero": 0, "no": 0, "single": 1, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+# fmt: on
+_NUM_ALT = r"\d+|" + "|".join(sorted(_NUM, key=len, reverse=True))
+_SEV_ALT = "critical|high|medium|low"
+_QUAL_ALT = "open|identified|outstanding|remaining|total"
+# "N [qualifier] [SEVERITY[-severity]] [migration] risk(s)" -- the one shape
+# every frame below shares. An article ("a"/"an") is never itself a count, only
+# the ignored word in front of "single" ("a single HIGH risk").
+_ANCHOR = (
+    rf"(?:an?\s+)?(?P<count>{_NUM_ALT})"
+    rf"(?:\s+(?:{_QUAL_ALT}))?"
+    rf"(?:\s+(?P<severity>{_SEV_ALT})(?:[\s-]severity)?)?"
+    rf"(?:\s+migration)?\s+risks?"
+)
+# A bare "count severity" pair, unnamed so it can repeat inside _BREAKDOWN's
+# comma/"and"-joined list; ``_ITEM`` (named like ``_ANCHOR``, below) re-parses
+# each one found.
+_ITEM_BARE = rf"(?:{_NUM_ALT})\s+(?:{_SEV_ALT})"
+_ITEM = re.compile(rf"(?P<count>{_NUM_ALT})\s+(?P<severity>{_SEV_ALT})", re.IGNORECASE)
+
+# Every frame is matched with ``fullmatch`` against one whole, ";"-split clause
+# -- never searched for inside a longer one -- so a wave, a condition, a table,
+# an engine, "until", "if"/"once"/"without", or a comparison, anywhere in the
+# clause, simply fails to match any of them.
+_THERE_IS = re.compile(rf"there\s+(?:are|is)\s+{_ANCHOR}\s*\.?\s*$", re.IGNORECASE)
+_REMAINS = re.compile(rf"{_ANCHOR}\s+remain(?:s|ing)?(?:\s+open)?\s*\.?\s*$", re.IGNORECASE)
+_PARENTHETICAL = re.compile(rf"{_ANCHOR}\s*\([^)]*\)\s*\.?\s*$", re.IGNORECASE)
+_RESOLVED = re.compile(
+    rf"{_ANCHOR}\s+(?:was|were)\s+resolved(?:\s+by\s+the\s+assignment)?\s*\.?\s*$",
+    re.IGNORECASE,
+)
+# "N risks remain: one HIGH and one LOW." -- a severity breakdown of the same
+# total named just before the colon.
+_BREAKDOWN = re.compile(
+    rf"{_ANCHOR}\s+remain(?:s|ing)?:\s*"
+    rf"(?P<items>{_ITEM_BARE}(?:(?:,\s*|\s+and\s+){_ITEM_BARE})*)\s*\.?\s*$",
+    re.IGNORECASE,
+)
+_OPEN_FRAMES = (_BREAKDOWN, _THERE_IS, _REMAINS, _PARENTHETICAL)
+# "<subject> leaves/leaving N <severity-or-open> [migration] risks [to <verb
+# phrase>]." -- the real evidence sentence that opened #536. Only a purpose
+# infinitive ("to load-test before cutover") may follow the count; any other
+# preposition (in, on, for, per, across, until, after, during, within) leaves
+# text unconsumed and fails to match. The prefix before "leaves"/"leaving" may
+# not carry its own condition or comparison word -- "before cutover" in the
+# tail is fine, "Before mitigation, ... leaves" in the prefix is not.
+_LEAVES_PREFIX_BLOCK = re.compile(
+    r"\b(?:if|unless|without|would|could|once|after|before|until|should|versus|"
+    r"compared|previously|initially)\b",
+    re.IGNORECASE,
+)
+_LEAVES = re.compile(
+    rf"(?P<prefix>.*?)\bleav(?:es|ing)\s+(?:an?\s+)?(?P<count>{_NUM_ALT})\s+"
+    rf"(?:open\s+|(?P<severity>{_SEV_ALT})(?:[\s-]severity)?\s+)(?:migration\s+)?risks?"
+    rf"(?:\s+to\s+\S.*)?\s*\.?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _risk_count_phrase(n: int, severity: str | None) -> str:
+    label = f"{severity} " if severity else ""
+    if n == 0:
+        return f"no {label}risks" if label else "no risks"
+    return f"{n} {label}risk" + ("" if n == 1 else "s")
+
+
+def _risk_count_finding(text: str, sentence: str, actual_phrase: str) -> dict:
+    return {
+        "table": None,
+        "text": text,
+        "engines": [],
+        "high_confidence": True,
+        "sentence": sentence,
+        "message": (
+            f'[high confidence] Summary says "{text}", but the risk register has '
+            f"{actual_phrase}: {sentence}"
+        ),
+    }
+
+
+def _check_count(
+    m: re.Match[str],
+    text: str,
+    sentence: str,
+    counts: dict[str, int],
+    total: int,
+    findings: list[dict],
+) -> None:
+    """Compare one matched ``count``/``severity`` pair against ``counts``/``total``."""
+    count_word, severity = m.group("count"), m.group("severity")
+    count = int(count_word) if count_word.isdigit() else _NUM[count_word.lower()]
+    if severity:
+        actual = counts.get(severity.upper(), 0)
+        if actual != count:
+            findings.append(
+                _risk_count_finding(text, sentence, _risk_count_phrase(actual, severity.upper()))
+            )
+    elif total != count:
+        findings.append(_risk_count_finding(text, sentence, _risk_count_phrase(total, None)))
+
+
+def check_summary_risk_counts(summary: str, risk_assessment: dict | None) -> list[dict]:
+    """Find a summary statement whose risk count or severity contradicts
+    ``risk_assessment`` (#536).
+
+    Only checks a clause (a whole ``;``-split sentence segment) matching one
+    of ``_OPEN_FRAMES``/``_RESOLVED``/``_LEAVES`` in full: "there are/is N
+    [...] risks", "N [...] risks remain(s)(, open)?", a colon breakdown of
+    that total, "N [...] risks (<parenthetical>)" (the deterministic
+    fallback's wording), "N [...] risks was/were resolved", or "<subject>
+    leaves/leaving N <severity-or-open> risks (to <verb phrase>)" with a clean
+    prefix. Anything else -- a wave, a condition, a table, an engine, a label,
+    a historical figure, an adjective use -- is not one of these shapes and is
+    left unchecked, never guessed at.
+
+    A severity word is checked against how many risks carry it
+    (case-insensitively; an unrecognised severity is unrated, never folded
+    into LOW -- #506); no severity word is checked against the risk count. A
+    mismatch is always high confidence, like a wrong migration order (#393).
+
+    Returns findings shaped like the other checks in this module.
+    """
+    if not summary or risk_assessment is None:
+        return []
+    findings: list[dict] = []
+    for sentence in split_sentences(summary):
+        for clause in sentence.split(";"):
+            clause = clause.strip()
+
+            m = _RESOLVED.fullmatch(clause)
+            if m:
+                if "resolved_risks" in risk_assessment:
+                    risks = risk_assessment.get("resolved_risks") or []
+                    text = m.group(0).strip()
+                    _check_count(m, text, sentence, count_by_severity(risks), len(risks), findings)
+                continue
+
+            m = _LEAVES.fullmatch(clause)
+            if m:
+                if not _LEAVES_PREFIX_BLOCK.search(m.group("prefix")):
+                    risks = risk_assessment.get("risks") or []
+                    text = m.group(0).strip()
+                    _check_count(m, text, sentence, count_by_severity(risks), len(risks), findings)
+                continue
+
+            m = None
+            for frame in _OPEN_FRAMES:
+                m = frame.fullmatch(clause)
+                if m:
+                    break
+            if not m:
+                continue
+            risks = risk_assessment.get("risks") or []
+            counts, total = count_by_severity(risks), len(risks)
+            _check_count(m, m.group(0).strip(), sentence, counts, total, findings)
+            for item in _ITEM.finditer(m.groupdict().get("items") or ""):
+                _check_count(
+                    item, f"{item.group(0).strip()} risk", sentence, counts, total, findings
+                )
     return findings
 
 

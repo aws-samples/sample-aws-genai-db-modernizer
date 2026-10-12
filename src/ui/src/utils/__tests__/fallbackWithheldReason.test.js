@@ -40,6 +40,16 @@ describe('fallbackWithheldReason', () => {
     );
   });
 
+  test('risk count reason', () => {
+    const warnings = [
+      '[high confidence] Summary says "two HIGH-severity risks", but '
+      + 'the risk register has 1 HIGH risk: some sentence.',
+    ];
+    expect(fallbackWithheldReason(warnings)).toBe(
+      "stated a risk count or severity that doesn't match the risk assessment",
+    );
+  });
+
   test('multiple reasons are joined', () => {
     const warnings = [
       '[high confidence] Summary names an internal field, "tco_analysis", instead of '

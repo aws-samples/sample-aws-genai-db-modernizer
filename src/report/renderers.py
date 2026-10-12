@@ -18,6 +18,7 @@ from src.shared.migration_wave_engines import NAMED_ENGINES as _WAVE_NAMED_ENGIN
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES as _WAVE_RELATIONAL_ENGINES
 from src.shared.migration_wave_engines import SEARCH_ENGINES as _WAVE_SEARCH_ENGINES
 from src.shared.migration_wave_engines import cache_front_description
+from src.shared.risk_severity import count_by_severity
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -424,15 +425,23 @@ NO_OPEN_RISKS_CAVEAT = (
 )
 
 
-# #393: three independent high-confidence checks can reject the generated executive
-# summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
-# ``check_summary_internal_leaks``, ``check_summary_wave_order``), each stamping its
-# own ``[high confidence] ...`` message onto ``summary_validation_warnings`` with its
-# own wording -- read here instead of hard-coding the table-attribution reason, which
-# used to show even when a different check was the one that actually rejected it.
+# #393/#536: four independent high-confidence checks can reject the generated
+# executive summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
+# ``check_summary_internal_leaks``, ``check_summary_wave_order``,
+# ``check_summary_risk_counts``), each stamping its own ``[high confidence] ...``
+# message onto ``summary_validation_warnings`` with its own wording -- read here
+# instead of hard-coding the table-attribution reason, which used to show even
+# when a different check was the one that actually rejected it. The table-
+# attribution reason stays last: it is also the default used when none of the
+# markers below matches (an older ``report.json`` written before a given check
+# existed), so a newly added reason is inserted above it, never appended after.
 _FALLBACK_REASONS: tuple[tuple[str, str], ...] = (
     ("internal field", "named one of this codebase's internal field names"),
     ("migration waves move", "stated a migration order that contradicts the roadmap"),
+    (
+        "but the risk register has",
+        "stated a risk count or severity that doesn't match the risk assessment",
+    ),
     (
         "no in-scope query of that engine touches it",
         "named a table under an engine that does not serve it",
@@ -893,22 +902,18 @@ def _severity_counts_text(risks: list[dict[str, Any]]) -> str:
 
     #270: the posture line used to fold CRITICAL into "high" and drop LOW
     entirely, so its parenthetical count did not add up to the open-risk
-    total whenever a risk register held either. Every risk here counts
-    exactly once -- severity is matched case-insensitively, and an
-    unrecognised severity is named "unrated" rather than folded into LOW
-    (#270 round-1 review: an unrated risk is not known to be low severity),
-    matching the deck's ``UNRATED`` handling (``pptx_report.py``) -- so the
-    terms always sum to ``len(risks)``.
+    total whenever a risk register held either. ``count_by_severity``
+    (``src.shared.risk_severity``, #536 S1) counts every risk exactly once,
+    case-insensitively, naming an unrecognised severity "unrated" rather than
+    folding it into LOW (#270 round-1 review: an unrated risk is not known to
+    be low severity) -- the same counter the deck's own ``UNRATED`` handling
+    (``pptx_report.py``) and the summary grounding check (``synthesis_
+    grounding.check_summary_risk_counts``) use, so the terms always sum to
+    ``len(risks)``.
     """
-    counts = {lvl: 0 for lvl in _RISK_POSTURE_SEVERITIES}
-    unrated = 0
-    for r in risks:
-        lv = str(r.get("severity", "")).upper()
-        if lv in counts:
-            counts[lv] += 1
-        else:
-            unrated += 1
-    terms = [f"{counts[lvl]} {lvl.lower()}" for lvl in _RISK_POSTURE_SEVERITIES if counts[lvl]]
+    counts = count_by_severity(risks)
+    terms = [f"{counts[lvl]} {lvl.lower()}" for lvl in _RISK_POSTURE_SEVERITIES if counts.get(lvl)]
+    unrated = counts.get("UNRATED", 0)
     if unrated:
         terms.append(f"{unrated} unrated")
     return ", ".join(terms)
