@@ -32,18 +32,7 @@ import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
-import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText } from "../utils/jobStatus";
-
-
-
-
-
-// A job already in one of these statuses is already finished -- DELETE on
-// one of these just reports that actual status without calling
-// stop_execution again (#518), so hide the Cancel action instead of letting
-// the user click it for nothing.
-const TERMINAL_JOB_STATUSES = new Set(['CANCELLED', 'SUCCEEDED', 'FAILED']);
-
+import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isTerminalStatus, isAlreadyFinishedMessage } from "../utils/jobStatus";
 
 
 
@@ -359,24 +348,39 @@ const JobMonitoringPage = memo(() => {
 
         addFlashbarMessage({
           type: 'error',
-          header: `API Error (Status: ${statusCode})`,
-          content: `Failed to cancel job at '${apiUrl}': ${errorMessage}`,
+          header: t('job-monitoring.cancel-modal.api-error-header', { statusCode }),
+          content: t('job-monitoring.cancel-modal.api-error-content', { apiUrl, errorMessage }),
           dismissible: true,
           id: `error-${Date.now()}`
         });
       } else if (results['delete-assessment']?.success) {
-        addFlashbarMessage({
-          type: 'success',
-          header: 'Job Cancelled',
-          content: `Job ${jobId} has been cancelled successfully. Redirecting to dashboard...`,
-          dismissible: true,
-          id: `success-${Date.now()}`
-        });
+        // The backend returns 200 for both an actual cancellation and a
+        // no-op on a job that was already finished -- the response's
+        // `status` field can't tell those apart (and ApiManager overwrites
+        // it with the HTTP status code anyway), so this reads the message
+        // instead (#526 round 1 review).
+        if (isAlreadyFinishedMessage(results['delete-assessment']?.message)) {
+          addFlashbarMessage({
+            type: 'info',
+            header: t('job-monitoring.cancel-modal.already-finished-header'),
+            content: t('job-monitoring.cancel-modal.already-finished-content', { jobId }),
+            dismissible: true,
+            id: `info-${Date.now()}`
+          });
+        } else {
+          addFlashbarMessage({
+            type: 'success',
+            header: t('job-monitoring.cancel-modal.success-header'),
+            content: t('job-monitoring.cancel-modal.success-content', { jobId }),
+            dismissible: true,
+            id: `success-${Date.now()}`
+          });
 
-        // Navigate to dashboard after 2 seconds
-        setTimeout(() => {
-          navigate('/dashboard');
-        }, 2000);
+          // Navigate to dashboard after 2 seconds
+          setTimeout(() => {
+            navigate('/dashboard');
+          }, 2000);
+        }
       }
 
     } catch (error) {
@@ -385,8 +389,8 @@ const JobMonitoringPage = memo(() => {
 
       addFlashbarMessage({
         type: 'error',
-        header: 'Unexpected Error',
-        content: `An unexpected error occurred: ${errorDetails}. Please check your network connection and try again.`,
+        header: t('job-monitoring.cancel-modal.unexpected-error-header'),
+        content: t('job-monitoring.cancel-modal.unexpected-error-content', { errorDetails }),
         dismissible: true,
         id: `error-${Date.now()}`
       });
@@ -394,7 +398,7 @@ const JobMonitoringPage = memo(() => {
       setCancellingJob(false);
       setShowCancelModal(false);
     }
-  }, [jobId, addFlashbarMessage, navigate]);
+  }, [jobId, addFlashbarMessage, navigate, t]);
 
 
 
@@ -723,7 +727,7 @@ const JobMonitoringPage = memo(() => {
                   <Button iconName="download" variant="normal" onClick={handleDownloadLogs}>
                     {t("job-monitoring.actions.download-logs")}
                   </Button>
-                  {jobData?.progress?.percent_complete !== 100 && !TERMINAL_JOB_STATUSES.has(jobData?.status) && (
+                  {jobData?.progress?.percent_complete !== 100 && !isTerminalStatus(jobData?.status) && (
                     <Button iconName="close" variant="normal" onClick={handleCancelJobClick}>
                       {t("job-monitoring.actions.cancel-job")}
                     </Button>

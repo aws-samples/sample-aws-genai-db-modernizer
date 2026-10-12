@@ -25,7 +25,8 @@ import { SideNavigationConfigurations, createLabelFunction, ApiConfigurations } 
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import CustomTable from "../components/CustomTable";
-import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText } from "../utils/jobStatus";
+import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText, isAlreadyFinishedMessage } from "../utils/jobStatus";
+import { buildDashboardActionItems } from "../utils/dashboardActions";
 
 
 
@@ -85,10 +86,10 @@ const ComponentPage = memo(() => {
   //-- Flashbar state for error messages
   const [flashbarItems, setFlashbarItems] = useState([]);
 
-  //-- Delete modal state
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deletingJob, setDeletingJob] = useState(false);
-  const [jobToDelete, setJobToDelete] = useState(null);
+  //-- Cancel modal state
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancellingJob, setCancellingJob] = useState(false);
+  const [jobToCancel, setJobToCancel] = useState(null);
 
   //-- Use ref for last update timestamp (doesn't need re-render)
   const lastUpdateTimestamp = useRef(null);
@@ -276,81 +277,88 @@ const ComponentPage = memo(() => {
 
       const jobId = selectedItems[0].jobId;
       window.open(`/analysis/engine-analysis/${jobId}`, '_blank');
-    } else if (detail.id === 'delete') {
+    } else if (detail.id === 'cancel') {
       if (selectedItems.length === 0) {
         addFlashbarMessage({
           type: 'warning',
-          header: 'No Selection',
-          content: 'Please select at least one analysis to delete',
+          header: t('dashboard.cancel-modal.no-selection-header'),
+          content: t('dashboard.cancel-modal.no-selection-content'),
           dismissible: true,
           id: `warning-${Date.now()}`
         });
         return;
       }
 
-      // For now, handle single deletion (first selected item)
-      setJobToDelete(selectedItems[0]);
-      setShowDeleteModal(true);
-    } else if (detail.id === 'stop') {
-      addFlashbarMessage({
-        type: 'info',
-        header: 'Stop Analysis',
-        content: 'Stop analysis functionality coming soon',
-        dismissible: true,
-        id: `info-${Date.now()}`
-      });
+      // For now, handle single cancellation (first selected item)
+      setJobToCancel(selectedItems[0]);
+      setShowCancelModal(true);
     }
-  }, [selectedItems, addFlashbarMessage]);
+  }, [selectedItems, addFlashbarMessage, t]);
 
 
-  //##-- Delete modal handlers
-  const handleDeleteModalDismiss = useCallback(() => {
-    setShowDeleteModal(false);
-    setJobToDelete(null);
+  //##-- Cancel modal handlers
+  const handleCancelModalDismiss = useCallback(() => {
+    setShowCancelModal(false);
+    setJobToCancel(null);
   }, []);
 
 
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!jobToDelete) return;
+  const handleCancelJobConfirm = useCallback(async () => {
+    if (!jobToCancel) return;
 
-    setDeletingJob(true);
+    setCancellingJob(true);
 
     try {
       const apiManager = new ApiManager();
 
       const apiCalls = [
         {
-          id: 'delete-assessment',
-          path: `assessments/${jobToDelete.jobId}`,
+          id: 'cancel-assessment',
+          path: `assessments/${jobToCancel.jobId}`,
           method: 'DELETE',
           params: {}
         }
       ];
 
       const results = await apiManager.execute(apiCalls);
-      console.log('Delete job result:', results);
+      console.log('Cancel job result:', results);
 
-      if (results['delete-assessment']?.error) {
-        const result = results['delete-assessment'];
-        const errorMessage = result.error?.message || 'Failed to delete analysis';
+      if (results['cancel-assessment']?.error) {
+        const result = results['cancel-assessment'];
+        const errorMessage = result.error?.message || 'Failed to cancel analysis';
         const statusCode = result.status || 'Unknown';
-        const apiUrl = `${ApiConfigurations.baseUrl}assessments/${jobToDelete.jobId}`;
+        const apiUrl = `${ApiConfigurations.baseUrl}assessments/${jobToCancel.jobId}`;
 
         addFlashbarMessage({
           type: 'error',
-          header: `API Error (Status: ${statusCode})`,
-          content: `Failed to delete analysis at '${apiUrl}': ${errorMessage}`,
+          header: t('dashboard.cancel-modal.api-error-header', { statusCode }),
+          content: t('dashboard.cancel-modal.api-error-content', { apiUrl, errorMessage }),
           dismissible: true,
           id: `error-${Date.now()}`
         });
-      } else if (results['delete-assessment']?.success) {
-        addFlashbarMessage({
-          type: 'success',
-          header: 'Analysis Deleted',
-          content: `Analysis ${jobToDelete.jobId} has been deleted successfully`,
-          dismissible: true,
-          id: `success-${Date.now()}`
-        });
+      } else if (results['cancel-assessment']?.success) {
+        // The backend returns 200 for both an actual cancellation and a
+        // no-op on a job that was already finished -- the response's
+        // `status` field can't tell those apart (and ApiManager overwrites
+        // it with the HTTP status code anyway), so this reads the message
+        // instead (#526 round 1 review).
+        if (isAlreadyFinishedMessage(results['cancel-assessment']?.message)) {
+          addFlashbarMessage({
+            type: 'info',
+            header: t('dashboard.cancel-modal.already-finished-header'),
+            content: t('dashboard.cancel-modal.already-finished-content', { jobId: jobToCancel.jobId }),
+            dismissible: true,
+            id: `info-${Date.now()}`
+          });
+        } else {
+          addFlashbarMessage({
+            type: 'success',
+            header: t('dashboard.cancel-modal.success-header'),
+            content: t('dashboard.cancel-modal.success-content', { jobId: jobToCancel.jobId }),
+            dismissible: true,
+            id: `success-${Date.now()}`
+          });
+        }
 
         // Clear selection and refresh data
         setSelectedItems([]);
@@ -358,22 +366,22 @@ const ComponentPage = memo(() => {
       }
 
     } catch (error) {
-      console.error('Error deleting analysis:', error);
-      const errorDetails = error.message || 'Failed to delete analysis';
+      console.error('Error cancelling analysis:', error);
+      const errorDetails = error.message || 'Failed to cancel analysis';
 
       addFlashbarMessage({
         type: 'error',
-        header: 'Unexpected Error',
-        content: `An unexpected error occurred: ${errorDetails}. Please check your network connection and try again.`,
+        header: t('dashboard.cancel-modal.unexpected-error-header'),
+        content: t('dashboard.cancel-modal.unexpected-error-content', { errorDetails }),
         dismissible: true,
         id: `error-${Date.now()}`
       });
     } finally {
-      setDeletingJob(false);
-      setShowDeleteModal(false);
-      setJobToDelete(null);
+      setCancellingJob(false);
+      setShowCancelModal(false);
+      setJobToCancel(null);
     }
-  }, [jobToDelete, addFlashbarMessage, gatherDashboardData]);
+  }, [jobToCancel, addFlashbarMessage, gatherDashboardData, t]);
 
 
 
@@ -486,26 +494,10 @@ const ComponentPage = memo(() => {
 
 
   //-- Action items for ButtonDropdown
-  const actionItems = useMemo(() => {
-    return [
-      {
-        text: t("dashboard.actions.view-results"),
-        id: "view-results"
-      },
-      {
-        text: t("dashboard.actions.view-analysis"),
-        id: "view-analysis"
-      },
-      {
-        text: t("dashboard.actions.stop-analysis"),
-        id: "stop"
-      },
-      {
-        text: t("dashboard.actions.delete-analysis"),
-        id: "delete"
-      }
-    ];
-  }, [t]);
+  const actionItems = useMemo(
+    () => buildDashboardActionItems(t, selectedItems),
+    [t, selectedItems],
+  );
 
 
   //-- Memoized table component to prevent unnecessary re-renders
@@ -638,18 +630,18 @@ const ComponentPage = memo(() => {
       />
 
       <Modal
-        visible={showDeleteModal}
-        onDismiss={handleDeleteModalDismiss}
-        header={t("dashboard.delete-modal.header")}
-        closeAriaLabel="Close modal"
+        visible={showCancelModal}
+        onDismiss={handleCancelModalDismiss}
+        header={t("dashboard.cancel-modal.header")}
+        closeAriaLabel={t("dashboard.cancel-modal.close-aria")}
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" onClick={handleDeleteModalDismiss}>
-                {t("common.actions.cancel")}
+              <Button variant="link" onClick={handleCancelModalDismiss}>
+                {t("dashboard.cancel-modal.keep-job")}
               </Button>
-              <Button variant="primary" onClick={handleDeleteConfirm} loading={deletingJob}>
-                {t("common.actions.delete")}
+              <Button variant="primary" onClick={handleCancelJobConfirm} loading={cancellingJob}>
+                {t("dashboard.cancel-modal.confirm")}
               </Button>
             </SpaceBetween>
           </Box>
@@ -657,15 +649,15 @@ const ComponentPage = memo(() => {
       >
         <SpaceBetween size="m">
           <Box>
-            {t("dashboard.delete-modal.confirm-question")}
+            {t("dashboard.cancel-modal.confirm-question")}
           </Box>
-          {jobToDelete && (
+          {jobToCancel && (
             <Box color="text-status-warning">
               <SpaceBetween size="xs">
-                <Box variant="strong">{t("dashboard.delete-modal.job-id")}{jobToDelete.jobId}</Box>
-                <Box variant="strong">{t("dashboard.delete-modal.database")}{jobToDelete.sourceDatabase}</Box>
-                <Box variant="strong">{t("dashboard.delete-modal.status")}{jobToDelete.statusText}</Box>
-                <Box>{t("dashboard.delete-modal.warning")}</Box>
+                <Box variant="strong">{t("dashboard.cancel-modal.job-id")}{jobToCancel.jobId}</Box>
+                <Box variant="strong">{t("dashboard.cancel-modal.database")}{jobToCancel.sourceDatabase}</Box>
+                <Box variant="strong">{t("dashboard.cancel-modal.status")}{jobToCancel.statusText}</Box>
+                <Box>{t("dashboard.cancel-modal.warning")}</Box>
               </SpaceBetween>
             </Box>
           )}

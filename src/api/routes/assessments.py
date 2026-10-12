@@ -366,9 +366,10 @@ async def get_assessment(job_id: str):
 async def cancel_assessment(job_id: str):
     """Cancel a running or waiting assessment.
 
-    A job already in a terminal status (SUCCEEDED or CANCELLED) can't be
-    cancelled -- this reports that actual status instead of fabricating
-    CANCELLED for a job that, say, already succeeded (#518 round 1 suggestion).
+    A job already in a terminal status (SUCCEEDED, CANCELLED or FAILED)
+    can't be cancelled -- this reports that actual status instead of
+    fabricating CANCELLED for a job that, say, already succeeded (#518
+    round 1 suggestion).
     """
     sfn_svc, _ = _require_services()
     execution = sfn_svc.describe_execution(job_id)
