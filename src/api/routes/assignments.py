@@ -15,7 +15,7 @@ from src.agents.referee.assignment_overrides import (
     UnknownQuery,
     apply_assignment_overrides,
 )
-from src.api.dependencies import database_name_param
+from src.api.dependencies import database_name_param, job_id_param
 from src.contracts.assignment_models import Assignment, AssignmentSource, ValidationResult
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import resolve_effective_assignment_version
@@ -108,7 +108,7 @@ def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -
 
 @router.get("/{job_id}/assignments", response_model=AssignmentResponse)
 async def get_assignments(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Read the current (latest version) assignment artifact."""
@@ -123,8 +123,8 @@ async def get_assignments(
 
 @router.put("/{job_id}/assignments", response_model=AssignmentResponse)
 async def put_assignments(
-    job_id: str,
     body: AssignmentOverrideRequest,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Accept overrides or scope narrowing.

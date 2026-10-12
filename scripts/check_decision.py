@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts._sandbox import NAME_ARGS, sandbox_violation  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
+from src.shared.job_id import validate_job_id  # noqa: E402
 from src.storage.local_store import LocalArtifactStore  # noqa: E402
 
 
@@ -50,6 +51,7 @@ def main() -> None:
 
     try:
         args.db = validate_database_name(args.db)
+        args.job_id = validate_job_id(args.job_id)
     except ValueError as exc:
         print(json.dumps({"status": "error", "message": str(exc)}))
         sys.exit(2)

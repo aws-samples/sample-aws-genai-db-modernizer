@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import database_name_param, validated_filename
+from src.api.dependencies import database_name_param, job_id_param, validated_filename
 from src.api.models.requests import AssessmentRequest, PrepareAssessmentRequest
 from src.api.models.responses import (
     AgentStatus,
@@ -86,7 +86,10 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
 
 
 @router.post("/{job_id}/uploads/confirm")
-async def confirm_upload(job_id: str, database_name: str = Depends(database_name_param)):
+async def confirm_upload(
+    job_id: str = Depends(job_id_param),
+    database_name: str = Depends(database_name_param),
+):
     """Confirm that the file upload completed successfully.
 
     Checks that the collector output file exists in S3 at the expected
@@ -123,7 +126,10 @@ async def confirm_upload(job_id: str, database_name: str = Depends(database_name
 
 
 @router.get("/{job_id}/uploads")
-async def list_uploads(job_id: str, database_name: str = Depends(database_name_param)):
+async def list_uploads(
+    job_id: str = Depends(job_id_param),
+    database_name: str = Depends(database_name_param),
+):
     """List uploaded files for a prepared assessment."""
     _, s3_svc = _require_services()
     prefix = f"{database_name}/{job_id}/uploads/"
@@ -155,7 +161,7 @@ async def list_uploads(job_id: str, database_name: str = Depends(database_name_p
 
 @router.delete("/{job_id}/uploads/{filename}")
 async def delete_upload(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
     filename: str = Depends(validated_filename),
 ):
@@ -300,7 +306,7 @@ async def list_assessments(
 
 
 @router.get("/{job_id}", response_model=AssessmentDetail)
-async def get_assessment(job_id: str):
+async def get_assessment(job_id: str = Depends(job_id_param)):
     """Get assessment status with pipeline progress."""
     sfn_svc, _ = _require_services()
     execution = sfn_svc.describe_execution(job_id)
@@ -368,7 +374,7 @@ async def get_assessment(job_id: str):
 
 
 @router.delete("/{job_id}")
-async def cancel_assessment(job_id: str):
+async def cancel_assessment(job_id: str = Depends(job_id_param)):
     """Cancel a running or waiting assessment.
 
     A job already in a terminal status (SUCCEEDED, CANCELLED or FAILED)
@@ -393,7 +399,7 @@ async def cancel_assessment(job_id: str):
 
 
 @router.get("/{job_id}/agents")
-async def get_agent_statuses(job_id: str):
+async def get_agent_statuses(job_id: str = Depends(job_id_param)):
     """Get per-agent status table with artifact summaries for completed agents."""
     sfn_svc, s3_svc = _require_services()
     execution = sfn_svc.describe_execution(job_id)
@@ -440,7 +446,7 @@ async def get_agent_statuses(job_id: str):
 
 
 @router.get("/{job_id}/execution-history")
-async def get_execution_history(job_id: str):
+async def get_execution_history(job_id: str = Depends(job_id_param)):
     """Get full Step Functions execution history with all state types.
 
     Returns a flat table of all states (Task, Map, MapIteration, Pass, etc.)

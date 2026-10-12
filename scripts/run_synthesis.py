@@ -165,9 +165,11 @@ def main() -> None:
         _error(violation)
 
     from src.shared.database_name import validate_database_name
+    from src.shared.job_id import validate_job_id
 
     try:
         args.db = validate_database_name(args.db)
+        args.job_id = validate_job_id(args.job_id)
     except ValueError as exc:
         _error(str(exc))
 

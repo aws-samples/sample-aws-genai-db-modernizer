@@ -90,9 +90,11 @@ def main() -> None:
         sys.exit(1)
 
     from src.shared.database_name import validate_database_name
+    from src.shared.job_id import validate_job_id
 
     try:
         args.db = validate_database_name(args.db)
+        args.job_id = validate_job_id(args.job_id)
     except ValueError as exc:
         print(json.dumps({"status": "error", "message": str(exc)}))
         sys.exit(1)

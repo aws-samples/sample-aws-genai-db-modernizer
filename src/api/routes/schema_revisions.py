@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from src.api.dependencies import database_name_param
+from src.api.dependencies import database_name_param, job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.contracts.schema_revision_models import (
     SchemaConfirmation,
@@ -149,8 +149,8 @@ def _write_confirmed_json(
 
 @router.get("/{job_id}/schema/{engine}", response_model=SchemaResponse)
 async def get_schema(
-    job_id: str,
     engine: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
     version: int | None = Query(None, description="Schema version (omit for latest)"),
 ):
@@ -184,8 +184,8 @@ async def get_schema(
 
 @router.get("/{job_id}/schema/{engine}/versions", response_model=VersionsResponse)
 async def get_schema_versions(
-    job_id: str,
     engine: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Return full version history for an engine, ordered by version number ascending."""
@@ -216,9 +216,9 @@ async def get_schema_versions(
 
 @router.put("/{job_id}/schema/{engine}/revisions")
 async def put_schema_revision(
-    job_id: str,
     engine: str,
     body: SchemaRevisionRequest,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Submit a schema revision request for an engine.
@@ -277,8 +277,8 @@ async def put_schema_revision(
 
 @router.post("/{job_id}/schema/{engine}/confirm", response_model=ConfirmResponse)
 async def confirm_schema(
-    job_id: str,
     engine: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Confirm the latest schema version for an engine. Writes confirmed.json."""
@@ -298,7 +298,7 @@ async def confirm_schema(
 
 @router.post("/{job_id}/schema/confirm-all", response_model=ConfirmAllResponse)
 async def confirm_all_schemas(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     database_name: str = Depends(database_name_param),
 ):
     """Confirm the latest schema version for every active engine.

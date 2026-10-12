@@ -2,8 +2,9 @@
 
 import math
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.storage.artifact_store import ArtifactStore
 from src.storage.parallel import map_parallel
@@ -54,7 +55,7 @@ def _journeys_from_graph(job_id: str) -> list[dict] | None:
 
 @router.get("/{job_id}/query-journeys")
 def list_query_journeys(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     page: int = Query(default=1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(default=50, ge=1, description="Items per page (max 200)"),
 ):
@@ -122,7 +123,7 @@ def list_query_journeys(
 
 
 @router.get("/{job_id}/query-journeys/{query_id}")
-def get_query_journey(job_id: str, query_id: str):
+def get_query_journey(query_id: str, job_id: str = Depends(job_id_param)):
     """Return the full modernization journey for a single query.
 
     Served from the context graph when available, falling back to the per-query

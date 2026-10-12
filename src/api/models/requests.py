@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.shared.database_name import validate_database_name as _validate_database_name
+from src.shared.job_id import validate_job_id as _validate_job_id
 
 
 class ConnectionDetails(BaseModel):
@@ -46,6 +47,15 @@ class AssessmentRequest(BaseModel):
     @classmethod
     def _check_database_name(cls, value: str) -> str:
         return _validate_database_name(value)
+
+    @field_validator("job_id")
+    @classmethod
+    def _check_job_id(cls, value: str | None) -> str | None:
+        # job_id is optional: omitting it lets the server generate one
+        # (always valid), so None passes through unchecked.
+        if value is None:
+            return value
+        return _validate_job_id(value)
 
     @model_validator(mode="after")
     def validate_connection_required(self):

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents.answer_validation import validate_answer
-from src.api.dependencies import database_name_param
+from src.api.dependencies import database_name_param, job_id_param
 from src.contracts.agent_interaction_models import AgentAnswers, AgentQuestions
 from src.contracts.assignment_models import ValidationResult
 from src.storage.artifact_store import ArtifactStore
@@ -20,6 +20,41 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["agent-interaction"])
 
 # Service injected by main.py at startup
 artifact_store: ArtifactStore | None = None
+
+#: The only agents wired for the pause-for-customer-input protocol
+#: (AgentNeedsInputError / write_questions / read_answers in
+#: src/agents/interaction.py) are the per-engine schema design agents --
+#: see src/agents/schema_design/handler.py's ``agent_name = f"schema-{target_type}"``
+#: and AgentQuestions.agent_type's own docstring example ("schema-dynamodb").
+#: database_name and job_id are validated against a character class
+#: (#420/#505/#508), but "agent" has no such shape of its own: unconstrained,
+#: "agent=.." resolves _questions_path/_answers_path one level up (into the
+#: job's own database_name folder) -- still inside the artifact root, so not
+#: a traversal out of it, but still a real file at a path this protocol
+#: never writes to. An explicit allowlist closes that off rather than
+#: relying on path-shape validation alone.
+_KNOWN_AGENT_FOLDERS = frozenset(
+    f"schema-{engine}"
+    for engine in (
+        "dynamodb",
+        "documentdb",
+        "opensearch",
+        "elasticache",
+        "aurora_postgresql",
+        "aurora_mysql",
+    )
+)
+
+
+def validated_agent(agent: str) -> str:
+    """FastAPI dependency: the ``agent`` path parameter, constrained to a
+    known agent folder name."""
+    if agent not in _KNOWN_AGENT_FOLDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=("agent must be one of: " + ", ".join(sorted(_KNOWN_AGENT_FOLDERS))),
+        )
+    return agent
 
 
 def _require_store() -> ArtifactStore:
@@ -69,8 +104,8 @@ def _answers_path(db: str, job_id: str, agent: str) -> str:
 
 @router.get("/{job_id}/agents/{agent}/questions", response_model=AgentQuestions)
 async def get_questions(
-    job_id: str,
-    agent: str,
+    job_id: str = Depends(job_id_param),
+    agent: str = Depends(validated_agent),
     database_name: str = Depends(database_name_param),
 ):
     """Read the questions artifact for an agent."""
@@ -84,9 +119,9 @@ async def get_questions(
 
 @router.put("/{job_id}/agents/{agent}/answers")
 async def put_answers(
-    job_id: str,
-    agent: str,
     body: SubmitAnswersRequest,
+    job_id: str = Depends(job_id_param),
+    agent: str = Depends(validated_agent),
     database_name: str = Depends(database_name_param),
 ):
     """Write the answers artifact for an agent."""
@@ -118,9 +153,9 @@ async def put_answers(
     response_model=ValidationResult,
 )
 async def validate_single_answer(
-    job_id: str,
-    agent: str,
     body: ValidateAnswerRequest,
+    job_id: str = Depends(job_id_param),
+    agent: str = Depends(validated_agent),
     database_name: str = Depends(database_name_param),
 ):
     """Validate a single answer using tiered validation.

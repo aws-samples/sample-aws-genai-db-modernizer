@@ -31,11 +31,15 @@ _ROUTES: list[tuple[str, str, dict | None]] = [
     ("POST", "/api/v1/assessments/job1/uploads/confirm", None),
     ("GET", "/api/v1/assessments/job1/uploads", None),
     ("DELETE", "/api/v1/assessments/job1/uploads/collector-output.json", None),
-    ("GET", "/api/v1/assessments/job1/agents/triage/questions", None),
-    ("PUT", "/api/v1/assessments/job1/agents/triage/answers", {"answers": {}}),
+    # "schema-dynamodb", not "triage": #508 adds an allowlist for the agent
+    # path parameter (src/api/routes/agent_interaction.py), so an arbitrary
+    # placeholder here would 422 on *agent*, masking the database_name
+    # check this file is actually about.
+    ("GET", "/api/v1/assessments/job1/agents/schema-dynamodb/questions", None),
+    ("PUT", "/api/v1/assessments/job1/agents/schema-dynamodb/answers", {"answers": {}}),
     (
         "POST",
-        "/api/v1/assessments/job1/agents/triage/validate-answer",
+        "/api/v1/assessments/job1/agents/schema-dynamodb/validate-answer",
         {"question_id": "q1", "answer": "a"},
     ),
     ("GET", "/api/v1/assessments/job1/assignments", None),

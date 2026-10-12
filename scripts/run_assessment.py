@@ -51,6 +51,7 @@ from src.shared.database_name import (  # noqa: E402
     DERIVED_DATABASE_NAME_ERROR,
     validate_database_name,
 )
+from src.shared.job_id import validate_job_id  # noqa: E402
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
     IngestionLimitError,
@@ -869,6 +870,12 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     if args.db is not None:
         try:
             args.db = validate_database_name(args.db)
+        except ValueError as exc:
+            _error("init", str(exc))
+
+    if args.job_id is not None:
+        try:
+            args.job_id = validate_job_id(args.job_id)
         except ValueError as exc:
             _error("init", str(exc))
 

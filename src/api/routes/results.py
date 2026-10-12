@@ -1,7 +1,8 @@
 """Results routes — analysis results, table mappings, and raw artifacts."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.report.renderers import resolve_migration_waves
@@ -24,7 +25,7 @@ def _get_database_name(job_id: str) -> str:
 
 
 @router.get("/{job_id}/results")
-async def get_results(job_id: str):
+async def get_results(job_id: str = Depends(job_id_param)):
     """Get full analysis results (executive summary, architecture, TCO, risks)."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -52,7 +53,7 @@ async def get_results(job_id: str):
 
 
 @router.get("/{job_id}/collector")
-async def get_collector_output(job_id: str):
+async def get_collector_output(job_id: str = Depends(job_id_param)):
     """Get raw collector output artifact."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -64,7 +65,7 @@ async def get_collector_output(job_id: str):
 
 
 @router.get("/{job_id}/triage")
-async def get_triage_output(job_id: str):
+async def get_triage_output(job_id: str = Depends(job_id_param)):
     """Get raw triage decisions artifact."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -76,7 +77,7 @@ async def get_triage_output(job_id: str):
 
 
 @router.get("/{job_id}/analysis/{agent_type}")
-async def get_analysis_output(job_id: str, agent_type: str):
+async def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_param)):
     """Get raw analysis output for a specific agent type."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -90,7 +91,7 @@ async def get_analysis_output(job_id: str, agent_type: str):
 
 
 @router.get("/{job_id}/reality-check")
-async def get_reality_check(job_id: str):
+async def get_reality_check(job_id: str = Depends(job_id_param)):
     """Get reality check output — engine consolidations and recommendations."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -103,7 +104,7 @@ async def get_reality_check(job_id: str):
 
 @router.get("/{job_id}/results/table-mappings")
 async def get_table_mappings(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     limit: int = Query(default=25, ge=1, le=500, description="Max rows to return"),
     offset: int = Query(default=0, ge=0, description="Rows to skip"),
     recommended_db: str | None = Query(default=None, description="Filter by target engine"),
@@ -161,7 +162,7 @@ async def get_table_mappings(
 
 
 @router.get("/{job_id}/schema-designs")
-async def get_schema_designs(job_id: str):
+async def get_schema_designs(job_id: str = Depends(job_id_param)):
     """Get all schema design artifacts."""
     db_name = _get_database_name(job_id)
     if not s3_service:

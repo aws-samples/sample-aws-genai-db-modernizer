@@ -5,9 +5,10 @@ Requirements: 14.3, 14.4, 13.2
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.contracts.phase_models import Phase, PhaseProgression
 from src.orchestrator.base import (
@@ -58,14 +59,14 @@ class ResumeResponse(BaseModel):
 
 
 @router.get("/{job_id}/phases", response_model=PhaseProgression)
-async def get_phases(job_id: str):
+async def get_phases(job_id: str = Depends(job_id_param)):
     """Return the PhaseProgression for a job."""
     orch = _require_orchestrator()
     return orch.get_progression(job_id)
 
 
 @router.post("/{job_id}/resume", response_model=ResumeResponse)
-async def resume_phase(job_id: str, body: ResumeRequest):
+async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param)):
     """Resume execution at the given phase.
 
     Returns HTTP 409 if phase prerequisites are not met, or if the job was

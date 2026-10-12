@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 
+from src.api.dependencies import job_id_param
 from src.api.models.graph_responses import (
     EngineDetailResponse,
     LoadTestResultsResponse,
@@ -186,7 +187,7 @@ def graph_lease(job_id: str) -> Iterator[tuple[GraphStore, str]]:
         yield store, db_name
 
 
-def get_graph_for_job(job_id: str) -> Iterator[tuple[GraphStore, str]]:
+def get_graph_for_job(job_id: str = Depends(job_id_param)) -> Iterator[tuple[GraphStore, str]]:
     """FastAPI dependency: lease the job's graph for the request.
 
     Exposed as a dependency so tests can override it via
@@ -259,7 +260,7 @@ async def read_cypher_request(request: Request) -> CypherRequest:
     },
 )
 def query_graph(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     request: CypherRequest = Depends(read_cypher_request),
     graph: Any = Depends(get_graph_for_job),
 ):
@@ -306,7 +307,7 @@ def query_graph(
     "/{job_id}/graph/rebuild",
     dependencies=[Depends(require_raw_query_enabled), Depends(require_json_content_type)],
 )
-def rebuild_assessment_graph(job_id: str):
+def rebuild_assessment_graph(job_id: str = Depends(job_id_param)):
     """Force rebuild the graph from the artifacts and persist it to the store.
 
     Disabled unless MODERNIZER_ENABLE_RAW_GRAPH_QUERY=1. Reads rebuild the
@@ -321,7 +322,7 @@ def rebuild_assessment_graph(job_id: str):
 
 @router.get("/{job_id}/load-test-results", response_model=LoadTestResultsResponse)
 def load_test_results(
-    job_id: str,
+    job_id: str = Depends(job_id_param),
     engine: str | None = Query(default=None),
     version: int | None = Query(default=None),
     prefix: str | None = Query(default=None),
@@ -341,7 +342,11 @@ def load_test_results(
 
 
 @router.get("/{job_id}/graph/tables/{table_id}/impact", response_model=TableImpactResponse)
-def graph_table_impact(job_id: str, table_id: str, graph: Any = Depends(get_graph_for_job)):
+def graph_table_impact(
+    table_id: str,
+    job_id: str = Depends(job_id_param),
+    graph: Any = Depends(get_graph_for_job),
+):
     """Queries affected if the given source table changes."""
     store, _ = graph
     with _curated_errors():
@@ -352,7 +357,11 @@ def graph_table_impact(job_id: str, table_id: str, graph: Any = Depends(get_grap
     "/{job_id}/graph/queries/{query_id}/provenance",
     response_model=QueryProvenanceResponse,
 )
-def graph_query_provenance(job_id: str, query_id: str, graph: Any = Depends(get_graph_for_job)):
+def graph_query_provenance(
+    query_id: str,
+    job_id: str = Depends(job_id_param),
+    graph: Any = Depends(get_graph_for_job),
+):
     """Why a query migrated where it did, and which agent decided it."""
     store, _ = graph
     with _curated_errors():
@@ -360,7 +369,11 @@ def graph_query_provenance(job_id: str, query_id: str, graph: Any = Depends(get_
 
 
 @router.get("/{job_id}/graph/engines/{engine}", response_model=EngineDetailResponse)
-def graph_engine_detail(job_id: str, engine: str, graph: Any = Depends(get_graph_for_job)):
+def graph_engine_detail(
+    engine: str,
+    job_id: str = Depends(job_id_param),
+    graph: Any = Depends(get_graph_for_job),
+):
     """Destinations and source tables migrating to a given engine."""
     store, _ = graph
     with _curated_errors():
@@ -368,7 +381,7 @@ def graph_engine_detail(job_id: str, engine: str, graph: Any = Depends(get_graph
 
 
 @router.get("/{job_id}/graph/risks", response_model=RiskHotspotsResponse)
-def graph_risks(job_id: str, graph: Any = Depends(get_graph_for_job)):
+def graph_risks(job_id: str = Depends(job_id_param), graph: Any = Depends(get_graph_for_job)):
     """Tables carrying risk and anti-patterns, weighted by traffic."""
     store, _ = graph
     with _curated_errors():
