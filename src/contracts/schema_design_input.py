@@ -40,9 +40,15 @@ class QueryType(str, Enum):
 
 
 class NormalizedDataType(str, Enum):
+    """Keep in sync with ``src/contracts/collector_output.py::NormalizedDataType``
+    (duplicated to keep this contract standalone; the projection re-casts by
+    value). ``decimal`` is exact; ``floating_point`` is approximate and never
+    resolves to a constrained NUMERIC/DECIMAL target type (#156)."""
+
     string = "string"
     integer = "integer"
     decimal = "decimal"
+    floating_point = "floating_point"
     boolean = "boolean"
     date = "date"
     datetime = "datetime"

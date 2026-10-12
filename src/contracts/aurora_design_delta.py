@@ -84,9 +84,67 @@ _ENUM_GRAMMAR = re.compile(
 
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{0,62}")
 
+# Aurora MySQL's DECIMAL/NUMERIC hard limits (#156): CREATE TABLE rejects
+# anything wider, or with scale greater than precision, so a model-supplied
+# type must fit too, not just parse. Public (not module-private) because
+# type_map.py's deterministic resolver (src/tools/schema/aurora_common/
+# type_map.py) imports these, so both layers enforce the same numbers with
+# the same message rather than drifting copies.
+MYSQL_DECIMAL_PRECISION_MAX = 65
+MYSQL_DECIMAL_SCALE_MAX = 30
+_MYSQL_DECIMAL_BASES = frozenset({"decimal", "dec", "numeric", "fixed"})
+
 
 def is_enum_type(aurora_type: str) -> bool:
     return bool(_ENUM_GRAMMAR.fullmatch(aurora_type))
+
+
+def _mysql_decimal_limit_reason(precision: int, scale: int) -> str:
+    """Why ``DECIMAL(precision,scale)`` is unusable on Aurora MySQL, with no
+    type prefix: callers that already name the type in their own message
+    (e.g. ``validate_aurora_type``'s ``aurora_type 'DECIMAL(66,0)' ...``) add
+    this directly after it, so it must not restate the type itself.
+
+    Scale above precision is its own, more specific reason (DDL the target
+    would reject regardless of the digit caps); otherwise it is one or both
+    of those caps.
+    """
+    if scale > precision:
+        return "scale cannot exceed precision"
+    return (
+        f"exceeds Aurora MySQL's limits (precision <= {MYSQL_DECIMAL_PRECISION_MAX}, "
+        f"scale <= {MYSQL_DECIMAL_SCALE_MAX})"
+    )
+
+
+def mysql_decimal_limit_message(precision: int, scale: int) -> str:
+    """Why ``DECIMAL(precision,scale)`` is unusable on Aurora MySQL, as a
+    standalone message that names the type itself (for a caller with no
+    other message of its own to name it, e.g. a ``TypeResolution.reason``).
+    """
+    return f"DECIMAL({precision},{scale}) {_mysql_decimal_limit_reason(precision, scale)}"
+
+
+def _mysql_decimal_limit_error(base_words: list[str], params: str | None) -> str | None:
+    """Why a MySQL DECIMAL/NUMERIC(p,s) is out of range, or ``None`` if it fits.
+
+    PostgreSQL NUMERIC has no equivalent cap, so this only applies when
+    checking against the Aurora MySQL grammar specifically. Returns the
+    type-prefix-free reason: ``validate_aurora_type``'s own message already
+    names the type once.
+    """
+    if not params or " ".join(base_words) not in _MYSQL_DECIMAL_BASES:
+        return None
+    digits = [int(n) for n in re.findall(r"\d+", params)]
+    precision = digits[0]
+    scale = digits[1] if len(digits) > 1 else 0
+    if (
+        scale > precision
+        or precision > MYSQL_DECIMAL_PRECISION_MAX
+        or scale > MYSQL_DECIMAL_SCALE_MAX
+    ):
+        return _mysql_decimal_limit_reason(precision, scale)
+    return None
 
 
 def _check_enum(value: str) -> str:
@@ -122,6 +180,11 @@ def _type_error(engine: str | None, normalized: str) -> str | None:
         if shape.group("arrays") and not arrays_ok:
             reasons.append(f"array types are not {name} types")
             continue
+        if name == "aurora_mysql":
+            limit_error = _mysql_decimal_limit_error(words[:base_len], shape.group("params"))
+            if limit_error:
+                reasons.append(limit_error)
+                continue
         return None
     return "; ".join(reasons)
 

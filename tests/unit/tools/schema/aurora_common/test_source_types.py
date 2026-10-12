@@ -35,6 +35,9 @@ def _type(raw, family, target, **kw):
         ("real", None, "REAL"),
         ("double precision", None, "DOUBLE PRECISION"),
         ("float8", None, "DOUBLE PRECISION"),
+        # Precision genuinely unknown: unconstrained NUMERIC on PostgreSQL is
+        # arbitrary-precision and exact, so staying on PostgreSQL is a
+        # confident, lossless carry-over, not a residual (I2, #156).
         ("numeric", None, "NUMERIC"),
         ("numeric(10,2)", None, "NUMERIC(10,2)"),
         ("decimal(12, 4)", None, "NUMERIC(12,4)"),
@@ -234,6 +237,56 @@ def test_pg_to_mysql_indexed_unbounded_text_is_a_residual(raw, max_length, fallb
 
 def test_pg_bare_numeric_to_mysql_is_a_residual():
     res = resolve_source_type("numeric", source_family="postgresql", target=MY)
+    assert res is not None and res.needs_judgment and res.aurora_type == "DECIMAL(38,10)"
+
+
+def test_pg_bare_numeric_to_pg_is_not_a_residual():
+    """``udt_name`` never carries precision (it is always bare ``numeric``),
+    but genuinely unknown precision going to Aurora PostgreSQL is still an
+    exact match: unconstrained NUMERIC is arbitrary-precision, so it is a
+    confident carry-over, not a residual (I2, #156). Only the Aurora MySQL
+    direction is lossy by default - see test_pg_bare_numeric_to_mysql_is_a_residual.
+    """
+    res = resolve_source_type("numeric", source_family="postgresql", target=PG)
+    assert res is not None and not res.needs_judgment and res.aurora_type == "NUMERIC"
+
+
+def test_pg_numeric_precision_from_collector_applies_to_pg_target():
+    """A PostgreSQL NUMERIC(10,2) source resolves exactly once numeric_precision
+    and numeric_scale (collected separately from the bare udt_name) are given."""
+    res = resolve_source_type(
+        "numeric",
+        source_family="postgresql",
+        target=PG,
+        numeric_precision=10,
+        numeric_scale=2,
+    )
+    assert res is not None and not res.needs_judgment
+    assert res.aurora_type == "NUMERIC(10,2)"
+
+
+def test_pg_numeric_precision_from_collector_applies_to_mysql_target():
+    """The same PostgreSQL NUMERIC(10,2) source, targeting Aurora MySQL."""
+    res = resolve_source_type(
+        "numeric",
+        source_family="postgresql",
+        target=MY,
+        numeric_precision=10,
+        numeric_scale=2,
+    )
+    assert res is not None and not res.needs_judgment
+    assert res.aurora_type == "DECIMAL(10,2)"
+
+
+def test_pg_numeric_precision_exceeding_mysql_limits_is_still_a_residual():
+    """Known precision does not bypass Aurora MySQL's DECIMAL(65,30) cap (I1)."""
+    res = resolve_source_type(
+        "numeric",
+        source_family="postgresql",
+        target=MY,
+        numeric_precision=70,
+        numeric_scale=0,
+    )
     assert res is not None and res.needs_judgment and res.aurora_type == "DECIMAL(38,10)"
 
 

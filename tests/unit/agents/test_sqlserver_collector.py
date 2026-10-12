@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agents.collector.sqlserver_collector import (
+    _SQLSERVER_TYPE_MAP,
     _build_procedures,
     _build_queries,
     _build_queries_from_aws,
@@ -21,6 +22,21 @@ from src.contracts.collector_output import NormalizedDataType, Queries, QueryLog
 # ---------------------------------------------------------------------------
 # Version parsing
 # ---------------------------------------------------------------------------
+
+
+class TestTypeMapExactVsApproximateNumerics:
+    """DECIMAL/NUMERIC/MONEY/SMALLMONEY carry real precision/scale, so they
+    stay exact numerics. FLOAT/REAL are approximate and must never resolve
+    through the exact-numeric path, which would reach a target NUMERIC(n,0)
+    and truncate every fractional value (#156)."""
+
+    def test_decimal_family_is_exact(self):
+        for name in ("decimal", "numeric", "money", "smallmoney"):
+            assert _SQLSERVER_TYPE_MAP[name] == NormalizedDataType.decimal
+
+    def test_float_and_real_are_approximate(self):
+        assert _SQLSERVER_TYPE_MAP["float"] == NormalizedDataType.floating_point
+        assert _SQLSERVER_TYPE_MAP["real"] == NormalizedDataType.floating_point
 
 
 class TestVersionParsing:

@@ -58,8 +58,11 @@ _PG_TYPE_MAP: dict[str, NormalizedDataType] = {
     "serial": NormalizedDataType.integer,
     "bigserial": NormalizedDataType.integer,
     "numeric": NormalizedDataType.decimal,
-    "real": NormalizedDataType.decimal,
-    "double precision": NormalizedDataType.decimal,
+    # REAL/DOUBLE PRECISION are approximate, not exact numerics (#156):
+    # resolving them as decimal would reach a target NUMERIC(n,0) that
+    # truncates every fractional value.
+    "real": NormalizedDataType.floating_point,
+    "double precision": NormalizedDataType.floating_point,
     "money": NormalizedDataType.decimal,
     "character varying": NormalizedDataType.string,
     "character": NormalizedDataType.string,

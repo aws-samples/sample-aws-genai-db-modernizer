@@ -134,6 +134,8 @@ def _resolve(
         max_length=col.max_length,
         indexed=indexed,
         has_default=has_default,
+        numeric_precision=col.numeric_precision,
+        numeric_scale=col.numeric_scale,
     )
     if resolution is not None:
         return resolution

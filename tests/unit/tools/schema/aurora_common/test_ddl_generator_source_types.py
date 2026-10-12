@@ -155,7 +155,11 @@ def test_discourse_carry_over_residuals_drop_to_the_genuinely_unmappable(discour
     after = generate_pg_ddl(discourse_tables, source_engine="postgresql")
 
     assert len(before.residuals) > 1500
-    # Only the two PostgreSQL enum types remain: their CREATE TYPE is not collected.
+    # Only the two PostgreSQL enum types remain: their CREATE TYPE is not
+    # collected. This fixture predates numeric_precision/numeric_scale
+    # collection (#156), so its one bare `numeric` column has no known
+    # scale - but unconstrained NUMERIC on Aurora PostgreSQL is still an
+    # exact match (arbitrary-precision), so that is not a residual either.
     assert sorted(r["source_type"] for r in after.residuals) == [
         "ai_moderation_setting_type",
         "hotlinked_media_status",

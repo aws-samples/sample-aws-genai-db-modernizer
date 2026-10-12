@@ -68,8 +68,11 @@ _SQLSERVER_TYPE_MAP: dict[str, NormalizedDataType] = {
     "numeric": NormalizedDataType.decimal,
     "money": NormalizedDataType.decimal,
     "smallmoney": NormalizedDataType.decimal,
-    "float": NormalizedDataType.decimal,
-    "real": NormalizedDataType.decimal,
+    # FLOAT/REAL are approximate, not exact numerics (#156): resolving them
+    # as decimal would reach a target NUMERIC(n,0) that truncates every
+    # fractional value.
+    "float": NormalizedDataType.floating_point,
+    "real": NormalizedDataType.floating_point,
     "char": NormalizedDataType.string,
     "varchar": NormalizedDataType.string,
     "nchar": NormalizedDataType.string,

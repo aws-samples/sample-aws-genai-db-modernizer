@@ -1,8 +1,15 @@
 """
 CollectorOutputContract Pydantic Models
-Version: 3.0
+Version: 3.1
 Last Modified: 2026-02-06
 Description: Output contract for all Collector agents with RDS-specific enhancements
+
+Version History:
+- 3.0: Prior version.
+- 3.1 (#156): Added Column.numeric_precision/numeric_scale (optional) and the
+  NormalizedDataType.floating_point enum value - both backward-compatible
+  additions (MINOR per docs/contracts/agent-contracts-spec.md: new optional
+  field, new enum value).
 """
 
 from datetime import datetime
@@ -10,7 +17,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DatabaseEngine(str, Enum):
@@ -48,9 +55,16 @@ class QueryLogSource(str, Enum):
 
 
 class NormalizedDataType(str, Enum):
+    """``decimal`` is exact (DECIMAL/NUMERIC/MONEY, Oracle NUMBER): precision and
+    scale are significant and are carried in the column's own fields.
+    ``floating_point`` is approximate (FLOAT/REAL/DOUBLE, Oracle BINARY_FLOAT /
+    BINARY_DOUBLE): it never resolves to a constrained NUMERIC/DECIMAL target
+    type, because that would misstate a float as exact (#156)."""
+
     string = "string"
     integer = "integer"
     decimal = "decimal"
+    floating_point = "floating_point"
     boolean = "boolean"
     date = "date"
     datetime = "datetime"
@@ -193,6 +207,38 @@ class Parameter(BaseModel):
     parameter_mode: ParameterMode | None = Field(None, description="Parameter mode")
 
 
+def _try_parse_int(v: object) -> int | None:
+    """Parse ``v`` to ``int`` with no range check, or ``None`` if blank or
+    unparseable. ``bool`` is excluded even though it is an ``int`` subclass,
+    because a boolean here means the payload is wrong, not that the value is 1.
+
+    Collectors shell out to database CLIs and parse the output, so numeric
+    metadata arrives as a string -- and as an empty string for types that
+    have neither.
+    """
+    if v is None or v == "" or isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str | float | Decimal):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _coerce_optional_int(v: object, *, min_value: int) -> int | None:
+    """``_try_parse_int(v)``, dropping anything below ``min_value``.
+
+    A value below ``min_value`` is dropped rather than clamped: it means the
+    source was misparsed, and ``None`` ("unknown") is honest where clamping
+    would fabricate a constraint.
+    """
+    parsed = _try_parse_int(v)
+    return parsed if parsed is not None and parsed >= min_value else None
+
+
 class ExecutionStats(BaseModel):
     total_executions: int | None = Field(None, ge=0, description="Total number of executions")
     avg_execution_time_ms: float | None = Field(
@@ -219,37 +265,52 @@ class Column(BaseModel):
     )
     numeric_scale: int | None = Field(
         None,
-        ge=0,
-        description="Digits right of the decimal point, e.g. 2 in DECIMAL(10,2)",
+        ge=-84,
+        description=(
+            "Digits right of the decimal point, e.g. 2 in DECIMAL(10,2). Can be "
+            "negative: Oracle's NUMBER(p, s) rounds to the left of the decimal "
+            "point when s < 0 (NUMBER(5,-2) holds multiples of 100, up to "
+            "9,999,900) -- -84 is Oracle's own documented floor for s."
+        ),
     )
 
-    @field_validator("numeric_precision", "numeric_scale", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _coerce_numeric_metadata(cls, v: object) -> int | None:
-        """Accept the text these values arrive as, and drop anything unusable.
+    def _unusable_scale_marks_precision_unusable(cls, data: object) -> object:
+        """A present, parseable scale below Oracle's floor (-84) means the
+        whole numeric metadata is unusable, not "scale unknown, precision
+        still known".
 
-        Collectors shell out to database CLIs and parse the output, so precision
-        and scale arrive as strings — and as empty strings for types that have
-        neither. Coercing in one validator keeps four collectors from carrying
-        four copies of the same try/except.
-
-        A negative value is dropped rather than clamped: it means the source was
-        misparsed, and None ("unknown") is honest where 0 ("no decimal digits")
-        would be a fabricated constraint. ``bool`` is excluded even though it is
-        an ``int`` subclass, because a boolean here means the payload is wrong,
-        not that precision is 1.
+        ``_coerce_numeric_scale`` already drops a value that far out of range
+        to ``None``, which on its own would read as "no scale given" -- and
+        the type map treats an absent scale as a bare ``DECIMAL(p)`` (scale
+        0). That is a narrower claim than a real ``NUMBER(p, s)`` with ``s``
+        this far negative actually holds, so it would fabricate a constraint
+        from a value that was never trustworthy. With no usable scale to
+        fold into it, precision is unusable too, so this flags the column
+        (via precision/scale both ``None``) instead.
         """
-        if v is None or v == "" or isinstance(v, bool):
-            return None
-        if isinstance(v, int):
-            return v if v >= 0 else None
-        if isinstance(v, str | float | Decimal):
-            try:
-                i = int(v)
-            except (TypeError, ValueError):
-                return None
-            return i if i >= 0 else None
-        return None
+        if not isinstance(data, dict):
+            return data
+        scale = _try_parse_int(data.get("numeric_scale"))
+        if scale is not None and scale < -84:
+            data = {**data, "numeric_precision": None}
+        return data
+
+    @field_validator("numeric_precision", mode="before")
+    @classmethod
+    def _coerce_numeric_precision(cls, v: object) -> int | None:
+        """Precision is always a positive digit count; see ``_coerce_optional_int``."""
+        return _coerce_optional_int(v, min_value=0)
+
+    @field_validator("numeric_scale", mode="before")
+    @classmethod
+    def _coerce_numeric_scale(cls, v: object) -> int | None:
+        """Unlike precision, scale can be legitimately negative (see the field's
+        own description) -- a value is only dropped once it is below Oracle's
+        documented floor, not merely for being negative. See ``_coerce_optional_int``.
+        """
+        return _coerce_optional_int(v, min_value=-84)
 
     nullable: bool = Field(..., description="Whether column allows NULL values")
     default_value: str | int | float | bool | None = Field(None, description="Default value")
@@ -578,11 +639,11 @@ class Metrics(BaseModel):
 class CollectorOutputContract(BaseModel):
     """
     Output contract for all Collector agents with RDS-specific enhancements
-    Version: 3.0
+    Version: 3.1
     """
 
     contract_version: str = Field(
-        default="3.0",
+        default="3.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -26,7 +26,7 @@ class TestMissingRequiredFields:
         """
         Test that missing contract_version uses the default value.
 
-        Since contract_version has a default value of "3.0", it should not
+        Since contract_version has a default value of "3.1", it should not
         raise a ValidationError when omitted.
 
         Requirements: 6.1
@@ -39,7 +39,7 @@ class TestMissingRequiredFields:
         contract = CollectorOutputContract(**data)
 
         # Assert - Should use default value
-        assert contract.contract_version == "3.0"
+        assert contract.contract_version == "3.1"
 
     def test_missing_job_id_raises_validation_error(self, minimal_collector_output_data):
         """

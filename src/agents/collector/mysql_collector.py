@@ -20,6 +20,7 @@ Stages (DDL mode):
 import logging
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import (
@@ -68,15 +69,35 @@ logger = logging.getLogger(__name__)
 
 COLLECTOR_VERSION = "1.0.0"
 
+# Primarily MySQL's native types, but also the one shared type map _build_columns
+# (below) uses for every engine's *offline* collection (collect-oracle.sql,
+# collect-postgresql.sql, collect-sqlserver.sql all feed the same generic
+# builder - unlike live mode, which has one native-type map per engine:
+# oracle_collector._ORACLE_TYPE_MAP, postgres_collector._PG_TYPE_MAP,
+# sqlserver_collector._SQLSERVER_TYPE_MAP). The entries below marked by engine
+# are native type names from those other engines that would otherwise never
+# match a MySQL-flavored key and resolve to normalized_data_type=None (#156).
 _TYPE_MAP: dict[str, NormalizedDataType] = {
     "int": NormalizedDataType.integer,
     "tinyint": NormalizedDataType.integer,
     "smallint": NormalizedDataType.integer,
     "mediumint": NormalizedDataType.integer,
     "bigint": NormalizedDataType.integer,
-    "float": NormalizedDataType.decimal,
-    "double": NormalizedDataType.decimal,
+    # FLOAT/DOUBLE are approximate, not exact numerics (#156): resolving them
+    # as decimal would reach a target DECIMAL(n,0) that truncates every
+    # fractional value. binary_float/binary_double (Oracle) are the same.
+    "float": NormalizedDataType.floating_point,
+    "double": NormalizedDataType.floating_point,
+    "binary_float": NormalizedDataType.floating_point,  # Oracle
+    "binary_double": NormalizedDataType.floating_point,  # Oracle
+    "real": NormalizedDataType.floating_point,  # SQL Server / PostgreSQL
+    "float4": NormalizedDataType.floating_point,  # PostgreSQL udt_name for real
+    "float8": NormalizedDataType.floating_point,  # PostgreSQL udt_name for double precision
     "decimal": NormalizedDataType.decimal,
+    "numeric": NormalizedDataType.decimal,  # SQL Server / PostgreSQL
+    "number": NormalizedDataType.decimal,  # Oracle
+    "money": NormalizedDataType.decimal,  # SQL Server / PostgreSQL
+    "smallmoney": NormalizedDataType.decimal,  # SQL Server
     "char": NormalizedDataType.string,
     "varchar": NormalizedDataType.string,
     "text": NormalizedDataType.text,
@@ -817,6 +838,20 @@ def _native_type(c: dict) -> str:
     return str(column_type or c.get("data_type", ""))
 
 
+def _numeric_meta(c: dict, new_key: str, old_key: str) -> Any:
+    """``c[new_key]``, falling back to ``c[old_key]`` when the former is absent.
+
+    An offline collection captured before #156 fixed the SQL scripts has
+    Oracle precision/scale under the old keys (``data_precision``/
+    ``data_scale`` -- Oracle's own catalog column names, read verbatim before
+    the generic keys the shared builder here reads existed). Falling back
+    means those files still get exact types rather than reverting to the
+    pre-#156 "numeric_precision is just always missing" behavior.
+    """
+    v = c.get(new_key)
+    return v if v is not None else c.get(old_key)
+
+
 def _build_columns(raw: list[dict]) -> list[Column]:
     return [
         Column(
@@ -825,8 +860,8 @@ def _build_columns(raw: list[dict]) -> list[Column]:
             data_type=_native_type(c),
             normalized_data_type=_TYPE_MAP.get(c.get("data_type", "")),
             max_length=c.get("max_length"),
-            numeric_precision=c.get("numeric_precision"),
-            numeric_scale=c.get("numeric_scale"),
+            numeric_precision=_numeric_meta(c, "numeric_precision", "data_precision"),
+            numeric_scale=_numeric_meta(c, "numeric_scale", "data_scale"),
             # Cross-engine boolean coercion:
             # MySQL/PostgreSQL emit 'YES'/'NO'; Oracle emits 'Y'/'N'.
             # Previously only matched 'YES' exactly, so Oracle 'Y' columns

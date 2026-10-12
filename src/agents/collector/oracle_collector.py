@@ -64,9 +64,12 @@ logger = logging.getLogger(__name__)
 # Oracle native type → normalized type.
 _ORACLE_TYPE_MAP: dict[str, NormalizedDataType] = {
     "number": NormalizedDataType.decimal,
-    "float": NormalizedDataType.decimal,
-    "binary_float": NormalizedDataType.decimal,
-    "binary_double": NormalizedDataType.decimal,
+    # FLOAT/BINARY_FLOAT/BINARY_DOUBLE are approximate, not exact numerics
+    # (#156): resolving them as decimal would reach a target NUMERIC(n,0)
+    # that truncates every fractional value.
+    "float": NormalizedDataType.floating_point,
+    "binary_float": NormalizedDataType.floating_point,
+    "binary_double": NormalizedDataType.floating_point,
     "varchar2": NormalizedDataType.string,
     "nvarchar2": NormalizedDataType.string,
     "char": NormalizedDataType.string,

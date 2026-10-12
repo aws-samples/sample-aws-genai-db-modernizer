@@ -19,6 +19,7 @@ from src.tools.schema.aurora_common.type_map import resolve_mysql_type
         (N.uuid, None, "CHAR(36)"),
         (N.text, None, "TEXT"),
         (N.string, 255, "VARCHAR(255)"),
+        (N.floating_point, None, "DOUBLE"),
     ],
 )
 def test_resolve_mysql_type_deterministic(normalized, max_length, expected):

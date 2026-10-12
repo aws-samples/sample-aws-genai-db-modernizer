@@ -179,6 +179,17 @@ class TestOracleTypeMap:
         assert _ORACLE_TYPE_MAP["blob"] == NormalizedDataType.binary
         assert _ORACLE_TYPE_MAP["xmltype"] == NormalizedDataType.xml
 
+    def test_number_is_exact_but_float_types_are_approximate(self):
+        """NUMBER carries real precision/scale (DATA_PRECISION/DATA_SCALE), so
+        it stays an exact numeric. FLOAT/BINARY_FLOAT/BINARY_DOUBLE are
+        approximate and must never resolve through the exact-numeric path,
+        which would reach a target NUMERIC(n,0) and truncate every fractional
+        value (#156)."""
+        assert _ORACLE_TYPE_MAP["number"] == NormalizedDataType.decimal
+        assert _ORACLE_TYPE_MAP["float"] == NormalizedDataType.floating_point
+        assert _ORACLE_TYPE_MAP["binary_float"] == NormalizedDataType.floating_point
+        assert _ORACLE_TYPE_MAP["binary_double"] == NormalizedDataType.floating_point
+
 
 class TestBuildTables:
     def test_basic_table(self):

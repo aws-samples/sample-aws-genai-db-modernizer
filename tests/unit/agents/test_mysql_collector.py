@@ -8,6 +8,7 @@ on hardening changes from the Oracle production JSON test run.
 import logging
 
 from src.agents.collector.mysql_collector import (
+    _TYPE_MAP,
     _build_columns,
     _build_tables,
     _build_triggers,
@@ -15,10 +16,187 @@ from src.agents.collector.mysql_collector import (
     _normalize_datetime_str,
     _normalize_index_type,
 )
+from src.contracts.collector_output import NormalizedDataType
 
 # ---------------------------------------------------------------------------
 # _build_tables: skip tables with zero columns
 # ---------------------------------------------------------------------------
+
+
+class TestTypeMapExactVsApproximateNumerics:
+    """DECIMAL carries real precision/scale, so it stays an exact numeric.
+
+    FLOAT/DOUBLE are approximate and must never resolve through the
+    exact-numeric path, which would reach a target DECIMAL(n,0) and truncate
+    every fractional value (#156). Inherited by the MariaDB collector, which
+    reuses this type map.
+    """
+
+    def test_decimal_is_exact(self):
+        assert _TYPE_MAP["decimal"] == NormalizedDataType.decimal
+
+    def test_float_and_double_are_approximate(self):
+        assert _TYPE_MAP["float"] == NormalizedDataType.floating_point
+        assert _TYPE_MAP["double"] == NormalizedDataType.floating_point
+
+    def test_oracle_offline_native_types(self):
+        """Oracle's offline collection (collect-oracle.sql) feeds the same
+        shared _build_columns as every other engine, unlike live mode (which
+        has oracle_collector._ORACLE_TYPE_MAP) - these keys would otherwise
+        resolve to normalized_data_type=None (#156)."""
+        assert _TYPE_MAP["number"] == NormalizedDataType.decimal
+        assert _TYPE_MAP["binary_float"] == NormalizedDataType.floating_point
+        assert _TYPE_MAP["binary_double"] == NormalizedDataType.floating_point
+
+    def test_sqlserver_offline_native_types(self):
+        """SQL Server's offline collection (collect-sqlserver.sql) feeds the
+        same shared _build_columns as every other engine, unlike live mode
+        (which has sqlserver_collector._SQLSERVER_TYPE_MAP) (#156)."""
+        assert _TYPE_MAP["numeric"] == NormalizedDataType.decimal
+        assert _TYPE_MAP["money"] == NormalizedDataType.decimal
+        assert _TYPE_MAP["smallmoney"] == NormalizedDataType.decimal
+        assert _TYPE_MAP["real"] == NormalizedDataType.floating_point
+
+
+class TestOfflineColumnsPerEngine:
+    """One representative row per engine, shaped exactly as that engine's
+    offline collection script (scripts/collect-<engine>.sql) emits it, run
+    through the shared offline builder (_build_columns) every engine uses.
+    Guards against the keys drifting apart again (#156): a SQL script can
+    emit a column under the wrong key with no import-time signal that
+    _build_columns silently ignores it.
+    """
+
+    def test_oracle_number_row(self):
+        """collect-oracle.sql: NUMBER's own precision/scale, no max_length."""
+        row = {
+            "column_name": "amount",
+            "data_type": "number",
+            "max_length": None,
+            "numeric_precision": 10,
+            "numeric_scale": 2,
+            "is_nullable": "Y",
+            "column_default": None,
+            "is_identity": "NO",
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.decimal
+        assert col.numeric_precision == 10
+        assert col.numeric_scale == 2
+        assert col.max_length is None
+
+    def test_oracle_number_row_old_offline_file_falls_back_to_data_precision(self):
+        """A collection captured before #156 fixed collect-oracle.sql has
+        precision/scale under the old keys (Oracle's own catalog column
+        names), not the generic ones _build_columns otherwise reads -- it
+        must still get an exact type, not revert to always-unknown."""
+        row = {
+            "column_name": "amount",
+            "data_type": "number",
+            "max_length": None,
+            "data_precision": 10,
+            "data_scale": 2,
+            "is_nullable": "Y",
+            "column_default": None,
+            "is_identity": "NO",
+        }
+        col = _build_columns([row])[0]
+        assert col.numeric_precision == 10
+        assert col.numeric_scale == 2
+
+    def test_new_keys_take_priority_over_old_keys_when_both_present(self):
+        row = {
+            "column_name": "amount",
+            "data_type": "number",
+            "numeric_precision": 10,
+            "numeric_scale": 2,
+            "data_precision": 99,
+            "data_scale": 9,
+            "is_nullable": "Y",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.numeric_precision == 10
+        assert col.numeric_scale == 2
+
+    def test_oracle_binary_double_row(self):
+        """collect-oracle.sql: BINARY_DOUBLE has no decimal precision/scale."""
+        row = {
+            "column_name": "measurement",
+            "data_type": "binary_double",
+            "max_length": None,
+            "numeric_precision": None,
+            "numeric_scale": None,
+            "is_nullable": "Y",
+            "column_default": None,
+            "is_identity": "NO",
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.floating_point
+        assert col.numeric_precision is None
+
+    def test_sqlserver_real_row(self):
+        """collect-sqlserver.sql: sys.columns.precision/scale, aliased."""
+        row = {
+            "column_name": "ratio",
+            "data_type": "real",
+            "max_length": None,
+            "numeric_precision": 24,
+            "numeric_scale": 0,
+            "is_nullable": "YES",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.floating_point
+        assert col.numeric_precision == 24
+
+    def test_sqlserver_numeric_row(self):
+        row = {
+            "column_name": "amount",
+            "data_type": "numeric",
+            "max_length": None,
+            "numeric_precision": 10,
+            "numeric_scale": 2,
+            "is_nullable": "YES",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.decimal
+        assert col.numeric_precision == 10
+        assert col.numeric_scale == 2
+
+    def test_postgresql_numeric_row(self):
+        """collect-postgresql.sql: information_schema.columns.numeric_precision
+        / numeric_scale, aliased; data_type is the bare udt_name."""
+        row = {
+            "column_name": "amount",
+            "data_type": "numeric",
+            "max_length": None,
+            "numeric_precision": 10,
+            "numeric_scale": 2,
+            "is_nullable": "YES",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.decimal
+        assert col.numeric_precision == 10
+        assert col.numeric_scale == 2
+
+    def test_postgresql_real_row(self):
+        """collect-postgresql.sql emits udt_name ("float4"), not the
+        information_schema.columns.data_type spelling ("real") live mode's
+        own _PG_TYPE_MAP uses."""
+        row = {
+            "column_name": "ratio",
+            "data_type": "float4",
+            "max_length": None,
+            "numeric_precision": None,
+            "numeric_scale": None,
+            "is_nullable": "YES",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.floating_point
 
 
 class TestBuildTablesSkipsEmptyColumns:

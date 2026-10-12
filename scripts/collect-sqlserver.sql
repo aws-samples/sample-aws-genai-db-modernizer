@@ -215,6 +215,8 @@ SET @columns = (
             WHEN ty.name IN ('nvarchar', 'nchar', 'ntext') THEN c.max_length / 2
             ELSE c.max_length
         END AS max_length,
+        c.precision AS numeric_precision,
+        c.scale AS numeric_scale,
         CASE WHEN c.is_nullable = 1 THEN 'YES' ELSE 'NO' END AS is_nullable,
         CASE WHEN c.is_identity = 1 THEN 'YES' ELSE 'NO' END AS is_identity,
         dc.definition AS column_default

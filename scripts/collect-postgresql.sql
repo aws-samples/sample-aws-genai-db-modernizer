@@ -57,6 +57,8 @@ columns_data AS (
       c.udt_name AS data_type,
       c.data_type AS column_type,
       c.character_maximum_length AS max_length,
+      c.numeric_precision AS numeric_precision,
+      c.numeric_scale AS numeric_scale,
       c.is_nullable,
       c.column_default,
       '' AS column_key,

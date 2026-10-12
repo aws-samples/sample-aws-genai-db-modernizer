@@ -56,10 +56,10 @@ MySQL -> Aurora PostgreSQL
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from src.contracts.aurora_design_delta import is_enum_type, validate_aurora_type
-from src.tools.schema.aurora_common.type_map import TypeResolution
+from src.tools.schema.aurora_common.type_map import TypeResolution, normalize_precision_scale
 
 _LITERAL = re.compile(r"'((?:[^'\\\n\r]|'')*)'")
 _SHAPE = re.compile(
@@ -486,12 +486,25 @@ def resolve_source_type(
     max_length: int | None = None,
     indexed: bool = False,
     has_default: bool = False,
+    numeric_precision: int | None = None,
+    numeric_scale: int | None = None,
 ) -> TypeResolution | None:
     """Aurora type for a PostgreSQL/MySQL source ``data_type``, or ``None`` if unmapped.
 
     ``indexed`` says the column is part of the primary key, an index or a
     foreign key (Aurora MySQL cannot index unbounded text); ``has_default``
     that it has a DEFAULT (Aurora MySQL TEXT/BLOB/JSON/GEOMETRY take none).
+
+    ``numeric_precision``/``numeric_scale`` matter for PostgreSQL only (#156):
+    ``information_schema.columns`` never embeds them in ``data_type``/
+    ``udt_name`` (always the bare ``numeric``, unlike MySQL's ``column_type``,
+    which already reads ``decimal(10,2)``), so without them this function
+    would otherwise answer from the bare name alone before the collector's
+    own precision columns are ever consulted. Only the Aurora MySQL target
+    is a residual when precision is genuinely unknown (a bare MySQL
+    ``DECIMAL`` is lossy ``(10,0)``); unconstrained PostgreSQL ``NUMERIC`` is
+    arbitrary-precision and exact, so staying on PostgreSQL is a confident,
+    lossless carry-over either way (I2, #156).
     """
     if not data_type or source_family not in ("postgresql", "mysql"):
         return None
@@ -500,6 +513,10 @@ def resolve_source_type(
         parsed = _parse_pg(data_type, max_length)
         if parsed is None:
             return None
+        if parsed.base == "numeric" and not parsed.params:
+            resolved = normalize_precision_scale(numeric_precision, numeric_scale)
+            if resolved is not None:
+                parsed = replace(parsed, params=resolved)
         if target == "aurora_postgresql":
             result = _render_pg(parsed)
         else:

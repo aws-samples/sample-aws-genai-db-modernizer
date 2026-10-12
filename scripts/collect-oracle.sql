@@ -140,6 +140,19 @@ BEGIN
 
     -- ===================================================================
     -- 4. Columns
+    -- max_length: NUMBER has none (its precision travels in numeric_precision
+    -- below, never here -- a character count and a digit count are different
+    -- things, #156). For character types, CHAR_LENGTH ("the length of the
+    -- column in characters") is used directly rather than derived from the
+    -- byte count DATA_LENGTH with a fixed divisor, which cannot be correct in
+    -- general: the bytes-per-character ratio is a property of the database's
+    -- character set, not a constant (#156). CHAR_LENGTH is 0, not NULL, for
+    -- non-character types, so a positive value is required before using it;
+    -- the fallback to DATA_LENGTH (unconverted) only applies to a collection
+    -- captured before CHAR_LENGTH was selected here.
+    -- numeric_precision/numeric_scale: emitted under the generic keys the
+    -- shared offline builder (mysql_collector.py::_build_columns) reads for
+    -- every engine, not Oracle's own data_precision/data_scale.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"columns": [');
     FOR rec IN (
@@ -148,10 +161,13 @@ BEGIN
             'column_name' VALUE LOWER(COLUMN_NAME),
             'ordinal_position' VALUE COLUMN_ID,
             'data_type' VALUE LOWER(DATA_TYPE),
-            'max_length' VALUE DATA_LENGTH,
-            'char_used' VALUE CHAR_USED,
-            'data_precision' VALUE DATA_PRECISION,
-            'data_scale' VALUE DATA_SCALE,
+            'max_length' VALUE CASE
+                WHEN LOWER(DATA_TYPE) = 'number' THEN NULL
+                WHEN NVL(CHAR_LENGTH, 0) > 0 THEN CHAR_LENGTH
+                ELSE DATA_LENGTH
+            END,
+            'numeric_precision' VALUE DATA_PRECISION,
+            'numeric_scale' VALUE DATA_SCALE,
             'is_nullable' VALUE NULLABLE,
             'column_default' VALUE NULL,
             'is_identity' VALUE IDENTITY_COLUMN

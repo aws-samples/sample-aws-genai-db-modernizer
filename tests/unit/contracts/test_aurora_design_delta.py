@@ -135,3 +135,46 @@ def test_type_grammar_is_per_engine(value, engine):
     validate_aurora_type(value)  # valid for one of the engines
     with pytest.raises(ValueError):
         validate_aurora_type(value, engine)
+
+
+@pytest.mark.parametrize("value", ["DECIMAL(66,0)", "NUMERIC(38,35)"])
+def test_mysql_decimal_limits_are_rejected_only_for_mysql(value):
+    """Aurora MySQL's DECIMAL/NUMERIC caps at precision 65, scale 30 - a model
+    delta naming a wider type must be rejected before it reaches DDL (I1,
+    #156). PostgreSQL NUMERIC has no equivalent cap.
+    """
+    validate_aurora_type(value, "aurora_postgresql")  # PostgreSQL has no cap
+    with pytest.raises(ValueError, match="exceeds Aurora MySQL's limits"):
+        validate_aurora_type(value, "aurora_mysql")
+
+
+@pytest.mark.parametrize("value", ["DEC(70,2)", "FIXED(126,0)"])
+def test_mysql_only_decimal_aliases_also_enforce_the_limit(value):
+    """``DEC``/``FIXED`` are MySQL-only aliases (not valid PostgreSQL types at
+    all), so the limit check must still fire for them specifically."""
+    with pytest.raises(ValueError, match="exceeds Aurora MySQL's limits"):
+        validate_aurora_type(value, "aurora_mysql")
+
+
+def test_mysql_decimal_scale_over_precision_is_rejected():
+    """``DECIMAL(10,20)`` is well within both digit caps but still invalid
+    DDL on Aurora MySQL (scale cannot exceed precision) - the limit check
+    must reject it too, not just the two hard caps."""
+    with pytest.raises(ValueError, match="scale cannot exceed precision"):
+        validate_aurora_type("DECIMAL(10,20)", "aurora_mysql")
+
+
+def test_mysql_decimal_limit_message_does_not_repeat_the_type():
+    """``validate_aurora_type`` already names the type once (``aurora_type
+    'DECIMAL(66,0)' ...``); the limit reason must not restate it, or the
+    message reads ``aurora_type 'DECIMAL(66,0)' DECIMAL(66,0) exceeds ...``.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        validate_aurora_type("DECIMAL(66,0)", "aurora_mysql")
+    message = str(exc_info.value)
+    assert message.count("DECIMAL(66,0)") == 1, message
+
+
+@pytest.mark.parametrize("value", ["DECIMAL(65,30)", "DECIMAL(10,2)", "NUMERIC(1,0)"])
+def test_mysql_decimal_at_or_under_limit_is_accepted(value):
+    assert validate_aurora_type(value, "aurora_mysql") == value

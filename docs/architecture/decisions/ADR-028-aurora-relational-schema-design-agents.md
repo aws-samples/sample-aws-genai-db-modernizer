@@ -20,7 +20,7 @@ We are adding real Aurora PG and Aurora MySQL schema-design agents. Two facts
 shape the decision:
 
 1. **The collector already normalizes source column types** into a canonical
-   13-value enum (`NormalizedDataType`) and provides fully structured
+   14-value enum (`NormalizedDataType`) and provides fully structured
    tables/columns/indexes/foreign-keys via `project_schema_design_input(...)`.
    Deterministic translation can therefore operate on normalized, structured
    input rather than parsing vendor DDL.
