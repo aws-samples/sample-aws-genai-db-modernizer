@@ -90,6 +90,36 @@ source MySQL database" (:func:`src.shared.engine_names.display_source_database`)
 A wave is scoped to tables and views the collector actually saw
 (``known_tables``, synthesis's own set): a parser artifact (a CTE alias, a
 keyword, a system catalog name) never reaches a wave or a deliverable.
+
+An owner wave's ``tables`` (#562) is every table its own engine *serves* --
+primary or secondary (``_served_tables``, built from
+``assignment_resolver.derive_table_assignments``'s own ``engines`` list,
+which already names every engine with an assigned query referencing a
+table) -- never only the tables where it is the table-level ``primary_engine``
+plurality winner (``_owned_tables``). ADR-031 Decision 1: the query is the
+unit of assignment, and a table's ``primary_engine`` is a summary label, not
+ownership of the work a wave moves. A served table this wave's engine does
+not durably own is named in ``table_owners`` with its real system of record
+and ``"CDC"`` as the sync mechanism (the dual-read gate text already uses
+this word); a table absent from ``table_owners`` is this wave's own, the
+same convention the search/analytics wave already used before #562. The
+dual-read gate text itself (``_table_group_coverage_note``) runs for every
+owner wave now, not DynamoDB's alone, built from the OWNED subset of the
+wave's tables specifically (never the full served set), so the forward
+clause ("stays dual-read by <other engine>'s queries") and the reverse
+clause ("<other engine> owns and keeps owning; keep a <this engine> copy
+in sync via CDC") each still say the one direction they are true of
+(#568 review). Table-level ``primary_engine`` stays the right tool for what
+it was always right for: naming the system of record in sync/dual-read
+prose, and per-table schema placement -- never for scoping which tables, or
+how many queries, a wave counts as its own.
+
+For the merged DynamoDB/DocumentDB wave only, ``table_count`` is the union
+of both engines' served tables and cannot be split back into each engine's
+own share; ``table_counts_by_engine`` and ``owned_counts_by_engine`` (#568
+review) give each engine's own served and owned counts, so a consumer
+(``src.report.renderers._architecture_engines``) never credits the whole
+union to both engines at once.
 """
 
 from __future__ import annotations
@@ -188,18 +218,79 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
     return retained_engine or "unresolved"
 
 
-def _owned_tables(
-    engine: str, table_assignments: list[dict[str, Any]], retained_engine: str | None
-) -> list[dict[str, Any]]:
-    """Tables ``engine`` durably owns (the corrected ``primary_engine``, #225)."""
-    return [t for t in table_assignments if _durable_owner(t, retained_engine) == engine]
-
-
 def _served_tables(engine: str, table_assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Tables ``engine`` serves, as primary or secondary (the multi-engine rule, AGENTS.md)."""
-    return [
-        t for t in table_assignments if engine in (t.get("engines") or [t.get("primary_engine")])
-    ]
+    """Tables ``engine`` serves, as primary or secondary (the multi-engine rule, AGENTS.md).
+
+    This is every owner wave's table scope (#562): ``table_assignments``'
+    own ``engines`` list already names every engine with an assigned query
+    referencing the table (``assignment_resolver.derive_table_assignments``),
+    so this is query-scoped, not a re-derivation from ``primary_engine``
+    alone. A table-level plurality winner (``primary_engine``) is a summary
+    label (ADR-031 Decision 1), not the set of tables the engine's own
+    queries actually need present -- a table where this engine lost the
+    plurality to another engine, but still has at least one assigned query
+    of its own touching it, belongs here too.
+
+    ``engines`` is read with no ``primary_engine``-only fallback (#568
+    review, Suggestion 1): a row with no ``engines`` list at all has no
+    recorded query evidence for any engine, so it never counts as served --
+    counting it for ``primary_engine`` alone would be exactly the
+    table-level claim with no query behind it this function exists to
+    avoid. The real pipeline (``derive_table_assignments``) always sets
+    ``engines`` (at minimum ``[primary_engine]``) for every row it builds,
+    so this only ever affects a hand-built or legacy row with no ``engines``
+    field, never real pipeline output.
+    """
+    return [t for t in table_assignments if engine in (t.get("engines") or [])]
+
+
+def _table_owners_for_served(
+    served: list[dict[str, Any]], engine: str, retained_engine: str | None
+) -> list[dict[str, Any]] | None:
+    """Which of ``served``'s tables ``engine`` does not durably own (#562):
+    each paired with its real system of record and ``"CDC"`` -- the dual-read
+    gate text's own word for this -- as the sync mechanism. ``None`` when
+    every served table is this engine's own (the common case for an owner
+    wave). A table absent from this list is this wave's own; an owner wave
+    states ownership by that absence, the same convention the
+    search/analytics wave already used (:func:`_search_wave`) before #562
+    generalized it to every owner wave.
+    """
+    owners = sorted(
+        (
+            {"table": str(t["table_id"]), "owner": owner, "sync": "CDC"}
+            for t in served
+            if t.get("table_id")
+            for owner in [_durable_owner(t, retained_engine)]
+            if owner != engine
+        ),
+        key=lambda o: str(o["table"]),
+    )
+    return owners or None
+
+
+def _dedupe_table_owners(entries: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Dedupe identical (table, owner, sync) facts (#568 review, Suggestion 4).
+
+    The merged DynamoDB/DocumentDB wave concatenates each engine's own
+    ``table_owners``; a table neither engine durably owns (a third engine,
+    typically the retained Aurora engine, owns it, and both DynamoDB and
+    DocumentDB merely serve it) would otherwise appear twice with an
+    identical-looking entry and no way to tell them apart. The fact itself
+    -- this table, kept in sync with this owner, this way -- is the same
+    fact regardless of which engine's own list it came from, so it is
+    recorded once.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for o in entries:
+        key = (str(o["table"]), str(o["owner"]), str(o.get("sync")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(o)
+    out.sort(key=lambda o: str(o["table"]))
+    return out or None
 
 
 def _sync_pattern(owner_engine: str) -> str:
@@ -219,13 +310,20 @@ def _dynamodb_table_groups(
 ) -> list[dict[str, Any]]:
     """DynamoDB's tables, table group by table group, respecting co-dependency groups.
 
+    ``rows`` is DynamoDB's *served* tables (#562, ``_served_tables``) --
+    every table at least one DynamoDB-assigned query touches, primary or
+    secondary -- not only the tables where DynamoDB won the table-level
+    ``primary_engine`` plurality. The query is the atomic unit (ADR-031
+    Decision 1): a table DynamoDB serves only as a secondary engine still
+    needs to be grouped and counted here, the same as one it owns outright.
+
     Two phases, both deterministic. First, a co-dependency group's *member*
     queries decide its table membership: a co-dependency group (queries
     sharing a significant JOIN) that has a DynamoDB-assigned member query
     touching one of DynamoDB's tables becomes one group (``kind:
     "co_dependency"``), named by its tables. Every DynamoDB table left over
     forms one final group of independent tables (``kind: "independent"``).
-    Second, every DynamoDB-assigned query that touches an owned table — not
+    Second, every DynamoDB-assigned query that touches a served table — not
     just a group's member queries — is counted in exactly one group: the
     first one (in this order) whose tables it touches (#225). A query
     touching none of DynamoDB's own tables is counted in no group; the
@@ -286,71 +384,99 @@ def _dynamodb_table_groups(
 
 
 def _table_group_coverage_note(
-    dynamo_tables: set[str],
-    table_assignments: list[dict[str, Any]],
+    engine_tables: set[str],
+    synced_tables: list[dict[str, Any]],
     query_assignments: list[dict[str, Any]],
-    dynamo_engine: str,
-    retained_engine: str | None,
+    engine: str,
     engine_wave_number: dict[str, int],
     current_wave_no: int,
 ) -> str:
     """Gate addendum for both directions of cross-wave co-dependency, plus the
-    count of DynamoDB-assigned queries whose table groups don't cover them.
+    count of ``engine``-assigned queries whose table groups don't cover them.
 
-    Forward: a table DynamoDB owns that another wave's queries still read.
-    Reverse: a table another wave owns that a DynamoDB-assigned query still
-    reads (#225 — the previous version only covered the forward direction).
-    Also counts DynamoDB-assigned queries that touch none of DynamoDB's own
-    tables, so a reader can reconcile the table groups' total against the
-    wave's ``query_count`` instead of being left with an unexplained gap.
+    Runs for every owner wave now (#562: DynamoDB, DocumentDB and any other
+    direct migration target), not DynamoDB's alone -- the dual read it names
+    is a real operational fact regardless of which engine the wave moves.
+
+    ``engine_tables`` is the OWNED subset of that wave's tables -- the rows
+    where ``engine`` is the durable owner (``_durable_owner``), never the
+    full served set :func:`_served_tables` returns (#568 review, Critical
+    1): the served set already includes every table this wave keeps in
+    sync from elsewhere (``table_owners``), so passing it here would fold
+    both directions into one sentence that no longer says which way the
+    sync runs -- every forward hit would also be a reverse hit, and
+    ``tables & engine_tables`` would always be true, silencing the reverse
+    clause on real data entirely.
+
+    ``synced_tables`` is this wave's own ``table_owners`` -- every table
+    ``engine`` serves but does not durably own, built once, exhaustively, by
+    :func:`_table_owners_for_served` (#568 review round 2, Important 2).
+    The reverse clause is now built from this list directly, not
+    re-derived from which ``engine``-assigned queries happen to touch no
+    owned table: that re-derivation skipped a kept-in-sync table outright
+    whenever a query read it *together with* an owned table (``tables &
+    engine_tables`` was true, so the whole query, and every table it
+    touched, was treated as "already counted" -- on real discourse data,
+    ``discourse.child_themes`` and ``discourse.post_actions`` never
+    appeared in any gate because every query that read them also read an
+    owned table). Building from ``table_owners`` instead means every
+    kept-in-sync table is named regardless of what else its queries read.
+
+    Forward: a table ``engine`` durably owns that another wave's queries
+    still read. Reverse: every table ``engine`` keeps in sync from another
+    wave's owner, with how many of ``engine``'s own queries actually read
+    it -- a separate count from the gap below, not a condition for being
+    named (#225 — the previous version only covered the forward direction).
+    Also counts ``engine``-assigned queries that touch neither an owned nor
+    a kept-in-sync table (fully unresolved), so a reader can reconcile the
+    table groups' total against the wave's ``query_count`` instead of being
+    left with an unexplained gap.
 
     #321 review (finding 1): the forward clause used to say "until wave N"
     unconditionally, which reads backwards once a wave can precede this one
-    -- Aurora is wave 1, so a DynamoDB-owned table a wave-1 (Aurora) query
-    still reads was rendered as "stay dual-read ... until wave 1", as if the
-    dual read ends when wave 1 (already in the past) finishes. "Until wave
-    N" is only true when the other engine's own wave has not run yet
+    -- Aurora is wave 1, so a table a wave-1 (Aurora) query still reads was
+    rendered as "stay dual-read ... until wave 1", as if the dual read ends
+    when wave 1 (already in the past) finishes. "Until wave N" is only true
+    when the other engine's own wave has not run yet
     (``wave_no > current_wave_no``): only then does *its* queries moving
     resolve the dual read. When the other engine's wave already ran (Aurora,
     always wave 1) or has no wave at all, that engine's queries never move
     again, so the dual read is permanent and the clause says so instead.
     """
-    by_table = {str(t["table_id"]): t for t in table_assignments if t.get("table_id")}
-
-    # Forward: DynamoDB's own tables, still read by a non-DynamoDB query.
+    # Forward: this wave's own tables, still read by a query assigned elsewhere.
     forward: dict[str, set[str]] = {}
     for qa in query_assignments:
         other = qa.get("assigned_engine")
-        if not other or other == dynamo_engine:
+        if not other or other == engine:
             continue
-        hit = set(qa.get("source_tables") or []) & dynamo_tables
+        hit = set(qa.get("source_tables") or []) & engine_tables
         if hit:
             forward.setdefault(other, set()).update(hit)
 
-    # Reverse: a DynamoDB-assigned query that reads a table some other engine
-    # durably owns, and the count of queries resolving to no owner at all.
+    # Reverse: every kept-in-sync table, exhaustively, from table_owners --
+    # never re-derived from which queries happen to touch no owned table
+    # (#568 review round 2).
+    owner_by_table: dict[str, str] = {str(o["table"]): str(o["owner"]) for o in synced_tables}
+    synced_ids = set(owner_by_table)
     reverse_tables: dict[str, set[str]] = {}
+    for table, owner in owner_by_table.items():
+        reverse_tables.setdefault(owner, set()).add(table)
     reverse_queries: dict[str, set[str]] = {}
     no_owned_table = 0
     for qa in query_assignments:
-        if qa.get("assigned_engine") != dynamo_engine:
+        if qa.get("assigned_engine") != engine:
             continue
         tables = set(qa.get("source_tables") or [])
-        if tables & dynamo_tables:
-            continue  # already counted in a table group
-        other_tables = [by_table[t] for t in tables if t in by_table]
-        if not other_tables:
-            no_owned_table += 1
-            continue
-        matched = False
-        for t_row in other_tables:
-            owner = _durable_owner(t_row, retained_engine)
-            if owner and owner != dynamo_engine:
-                reverse_tables.setdefault(owner, set()).add(str(t_row["table_id"]))
-                reverse_queries.setdefault(owner, set()).add(str(qa.get("query_id")))
-                matched = True
-        if not matched:
-            no_owned_table += 1
+        hit = tables & synced_ids
+        if hit:
+            for table in hit:
+                reverse_queries.setdefault(owner_by_table[table], set()).add(
+                    str(qa.get("query_id"))
+                )
+            continue  # named by table_owners above; not a gap
+        if tables & engine_tables:
+            continue  # an owned table, already counted in a table group
+        no_owned_table += 1
 
     clauses: list[str] = []
     if forward:
@@ -368,32 +494,44 @@ def _table_group_coverage_note(
         if future:
             all_tables = set()
             parts = []
+            others = []
             for other in sorted(future, key=lambda e: (engine_wave_number[e], e)):
                 tables = future[other]
                 all_tables |= tables
+                others.append(other)
                 parts.append(
                     f"{display_engine(other)} queries until wave {engine_wave_number[other]}"
                 )
             n = len(all_tables)
+            # #568 review round 2, Suggestion 1: name which way the sync runs
+            # explicitly -- ``engine`` owns these tables, so the OTHER
+            # engine's copy is the one synced, from ``engine``, not the
+            # reverse.
+            other_names = ", ".join(display_engine(o) for o in others)
             clauses.append(
                 f"{n} {_plural(n, 'table')} ({', '.join(sorted(all_tables))}) stay dual-read by "
                 + ", ".join(parts)
-                + "; keep them in sync via CDC until then."
+                + f"; {display_engine(engine)} owns them, so keep the {other_names} copy in "
+                f"sync from {display_engine(engine)} via CDC until then."
             )
         if permanent:
             all_tables = set()
             parts = []
+            others = []
             for other in sorted(permanent, key=lambda e: (engine_wave_number.get(e) or 999, e)):
                 tables = permanent[other]
                 all_tables |= tables
+                others.append(other)
                 parts.append(
                     f"{display_engine(other)} queries, which remain on {display_engine(other)}"
                 )
             n = len(all_tables)
+            other_names = ", ".join(display_engine(o) for o in others)
             clauses.append(
                 f"{n} {_plural(n, 'table')} ({', '.join(sorted(all_tables))}) stay dual-read by "
                 + ", ".join(parts)
-                + "; keep a copy in sync via CDC."
+                + f"; {display_engine(engine)} owns them, so keep the {other_names} copy in "
+                f"sync from {display_engine(engine)} via CDC."
             )
     if reverse_tables:
         for other in sorted(reverse_tables, key=lambda e: (engine_wave_number.get(e) or 999, e)):
@@ -405,7 +543,7 @@ def _table_group_coverage_note(
             clauses.append(
                 f"{n_q} {_query_noun(n_q)} read {n_t} "
                 f"{_plural(n_t, 'table')} ({', '.join(owned_table_list)}) {display_engine(other)} "
-                f"owns ({wave_text}) and keeps owning; keep a {display_engine(dynamo_engine)} copy of "
+                f"owns ({wave_text}) and keeps owning; keep a {display_engine(engine)} copy of "
                 f"them in sync via CDC."
             )
     if no_owned_table:
@@ -729,7 +867,7 @@ def _kv_wave(
     retained_engine: str | None,
     source_engine: str,
 ) -> dict[str, Any] | None:
-    rows = _owned_tables(engine, table_assignments, retained_engine)
+    rows = _served_tables(engine, table_assignments)
     n = int(by_engine[engine].get("assigned_queries") or 0)
     if not n and not rows:
         return None
@@ -747,6 +885,7 @@ def _kv_wave(
         "tables": _table_ids(rows),
         "table_count": len(rows),
         "table_groups": groups or None,
+        "table_owners": _table_owners_for_served(rows, engine, retained_engine),
         "query_count": n,
         "workload_share_percent": share,
         "share_basis": "queries",
@@ -767,7 +906,7 @@ def _other_target_wave(
     retained_engine: str | None,
     source_engine: str,
 ) -> dict[str, Any] | None:
-    rows = _owned_tables(engine, table_assignments, retained_engine)
+    rows = _served_tables(engine, table_assignments)
     n = int(by_engine[engine].get("assigned_queries") or 0)
     if not n and not rows:
         return None
@@ -782,6 +921,7 @@ def _other_target_wave(
         "tables": _table_ids(rows),
         "table_count": len(rows),
         "table_groups": None,
+        "table_owners": _table_owners_for_served(rows, engine, retained_engine),
         "query_count": n,
         "workload_share_percent": share,
         "share_basis": "queries",
@@ -800,7 +940,7 @@ def _document_wave(
     retained_engine: str | None,
     source_engine: str,
 ) -> dict[str, Any] | None:
-    rows = _owned_tables(engine, table_assignments, retained_engine)
+    rows = _served_tables(engine, table_assignments)
     n = int(by_engine[engine].get("assigned_queries") or 0)
     if not n and not rows:
         return None
@@ -815,6 +955,7 @@ def _document_wave(
         "tables": _table_ids(rows),
         "table_count": len(rows),
         "table_groups": None,
+        "table_owners": _table_owners_for_served(rows, engine, retained_engine),
         "query_count": n,
         "workload_share_percent": share,
         "share_basis": "queries",
@@ -915,24 +1056,56 @@ def _merge_kv_and_document_waves(dynamo: dict[str, Any], doc: dict[str, Any]) ->
     blended into one sentence that would blur which gate blocks which
     engine.
 
-    ``_dynamo_label``/``_dynamo_gate``/``_doc_label``/``_doc_gate`` are
-    transient bookkeeping ``build_migration_waves`` uses to splice the
-    cross-wave dual-read note (if any) into DynamoDB's own gate text
-    specifically, not the end of DocumentDB's; they are stripped before the
-    waves are returned, never part of the public shape.
+    ``_dynamo_label``/``_dynamo_gate``/``_dynamo_owned``/``_dynamo_synced``/
+    ``_doc_label``/``_doc_gate``/``_doc_owned``/``_doc_synced`` are transient
+    bookkeeping ``build_migration_waves`` uses to splice each engine's own
+    cross-wave dual-read note (#562: now computed for both, not DynamoDB's
+    alone) into its own gate text specifically, keyed to its own OWNED
+    table set for the forward clause (#568 review, Critical 1 -- never the
+    served set) and its own ``table_owners`` entries for the reverse clause
+    (#568 review round 2, Important 2 -- the deduped, combined public
+    ``table_owners`` no longer says which engine each entry is for), rather
+    than blending them or attaching both to the end of one engine's gate;
+    they are stripped before the waves are returned, never part of the
+    public shape.
     """
     dynamo_name = display_engine(dynamo["engines"][0])
     doc_name = display_engine(doc["engines"][0])
+    dynamo_engine = dynamo["engines"][0]
+    doc_engine = doc["engines"][0]
     tables = sorted(set(dynamo["tables"]) | set(doc["tables"]))
     moves_from = sorted(set(dynamo.get("moves_from") or []) | set(doc.get("moves_from") or []))
+    dynamo_owners = dynamo.get("table_owners") or []
+    doc_owners = doc.get("table_owners") or []
+    # #568 review, Suggestion 4: a table neither engine durably owns (both
+    # merely serve it) would otherwise appear twice, identically -- dedupe
+    # the fact itself rather than keep two copies with no way to tell them
+    # apart.
+    table_owners = _dedupe_table_owners([*dynamo_owners, *doc_owners])
+    dynamo_owned = sorted(set(dynamo["tables"]) - {o["table"] for o in dynamo_owners})
+    doc_owned = sorted(set(doc["tables"]) - {o["table"] for o in doc_owners})
     return {
         "title": f"Move key-value and document-shaped data to {dynamo_name} and {doc_name}",
-        "engines": [*dynamo["engines"], *doc["engines"]],
+        "engines": [dynamo_engine, doc_engine],
         "moves_from": moves_from,
         "serves_from": [],
         "tables": tables,
         "table_count": len(tables),
         "table_groups": dynamo.get("table_groups"),
+        "table_owners": table_owners,
+        # #568 review, Important 2: table_count above is the union of both
+        # engines' served tables and cannot be split back into each
+        # engine's own share -- a consumer that credited it to every engine
+        # (the pre-#568-review behaviour) double counted. These two give
+        # the real per-engine served and owned counts instead.
+        "table_counts_by_engine": {
+            dynamo_engine: dynamo["table_count"],
+            doc_engine: doc["table_count"],
+        },
+        "owned_counts_by_engine": {
+            dynamo_engine: len(dynamo_owned),
+            doc_engine: len(doc_owned),
+        },
         "query_count": dynamo["query_count"] + doc["query_count"],
         "workload_share_percent": round(
             dynamo["workload_share_percent"] + doc["workload_share_percent"], 1
@@ -942,9 +1115,12 @@ def _merge_kv_and_document_waves(dynamo: dict[str, Any], doc: dict[str, Any]) ->
         "gate": f"{dynamo_name}: {dynamo['gate']} {doc_name}: {doc['gate']}",
         "_dynamo_label": dynamo_name,
         "_dynamo_gate": dynamo["gate"],
-        "_dynamo_tables": dynamo["tables"],
+        "_dynamo_owned": dynamo_owned,
+        "_dynamo_synced": dynamo_owners,
         "_doc_label": doc_name,
         "_doc_gate": doc["gate"],
+        "_doc_owned": doc_owned,
+        "_doc_synced": doc_owners,
     }
 
 
@@ -1135,33 +1311,71 @@ def build_migration_waves(
         for e in w["engines"]:
             engine_wave_number.setdefault(e, w["wave"])
 
+    # #562: the dual-read coverage note runs for every owner wave -- key-value,
+    # document and any other direct migration target -- not DynamoDB's alone.
+    # Wave 1 (Aurora), the cache and the search/analytics wave are excluded:
+    # wave 1 is the whole schema (nothing else to reconcile against yet), the
+    # cache owns no table, and search's own ``table_owners``/``serves_from``
+    # already state its sync facts in full.
+    _coverage_note_excluded = RELATIONAL_ENGINES | CACHE_ENGINES | SEARCH_ENGINES
     for w in waves:
-        if w["engines"] and w["engines"][0] in KV_ENGINES and w.get("table_groups"):
-            # A wave merged with DocumentDB (finding 10) carries DynamoDB's
-            # own table set separately (``_dynamo_tables``): the coverage
-            # note is about DynamoDB's tables specifically, not DocumentDB's
-            # too, which the merged ``tables`` union would wrongly include.
-            dynamo_tables = set(w.get("_dynamo_tables", w["tables"]))
-            note = _table_group_coverage_note(
-                dynamo_tables,
-                table_assignments,
+        engines_here = w.get("engines") or []
+        if not engines_here or engines_here[0] in _coverage_note_excluded:
+            continue
+        if "_dynamo_owned" in w:
+            # A wave merged with DocumentDB (finding 10): each engine's own
+            # OWNED table set (``_dynamo_owned``/``_doc_owned``, #568 review
+            # Critical 1 -- never the served set) and own ``table_owners``
+            # entries (``_dynamo_synced``/``_doc_synced``, #568 review round
+            # 2 -- never the deduped, combined public list, which no longer
+            # says which engine each entry is for) each get their own note,
+            # spliced into their own gate segment -- the merged ``tables``
+            # union would wrongly credit one engine's dual reads to the
+            # other's gate text, and the served set would silence the
+            # reverse clause entirely (every served-but-not-owned table is
+            # already "in" the served set).
+            dynamo_note = _table_group_coverage_note(
+                set(w["_dynamo_owned"]),
+                w.get("_dynamo_synced") or [],
                 query_assignments,
-                w["engines"][0],
-                retained_engine,
+                engines_here[0],
+                engine_wave_number,
+                w["wave"],
+            )
+            doc_note = _table_group_coverage_note(
+                set(w["_doc_owned"]),
+                w.get("_doc_synced") or [],
+                query_assignments,
+                engines_here[1],
+                engine_wave_number,
+                w["wave"],
+            )
+            if dynamo_note:
+                w["_dynamo_gate"] = w["_dynamo_gate"] + dynamo_note
+            if doc_note:
+                w["_doc_gate"] = w["_doc_gate"] + doc_note
+            if dynamo_note or doc_note:
+                w["gate"] = (
+                    f"{w['_dynamo_label']}: {w['_dynamo_gate']} {w['_doc_label']}: {w['_doc_gate']}"
+                )
+        else:
+            # #568 review, Critical 1: the OWNED subset only (``tables``
+            # minus whatever ``table_owners`` already names as kept in
+            # sync from elsewhere) -- the served set would silence the
+            # reverse clause on real data (every served-but-not-owned
+            # table is already "in" it).
+            synced = w.get("table_owners") or []
+            owned = set(w["tables"]) - {o["table"] for o in synced}
+            note = _table_group_coverage_note(
+                owned,
+                synced,
+                query_assignments,
+                engines_here[0],
                 engine_wave_number,
                 w["wave"],
             )
             if note:
-                # #321 review (finding 10): a wave merged with DocumentDB
-                # keeps the note attached to DynamoDB's own gate text, not
-                # tacked onto the end after DocumentDB's.
-                if "_dynamo_gate" in w:
-                    w["_dynamo_gate"] = w["_dynamo_gate"] + note
-                    w["gate"] = (
-                        f"{w['_dynamo_label']}: {w['_dynamo_gate']} {w['_doc_label']}: {w['_doc_gate']}"
-                    )
-                else:
-                    w["gate"] = w["gate"] + note
+                w["gate"] = w["gate"] + note
 
     if cache_overlay:
         cache_w = next(
@@ -1186,8 +1400,11 @@ def build_migration_waves(
     for w in waves:
         w.pop("_dynamo_label", None)
         w.pop("_dynamo_gate", None)
-        w.pop("_dynamo_tables", None)
+        w.pop("_dynamo_owned", None)
+        w.pop("_dynamo_synced", None)
         w.pop("_doc_label", None)
         w.pop("_doc_gate", None)
+        w.pop("_doc_owned", None)
+        w.pop("_doc_synced", None)
 
     return waves

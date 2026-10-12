@@ -507,11 +507,8 @@ def _print_report(r: dict, path: str) -> None:
                 aq = rk.get("assigned_queries", 0)
                 aqs = rk.get("assigned_queries_in_scope", 0)
                 wp = rk.get("workload_percent", 0)
-                pt = rk.get("primary_tables", 0)
                 reasons = rk.get("assignment_reason_summary", [])
-                print(
-                    f"    {rk['target']}: {aq} queries ({wp}%), {aqs} in scope, {pt} primary tables"
-                )
+                print(f"    {rk['target']}: {aq} queries ({wp}%), {aqs} in scope")
                 if reasons:
                     print(f"      reasons: {', '.join(reasons)}")
     if r.get("assignment_summary"):

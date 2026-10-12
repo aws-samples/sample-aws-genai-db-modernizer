@@ -409,7 +409,20 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
           ${wave.share_basis === 'calls'
             ? html`${fixed(wave.workload_share_percent, 1, '0')}% of calls`
             : html`${fixed(wave.workload_share_percent, 1, '0')}% of query patterns`}
-          ${wave.table_count > 0 ? html` · ${wave.table_count} source tables` : ''}
+          ${(() => {
+            // #568 review round 2, Suggestion 2: a wave with a served-but-
+            // not-owned subset (table_owners) states both halves -- "N
+            // served, M move" -- instead of a bare served count a reader
+            // has to compare against the Tables migrate tile themselves.
+            const tableCount = wave.table_count || 0;
+            if (!tableCount) return '';
+            const synced = asArray(wave.table_owners).length;
+            if (synced) {
+              const moved = Math.max(tableCount - synced, 0);
+              return html` · ${tableCount} served, ${moved} move`;
+            }
+            return html` · ${tableCount} source tables`;
+          })()}
         </div>
         <p>${wave.rationale}</p>
         ${asArray(wave.tables).length > 0 ? html`

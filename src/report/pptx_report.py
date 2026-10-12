@@ -1239,6 +1239,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": accent,
                 "note": sw.get("rationale", ""),
                 "gate": sw.get("gate", ""),
+                # #568 review round 2, Important 1: the owned-vs-kept-in-sync
+                # split, built from structured fields -- never lost to the
+                # gate's own 90-character clip in the card below.
+                "sync_summary": _wave_sync_summary(sw),
                 # A wave moves no data only when it has nothing to move away from
                 # (the cache, which only fronts reads; the search read model and
                 # retained wave, which sync/stay rather than migrate).
@@ -1974,29 +1978,88 @@ def slide_risk(prs, f):
     return s
 
 
-def _wave_card_text(rationale: str, gate: str, box_w: float, box_h: float) -> tuple[str, str]:
-    """The rationale/gate text that fits a Migration Sequencing card's text box.
+def _wave_sync_summary(sw: dict[str, Any]) -> str:
+    """One short, structured line stating the owned-vs-kept-in-sync split for
+    a wave that moves data (#568 review round 2, Important 1).
 
-    Clips the rationale to about one sentence and the gate to about one line
-    (#225); if both together still estimate taller than ``box_h``, drops the
-    rationale and keeps only the gate (the alternative the review offered),
-    shrinking the gate further as a last resort. ``_estimated_text_height_in``
-    is an approximation, not exact PowerPoint layout, but catches the case
-    that actually happened: real wordpress/discourse rationale/gate text
-    (270-370 characters) overflowing a fixed-height card.
+    Built from the wave's own structured fields (``table_count``,
+    ``table_owners``, and, for the merged DynamoDB/DocumentDB wave,
+    ``table_counts_by_engine``/``owned_counts_by_engine``) -- never from
+    truncating the gate's prose, which is how the deck/PDF lost this split
+    entirely: ``_wave_card_text`` clips the gate at 90 characters, so on
+    real data the card stopped mid-sentence before "keeps owning" or "kept
+    in sync" ever appeared, even though the round-1 fix had already put
+    both clauses in the gate text itself.
+
+    ``""`` for a wave with nothing to move (the cache, search/analytics, or
+    wave 1/Aurora, which carries the whole schema rather than a per-engine
+    owned/synced split).
     """
+    engines = [str(e) for e in (sw.get("engines") or []) if e]
+    if not engines or not sw.get("moves_from") or sw.get("homogeneity") is not None:
+        return ""
+    table_owners = sw.get("table_owners") or []
+    per_engine_served = sw.get("table_counts_by_engine")
+    per_engine_owned = sw.get("owned_counts_by_engine")
+    if per_engine_served and per_engine_owned and len(engines) > 1:
+        move_bits = [
+            f"{ENGINE_LABEL.get(e, e)} moves {int(per_engine_owned.get(e) or 0)} "
+            f"{plural_noun(int(per_engine_owned.get(e) or 0), 'table')}"
+            for e in engines
+        ]
+        text = "; ".join(move_bits) + "."
+    else:
+        served = int(sw.get("table_count") or 0)
+        owned = max(served - len(table_owners), 0)
+        text = f"Moves {owned} {plural_noun(owned, 'table')}."
+    if table_owners:
+        owner_names = sorted({ENGINE_LABEL.get(o["owner"], o["owner"]) for o in table_owners})
+        n = len(table_owners)
+        text += f" Kept in sync from {join_names(owner_names)}: {n} {plural_noun(n, 'table')}."
+    return text
+
+
+def _wave_card_text(
+    rationale: str, gate: str, sync_summary: str, box_w: float, box_h: float
+) -> tuple[str, str, str]:
+    """The sync-summary/rationale/gate text that fits a Migration Sequencing
+    card's text box.
+
+    ``sync_summary`` (#568 review round 2, Important 1) is the owned-vs-
+    kept-in-sync split, built from structured wave fields by
+    :func:`_wave_sync_summary` -- never truncated: its height is reserved
+    first, and the rationale/gate share whatever height is left, with the
+    same clipping priority as before (rationale drops first, then the gate
+    shrinks). Clips the rationale to about one sentence and the gate to
+    about one line (#225); if both together still estimate taller than the
+    remaining height, drops the rationale and keeps only the gate (the
+    alternative the review offered), shrinking the gate further as a last
+    resort. ``_estimated_text_height_in`` is an approximation, not exact
+    PowerPoint layout, but catches the case that actually happened: real
+    wordpress/discourse rationale/gate text (270-370 characters)
+    overflowing a fixed-height card.
+    """
+    sync_text = sync_summary or ""
+    sync_h = _estimated_text_height_in(sync_text, 9.5, box_w) if sync_text else 0.0
+    remaining_h = max(box_h - sync_h, 0.0)
     rationale_text = clip(rationale, 110) if rationale else ""
     gate_text = f"Gate: {clip(gate, 90)}" if gate else ""
     r_h = _estimated_text_height_in(rationale_text, 10.0, box_w)
     g_h = _estimated_text_height_in(gate_text, 9.0, box_w)
-    if rationale_text and gate_text and r_h + g_h > box_h:
+    if rationale_text and gate_text and r_h + g_h > remaining_h:
         rationale_text = ""
     if gate_text:
         budget = 90
-        while _estimated_text_height_in(gate_text, 9.0, box_w) > box_h and budget > 20:
+        while _estimated_text_height_in(gate_text, 9.0, box_w) > remaining_h and budget > 20:
             budget -= 20
             gate_text = f"Gate: {clip(gate, budget)}"
-    return rationale_text, gate_text
+        # sync_text's reserved height can leave less room than even a
+        # minimally-clipped gate needs (a pathological many-waves card) --
+        # drop the gate rather than render text that still overflows; the
+        # sync summary is the one line this function guarantees fits.
+        if _estimated_text_height_in(gate_text, 9.0, box_w) > remaining_h:
+            gate_text = ""
+    return sync_text, rationale_text, gate_text
 
 
 def slide_sequencing(prs, f):
@@ -2082,16 +2145,30 @@ def slide_sequencing(prs, f):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)
             para(tf, val, size=11.5, bold=(j == 1), color=PAPER if j != 1 else accent, first=True)
         # #225: every wave shows its own gate, and the text is clipped (or the
-        # rationale dropped) to fit the card.
+        # rationale dropped) to fit the card. #568 review round 2 (Important
+        # 1): the owned-vs-kept-in-sync split is a structured line that is
+        # never clipped -- it is reserved space first, so it survives even
+        # when the gate's own prose has to shrink.
         box_w, box_h = 9.6, card_h - 0.44
-        rationale_text, gate_text = _wave_card_text(w["note"], w.get("gate", ""), box_w, box_h)
+        sync_text, rationale_text, gate_text = _wave_card_text(
+            w["note"], w.get("gate", ""), w.get("sync_summary", ""), box_w, box_h
+        )
         tf = textbox(s, 2.25, y + 0.44, box_w, max(box_h, 0.01))
         # No top/bottom inset: the text area is the full box _wave_card_text budgets for.
         tf.margin_top = tf.margin_bottom = 0
+        if sync_text:
+            para(tf, sync_text, size=9.5, bold=True, color=WHITE, first=True, space_after=1)
         if rationale_text:
-            para(tf, rationale_text, size=10.0, color=MUTED, first=True, space_after=1)
+            para(tf, rationale_text, size=10.0, color=MUTED, first=not sync_text, space_after=1)
         if gate_text:
-            para(tf, gate_text, size=9.0, bold=True, color=PINK, first=not rationale_text)
+            para(
+                tf,
+                gate_text,
+                size=9.0,
+                bold=True,
+                color=PINK,
+                first=not sync_text and not rationale_text,
+            )
         y += step
 
     card(s, 0.67, y + 0.08, 11.43, 0.98, GREEN)

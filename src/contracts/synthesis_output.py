@@ -198,6 +198,15 @@ Version History:
   the approval gate already does from the assignment directly, instead of
   having nothing to render for the count alone. None for a report
   synthesized before this field existed.
+- 1.13 (2026-10-12, #568 review of #562): Added optional ``table_counts_by_engine``
+  and ``owned_counts_by_engine`` to ``MigrationWave``: for the merged DynamoDB/
+  DocumentDB wave only, each engine's own served and durably-owned table counts.
+  ``table_count`` on that wave is the union of both engines' served tables and
+  cannot be split back into each engine's own share; a consumer that credited
+  the whole union to every engine (``src.report.renderers._architecture_engines``,
+  before this fix) double counted. Both default to ``None`` for a single-engine
+  wave (derive the owned count there as ``table_count - len(table_owners or [])``)
+  and for a wave written before this version. Backward compatible.
 """
 
 from datetime import datetime
@@ -521,8 +530,34 @@ class MigrationWave(BaseModel):
     table_owners: list[TableOwner] | None = Field(
         None,
         description=(
-            "Search/analytics read-model wave only: each served table's durable owner "
-            "and sync pattern (#225)"
+            "Each served-but-not-durably-owned table's real owner and sync pattern "
+            "(#225, generalized from the search/analytics wave to every owner wave by "
+            "#568 review): a table in ``tables`` that is absent here is this wave's own. "
+            "For the merged DynamoDB/DocumentDB wave, deduped by (table, owner, sync) -- "
+            "a table neither engine durably owns is one fact, not two identical entries."
+        ),
+    )
+    table_counts_by_engine: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Per-engine table_count, for a wave with more than one engine (#568 review: "
+            "the merged DynamoDB/DocumentDB wave). table_count itself is the union of "
+            "both engines' served tables and cannot be split back into each engine's "
+            "own share; crediting it to every engine double counts. None for a "
+            "single-engine wave (table_count is already that engine's own) and for a "
+            "wave written before this field existed."
+        ),
+    )
+    owned_counts_by_engine: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Per-engine count of tables that engine durably owns -- table_counts_by_"
+            "engine's count minus that engine's own table_owners entries -- for a wave "
+            "with more than one engine (#568 review). Only the owned subset actually "
+            "migrates; a served-but-not-owned table stays on its real owner, kept in "
+            "sync. None for a single-engine wave (derive it there as "
+            "table_count - len(table_owners or [])) and for a wave written before this "
+            "field existed."
         ),
     )
     query_count: int = Field(..., ge=0, description="Number of queries this wave covers")
@@ -562,7 +597,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.12",
+        default="1.13",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

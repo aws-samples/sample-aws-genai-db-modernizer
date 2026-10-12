@@ -713,10 +713,23 @@ class TestDynamoDbWave:
             # No resolvable table at all.
             {"query_id": "q9", "assigned_engine": "dynamodb", "source_tables": ["unknown"]},
         ]
+        # #568 review round 2 (Important 2): this query makes DynamoDB serve
+        # wp_options too (self-consistent with how ``derive_table_assignments``
+        # would record it in real data) -- a hand-built fixture that added
+        # the query without this is exactly the inconsistency that fixture
+        # was flagged for elsewhere.
+        table_assignments = [
+            t if t["table_id"] != "wp_options" else {**t, "engines": ["aurora_mysql", "dynamodb"]}
+            for t in TABLE_ASSIGNMENTS
+        ]
         ranking = [
             {**r, "assigned_queries": 4} if r["target"] == "dynamodb" else r for r in RANKING
         ]
-        wave = _build(ranking=ranking, query_assignments=query_assignments)[2]
+        wave = _build(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+        )[2]
         owned = set(wave["tables"])
         dynamo_qids_touching_owned = {
             qa["query_id"]
@@ -744,7 +757,14 @@ class TestDynamoDbWave:
             *QUERY_ASSIGNMENTS,
             {"query_id": "q8", "assigned_engine": "dynamodb", "source_tables": ["wp_options"]},
         ]
-        wave = _build(query_assignments=query_assignments)[2]
+        # #568 review round 2 (Important 2): self-consistent with the added
+        # query -- see the same note on
+        # test_group_counts_plus_queries_with_no_owned_table_equal_wave_query_count.
+        table_assignments = [
+            t if t["table_id"] != "wp_options" else {**t, "engines": ["aurora_mysql", "dynamodb"]}
+            for t in TABLE_ASSIGNMENTS
+        ]
+        wave = _build(table_assignments=table_assignments, query_assignments=query_assignments)[2]
         assert "1 query read 1 table (wp_options) Aurora MySQL owns (wave 1)" in wave["gate"]
         assert "CDC" in wave["gate"]
 
@@ -936,6 +956,443 @@ class TestPseudoAndUnknownTables:
         dynamo = waves[2]
         assert "CURRENT_TIMESTAMP" not in dynamo["tables"]
         assert dynamo["table_count"] == 3
+
+
+def _derive_table_assignments(
+    query_assignments: list[dict], retained_engine: str | None = None
+) -> list[dict]:
+    """A tiny, test-only stand-in for ``assignment_resolver.derive_table_assignments``:
+    builds a self-consistent ``table_assignments`` straight from
+    ``query_assignments`` (``engines`` is every engine with an assigned query
+    touching the table; ``primary_engine`` is the plurality winner, ties
+    broken toward ``retained_engine``) so a #562 regression test's two inputs
+    cannot silently disagree with each other the way hand-written fixtures
+    can.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for qa in query_assignments:
+        for t in qa.get("source_tables") or []:
+            counts.setdefault(t, {})
+            counts[t][qa["assigned_engine"]] = counts[t].get(qa["assigned_engine"], 0) + 1
+    rows = []
+    for t, engine_counts in counts.items():
+        primary = max(engine_counts, key=lambda e: (engine_counts[e], e == retained_engine, e))
+        rows.append({"table_id": t, "primary_engine": primary, "engines": sorted(engine_counts)})
+    return rows
+
+
+class TestQueryScopedTables:
+    """#562: an owner wave's ``tables`` is every table its own engine's
+    queries actually use (``_served_tables``: primary or secondary), never
+    only the tables where it won the table-level ``primary_engine``
+    plurality (the old ``_owned_tables``). ADR-031 Decision 1: the query is
+    the unit of assignment; a table's ``primary_engine`` is a summary label,
+    not ownership of the work a wave moves.
+    """
+
+    def test_documentdb_wave_lists_every_table_its_queries_use(self):
+        # #562 audit comment: on wordpress, the DocumentDB wave reported 4
+        # tables while its 11 queries actually used 9 -- the 5 missing
+        # tables got no sync note at all, because the coverage note was only
+        # wired up for key-value engines. Reproduced with the audit's own
+        # table names and counts.
+        owned = ["wp_posts", "wp_postmeta", "wp_comments", "wp_commentmeta"]
+        synced = {
+            "wp_actionscheduler_logs": "dynamodb",
+            "wp_options": "aurora_mysql",
+            "wp_wc_product_meta_lookup": "dynamodb",
+            "wp_wc_reserved_stock": "dynamodb",
+            "wp_woocommerce_downloadable_product_permissions": "aurora_mysql",
+        }
+        table_assignments = [
+            {"table_id": t, "primary_engine": "documentdb", "engines": ["documentdb"]}
+            for t in owned
+        ] + [
+            {"table_id": t, "primary_engine": owner, "engines": sorted([owner, "documentdb"])}
+            for t, owner in synced.items()
+        ]
+        query_assignments = [
+            {"query_id": "qd1", "assigned_engine": "documentdb", "source_tables": ["wp_posts"]},
+            {"query_id": "qd2", "assigned_engine": "documentdb", "source_tables": ["wp_postmeta"]},
+            {"query_id": "qd3", "assigned_engine": "documentdb", "source_tables": ["wp_comments"]},
+            {
+                "query_id": "qd4",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_commentmeta"],
+            },
+            {
+                "query_id": "qd5",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_posts", "wp_postmeta"],
+            },
+            {
+                "query_id": "qd6",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_actionscheduler_logs"],
+            },
+            {"query_id": "qd7", "assigned_engine": "documentdb", "source_tables": ["wp_options"]},
+            {
+                "query_id": "qd8",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_wc_product_meta_lookup"],
+            },
+            {
+                "query_id": "qd9",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_wc_reserved_stock"],
+            },
+            {
+                "query_id": "qd10",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_woocommerce_downloadable_product_permissions"],
+            },
+            {
+                "query_id": "qd11",
+                "assigned_engine": "documentdb",
+                "source_tables": ["wp_comments", "wp_commentmeta"],
+            },
+        ]
+        ranking = [{"target": "documentdb", "assigned_queries": 11, "workload_percent": 10.0}]
+        known_tables = set(owned) | set(synced)
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables=known_tables,
+        )
+        doc_wave = next(w for w in waves if w["engines"] == ["documentdb"])
+        assert doc_wave["query_count"] == 11
+        assert doc_wave["table_count"] == 9
+        assert sorted(doc_wave["tables"]) == sorted(set(owned) | set(synced))
+        # Every served-but-not-owned table is marked kept in sync with its
+        # real system of record (#562) -- an owner table is absent here, the
+        # same convention the search/analytics wave already used.
+        owners = {o["table"]: o["owner"] for o in doc_wave["table_owners"]}
+        assert owners == synced
+        assert all(o["sync"] == "CDC" for o in doc_wave["table_owners"])
+        assert all(t not in owners for t in owned)
+
+    def test_table_served_as_secondary_engine_is_still_in_the_wave(self):
+        # The minimal #562 regression: a table dynamodb merely serves
+        # (secondary, documentdb won the primary_engine plurality) must still
+        # be in dynamodb's own wave -- the pre-fix ``_owned_tables`` would
+        # have dropped it entirely.
+        table_assignments = [
+            {
+                "table_id": "t_shared",
+                "primary_engine": "documentdb",
+                "engines": sorted(["documentdb", "dynamodb"]),
+            },
+        ]
+        query_assignments = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["t_shared"]},
+        ]
+        ranking = [{"target": "dynamodb", "assigned_queries": 1, "workload_percent": 100.0}]
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="dynamodb",
+            known_tables={"t_shared"},
+        )
+        dynamo_wave = next(w for w in waves if w["engines"] == ["dynamodb"])
+        assert "t_shared" in dynamo_wave["tables"]
+
+    def test_coverage_note_now_runs_for_document_and_other_target_waves(self):
+        # #562: the dual-read gate text used to be wired up for DynamoDB
+        # only. Both directions now fire for a DocumentDB wave too.
+        #
+        # #568 review (Critical 1): built with ``_derive_table_assignments``
+        # so ``table_assignments`` cannot disagree with ``query_assignments``
+        # the way a hand-written fixture can -- the previous version of this
+        # test had a DocumentDB query (qd2) reading a table whose
+        # ``engines`` never listed DocumentDB at all, which real pipeline
+        # data can never produce (``derive_table_assignments`` always adds
+        # an assigned query's own engine to the table's ``engines`` list).
+        #
+        # wp_posts: 2 DocumentDB touches, 1 Aurora MySQL touch -> DocumentDB
+        # owns it (forward case: Aurora MySQL's own query still reads a
+        # table DocumentDB owns). wp_legacy: 2 Aurora MySQL touches, 1
+        # DocumentDB touch -> Aurora MySQL owns it, DocumentDB merely serves
+        # it (reverse case: DocumentDB's own query reads a table it does not
+        # own -- the served-but-not-owned table #562 added to DocumentDB's
+        # wave in the first place).
+        query_assignments = [
+            {"query_id": "qd1", "assigned_engine": "documentdb", "source_tables": ["wp_posts"]},
+            {"query_id": "qd1b", "assigned_engine": "documentdb", "source_tables": ["wp_posts"]},
+            {"query_id": "qa1", "assigned_engine": "aurora_mysql", "source_tables": ["wp_posts"]},
+            {"query_id": "qa2", "assigned_engine": "aurora_mysql", "source_tables": ["wp_legacy"]},
+            {"query_id": "qa2b", "assigned_engine": "aurora_mysql", "source_tables": ["wp_legacy"]},
+            {"query_id": "qd2", "assigned_engine": "documentdb", "source_tables": ["wp_legacy"]},
+        ]
+        table_assignments = _derive_table_assignments(
+            query_assignments, retained_engine="aurora_mysql"
+        )
+        ranking = [
+            {"target": "documentdb", "assigned_queries": 3, "workload_percent": 50.0},
+            {"target": "aurora_mysql", "assigned_queries": 3, "workload_percent": 50.0},
+        ]
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables={"wp_posts", "wp_legacy"},
+        )
+        doc_wave = next(w for w in waves if w["engines"] == ["documentdb"])
+        # DocumentDB serves both tables (owns wp_posts, kept in sync on
+        # wp_legacy) -- #562's own fix, still intact.
+        assert doc_wave["table_count"] == 2
+        assert doc_wave["table_owners"] == [
+            {"table": "wp_legacy", "owner": "aurora_mysql", "sync": "CDC"}
+        ]
+        # Forward: Aurora MySQL (wave 1, already run) keeps reading wp_posts,
+        # which DocumentDB owns.
+        assert "wp_posts" in doc_wave["gate"]
+        assert "Aurora MySQL queries, which remain on Aurora MySQL" in doc_wave["gate"]
+        # Reverse: DocumentDB still reads wp_legacy, which Aurora MySQL owns
+        # (wave 1) and keeps owning -- the exact "owns ... and keeps owning"
+        # clause #568 review flagged as unreachable before this fix.
+        assert "wp_legacy" in doc_wave["gate"]
+        assert "Aurora MySQL owns (wave 1) and keeps owning" in doc_wave["gate"]
+        assert "keep a DocumentDB copy of them in sync via CDC" in doc_wave["gate"]
+
+    def test_kept_in_sync_table_is_named_even_read_together_with_an_owned_table(self):
+        # #568 review round 2, Important 2: on real discourse data,
+        # ``discourse.child_themes`` and ``discourse.post_actions`` are kept
+        # in sync from Aurora PostgreSQL, but no gate named them -- every
+        # DocumentDB query that read them also read a table DocumentDB owns
+        # (``discourse.themes``/``discourse.reviewable_scores``), so the old
+        # ``if tables & engine_tables: continue`` skipped the whole query,
+        # and the kept-in-sync table along with it, before it was ever
+        # checked against the real owner. Reproduced here with the same
+        # shape: a single query touching one owned table and one
+        # served-but-not-owned table together.
+        query_assignments = [
+            {"query_id": "qd1", "assigned_engine": "documentdb", "source_tables": ["themes"]},
+            {
+                "query_id": "qd2",
+                "assigned_engine": "documentdb",
+                "source_tables": ["themes", "child_themes"],
+            },
+            {
+                "query_id": "qd3",
+                "assigned_engine": "documentdb",
+                "source_tables": ["reviewable_scores"],
+            },
+            {
+                "query_id": "qd4",
+                "assigned_engine": "documentdb",
+                "source_tables": ["reviewable_scores", "post_actions"],
+            },
+            {
+                "query_id": "qa1",
+                "assigned_engine": "aurora_mysql",
+                "source_tables": ["child_themes"],
+            },
+            {
+                "query_id": "qa2",
+                "assigned_engine": "aurora_mysql",
+                "source_tables": ["child_themes"],
+            },
+            {
+                "query_id": "qa3",
+                "assigned_engine": "aurora_mysql",
+                "source_tables": ["post_actions"],
+            },
+            {
+                "query_id": "qa4",
+                "assigned_engine": "aurora_mysql",
+                "source_tables": ["post_actions"],
+            },
+        ]
+        table_assignments = _derive_table_assignments(
+            query_assignments, retained_engine="aurora_mysql"
+        )
+        ranking = [
+            {"target": "documentdb", "assigned_queries": 4, "workload_percent": 50.0},
+            {"target": "aurora_mysql", "assigned_queries": 4, "workload_percent": 50.0},
+        ]
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables={"themes", "reviewable_scores", "child_themes", "post_actions"},
+        )
+        doc_wave = next(w for w in waves if w["engines"] == ["documentdb"])
+        owners = {o["table"]: o["owner"] for o in doc_wave["table_owners"]}
+        assert owners == {
+            "child_themes": "aurora_mysql",
+            "post_actions": "aurora_mysql",
+        }
+        # Both kept-in-sync tables are named in the gate, even though every
+        # query that reads either of them also reads an owned table.
+        assert "child_themes" in doc_wave["gate"]
+        assert "post_actions" in doc_wave["gate"]
+        assert "Aurora MySQL owns (wave 1) and keeps owning" in doc_wave["gate"]
+        assert "keep a DocumentDB copy of them in sync via CDC" in doc_wave["gate"]
+        # Not a gap: both queries that read them are counted via the reverse
+        # clause, not the "could not be resolved" fallback.
+        assert "could not be resolved" not in doc_wave["gate"]
+
+    def test_every_owner_waves_tables_equal_the_tables_its_queries_use(self):
+        # General property (#562), checked against a self-consistent fixture
+        # (table_assignments derived straight from query_assignments, see
+        # ``_derive_table_assignments``) covering every owner-wave shape: a
+        # plain key-value wave, the merged DynamoDB/DocumentDB wave (sharing
+        # a table, "t_shared", as primary vs. secondary engine), and an
+        # unnamed "other" direct migration target.
+        # ``t_shared`` is primarily owned by Aurora MySQL (3 touches, the
+        # plurality winner), yet both DynamoDB and DocumentDB each have a
+        # query of their own touching it too (2 and 1 touches) -- neither
+        # owns it, so a union built from each engine's old *owned-only* set
+        # would miss it from the merged wave entirely, even though the
+        # merged wave's union would still (by coincidence) recover a table
+        # one of the two merged engines happens to own. This is the case
+        # that coincidence can't paper over.
+        query_assignments = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["t1"]},
+            {"query_id": "q2", "assigned_engine": "dynamodb", "source_tables": ["t1", "t_shared"]},
+            {"query_id": "q3", "assigned_engine": "dynamodb", "source_tables": ["t_shared"]},
+            # DUAL is parser noise (a pseudo table): this query resolves to no
+            # real table at all, so it must not force a phantom table into
+            # dynamodb's wave.
+            {"query_id": "q8", "assigned_engine": "dynamodb", "source_tables": ["DUAL"]},
+            {"query_id": "q4", "assigned_engine": "documentdb", "source_tables": ["t_shared"]},
+            {"query_id": "q5", "assigned_engine": "documentdb", "source_tables": ["t2"]},
+            {"query_id": "q6", "assigned_engine": "aurora_mysql", "source_tables": ["t3"]},
+            {"query_id": "q9", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+            {"query_id": "q10", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+            {"query_id": "q11", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+            {"query_id": "q7", "assigned_engine": "neptune", "source_tables": ["t4"]},
+        ]
+        table_assignments = _derive_table_assignments(
+            query_assignments, retained_engine="aurora_mysql"
+        )
+        ranking = [
+            {"target": "dynamodb", "assigned_queries": 4, "workload_percent": 40.0},
+            {"target": "documentdb", "assigned_queries": 2, "workload_percent": 20.0},
+            {"target": "aurora_mysql", "assigned_queries": 4, "workload_percent": 30.0},
+            {"target": "neptune", "assigned_queries": 1, "workload_percent": 10.0},
+        ]
+        known_tables = {"t1", "t2", "t3", "t4", "t_shared"}
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables=known_tables,
+        )
+
+        query_tables_by_engine: dict[str, set[str]] = {}
+        for qa in query_assignments:
+            query_tables_by_engine.setdefault(qa["assigned_engine"], set()).update(
+                set(qa.get("source_tables") or []) & known_tables
+            )
+
+        checked = 0
+        for w in waves:
+            engines_here = w["engines"]
+            # Wave 1 (Aurora) carries the whole collected schema by rule,
+            # never only its own queries' tables -- not this property's
+            # concern (covered by TestAuroraWave).
+            if w.get("homogeneity") is not None:
+                continue
+            expected: set[str] = set()
+            for engine in engines_here:
+                expected |= query_tables_by_engine.get(engine, set())
+            assert set(w["tables"]) == expected, (engines_here, w["tables"], expected)
+            checked += 1
+        assert checked == 2  # the merged dynamodb+documentdb wave, and neptune's
+
+    def test_merged_wave_table_groups_reconcile_against_dynamodbs_own_query_count(self):
+        # #562: the table-group reconciliation invariant (#225) must still
+        # hold for DynamoDB's own share of a merged DynamoDB/DocumentDB wave
+        # -- against DynamoDB's own assigned_queries, not the merged wave's
+        # combined query_count (which also includes DocumentDB's).
+        query_assignments = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["t1"]},
+            {"query_id": "q2", "assigned_engine": "dynamodb", "source_tables": ["t1", "t_shared"]},
+            {"query_id": "q3", "assigned_engine": "dynamodb", "source_tables": ["t_shared"]},
+            # Touches no resolvable table at all (parser noise): the gap
+            # ``_table_group_coverage_note`` reports separately.
+            {"query_id": "q8", "assigned_engine": "dynamodb", "source_tables": ["DUAL"]},
+            {"query_id": "q4", "assigned_engine": "documentdb", "source_tables": ["t_shared"]},
+            {"query_id": "q5", "assigned_engine": "documentdb", "source_tables": ["t2"]},
+        ]
+        table_assignments = _derive_table_assignments(
+            query_assignments, retained_engine="aurora_mysql"
+        )
+        ranking = [
+            {"target": "dynamodb", "assigned_queries": 4, "workload_percent": 60.0},
+            {"target": "documentdb", "assigned_queries": 2, "workload_percent": 40.0},
+        ]
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables={"t1", "t2", "t_shared"},
+        )
+        merged = next(w for w in waves if "dynamodb" in w["engines"])
+        assert merged["query_count"] == 6  # 4 (dynamodb) + 2 (documentdb) -- not what we reconcile
+        groups = merged["table_groups"]
+        assert sum(g["query_count"] for g in groups) == 3  # q1, q2, q3
+        assert "1 query could not be resolved" in merged["gate"]
+        # 3 grouped + 1 unresolved == DynamoDB's own 4 assigned queries.
+        assert sum(g["query_count"] for g in groups) + 1 == 4
+
+    def test_merged_wave_dedupes_a_table_owners_fact_both_engines_share(self):
+        # #568 review, Suggestion 4: a table neither DynamoDB nor DocumentDB
+        # durably owns, but both merely serve (here, Aurora MySQL owns
+        # ``t_shared``) must appear once in the merged wave's
+        # ``table_owners``, not twice with an identical-looking entry.
+        query_assignments = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["t_shared"]},
+            {"query_id": "q2", "assigned_engine": "documentdb", "source_tables": ["t_shared"]},
+            {"query_id": "q3", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+            {"query_id": "q4", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+            {"query_id": "q5", "assigned_engine": "aurora_mysql", "source_tables": ["t_shared"]},
+        ]
+        table_assignments = _derive_table_assignments(
+            query_assignments, retained_engine="aurora_mysql"
+        )
+        ranking = [
+            {"target": "dynamodb", "assigned_queries": 1, "workload_percent": 20.0},
+            {"target": "documentdb", "assigned_queries": 1, "workload_percent": 20.0},
+            {"target": "aurora_mysql", "assigned_queries": 3, "workload_percent": 60.0},
+        ]
+        waves = build_migration_waves(
+            ranking=ranking,
+            table_assignments=table_assignments,
+            query_assignments=query_assignments,
+            co_dependency_groups=[],
+            cache_overlay=None,
+            source_engine="mysql",
+            known_tables={"t_shared"},
+        )
+        merged = next(w for w in waves if "dynamodb" in w["engines"])
+        # Both engines merely serve t_shared (Aurora MySQL owns it, 3 of 5
+        # touches): one fact, recorded once, not duplicated per engine.
+        assert merged["table_owners"] == [
+            {"table": "t_shared", "owner": "aurora_mysql", "sync": "CDC"}
+        ]
+        assert merged["owned_counts_by_engine"] == {"dynamodb": 0, "documentdb": 0}
+        assert merged["table_counts_by_engine"] == {"dynamodb": 1, "documentdb": 1}
 
 
 class TestOwnerWaveCoverage:

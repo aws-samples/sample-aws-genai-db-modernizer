@@ -220,6 +220,55 @@ describe('buildReportHtml (ReportHtmlExport.js)', () => {
     expect(doc.body.textContent).toContain('(+5 more)');
   });
 
+  it('shows "N served, M move" when the wave has a kept-in-sync subset (#568 review round 2, Suggestion 2)', () => {
+    const resultsData = {
+      synthesis: {
+        database_name: 'x',
+        migration_waves: [{
+          wave: 1,
+          title: 'w',
+          engines: ['dynamodb'],
+          tables: ['t0', 't1'],
+          table_count: 17,
+          table_owners: [
+            { table: 'o0', owner: 'aurora_mysql', sync: 'CDC' },
+            { table: 'o1', owner: 'aurora_mysql', sync: 'CDC' },
+          ],
+          query_count: 1,
+          workload_share_percent: 10,
+          share_basis: 'queries',
+          rationale: 'r',
+          gate: 'g',
+        }],
+      },
+    };
+    const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));
+    expect(doc.body.textContent).toContain('17 served, 15 move');
+    expect(doc.body.textContent).not.toContain('17 source tables');
+  });
+
+  it('still shows "N source tables" when the wave owns every table it serves', () => {
+    const resultsData = {
+      synthesis: {
+        database_name: 'x',
+        migration_waves: [{
+          wave: 1,
+          title: 'w',
+          engines: ['dynamodb'],
+          tables: ['t0'],
+          table_count: 1,
+          query_count: 1,
+          workload_share_percent: 10,
+          share_basis: 'queries',
+          rationale: 'r',
+          gate: 'g',
+        }],
+      },
+    };
+    const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));
+    expect(doc.body.textContent).toContain('1 source table');
+  });
+
   it('still renders an ordinary report', () => {
     const resultsData = {
       synthesis: {

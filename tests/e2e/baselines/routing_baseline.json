@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one.",
+  "reason": "migration waves scope tables by served queries, not table-level ownership (#562): wordpress wave 3 table_count went 5 (as of #502) -> 7 (current main, an unrelated drift from intervening commits) -> 17 (this PR); discourse wave 3 table_count 181->200. wordpress's owner_queries/workload_percent also move from the stale pre-#562 baseline (64/43, last regenerated at #502) to current main's actual, already-true values (63/44) -- that drift predates this change too; routing_snapshot.json needs no update, confirming zero per-query reassignment.",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -20,7 +20,8 @@
     "#501: Pass 0 now re-checks every surviving engine after partial consolidation, against the TRUE committed set rather than a set still mid-elimination, and a query never moves to an engine that scores it lower than the one it is already on. wordpress: documentdb drops from 21 (an evaluation-order artifact -- it dodged the TARGET_ENGINE_COUNT check only because Aurora MySQL's slot looked vacated when documentdb was checked) to 4 queries that genuinely have no as-good alternative (one gated by a hard aggregation capability, three by score); its other 17 queries move to Aurora MySQL (now correctly available as an alternative) or DynamoDB. discourse: documentdb goes from 0 (fully, and incorrectly, absorbed under the old order-dependent and never-worse-unaware logic) to 183 -- the never-worse rule alone finds no committed engine scores these queries as well as DocumentDB already does (sampled scores confirm a real, if narrow, 2-10 point edge); only 11 of its 194 original queries actually have a better home now.",
     "#502 review correction: removed the min_fit score floor on consolidation moves (a query being removed goes to its highest-scoring remaining engine that can serve it, even at a lower score -- the point of consolidating down to fewer engines) and replaced it with a never-pad-to-justify rule (an engine's own re-check uses only its native queries, never anything another engine's consolidation redistributed onto it this run). wordpress: DocumentDB is now fully removed -- its 8 native queries have no unique value once Aurora MySQL is correctly counted as a real alternative (7 move to Aurora MySQL, 1 to DynamoDB, dynamodb back to 57/aurora_mysql 50). discourse: unchanged from #500 (aurora_postgresql 1091, dynamodb 563, documentdb 0) -- DocumentDB was never order-dependent there, so the earlier 183-query retention was entirely the now-removed score floor, not a real finding.",
     "#502 redesign: two phases -- Phase 1 settles which engines earn a place from their own native queries alone, order-independent to a fixed point (no engine protected for being cheapest or primary); Phase 2 places every query on its highest-scoring settled engine using the resolver's own per-query scores (ADR-031), not the reality check's separate fit scorer. wordpress collapses to a single owner engine (aurora_mysql 107/107) plus the ElastiCache cache layer: DynamoDB's 38 native queries score it meaningfully better than Aurora MySQL on only 2 of them once judged by the resolver's own scores, so the fixed per-engine operational burden is not worth it once Aurora MySQL can serve the rest -- DocumentDB was already being removed for the same reason. discourse keeps two engines (aurora_postgresql 991/1654 = 59.9%, dynamodb 663/1654 = 40.1%, up from 66.0%/34.0%): DynamoDB has far more queries that genuinely score it higher here, so it clears the same burden check wordpress's DynamoDB does not. Both are real, data-driven results, not a universal collapse -- the sample with much less of an actual DynamoDB-shaped workload (wordpress) ends up on fewer engines.",
-    "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one."
+    "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one.",
+    "migration waves scope tables by served queries, not table-level ownership (#562): wordpress wave 3 table_count went 5 (as of #502) -> 7 (current main, an unrelated drift from intervening commits) -> 17 (this PR); discourse wave 3 table_count 181->200. wordpress's owner_queries/workload_percent also move from the stale pre-#562 baseline (64/43, last regenerated at #502) to current main's actual, already-true values (63/44) -- that drift predates this change too; routing_snapshot.json needs no update, confirming zero per-query reassignment."
   ],
   "samples": {
     "wordpress": {
@@ -29,14 +30,14 @@
       "assignment_version": 2,
       "queries_in_scope": 107,
       "owner_share_percent": {
-        "aurora_mysql": 59.8,
-        "dynamodb": 40.2
+        "aurora_mysql": 58.9,
+        "dynamodb": 41.1
       },
       "owner_queries": {
-        "aurora_mysql": 64,
-        "dynamodb": 43
+        "aurora_mysql": 63,
+        "dynamodb": 44
       },
-      "source_compatible_share_percent": 59.8,
+      "source_compatible_share_percent": 58.9,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 20,
@@ -47,7 +48,7 @@
           "engines": [
             "aurora_mysql"
           ],
-          "workload_percent": 59.8,
+          "workload_percent": 58.9,
           "cached_call_share_percent": 0.0,
           "table_count": 50
         },
@@ -63,9 +64,9 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 40.2,
+          "workload_percent": 41.1,
           "cached_call_share_percent": 0.0,
-          "table_count": 5
+          "table_count": 17
         }
       ],
       "utility_queries_off_aurora": 0
@@ -115,7 +116,7 @@
           ],
           "workload_percent": 45.7,
           "cached_call_share_percent": 0.0,
-          "table_count": 181
+          "table_count": 200
         }
       ],
       "utility_queries_off_aurora": 0

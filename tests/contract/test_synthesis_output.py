@@ -386,8 +386,8 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        # #503: tied_queries added
-        assert output.contract_version == "1.12"
+        # #568 review round 2: table_counts_by_engine/owned_counts_by_engine added
+        assert output.contract_version == "1.13"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

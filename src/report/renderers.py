@@ -635,11 +635,37 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     costs = _engine_costs(report)
     # #524: per-engine fallback for the branch below, read from the same
     # per-wave ``table_count`` the tile and the roadmap already use.
-    wave_tables: dict[str, int] = {}
+    #
+    # #568 review (Important 2): a wave with more than one engine (the
+    # merged DynamoDB/DocumentDB wave) has one ``table_count`` for the union
+    # of both engines' served tables -- crediting it to every engine in
+    # ``engines`` (the pre-review behaviour) double counted (discourse:
+    # DynamoDB and DocumentDB both showed the union's 200, not their real
+    # 118/82). ``table_counts_by_engine``/``owned_counts_by_engine`` (set
+    # only on such a wave) give the real per-engine split; a single-engine
+    # wave still just uses its own ``table_count``/``table_owners`` directly.
+    # A multi-engine wave written before this field existed is skipped
+    # rather than guessed at -- contributing nothing undercounts, but never
+    # double counts, and every other total here already falls back past a
+    # wave fallback that reads 0.
+    wave_served: dict[str, int] = {}
+    wave_owned: dict[str, int] = {}
     for w in resolve_migration_waves(report):
-        if w.get("moves_from") and w.get("homogeneity") is None:
-            for e in w.get("engines") or []:
-                wave_tables[e] = wave_tables.get(e, 0) + int(w.get("table_count") or 0)
+        if not (w.get("moves_from") and w.get("homogeneity") is None):
+            continue
+        engines_here = w.get("engines") or []
+        per_engine_served = w.get("table_counts_by_engine")
+        per_engine_owned = w.get("owned_counts_by_engine")
+        if per_engine_served and per_engine_owned:
+            for e in engines_here:
+                wave_served[e] = wave_served.get(e, 0) + int(per_engine_served.get(e) or 0)
+                wave_owned[e] = wave_owned.get(e, 0) + int(per_engine_owned.get(e) or 0)
+        elif len(engines_here) == 1:
+            e = engines_here[0]
+            served_n = int(w.get("table_count") or 0)
+            owned_n = served_n - len(w.get("table_owners") or [])
+            wave_served[e] = wave_served.get(e, 0) + served_n
+            wave_owned[e] = wave_owned.get(e, 0) + max(owned_n, 0)
 
     rows: list[dict[str, Any]] = []
     for r in ranking:
@@ -653,13 +679,26 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         if role == "Migration target":
             n = src_tables.get(eng)
             has_design = (schema_designs.get(eng) or {}).get("status") == "completed"
+            wave_owned_n: int | None = None
             if not n and not has_design:
                 # No schema design has mapped source tables to this engine yet
                 # (table_mappings/table_count stay 0): read the same wave figure
                 # the tile and the roadmap already show, instead of a bare 0.
-                wave_n = wave_tables.get(eng)
+                wave_n = wave_served.get(eng)
                 n = wave_n if isinstance(wave_n, int) and wave_n > 0 else n
-            migrates = n if isinstance(n, int) else (objs or 0)
+                # #568 review (Important 1): the wave figure above is the
+                # SERVED count (every table this engine's queries touch,
+                # #562) -- shown in the Scope cell as-is. "Tables migrate"
+                # must count only the tables that actually move, i.e. the
+                # subset this engine durably owns; a served-but-not-owned
+                # table stays on its real owner, kept in sync, and never
+                # migrates anywhere.
+                wave_owned_n = wave_owned.get(eng)
+            migrates = (
+                wave_owned_n
+                if isinstance(wave_owned_n, int)
+                else (n if isinstance(n, int) else (objs or 0))
+            )
             served = _design_source_tables(design_tables)
             scope = (
                 # Source tables mapped to the engine -- named as such, because the
@@ -1515,6 +1554,22 @@ def resolve_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Re-derive the roadmap from a pre-#225 ``report.json`` with no stored
+    ``migration_waves`` at all.
+
+    #562 scoped a live wave's tables by the queries its engine actually
+    serves (``_served_tables``) instead of the table-level ``primary_engine``
+    plurality (``_owned_tables``) -- query_assignments carries the data for
+    that. This fallback has no such luck: a legacy ``report.json`` kept only
+    ``table_mappings`` (``source_table`` -> one ``recommended_database``,
+    itself a table-level summary with no query behind it) and ``ranking``'s
+    aggregate counts, never ``query_assignments``. There is no served set to
+    recompute from here -- ``tables_for`` stays table-level because the data
+    the real fix needs simply is not there, not because a wave's scope is
+    legitimately table-level (#568 review, Suggestion 3: it is not -- #562
+    is the one rule). A report new enough to carry ``migration_waves`` never
+    reaches this function at all.
+    """
     ranking = [r for r in (report.get("ranking") or []) if isinstance(r, dict)]
     by_engine = {str(r.get("target")): r for r in ranking if r.get("target")}
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
@@ -1770,11 +1825,24 @@ def _wave_headline_stats(w: dict[str, Any]) -> tuple[str, str]:
     #321 review (finding 4): wave 1's table count is tables *and* views
     (wave 1 carries the whole collected schema, views included), stated
     once here rather than at each place the figure is repeated.
+
+    #568 review round 2, Suggestion 2: a wave with a served-but-not-owned
+    subset (``table_owners``) states both halves -- "N served, M move" --
+    instead of a bare served count a reader has to compare against the
+    "Tables migrate" tile and the gate's own prose to even notice is a
+    served total, not a moved one. ``table_count - len(table_owners)`` is
+    exactly the owned/moved count regardless of how many engines the wave
+    has (a table belongs to exactly one engine's owned set, so it is
+    never double-subtracted for the merged DynamoDB/DocumentDB wave).
+    Wave 1 (the ``cutover`` branch) keeps its own "tables and views"
+    phrasing unchanged: it carries the whole collected schema, not a
+    per-wave served/owned split.
     """
     n = int(w.get("query_count") or 0)
     basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
     share = fmt_num(w.get("workload_share_percent", 0), 1)
     tables = w.get("table_count") or 0
+    synced = len(w.get("table_owners") or [])
     cutover = w.get("cutover_query_count")
     engines = w.get("engines") or []
     if cutover is not None and engines:
@@ -1788,7 +1856,11 @@ def _wave_headline_stats(w: dict[str, Any]) -> tuple[str, str]:
         )
     else:
         count_phrase = f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis})"
-        table_phrase = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
+        if tables and synced:
+            moved = max(tables - synced, 0)
+            table_phrase = f", {tables} served, {moved} move"
+        else:
+            table_phrase = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
     return count_phrase, table_phrase
 
 
@@ -2000,8 +2072,12 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
                 for o in owners[:15]
             )
             more = f" (+{len(owners) - 15} more)" if len(owners) > 15 else ""
+            # #568 review, Suggestion 4: "N table owners" read oddly for a
+            # list of tables this wave does NOT own -- it names the real
+            # owner elsewhere this wave keeps a synced copy of, so say that.
             out.append(
-                f"- {len(owners)} table {plural_noun(len(owners), 'owner')}: {shown_owners}{more}"
+                f"- {len(owners)} {plural_noun(len(owners), 'table')} kept in sync from "
+                f"their owner: {shown_owners}{more}"
             )
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
         out.append(f"- Gate before the next wave: {escaping.md_text(w.get('gate') or '-')}")

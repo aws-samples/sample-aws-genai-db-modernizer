@@ -234,8 +234,17 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
     """Compute per-engine workload distribution from assignment data.
 
     Returns a dict keyed by engine name with:
-      query_count, in_scope_count, workload_percent, primary_table_count, top_reasons
+      query_count, in_scope_count, workload_percent, top_reasons
     Returns empty dict if no assignment exists.
+
+    #562: this used to also count each engine's table-level ``primary_engine``
+    plurality (``primary_table_count`` -> ``ranking[].primary_tables``), but
+    nothing ever displayed that count -- the query is the unit of
+    assignment (ADR-031 Decision 1), and this field was exactly the
+    table-level summary the migration-waves fix replaced. Dropped rather
+    than recomputed, so nothing can display it later; a per-engine table
+    count a reader actually needs is ``migration_waves[].table_count``,
+    scoped by the engine's own queries.
     """
     if not data.assignment:
         return {}
@@ -244,8 +253,6 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
     total_queries = len(query_assignments)
     if total_queries == 0:
         return {}
-
-    table_assignments = data.assignment.get("table_assignments", [])
 
     # Build per-engine stats
     engine_stats: dict[str, dict] = {}
@@ -264,14 +271,6 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
         if reason:
             engine_stats[eng]["reasons"].append(reason)
 
-    # Count primary tables per engine
-    engine_primary_tables: dict[str, int] = {}
-    for ta in table_assignments:
-        if isinstance(ta, dict):
-            primary = ta.get("primary_engine", "")
-            if primary:
-                engine_primary_tables[primary] = engine_primary_tables.get(primary, 0) + 1
-
     result = {}
     for eng, stats in engine_stats.items():
         # Top reasons by frequency
@@ -284,7 +283,6 @@ def _compute_assignment_distribution(data: SynthesisData) -> dict:
             "query_count": stats["query_count"],
             "in_scope_count": stats["in_scope_count"],
             "workload_percent": round(stats["query_count"] / total_queries * 100, 1),
-            "primary_table_count": engine_primary_tables.get(eng, 0),
             "top_reasons": [r[0] for r in top_reasons],
         }
 
@@ -453,14 +451,12 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             entry["assigned_queries"] = dist["query_count"]
             entry["assigned_queries_in_scope"] = dist["in_scope_count"]
             entry["workload_percent"] = dist["workload_percent"]
-            entry["primary_tables"] = dist["primary_table_count"]
             entry["assignment_reason_summary"] = dist["top_reasons"]
         elif assignment_dist:
             # Engine exists but got no assignments
             entry["assigned_queries"] = 0
             entry["assigned_queries_in_scope"] = 0
             entry["workload_percent"] = 0.0
-            entry["primary_tables"] = 0
             entry["assignment_reason_summary"] = []
 
         if engine in CACHE_OVERLAY_ENGINES and overlay.get("engine") == engine:

@@ -732,7 +732,15 @@
         html += '<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">' + escapeHtml(wave.title) + '</div>';
         const basis = wave.share_basis === 'calls' ? '% of calls' : '% of query patterns';
         let stats = (wave.query_count || 0) + ' queries · ' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;
-        if (wave.table_count) stats += ' · ' + wave.table_count + ' source tables';
+        if (wave.table_count) {
+          const syncedCount = (wave.table_owners || []).length;
+          if (syncedCount) {
+            const movedCount = Math.max(wave.table_count - syncedCount, 0);
+            stats += ' · ' + wave.table_count + ' served, ' + movedCount + ' move';
+          } else {
+            stats += ' · ' + wave.table_count + ' source tables';
+          }
+        }
         html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
         html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(wave.rationale) + '</div>';
         if ((wave.tables || []).length > 0) {

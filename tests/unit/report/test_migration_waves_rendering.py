@@ -312,7 +312,13 @@ class TestEngineeringReportRoadmap:
         assert "2 table names in the assignment did not resolve to a table or view" in md
         assert "co-dependency" in md
         assert "co_dependency" not in md
-        assert "1 table owner: `wordpress.wp_comments` -> DynamoDB (OpenSearch Ingestion)" in md
+        # #568 review, Suggestion 4: "N table owners" read oddly for a table
+        # this wave does NOT own -- it names the real owner it keeps a
+        # synced copy from instead.
+        assert (
+            "1 table kept in sync from their owner: "
+            "`wordpress.wp_comments` -> DynamoDB (OpenSearch Ingestion)" in md
+        )
 
     def test_unresolved_names_note_agrees_in_number_when_singular(self):
         # Grammar: "1 table name ... is not shown", not "... are not shown".
@@ -563,10 +569,14 @@ class TestDeckUsesStoredWaves:
             card_h = min(0.92, step - 0.08)
             box_w, box_h = 9.6, card_h - 0.44
             for w in f["waves"]:
-                rationale_text, gate_text = _wave_card_text(w["note"], w["gate"], box_w, box_h)
-                total_h = _estimated_text_height_in(
-                    rationale_text, 10.0, box_w
-                ) + _estimated_text_height_in(gate_text, 9.0, box_w)
+                sync_text, rationale_text, gate_text = _wave_card_text(
+                    w["note"], w["gate"], w.get("sync_summary", ""), box_w, box_h
+                )
+                total_h = (
+                    _estimated_text_height_in(sync_text, 9.5, box_w)
+                    + _estimated_text_height_in(rationale_text, 10.0, box_w)
+                    + _estimated_text_height_in(gate_text, 9.0, box_w)
+                )
                 assert total_h <= box_h + 1e-9, (
                     f"n={n} wave {w['names']}: estimated text height {total_h:.3f} exceeds "
                     f"the card's text box {box_h:.3f}"
