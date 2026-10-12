@@ -127,7 +127,30 @@ def test_an_unresolvable_index_is_a_warning_not_a_merge_error():
 
     assert merged.errors == []
     assert merged.output is not None
-    assert any("q1" in w for w in merged.warnings)
+    assert any("no index leads with the filtered column" in w for w in merged.warnings)
+
+
+def test_many_residuals_of_the_same_shape_are_one_compact_warning():
+    """#157 review, I4: compact stdout is a headless rule -- a many-pattern
+    case (here, 50 queries that all share the same unresolvable predicate)
+    must still produce one summary warning, not one per pattern id. Each
+    pattern's own ``judgment_reason`` still carries the full detail, in the
+    merged output's ``access_patterns`` (not in this warning)."""
+    queries = [_query(f"q{i}", ["shipped_at"]) for i in range(50)]
+    merged = merge_design_delta(_base(queries), _EMPTY_DELTA)
+
+    assert merged.errors == []
+    assert merged.output is not None
+    access_pattern_warnings = [
+        w for w in merged.warnings if "no index leads with the filtered column" in w
+    ]
+    assert access_pattern_warnings == [
+        "50 access patterns: no index leads with the filtered column(s)"
+    ]
+    # The full detail is still there -- just in the output, not stdout.
+    patterns = merged.output["access_patterns"]
+    assert len(patterns) == 50
+    assert all(p["needs_judgment"] and p["judgment_reason"] for p in patterns)
 
 
 def test_an_empty_query_log_yields_no_patterns():

@@ -67,13 +67,15 @@
         (content.access_patterns || []).forEach(ap => {
           const opCategory = getOpCategory(ap.operation || ap.http_method);
           const keyDesign = isCacheLayer && ap.key_pattern ? keyDesignByPattern[ap.key_pattern] : null;
+          const auroraDest = (ap.source_tables || []).map(t => t.split('.').pop()).join(', ');
           patterns.push({
             id: ap.pattern_id || ap.name || (engine + '-' + patterns.length),
             engine, operation: ap.operation || ap.http_method || '—', opCategory, isCacheLayer,
             sourceTables: (ap.source_tables || []).map(t => t.split('.').pop()).join(', '),
             sourceTablesArray: (ap.source_tables || []).map(t => t.split('.').pop()),
-            destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || '—',
-            description: ap.description || ap.name || '', gsiName: ap.gsi_name || null,
+            destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || auroraDest || '—',
+            description: (AURORA_ENGINE_KEYS.includes(engine) && AURORA_REASON_BY_PATTERN_ID[ap.pattern_id]) || ap.description || ap.name || '',
+            patternDescription: ap.description || ap.name || '', gsiName: ap.gsi_name || null,
             ttlSeconds: keyDesign && typeof keyDesign.ttl_seconds === 'number' ? keyDesign.ttl_seconds : null,
             keyDataType: (keyDesign && keyDesign.data_type) || null
           });
@@ -571,6 +573,16 @@
       return ap.description || '';
     }
 
+    const AURORA_REASON_BY_PATTERN_ID = {};
+    (DATA.results?.synthesis?.query_groups || []).forEach(function(g) {
+      (g.access_patterns || []).forEach(function(ap) {
+        if (AURORA_ENGINE_KEYS.includes(ap.engine) && ap.pattern_id) {
+          const reason = reasonTextFor(g, ap);
+          if (reason) AURORA_REASON_BY_PATTERN_ID[ap.pattern_id] = reason;
+        }
+      });
+    });
+
     function auroraQueryGroupsFor(engine) {
       const groups = DATA.results?.synthesis?.query_groups || [];
       const out = [];
@@ -777,13 +789,18 @@
       tabsHtml += '<button class="tab-button" onclick="switchPatternTab(\'target\')">Target Pattern</button>';
       tabsHtml += '</div>';
       tabsHtml += '<div id="pattern-tab-overview" class="tab-content active">';
+      const fpStructuralDescription = fullPattern.description || fullPattern.name || '';
+      const fpDescription = (AURORA_ENGINE_KEYS.includes(fullPattern.engine) && AURORA_REASON_BY_PATTERN_ID[fullPattern.pattern_id]) || fpStructuralDescription || 'No description available';
       tabsHtml += '<div style="margin-bottom: 24px;"><div class="key-value-label">Description</div>';
-      tabsHtml += '<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">' + escapeHtml(fullPattern.description || fullPattern.name || 'No description available') + '</div></div>';
+      tabsHtml += '<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">' + escapeHtml(fpDescription) + '</div>';
+      if (fpStructuralDescription && fpStructuralDescription !== fpDescription) tabsHtml += '<div style="margin-top: 4px; font-size: 12px; color: var(--color-text-secondary);">' + escapeHtml(fpStructuralDescription) + '</div>';
+      tabsHtml += '</div>';
       tabsHtml += '<div class="key-value-grid">';
       const fpEngineLabel = (ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + (fullPattern.engine === cacheEngine ? ' (cache layer)' : '');
       tabsHtml += '<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">' + engineBadge(fullPattern.engine, fpEngineLabel) + '</div></div>';
       tabsHtml += '<div class="key-value-item"><div class="key-value-label">Operation</div><div class="key-value-value">' + escapeHtml(fullPattern.operation || fullPattern.http_method || '—') + '</div></div>';
-      tabsHtml += '<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || '—') + '</div></div>';
+      const fpAuroraDest = (fullPattern.source_tables || []).map(function(t) { return t.split('.').pop(); }).join(', ');
+      tabsHtml += '<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || fpAuroraDest || '—') + '</div></div>';
       tabsHtml += '</div>';
       if (pattern.isCacheLayer && pattern.ttlSeconds != null) tabsHtml += '<div class="key-value-item"><div class="key-value-label">TTL</div><div class="key-value-value">' + escapeHtml(pattern.ttlSeconds + 's') + '</div></div>';
       if (pattern.isCacheLayer && pattern.keyDataType) tabsHtml += '<div class="key-value-item"><div class="key-value-label">Key data type</div><div class="key-value-value">' + escapeHtml(pattern.keyDataType) + '</div></div>';
@@ -794,9 +811,10 @@
         });
         tabsHtml += '</div></div>';
       }
-      if (fullPattern.query_ids && fullPattern.query_ids.length > 0) {
-        tabsHtml += '<div class="key-value-block"><div class="key-value-label">SQL IDs (' + fullPattern.query_ids.length + ')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">';
-        fullPattern.query_ids.forEach(function(qid) {
+      const fpQueryIds = fullPattern.query_ids || fullPattern.source_query_ids || [];
+      if (fpQueryIds.length > 0) {
+        tabsHtml += '<div class="key-value-block"><div class="key-value-label">SQL IDs (' + fpQueryIds.length + ')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">';
+        fpQueryIds.forEach(function(qid) {
           const journeyAvailable = hasJourney(qid);
           const cursorStyle = journeyAvailable ? 'cursor: pointer;' : 'opacity: 0.6;';
           const onclickAttr = journeyAvailable ? ' onclick="showQueryJourney(' + jsArg(qid) + ')"' : '';
@@ -817,18 +835,22 @@
       if (fullPattern.estimated_item_size != null) tabsHtml += '<div class="key-value-item"><div class="key-value-label">Estimated Item Size</div><div class="key-value-value">' + escapeHtml(String(fullPattern.estimated_item_size)) + ' bytes</div></div>';
       tabsHtml += '</div></div>';
       tabsHtml += '<div id="pattern-tab-source" class="tab-content">';
-      if (fullPattern.source_query) {
-        tabsHtml += '<div><div class="key-value-label">Source SQL Query</div><div class="code-block">' + escapeHtml(fullPattern.source_query) + '</div></div>';
+      const fpSourceQuery = fullPattern.source_query || fullPattern.sql_text;
+      if (fpSourceQuery) {
+        tabsHtml += '<div><div class="key-value-label">Source SQL Query</div><div class="code-block">' + escapeHtml(fpSourceQuery) + '</div></div>';
       } else {
         tabsHtml += '<p style="color: var(--color-text-secondary);">No source query available for this pattern.</p>';
       }
       tabsHtml += '</div>';
       tabsHtml += '<div id="pattern-tab-target" class="tab-content">';
       if (fullPattern.key_condition) tabsHtml += '<div><div class="key-value-label">Key Condition Expression</div><div class="code-block">' + escapeHtml(fullPattern.key_condition) + '</div></div>';
+      const fpTableUnidentified = fullPattern.load_testable === false && (fullPattern.load_testable_reason || '').includes('could be identified');
+      const fpIndexUsed = fullPattern.index_used === '__seq_scan__' ? ((fullPattern.needs_judgment || fpTableUnidentified) ? null : 'None (sequential scan)') : fullPattern.index_used;
+      if (fpIndexUsed) tabsHtml += '<div class="key-value-item"><div class="key-value-label">Index Used</div><div class="key-value-value">' + escapeHtml(fpIndexUsed) + '</div></div>';
       if (fullPattern.dsl_query) {
         tabsHtml += '<div class="key-value-block"><div class="key-value-label">OpenSearch DSL Query</div><div class="code-block">' + (typeof fullPattern.dsl_query === 'string' ? escapeHtml(fullPattern.dsl_query) : escapeHtml(JSON.stringify(fullPattern.dsl_query, null, 2))) + '</div></div>';
       }
-      if (!fullPattern.key_condition && !fullPattern.dsl_query) tabsHtml += '<p style="color: var(--color-text-secondary);">No target pattern details available.</p>';
+      if (!fullPattern.key_condition && !fullPattern.dsl_query && !fpIndexUsed) tabsHtml += '<p style="color: var(--color-text-secondary);">No target pattern details available.</p>';
       tabsHtml += '</div>';
       document.getElementById('pattern-modal-body').innerHTML = tabsHtml;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
       modal.style.display = 'flex';

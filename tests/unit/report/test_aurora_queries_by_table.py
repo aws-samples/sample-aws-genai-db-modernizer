@@ -1,11 +1,13 @@
 """#478: Aurora's queries live in ``query_groups`` like any other
-engine's (``build_query_groups``'s relational branch), since Aurora's schema
-design has no ``access_patterns`` of its own (#157 adds real ones later).
+engine's (``build_query_groups``'s relational branch), while that engine's
+schema design has not run yet and so has no ``access_patterns`` of its own
+(#157 covers the designed case with real, script-derived ones instead -- see
+test_synthesis_real_aurora_access_patterns.py).
 
 Covers the two Engineering Report consequences:
-- "Target schemas by engine" says "N queries" for a relational engine, with
-  its display name in the heading, instead of "0 access patterns" with the
-  raw contract key.
+- "Target schemas by engine" says "N queries" for a not-yet-designed
+  relational engine, with its display name in the heading, instead of "0
+  access patterns" with the raw contract key.
 - A new "Queries on Aurora by table" subsection, scoped to each Aurora
   engine's own entries within a group even when the group is shared with
   another engine (e.g. the cache layer reading the same source table), and

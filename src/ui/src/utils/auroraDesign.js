@@ -1,21 +1,27 @@
 /**
- * Aurora design section (#478): the Results page, the HTML export and the
- * engineering report all show DynamoDB/DocumentDB/ElastiCache/OpenSearch in
- * full detail -- tables, indexes, access patterns -- but Aurora only shows up
- * in the trade-offs tab, because the access pattern explorer reads each
- * design's `access_patterns`, and Aurora's schema-design contract has no such
- * field (it carries over tables 1:1 instead; #157 adds real access patterns
- * later).
+ * Aurora design section (#478): before #157, the Results page, the HTML
+ * export and the engineering report all showed
+ * DynamoDB/DocumentDB/ElastiCache/OpenSearch in full detail -- tables,
+ * indexes, access patterns -- but Aurora only showed up in the trade-offs
+ * tab, because the access pattern explorer reads each design's
+ * `access_patterns`, and Aurora's schema-design contract had no such field
+ * (it carried over tables 1:1 instead). #157 gave Aurora real,
+ * script-derived access patterns once its design has run, so the generic
+ * explorer now shows it there too -- this section stays as the place for
+ * what that explorer still doesn't: the full design (DDL, indexes,
+ * optimizations), not just the per-query browsing view.
  *
- * This module shapes what Aurora *does* already have, with no contract
- * change: `table_definitions` (columns, primary key, indexes, foreign keys),
+ * This module shapes what Aurora has, with no contract change:
+ * `table_definitions` (columns, primary key, indexes, foreign keys),
  * `generated_ddl`, `optimizations` and `migration_strategy` from the schema
  * design, plus "queries on Aurora" grouped by source table -- built from
  * `synthesis.query_groups`, not a separate fetch. The relational branch added
- * to `build_query_groups` (`src/agents/referee/synthesis_report.py`) already
- * puts every query the assignment routed to an Aurora engine into that same
- * `query_groups` list the UI already fetches as part of `/results`, so this
- * is pure data-shaping, no new API call.
+ * to `build_query_groups` (`src/agents/referee/synthesis_report.py`) puts
+ * every query the assignment routed to an Aurora engine into that same
+ * `query_groups` list the UI already fetches as part of `/results` (as a
+ * routing record while the design has not run yet, or -- once it has -- as
+ * the same real access patterns the generic explorer reads), so this is pure
+ * data-shaping, no new API call.
  */
 
 import { displayEngine } from './engineNames';

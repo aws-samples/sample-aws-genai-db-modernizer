@@ -104,8 +104,10 @@ def test_unknown_source_query_ids_do_not_fabricate_queries() -> None:
 # ---------------------------------------------------------------------------
 # #478: a query is the atomic unit synthesis groups by, so a query
 # the assignment routed to an Aurora engine belongs in query_groups like any
-# other -- Aurora's schema-design contract simply has no access_patterns to
-# drive this from (#157 adds real ones later). Built from the assignment,
+# other. This section covers that engine while its own schema design has not
+# run yet, so there is no access_patterns to drive this from (#157 covers the
+# designed case with real, script-derived ones instead -- see
+# test_synthesis_real_aurora_access_patterns.py). Built from the assignment,
 # not the schema design, so a group exists even without one.
 # ---------------------------------------------------------------------------
 

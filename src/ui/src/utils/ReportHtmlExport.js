@@ -21,11 +21,12 @@ import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
 // inline (#225 -- discourse wave 4 lists 226 tables).
 const MAX_INLINE_TABLES = 20;
 
-// Mirrors AURORA_ENGINES in src/agents/referee/synthesis_report.py (#478):
-// a relational engine's query_groups entries are built
-// from the assignment, not a real access pattern (it has none -- #157 adds
-// real ones later), so a group served only by relational engine(s) says
-// "queries" here, not "patterns".
+// Mirrors AURORA_ENGINES in src/agents/referee/synthesis_report.py (#478).
+// This legacy export has had no page to render it from since #356 (see the
+// module docstring) and is kept for its own test coverage only, so it was
+// not updated for #157's real, script-derived Aurora access patterns: a
+// group served only by relational engine(s) always says "queries" here, not
+// "patterns", even once that engine's schema design has run.
 const RELATIONAL_ENGINES = ['aurora_mysql', 'aurora_postgresql'];
 const isRelationalGroup = (engines) => {
   const list = Array.isArray(engines) ? engines : [];

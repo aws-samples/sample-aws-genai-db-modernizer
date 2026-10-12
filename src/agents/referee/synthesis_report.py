@@ -598,11 +598,53 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     source_queries = {q["query_id"]: q for q in data.source_queries}
     groups: dict[str, dict] = {}
 
+    # Reason text repeats far more than it varies (#478): a consolidation
+    # reason is written once per *event*, not per query, so on a large
+    # workload (discourse: 1281 relational access patterns) the distinct
+    # text is a small fraction of the total (146) -- storing it once per
+    # group and indexing into it, instead of copying the full string onto
+    # every access pattern, cut report.json from 1.28 MB to well under that.
+    # Keyed by group name (not nested in ``groups`` itself) so it survives
+    # across this whole function's passes without becoming a serialized
+    # field a consumer could mistake for real data. Shared by the main loop
+    # below (an Aurora engine with a real, #157-derived access pattern) and
+    # the relational branch further down (one still awaiting its design), so
+    # the same table's reasons dedupe together regardless of which branch
+    # built the group first.
+    reason_indices: dict[str, dict[str, int]] = {}
+    # query_id -> the assignment's own routing reason (#157 review, I3): an
+    # Aurora access pattern's own ``description`` is structural ("SELECT on
+    # t; filtered by id"), not why the query is on Aurora at all -- that
+    # fact lives only in the assignment, same source the relational branch
+    # below already reads for the not-yet-designed case.
+    qid_to_assignment_reason = {
+        qa["query_id"]: qa.get("assignment_reason")
+        for qa in (data.assignment or {}).get("query_assignments", [])
+        if qa.get("query_id")
+    }
+
     for engine, artifacts in data.engines.items():
         schema = artifacts.schema_design or {}
         for ap in schema.get("access_patterns", []):
             source_tables = sorted(set(ap.get("source_tables") or []))
-            group_name = ap.get("pattern_group") or ", ".join(source_tables) or "ungrouped"
+            clean_tables = [t for t in source_tables if t not in _PLACEHOLDER_TABLES]
+            if ap.get("pattern_group"):
+                group_name = ap["pattern_group"]
+            elif source_tables and not clean_tables:
+                # #157 review, C2: every name in source_tables is a
+                # placeholder ("unknown", the collector's own catch-all for a
+                # query it could not resolve a table for) -- Aurora's own
+                # access patterns have no pattern_group to fall back on, so
+                # without this a literal "unknown" leaked into the group name
+                # instead of one of the two blame labels the relational
+                # branch below already uses for exactly this fact.
+                group_name = (
+                    UTILITY_GROUP_LABEL
+                    if is_utility_statement(ap.get("sql_text"), source_tables)
+                    else UNRESOLVED_TABLE_GROUP_LABEL
+                )
+            else:
+                group_name = ", ".join(clean_tables) or "ungrouped"
             query_ids = _access_pattern_query_ids(ap)
 
             if group_name not in groups:
@@ -617,19 +659,38 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             if engine not in groups[group_name]["engines"]:
                 groups[group_name]["engines"].append(engine)
 
-            groups[group_name]["access_patterns"].append(
-                {
-                    "pattern_id": ap.get("pattern_id"),
-                    "engine": engine,
-                    "operation": ap.get("operation"),
-                    "table_name": ap.get("table_name"),
-                    "key_condition": ap.get("key_condition"),
-                    "design_rps": ap.get("design_rps", 0),
-                    "description": ap.get("description"),
-                    "in_scope": ap.get("in_scope", True),
-                    "query_ids": query_ids,
-                }
-            )
+            entry = {
+                "pattern_id": ap.get("pattern_id"),
+                "engine": engine,
+                "operation": ap.get("operation"),
+                "table_name": ap.get("table_name"),
+                "key_condition": ap.get("key_condition"),
+                "design_rps": ap.get("design_rps", 0),
+                "description": ap.get("description"),
+                "in_scope": ap.get("in_scope", True),
+                "query_ids": query_ids,
+            }
+            if engine in AURORA_ENGINES:
+                # #157 review, I3: the assignment's own routing reason, via
+                # the same reasons/reason_index mechanism the relational
+                # branch below already uses -- ``description`` above stays
+                # the structural "SELECT on t; filtered by id" text; this is
+                # why the query is on Aurora at all, which every consumer
+                # (the engineering report's "Reason" column,
+                # ``auroraDesign.js``'s "Queries on Aurora" tab) already reads
+                # through ``reason_text_for``/``reasonTextFor``.
+                reason_text = _clean_relational_reason(
+                    qid_to_assignment_reason.get(query_ids[0]) if query_ids else None
+                )
+                group_reasons = groups[group_name].setdefault("reasons", [])
+                idx_by_reason = reason_indices.setdefault(group_name, {})
+                reason_index = idx_by_reason.get(reason_text)
+                if reason_index is None:
+                    reason_index = len(group_reasons)
+                    idx_by_reason[reason_text] = reason_index
+                    group_reasons.append(reason_text)
+                entry["reason_index"] = reason_index
+            groups[group_name]["access_patterns"].append(entry)
 
             groups[group_name]["total_design_rps"] += ap.get("design_rps", 0)
 
@@ -665,33 +726,29 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
 
     # Relational branch (#478): a query is the atomic unit synthesis groups
     # by, so a query the assignment routed to an Aurora engine belongs here
-    # like any other -- Aurora's schema-design contract simply has no
-    # access_patterns to drive the loop above with (#157 adds real ones
-    # later). Built from the assignment, not ``data.engines``, so a group
-    # exists even when Aurora has no schema design at all yet (only the
+    # like any other. Built from the assignment, not ``data.engines``, so a
+    # group exists even when Aurora has no schema design at all yet (only the
     # design-dependent fields -- DDL, table definitions -- are unavailable
-    # then, not the groups; the queries still run on Aurora).
+    # then, not the groups; the queries still run on Aurora). Since #157,
+    # Aurora's schema design derives real access_patterns once it has run; the
+    # step-aside check just below lets the main loop above take over as soon
+    # as it does, so this branch only ever covers an Aurora engine that has
+    # not been designed yet.
     # Sorted, not frozenset iteration order: a frozenset's iteration order is
     # stable within one process but not guaranteed across runs (hash
     # randomization), so which Aurora engine's entry "wins" a shared dict
-    # key below should not depend on it.
-    # Reason text repeats far more than it varies (#478): a consolidation
-    # reason is written once per *event*, not per query, so on a large
-    # workload (discourse: 1281 relational access patterns) the distinct
-    # text is a small fraction of the total (146) -- storing it once per
-    # group and indexing into it, instead of copying the full string onto
-    # every access pattern, cut report.json from 1.28 MB to well under that.
-    # Keyed by group name (not nested in ``groups`` itself) so it survives
-    # across this whole function's two passes without becoming a serialized
-    # field a consumer could mistake for real data.
-    reason_indices: dict[str, dict[str, int]] = {}
+    # key below should not depend on it. ``reason_indices`` (declared at the
+    # top of this function, shared with the main loop above) keeps its own
+    # per-group dedup regardless of which branch builds a group's "reasons"
+    # list first.
     for engine in sorted(AURORA_ENGINES):
         aurora_artifacts = data.engines.get(engine)
         schema = (aurora_artifacts.schema_design if aurora_artifacts else None) or {}
         if schema.get("access_patterns"):
-            # Once #157 lands real access_patterns for this engine, the main
-            # loop above already covers it -- stepping aside here avoids
-            # double-building (and double-counting) its groups.
+            # This engine's schema design has run and derived real
+            # access_patterns, so the main loop above already covers it --
+            # stepping aside here avoids double-building (and
+            # double-counting) its groups.
             continue
 
         # Some assignments carry more than one query_assignments row for the
@@ -1098,7 +1155,22 @@ def build_risk_assessment(
                 ids = on_engine[target]
                 tables = _tables_for(ids, ap_tables, query_tables)
                 if target == engine:
-                    covered = covered_by.get(engine, set())
+                    # #157 review, I2: Aurora's own access patterns are a
+                    # mechanical projection of every query it owns (carry_over
+                    # runs the source SQL as-is), not a design decision -- so
+                    # "covered" by them says nothing about whether this
+                    # anti-pattern (a missing index, a key-value table forced
+                    # relational, ...) was actually addressed. Counting it as
+                    # schema-design coverage would silently resolve every such
+                    # risk just because Aurora derives a pattern for every
+                    # query it owns. An Aurora risk still resolves below, via
+                    # the deliberate-routing/pin_reason path (a sibling query's
+                    # own capability or utility/DDL pin on the same table),
+                    # which is a real decision rather than an artifact of
+                    # derivation.
+                    covered = (
+                        covered_by.get(engine, set()) if engine not in AURORA_ENGINES else set()
+                    )
                     # If all flagged queries are covered by the schema design, it's resolved
                     if ids and ids.issubset(covered):
                         resolved.append(
@@ -2799,16 +2871,20 @@ def build_summary(
             engines = {r["target"] for r in designed}
             relevant_groups = [g for g in query_groups if engines & set(g.get("engines") or [])]
             groups = len(relevant_groups)
-            # #478: a relational engine's queries get their own
+            # #478: before #157, a relational engine's queries got their own
             # query_groups entries (built from the assignment, since the
-            # engine's schema design has no access_patterns -- #157 adds
-            # real ones later) but carry no access pattern, so "N access
-            # patterns across M query groups" could read M > N once a
-            # relational engine's groups counted toward M but never toward
-            # N. Queries and groups are counted on one footing instead --
-            # every distinct in-scope query id these groups carry, for any
-            # designed engine -- and the access-pattern total is called out
-            # separately as the non-relational engines' own figure.
+            # engine's schema design had no access_patterns of its own) but
+            # carried no access pattern, so "N access patterns across M query
+            # groups" could read M > N once a relational engine's groups
+            # counted toward M but never toward N. Queries and groups are
+            # still counted on one footing here -- every distinct in-scope
+            # query id these groups carry, for any designed engine -- which
+            # also still works correctly once an Aurora engine's groups do
+            # carry real access patterns (#157): ``in_scope`` on each one
+            # mirrors the assignment scope, so this set is exactly the queries
+            # the assignment routed to a designed engine, regardless of
+            # whether that engine's own entries are routing records or real
+            # designed patterns.
             query_ids: set[str] = set()
             for g in relevant_groups:
                 for ap in g.get("access_patterns") or []:
@@ -2826,8 +2902,20 @@ def build_summary(
             )
             total_in = sum(n for n, _ in scope.values())
             total_out = sum(n for _, n in scope.values())
+            # "on non-relational engines" only still holds while no Aurora
+            # engine actually contributes any access pattern to this total
+            # (#157 review, C2): an Aurora engine with a schema design but no
+            # access patterns of its own yet (schema_design_available from
+            # table_definitions alone, before #157's derivation covered it)
+            # keeps the qualifier; one that does contribute drops it rather
+            # than being misnamed "non-relational".
+            non_relational_only = not any(
+                target in AURORA_ENGINES and (n_in or n_out)
+                for target, (n_in, n_out) in scope.items()
+            )
             ap_clause = (
-                f"; {_in_scope_phrase(total_in, total_out)} on non-relational engines"
+                f"; {_in_scope_phrase(total_in, total_out)}"
+                f"{' on non-relational engines' if non_relational_only else ''}"
                 if (total_in or total_out)
                 else ""
             )
@@ -3078,23 +3166,21 @@ def generate_executive_summary(
             entry["cached_call_share_pct"] = r.get("cache_call_share_percent", 0)
         if r.get("schema_design_available"):
             entry["target_tables"] = r.get("target_tables", 0)
-            # #478: a relational engine's schema design has no
-            # access_patterns (#157 adds real ones later) -- adding
-            # "access_patterns: 0" next to this engine's own "queries: 53"
-            # read as contradictory, inviting the model to describe Aurora
-            # as having "0 access patterns" despite owning most of the
-            # workload. Only non-relational engines carry this key.
-            if r["target"] not in AURORA_ENGINES:
-                entry["access_patterns"] = r.get("access_patterns", 0)
+            # #157 landed real Aurora access patterns, derived 1:1 from the
+            # queries it owns, so "access_patterns: 53" next to "queries: 53"
+            # is now consistent for every engine with a design -- this key is
+            # no longer withheld from Aurora specifically.
+            entry["access_patterns"] = r.get("access_patterns", 0)
         engine_workload.append(entry)
 
     # #478: neither label is a real "busiest" group (a
     # utility/session statement or a query the collector could not resolve a
     # table for), excluded before taking the top 5, same as the
-    # deterministic summary and the grounding fallback. A relational
-    # engine's group has no access pattern to count -- "queries" instead of
-    # "patterns" for those, so the model never calls Aurora's query count a
-    # pattern count.
+    # deterministic summary and the grounding fallback. An Aurora engine's
+    # group only lacks real access patterns (and so counts as "queries"
+    # rather than "patterns") while its own schema design has not run yet
+    # (#157); once it has, its group entries are real derived patterns like
+    # any other designed engine's.
     named_groups = [
         g
         for g in query_groups
@@ -3103,7 +3189,10 @@ def generate_executive_summary(
     top_groups_ctx = []
     for g in named_groups[:5]:
         group_ctx: dict = {"name": g["group_name"], "rps": round(g["total_design_rps"], 1)}
-        if set(g.get("engines") or []) & AURORA_ENGINES:
+        aurora_without_design = (set(g.get("engines") or []) & AURORA_ENGINES) - set(
+            designed_engines
+        )
+        if aurora_without_design:
             group_ctx["queries"] = len(g["access_patterns"])
         else:
             group_ctx["patterns"] = len(g["access_patterns"])

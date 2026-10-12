@@ -2010,14 +2010,16 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report subsection: "Queries on Aurora by table" (#478).
 
     A query the assignment routed to a relational engine is a ``query_groups``
-    entry like any other (build_query_groups's relational branch, since the
-    engine's schema design has no access_patterns of its own -- #157 adds
-    real ones later), but it reads oddly folded into the generic "## Query
-    groups" table above when a group is shared with, say, the cache layer
-    serving reads on the same source table: that table's row would merge the
-    two engines' access-pattern/source-query counts into one figure. This
-    subsection is scoped to one Aurora engine's own access_patterns within
-    each group instead, so its numbers are never someone else's.
+    entry like any other (build_query_groups's relational branch, while the
+    engine's own schema design has not run yet; once it has, #157's real,
+    script-derived access patterns take over the same group through the
+    module's main loop instead), but it reads oddly folded into the generic
+    "## Query groups" table above when a group is shared with, say, the cache
+    layer serving reads on the same source table: that table's row would
+    merge the two engines' access-pattern/source-query counts into one
+    figure. This subsection is scoped to one Aurora engine's own
+    access_patterns within each group instead, so its numbers are never
+    someone else's.
     """
     out: list[str] = []
     groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
@@ -2259,14 +2261,17 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         for eng, dz in designs.items():
             tables = [t for t in (dz.get("tables") or []) if isinstance(t, dict)]
             n_in, n_out = ap_scope.get(eng, (0, 0))
-            # #478: a relational engine's query_groups entries (built
-            # from the assignment -- its schema design has no access_patterns
-            # of its own, #157 adds real ones later) are queries, not access
-            # patterns; access_pattern_scope counts them the same way either
-            # way (unique engine/pattern_id pairs from query_groups), so the
-            # heading just names the unit differently instead of reaching for
-            # a second, separately-computed count that could disagree.
-            if eng in _RELATIONAL_ENGINES:
+            # #478/#157: a relational engine's query_groups entries are
+            # queries, not access patterns, only while its own schema design
+            # has not run yet (built from the assignment as a routing record,
+            # with no access_patterns of its own) -- access_pattern_count is
+            # the signal either way, since it is 0 until #157's merge has
+            # derived real ones. access_pattern_scope counts the group
+            # entries the same way regardless (unique engine/pattern_id pairs
+            # from query_groups), so this just names the unit differently
+            # instead of reaching for a second, separately-computed count
+            # that could disagree.
+            if eng in _RELATIONAL_ENGINES and not dz.get("access_pattern_count"):
                 n_queries = n_in + n_out
                 unit_text = f"{n_queries} {plural_noun(n_queries, 'query', 'queries')}"
                 eng_heading = escaping.md_text(display_engine(eng))
@@ -2280,7 +2285,11 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     else ""
                 )
                 unit_text = f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split}"
-                eng_heading = escaping.md_text(eng)
+                eng_heading = (
+                    escaping.md_text(display_engine(eng))
+                    if eng in _RELATIONAL_ENGINES
+                    else escaping.md_text(eng)
+                )
             out += [
                 f"### {eng_heading} ({len(tables)} target "
                 f"{plural_noun(len(tables), 'object')}, "

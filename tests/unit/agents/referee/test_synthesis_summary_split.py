@@ -100,6 +100,38 @@ def test_schema_totals_cover_every_engine_with_workload() -> None:
     assert "10 target tables with 13 access patterns" not in text
 
 
+def test_aurora_access_patterns_drop_the_non_relational_wording() -> None:
+    """#157 review (C2): once Aurora has real access patterns of its own, the
+    summary counts them like any other designed engine's and stops calling
+    the in-scope total "non-relational engines" only."""
+    data = _data()
+    aurora_patterns = [
+        {"pattern_id": f"a{i}", "in_scope": True, "query_ids": [f"a{i}"]} for i in range(10)
+    ]
+    data.engines = {
+        "dynamodb": EngineArtifacts("dynamodb", schema_design={"access_patterns": [{}] * 52}),
+        "elasticache": EngineArtifacts("elasticache", schema_design={"access_patterns": [{}] * 13}),
+        "aurora_mysql": EngineArtifacts(
+            "aurora_mysql", schema_design={"access_patterns": aurora_patterns}
+        ),
+    }
+    groups = GROUPS + [
+        {
+            "group_name": "wordpress.wp_options",
+            "engines": ["aurora_mysql"],
+            "access_patterns": [
+                {"engine": "aurora_mysql", "query_ids": [f"a{i}"], "in_scope": True}
+                for i in range(10)
+            ],
+        }
+    ]
+    text = build_summary(data, RANKING, MAPPINGS, TCO, RISKS, groups)
+
+    assert "on non-relational engines" not in text
+    assert "75 in-scope access patterns" in text
+    assert "aurora_mysql: 9 target tables, 10 in-scope access patterns" in text
+
+
 def test_only_in_scope_access_patterns_are_counted() -> None:
     data = _data()
     patterns = [{"pattern_id": f"p{i}", "in_scope": i >= 5} for i in range(52)]

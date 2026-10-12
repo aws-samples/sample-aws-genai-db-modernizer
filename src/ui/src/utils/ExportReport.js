@@ -320,13 +320,21 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        (content.access_patterns || []).forEach(ap => {\n';
   script += '          const opCategory = getOpCategory(ap.operation || ap.http_method);\n';
   script += '          const keyDesign = isCacheLayer && ap.key_pattern ? keyDesignByPattern[ap.key_pattern] : null;\n';
+  script += '          const auroraDest = (ap.source_tables || []).map(t => t.split(\'.\').pop()).join(\', \');\n';
   script += '          patterns.push({\n';
   script += '            id: ap.pattern_id || ap.name || (engine + \'-\' + patterns.length),\n';
   script += '            engine, operation: ap.operation || ap.http_method || \'—\', opCategory, isCacheLayer,\n';
   script += '            sourceTables: (ap.source_tables || []).map(t => t.split(\'.\').pop()).join(\', \'),\n';
   script += '            sourceTablesArray: (ap.source_tables || []).map(t => t.split(\'.\').pop()),\n';
-  script += '            destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || \'—\',\n';
-  script += '            description: ap.description || ap.name || \'\', gsiName: ap.gsi_name || null,\n';
+  // Aurora (#157/#429 part 1) has no table_name/key_pattern/etc. of its own
+  // -- its destination IS its source table(s), carried over 1:1 -- so the
+  // fallback chain ends on source_tables rather than '—'.
+  script += '            destTable: ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || auroraDest || \'—\',\n';
+  // #157 review round 2: a designed Aurora row's Description column shows
+  // the assignment's own routing reason; patternDescription keeps the
+  // structural text available for the detail modal's secondary line.
+  script += '            description: (AURORA_ENGINE_KEYS.includes(engine) && AURORA_REASON_BY_PATTERN_ID[ap.pattern_id]) || ap.description || ap.name || \'\',\n';
+  script += '            patternDescription: ap.description || ap.name || \'\', gsiName: ap.gsi_name || null,\n';
   script += '            ttlSeconds: keyDesign && typeof keyDesign.ttl_seconds === \'number\' ? keyDesign.ttl_seconds : null,\n';
   script += '            keyDataType: (keyDesign && keyDesign.data_type) || null\n';
   script += '          });\n';
@@ -878,15 +886,16 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
-  // #478: Aurora's schema design has no access_patterns (tables carry over
-  // 1:1; #157 adds real access patterns later), so extractPatterns() above
-  // never sees it. The relational branch in build_query_groups
+  // #478: while Aurora's schema design has not run yet, its tables carry
+  // over 1:1 with no access_patterns at all, so extractPatterns() above sees
+  // nothing for it (#157 covers it with real, script-derived ones once the
+  // design has run). The relational branch in build_query_groups
   // (src/agents/referee/synthesis_report.py) already puts every query the
   // assignment routed to an Aurora engine into DATA.results.synthesis.
-  // query_groups, so this section is built from that plus DATA.schemaDesigns
-  // directly -- the same two sources the live Results page's
-  // utils/auroraDesign.js reads, kept in parity by hand (this file has no
-  // access to that module -- it is lifted into static text by
+  // query_groups regardless, so this section is built from that plus
+  // DATA.schemaDesigns directly -- the same two sources the live Results
+  // page's utils/auroraDesign.js reads, kept in parity by hand (this file has
+  // no access to that module -- it is lifted into static text by
   // scripts/sync_report_template.py, which cannot import JS modules).
   script += '    const AURORA_ENGINE_KEYS = [\'aurora_mysql\', \'aurora_postgresql\', \'aurora\'];\n';
   // Mirrors AURORA_BLAME_LABELS in src/ui/src/utils/auroraDesign.js and
@@ -910,6 +919,23 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      }\n';
   script += '      return ap.description || \'\';\n';
   script += '    }\n';
+  script += '\n';
+  // #157 review round 2: the explorer's "Description" column (built in
+  // extractPatterns above, which runs after this -- see its own call site
+  // at the bottom of this script) names why a query is on Aurora at all
+  // (the assignment's own reason) for a designed row, not just the
+  // pattern's own structural text. Keyed by pattern_id, which both
+  // query_groups' access_patterns entries and the schema design's own
+  // content.access_patterns share (they are the same derived dict).
+  script += '    const AURORA_REASON_BY_PATTERN_ID = {};\n';
+  script += '    (DATA.results?.synthesis?.query_groups || []).forEach(function(g) {\n';
+  script += '      (g.access_patterns || []).forEach(function(ap) {\n';
+  script += '        if (AURORA_ENGINE_KEYS.includes(ap.engine) && ap.pattern_id) {\n';
+  script += '          const reason = reasonTextFor(g, ap);\n';
+  script += '          if (reason) AURORA_REASON_BY_PATTERN_ID[ap.pattern_id] = reason;\n';
+  script += '        }\n';
+  script += '      });\n';
+  script += '    });\n';
   script += '\n';
   script += '    function auroraQueryGroupsFor(engine) {\n';
   script += '      const groups = DATA.results?.synthesis?.query_groups || [];\n';
@@ -1149,13 +1175,24 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      tabsHtml += \'<button class="tab-button" onclick="switchPatternTab(\\\'target\\\')">Target Pattern</button>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-overview" class="tab-content active">\';\n';
+  // #157 review round 2: a designed Aurora row's main Description is the
+  // assignment's routing reason, same as extractPatterns above; the
+  // structural text (fpStructuralDescription) still shows as a secondary
+  // line when it differs (every other engine: the two are the same string).
+  script += '      const fpStructuralDescription = fullPattern.description || fullPattern.name || \'\';\n';
+  script += '      const fpDescription = (AURORA_ENGINE_KEYS.includes(fullPattern.engine) && AURORA_REASON_BY_PATTERN_ID[fullPattern.pattern_id]) || fpStructuralDescription || \'No description available\';\n';
   script += '      tabsHtml += \'<div style="margin-bottom: 24px;"><div class="key-value-label">Description</div>\';\n';
-  script += '      tabsHtml += \'<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">\' + escapeHtml(fullPattern.description || fullPattern.name || \'No description available\') + \'</div></div>\';\n';
+  script += '      tabsHtml += \'<div class="key-value-value" style="margin-top: 4px; padding: 16px; background: var(--color-bg-layout); border-radius: 8px;">\' + escapeHtml(fpDescription) + \'</div>\';\n';
+  script += '      if (fpStructuralDescription && fpStructuralDescription !== fpDescription) tabsHtml += \'<div style="margin-top: 4px; font-size: 12px; color: var(--color-text-secondary);">\' + escapeHtml(fpStructuralDescription) + \'</div>\';\n';
+  script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-grid">\';\n';
   script += '      const fpEngineLabel = (ENGINE_LABELS[fullPattern.engine] || fullPattern.engine) + (fullPattern.engine === cacheEngine ? \' (cache layer)\' : \'\');\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Engine</div><div class="key-value-value">\' + engineBadge(fullPattern.engine, fpEngineLabel) + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Operation</div><div class="key-value-value">\' + escapeHtml(fullPattern.operation || fullPattern.http_method || \'—\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">\' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || \'—\') + \'</div></div>\';\n';
+  // Aurora (#157/#429 part 1) has no table_name/key_pattern/etc. of its own
+  // -- its destination IS its source table(s), carried over 1:1.
+  script += '      const fpAuroraDest = (fullPattern.source_tables || []).map(function(t) { return t.split(\'.\').pop(); }).join(\', \');\n';
+  script += '      tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Destination Table</div><div class="key-value-value">\' + escapeHtml(fullPattern.table_name || fullPattern.key_pattern || fullPattern.index_or_stream || fullPattern.index || fullPattern.collection || fpAuroraDest || \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   // Cache rows: TTL and key data type live in key_designs, which buildPatterns
   // already joined onto the row -- same metrics as the Results page modal.
@@ -1168,9 +1205,12 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        });\n';
   script += '        tabsHtml += \'</div></div>\';\n';
   script += '      }\n';
-  script += '      if (fullPattern.query_ids && fullPattern.query_ids.length > 0) {\n';
-  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">SQL IDs (\' + fullPattern.query_ids.length + \')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">\';\n';
-  script += '        fullPattern.query_ids.forEach(function(qid) {\n';
+  // Aurora's own raw pattern keys its query ids source_query_ids (#157),
+  // same split DocumentDB/ElastiCache already use.
+  script += '      const fpQueryIds = fullPattern.query_ids || fullPattern.source_query_ids || [];\n';
+  script += '      if (fpQueryIds.length > 0) {\n';
+  script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">SQL IDs (\' + fpQueryIds.length + \')</div><div style="display: flex; flex-wrap: wrap; gap: 8px;">\';\n';
+  script += '        fpQueryIds.forEach(function(qid) {\n';
   script += '          const journeyAvailable = hasJourney(qid);\n';
   script += '          const cursorStyle = journeyAvailable ? \'cursor: pointer;\' : \'opacity: 0.6;\';\n';
   script += '          const onclickAttr = journeyAvailable ? \' onclick="showQueryJourney(\' + jsArg(qid) + \')"\' : \'\';\n';
@@ -1191,18 +1231,31 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (fullPattern.estimated_item_size != null) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Estimated Item Size</div><div class="key-value-value">\' + escapeHtml(String(fullPattern.estimated_item_size)) + \' bytes</div></div>\';\n';
   script += '      tabsHtml += \'</div></div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-source" class="tab-content">\';\n';
-  script += '      if (fullPattern.source_query) {\n';
-  script += '        tabsHtml += \'<div><div class="key-value-label">Source SQL Query</div><div class="code-block">\' + escapeHtml(fullPattern.source_query) + \'</div></div>\';\n';
+  // Aurora's sql_text runs as-is on a carry_over target (#157) -- same role
+  // as source_query for the other engines that already have one.
+  script += '      const fpSourceQuery = fullPattern.source_query || fullPattern.sql_text;\n';
+  script += '      if (fpSourceQuery) {\n';
+  script += '        tabsHtml += \'<div><div class="key-value-label">Source SQL Query</div><div class="code-block">\' + escapeHtml(fpSourceQuery) + \'</div></div>\';\n';
   script += '      } else {\n';
   script += '        tabsHtml += \'<p style="color: var(--color-text-secondary);">No source query available for this pattern.</p>\';\n';
   script += '      }\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      tabsHtml += \'<div id="pattern-tab-target" class="tab-content">\';\n';
   script += '      if (fullPattern.key_condition) tabsHtml += \'<div><div class="key-value-label">Key Condition Expression</div><div class="code-block">\' + escapeHtml(fullPattern.key_condition) + \'</div></div>\';\n';
+  // Aurora's one judgment field (#157): which index serves this pattern's
+  // predicate, by leftmost-prefix. '__seq_scan__' never reaches the reader
+  // as-is (#157 review, S1 and round 2): an unknown predicate, or a query
+  // whose table could not be identified at all (load_testable=false with
+  // that reason -- there was nothing to resolve an index against), both
+  // hide the field entirely; a confirmed empty predicate on an identified
+  // table shows "None (sequential scan)" instead of the script-internal name.
+  script += '      const fpTableUnidentified = fullPattern.load_testable === false && (fullPattern.load_testable_reason || \'\').includes(\'could be identified\');\n';
+  script += '      const fpIndexUsed = fullPattern.index_used === \'__seq_scan__\' ? ((fullPattern.needs_judgment || fpTableUnidentified) ? null : \'None (sequential scan)\') : fullPattern.index_used;\n';
+  script += '      if (fpIndexUsed) tabsHtml += \'<div class="key-value-item"><div class="key-value-label">Index Used</div><div class="key-value-value">\' + escapeHtml(fpIndexUsed) + \'</div></div>\';\n';
   script += '      if (fullPattern.dsl_query) {\n';
   script += '        tabsHtml += \'<div class="key-value-block"><div class="key-value-label">OpenSearch DSL Query</div><div class="code-block">\' + (typeof fullPattern.dsl_query === \'string\' ? escapeHtml(fullPattern.dsl_query) : escapeHtml(JSON.stringify(fullPattern.dsl_query, null, 2))) + \'</div></div>\';\n';
   script += '      }\n';
-  script += '      if (!fullPattern.key_condition && !fullPattern.dsl_query) tabsHtml += \'<p style="color: var(--color-text-secondary);">No target pattern details available.</p>\';\n';
+  script += '      if (!fullPattern.key_condition && !fullPattern.dsl_query && !fpIndexUsed) tabsHtml += \'<p style="color: var(--color-text-secondary);">No target pattern details available.</p>\';\n';
   script += '      tabsHtml += \'</div>\';\n';
   script += '      document.getElementById(\'pattern-modal-body\').innerHTML = tabsHtml;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '      modal.style.display = \'flex\';\n';

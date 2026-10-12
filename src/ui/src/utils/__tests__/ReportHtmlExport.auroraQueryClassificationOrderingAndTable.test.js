@@ -3,8 +3,10 @@
  * must not let a collector/utility "blame" group (see AURORA_BLAME_LABELS in
  * ../auroraDesign) occupy one of the top-10 slots ahead of a group that
  * names a real table, and its per-pattern "Table" column must fall back to
- * the group's own name for a relational engine's access patterns, which
- * carry no `table_name` of their own (#157 adds real ones later).
+ * the group's own name for a relational engine's query_groups entries, which
+ * carry no `table_name` of their own (this legacy, page-less export was not
+ * updated for #157's real Aurora access patterns -- see ReportHtmlExport.js's
+ * module docstring).
  */
 import { buildReportHtml } from '../ReportHtmlExport';
 

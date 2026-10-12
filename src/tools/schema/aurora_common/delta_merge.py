@@ -409,6 +409,51 @@ def _time_zone_notes(ddl: DdlResult) -> list[dict]:
     ]
 
 
+_FILTER_UNKNOWN = "filter predicate unknown"
+_NO_LEADING_INDEX = "no index leads with the filtered column(s)"
+_AMBIGUOUS_INDEX = "ambiguous index choice"
+
+
+def _residual_category(reason: str) -> str:
+    """A short, stable label for one access-pattern residual's reason.
+
+    Matches ``access_patterns._resolve_index``'s three residual shapes by
+    their fixed opening clause, not the full sentence (which carries
+    per-pattern detail -- table/index names -- that would defeat grouping).
+    """
+    if reason.startswith("Filter predicate unknown"):
+        return _FILTER_UNKNOWN
+    if reason.startswith("No index leads with any filtered column"):
+        return _NO_LEADING_INDEX
+    return _AMBIGUOUS_INDEX
+
+
+def _access_pattern_residual_warnings(residuals: list[dict]) -> list[str]:
+    """One compact warning for every access-pattern residual, not one each.
+
+    Headless stdout must stay compact (AGENTS.md): on a real workload, most
+    residuals are the same handful of reason shapes repeated per query (a
+    wordpress run case has 42 "filter predicate unknown" residuals), so one
+    line per pattern id turned a single ``--finalize`` status line into
+    dozens (#157 review, I4). Each pattern's own ``judgment_reason`` already
+    carries the full detail in the merged output's ``access_patterns`` --
+    this is a count by category, not a replacement for it.
+    """
+    if not residuals:
+        return []
+    counts: dict[str, int] = {}
+    for r in residuals:
+        category = _residual_category(str(r.get("reason") or ""))
+        counts[category] = counts.get(category, 0) + 1
+    if len(counts) == 1:
+        category, n = next(iter(counts.items()))
+        return [f"{n} access pattern{'s' if n != 1 else ''}: {category}"]
+    parts = ", ".join(
+        f"{n} {category}" for category, n in sorted(counts.items(), key=lambda kv: -kv[1])
+    )
+    return [f"{len(residuals)} access patterns need judgment: {parts}"]
+
+
 def _default_trade_off(base: AuroraDesignBase, n_tables: int) -> dict:
     strategy = base.migration_strategy
     how = (
@@ -530,10 +575,8 @@ def merge_design_delta(
     # proposed design instead, which is a different (and also useful) question,
     # but it needs an _Index -> AgentTable adaptation that belongs in its own
     # change rather than riding along here.
-    derived = derive_access_patterns(base.queries, base.tables)
-    warnings.extend(
-        f"Access pattern '{r.get('pattern_id')}': {r.get('reason')}" for r in derived.residuals
-    )
+    derived = derive_access_patterns(base.queries, base.tables, base.engine)
+    warnings.extend(_access_pattern_residual_warnings(derived.residuals))
     output = {
         "contract_version": "1.0",
         "job_id": base.job_id,

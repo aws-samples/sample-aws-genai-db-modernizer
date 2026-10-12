@@ -505,6 +505,7 @@
   "analysis-results-v2.pattern-detail.item-size-value": "{{size}} bytes",
   "analysis-results-v2.pattern-detail.avg-items-returned": "Avg items returned",
   "analysis-results-v2.pattern-detail.gsi": "GSI",
+  "analysis-results-v2.pattern-detail.index-used": "Index used",
   "analysis-results-v2.pattern-detail.pattern-group": "Pattern group",
   "analysis-results-v2.pattern-detail.partition-key": "Partition key",
   "analysis-results-v2.pattern-detail.sort-key": "Sort key",

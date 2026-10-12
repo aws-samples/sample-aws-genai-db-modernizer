@@ -1,6 +1,6 @@
 """Tests for deterministic Aurora access-pattern derivation.
 
-Two properties matter here and are tested separately.
+Several properties matter here and are tested separately.
 
 Derivation must be a *projection*, not a design: ``design_rps`` is the
 collector's measured ``calls_per_second`` and is never invented, and
@@ -12,6 +12,22 @@ Provenance holds *structurally* rather than by prompt: the designer returns an
 merge derives them from the draft. There is no path by which a model can
 re-author ``design_rps`` — the #136 failure mode is absent by construction, not
 defended against.
+
+Matching is schema-insensitive (#157 review, C1): the collector reports
+``tables_accessed`` schema-qualified (``wordpress.wp_posts``), while a design
+table's own name is bare (``wp_posts``). The default ``_query`` fixture below
+qualifies its table the same way, so every test here exercises that match
+rather than accidentally relying on both sides happening to already agree.
+
+``in_scope`` mirrors the assignment scope only -- unconditionally true, since
+``queries`` is already assignment-scoped to this engine before derivation
+ever runs (#157 review, I1) -- and ``load_testable`` is a separate fact: a
+query can be in scope with its table unidentified, or with nothing measured
+to drive a load test by (#157 review, I4).
+
+A query's ``filter_columns`` of ``None`` means the collector never recorded
+one, which is not the same fact as an empty list -- a confirmed scan with no
+predicate at all (#157 review, I3).
 """
 
 from __future__ import annotations
@@ -61,14 +77,19 @@ def _orders() -> AgentTable:
 
 def _query(
     query_id: str,
-    filter_columns: list[str],
+    filter_columns: list[str] | None,
     *,
     calls_per_second: float | None = 5.0,
-    table: str = "orders",
+    table: str = "shop.orders",
     p95: float | None = 12.0,
     db_load: float | None = 14.0,
     sort_columns: list[str] | None = None,
 ) -> AgentQueryPattern:
+    """``table`` is schema-qualified by default, matching real collector output.
+
+    A design table's own ``table_name`` stays bare (see ``_orders``); the
+    schema prefix here is what C1's fix has to see past.
+    """
     return AgentQueryPattern(
         query_id=query_id,
         query_text=f"SELECT * FROM {table} -- {query_id}",
@@ -90,6 +111,48 @@ def _only(queries: list[AgentQueryPattern], tables: list[AgentTable]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Schema-insensitive table matching (#157 review, C1)
+# ---------------------------------------------------------------------------
+
+
+def test_schema_qualified_table_matches_the_bare_design_table():
+    """``wordpress.wp_posts`` (collector) must match ``wp_posts`` (design).
+
+    Without stripping the schema qualifier the same way
+    ``delta_merge._table_key`` does, this query's tables look undesigned and
+    every pattern comes back out of scope -- the bug the review found running
+    the whole wordpress sample (all 49 patterns out of scope).
+    """
+    table = AgentTable(
+        table_id="wordpress.wp_posts",
+        table_name="wp_posts",
+        row_count=100,
+        columns=[_col("id")],
+        primary_key=["id"],
+    )
+    pattern = _only([_query("q", ["id"], table="wordpress.wp_posts")], [table])
+
+    assert pattern["in_scope"] is True
+    assert pattern["index_used"] == "PRIMARY"
+    assert pattern["script_derived"] is True
+
+
+def test_quoted_schema_and_table_both_fold_for_matching():
+    """Brackets/quotes around either segment are stripped before folding."""
+    table = AgentTable(
+        table_id="t",
+        table_name="Posts",
+        row_count=10,
+        columns=[_col("Id")],
+        primary_key=['"Id"'],
+    )
+    pattern = _only([_query("q", ["id"], table='"WordPress"."Posts"')], [table])
+
+    assert pattern["in_scope"] is True
+    assert pattern["index_used"] == "PRIMARY"
+
+
+# ---------------------------------------------------------------------------
 # Index resolution — the leftmost-prefix rule
 # ---------------------------------------------------------------------------
 
@@ -106,6 +169,42 @@ def test_primary_key_lookup_resolves_deterministically():
     assert pattern["index_used"] == "PRIMARY"
     assert pattern["script_derived"] is True
     assert pattern["needs_judgment"] is False
+
+
+def test_postgresql_primary_key_uses_its_own_pkey_naming():
+    """PostgreSQL auto-names a PK index ``<table>_pkey``, not MySQL's ``PRIMARY``.
+
+    ``ddl_generator.is_primary_key_index`` already knows this split for the
+    collector side; a reader confirming the index in a PostgreSQL console
+    should see the name that is actually there.
+    """
+    result = derive_access_patterns([_query("q", ["id"])], [_orders()], engine="aurora_postgresql")
+    pattern = result.patterns[0]
+
+    assert pattern["index_used"] == "orders_pkey"
+    assert pattern["script_derived"] is True
+
+
+def test_a_real_collector_reported_primary_key_index_name_is_preferred():
+    """#157 review, S3: the synthetic dialect-default PK name is only a
+    guess for when the collector didn't report the PK as an index at all --
+    when it did (an entry with ``is_primary=True`` and its own name), that
+    real name wins over the guess.
+    """
+    table = AgentTable(
+        table_id="t",
+        table_name="orders",
+        row_count=10,
+        columns=[_col("id")],
+        primary_key=["id"],
+        indexes=[
+            AgentIndex(index_name="orders_pk_v2", columns=["id"], is_unique=True, is_primary=True)
+        ],
+    )
+    pattern = _only([_query("q", ["id"], table="orders")], [table])
+
+    assert pattern["index_used"] == "orders_pk_v2"
+    assert pattern["script_derived"] is True
 
 
 def test_compound_index_matches_on_a_leading_prefix():
@@ -147,7 +246,7 @@ def test_ambiguous_prefix_is_handed_over_rather_than_guessed():
             AgentIndex(index_name="idx_b", columns=["email", "tenant"], is_unique=False),
         ],
     )
-    result = derive_access_patterns([_query("q", ["email"], table="users")], [table])
+    result = derive_access_patterns([_query("q", ["email"], table="store.users")], [table])
     pattern = result.patterns[0]
 
     assert pattern["needs_judgment"] is True
@@ -168,7 +267,7 @@ def test_uniqueness_breaks_a_same_prefix_tie():
             AgentIndex(index_name="idx_uq", columns=["code"], is_unique=True),
         ],
     )
-    pattern = _only([_query("q", ["code"], table="accts")], [table])
+    pattern = _only([_query("q", ["code"], table="bank.accts")], [table])
 
     assert pattern["index_used"] == "idx_uq"
     assert pattern["script_derived"] is True
@@ -183,9 +282,40 @@ def test_quoted_and_mixed_case_identifiers_still_match():
         columns=[_col("Id")],
         primary_key=['"Id"'],
     )
-    pattern = _only([_query("q", ["id"], table="Mixed")], [table])
+    pattern = _only([_query("q", ["id"], table="app.Mixed")], [table])
 
     assert pattern["index_used"] == "PRIMARY"
+    assert pattern["script_derived"] is True
+
+
+# ---------------------------------------------------------------------------
+# Unknown vs. confirmed-empty predicates (#157 review, I3)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_filter_predicate_makes_no_index_or_scan_claim():
+    """``filter_columns=None`` means the collector never recorded one.
+
+    That is not the same fact as an empty list (a confirmed no-predicate
+    scan): neither "an index serves this" nor "a full scan is expected" can
+    be claimed, so the pattern is handed to the LLM instead.
+    """
+    result = derive_access_patterns([_query("q", None)], [_orders()])
+    pattern = result.patterns[0]
+
+    assert pattern["index_used"] == NO_INDEX
+    assert pattern["needs_judgment"] is True
+    assert pattern["script_derived"] is False
+    assert "unknown" in pattern["judgment_reason"].lower()
+    assert len(result.residuals) == 1
+
+
+def test_confirmed_empty_predicate_still_claims_a_full_scan():
+    """An explicit ``[]`` is the only "no predicate" -- contrast with above."""
+    pattern = _only([_query("q", [])], [_orders()])
+
+    assert pattern["index_used"] == NO_INDEX
+    assert pattern["needs_judgment"] is False
     assert pattern["script_derived"] is True
 
 
@@ -209,19 +339,53 @@ def test_unfiltered_aggregate_is_not_a_missing_index():
     assert result.residuals == []
 
 
-def test_query_on_a_table_assigned_elsewhere_is_out_of_scope():
-    """Assignment splits a source across engines, so this input is expected.
-
-    Without this branch every DynamoDB- or DocumentDB-assigned query returns
-    here as an "add an index" recommendation.
+def test_an_unidentified_table_is_in_scope_but_not_load_testable():
+    """#157 review, I1: ``queries`` is already assignment-scoped to this
+    engine -- every entry in it is something the assignment routed here, so
+    ``in_scope`` is true unconditionally, even when this method cannot
+    identify the query's table (here, a name absent from the design;
+    typically the collector's own "unknown" placeholder in practice). That
+    is a load-testability gap, not an assignment-scope one: there is nothing
+    to resolve an index against, so the pattern is in scope but not
+    load-testable.
     """
-    result = derive_access_patterns([_query("q", ["email"], table="ghost")], [_orders()])
+    result = derive_access_patterns([_query("q", ["email"], table="shop.ghost")], [_orders()])
     pattern = result.patterns[0]
 
-    assert pattern["in_scope"] is False
-    assert pattern["out_of_scope_reason"]
+    assert pattern["in_scope"] is True
+    assert pattern["out_of_scope_reason"] is None
+    assert pattern["load_testable"] is False
+    assert pattern["load_testable_reason"]
     assert pattern["needs_judgment"] is False
     assert result.residuals == []
+
+
+# ---------------------------------------------------------------------------
+# in_scope vs. load_testable (#157 review, I4)
+# ---------------------------------------------------------------------------
+
+
+def test_in_scope_mirrors_assignment_scope_only():
+    """``in_scope`` is true unconditionally (``queries`` is already
+    assignment-scoped to this engine, #157 review I1), regardless of
+    whether a rate was measured. The report reads this to count the
+    assignment's scope; a load test's own eligibility filter reads
+    ``load_testable`` instead -- the two must not share one field.
+    """
+    query = _query("q", ["id"], calls_per_second=None)
+    query.frequency_per_hour = 0.0
+    pattern = _only([query], [_orders()])
+
+    assert pattern["in_scope"] is True
+    assert pattern["load_testable"] is False
+    assert pattern["load_testable_reason"]
+
+
+def test_load_testable_true_when_a_rate_is_measured():
+    pattern = _only([_query("q", ["id"], calls_per_second=5.0)], [_orders()])
+
+    assert pattern["load_testable"] is True
+    assert pattern["load_testable_reason"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -242,21 +406,6 @@ def test_design_rps_falls_back_to_hourly_frequency():
     pattern = _only([query], [_orders()])
 
     assert pattern["design_rps"] == pytest.approx(2.0)
-
-
-def test_unmeasured_rate_is_out_of_scope_rather_than_assumed():
-    """A pattern with no measured rate cannot drive a load test.
-
-    Reporting 0.0 and ``in_scope=False`` is honest; substituting a plausible
-    default would produce a load test calibrated to a number nobody measured.
-    """
-    query = _query("q", ["id"], calls_per_second=None)
-    query.frequency_per_hour = 0.0
-    pattern = _only([query], [_orders()])
-
-    assert pattern["design_rps"] == 0.0
-    assert pattern["in_scope"] is False
-    assert pattern["out_of_scope_reason"]
 
 
 def test_source_baseline_travels_with_the_pattern():

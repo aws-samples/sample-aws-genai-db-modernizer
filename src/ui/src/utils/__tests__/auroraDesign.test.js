@@ -1,11 +1,13 @@
 /**
- * #478: Aurora has no `access_patterns` field (Aurora carries tables over 1:1;
- * #157 adds real access patterns later), so the Results page can't reach it
- * through the access pattern explorer. These tests cover the data-shaping
- * that builds the "Aurora design" section instead, straight from the schema
+ * #478: while Aurora's schema design has not run yet, it has no
+ * `access_patterns` field at all (tables carry over 1:1), so the Results
+ * page can't reach it through the access pattern explorer (#157 covers that
+ * case once the design has run). These tests cover the data-shaping that
+ * builds the "Aurora design" section instead, straight from the schema
  * design's `table_definitions`/`generated_ddl`/`optimizations` and the
  * synthesis report's `query_groups` (which the relational branch in
- * `build_query_groups` now populates for Aurora from the assignment).
+ * `build_query_groups` populates for Aurora from the assignment as a routing
+ * record, while the design has not run yet).
  */
 import {
   isAuroraEngine,

@@ -515,11 +515,12 @@ SUMMARY_GROUNDING_RULE = (
 
 _TOP_GROUPS_PER_ENGINE = 5
 
-# #478: a relational engine's query_groups entries built
-# from the assignment (not a real schema-design access pattern -- #157 adds
-# those later) label a query with no real source table one of these two
-# ways instead of a generic "unknown" (synthesis_report.py carries the exact
-# same two strings as UTILITY_GROUP_LABEL/UNRESOLVED_TABLE_GROUP_LABEL;
+# #478: a relational engine's query_groups entries built from the
+# assignment (a routing record, while that engine's own schema design has
+# not run yet -- #157 covers it with a real, script-derived access pattern
+# as soon as it has) label a query with no real source table one of these
+# two ways instead of a generic "unknown" (synthesis_report.py carries the
+# exact same two strings as UTILITY_GROUP_LABEL/UNRESOLVED_TABLE_GROUP_LABEL;
 # duplicated here, not imported, to avoid a circular import --
 # synthesis_report already imports from this module). Neither is a real
 # access pattern a reader should see named as a "busiest" group.

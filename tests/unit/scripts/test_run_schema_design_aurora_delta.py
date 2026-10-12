@@ -253,6 +253,28 @@ def test_finalize_with_empty_delta_writes_the_draft(monkeypatch, capsys, tmp_pat
     assert len(written["table_definitions"]) == 2
 
 
+def test_finalize_warnings_stay_compact_on_a_many_pattern_job(monkeypatch, capsys, tmp_path):
+    """#157 review, I4: compact stdout is a headless rule (AGENTS.md). None of
+    this fixture's queries carry ``filter_columns`` (every ``_query()`` here
+    omits it), so finalizing derives one "filter predicate unknown" residual
+    per query -- 300 of them. The finalize status line must still carry one
+    summary warning, not 300, and stay well under what 300 per-pattern lines
+    would cost."""
+    store = _store(tmp_path, n_queries=300)
+    store.write_json(_RESPONSE, {"delta_version": "1.0"})
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "complete", status
+    access_pattern_warnings = [w for w in status["warnings"] if "access pattern" in w]
+    assert access_pattern_warnings == ["300 access patterns: filter predicate unknown"]
+    assert len(json.dumps(status)) < 2000
+    # The full per-pattern detail is still there -- just in the output file.
+    written = store.read_json(status["output_path"])
+    assert len(written["access_patterns"]) == 300
+    assert all(p["needs_judgment"] and p["judgment_reason"] for p in written["access_patterns"])
+
+
 def test_finalize_with_unknown_table_fails_and_writes_nothing(monkeypatch, capsys, tmp_path):
     store = _store(tmp_path)
     store.write_json(_RESPONSE, {"delta_version": "1.0", "tables": [{"table_name": "invoices"}]})

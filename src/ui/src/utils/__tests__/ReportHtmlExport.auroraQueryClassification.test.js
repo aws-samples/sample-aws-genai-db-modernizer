@@ -1,9 +1,10 @@
 /**
  * #478: ReportHtmlExport.js's "Query Classification" section
  * must use display engine names (not raw contract keys) and say "queries"
- * for a group served only by a relational engine (Aurora's query_groups
- * entries are built from the assignment, not a real access pattern -- it
- * has none; #157 adds real ones later).
+ * for a group served only by a relational engine (this legacy, page-less
+ * export was not updated for #157's real Aurora access patterns -- see its
+ * module docstring -- so it always treats a relational engine's
+ * query_groups entries as a routing record, never a real access pattern).
  */
 import { buildReportHtml } from '../ReportHtmlExport';
 

@@ -43,7 +43,7 @@ import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
-import { buildAuroraDesigns } from "../utils/auroraDesign";
+import { buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
@@ -125,6 +125,26 @@ const getOpCategory = (op) => OP_CATEGORY[op] || (
 );
 
 const shortTable = (t) => t?.split('.').pop() || t;
+
+// Aurora's '__seq_scan__' sentinel (#157 review, S1) is a script-internal
+// value, never a reader-facing one. Three facts collapse onto it, and only
+// one is a claim worth showing:
+// - the predicate itself is unknown (needs_judgment) -- nothing can be
+//   shown either way, hidden;
+// - the query's table could not be identified at all (load_testable=false
+//   with that reason, #157 review round 2) -- there was nothing to resolve
+//   an index against in the first place, so "sequential scan" would claim
+//   more than is known; hidden, same as the unknown-predicate case;
+// - the predicate is confirmed empty -- a sequential scan really is the
+//   resolved answer, shown as "None (sequential scan)".
+const auroraIndexUsedDisplay = (ap) => {
+  if (ap?.index_used !== '__seq_scan__') return ap?.index_used || null;
+  if (ap?.needs_judgment) return null;
+  if (ap?.load_testable === false && (ap?.load_testable_reason || '').includes('could be identified')) {
+    return null;
+  }
+  return 'None (sequential scan)';
+};
 
 // #429 part 2: shared by the owner rows and the cache-layer rows -- each is
 // grouped by source table separately so the cache layer renders as its own
@@ -385,6 +405,28 @@ const AnalysisResultsPage = memo(() => {
   // Unified access patterns (all engines)
   // ============================================
 
+  // #157 review round 2: the explorer's "Description" column names why a
+  // query is on Aurora at all (the assignment's own reason), not just the
+  // pattern's own structural text ("SELECT on t; filtered by id") -- same
+  // fact synthesis_report.py's build_query_groups already attaches via
+  // reasons/reason_index for the engineering report's "Reason" column and
+  // auroraDesign.js's own "Queries on Aurora" tab. Keyed by pattern_id,
+  // which both query_groups' access_patterns entries and the schema
+  // design's own content.access_patterns below share (they are the same
+  // derived dict).
+  const auroraReasonByPatternId = useMemo(() => {
+    const map = {};
+    (synthesis?.query_groups || []).forEach(g => {
+      (g.access_patterns || []).forEach(ap => {
+        if (isAuroraEngine(ap?.engine) && ap?.pattern_id) {
+          const reason = reasonTextFor(g, ap);
+          if (reason) map[ap.pattern_id] = reason;
+        }
+      });
+    });
+    return map;
+  }, [synthesis]);
+
   const allAccessPatterns = useMemo(() => {
     const patterns = [];
 
@@ -407,7 +449,11 @@ const AnalysisResultsPage = memo(() => {
       (content.collection_designs || []).forEach(col => { tableLookup[col.collection_name || col.name] = col; });
 
       (content.access_patterns || []).forEach(ap => {
-        const destName = ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || '—';
+        // Aurora (#157/#429 part 1) has no table_name/key_pattern/etc. of its
+        // own -- its destination IS its source table(s), carried over 1:1 --
+        // so the fallback chain ends on source_tables rather than '—'.
+        const auroraDest = (ap.source_tables || []).map(shortTable).join(', ');
+        const destName = ap.table_name || ap.key_pattern || ap.index_or_stream || ap.index || ap.collection || auroraDest || '—';
         const destDef = tableLookup[destName] || null;
 
         patterns.push({
@@ -421,7 +467,18 @@ const AnalysisResultsPage = memo(() => {
           destDef,
           gsiName: ap.gsi_name || null,
           keyCondition: ap.key_condition || null,
-          description: ap.description || ap.name || '',
+          // Aurora's one judgment field (#157): which index serves this
+          // pattern's predicate, by leftmost-prefix. '__seq_scan__' never
+          // reaches the reader as-is (S1) -- see auroraIndexUsedDisplay.
+          indexUsed: auroraIndexUsedDisplay(ap),
+          // #157 review round 2: for a designed Aurora row, the explorer's
+          // Description column shows why the query is on Aurora at all
+          // (the assignment's own reason) -- the structural text stays
+          // available in patternDescription (rendered as a secondary line
+          // in the detail panel) rather than being replaced outright.
+          description: (isAuroraEngine(engine) && auroraReasonByPatternId[ap.pattern_id])
+            || ap.description || ap.name || '',
+          patternDescription: ap.description || ap.name || '',
           queryIds: ap.source_query_ids || ap.query_ids || [],
           patternGroup: ap.pattern_group || null,
           designRps: ap.design_rps || null,
@@ -431,13 +488,16 @@ const AnalysisResultsPage = memo(() => {
           outOfScopeReason: ap.out_of_scope_reason || null,
           // OpenSearch specific
           opensearchDsl: ap.opensearch_dsl || null,
-          sourceQuery: ap.source_query || null,
+          // Aurora's sql_text runs as-is on a carry_over target (#157), same
+          // role as OpenSearch's own source_query below: the raw statement a
+          // pattern-detail panel shows when no per-query table already has it.
+          sourceQuery: ap.source_query || ap.sql_text || null,
         });
       });
     });
 
     return patterns;
-  }, [activeDesigns, cacheOverlay]);
+  }, [activeDesigns, cacheOverlay, auroraReasonByPatternId]);
 
   // #429 part 2: the cache layer's own access patterns, tagged isCacheLayer so
   // the explorer can render them as their own "<Name> (cache layer)" group
@@ -470,13 +530,16 @@ const AnalysisResultsPage = memo(() => {
     return map;
   }, [activeDesigns]);
 
-  // #478: Aurora's schema-design contract has no access_patterns (tables
-  // carry over 1:1; #157 adds real access patterns later), so the explorer
-  // above never shows it. The relational branch in build_query_groups
-  // (src/agents/referee/synthesis_report.py) already puts every query the
-  // assignment routed to an Aurora engine into synthesis.query_groups, so
-  // this section needs no extra fetch -- just the schema designs already
-  // loaded and that same query_groups list.
+  // #478: while Aurora's schema design has not run yet, its tables carry
+  // over 1:1 with no access_patterns at all, so the explorer above has
+  // nothing to show for it (#157 covers it with real ones once the design
+  // has run -- see allAccessPatterns above). The relational branch in
+  // build_query_groups (src/agents/referee/synthesis_report.py) puts every
+  // query the assignment routed to an Aurora engine into
+  // synthesis.query_groups regardless, so this section needs no extra fetch
+  // -- just the schema designs already loaded and that same query_groups
+  // list -- and keeps showing the full design (DDL, indexes, optimizations)
+  // the generic explorer above does not.
   const auroraDesigns = useMemo(
     () => buildAuroraDesigns(activeDesigns, synthesis?.query_groups),
     [activeDesigns, synthesis]
@@ -1192,6 +1255,7 @@ const AnalysisResultsPage = memo(() => {
     if (ap.operation) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.operation'), value: ap.operation });
     if (ap.destTable) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.destination-table'), value: ap.destTable });
     if (ap.gsiName) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.gsi'), value: ap.gsiName });
+    if (ap.indexUsed) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.index-used'), value: ap.indexUsed });
     if (ap.sourceTables?.length > 0) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.source-tables'), value: ap.sourceTables.join(', ') });
     if (ap.designRps != null) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.design-rps'), value: ap.designRps });
     if (ap.itemSize != null) metricsItems.push({ label: t('analysis-results-v2.pattern-detail.item-size'), value: `${ap.itemSize} bytes` });
@@ -1205,10 +1269,19 @@ const AnalysisResultsPage = memo(() => {
 
     return (
       <SpaceBetween size="l">
-        {/* Description */}
+        {/* Description -- for a designed Aurora row this is the assignment's
+            routing reason (#157 review round 2); patternDescription keeps the
+            pattern's own structural text visible underneath when it differs
+            (every other engine's row: the two are the same string, so the
+            second line never renders). */}
         {ap.description && (
           <Container>
             <Box fontSize="body-m">{ap.description}</Box>
+            {ap.patternDescription && ap.patternDescription !== ap.description && (
+              <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 's' }}>
+                {ap.patternDescription}
+              </Box>
+            )}
           </Container>
         )}
 
