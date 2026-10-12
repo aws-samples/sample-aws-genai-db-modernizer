@@ -869,6 +869,37 @@ def _risk_tile_class(level: str) -> str:
     return "green"
 
 
+_RISK_POSTURE_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+
+
+def _severity_counts_text(risks: list[dict[str, Any]]) -> str:
+    """ "N critical, N high, ..." for the risk posture line, one term per
+    non-zero severity, in CRITICAL/HIGH/MEDIUM/LOW order, with any unrated
+    risks named last.
+
+    #270: the posture line used to fold CRITICAL into "high" and drop LOW
+    entirely, so its parenthetical count did not add up to the open-risk
+    total whenever a risk register held either. Every risk here counts
+    exactly once -- severity is matched case-insensitively, and an
+    unrecognised severity is named "unrated" rather than folded into LOW
+    (#270 round-1 review: an unrated risk is not known to be low severity),
+    matching the deck's ``UNRATED`` handling (``pptx_report.py``) -- so the
+    terms always sum to ``len(risks)``.
+    """
+    counts = {lvl: 0 for lvl in _RISK_POSTURE_SEVERITIES}
+    unrated = 0
+    for r in risks:
+        lv = str(r.get("severity", "")).upper()
+        if lv in counts:
+            counts[lv] += 1
+        else:
+            unrated += 1
+    terms = [f"{counts[lvl]} {lvl.lower()}" for lvl in _RISK_POSTURE_SEVERITIES if counts[lvl]]
+    if unrated:
+        terms.append(f"{unrated} unrated")
+    return ", ".join(terms)
+
+
 def provenance(
     report: dict[str, Any],
     artifact: str,
@@ -1120,8 +1151,7 @@ def render_decision_report_html(
             )
             out.append(f"<p class=note>{esc(NO_OPEN_RISKS_CAVEAT)}</p>")
         if risks:
-            hi = sum(1 for r in risks if str(r.get("severity", "")).upper() in ("HIGH", "CRITICAL"))
-            med = sum(1 for r in risks if str(r.get("severity", "")).upper() == "MEDIUM")
+            sev_txt = _severity_counts_text(risks)
             types = sorted(
                 {
                     str(r.get("risk_type", "")).replace("_", " ").lower()
@@ -1142,7 +1172,7 @@ def render_decision_report_html(
             out.append(
                 f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} open migration "
                 f"{plural_noun(len(risks), 'risk')} "
-                f"({hi} high, {med} medium) across {esc(types_txt)}.{resolved_txt} The full "
+                f"({sev_txt}) across {esc(types_txt)}.{resolved_txt} The full "
                 "risk register, with "
                 "per-engine detail and mitigations, and the migration trade-offs are in the "
                 "Engineering Report.</p>"

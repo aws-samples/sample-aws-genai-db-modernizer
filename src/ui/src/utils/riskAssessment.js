@@ -20,10 +20,18 @@
  * plain warning (#270: the deleted `ReportResults.js` page's bug, where
  * CRITICAL fell back to the same styling as a warning and had no tab of its
  * own).
+ *
+ * A severity outside the four known ones (`UNRATED`) is its own bucket and
+ * status, matching the deck's `UNRATED` handling (`pptx_report.py`) -- it
+ * used to fold into `LOW`, which told a reader an unrated risk was known to
+ * be low severity rather than simply unrated (#270 round-1 review).
  */
 
 /** Severities in the order every severity-based view should show them. */
 export const RISK_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+
+/** A risk whose severity is none of `RISK_SEVERITIES`, mirroring `pptx_report.UNRATED`. */
+export const UNRATED = 'UNRATED';
 
 /** `"[dynamodb] some text"` -> `{ engine: 'dynamodb', body: 'some text' }`. */
 export function splitRiskDescription(description) {
@@ -52,26 +60,38 @@ export function filterRisksWithContent(risks) {
   return (risks || []).filter((r) => r && typeof r === 'object' && riskHasContent(r.description));
 }
 
-/** Cloudscape status/alert type for a severity: CRITICAL and HIGH both read as `error`. */
+/**
+ * Cloudscape status/alert type for a severity: CRITICAL and HIGH both read as
+ * `error`. An unrated severity reads as `stopped` (a neutral grey, matching
+ * the deck's muted `UNRATED` accent) -- not `success`, which would read an
+ * unrated risk as known to be low severity rather than simply unrated.
+ */
 export function riskSeverityStatus(severity) {
   const sev = String(severity || '').toUpperCase();
   if (sev === 'CRITICAL' || sev === 'HIGH') return 'error';
   if (sev === 'MEDIUM') return 'warning';
-  return 'success';
+  if (sev === 'LOW') return 'success';
+  return 'stopped';
 }
 
 /**
  * Groups the (already content-filtered) open risks by severity, one bucket
  * per `RISK_SEVERITIES` entry present even when empty, so a severity with no
  * open risk still gets its own (empty) tab rather than disappearing (#373
- * suggested fix). A risk with a severity outside the four known ones is kept
- * -- defensively -- in `LOW`, so it is never silently dropped from the total.
+ * suggested fix). A risk with a severity outside the four known ones gets its
+ * own `UNRATED` bucket -- added only when at least one such risk exists, the
+ * same "only when present" rule the deck's `UNRATED` bar follows -- instead
+ * of silently counting as `LOW`.
  */
 export function groupRisksBySeverity(risks) {
   const groups = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
   (risks || []).forEach((r) => {
     const sev = String(r?.severity || '').toUpperCase();
-    (groups[sev] || groups.LOW).push(r);
+    if (groups[sev]) {
+      groups[sev].push(r);
+    } else {
+      (groups[UNRATED] || (groups[UNRATED] = [])).push(r);
+    }
   });
   return groups;
 }

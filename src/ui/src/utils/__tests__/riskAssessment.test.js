@@ -1,5 +1,6 @@
 import {
   RISK_SEVERITIES,
+  UNRATED,
   filterRisksWithContent,
   groupRisksBySeverity,
   mitigationRepeatsDescription,
@@ -53,11 +54,15 @@ describe('riskSeverityStatus (#270/#373: CRITICAL at least as severe as HIGH)', 
     expect(riskSeverityStatus('critical')).toBe('error');
   });
 
-  it('maps MEDIUM to warning and LOW (or anything unrecognized) to success', () => {
+  it('maps MEDIUM to warning and LOW to success', () => {
     expect(riskSeverityStatus('MEDIUM')).toBe('warning');
     expect(riskSeverityStatus('LOW')).toBe('success');
-    expect(riskSeverityStatus('')).toBe('success');
-    expect(riskSeverityStatus(undefined)).toBe('success');
+  });
+
+  it('maps an unrecognized severity to stopped, not success -- unrated is not the same as low (#270 round-1 review)', () => {
+    expect(riskSeverityStatus('')).toBe('stopped');
+    expect(riskSeverityStatus(undefined)).toBe('stopped');
+    expect(riskSeverityStatus('WEIRD')).toBe('stopped');
   });
 });
 
@@ -82,11 +87,19 @@ describe('groupRisksBySeverity', () => {
     expect(groups.HIGH).toHaveLength(0);
   });
 
-  it('keeps a risk with an unrecognized severity (defensive fallback) instead of dropping it', () => {
+  it('a risk with an unrecognized severity gets its own UNRATED bucket, not folded into LOW (#270 round-1 review)', () => {
     const risks = [{ severity: 'WEIRD', description: '[x] y' }];
     const groups = groupRisksBySeverity(risks);
     const total = Object.values(groups).reduce((n, list) => n + list.length, 0);
     expect(total).toBe(1);
+    expect(groups.LOW).toEqual([]);
+    expect(groups[UNRATED]).toHaveLength(1);
+  });
+
+  it('does not add an UNRATED bucket when every risk has a known severity', () => {
+    const risks = [{ severity: 'HIGH', description: '[x] y' }];
+    const groups = groupRisksBySeverity(risks);
+    expect(groups[UNRATED]).toBeUndefined();
   });
 });
 

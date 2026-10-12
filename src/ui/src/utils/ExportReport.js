@@ -624,6 +624,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // -- "error"/red -- never downgraded to a warning the way #270 found the
   // deleted ReportResults.js page treating CRITICAL). Severities are always
   // shown in CRITICAL/HIGH/MEDIUM/LOW order, each with its count, even at zero.
+  // A severity outside those four is its own UNRATED section, shown only when
+  // present -- matching the deck's UNRATED handling (pptx_report.py) -- rather
+  // than silently counting as LOW (#270 round-1 review).
   script += '    function buildRiskAssessment() {\n';
   script += '      const container = document.getElementById(\'risk-assessment-container\');\n';
   script += '      if (!container) return;\n';
@@ -646,8 +649,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (!ra.overall_risk_level && openRisks.length === 0 && resolvedRisks.length === 0) { container.style.display = \'none\'; return; }\n';
   script += '      const severities = [\'CRITICAL\', \'HIGH\', \'MEDIUM\', \'LOW\'];\n';
   script += '      const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };\n';
-  script += '      openRisks.forEach(r => { const sev = String(r.severity || \'\').toUpperCase(); (bySeverity[sev] || bySeverity.LOW).push(r); });\n';
-  script += '      const sevClass = function(sev) { return (sev === \'CRITICAL\' || sev === \'HIGH\') ? \'error\' : (sev === \'MEDIUM\' ? \'warning\' : \'success\'); };\n';
+  script += '      openRisks.forEach(r => { const sev = String(r.severity || \'\').toUpperCase(); if (bySeverity[sev]) { bySeverity[sev].push(r); } else { (bySeverity.UNRATED || (bySeverity.UNRATED = [])).push(r); } });\n';
+  script += '      const severitiesToShow = severities.concat((bySeverity.UNRATED && bySeverity.UNRATED.length > 0) ? [\'UNRATED\'] : []);\n';
+  script += '      const sevClass = function(sev) { return (sev === \'CRITICAL\' || sev === \'HIGH\') ? \'error\' : (sev === \'MEDIUM\' ? \'warning\' : (sev === \'LOW\' ? \'success\' : \'unrated\')); };\n';
   // #421 review: #ffc107 (amber) as plain text, or as a badge background with
   // white text, is a 1.63:1 contrast ratio on white -- axe's color-contrast
   // (WCAG AA needs 4.5:1 for this 14px bold text, below the "large text"
@@ -657,10 +661,13 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // the badge background) both resolve to colors verified >= 4.5:1 for every
   // severity -- warning's dark brown #5b4708 reuses the decision report's own
   // ``.sev.MEDIUM`` text color (src/report/renderers.py), which already pairs
-  // with #ffc107 at 5.48:1.
-  script += '      const sevAccent = { error: \'#d13212\', warning: \'#ffc107\', success: \'#1d8102\' };\n';
-  script += '      const sevText = { error: \'#d13212\', warning: \'#5b4708\', success: \'#1d8102\' };\n';
-  script += '      const sevBadgeFg = { error: \'#fff\', warning: \'#5b4708\', success: \'#fff\' };\n';
+  // with #ffc107 at 5.48:1. unrated's #6b7280 is already used as a text
+  // color on white elsewhere in this codebase (contrast ratio is symmetric,
+  // so it is also valid as a background behind white badge text, #270
+  // round-1 review).
+  script += '      const sevAccent = { error: \'#d13212\', warning: \'#ffc107\', success: \'#1d8102\', unrated: \'#6b7280\' };\n';
+  script += '      const sevText = { error: \'#d13212\', warning: \'#5b4708\', success: \'#1d8102\', unrated: \'#6b7280\' };\n';
+  script += '      const sevBadgeFg = { error: \'#fff\', warning: \'#5b4708\', success: \'#fff\', unrated: \'#fff\' };\n';
   script += '      let html = \'\';\n';
   script += '      if (ra.overall_risk_level) {\n';
   script += '        const lvl = sevClass(ra.overall_risk_level);\n';
@@ -673,8 +680,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (openRisks.length === 0) {\n';
   script += '        html += \'<p style="color: var(--color-text-secondary); font-size: 13px; margin-bottom: 12px;">\' + escapeHtml(\'No open risks is not the same as no migration risk: this analysis reads schema and query patterns only and does not model traffic bursts, peak load or compliance requirements.\') + \'</p>\';\n';
   script += '      }\n';
-  script += '      severities.forEach(function(sev) {\n';
-  script += '        const risks = bySeverity[sev];\n';
+  script += '      severitiesToShow.forEach(function(sev) {\n';
+  script += '        const risks = bySeverity[sev] || [];\n';
   script += '        const cls = sevClass(sev);\n';
   script += '        html += \'<div style="margin-top: 16px;">\';\n';
   script += '        html += \'<div style="font-weight: 700; font-size: 14px; color: \' + sevText[cls] + \';">\' + escapeHtml(sev) + \' (\' + risks.length + \')</div>\';\n';

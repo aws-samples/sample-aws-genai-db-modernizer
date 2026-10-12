@@ -278,7 +278,9 @@ class TestRiskProfileSeverityFallback:
         assert rows[1][4] == "6"
         # Each row shows its own mitigation, not mitigation_strategies[0].
         assert rows[1][3] == "Keep a counter per key via UpdateItem."
-        assert caption.startswith("No HIGH risks remain; the table shows the top MEDIUM risks.")
+        assert caption.startswith(
+            "No CRITICAL or HIGH risks remain; the table shows the top MEDIUM risks."
+        )
         assert "below" not in caption and "above" not in caption
         assert "Each HIGH risk" not in caption
 
@@ -286,7 +288,7 @@ class TestRiskProfileSeverityFallback:
         rows, caption = _risk_slide([_risk("RISK-001", "LOW", 2)])
         assert [r[0] for r in rows[1:]] == ["RISK-001"]
         assert caption.startswith(
-            "No HIGH or MEDIUM risks remain; the table shows the top LOW risk."
+            "No CRITICAL, HIGH or MEDIUM risks remain; the table shows the top LOW risk."
         )
 
     def test_high_risks_keep_the_high_caption_and_rows(self) -> None:
@@ -372,7 +374,9 @@ class TestUnlabelledCounts:
 
     def test_decision_report_separates_open_and_resolved_risks(self) -> None:
         html = renderers.render_decision_report_html(_mapped_report(), trust_generated_summary=True)
-        assert "8 open migration risks (0 high, 8 medium) across migration complexity" in html
+        # #270: only non-zero severities are named -- all 8 fixture risks are
+        # MEDIUM, so "0 high" no longer appears.
+        assert "8 open migration risks (8 medium) across migration complexity" in html
         assert "4 more were resolved by the assignment." in html
         assert "4 resolved by the assignment)" not in html
 

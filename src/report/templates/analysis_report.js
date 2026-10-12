@@ -367,11 +367,12 @@
       if (!ra.overall_risk_level && openRisks.length === 0 && resolvedRisks.length === 0) { container.style.display = 'none'; return; }
       const severities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
       const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
-      openRisks.forEach(r => { const sev = String(r.severity || '').toUpperCase(); (bySeverity[sev] || bySeverity.LOW).push(r); });
-      const sevClass = function(sev) { return (sev === 'CRITICAL' || sev === 'HIGH') ? 'error' : (sev === 'MEDIUM' ? 'warning' : 'success'); };
-      const sevAccent = { error: '#d13212', warning: '#ffc107', success: '#1d8102' };
-      const sevText = { error: '#d13212', warning: '#5b4708', success: '#1d8102' };
-      const sevBadgeFg = { error: '#fff', warning: '#5b4708', success: '#fff' };
+      openRisks.forEach(r => { const sev = String(r.severity || '').toUpperCase(); if (bySeverity[sev]) { bySeverity[sev].push(r); } else { (bySeverity.UNRATED || (bySeverity.UNRATED = [])).push(r); } });
+      const severitiesToShow = severities.concat((bySeverity.UNRATED && bySeverity.UNRATED.length > 0) ? ['UNRATED'] : []);
+      const sevClass = function(sev) { return (sev === 'CRITICAL' || sev === 'HIGH') ? 'error' : (sev === 'MEDIUM' ? 'warning' : (sev === 'LOW' ? 'success' : 'unrated')); };
+      const sevAccent = { error: '#d13212', warning: '#ffc107', success: '#1d8102', unrated: '#6b7280' };
+      const sevText = { error: '#d13212', warning: '#5b4708', success: '#1d8102', unrated: '#6b7280' };
+      const sevBadgeFg = { error: '#fff', warning: '#5b4708', success: '#fff', unrated: '#fff' };
       let html = '';
       if (ra.overall_risk_level) {
         const lvl = sevClass(ra.overall_risk_level);
@@ -380,8 +381,8 @@
       if (openRisks.length === 0) {
         html += '<p style="color: var(--color-text-secondary); font-size: 13px; margin-bottom: 12px;">' + escapeHtml('No open risks is not the same as no migration risk: this analysis reads schema and query patterns only and does not model traffic bursts, peak load or compliance requirements.') + '</p>';
       }
-      severities.forEach(function(sev) {
-        const risks = bySeverity[sev];
+      severitiesToShow.forEach(function(sev) {
+        const risks = bySeverity[sev] || [];
         const cls = sevClass(sev);
         html += '<div style="margin-top: 16px;">';
         html += '<div style="font-weight: 700; font-size: 14px; color: ' + sevText[cls] + ';">' + escapeHtml(sev) + ' (' + risks.length + ')</div>';

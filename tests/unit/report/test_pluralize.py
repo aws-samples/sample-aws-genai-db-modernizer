@@ -90,26 +90,31 @@ class TestSessionStoreRegression:
 class TestWorstEngineSentenceVerbAgreement:
     """#206 follow-up regression: the verb must agree with the count sitting
     on the worst engine (the sentence's subject), not with the sentence's
-    other number (the total HIGH risk count across every engine)."""
+    other number (the total CRITICAL/HIGH risk count across every engine,
+    #270)."""
 
     def test_singular_subject_takes_sits_even_when_total_is_plural(self) -> None:
         sentence = pptx_report._worst_engine_sentence(("dynamodb", 1), 5)
-        assert sentence == "1 of the 5 HIGH risks sits on DynamoDB alone."
+        assert sentence == "1 of the 5 CRITICAL/HIGH risks sits on DynamoDB alone."
 
     def test_plural_subject_takes_sit(self) -> None:
         sentence = pptx_report._worst_engine_sentence(("dynamodb", 2), 5)
-        assert sentence == "2 of the 5 HIGH risks sit on DynamoDB alone."
+        assert sentence == "2 of the 5 CRITICAL/HIGH risks sit on DynamoDB alone."
 
     def test_both_counts_singular(self) -> None:
         sentence = pptx_report._worst_engine_sentence(("dynamodb", 1), 1)
-        assert sentence == "1 of the 1 HIGH risk sits on DynamoDB alone."
+        assert sentence == "1 of the 1 CRITICAL/HIGH risk sits on DynamoDB alone."
 
 
 class TestRootCauseSentenceDeterminerAndVerb:
     def test_singular_uses_the_not_all(self) -> None:
-        assert pptx_report._root_cause_sentence(1, "data model") == "the 1 HIGH risk is data model"
+        assert (
+            pptx_report._root_cause_sentence(1, "data model")
+            == "the 1 CRITICAL/HIGH risk is data model"
+        )
 
     def test_plural_uses_all(self) -> None:
         assert (
-            pptx_report._root_cause_sentence(3, "data model") == "all 3 HIGH risks are data model"
+            pptx_report._root_cause_sentence(3, "data model")
+            == "all 3 CRITICAL/HIGH risks are data model"
         )

@@ -571,6 +571,14 @@ def _risk_query_count(risk: dict[str, Any]) -> int:
     return len(ids) if isinstance(ids, list) else 0
 
 
+def _join_or(items: list[str]) -> str:
+    """``["CRITICAL", "HIGH"]`` -> ``"CRITICAL or HIGH"``; a third item gets an
+    Oxford comma: ``["CRITICAL", "HIGH", "MEDIUM"]`` -> ``"CRITICAL, HIGH or MEDIUM"``."""
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + f" or {items[-1]}"
+
+
 def _risk_caption(level: str, n_shown: int) -> str:
     """The Risk Profile caption for the severity its table shows (#249).
 
@@ -585,8 +593,15 @@ def _risk_caption(level: str, n_shown: int) -> str:
     risks_word = plural_noun(n_shown, "risk")
     if level == UNRATED:
         return f"No risk has a recognised severity; the table shows the top unrated {risks_word}."
-    above = " or ".join(
-        k for k in ("HIGH", "MEDIUM") if SEVERITY_ORDER.index(k) < SEVERITY_ORDER.index(level)
+    # #270 round-2 review: CRITICAL is a severity above MEDIUM/LOW too, so it
+    # belongs in this list -- "No HIGH risks remain" used to imply a CRITICAL
+    # risk could still be lurking unmentioned.
+    above = _join_or(
+        [
+            k
+            for k in ("CRITICAL", "HIGH", "MEDIUM")
+            if SEVERITY_ORDER.index(k) < SEVERITY_ORDER.index(level)
+        ]
     )
     return f"No {above} risks remain; the table shows the top {level} {risks_word}."
 
@@ -910,12 +925,21 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     for r in risks:
         k = _severity(r)
         sev[k] = sev.get(k, 0) + 1
-    high = [r for r in risks if str(r.get("severity", "")).upper() == "HIGH"]
-    high_by_engine: dict[str, int] = {}
-    for r in high:
+    # #270: CRITICAL is at least as severe as HIGH, so every count that singles
+    # out "HIGH" to flag what needs escalating -- the Scope/no-migration
+    # decision cards, the engine table, the per-wave counts and the worst-
+    # engine/root-cause sentences -- counts CRITICAL alongside it; a report
+    # with only CRITICAL risks and no HIGH ones used to show "0 HIGH risks"
+    # everywhere a CRITICAL risk should have been the headline. The Risk
+    # Profile slide's own severity breakdown (``sev``) still keeps CRITICAL
+    # and HIGH in separate buckets -- that table is explicitly about which
+    # severity, not which risks need escalating.
+    crit_high = [r for r in risks if str(r.get("severity", "")).upper() in ("CRITICAL", "HIGH")]
+    crit_high_by_engine: dict[str, int] = {}
+    for r in crit_high:
         eng = risk_engine(str(r.get("description") or ""))
         if eng:
-            high_by_engine[eng] = high_by_engine.get(eng, 0) + 1
+            crit_high_by_engine[eng] = crit_high_by_engine.get(eng, 0) + 1
     by_type: dict[str, int] = {}
     for r in risks:
         t = str(r.get("risk_type") or "other").replace("_", " ").lower()
@@ -929,11 +953,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         key=lambda r: (-_risk_query_count(r), str(r.get("risk_id"))),
     )
     if shown_level == "HIGH":
-        shown_risks = high  # unchanged: HIGH rows stay in risk-id order
-    # "all the same root cause" is only claimed when the HIGH risks really do
-    # share one risk_type.
-    high_types = sorted({str(r.get("risk_type") or "") for r in high})
-    one_root_cause = len(high_types) == 1 and bool(high)
+        # unchanged: HIGH rows stay in risk-id order. shown_level is only "HIGH"
+        # when no CRITICAL risk is present (CRITICAL sorts first in
+        # SEVERITY_ORDER), so crit_high is exactly the HIGH-severity risks here.
+        shown_risks = crit_high
+    # "all the same root cause" is only claimed when the CRITICAL/HIGH risks
+    # really do share one risk_type.
+    crit_high_types = sorted({str(r.get("risk_type") or "") for r in crit_high})
+    one_root_cause = len(crit_high_types) == 1 and bool(crit_high)
 
     # Analysis risks the effective assignment resolved (#434): with no open risks
     # the Risk Profile slide leads with these instead of an empty table and an
@@ -1044,15 +1071,21 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "action": "Requirement validation pending.",
             }
         )
-    if high_by_engine:
-        eng = sorted(high_by_engine.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    if crit_high_by_engine:
+        # #270: sorted by CRITICAL+HIGH count, so an engine carrying 2 CRITICAL
+        # risks outranks one carrying only 1 HIGH risk even though the old,
+        # HIGH-only count saw them as 0 vs 1.
+        eng = sorted(crit_high_by_engine.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
         decisions.append(
             {
                 "question": f"Scope {ENGINE_LABEL.get(eng, eng)}?",
-                "badge": f"{high_by_engine[eng]} of {len(high)} HIGH {plural_noun(len(high), 'risk')}",
+                "badge": (
+                    f"{crit_high_by_engine[eng]} of {len(crit_high)} CRITICAL/HIGH "
+                    f"{plural_noun(len(crit_high), 'risk')}"
+                ),
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
-                    f"Carries the most HIGH risks · {conf_text(eng)} confidence · "
+                    f"Carries the most CRITICAL/HIGH risks · {conf_text(eng)} confidence · "
                     f"{share_text(eng)}"
                 ),
                 "action": "Scope defined as the matching table subset.",
@@ -1062,7 +1095,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     if no_move:
         names = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in no_move)
         pct = sum(workload.get(e["engine"], 0) for e in no_move if e["engine"] not in cache)
-        no_move_high = sum(high_by_engine.get(e["engine"], 0) for e in no_move)
+        no_move_crit_high = sum(crit_high_by_engine.get(e["engine"], 0) for e in no_move)
         cached_share = sum(cache[e["engine"]][1] for e in no_move if e["engine"] in cache)
         badge = (
             f"{pct:.0f}% of workload"
@@ -1081,7 +1114,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": BLUE,
                 "against": (
                     f"{names} · no data migration · "
-                    f"{no_move_high} HIGH {plural_noun(no_move_high, 'risk')}"
+                    f"{no_move_crit_high} CRITICAL/HIGH {plural_noun(no_move_crit_high, 'risk')}"
                 ),
                 "action": (
                     "No data migration: the engine already serving these reads keeps "
@@ -1136,7 +1169,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         )
     for w in waves:
         w["names"] = " + ".join(ENGINE_LABEL.get(e, e) for e in w["engines"])
-        w["high"] = sum(high_by_engine.get(e, 0) for e in w["engines"])
+        w["crit_high"] = sum(crit_high_by_engine.get(e, 0) for e in w["engines"])
         w["conf_text"] = conf_text(
             min(w["engines"], key=lambda e: (conf.get(e, 0), e)),
             short=True,
@@ -1175,14 +1208,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "assignment": assignment,
         "risks": risks,
         "sev": sev,
-        "high": high,
-        "high_by_engine": high_by_engine,
+        "crit_high": crit_high,
+        "crit_high_by_engine": crit_high_by_engine,
         "shown_level": shown_level,
         "shown_risks": shown_risks,
         "resolved_risks": resolved,
         "by_type": sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])),
         "one_root_cause": one_root_cause,
-        "high_type": high_types[0].replace("_", " ").lower() if one_root_cause else "",
+        "high_type": crit_high_types[0].replace("_", " ").lower() if one_root_cause else "",
         "mitigations": [str(s) for s in (risk.get("mitigation_strategies") or []) if s],
         "ops": ops_sorted,
         "n_ops": n_ops,
@@ -1522,31 +1555,31 @@ def slide_workload(prs, f):
     return s
 
 
-def _worst_engine_sentence(worst: tuple[str, int], n_high: int) -> str:
-    """ "{worst[1]} of the {n_high} HIGH risk(s) sit(s)/sits on {engine} alone."
+def _worst_engine_sentence(worst: tuple[str, int], n_crit_high: int) -> str:
+    """ "{worst[1]} of the {n_crit_high} CRITICAL/HIGH risk(s) sit(s)/sits on {engine} alone."
 
     Extracted so the verb-agreement regression has a direct unit test: the
     verb must agree with ``worst[1]`` (the count sitting on *this* engine --
-    the sentence's subject), not with ``n_high`` (the sentence's other
-    number, the total HIGH risk count across every engine).
+    the sentence's subject), not with ``n_crit_high`` (the sentence's other
+    number, the total CRITICAL/HIGH risk count across every engine, #270).
     """
     eng, count = worst
     return (
-        f"{count} of the {n_high} HIGH {plural_noun(n_high, 'risk')} "
+        f"{count} of the {n_crit_high} CRITICAL/HIGH {plural_noun(n_crit_high, 'risk')} "
         f"{plural_verb(count, 'sits', 'sit')} on {ENGINE_LABEL.get(eng, eng)} alone."
     )
 
 
-def _root_cause_sentence(n_high: int, high_type: str) -> str:
-    """ "{the|all} {n_high} HIGH risk(s) is/are {high_type}".
+def _root_cause_sentence(n_crit_high: int, high_type: str) -> str:
+    """ "{the|all} {n_crit_high} CRITICAL/HIGH risk(s) is/are {high_type}".
 
-    "all 1 HIGH risk is ..." reads oddly -- "all" implies more than one;
-    "the 1 HIGH risk is ..." is the natural singular phrasing.
+    "all 1 CRITICAL/HIGH risk is ..." reads oddly -- "all" implies more than
+    one; "the 1 CRITICAL/HIGH risk is ..." is the natural singular phrasing.
     """
-    determiner = "the" if n_high == 1 else "all"
+    determiner = "the" if n_crit_high == 1 else "all"
     return (
-        f"{determiner} {n_high} HIGH {plural_noun(n_high, 'risk')} "
-        f"{plural_verb(n_high, 'is', 'are')} {high_type}"
+        f"{determiner} {n_crit_high} CRITICAL/HIGH {plural_noun(n_crit_high, 'risk')} "
+        f"{plural_verb(n_crit_high, 'is', 'are')} {high_type}"
     )
 
 
@@ -1568,7 +1601,7 @@ def slide_decisions(prs, f):
         ),
     )
 
-    rows = [("Engine", "Workload", "Confidence", "HIGH risks", "Role")]
+    rows = [("Engine", "Workload", "Confidence", "CRITICAL/HIGH risks", "Role")]
     emph: dict[tuple[int, int], Any] = {}
     for i, r in enumerate(f["ranking"], start=1):
         eng = r.get("target")
@@ -1583,14 +1616,14 @@ def slide_decisions(prs, f):
                     else f"{f['workload'].get(eng, 0):.1f}%"
                 ),
                 f["conf_text"].get(eng, f"{c:.0f}%"),
-                str(f["high_by_engine"].get(eng, 0)),
+                str(f["crit_high_by_engine"].get(eng, 0)),
                 role,
             )
         )
         emph[(i, 0)] = ENGINE_COLOR.get(eng, PAPER)
         if c < CONFIDENCE_FLOOR or "(" in f["conf_text"].get(eng, ""):
             emph[(i, 2)] = ORANGE
-        if f["high_by_engine"].get(eng, 0):
+        if f["crit_high_by_engine"].get(eng, 0):
             emph[(i, 3)] = PINK
     table(
         s,
@@ -1631,12 +1664,12 @@ def slide_decisions(prs, f):
         first=True,
         space_after=8,
     )
-    if f["high_by_engine"]:
-        worst = sorted(f["high_by_engine"].items(), key=lambda kv: (-kv[1], kv[0]))[0]
-        n_high = len(f["high"])
+    if f["crit_high_by_engine"]:
+        worst = sorted(f["crit_high_by_engine"].items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        n_crit_high = len(f["crit_high"])
         para(
             tf,
-            _worst_engine_sentence(worst, n_high),
+            _worst_engine_sentence(worst, n_crit_high),
             size=11.0,
             bold=True,
             color=PINK,
@@ -1763,7 +1796,11 @@ def slide_risk(prs, f):
     if not f["risks"]:
         _slide_risk_no_open_risks(s, f)
         return s
-    n_high = f["sev"].get("HIGH", 0)
+    # #270: one_root_cause/high_type are derived from crit_high (CRITICAL and
+    # HIGH together), so the count named here must be the same set, not the
+    # HIGH-only bucket of ``sev`` -- otherwise a CRITICAL-only run could claim
+    # "all 0 CRITICAL/HIGH risks are X".
+    n_crit_high = len(f["crit_high"])
     mix = ", ".join(
         f"{f['sev'][k]} {k.lower() if k == UNRATED else k}"
         for k in (*SEVERITY_ORDER, UNRATED)
@@ -1772,7 +1809,7 @@ def slide_risk(prs, f):
     n_risks = len(f["risks"])
     sub = f"{n_risks} {plural_noun(n_risks, 'risk')}: {mix}"
     if f["one_root_cause"]:
-        sub += f"  ·  {_root_cause_sentence(n_high, f['high_type'])}"
+        sub += f"  ·  {_root_cause_sentence(n_crit_high, f['high_type'])}"
     set_subtitle(s, sub)
 
     # Same colours as the table's Engine column (_risk_accent). Up to three rows
@@ -1944,7 +1981,7 @@ def slide_sequencing(prs, f):
             ),
             # A labelled figure ("60% (signal only)") fills the cell on its own
             w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} confidence",
-            f"{w['high']} HIGH {plural_noun(w['high'], 'risk')}",
+            f"{w['crit_high']} CRIT/HIGH {plural_noun(w['crit_high'], 'risk')}",
         )
         for j, val in enumerate(stats):
             tf = textbox(s, 6.75 + j * 1.80, y + 0.06, 1.75, 0.33)

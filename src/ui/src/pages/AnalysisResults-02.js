@@ -42,7 +42,7 @@ import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { buildAuroraDesigns } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
-import { RISK_SEVERITIES, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
+import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
 import { costBaselineStats } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
@@ -66,11 +66,13 @@ const ENGINE_BADGE_COLORS = {
 
 // #373: mirrors src/report/renderers.py's .risk/.sev CSS -- red for the
 // error-level severities (CRITICAL and HIGH, kept equally severe, #270),
-// amber for MEDIUM, green for LOW.
+// amber for MEDIUM, green for LOW. `stopped` is an unrated severity (#270
+// round-1 review) -- grey, matching the deck's muted UNRATED accent.
 const RISK_BORDER_COLOR = {
   error: '#d13212',
   warning: '#ffc107',
   success: '#1d8102',
+  stopped: '#9ba7b6',
 };
 
 const ENGINE_HEX = {
@@ -2245,7 +2247,11 @@ const AnalysisResultsPage = memo(() => {
 
             {/* Risk Assessment (#373): synthesis.risk_assessment, including
                 any CRITICAL risk, with one tab per severity (always present,
-                even empty) and the risks the assignment already resolved. */}
+                even empty) and the risks the assignment already resolved.
+                An UNRATED tab (#270 round-1 review) joins them only when a
+                risk's severity is none of the four known ones -- matching
+                the deck's "only show UNRATED when present" rule, rather than
+                an always-empty fifth tab on every ordinary run. */}
             {(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
               <Container header={<Header variant="h2" description={t('analysis-results-v2.risk-assessment.description')}>{t('analysis-results-v2.risk-assessment.title')}</Header>}>
                 <SpaceBetween size="m">
@@ -2255,7 +2261,10 @@ const AnalysisResultsPage = memo(() => {
                     </StatusIndicator>
                   )}
                   <Tabs
-                    tabs={RISK_SEVERITIES.map((severity) => {
+                    tabs={[
+                      ...RISK_SEVERITIES,
+                      ...((risksBySeverity[UNRATED] || []).length > 0 ? [UNRATED] : []),
+                    ].map((severity) => {
                       const risksAtSeverity = risksBySeverity[severity] || [];
                       const status = riskSeverityStatus(severity);
                       return {
