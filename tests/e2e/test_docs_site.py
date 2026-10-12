@@ -101,11 +101,27 @@ def test_search_returns_results(page: Page, docs_site: str) -> None:
     assert results.count() > 0
 
 
-def test_sample_report_opens(page: Page, docs_site: str) -> None:
+def test_sample_report_stays_in_theme(page: Page, docs_site: str) -> None:
+    # #364: the sample page is a normal themed MkDocs page, not a standalone
+    # one build_docs_sample.py generates by overwriting index.html -- so the
+    # site header, search and nav sidebar are all still present.
     page.goto(f"{docs_site}/sample/")
     page.wait_for_load_state("networkidle")
-    assert "Sample report" in page.content()
-    links = page.locator("ul li a")
+    assert page.locator(".md-header").count() > 0
+    assert page.locator(".md-nav--primary").count() > 0
+    content = page.content()
+    assert "Sample report" in content
+    # Explains what the reader is looking at: one example, how it was
+    # produced, and how it differs from a real Claude Code run.
+    assert "wordpress" in content.lower()
+    assert "deterministic" in content.lower()
+    assert "Schema Design" in content
+
+
+def test_sample_report_deliverables_resolve(page: Page, docs_site: str) -> None:
+    page.goto(f"{docs_site}/sample/")
+    page.wait_for_load_state("networkidle")
+    links = page.locator("#sample-deliverables a")
     assert links.count() > 0
     # Each listed deliverable actually resolves (no 404), rather than just
     # existing as a link.
