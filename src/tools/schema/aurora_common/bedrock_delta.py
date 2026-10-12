@@ -111,7 +111,12 @@ def merge_or_correct[T: BaseModel](
     """
     merged = merge_design_delta(base, delta)
     if merged.errors:
-        logger.warning("[schema-design/%s] delta merge errors: %s", engine, merged.errors)
+        # merge errors can echo the delta's own column/type text (the model's
+        # output); full list at DEBUG only, WARNING keeps just the count (#143).
+        logger.debug("[schema-design/%s] delta merge errors: %s", engine, merged.errors)
+        logger.warning(
+            "[schema-design/%s] delta merge found %d error(s)", engine, len(merged.errors)
+        )
         prompt = (
             "Your design delta references things the draft does not have:\n- "
             + "\n- ".join(merged.errors)
@@ -120,7 +125,10 @@ def merge_or_correct[T: BaseModel](
         try:
             delta = runner._invoke_designer(prompt, previous_output=delta)
         except Exception as exc:  # keep the first delta; lenient merge records the errors
-            logger.warning("[schema-design/%s] delta correction failed: %s", engine, exc)
+            logger.debug("[schema-design/%s] delta correction failed: %s", engine, exc)
+            logger.warning(
+                "[schema-design/%s] delta correction failed (%s)", engine, type(exc).__name__
+            )
         merged = merge_design_delta(base, delta, strict=False)
     trace["delta_merge"] = {
         "summary": merged.summary,

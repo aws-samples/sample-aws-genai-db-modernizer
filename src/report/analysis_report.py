@@ -213,7 +213,10 @@ def _read_schema_designs(store: Any, database_name: str, job_id: str) -> list[di
                 {"target_type": engine, "artifact_path": key, "content": store.read_json(key)}
             )
         except Exception as exc:  # noqa: BLE001 - one unreadable design must not lose the rest
-            logger.warning("Skipping schema design %s: %s", key, exc)
+            # A malformed design artifact's read/parse error can echo its own
+            # content (#143): full text at DEBUG only, WARNING keeps the key.
+            logger.debug("Skipping schema design %s: %s", key, exc)
+            logger.warning("Skipping schema design %s (%s)", key, type(exc).__name__)
     return designs
 
 
@@ -572,7 +575,10 @@ def build_export_data(
         try:
             triage = store.read_json(triage_key)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not read triage %s: %s", triage_key, exc)
+            # A malformed artifact's parse error can echo its own content
+            # (#143): full text at DEBUG only, WARNING keeps the key.
+            logger.debug("Could not read triage %s: %s", triage_key, exc)
+            logger.warning("Could not read triage %s (%s)", triage_key, type(exc).__name__)
 
     collector: dict = {}
     collector_key = f"{database_name}/{job_id}/collector/output.json"
@@ -580,7 +586,8 @@ def build_export_data(
         try:
             collector = _project_collector(store.read_json(collector_key))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not read collector %s: %s", collector_key, exc)
+            logger.debug("Could not read collector %s: %s", collector_key, exc)
+            logger.warning("Could not read collector %s (%s)", collector_key, type(exc).__name__)
 
     schema_designs = _cap_generated_ddl(_read_schema_designs(store, database_name, job_id))
     if not schema_designs:

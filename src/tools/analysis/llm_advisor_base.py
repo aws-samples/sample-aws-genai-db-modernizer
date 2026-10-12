@@ -134,12 +134,21 @@ class LlmAdvisorBase(ABC):
             try:
                 return self._call_llm(schema, queries, **kwargs)
             except Exception as exc:  # noqa: B112
-                logger.warning(
+                # The LLM-call error can carry prompt/response fragments
+                # (#143): full text at DEBUG only, WARNING keeps the type.
+                logger.debug(
                     "%s attempt %d/%d failed: %s",
                     self.__class__.__name__,
                     attempt + 1,
                     self.MAX_RETRIES,
                     exc,
+                )
+                logger.warning(
+                    "%s attempt %d/%d failed (%s)",
+                    self.__class__.__name__,
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                    type(exc).__name__,
                 )
         return None
 
@@ -184,13 +193,23 @@ class LlmAdvisorBase(ABC):
                     group_result = self._call_llm(group_schema, group_queries, **group_kwargs)
                     break
                 except Exception as exc:  # noqa: B112
-                    logger.warning(
+                    # The LLM-call error can carry prompt/response fragments
+                    # (#143): full text at DEBUG only, WARNING keeps the type.
+                    logger.debug(
                         "%s group %d/%d attempt %d failed: %s",
                         self.__class__.__name__,
                         group_idx + 1,
                         len(groups),
                         attempt + 1,
                         exc,
+                    )
+                    logger.warning(
+                        "%s group %d/%d attempt %d failed (%s)",
+                        self.__class__.__name__,
+                        group_idx + 1,
+                        len(groups),
+                        attempt + 1,
+                        type(exc).__name__,
                     )
 
             if group_result is None:

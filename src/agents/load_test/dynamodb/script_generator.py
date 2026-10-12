@@ -153,7 +153,10 @@ class DynamoDBScriptGenerator(BaseScriptGenerator):
                 try:
                     script = self.generate_scenario(ap, table_def, seed_info)
                 except Exception as e:
-                    logger.warning("script_gen_failed", query_id=qid, error=str(e))
+                    # A template-rendering error can echo seeded sample data
+                    # or query content; full text at DEBUG only (#143).
+                    logger.debug("script_gen_failed", query_id=qid, error=str(e))
+                    logger.warning("script_gen_failed", query_id=qid, error_type=type(e).__name__)
                     continue
 
                 script_path = scripts_dir / "scenarios" / f"{qid}.js"

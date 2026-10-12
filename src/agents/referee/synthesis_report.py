@@ -3123,12 +3123,20 @@ def generate_executive_summary(
 
     except Exception as exc:
         model_id = os.environ.get("SUMMARY_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+        # The underlying error from an LLM call can carry prompt/response
+        # fragments (#143): full text at DEBUG only.
+        logger.debug(
+            "LLM executive summary failed (model=%s): %s — using deterministic", model_id, exc
+        )
         logger.error(
             "LLM executive summary failed (model=%s): %s — using deterministic",
             model_id,
-            exc,
+            type(exc).__name__,
         )
-        print(f"[synthesis] ERROR: LLM summary failed with model '{model_id}': {exc}")
+        print(
+            f"[synthesis] ERROR: LLM summary failed with model '{model_id}' "
+            f"({type(exc).__name__})"
+        )
         print(
             "[synthesis] Set SUMMARY_MODEL_ID env var to override. Falling back to deterministic summary."
         )

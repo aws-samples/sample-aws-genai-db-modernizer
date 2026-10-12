@@ -245,12 +245,21 @@ class LlmSchemaDesigner:
             try:
                 return self._call_llm(aggregate, collector_output, analysis_output)
             except Exception as exc:
-                logger.warning(
+                # The LLM-call error can carry prompt/response fragments
+                # (#143): full text at DEBUG only, WARNING keeps the type.
+                logger.debug(
                     "Schema designer attempt %d/%d failed for %s: %s",
                     attempt + 1,
                     self.MAX_RETRIES,
                     aggregate.get("aggregate_id"),
                     exc,
+                )
+                logger.warning(
+                    "Schema designer attempt %d/%d failed for %s (%s)",
+                    attempt + 1,
+                    self.MAX_RETRIES,
+                    aggregate.get("aggregate_id"),
+                    type(exc).__name__,
                 )
                 continue
 

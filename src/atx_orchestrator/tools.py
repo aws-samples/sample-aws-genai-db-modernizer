@@ -1123,7 +1123,10 @@ def _run_phase_via_a2a(
         else:
             payload = invoke_and_wait(agent_id, message, timeout=timeout)
     except A2AError as e:
-        logger.error("ATX %s FAILED: %s: %s", label, type(e).__name__, e)
+        # The A2A payload errors this can wrap sometimes embed the subagent's
+        # own output (#143): full text at DEBUG only, ERROR keeps the type.
+        logger.debug("ATX %s FAILED: %s: %s", label, type(e).__name__, e)
+        logger.error("ATX %s FAILED: %s", label, type(e).__name__)
         if step:
             mark_step_failed(step, str(e))
         return json.dumps(
@@ -1435,10 +1438,16 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             ]
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning(
+        # Deliverable rendering operates directly on the report's own
+        # content, so the error can echo it (#143): full text at DEBUG only.
+        logger.debug(
             "ATX synthesis deliverables skipped (report is durable in S3): %s: %s",
             type(e).__name__,
             e,
+        )
+        logger.warning(
+            "ATX synthesis deliverables skipped (report is durable in S3): %s",
+            type(e).__name__,
         )
 
 
@@ -1991,7 +2000,9 @@ def _run_schema_design_via_a2a(
     try:
         payload = invoke_and_wait(agent_id, message, timeout=_schema_design_timeout_s())
     except A2AError as e:
-        logger.error("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
+        # Same reasoning as _invoke_phase_tool above: full text at DEBUG only.
+        logger.debug("ATX schema-design %s FAILED: %s: %s", suffix, type(e).__name__, e)
+        logger.error("ATX schema-design %s FAILED: %s", suffix, type(e).__name__)
         mark_step_failed(step, str(e))
         return json.dumps(
             {

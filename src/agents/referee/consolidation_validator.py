@@ -548,10 +548,16 @@ def _parse_flagged(response_text: str) -> list[dict] | None:
     try:
         result = json.loads(text)
     except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM validation response: %s", text[:200])
+        # The raw LLM response text is DEBUG only -- it is model output, which
+        # must stay out of INFO and above (#143). WARNING keeps only the length.
+        logger.debug("Failed to parse LLM validation response: %s", text[:200])
+        logger.warning("Failed to parse LLM validation response (length=%d)", len(text))
         return None
     if not isinstance(result, list):
-        logger.warning("LLM validation response is not a JSON array: %s", text[:200])
+        logger.debug("LLM validation response is not a JSON array: %s", text[:200])
+        logger.warning(
+            "LLM validation response is not a JSON array (type=%s)", type(result).__name__
+        )
         return None
     # Validate each entry has required fields
     return [
@@ -568,7 +574,10 @@ def _report(from_engine: str, to_engine: str, queries: list[dict], flagged: list
             f"as unserviceable on {to_engine}"
         )
         for f in flagged:
-            print(f"[reality-check]   {f['query_id']}: {f['reason']}")
+            # `reason` is LLM-generated free text; full detail at DEBUG only,
+            # the console narration stays to the query identifier (#143).
+            logger.debug("[reality-check] %s: %s", f["query_id"], f["reason"])
+            print(f"[reality-check]   {f['query_id']}")
     else:
         print(f"[reality-check] LLM confirmed all {len(queries)} queries OK on {to_engine}")
 
@@ -578,6 +587,25 @@ def _validator_model_id() -> str:
         "VALIDATOR_MODEL_ID",
         os.environ.get("SUMMARY_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
     )
+
+
+def _error_label(exc: Exception) -> str:
+    """A short, safe label for an LLM-call exception.
+
+    Normally the exception's type name. A boto3/Strands ``ClientError`` wraps
+    every AWS service error behind that one class, so the type name alone
+    ("ClientError") loses the distinction between e.g. throttling and a bad
+    request; its own ``Error.Code`` (a short AWS-defined enum string such as
+    "ThrottlingException", not free text) is safe to log above DEBUG (#143)
+    and far more useful. Falls back to the type name when ``exc`` is not a
+    ``ClientError`` or carries no recognizable code.
+    """
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        if code:
+            return f"{type(exc).__name__}:{code}"
+    return type(exc).__name__
 
 
 def _try_strands_validator(
@@ -617,9 +645,13 @@ def _try_strands_validator(
         )
         response_text = str(agent(prompt)).strip()
     except Exception as exc:
-        logger.error("Strands validation failed: %s", exc)
-        print(f"[reality-check] LLM validation failed: {exc}")
-        raise ValidationFailed(f"strands: {exc}") from exc
+        # The underlying error from an LLM call can carry prompt/response
+        # fragments (#143): full text at DEBUG only. The ValidationFailed
+        # message itself must also carry only the type, since it propagates
+        # into a WARNING log a few frames up (run_consolidation_validation).
+        logger.debug("Strands validation failed: %s", exc)
+        logger.error("Strands validation failed (%s)", _error_label(exc))
+        raise ValidationFailed(f"strands: {_error_label(exc)}") from exc
 
     flagged = _parse_flagged(response_text)
     if flagged is None:
@@ -655,8 +687,10 @@ def _try_boto3_validator(
         )
         response_text = response["output"]["message"]["content"][0]["text"]
     except Exception as exc:
-        logger.error("boto3 validation failed: %s", exc)
-        raise ValidationFailed(f"boto3: {exc}") from exc
+        # Same reasoning as the Strands branch above: full text at DEBUG only.
+        logger.debug("boto3 validation failed: %s", exc)
+        logger.error("boto3 validation failed (%s)", _error_label(exc))
+        raise ValidationFailed(f"boto3: {_error_label(exc)}") from exc
 
     print(f"[reality-check] Validating {len(queries)} queries moved {from_engine} → {to_engine}...")
     flagged = _parse_flagged(response_text)

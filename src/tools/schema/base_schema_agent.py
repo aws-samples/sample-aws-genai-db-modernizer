@@ -236,8 +236,13 @@ class SchemaDesignRunner:
                 self.trace.log_pe_review(iteration, elapsed, review)
                 print(f"{prefix} PE review {iteration + 1} complete in {elapsed:.0f}s")
             except Exception as exc:
-                print(f"{prefix} PE review failed: {exc} — accepting design")
-                logger.warning("PE review failed: %s — accepting design", exc)
+                # The PE reviewer's error can carry a pydantic ValidationError's
+                # input_value fragments (the model's own generated output), so
+                # the full text is DEBUG only; print/WARNING keep the type (#143).
+                logger.debug("%s PE review failed: %s — accepting design", prefix, exc)
+                logger.warning(
+                    "%s PE review failed (%s) — accepting design", prefix, type(exc).__name__
+                )
                 self.trace.log_pe_error(iteration, str(exc))
                 break
 
@@ -307,7 +312,11 @@ class SchemaDesignRunner:
                 cat = getattr(getattr(cr, "category", ""), "value", "?")
                 tgt = getattr(cr, "target", "?")
                 chg = getattr(cr, "requested_change", "?")
-                print(f"  - [{sev}] {cat}: {tgt} — {chg}")
+                # `target`/`requested_change` echo the customer's schema/query
+                # content back through the PE reviewer's change request, so the
+                # per-item detail is DEBUG only; the console keeps only the
+                # severity/category count printed above (#143).
+                logger.debug("%s PE feedback: [%s] %s: %s — %s", prefix, sev, cat, tgt, chg)
 
             table_names = self._get_table_names(design_output)
             revision_prompt = (
@@ -370,7 +379,13 @@ class SchemaDesignRunner:
                     regular_failures += 1
                     kind = "error"
                     backoff = BASE_BACKOFF_SECONDS * (2 ** max(0, regular_failures - 1))
-                print(f"{prefix} Attempt {attempt} failed ({kind}): {exc}")
+                # The designer's error can carry a pydantic ValidationError's
+                # input_value fragments (the model's own generated output) or
+                # raw partial LLM output, so full text is DEBUG only (#143).
+                logger.debug("%s Attempt %d failed (%s): %s", prefix, attempt, kind, exc)
+                logger.warning(
+                    "%s Attempt %d failed (%s): %s", prefix, attempt, kind, type(exc).__name__
+                )
                 if regular_failures >= regular_max or throttle_failures >= throttle_max:
                     break
                 print(f"{prefix} Retry after {backoff:.1f}s")
@@ -402,7 +417,14 @@ class SchemaDesignRunner:
             except (json.JSONDecodeError, ValueError, TypeError):
                 logger.warning("Could not salvage partial output from last attempt")
 
-        raise RuntimeError(f"Designer failed after {attempt} attempts: {last_error}")
+        # Name only the error's type, never its text: this propagates up to the
+        # ATX subagent wrapper's broad failure handler, which logs the raised
+        # exception's message at ERROR via logger.exception("Subagent FAILED")
+        # (base.py) -- the same leak shape as the ValueError fix in #143. Not
+        # chained with ``from last_error``: that would still print the original
+        # text in the traceback once something logs this with exc_info.
+        logger.debug("%s Designer failed after %d attempts: %s", prefix, attempt, last_error)
+        raise RuntimeError(f"Designer failed after {attempt} attempts: {type(last_error).__name__}")
 
     def _append_trade_offs(self, output: BaseModel, notes: list[str]) -> None:
         """Append trade-off notes to the output if it has a trade_offs field.

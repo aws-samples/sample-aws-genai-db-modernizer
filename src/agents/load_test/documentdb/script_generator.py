@@ -157,7 +157,13 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
         for ap in access_patterns:
             source_table = self._extract_source_table(ap)
             if source_table is None:
-                logger.warning("documentdb_no_source_table_for_pattern", access_pattern=ap)
+                # The whole access-pattern dict can carry query/schema content
+                # (query_filter, pipeline stages); DEBUG only. WARNING keeps
+                # the stable pattern identifier (#143).
+                logger.debug("documentdb_no_source_table_for_pattern", access_pattern=ap)
+                logger.warning(
+                    "documentdb_no_source_table_for_pattern", pattern_id=ap.get("pattern_id")
+                )
                 continue
 
             collection_def = collections_by_source.get(source_table)
@@ -191,7 +197,12 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
             try:
                 script = self.generate_scenario(ap, collection_def, seed_info)
             except Exception as exc:
-                logger.warning("documentdb_script_gen_failed", query_id=qid, error=str(exc))
+                # A template-rendering error can echo seeded sample data or
+                # query content; full text at DEBUG only (#143).
+                logger.debug("documentdb_script_gen_failed", query_id=qid, error=str(exc))
+                logger.warning(
+                    "documentdb_script_gen_failed", query_id=qid, error_type=type(exc).__name__
+                )
                 continue
 
             script_path = scripts_dir / "scenarios" / f"{qid}.js"

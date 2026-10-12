@@ -840,12 +840,13 @@ def _generate_executive_summary(
 
     except Exception as exc:
         model_id = os.environ.get("SUMMARY_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
-        logger.error(
-            "LLM executive summary failed (model=%s): %s",
-            model_id,
-            exc,
+        # The underlying error from an LLM call can carry prompt/response
+        # fragments (#143): full text at DEBUG only.
+        logger.debug("LLM executive summary failed (model=%s): %s", model_id, exc)
+        logger.error("LLM executive summary failed (model=%s): %s", model_id, type(exc).__name__)
+        print(
+            f"[reality-check] ERROR: LLM summary failed with model '{model_id}' ({type(exc).__name__})"
         )
-        print(f"[reality-check] ERROR: LLM summary failed with model '{model_id}': {exc}")
         print("[reality-check] Set SUMMARY_MODEL_ID env var to override the model.")
 
     return None

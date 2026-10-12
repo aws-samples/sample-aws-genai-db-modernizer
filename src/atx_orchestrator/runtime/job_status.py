@@ -118,7 +118,11 @@ def complete_job(
                 )
             else:
                 manager.update_job_status(JobStatus.FAILED, error_message)
-            logger.info("Job marked FAILED: %s", error_message)
+            # error_message is caller-supplied free text and is not
+            # contractually limited to identifiers (#143): full text at DEBUG
+            # only, INFO keeps just its length.
+            logger.debug("Job marked FAILED: %s", error_message)
+            logger.info("Job marked FAILED (message length=%d)", len(error_message or ""))
 
         if guard_key:
             _COMPLETED_JOB_IDS.add(guard_key)

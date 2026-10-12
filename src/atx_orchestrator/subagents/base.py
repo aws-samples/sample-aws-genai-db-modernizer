@@ -46,13 +46,15 @@ def extract_text(message) -> str:
       — original A2A form. Return ``parts[0]["text"]``.
     - Anything else → ``str(msg)``.
     """
-    # DIAG A16.10: log the RAW incoming message to see what the SDK actually
-    # delivers when the orchestrator's invoke_and_wait -> send_message flow
-    # is used. Test-8 + test-9 showed parse_invocation gets empty job_id
-    # despite our envelope having the right text.
-    logger.info("DIAG extract_text got message type=%s repr=%r", type(message).__name__, message)
+    # DIAG A16.10: the RAW incoming message helped diagnose what the SDK
+    # actually delivers when the orchestrator's invoke_and_wait -> send_message
+    # flow is used (test-8 + test-9 showed parse_invocation gets empty job_id
+    # despite our envelope having the right text). The message can carry
+    # customer-derived content (collection JSON, SQL text, schema names), so
+    # these diagnostics are DEBUG only -- never INFO (#143).
+    logger.debug("DIAG extract_text got message type=%s repr=%r", type(message).__name__, message)
     msg = getattr(message, "message", message)
-    logger.info("DIAG after getattr .message: type=%s repr=%r", type(msg).__name__, msg)
+    logger.debug("DIAG after getattr .message: type=%s repr=%r", type(msg).__name__, msg)
 
     if isinstance(msg, str):
         # SDK sometimes delivers the parts array as a JSON string. Try to
@@ -63,24 +65,24 @@ def extract_text(message) -> str:
                 first = parsed[0]
                 if isinstance(first, dict) and "text" in first:
                     inner = str(first["text"])
-                    logger.info(
+                    logger.debug(
                         "DIAG unwrapped JSON-list-string shape → inner text=%r",
                         inner[:500],
                     )
                     return inner
         except json.JSONDecodeError:
             pass
-        logger.info("DIAG non-JSON string, returning msg[:500]=%r", msg[:500])
+        logger.debug("DIAG non-JSON string, returning msg[:500]=%r", msg[:500])
         return msg
 
     if isinstance(msg, dict):
         parts = msg.get("parts") or [{}]
         first = parts[0] if parts else {}
         text = first.get("text", json.dumps(msg))
-        logger.info("DIAG dict path: parts=%r first=%r text=%r", parts, first, text)
+        logger.debug("DIAG dict path: parts=%r first=%r text=%r", parts, first, text)
         return str(text)
 
-    logger.info("DIAG fallback str(msg)=%r", str(msg)[:500])
+    logger.debug("DIAG fallback str(msg)=%r", str(msg)[:500])
     return str(msg)
 
 
@@ -101,7 +103,10 @@ def parse_invocation(text: str) -> dict:
     caller — which pointed at the wrong side of the contract. Types are preserved
     too, so an int stays an int.
     """
-    logger.info("DIAG parse_invocation received text=%r", text[:1000] if text else text)
+    # The invocation text can carry customer-derived content riding alongside
+    # job_id/database_name/input_key (e.g. a free-form note field), so this
+    # stays DEBUG only -- never INFO (#143).
+    logger.debug("DIAG parse_invocation received text=%r", text[:1000] if text else text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         try:
@@ -260,10 +265,20 @@ def make_subagent_factory(
 
                 try:
                     params = parse_invocation(text)
-                    if not params["job_id"] or not params["database_name"]:
+                    missing = sorted(
+                        key for key in ("job_id", "database_name") if not params.get(key)
+                    )
+                    if missing:
+                        # Name only the missing keys and the parsed key *names* --
+                        # never the values. ``params`` can carry arbitrary
+                        # customer-derived fields (e.g. a free-form ``note``), and
+                        # this ValueError is logged at ERROR by the broad
+                        # ``except Exception`` below via ``logger.exception``
+                        # (#143), so embedding ``params`` itself would leak
+                        # whatever rode along in the invocation.
                         raise ValueError(
-                            "Invocation must include 'job_id' and 'database_name'. "
-                            f"Parsed: {params}"
+                            f"Invocation must include non-empty {', '.join(missing)}. "
+                            f"Received keys: {sorted(params.keys())}"
                         )
                     logger.info(
                         "Subagent starting work: job_id=%s database=%s",
@@ -286,7 +301,19 @@ def make_subagent_factory(
                     payload = json.dumps({"response": summary})
                     if manager and instance_id:
                         _report_completed(manager, instance_id, payload)
-                    logger.info("Subagent COMPLETED: %s", summary)
+                    # The full summary dict is logged at DEBUG only: a work_fn's
+                    # return value is not contractually limited to identifiers
+                    # and counts, so it could carry customer-derived content
+                    # (#143). job_id/database are already at INFO from
+                    # "Subagent starting work" above, and the result's keys
+                    # from "Subagent work_fn returned" just above that -- so
+                    # this marker only repeats the field count, not those
+                    # same identifiers again.
+                    logger.debug("Subagent COMPLETED: %s", summary)
+                    logger.info(
+                        "Subagent COMPLETED: %d field(s) in response",
+                        len(summary) if isinstance(summary, dict) else 0,
+                    )
                     # Must be AgentResult-shaped, not a bare string — see
                     # _SubagentResult. The orchestrator does not read this; it
                     # reads agentOutput.serializedPayload written just above.

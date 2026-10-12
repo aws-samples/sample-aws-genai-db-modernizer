@@ -412,7 +412,14 @@ def run_opensearch_schema_agent(
             elapsed = time.time() - t0
             trace.log_pe_review(iteration, elapsed, review)
         except Exception as exc:
-            print(f"[schema-design/opensearch] PE review failed: {exc} — accepting design")
+            # The PE reviewer's error can carry a pydantic ValidationError's
+            # input_value fragments (the model's own generated output), so the
+            # full text is DEBUG only; WARNING keeps the type only (#143).
+            logger.debug("[schema-design/opensearch] PE review failed: %s — accepting design", exc)
+            logger.warning(
+                "[schema-design/opensearch] PE review failed (%s) — accepting design",
+                type(exc).__name__,
+            )
             trace.log_pe_error(iteration, str(exc))
             break
 
