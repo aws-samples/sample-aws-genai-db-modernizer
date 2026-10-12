@@ -16,14 +16,13 @@ exactly the latent bug #477 closes before it has a live victim.
 
 This module is deliberately narrow: it only names capabilities that
 ``ANTI_PATTERN_PENALTIES`` keys need to check themselves against, not a
-general replacement for the broader (and already duplicated-by-necessity)
-capability tables in ``src.agents.referee.capability_registry`` (hard
-architectural constraints used by the reality check's serviceability gate)
-or ``src.agents.referee.reality_check`` (workload-pattern fit scoring). Adding
-a third, differently-shaped capability table for every future scoring need
-would make the exact kind of drift this fix is cleaning up worse, not
-better -- so this module only grows when another ``ANTI_PATTERN_PENALTIES``
-key turns out to be a capability statement too.
+general replacement for the broader capability table in
+``src.agents.referee.capability_registry`` (hard architectural constraints
+used by the reality check's serviceability gate). Adding a second,
+differently-shaped capability table for every future scoring need would
+make the exact kind of drift this fix is cleaning up worse, not better --
+so this module only grows when another ``ANTI_PATTERN_PENALTIES`` key turns
+out to be a capability statement too.
 
 ``ACID_TRANSACTION_ENGINES`` below intentionally mirrors
 ``capability_registry.ENGINE_CAPABILITIES``'s ``multi_doc_acid`` set (same
@@ -31,11 +30,16 @@ three engines) rather than importing it: ``src.shared`` must not depend on
 ``src.agents`` (the dependency runs the other way everywhere else in this
 codebase), so this stays a small literal constant, not an import, and
 ``tests/unit/test_capability_registry.py`` asserts the two sets agree so they
-cannot drift apart silently. Separately, ``reality_check.ENGINE_CAPABILITIES``
-(a third, older capability table, workload-fit scoring rather than hard
-constraints) does NOT list ``transactions`` for ``documentdb`` at all, which
-disagrees with both this module and ``capability_registry`` -- a pre-existing
-gap this fix does not touch; see PR #479 review round 1, comment 1.
+cannot drift apart silently.
+
+#490 removed the third capability table this module used to also track
+against: the reality check's own ``ENGINE_CAPABILITIES`` (workload-fit
+scoring, not hard constraints), which did NOT list ``transactions`` for
+``documentdb`` at all -- a pre-existing gap (PR #479 review round 1, comment
+1) between it and the two tables above. That table, and the gap, are gone:
+every fit-scoring decision now reads the resolver's own score
+(``query_scoring.score_query_for_engine``) and this module's two
+capability tables are the only ones left.
 """
 
 from __future__ import annotations
@@ -141,19 +145,18 @@ FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
 # one query needs full-text search says nothing about a neighboring plain
 # primary-key lookup on the same table.
 #
-# Both the assignment resolver's per-query confidence
-# (``query_scoring.compute_query_confidence``) and the reality
-# check's per-query fit score (``reality_check._engine_fit_score``) key off
-# this set, with the same precedence: an engine in it never gets a
+# ``query_scoring.compute_query_confidence`` keys off this set, with the
+# same precedence everywhere it is used -- the resolver's own ``resolve()``
+# and, since #490, the reality check's Aurora absorption pass and the
+# mandatory-engine floor's absorber, all through the one shared
+# ``score_query_for_engine`` (#549): an engine in this set never gets a
 # non-zero score from a table-wide average. It first checks whether the
 # query itself appears in one of the engine's own detected patterns (real,
-# query-level evidence); only when that doesn't match does the resolver
-# score 0 and the reality check fall to its flat basic-CRUD baseline plus
-# any triage-signal-capability bonus (the reality check's own, pre-existing
-# floor for "any engine with key-value/range can do simple ops" -- the
-# resolver has no equivalent concept, so it scores 0 instead). This is the
-# resolver's and the reality check's atomic unit -- the query, not the
-# table -- applied consistently in both places so a query that correctly
-# starts off OpenSearch in the first assignment is not routed back onto it
-# by the reality check's own consolidation pass.
+# query-level evidence); only when that doesn't match does it score 0 --
+# there is no flat basic-CRUD floor or triage-signal bonus to fall back to
+# any more (#490 deleted the reality check's own, separate version of
+# that). This is the one scorer's atomic unit -- the query, not the table
+# -- applied consistently everywhere so a query that correctly starts off
+# OpenSearch in the first assignment is not routed back onto it by the
+# reality check's own consolidation pass.
 PATTERN_ONLY_ENGINES: frozenset[str] = frozenset({"opensearch"})

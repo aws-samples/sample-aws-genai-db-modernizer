@@ -10,15 +10,8 @@
 from __future__ import annotations
 
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
-from src.agents.referee.reality_check import (
-    BASIC_CRUD_SCORE,
-    ENGINE_CAPABILITIES,
-    SIGNAL_MATCH_BONUS,
-    SIGNAL_TO_CAPABILITY,
-    _engine_fit_score,
-    _find_best_absorber_for_query,
-    run_reality_check,
-)
+from src.agents.referee.query_scoring import ScoringContext
+from src.agents.referee.reality_check import _find_best_absorber_for_query, run_reality_check
 
 
 def _collector(qids: list[str], **fields) -> dict:
@@ -129,55 +122,46 @@ class TestMandatoryProtectsOnlyItsQueries:
         assert engine == {"d1": "dynamodb", "search": "opensearch"}
 
 
-class TestCapabilityMap:
-    def test_aggregations_need_the_aggregation_capability(self):
-        assert SIGNAL_TO_CAPABILITY["aggregations"] == "aggregation"
-        signals = {"q": ["aggregations"]}
-        query_map = {"q": {"tables_accessed": []}}
-        qa = {"query_id": "q"}
-        assert _engine_fit_score("dynamodb", qa, signals, query_map, {}) == (
-            BASIC_CRUD_SCORE - SIGNAL_MATCH_BONUS
-        )
-        assert _engine_fit_score("aurora_mysql", qa, signals, query_map, {}) == (
-            BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
-        )
-        assert _engine_fit_score("elasticache", qa, signals, query_map, {}) == 0
-
-    def test_elasticache_serves_top_n(self):
-        assert SIGNAL_TO_CAPABILITY["leaderboard_pattern"] in ENGINE_CAPABILITIES["elasticache"]
+# #490: ``TestCapabilityMap`` tested the reality check's own, now-deleted
+# ``SIGNAL_TO_CAPABILITY``/``ENGINE_CAPABILITIES``/``_engine_fit_score``/
+# ``BASIC_CRUD_SCORE``/``SIGNAL_MATCH_BONUS``. Every fit-scoring and
+# capability-gate decision now reads the resolver's own score
+# (``resolver_fit_score``) and ``capability_registry.can_engine_serve_capability``
+# -- both already covered by ``tests/unit/test_assignment_resolver.py`` and
+# ``tests/unit/test_capability_registry.py`` -- so this class is removed
+# rather than rewritten against functions that no longer exist.
 
 
 class TestNoCacheAbsorber:
     def _absorber(self, qa, query_map):
-        analysis = {
-            "elasticache": {"table_recommendations": [{"table_id": "t", "confidence_score": 99}]},
-            "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]},
-        }
         # ElastiCache is excluded by the write/cache-ownership gate before
-        # any score is even looked at (``can_own``), regardless of its
-        # inflated confidence_score above -- dynamodb just needs a real
-        # resolver score to be considered at all (#502 review round 5,
-        # finding N3 swapped the scorer here).
-        trace_by_query = {qa["query_id"]: {"engines": {"dynamodb": 40}}}
+        # any score is even looked at (``can_own``) -- dynamodb just needs a
+        # real resolver score to be considered at all (#502 review round 5,
+        # finding N3 swapped the scorer here; #490/#549 moved it onto
+        # ``score_query_for_engine`` directly).
+        ctx = ScoringContext(
+            analysis_outputs={
+                "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]}
+            }
+        )
         return _find_best_absorber_for_query(
             qa,
             {"elasticache", "dynamodb"},
             "documentdb",
             {},
             query_map,
-            analysis,
             {},
             set(),
             "dynamodb",
-            trace_by_query,
+            ctx,
         )
 
     def test_elasticache_never_absorbs_a_read(self):
-        query_map = {"q": {"tables_accessed": ["t"], "query_type": "SELECT"}}
+        query_map = {"q": {"query_id": "q", "tables_accessed": ["t"], "query_type": "SELECT"}}
         assert self._absorber({"query_id": "q"}, query_map)["target_engine"] == "dynamodb"
 
     def test_elasticache_never_absorbs_a_write(self):
-        query_map = {"w": {"tables_accessed": ["t"], "query_type": "UPDATE"}}
+        query_map = {"w": {"query_id": "w", "tables_accessed": ["t"], "query_type": "UPDATE"}}
         assert self._absorber({"query_id": "w"}, query_map)["target_engine"] == "dynamodb"
 
 

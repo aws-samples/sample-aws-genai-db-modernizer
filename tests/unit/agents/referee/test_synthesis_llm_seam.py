@@ -69,7 +69,18 @@ _ANALYSIS_DDB = {
         {"table_id": "orders", "confidence_score": 78, "migration_complexity": "LOW"},
     ],
     "workload_analysis": {
-        "patterns_detected": ["key-value lookup"],
+        # A real ``Pattern`` object (dict, not a bare descriptive string): #490
+        # made the resolver's ``_build_anti_pattern_map`` read every engine's
+        # ``patterns_detected`` (previously only ``_engine_fit_score`` read it,
+        # and only for ``PATTERN_ONLY_ENGINES``, which dynamodb is not) --
+        # a bare string here used to never be reached for this engine.
+        "patterns_detected": [
+            {
+                "pattern_id": "p1",
+                "pattern_type": "key-value-lookup",
+                "confidence": "HIGH",
+            }
+        ],
         "anti_patterns_detected": [],
     },
     "cost_estimate": {

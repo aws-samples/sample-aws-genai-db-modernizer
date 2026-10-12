@@ -3,12 +3,14 @@
 Maps each engine's fundamental capabilities (what it CAN do at an
 architectural level) and provides detection logic for query requirements.
 
-Used by the reality check serviceability gate to prevent query absorption
-when the target engine fundamentally cannot serve the access pattern.
-
-This is distinct from the existing ENGINE_CAPABILITIES in reality_check.py
-which tracks workload-pattern fit scoring. This registry tracks hard
-architectural constraints: things an engine structurally cannot do.
+Used by ``query_scoring.score_query_for_engine``'s hard capability gate
+(#490/#549) to prevent query absorption when the target engine fundamentally
+cannot serve the access pattern. This registry tracks hard architectural
+constraints: things an engine structurally cannot do -- a different fact
+from workload-pattern fit scoring, which lives entirely in
+``query_scoring.py`` now (the reality check's own, separate
+``ENGINE_CAPABILITIES`` fit-scoring table this registry used to be
+distinguished from is deleted).
 """
 
 from __future__ import annotations

@@ -168,32 +168,39 @@ class TestAbsorberTieBreakIsOrderIndependent:
         second_engine: str = "aurora_postgresql",
         settled_counts: dict[str, int] | None = None,
     ) -> str:
+        from src.agents.referee.query_scoring import ScoringContext
         from src.agents.referee.reality_check import _find_best_absorber_for_query
 
-        analysis = {"table_recommendations": [{"table_id": "t1", "confidence_score": 80}]}
         # Extra dynamodb queries touch another table, so the overlap stays 1 each.
         extra = [{"query_id": f"x{i}"} for i in range(dynamodb_queries - 1)]
+        # Both candidates tied on resolver score too (#502 review round 5,
+        # finding N3 swapped the scorer here) -- the tie this test checks is
+        # the ADR-031 Decision 2 tie-break itself (#503).
+        ctx = ScoringContext(
+            analysis_outputs={
+                second_engine: {
+                    "table_recommendations": [{"table_id": "t1", "confidence_score": 80}]
+                },
+                "dynamodb": {"table_recommendations": [{"table_id": "t1", "confidence_score": 80}]},
+            }
+        )
         absorber = _find_best_absorber_for_query(
             {"query_id": "q1", "assigned_engine": "documentdb"},
             committed_order,  # type: ignore[arg-type]  # a list pins the iteration order
             "documentdb",
             {},
             {
-                "q1": {"tables_accessed": ["t1"]},
-                "q2": {"tables_accessed": ["t1"]},
-                "q3": {"tables_accessed": ["t1"]},
+                "q1": {"query_id": "q1", "tables_accessed": ["t1"]},
+                "q2": {"query_id": "q2", "tables_accessed": ["t1"]},
+                "q3": {"query_id": "q3", "tables_accessed": ["t1"]},
             },
-            {second_engine: analysis, "dynamodb": analysis},
             {
                 second_engine: [{"query_id": "q2"}],
                 "dynamodb": [{"query_id": "q3"}, *extra],
             },
             set(),
             "dynamodb",
-            # Both candidates tied on resolver score too (#502 review round
-            # 5, finding N3 swapped the scorer here) -- the tie this test
-            # checks is the ADR-031 Decision 2 tie-break itself (#503).
-            {"q1": {"engines": {second_engine: 80, "dynamodb": 80}}},
+            ctx,
             source_compatible_engine=source_compatible_engine,
             settled_counts=settled_counts,
         )
@@ -418,14 +425,14 @@ class TestAuroraAbsorptionFollowsTheSource:
         engine_queries: dict[str, list[dict]] = {}
         for qa in assignments:
             engine_queries.setdefault(qa["assigned_engine"], []).append(qa)
+        from src.agents.referee.query_scoring import ScoringContext
+
         result = _run_aurora_absorption_pass(
             engine_queries=engine_queries,
             surviving_engines=set(engine_queries),
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
-            analysis_outputs=analysis,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis),
             source_engine=source,
         )
         # Without a source the engine with more queries (MySQL, 2 vs 1) wins.
@@ -472,14 +479,14 @@ class TestAuroraAbsorptionFollowsTheSource:
         engine_queries: dict[str, list[dict]] = {}
         for qa in assignments:
             engine_queries.setdefault(qa["assigned_engine"], []).append(qa)
+        from src.agents.referee.query_scoring import ScoringContext
+
         result = _run_aurora_absorption_pass(
             engine_queries=engine_queries,
             surviving_engines=set(engine_queries),
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
-            analysis_outputs=analysis,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis),
         )
         assert result.aurora_engine == "aurora_postgresql"
 
@@ -487,6 +494,7 @@ class TestAuroraAbsorptionFollowsTheSource:
         # #550 review (Critical 1): a genuine 1-vs-1 settled tie, keyed on
         # every query id this absorption pass is looking at -- never a
         # constant seed every workload hitting this exact tie would share.
+        from src.agents.referee.query_scoring import ScoringContext
         from src.agents.referee.reality_check import _run_aurora_absorption_pass
 
         recs = {"table_recommendations": [{"table_id": "t", "confidence_score": 80}]}
@@ -505,10 +513,8 @@ class TestAuroraAbsorptionFollowsTheSource:
                 engine_queries=engine_queries,
                 surviving_engines=set(engine_queries),
                 mandatory_committed_engines=set(),
-                query_signals={},
                 query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
-                analysis_outputs=analysis,
-                query_capabilities={},
+                ctx=ScoringContext(analysis_outputs=analysis),
             )
             return result.aurora_engine
 

@@ -28,7 +28,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
 from src.agents.referee.cache_overlay import can_own
@@ -39,81 +39,21 @@ from src.agents.referee.capability_registry import (
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.tie_break import settled_counts as settled_workload_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
-from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
-# ---------------------------------------------------------------------------
-# Engine capability matrix — what each engine CAN do (even if not optimal)
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    from src.agents.referee.query_scoring import ScoringContext
 
-ENGINE_CAPABILITIES: dict[str, set[str]] = {
-    "dynamodb": {
-        "key_value_lookup",
-        "range_query",
-        "write_heavy",
-        "time_series_simple",
-        "leaderboard_simple",  # with GSI + Query
-        "metadata_config",
-        "session_store",
-    },
-    "documentdb": {
-        "key_value_lookup",
-        "range_query",
-        "aggregation",
-        "nested_document",
-        "flexible_schema",
-        "text_search_basic",  # $regex, not great but works
-        "write_heavy",
-        "time_series_simple",
-    },
-    "opensearch": {
-        "text_search",
-        "fuzzy_search",
-        "aggregation",
-        "analytics",
-        "time_series",
-        "leaderboard_simple",  # top-N via sort
-        "range_query",
-        "key_value_lookup",  # get by _id
-        "nested_document",
-        "geo_search",
-    },
-    "elasticache": {
-        "session_store",
-        "leaderboard",
-        "leaderboard_simple",  # sorted sets serve any top-N (#296)
-        "rate_limiting",
-        "pub_sub",
-        "caching",
-    },
-    "aurora_postgresql": {
-        "key_value_lookup",
-        "range_query",
-        "write_heavy",
-        "aggregation",
-        "analytics",
-        "complex_joins",
-        "transactions",
-        "referential_integrity",
-        "text_search_basic",  # tsvector, not as good as OpenSearch
-        "time_series_simple",
-        "metadata_config",
-    },
-    "aurora_mysql": {
-        "key_value_lookup",
-        "range_query",
-        "write_heavy",
-        "aggregation",
-        "analytics",
-        "complex_joins",
-        "transactions",
-        "referential_integrity",
-        "text_search_basic",  # FULLTEXT index, limited
-        "time_series_simple",
-        "metadata_config",
-    },
-}
+# #490: this module used to keep its own fit-scoring capability matrix here
+# (``ENGINE_CAPABILITIES``), separate from both the resolver's own fit score
+# and ``capability_registry``'s hard-architectural-constraint matrix of the
+# same name -- two capability tables and two fit scorers that could (and did)
+# disagree. Deleted: every caller now reads ``query_scoring.
+# score_query_for_engine`` (the capability/exclusion gates, the base
+# confidence and the anti-pattern penalty, all in one call, against one
+# ``ScoringContext``) for both fit and hard capability. There is now one
+# fit function and one capability source.
 
 # Minimum query threshold — if an engine has fewer queries than this,
 # it's a trivial consolidation target (even without unique value check)
@@ -214,37 +154,6 @@ class AuroraAbsorptionResult:
 
 
 # ---------------------------------------------------------------------------
-# Triage signal → capability mapping
-# Used to check if a target engine can handle a query's workload pattern
-# ---------------------------------------------------------------------------
-
-SIGNAL_TO_CAPABILITY: dict[str, str] = {
-    "text_search": "text_search",
-    "key_value_lookups": "key_value_lookup",
-    "leaderboard_pattern": "leaderboard_simple",
-    # SUM/COUNT/AVG with GROUP BY or JOINs: an engine without aggregation must not
-    # absorb them on table confidence alone (#296: WooCommerce SUM...JOIN reports
-    # were consolidated into ElastiCache)
-    "aggregations": "aggregation",
-    "time_series": "time_series_simple",
-    "metadata_config": "metadata_config",
-    "session_store": "session_store",
-    "low_frequency_writes": "write_heavy",
-    "junction_tables": "range_query",
-    "complex_joins": "complex_joins",
-    "subqueries": "complex_joins",
-    "transactions": "transactions",
-    "referential_integrity": "referential_integrity",
-}
-
-# Signals whose specialist capability has a basic form in other engines.
-# Used only for tiny mandatory engines (#165): Aurora FULLTEXT can stand in for
-# OpenSearch when the search workload is a handful of queries.
-SIGNAL_TO_BASIC_CAPABILITY: dict[str, str] = {
-    "text_search": "text_search_basic",
-}
-
-# ---------------------------------------------------------------------------
 # Differentiation scoring — how much better is this engine vs alternatives?
 # ---------------------------------------------------------------------------
 
@@ -288,9 +197,9 @@ OPENSEARCH_MIN_CALLS_PER_SECOND = 1.0
 
 # Source database engines whose own text search (MySQL FULLTEXT via
 # MATCH...AGAINST, Postgres tsvector/pg_trgm) already covers these patterns
-# for free -- ENGINE_CAPABILITIES["aurora_mysql"/"aurora_postgresql"]'s
-# text_search_basic. A dedicated OpenSearch domain must clear a higher
-# traffic bar than OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway.
+# for free -- the Aurora engines' native, basic full-text support. A
+# dedicated OpenSearch domain must clear a higher traffic bar than
+# OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway.
 NATIVE_TEXT_SEARCH_SOURCE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "postgres"})
 
 # The traffic floor a native-text-search source engine's queries must clear
@@ -506,12 +415,6 @@ def may_absorb(
         or caps & set((query_capabilities or {}).get(qid, []))
     )
 
-
-# Bonus for signal-capability match (engine has the exact capability the query needs)
-SIGNAL_MATCH_BONUS = 20
-
-# Base score for engines that can serve basic CRUD but have no specific advantage
-BASIC_CRUD_SCORE = 40
 
 # ---------------------------------------------------------------------------
 # Architectural patterns
@@ -1709,10 +1612,18 @@ def run_reality_check(
     # ``query_assignments`` -- see ``tests/e2e/routing_snapshot.py`` for the
     # same technique and its own consistency guard.
     from src.agents.referee.assignment_resolver import AssignmentResolver, RoutingTrace
+    from src.agents.referee.query_scoring import ScoringContext
 
     _trace = RoutingTrace()
     AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
     trace_by_query = _trace.by_query
+    # The one shared scoring context (#490/#549): the mandatory-engine
+    # floor's absorber (``_find_best_absorber_for_query``) scores each
+    # candidate engine directly with this (``score_query_for_engine``)
+    # instead of reading ``trace_by_query`` -- one scoring call site, same
+    # as the Aurora absorption pass and ``routed_confidence.py``, rather
+    # than a second way of reaching the identical number.
+    scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
     # The resolver's OWN settled-workload snapshot (#503), persisted on the
     # trace rather than recomputed here from
     # the final v1 assignment: the resolver's snapshot is taken before the
@@ -1936,11 +1847,10 @@ def run_reality_check(
                 engine,
                 query_signals,
                 query_map,
-                analysis_outputs,
                 engine_queries,
                 set(),
                 "",
-                trace_by_query,
+                scoring_ctx,
                 query_capabilities,
                 source_compatible_engine,
                 settled_counts,
@@ -2145,6 +2055,8 @@ def rerun_aurora_absorption(
 
     Returns (updated_assignments, new_consolidations). Assignments are copied.
     """
+    from src.agents.referee.query_scoring import ScoringContext
+
     revised = deepcopy(revised_assignments)
     engine_queries: dict[str, list[dict]] = defaultdict(list)
     for qa in revised:
@@ -2154,14 +2066,13 @@ def rerun_aurora_absorption(
     }
     queries = collector_output.get("queries", {}).get("query_patterns", [])
 
+    scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
     absorption = _run_aurora_absorption_pass(
         engine_queries=engine_queries,
         surviving_engines={e for e, qas in engine_queries.items() if qas},
         mandatory_committed_engines=mandatory_committed_engines,
-        query_signals=_build_query_signals(triage.get("signals", [])),
         query_map={q["query_id"]: q for q in queries},
-        analysis_outputs=analysis_outputs,
-        query_capabilities=triage.get("query_capabilities", {}),
+        ctx=scoring_ctx,
         source_engine=(
             source_database_engine(collector_output) if source_engine is None else source_engine
         ),
@@ -2258,10 +2169,8 @@ def _run_aurora_absorption_pass(
     engine_queries: dict[str, list[dict]],
     surviving_engines: set[str],
     mandatory_committed_engines: set[str],
-    query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
-    analysis_outputs: dict[str, dict],
-    query_capabilities: dict[str, list[str]],
+    ctx: ScoringContext,
     source_engine: str = "",
 ) -> AuroraAbsorptionResult:
     """Pass 1: Absorb orphan queries from low-count engines into committed Aurora.
@@ -2274,6 +2183,32 @@ def _run_aurora_absorption_pass(
 
     If the specialist engine scores significantly higher than Aurora on a query,
     that query is protected (the specialist provides genuine operational value).
+
+    The fit score for both sides of that comparison is the resolver's own
+    (``query_scoring.score_query_for_engine``, #490/#549): the hard exclusion
+    and capability gates, then base table/pattern confidence
+    (``query_scoring.compute_query_confidence``) minus the resolver's
+    anti-pattern penalty, against the one ``ctx`` (``ScoringContext.
+    from_pipeline``) built once by the caller -- never this module's own,
+    separately drifting ``_engine_fit_score``. A gated engine
+    (``EngineScore.score is None``) scores 0 here: a hard-gated Aurora never
+    clears ``AURORA_ABSORPTION_MIN_FIT`` (so the query stays protected,
+    correctly refusing the absorption), and a hard-gated specialist is
+    already a contradiction (it currently owns this query), so there is no
+    better number to fall back to than 0 either way.
+
+    Latent edge (#490 review): ``AssignmentResolver.resolve()`` un-gates the
+    homogeneous source's own Aurora dialect outright (the "capability
+    guarantee" block -- this exact query already ran on the source
+    database, so its matching Aurora engine is always ownable and
+    serviceable for it), but ``score_query_for_engine`` has no equivalent --
+    it is a pure per-(query, engine) function with no notion of "the
+    source's own dialect". If a future exclusion or capability rule ever
+    gated that engine for a query it is actually guaranteed to serve, this
+    pass and ``_find_best_absorber_for_query`` would score it 0/``None``
+    while the resolver scored it normally. Not reachable today (no rule
+    gates an Aurora engine on its own source's queries), so this is a
+    comment, not a fix.
     """
     empty_result = AuroraAbsorptionResult(
         absorbed_queries=[], engines_eliminated=[], engines_reduced=[], aurora_engine=""
@@ -2298,6 +2233,8 @@ def _run_aurora_absorption_pass(
     )
     if aurora_engine is None:
         return empty_result
+
+    from src.agents.referee.query_scoring import score_query_for_engine
 
     absorbed_queries: list[dict] = []
     engines_eliminated: list[str] = []
@@ -2325,10 +2262,8 @@ def _run_aurora_absorption_pass(
                 candidate_engine,
                 aurora_engine,
                 qas,
-                query_signals,
                 query_map,
-                analysis_outputs,
-                query_capabilities,
+                ctx,
             )
             if mandatory_absorbed:
                 absorbed_queries.extend(mandatory_absorbed)
@@ -2339,18 +2274,20 @@ def _run_aurora_absorption_pass(
         protected = []
 
         for qa in qas:
-            aurora_fit = _engine_fit_score(
-                aurora_engine, qa, query_signals, query_map, analysis_outputs
-            )
-            specialist_fit = _engine_fit_score(
-                candidate_engine, qa, query_signals, query_map, analysis_outputs
+            qid = qa["query_id"]
+            query = query_map.get(qid, qa)
+            aurora_result = score_query_for_engine(query, aurora_engine, ctx)
+            specialist_result = score_query_for_engine(query, candidate_engine, ctx)
+            aurora_fit = int(aurora_result.score) if aurora_result.score is not None else 0
+            specialist_fit = (
+                int(specialist_result.score) if specialist_result.score is not None else 0
             )
             delta = specialist_fit - aurora_fit
 
             if aurora_fit >= AURORA_ABSORPTION_MIN_FIT and delta < SPECIALIST_DELTA_THRESHOLD:
                 absorbable.append(
                     {
-                        "query_id": qa["query_id"],
+                        "query_id": qid,
                         "from_engine": candidate_engine,
                         "to_engine": aurora_engine,
                         "fit_score": aurora_fit,
@@ -2388,57 +2325,48 @@ def _absorb_tiny_mandatory_engine(
     candidate_engine: str,
     aurora_engine: str,
     qas: list[dict],
-    query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
-    analysis_outputs: dict[str, dict],
-    query_capabilities: dict[str, list[str]],
+    ctx: ScoringContext,
 ) -> list[dict]:
     """Absorb every query of a tiny mandatory engine into Aurora, or none (#165).
 
-    Each query must pass three checks:
-      - Aurora meets the query's hard capability requirements
-      - every capability signal is covered by Aurora directly or in basic form
-      - Aurora fit, scoring basic-covered signals as neutral, is at least
-        AURORA_ABSORPTION_MIN_FIT
+    Each query must pass ``query_scoring.score_query_for_engine``'s own gates
+    (the hard exclusion gate, then the hard capability gate --
+    ``capability_registry.can_engine_serve_capability`` against
+    ``ctx.query_capabilities``) and clear ``AURORA_ABSORPTION_MIN_FIT`` on its
+    base confidence minus the resolver's anti-pattern penalty (#490/#549).
 
-    The specialist delta check is skipped on purpose: the specialist always
-    wins it through the signal bonus, which is what made the engine mandatory.
-    Partial absorption is refused because the engine, and its cost, would stay.
+    The specialist delta check is skipped on purpose: the engine is mandatory
+    because a triage signal override pinned it there (``_is_signal_override``,
+    checked by this function's only caller), not because of a score -- there
+    is no "specialist score" to compare Aurora against for a query that was
+    never scored into contention in the first place. Partial absorption is
+    refused because the engine, and its cost, would stay. The old
+    "basic-covered signal" shim (treating a signal Aurora can only serve in a
+    basic form as neutral) is gone: the resolver's own anti-pattern/
+    capability-exemption scoring (``_capability_scoped_penalty``) already
+    accounts for Aurora's native, if weaker, support -- e.g. a text-search
+    signal costs Aurora nothing extra once ``wildcard-search``/
+    ``full-text-search`` exempt it. A signal with no anti-pattern-table entry
+    at all (``session_store``, ``leaderboard_pattern``, ...) costs Aurora
+    nothing either, which is new behaviour from #490 -- see the issue and the
+    PR body for the full list and the ADR-031 reasoning.
     """
-    aurora_caps = ENGINE_CAPABILITIES.get(aurora_engine, set())
+    from src.agents.referee.query_scoring import score_query_for_engine
+
     fits: dict[str, int] = {}
-    coverage: set[str] = set()
 
     for qa in qas:
         qid = qa["query_id"]
-        if not can_engine_serve_capability(aurora_engine, query_capabilities.get(qid, [])):
+        result = score_query_for_engine(query_map.get(qid, qa), aurora_engine, ctx)
+        if result.score is None or result.score < AURORA_ABSORPTION_MIN_FIT:
             return []
-
-        basic_covered: list[str] = []
-        for sig in query_signals.get(qid, []):
-            needed_cap = SIGNAL_TO_CAPABILITY.get(sig)
-            if not needed_cap or needed_cap in aurora_caps:
-                continue
-            basic_cap = SIGNAL_TO_BASIC_CAPABILITY.get(sig)
-            if basic_cap not in aurora_caps:
-                return []
-            basic_covered.append(sig)
-            coverage.add(basic_cap)
-
-        neutral_signals = {
-            qid: [sig for sig in query_signals.get(qid, []) if sig not in basic_covered]
-        }
-        fits[qid] = _engine_fit_score(
-            aurora_engine, qa, neutral_signals, query_map, analysis_outputs
-        )
-        if fits[qid] < AURORA_ABSORPTION_MIN_FIT:
-            return []
+        fits[qid] = int(result.score)
 
     reason = (
         f"{candidate_engine} carries only {len(qas)} queries and {aurora_engine} "
-        f"serves them (fit {min(fits.values())}-{max(fits.values())}"
-        + (f", via {', '.join(sorted(coverage))}" if coverage else "")
-        + f"), so a dedicated {candidate_engine} deployment is not justified"
+        f"serves them (fit {min(fits.values())}-{max(fits.values())}), so a dedicated "
+        f"{candidate_engine} deployment is not justified"
     )
     return [
         {
@@ -2454,159 +2382,30 @@ def _absorb_tiny_mandatory_engine(
     ]
 
 
-def _engine_fit_score(
-    engine: str,
-    qa: dict,
-    query_signals: dict[str, list[str]],
-    query_map: dict[str, dict],
-    analysis_outputs: dict[str, dict],
-) -> int:
-    """Score how well an engine fits a query (0-100).
-
-    Combines:
-    - For most engines: table-level confidence from analysis (weighted
-      average across accessed tables).
-    - For a ``PATTERN_ONLY_ENGINES`` engine (OpenSearch, #475) instead: the
-      query's own matched pattern when it has one, else the flat basic-CRUD
-      baseline below -- never table confidence (see the comment at
-      ``table_recs`` below for why).
-    - Signal-capability bonus (engine has specific capability the query needs)
-    - Basic CRUD baseline (any engine with key-value/range can do simple ops)
-
-    Higher = better fit. Used to compute deltas between engines.
-    """
-    qid = qa["query_id"]
-    sigs = query_signals.get(qid, [])
-    engine_caps = ENGINE_CAPABILITIES.get(engine, set())
-    query_tables = query_map.get(qid, {}).get("tables_accessed", [])
-
-    # ``PATTERN_ONLY_ENGINES`` (OpenSearch, #475): a table's recommendation
-    # reflects whether ANY query against it needs search/time-series
-    # handling, not whether THIS query does, so it never stands in for this
-    # query's own fit -- table_scores stays empty, and pattern_scores (the
-    # query's own matched pattern, mirroring the resolver's own first branch,
-    # ``query_scoring.compute_query_confidence``) is checked instead,
-    # below. Every other engine keeps using table_scores as before; adding
-    # pattern_scores there too would double-count the same evidence. Both
-    # kinds of engine still fall through to the flat basic-CRUD baseline
-    # when they have neither (unaffected by the table-wide bleed above,
-    # since it's a constant, not an average over other queries' evidence),
-    # plus the signal-capability bonus/penalty below.
-    target_analysis = analysis_outputs.get(engine, {})
-    table_recs = {r["table_id"]: r for r in target_analysis.get("table_recommendations", [])}
-    table_scores = (
-        [table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs]
-        if engine not in PATTERN_ONLY_ENGINES
-        else []
-    )
-
-    pattern_scores: list[int] = []
-    if engine in PATTERN_ONLY_ENGINES:
-        for pattern in target_analysis.get("workload_analysis", {}).get("patterns_detected") or []:
-            if qid in (pattern.get("query_ids") or []):
-                pattern_scores.extend(
-                    table_recs[t].get("confidence_score", 0)
-                    for t in (pattern.get("table_ids") or [])
-                    if t in table_recs
-                )
-
-    if pattern_scores:
-        base_score = sum(pattern_scores) / len(pattern_scores)
-    elif table_scores:
-        base_score = sum(table_scores) / len(table_scores)
-    elif {"key_value_lookup", "range_query"} & engine_caps:
-        base_score = BASIC_CRUD_SCORE
-    else:
-        base_score = 0
-
-    # Bonus for signal-capability match
-    has_capability_signal = False
-    signal_matched = False
-    for sig in sigs:
-        needed_cap = SIGNAL_TO_CAPABILITY.get(sig)
-        if needed_cap:
-            has_capability_signal = True
-            if needed_cap in engine_caps:
-                signal_matched = True
-                break
-
-    if has_capability_signal and signal_matched:
-        base_score = min(100, base_score + SIGNAL_MATCH_BONUS)
-    elif has_capability_signal and not signal_matched:
-        # Engine lacks a capability the query specifically needs — penalize
-        base_score = max(0, base_score - SIGNAL_MATCH_BONUS)
-
-    return int(base_score)
-
-
-def _can_engine_serve_query(
-    engine: str,
-    qa: dict,
-    query_signals: dict[str, list[str]],
-    query_map: dict[str, dict],
-    analysis_outputs: dict[str, dict],
-) -> bool:
-    """Check if an engine has the capability to serve a given query.
-
-    Uses signals first (fast path), then falls back to analysis confidence.
-    """
-    qid = qa["query_id"]
-    sigs = query_signals.get(qid, [])
-    engine_caps = ENGINE_CAPABILITIES.get(engine, set())
-
-    # Check via signal → capability mapping
-    has_capability_signal = False
-    for sig in sigs:
-        needed_cap = SIGNAL_TO_CAPABILITY.get(sig)
-        if needed_cap:
-            has_capability_signal = True
-            if needed_cap in engine_caps:
-                return True
-
-    # If no signals require specific capabilities (either no signals at all,
-    # or signals like "low_frequency_reads" that are workload characteristics
-    # rather than capability requirements), fall through to broader checks.
-    if not has_capability_signal:
-        # Check analysis confidence for the query's tables
-        query_tables = query_map.get(qid, {}).get("tables_accessed", [])
-        target_analysis = analysis_outputs.get(engine, {})
-        table_recs = {r["table_id"]: r for r in target_analysis.get("table_recommendations", [])}
-        scores = [table_recs[t].get("confidence_score", 0) for t in query_tables if t in table_recs]
-        if scores and sum(scores) / len(scores) >= 50:
-            return True
-
-        # Basic CRUD patterns can be served by any engine with key-value or range
-        if {"key_value_lookup", "range_query"} & engine_caps:
-            return True
-
-    return False
-
-
 def _find_best_absorber_for_query(
     qa: dict,
     committed_engines: set[str],
     source_engine: str,
     query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
-    analysis_outputs: dict[str, dict],
     engine_queries: dict[str, list[dict]],
     mandatory_committed_engines: set[str],
     primary_engine: str,
-    trace_by_query: dict[str, dict],
+    ctx: ScoringContext,
     query_capabilities: dict[str, list[str]] | None = None,
     source_compatible_engine: str | None = None,
     settled_counts: Mapping[str, int] | None = None,
 ) -> dict | None:
     """Find the best committed engine to absorb a single query.
 
-    Ranks by: resolver score (highest wins, ``_resolver_score`` against
-    ``trace_by_query`` -- #502 review round 5, finding N3: the
-    mandatory-engine justification floor, the only caller of this
-    function, used the reality check's own ``_engine_fit_score`` here, a
-    second scorer disagreeing with the one Phase 1 and Phase 2 already
-    use; the earlier Aurora-absorption pass this PR does not touch still
-    has its own, separate ``_engine_fit_score`` calls -- #490's full
-    scorer unification is later, broader work), with mandatory secondary
+    Ranks by: the resolver's own score (highest wins,
+    ``query_scoring.score_query_for_engine`` against the one shared ``ctx``
+    -- #502 review round 5, finding N3: the mandatory-engine justification
+    floor, the only caller of this function, used the reality check's own
+    ``_engine_fit_score`` here, a second scorer disagreeing with the one
+    Phase 1 and Phase 2 already use; #490/#549 then removed every other
+    separate scorer in this module too, so every reality-check decision now
+    reads the one shared score), with mandatory secondary
     engines getting a tiebreaker bonus (data already flowing via sync -- a
     real operational reason, not a preference of convenience).
 
@@ -2619,17 +2418,20 @@ def _find_best_absorber_for_query(
     reported as ``tie_unresolved`` in the returned reason, not silently
     picked.
 
-    Respects the serviceability gate: if query_capabilities are provided,
-    only considers engines that can serve the query's hard requirements.
+    Respects the serviceability gate (``query_scoring.score_query_for_engine``'s
+    own hard capability gate against ``ctx.query_capabilities``): only
+    considers engines that can serve the query's hard requirements.
 
     No score floor (#502 review): a query being consolidated moves to its
     highest-scoring remaining engine that can serve it, even if that scores
     it a little lower than the engine it is leaving -- accepting a slightly
     worse fit in exchange for fewer engines is the point of this CTO review.
     """
+    from src.agents.referee.query_scoring import score_query_for_engine
+
     qid = qa["query_id"]
+    query = query_map.get(qid, qa)
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
-    required_caps = (query_capabilities or {}).get(qid, [])
     candidates: list[dict] = []
 
     for target_engine in sorted(committed_engines):
@@ -2639,13 +2441,7 @@ def _find_best_absorber_for_query(
         # Write gate (#296): a cache never owns a query, and an engine that is not
         # a system of record never owns a write; a specialist (OpenSearch) absorbs
         # only the queries its specialty serves
-        if not may_absorb(
-            target_engine, qid, query_map.get(qid, qa), query_signals, query_capabilities
-        ):
-            continue
-
-        # Serviceability gate: skip engines that can't serve hard requirements
-        if required_caps and not can_engine_serve_capability(target_engine, required_caps):
+        if not may_absorb(target_engine, qid, query, query_signals, query_capabilities):
             continue
 
         # Review of #375, finding B2: a join consolidated away from a
@@ -2662,21 +2458,40 @@ def _find_best_absorber_for_query(
         ):
             continue
 
-        # #502 review round 5, finding N3: ranked by the resolver's own
-        # score, not a second, separate scorer -- ``None`` means the
-        # resolver's own hard exclusion/capability/write gate already
-        # ruled this engine out for this query, so there is nothing to
-        # absorb it with.
-        resolver_fit = _resolver_score(trace_by_query, qa["query_id"], target_engine)
-        if resolver_fit is None:
+        # #502 review round 5, finding N3 / #490/#549: ranked by the
+        # resolver's own score, not a second, separate scorer -- ``None``
+        # means ``score_query_for_engine``'s own hard exclusion/capability
+        # gate already ruled this engine out for this query (``.gate_kind``
+        # names which, if a caller needs it), so there is nothing to absorb
+        # it with.
+        #
+        # #490 review (round 2): this used to also drop a candidate scoring
+        # exactly 0 unless the reality check's own, now-deleted
+        # ``_can_engine_serve_query`` passed -- reachable (not dead code: a
+        # round-1 review response claimed otherwise and was corrected) via
+        # that function's *signal-gated* branch, which returned ``False``
+        # outright whenever a triage signal demanded a capability the old
+        # ``ENGINE_CAPABILITIES`` table didn't list for the candidate,
+        # skipping its own basic-CRUD fallback entirely. That second check
+        # is not restored, for each capability it could gate on:
+        #   - ``complex_joins``: still excluded -- ``score_query_for_engine``
+        #     gates it the same way today, through the real per-query
+        #     ``complex_joins`` capability (``capability_registry``), not a
+        #     private table.
+        #   - ``referential_integrity``, ``transactions`` (dynamodb/
+        #     documentdb), ``text_search`` (aurora, via ``inverted_index``):
+        #     no longer excluded. None is a structural impossibility
+        #     (ADR-031 Decision 2 Step 2); ``transactions`` hard-excluding
+        #     DynamoDB was itself an ADR-031 Decision 3 violation in the old
+        #     code (DynamoDB's transaction support is scored by shape, never
+        #     excluded). Pinned by ``test_resolver_reality_check_agreement.
+        #     py``'s ``TestAbsorptionBehaviorChanges`` for every case above,
+        #     plus the general "a 0 that clears the real gate is a
+        #     candidate, not an exclusion" rule.
+        result = score_query_for_engine(query, target_engine, ctx)
+        if result.score is None:
             continue
-        fit = round(resolver_fit)
-
-        # Even low-fit engines can absorb if they have basic capabilities
-        if fit <= 0 and not _can_engine_serve_query(
-            target_engine, qa, query_signals, query_map, analysis_outputs
-        ):
-            continue
+        fit = round(result.score)
 
         # Check table overlap with target
         target_tables = set()

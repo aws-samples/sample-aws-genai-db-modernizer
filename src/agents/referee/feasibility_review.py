@@ -29,7 +29,7 @@ Two checks:
 
 from __future__ import annotations
 
-from src.agents.referee.reality_check import ENGINE_CAPABILITIES
+from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.contracts.assignment_models import Assignment
 from src.contracts.feasibility_models import FeasibilityFinding, FindingKind, FindingSeverity
 
@@ -90,7 +90,10 @@ def _replication_recommendation(write_engines: set[str], read_dests: set[str]) -
 
 
 def _engine_lacks_complex_joins(engine: str) -> bool:
-    return "complex_joins" not in ENGINE_CAPABILITIES.get(engine, set())
+    # #490: reads the shared capability registry (the single capability
+    # source) instead of reality_check's now-deleted, separately drifting
+    # ``ENGINE_CAPABILITIES`` fit-scoring table.
+    return not can_engine_serve_capability(engine, ["complex_joins"])
 
 
 def _in_scope_engine_by_query(assignment: Assignment) -> dict[str, str]:

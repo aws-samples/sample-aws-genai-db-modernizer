@@ -113,8 +113,10 @@ class TestConfidences:
         assert r["opensearch"]["confidence_score"] == 25  # backward compatible
         # OpenSearch ignores the "posts" table-level average (#475: that
         # number reflects whether ANY query against the table needs search,
-        # not whether this one does) -- basic-CRUD baseline + text-search bonus.
-        assert r["opensearch"]["routed_confidence"] == 60
+        # not whether this one does) -- it uses its own matched pattern
+        # instead, and ``_analysis(0, ...)`` gives it none, so its fit is 0
+        # (#490: no basic-CRUD baseline/signal bonus to fall back to any more).
+        assert r["opensearch"]["routed_confidence"] == 0
         assert r["opensearch"]["routed_confidence_basis"] == "owned_queries"
         assert r["opensearch"]["routed_queries"] == 1
         assert r["opensearch"]["routed_tables"] == 1
@@ -141,14 +143,18 @@ class TestRationale:
         # "signal only", not "1 rated table" (see ``TestNoTableEvidence`` below
         # for the ``tables_accessed=["unknown"]`` case this phrase also covers).
         assert dbs["opensearch"]["rationale"].startswith(
-            "60% mean fit across 1 query (signal only — no table-level evidence), "
+            "0% mean fit across 1 query (signal only — no table-level evidence), "
             "led by full-text search (1 of 1)."
         )
+        # #490: DynamoDB's old 100% included a flat signal-match bonus
+        # (``key_value_lookups`` matching its own ``_engine_fit_score``
+        # capability table) that no longer exists -- 90% is its plain
+        # "users" table confidence, unpenalized.
         assert dbs["dynamodb"]["rationale"].startswith(
-            "100% mean fit across 6 queries (1 rated table), led by key-value lookups (6 of 6)."
+            "90% mean fit across 6 queries (1 rated table), led by key-value lookups (6 of 6)."
         )
         assert "average confidence across" not in dbs["opensearch"]["rationale"]
-        assert dbs["opensearch"]["routed_confidence"] == 60
+        assert dbs["opensearch"]["routed_confidence"] == 0
 
     def test_cache_rationale_states_its_cache_fit(self):
         ranking = build_ranking(_data(ASSIGNMENT))
@@ -179,8 +185,10 @@ class TestNoTableEvidence:
         opensearch = _by_target(build_ranking(data))["opensearch"]
         assert opensearch["routed_confidence_evidence"] == "signal_only"
         assert opensearch["routed_tables"] == 0
+        # #490: no basic-CRUD baseline/signal bonus any more -- OpenSearch
+        # has no matched pattern for s1 here either, so its fit is 0.
         assert _engine_rationale(data, opensearch).startswith(
-            "60% mean fit across 1 query (signal only — no table-level evidence), led by full-text search"
+            "0% mean fit across 1 query (signal only — no table-level evidence), led by full-text search"
         )
 
     def test_partial_evidence_is_counted(self):

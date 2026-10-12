@@ -1,10 +1,22 @@
-"""Routed confidence (#152): the fit of the work an engine was actually given."""
+"""Routed confidence (#152): the fit of the work an engine was actually given.
+
+#490: the fit this module reports is now the resolver's own score
+(``query_scoring.score_query_for_engine``) -- base table/pattern confidence
+minus the resolver's anti-pattern penalty -- not the reality check's own,
+separately drifting ``_engine_fit_score`` (deleted, along with its
+``BASIC_CRUD_SCORE`` flat baseline and ``SIGNAL_MATCH_BONUS``). None of the
+fixtures below give any engine a ``workload_analysis`` with
+anti-patterns/patterns detected, so
+the resolver's own penalty is always 0 here and every number below is a
+plain base confidence: a table-recommendation average for most engines, the
+query's own matched pattern (or 0 with none) for ``PATTERN_ONLY_ENGINES``
+(OpenSearch), and a last-resort average across every table recommendation
+when a query's own tables rate none (e.g. the collector's ``"unknown"``
+placeholder).
+"""
 
 from __future__ import annotations
 
-import pytest
-
-from src.agents.referee.reality_check import BASIC_CRUD_SCORE, SIGNAL_MATCH_BONUS
 from src.agents.referee.routed_confidence import BASIS_CACHED, BASIS_OWNED, routed_fits
 
 
@@ -55,31 +67,28 @@ class TestOwnerFit:
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
         # OpenSearch never uses the table-level average as its own fit (#475:
         # that number reflects whether ANY query against the table needs
-        # search, not whether this one does) -- the basic-CRUD baseline plus
-        # the text_search capability-match bonus, not 80 + bonus.
-        assert fits["opensearch"].confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
+        # search, not whether this one does) -- it uses its own matched
+        # pattern instead, and ANALYSIS below gives it none, so its fit is 0
+        # (#490: no flat basic-CRUD baseline/signal bonus to fall back to
+        # any more -- the resolver's own scorer has neither).
+        assert fits["opensearch"].confidence == 0
         assert fits["opensearch"].basis == BASIS_OWNED
         assert fits["opensearch"].queries == 2
         assert fits["opensearch"].tables == 1
-        # k1: users 90 (+bonus, capped); k2: mean(90, 70) = 80 (+bonus)
-        expected = round(
-            (min(100, 90 + SIGNAL_MATCH_BONUS) + min(100, 80 + SIGNAL_MATCH_BONUS)) / 2
-        )
-        assert fits["dynamodb"].confidence == expected
+        # k1: users 90; k2: mean(90, 70) = 80 -- no signal bonus any more.
+        assert fits["dynamodb"].confidence == round((90 + 80) / 2)
         assert fits["dynamodb"].tables == 2
 
     def test_stored_per_query_confidence_is_ignored(self):
         """Reality Check moves a query without updating its stored confidence."""
-        a = _assignment(
-            _qa("s1", "opensearch", confidence=5), _qa("s2", "opensearch", confidence=5)
-        )
-        assert routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["opensearch"].confidence > 50
+        a = _assignment(_qa("k1", "dynamodb", confidence=5), _qa("k2", "dynamodb", confidence=5))
+        assert routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["dynamodb"].confidence > 50
 
     def test_out_of_scope_queries_do_not_count(self):
         a = _assignment(_qa("s1", "opensearch"), _qa("k1", "opensearch", in_scope=False))
         fit = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["opensearch"]
         assert fit.queries == 1
-        assert fit.confidence == min(100, BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS)
+        assert fit.confidence == 0
 
     def test_engine_with_no_routed_query_has_none(self):
         a = _assignment(_qa("s1", "opensearch"))
@@ -100,11 +109,11 @@ class TestCustomerOverride:
         )
         fits = routed_fits(a, TRIAGE, QUERIES, ANALYSIS)
         # OpenSearch ignores the "users" table-level average (#475) and uses
-        # the basic-CRUD baseline instead: it still serves key-value lookups
-        # (get by _id), so the signal-match bonus applies on top.
+        # its own matched pattern instead -- ANALYSIS gives it none, so its
+        # fit is 0 (#490: no basic-CRUD/signal-bonus fallback any more).
         # The stored confidence (95) and DynamoDB's fit (90+) are not used.
         assert fits["opensearch"].queries == 1
-        assert fits["opensearch"].confidence == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
+        assert fits["opensearch"].confidence == 0
         assert fits["dynamodb"].queries == 1
 
 
@@ -139,14 +148,16 @@ class TestLeadSignal:
 class TestTableEvidence:
     def test_unknown_tables_are_not_counted_and_flag_signal_only(self):
         """discourse: the 3 OpenSearch queries have tables_accessed ["unknown"], so
-        the fit is the CRUD baseline plus the signal bonus, a constant."""
+        OpenSearch (a ``PATTERN_ONLY_ENGINES`` engine) has no matched pattern for
+        any of them and its fit is a constant 0 (#490: no CRUD baseline/signal
+        bonus to fall back to any more)."""
         queries = [_q(f"t{i}", "unknown") for i in range(3)]
         triage = {"signals": [{"signal": "text_search", "query_ids": ["t0", "t1", "t2"]}]}
         a = _assignment(*(_qa(f"t{i}", "opensearch") for i in range(3)))
         fit = routed_fits(a, triage, queries, ANALYSIS, source_tables=["posts", "users"])[
             "opensearch"
         ]
-        assert fit.confidence == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
+        assert fit.confidence == 0
         assert fit.tables == 0
         assert fit.evidence == "signal_only"
         assert fit.unbacked_queries == 3
@@ -235,11 +246,18 @@ class TestCacheLayer:
         assert fit.confidence == 65
         assert (fit.lead_signal, fit.lead_count) == ("point_lookup", 2)
 
-    @pytest.mark.parametrize("pattern", ["top_n", "session_lookup"])
-    def test_the_overlays_cache_pattern_earns_the_bonus(self, pattern):
-        a = _assignment(_qa("k1", "dynamodb", cache_engine="elasticache", cache_pattern=pattern))
+    def test_the_overlays_cache_pattern_earns_no_separate_bonus(self):
+        """#490: the overlay's ``cache_pattern`` used to earn ElastiCache a flat
+        signal-match bonus here, synthesized specifically for this module's own,
+        now-deleted call into ``_engine_fit_score``. ElastiCache's fit is now the
+        same resolver score every other engine gets from its own analysis
+        (``k1``'s ``users`` table confidence, 60) -- ``cache_pattern`` still
+        decides WHO the cache fronts (``cache_overlay.py``), just not a scoring
+        bonus here.
+        """
+        a = _assignment(_qa("k1", "dynamodb", cache_engine="elasticache", cache_pattern="top_n"))
         fit = routed_fits(a, {"signals": []}, QUERIES, ANALYSIS)["elasticache"]
-        assert fit.confidence == 60 + SIGNAL_MATCH_BONUS
+        assert fit.confidence == 60
 
     def test_a_triage_hint_on_a_point_lookup_earns_nothing(self):
         """leaderboard_pattern fires on reads the overlay classified as point lookups."""
@@ -253,8 +271,14 @@ class TestCacheLayer:
         a = _assignment(_qa("k1", "dynamodb"))
         assert routed_fits(a, TRIAGE, QUERIES, ANALYSIS)["elasticache"].confidence is None
 
-    def test_tables_without_analysis_use_the_basic_crud_baseline(self):
+    def test_tables_without_analysis_fall_back_to_the_resolvers_own_last_resort(self):
+        """#490: no table recommendation matches ``x``'s own ``tables_accessed``
+        (the collector's ``"unknown"`` placeholder) -- the resolver's own
+        last-resort branch (``AssignmentResolver._compute_query_confidence``)
+        averages across every one of DynamoDB's table recommendations instead
+        of a flat basic-CRUD baseline: mean(40, 90, 70) = 66.
+        """
         a = _assignment(_qa("x", "dynamodb"))
         fit = routed_fits(a, {"signals": []}, [_q("x", "unknown")], ANALYSIS)["dynamodb"]
-        assert fit.confidence == BASIC_CRUD_SCORE
+        assert fit.confidence == 66
         assert fit.evidence == "signal_only"

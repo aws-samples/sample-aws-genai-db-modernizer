@@ -8,6 +8,7 @@ Tests the interaction between capability detection and consolidation logic:
 - Full end-to-end: text_search queries block DynamoDB absorption
 """
 
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
     _find_best_absorber_for_query,
     _suggest_lightweight_for_orphans,
@@ -309,8 +310,9 @@ class TestFindBestAbsorberWithCapabilities:
         qa = {"query_id": "q-1", "assigned_engine": "opensearch"}
         committed = {"dynamodb"}
         query_signals: dict = {"q-1": ["text_search"]}
-        query_map = {"q-1": {"tables_accessed": ["posts"]}}
+        query_map = {"q-1": {"query_id": "q-1", "tables_accessed": ["posts"]}}
         query_capabilities = {"q-1": ["inverted_index"]}
+        ctx = ScoringContext(query_capabilities=query_capabilities)
 
         result = _find_best_absorber_for_query(
             qa=qa,
@@ -318,11 +320,10 @@ class TestFindBestAbsorberWithCapabilities:
             source_engine="opensearch",
             query_signals=query_signals,
             query_map=query_map,
-            analysis_outputs={},
             engine_queries={"dynamodb": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
-            trace_by_query={},
+            ctx=ctx,
             query_capabilities=query_capabilities,
         )
 
@@ -339,8 +340,16 @@ class TestFindBestAbsorberWithCapabilities:
         qa = {"query_id": "q-1", "assigned_engine": "opensearch"}
         committed = {"dynamodb", "documentdb"}
         query_signals: dict = {"q-1": ["text_search"]}
-        query_map = {"q-1": {"tables_accessed": ["posts"]}}
+        query_map = {"q-1": {"query_id": "q-1", "tables_accessed": ["posts"]}}
         query_capabilities = {"q-1": ["inverted_index"]}
+        ctx = ScoringContext(
+            analysis_outputs={
+                "documentdb": {
+                    "table_recommendations": [{"table_id": "posts", "confidence_score": 60}]
+                }
+            },
+            query_capabilities=query_capabilities,
+        )
 
         result = _find_best_absorber_for_query(
             qa=qa,
@@ -348,11 +357,10 @@ class TestFindBestAbsorberWithCapabilities:
             source_engine="opensearch",
             query_signals=query_signals,
             query_map=query_map,
-            analysis_outputs={},
             engine_queries={"dynamodb": [], "documentdb": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
-            trace_by_query={"q-1": {"engines": {"documentdb": 60}}},
+            ctx=ctx,
             query_capabilities=query_capabilities,
         )
 
@@ -363,8 +371,14 @@ class TestFindBestAbsorberWithCapabilities:
         qa = {"query_id": "q-1", "assigned_engine": "documentdb"}
         committed = {"dynamodb", "opensearch"}
         query_signals: dict = {"q-1": ["text_search"]}
-        query_map = {"q-1": {"tables_accessed": ["posts"]}}
+        query_map = {"q-1": {"query_id": "q-1", "tables_accessed": ["posts"]}}
         query_capabilities = {"q-1": ["inverted_index"]}
+        # OpenSearch is a ``PATTERN_ONLY_ENGINES`` member: with no
+        # ``patterns_detected`` match for q-1 its base confidence is 0, same
+        # as DynamoDB's would be -- but DynamoDB is gated out entirely for
+        # lacking ``inverted_index``, so OpenSearch is the only candidate
+        # and wins regardless of the exact (0) score.
+        ctx = ScoringContext(query_capabilities=query_capabilities)
 
         result = _find_best_absorber_for_query(
             qa=qa,
@@ -372,11 +386,10 @@ class TestFindBestAbsorberWithCapabilities:
             source_engine="documentdb",
             query_signals=query_signals,
             query_map=query_map,
-            analysis_outputs={},
             engine_queries={"dynamodb": [], "opensearch": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
-            trace_by_query={"q-1": {"engines": {"opensearch": 50}}},
+            ctx=ctx,
             query_capabilities=query_capabilities,
         )
 

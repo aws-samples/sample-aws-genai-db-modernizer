@@ -1,13 +1,21 @@
-"""Unit tests for the reality check agent core logic."""
+"""Unit tests for the reality check agent core logic.
+
+#490/#549: the reality check's own fit-scoring tables and
+``_engine_fit_score``/``_can_engine_serve_query`` (which read them) are
+deleted -- every fit-scoring decision now reads the resolver's own score
+(``query_scoring.score_query_for_engine``) and the shared capability
+registry (``capability_registry.can_engine_serve_capability``).
+``TestEngineFitScore`` and ``TestCanEngineServeQuery`` tested those deleted
+functions directly; the resolver's own equivalent scoring is already
+covered by ``tests/unit/test_assignment_resolver.py``, so they are removed
+rather than rewritten against a function that no longer exists.
+"""
 
 import itertools
 
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
-    BASIC_CRUD_SCORE,
-    SIGNAL_MATCH_BONUS,
     TINY_MANDATORY_QUERY_THRESHOLD,
-    _can_engine_serve_query,
-    _engine_fit_score,
     _find_best_absorber_for_query,
     _place_settled_queries,
     _run_aurora_absorption_pass,
@@ -93,199 +101,6 @@ def _make_engine_queries(engine_query_map: dict[str, list[str]]) -> dict[str, li
             for qid in qids
         ]
     return result
-
-
-class TestEngineFitScore:
-    """Test the per-query engine fit scoring."""
-
-    def test_basic_crud_score_for_capable_engine(self):
-        score = _engine_fit_score(
-            "dynamodb",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.users"]}},
-            {},
-        )
-        assert score == BASIC_CRUD_SCORE
-
-    def test_zero_score_for_incapable_engine(self):
-        score = _engine_fit_score(
-            "elasticache",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.users"]}},
-            {},
-        )
-        assert score == 0
-
-    def test_signal_match_bonus(self):
-        score = _engine_fit_score(
-            "opensearch",
-            {"query_id": "q1"},
-            {"q1": ["text_search"]},
-            {"q1": {"tables_accessed": ["db.posts"]}},
-            {},
-        )
-        assert score == BASIC_CRUD_SCORE + SIGNAL_MATCH_BONUS
-
-    def test_signal_mismatch_penalty(self):
-        score = _engine_fit_score(
-            "dynamodb",
-            {"query_id": "q1"},
-            {"q1": ["text_search"]},
-            {"q1": {"tables_accessed": ["db.posts"]}},
-            {},
-        )
-        assert score == BASIC_CRUD_SCORE - SIGNAL_MATCH_BONUS
-
-    def test_analysis_confidence_used(self):
-        score = _engine_fit_score(
-            "dynamodb",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.users"]}},
-            {
-                "dynamodb": {
-                    "table_recommendations": [{"table_id": "db.users", "confidence_score": 90}]
-                }
-            },
-        )
-        assert score == 90
-
-    def test_opensearch_ignores_table_level_confidence(self):
-        """#475: a table's confidence from analysis reflects whether ANY
-        query against it needs search/time-series handling, not whether
-        THIS query does -- OpenSearch never uses it as its own fit score.
-        The flat basic-CRUD baseline still applies (unaffected: it's a
-        constant, not an average over other queries' evidence).
-        """
-        score = _engine_fit_score(
-            "opensearch",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.posts"]}},
-            {
-                "opensearch": {
-                    # Classified SEARCH (confidence 95) because some OTHER
-                    # query on db.posts needs full-text search -- q1 itself
-                    # carries no signal at all.
-                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
-                }
-            },
-        )
-        assert score == BASIC_CRUD_SCORE
-
-    def test_non_pattern_only_engine_keeps_table_level_confidence(self):
-        """The fallback removed for OpenSearch is untouched for every other
-        engine (#475): DynamoDB's table-level recommendation really does
-        generalize across a table's queries.
-        """
-        score = _engine_fit_score(
-            "dynamodb",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.posts"]}},
-            {
-                "dynamodb": {
-                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
-                }
-            },
-        )
-        assert score == 95
-
-    def test_opensearch_uses_its_own_matched_pattern_score(self):
-        """#475 review, finding 4: OpenSearch's fit is not a flat basic-CRUD
-        score whenever it lacks table-level evidence -- it first checks
-        whether the query itself appears in one of OpenSearch's own
-        detected patterns (mirroring the resolver's own first branch,
-        ``query_scoring.compute_query_confidence``), and uses that
-        pattern's own table confidence, not the query's ``tables_accessed``
-        (``db.other`` below is never consulted; only the pattern's own
-        ``db.posts``).
-        """
-        score = _engine_fit_score(
-            "opensearch",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.posts", "db.other"]}},
-            {
-                "opensearch": {
-                    "table_recommendations": [
-                        {"table_id": "db.posts", "confidence_score": 85},
-                        {"table_id": "db.other", "confidence_score": 10},
-                    ],
-                    "workload_analysis": {
-                        "patterns_detected": [
-                            {
-                                "pattern_type": "full-text-search",
-                                "query_ids": ["q1"],
-                                "table_ids": ["db.posts"],
-                            }
-                        ]
-                    },
-                }
-            },
-        )
-        assert score == 85
-
-    def test_opensearch_pattern_match_takes_priority_over_basic_crud(self):
-        """A matched pattern's score is used even when it is below the flat
-        basic-CRUD baseline -- real, query-level evidence always wins over
-        the fallback constant.
-        """
-        score = _engine_fit_score(
-            "opensearch",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": ["db.posts"]}},
-            {
-                "opensearch": {
-                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 15}],
-                    "workload_analysis": {
-                        "patterns_detected": [
-                            {
-                                "pattern_type": "wildcard-search",
-                                "query_ids": ["q1"],
-                                "table_ids": ["db.posts"],
-                            }
-                        ]
-                    },
-                }
-            },
-        )
-        assert score == 15
-        assert score != BASIC_CRUD_SCORE
-
-
-class TestCanEngineServeQuery:
-    """Test the capability check."""
-
-    def test_signal_match_returns_true(self):
-        assert _can_engine_serve_query(
-            "opensearch",
-            {"query_id": "q1"},
-            {"q1": ["text_search"]},
-            {"q1": {"tables_accessed": []}},
-            {},
-        )
-
-    def test_signal_mismatch_returns_false(self):
-        assert not _can_engine_serve_query(
-            "dynamodb",
-            {"query_id": "q1"},
-            {"q1": ["text_search"]},
-            {"q1": {"tables_accessed": []}},
-            {},
-        )
-
-    def test_basic_crud_returns_true_without_signals(self):
-        assert _can_engine_serve_query(
-            "dynamodb",
-            {"query_id": "q1"},
-            {},
-            {"q1": {"tables_accessed": []}},
-            {},
-        )
 
 
 class TestTiedQueryCountsAsNativeEvidenceForTheCreditedEngineOnly:
@@ -709,12 +524,14 @@ class TestRunRealityCheck:
         OpenSearch during consolidation (``_find_best_absorber_for_query``
         is the function Pass 2 calls to pick an absorber).
 
-        #502 review round 5, finding N3: this function now ranks by the
-        resolver's own per-query score (``trace_by_query``), not the
+        #502 review round 5, finding N3 / #490/#549: this function now
+        ranks by the resolver's own per-query score
+        (``query_scoring.score_query_for_engine``), not the
         analysis-confidence average ``_engine_fit_score`` used to compute --
         exactly the averaging #500 already fixed on the resolver's own side,
-        so the trace built here gives OpenSearch its real, per-query score
-        (32: no search signal of its own) rather than a table-wide average.
+        so OpenSearch's own matched pattern gives it its real, per-query
+        score (32: no search signal of its own) rather than a table-wide
+        average.
         """
         qa = {"query_id": "q2", "assigned_engine": "documentdb"}
         # "aggregations" is broad enough to make OpenSearch an eligible
@@ -722,19 +539,34 @@ class TestRunRealityCheck:
         # plain COUNT(*) carries in the real pipeline -- this is not itself
         # the bug, so both candidates compete on resolver score alone.
         query_signals = {"q2": ["aggregations"]}
-        query_map = {"q2": {"tables_accessed": ["db.posts"], "query_type": "SELECT"}}
-        analysis_outputs = {
-            "dynamodb": {
-                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 90}]
-            },
-            "opensearch": {
-                "table_recommendations": [{"table_id": "db.posts", "confidence_score": 95}]
-            },
+        query_map = {
+            "q2": {"query_id": "q2", "tables_accessed": ["db.posts"], "query_type": "SELECT"}
         }
-        # q2's own resolver score: dynamodb scores it well, OpenSearch scores
-        # it on its own merits (no search signal of its own), not on some
-        # other query's table-wide average.
-        trace_by_query = {"q2": {"engines": {"dynamodb": 90, "opensearch": 32}}}
+        # q2's own resolver score: dynamodb scores it well on its plain
+        # table confidence. OpenSearch (a ``PATTERN_ONLY_ENGINES`` member)
+        # scores it on its own matched pattern (32), never db.posts's
+        # table-wide average -- a different, unrelated, genuinely
+        # search-shaped query could inflate that average without this score
+        # moving at all.
+        ctx = ScoringContext(
+            analysis_outputs={
+                "dynamodb": {
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 90}]
+                },
+                "opensearch": {
+                    "table_recommendations": [{"table_id": "db.posts", "confidence_score": 32}],
+                    "workload_analysis": {
+                        "patterns_detected": [
+                            {
+                                "pattern_type": "aggregation-pattern",
+                                "query_ids": ["q2"],
+                                "table_ids": ["db.posts"],
+                            }
+                        ]
+                    },
+                },
+            }
+        )
 
         absorber = _find_best_absorber_for_query(
             qa,
@@ -742,11 +574,10 @@ class TestRunRealityCheck:
             source_engine="documentdb",
             query_signals=query_signals,
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
             engine_queries={"dynamodb": [], "opensearch": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
-            trace_by_query=trace_by_query,
+            ctx=ctx,
         )
 
         assert absorber is not None
@@ -779,10 +610,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "documentdb"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert result.aurora_engine == "aurora_postgresql"
@@ -812,10 +641,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "documentdb"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert result.engines_eliminated == []
@@ -848,10 +675,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "dynamodb"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert result.engines_eliminated == []
@@ -880,10 +705,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "documentdb"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert result.engines_eliminated == []
@@ -902,10 +725,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"dynamodb", "documentdb"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map={},
-            analysis_outputs={},
-            query_capabilities={},
+            ctx=ScoringContext(),
         )
 
         assert result.aurora_engine == ""
@@ -936,10 +757,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "opensearch"},
             mandatory_committed_engines={"opensearch"},
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert result.engines_eliminated == []
@@ -978,10 +797,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "elasticache"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert len(result.absorbed_queries) == 5
@@ -1021,10 +838,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "elasticache"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         assert len(result.absorbed_queries) == 4
@@ -1067,10 +882,8 @@ class TestAuroraAbsorptionPass:
             engine_queries=engine_queries,
             surviving_engines={"aurora_postgresql", "elasticache"},
             mandatory_committed_engines=set(),
-            query_signals={},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={},
+            ctx=ScoringContext(analysis_outputs=analysis_outputs),
         )
 
         # Majority protected: engine is skipped entirely, nothing absorbed
@@ -1315,7 +1128,16 @@ class TestAbsorptionAppliedToAssignments:
 
 
 class TestTinyMandatoryAbsorption:
-    """A tiny mandatory engine can be absorbed when Aurora covers its signal at a basic level (#165)."""
+    """A tiny mandatory engine can be absorbed when Aurora's own resolver fit score
+    on its queries clears ``AURORA_ABSORPTION_MIN_FIT`` (#165, #490). ``os_count``'s
+    queries all read ``db.users``, so Aurora's resolver fit for them is exactly
+    ``aurora_text_confidence`` (its ``db.users`` table recommendation): no anti-pattern
+    entries exist in these fixtures' ``analysis_outputs``, so the resolver's own
+    penalty is 0 -- this still exercises the real ``capability_registry.
+    can_engine_serve_capability`` hard-capability gate (#165's own
+    ``aurora_mysql`` FULLTEXT/``inverted_index`` capability), just not a
+    text-search-specific scoring bonus (that lived in ``_engine_fit_score``,
+    now deleted)."""
 
     @staticmethod
     def _absorb(os_count: int, aurora_text_confidence: int = 70, required_caps=None):
@@ -1323,8 +1145,10 @@ class TestTinyMandatoryAbsorption:
         engine_queries = _make_engine_queries(
             {"aurora_mysql": [f"aq{i}" for i in range(10)], "opensearch": os_ids}
         )
-        query_map = {qid: {"tables_accessed": ["db.users"]} for qid in os_ids}
-        query_map.update({f"aq{i}": {"tables_accessed": ["db.posts"]} for i in range(10)})
+        query_map = {qid: {"query_id": qid, "tables_accessed": ["db.users"]} for qid in os_ids}
+        query_map.update(
+            {f"aq{i}": {"query_id": f"aq{i}", "tables_accessed": ["db.posts"]} for i in range(10)}
+        )
         analysis_outputs = {
             "aurora_mysql": {
                 "table_recommendations": [
@@ -1335,14 +1159,16 @@ class TestTinyMandatoryAbsorption:
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 60}]
             },
         }
+        ctx = ScoringContext(
+            analysis_outputs=analysis_outputs,
+            query_capabilities={qid: required_caps or ["inverted_index"] for qid in os_ids},
+        )
         return _run_aurora_absorption_pass(
             engine_queries=engine_queries,
             surviving_engines={"aurora_mysql", "opensearch"},
             mandatory_committed_engines={"opensearch"},
-            query_signals={qid: ["text_search"] for qid in os_ids},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={qid: required_caps or ["inverted_index"] for qid in os_ids},
+            ctx=ctx,
         )
 
     def test_tiny_text_search_engine_absorbed_into_aurora_fulltext(self):
@@ -1352,9 +1178,15 @@ class TestTinyMandatoryAbsorption:
         assert {aq["to_engine"] for aq in result.absorbed_queries} == {"aurora_mysql"}
         assert len(result.absorbed_queries) == 3
 
-    def test_absorption_reason_names_the_basic_capability(self):
+    def test_absorption_reason_names_the_resolver_fit_range(self):
+        """#490: the reason used to name the specific basic capability Aurora
+        covered a signal through (e.g. ``text_search_basic``) -- that was
+        ``_engine_fit_score``'s own "neutral signal" bookkeeping, now
+        deleted. The reason now just names the resolver fit range every
+        absorbed query cleared.
+        """
         result = self._absorb(os_count=3)
-        assert "text_search_basic" in result.absorbed_queries[0]["reason"]
+        assert "fit 70-70" in result.absorbed_queries[0]["reason"]
 
     def test_tiny_mandatory_engine_kept_when_aurora_fit_is_low(self):
         result = self._absorb(os_count=3, aurora_text_confidence=20)
@@ -1375,9 +1207,9 @@ class TestTinyMandatoryAbsorption:
             {"aurora_mysql": [f"aq{i}" for i in range(10)], "opensearch": os_ids}
         )
         query_map = {
-            "os1": {"tables_accessed": ["db.users"]},
-            "os2": {"tables_accessed": ["db.users"]},
-            "os3": {"tables_accessed": ["db.logs"]},
+            "os1": {"query_id": "os1", "tables_accessed": ["db.users"]},
+            "os2": {"query_id": "os2", "tables_accessed": ["db.users"]},
+            "os3": {"query_id": "os3", "tables_accessed": ["db.logs"]},
         }
         analysis_outputs = {
             "aurora_mysql": {
@@ -1387,15 +1219,17 @@ class TestTinyMandatoryAbsorption:
                 ]
             },
         }
+        ctx = ScoringContext(
+            analysis_outputs=analysis_outputs,
+            query_capabilities={qid: ["inverted_index"] for qid in os_ids},
+        )
 
         result = _run_aurora_absorption_pass(
             engine_queries=engine_queries,
             surviving_engines={"aurora_mysql", "opensearch"},
             mandatory_committed_engines={"opensearch"},
-            query_signals={qid: ["text_search"] for qid in os_ids},
             query_map=query_map,
-            analysis_outputs=analysis_outputs,
-            query_capabilities={qid: ["inverted_index"] for qid in os_ids},
+            ctx=ctx,
         )
 
         assert result.absorbed_queries == []

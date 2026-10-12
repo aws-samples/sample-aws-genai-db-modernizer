@@ -23,6 +23,7 @@ from src.agents.referee.cache_overlay import (
     apply_schema_safety_net,
     normalize_cache_owners,
 )
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import _find_best_absorber_for_query, may_absorb
 from src.agents.referee.reality_check_handler import run_reality_check_deterministic
 from src.agents.schema_design.handler import filter_collector_for_assignment
@@ -352,28 +353,37 @@ class TestInvalidationContext:
 
 class TestOpenSearchAbsorber:
     def _absorber(self, signals):
-        query_map = {"q": {"tables_accessed": ["t"], "query_type": "SELECT"}}
-        analysis = {
-            "opensearch": {"table_recommendations": [{"table_id": "t", "confidence_score": 95}]},
-            "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]},
-        }
+        query_map = {"q": {"query_id": "q", "tables_accessed": ["t"], "query_type": "SELECT"}}
         # OpenSearch only ever competes once ``may_absorb`` lets it through
         # (a plain lookup never does, regardless of score); when it does,
         # it genuinely scores higher (#502 review round 5, finding N3
         # swapped the scorer here from analysis-confidence to resolver
-        # score).
-        trace_by_query = {"q": {"engines": {"dynamodb": 40, "opensearch": 95}}}
+        # score; #490/#549 moved it onto ``score_query_for_engine`` directly).
+        # OpenSearch is a ``PATTERN_ONLY_ENGINES`` member, so its 95 comes
+        # from its own matched pattern, not a table recommendation.
+        ctx = ScoringContext(
+            analysis_outputs={
+                "dynamodb": {"table_recommendations": [{"table_id": "t", "confidence_score": 40}]},
+                "opensearch": {
+                    "table_recommendations": [{"table_id": "t", "confidence_score": 95}],
+                    "workload_analysis": {
+                        "patterns_detected": [
+                            {"pattern_type": "x", "query_ids": ["q"], "table_ids": ["t"]}
+                        ]
+                    },
+                },
+            }
+        )
         return _find_best_absorber_for_query(
             {"query_id": "q"},
             {"opensearch", "dynamodb"},
             "aurora_mysql",
             {"q": signals},
             query_map,
-            analysis,
             {},
             set(),
             "dynamodb",
-            trace_by_query,
+            ctx,
         )["target_engine"]
 
     def test_plain_lookup_never_goes_to_opensearch(self):
