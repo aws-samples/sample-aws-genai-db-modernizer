@@ -136,21 +136,33 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
 
     # Without schema design the architecture is still described (was "Hybrid
     # architecture: ." with no databases).
-    arch = json.loads(report_path.read_text())["recommended_architecture"]
+    report = json.loads(report_path.read_text())
+    arch = report["recommended_architecture"]
     assert arch["architecture_type"] == "HYBRID_WITH_CACHE"
     # #296: Reality Check keeps the source-compatible Aurora MySQL (OpenSearch no longer
     # absorbs its plain lookups) and ElastiCache is listed as the cache layer. #326: OpenSearch
     # no longer appears -- its 4 LIKE/prefix admin-search queries fail the justification floor
     # (no real search depth, well under the traffic floor) and consolidate back to Aurora MySQL.
+    # #287: Aurora MySQL carries no data migration of its own here -- it is the
+    # source-compatible engine, retained as-is -- so it stays out of ``databases``
+    # (the same way a mixed run already keeps a retained engine out) rather than
+    # listing it as a migration target with 0 tables.
     assert {d["service"] for d in arch["databases"]} == {
-        "aurora_mysql",
         "dynamodb",
         "elasticache",
     }
     assert all(d["table_count"] == 0 for d in arch["databases"])
+    from src.report.renderers import _architecture_engines
+
+    roles = {e["engine"]: e["role"] for e in _architecture_engines(report)}
+    assert roles["aurora_mysql"] == "Retained"
+    assert roles["dynamodb"] == "Migration target"
+    assert roles["elasticache"] == "Cache layer"
     assert arch["rationale"] == (
-        "Hybrid architecture: dynamodb for primary data storage and elasticache for "
-        "caching hot data. Schema design was not run, so no tables are allocated yet."
+        "Hybrid architecture: Aurora MySQL retained as the relational core "
+        "(46% of queries) and dynamodb for primary data storage and elasticache "
+        "for caching hot data. Schema design was not run, so no tables are "
+        "allocated yet."
     )
 
 

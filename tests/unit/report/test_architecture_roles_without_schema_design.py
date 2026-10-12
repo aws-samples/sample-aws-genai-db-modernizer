@@ -30,11 +30,17 @@ def _rank(target: str, conf: int, aq: int, wp: float, designed: bool) -> dict:
     }
 
 
-def _report(ranking: list[dict], engines: dict[str, dict | None], mappings: list[dict]) -> dict:
+def _report(
+    ranking: list[dict],
+    engines: dict[str, dict | None],
+    mappings: list[dict],
+    collector: dict | None = None,
+) -> dict:
     data = SynthesisData(
         job_id="job-1",
         database_name="wordpress",
         engines={e: EngineArtifacts(e, schema_design=s) for e, s in engines.items()},
+        collector=collector or {},
     )
     return {
         "database_name": "wordpress",
@@ -141,3 +147,183 @@ def test_no_schema_design_lists_workload_engines_as_targets() -> None:
     assert waves[0] == ["elasticache"]
     assert sorted(e for w in waves[1:] for e in w) == ["dynamodb", "opensearch"]
     assert waves[-1] == ["opensearch"]  # after the engines that own its tables
+
+
+def test_no_schema_design_still_retains_the_source_compatible_aurora_engine() -> None:
+    """#287: the ``--llm-mode none`` branch above lists every workload engine as a
+    database (so the rationale is not empty), but that must not sweep in the
+    source-compatible Aurora engine -- it carries no migration of its own and
+    must read "Retained", exactly as the mixed-run case above already does, even
+    though here NO engine has a schema design at all.
+    """
+    ranking = [
+        _rank("aurora_mysql", 70, 60, 55.0, False),
+        _rank("dynamodb", 60, 40, 45.0, False),
+    ]
+    report = _report(
+        ranking,
+        {e["target"]: None for e in ranking},
+        [],
+        collector={"metadata": {"source_database": {"engine": "mysql"}}},
+    )
+
+    services = [d["service"] for d in report["recommended_architecture"]["databases"]]
+    assert "aurora_mysql" not in services
+    assert "dynamodb" in services
+    assert _roles(report) == {
+        "aurora_mysql": "Retained",
+        "dynamodb": "Migration target",
+    }
+    waves = _wave_engines(report)
+    assert waves[0] == ["aurora_mysql"]
+    assert waves[-1] == ["dynamodb"]
+    assert (
+        "Aurora MySQL retained as the relational core"
+        in report["recommended_architecture"]["rationale"]
+    )
+
+
+def test_no_schema_design_never_retains_a_heterogeneous_source_engine() -> None:
+    """#287 round-1 review (C1): SQL Server, Oracle and DB2 have no Aurora dialect
+    of their own (``SOURCE_ENGINE_TO_AURORA`` has no entry for them), so the
+    Aurora engine the heterogeneous resolver (#381) picks is always a real
+    migration target, never retained -- even with no schema design at all.
+    """
+    ranking = [
+        _rank("aurora_postgresql", 70, 60, 55.0, False),
+        _rank("dynamodb", 60, 40, 45.0, False),
+    ]
+    report = _report(
+        ranking,
+        {e["target"]: None for e in ranking},
+        [],
+        collector={"metadata": {"source_database": {"engine": "sqlserver"}}},
+    )
+
+    services = [d["service"] for d in report["recommended_architecture"]["databases"]]
+    assert "aurora_postgresql" in services
+    assert _roles(report) == {
+        "aurora_postgresql": "Migration target",
+        "dynamodb": "Migration target",
+    }
+    assert "retained" not in report["recommended_architecture"]["rationale"].lower()
+
+
+def test_rationale_names_the_retained_engine_when_it_is_the_only_engine() -> None:
+    """#287 round-1 review (I1): an Aurora-only run (SINGLE_DATABASE) with no
+    schema design has an empty ``databases`` list -- the retained engine is the
+    whole architecture, not "insufficient data". #287 round 2 (I1, S1): the
+    retained engine's own workload share is quoted, and (item 3) the "schema
+    design was not run" note applies here too -- nothing migrates, but schema
+    design genuinely was not run.
+    """
+    ranking = [_rank("aurora_mysql", 70, 60, 100.0, False)]
+    report = _report(
+        ranking,
+        {"aurora_mysql": None},
+        [],
+        collector={"metadata": {"source_database": {"engine": "mysql"}}},
+    )
+
+    arch = report["recommended_architecture"]
+    assert arch["databases"] == []
+    assert arch["rationale"] == (
+        "Aurora MySQL retained as the relational core (100% of queries), with no "
+        "data migration. Schema design was not run, so no tables are allocated yet."
+    )
+    assert _roles(report) == {"aurora_mysql": "Retained"}
+
+
+def test_rationale_names_the_retained_engine_in_the_aurora_plus_cache_shape() -> None:
+    """#287 round-1 review (I1): the discourse-like shape -- a PostgreSQL source
+    kept on Aurora PostgreSQL, fronted by a cache -- has only the cache in
+    ``databases`` (HYBRID_WITH_CACHE); the retained Aurora side must still be
+    named, not silently dropped from the rationale. #287 round 2 (I1): the
+    retained engine's own workload share is quoted alongside it.
+    """
+    ranking = [
+        _rank("aurora_postgresql", 70, 55, 85.0, False),
+        _rank("elasticache", 50, 20, 15.0, False),
+    ]
+    report = _report(
+        ranking,
+        {e["target"]: None for e in ranking},
+        [],
+        collector={"metadata": {"source_database": {"engine": "postgresql"}}},
+    )
+
+    arch = report["recommended_architecture"]
+    assert [d["service"] for d in arch["databases"]] == ["elasticache"]
+    assert arch["rationale"] == (
+        "Hybrid architecture: Aurora PostgreSQL retained as the relational core "
+        "(85% of queries) and elasticache for caching hot data. Schema design "
+        "was not run, so no tables are allocated yet."
+    )
+    assert _roles(report) == {
+        "aurora_postgresql": "Retained",
+        "elasticache": "Cache layer",
+    }
+
+
+def test_rationale_names_the_other_engine_by_function_when_retained_leads() -> None:
+    """#287 round-2 review (I1/I2): once the retained Aurora engine carries more
+    of the workload than the other non-cache engine, calling that other engine
+    "primary data storage" directly contradicts "retained as the relational
+    core" in the same sentence. Named by function instead, joined with ';' per
+    the reviewer's example.
+    """
+    ranking = [
+        _rank("aurora_postgresql", 70, 70, 77.0, False),
+        _rank("dynamodb", 60, 15, 15.0, False),
+        _rank("elasticache", 50, 8, 8.0, False),
+    ]
+    report = _report(
+        ranking,
+        {e["target"]: None for e in ranking},
+        [],
+        collector={"metadata": {"source_database": {"engine": "postgresql"}}},
+    )
+
+    arch = report["recommended_architecture"]
+    assert arch["rationale"] == (
+        "Hybrid architecture: Aurora PostgreSQL retained as the relational core "
+        "(77% of queries); dynamodb for key-value access; elasticache for caching "
+        "hot data. Schema design was not run, so no tables are allocated yet."
+    )
+    assert _roles(report) == {
+        "aurora_postgresql": "Retained",
+        "dynamodb": "Migration target",
+        "elasticache": "Cache layer",
+    }
+
+
+def test_rationale_keeps_primary_data_storage_when_retained_engine_is_the_minority() -> None:
+    """#287 round-2 review (I1): the reviewer's fix is conditional on the retained
+    engine actually carrying most of the workload -- when the other engine
+    carries more, calling it "primary data storage" is still accurate, so the
+    wording (and the 'and'-joined shape) is unchanged.
+    """
+    ranking = [
+        _rank("aurora_mysql", 70, 10, 10.0, False),
+        _rank("dynamodb", 60, 70, 70.0, False),
+        _rank("elasticache", 50, 20, 20.0, False),
+    ]
+    report = _report(
+        ranking,
+        {e["target"]: None for e in ranking},
+        [],
+        collector={"metadata": {"source_database": {"engine": "mysql"}}},
+    )
+
+    arch = report["recommended_architecture"]
+    assert arch["rationale"] == (
+        "Hybrid architecture: Aurora MySQL retained as the relational core "
+        "(10% of queries) and dynamodb for primary data storage and elasticache "
+        "for caching hot data. Schema design was not run, so no tables are "
+        "allocated yet."
+    )
+    assert _roles(report) == {
+        "aurora_mysql": "Retained",
+        "dynamodb": "Migration target",
+        "elasticache": "Cache layer",
+    }

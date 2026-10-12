@@ -27,6 +27,7 @@ from src.agents.referee.synthesis_handler import run_synthesis
 from src.agents.referee.triage_handler import run_triage
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report import deliverables as dl
+from src.report.renderers import _architecture_engines
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
 
@@ -104,6 +105,18 @@ class TestAdventureWorksSynthesisContract:
         assert choice["source_engine"] == "sqlserver"
         assert choice["engine"] in ("aurora_mysql", "aurora_postgresql")
 
+    def test_chosen_aurora_engine_is_a_migration_target_not_retained(self, pipeline_report) -> None:
+        """#287 round-1 review (C1): SQL Server has no Aurora dialect of its own, so
+        whichever Aurora engine the heterogeneous resolver picked is a real
+        migration target in every deliverable -- never "Retained", which would
+        wrongly claim SQL Server's own dialect carries no migration.
+        """
+        _, report, _ = pipeline_report
+        choice = report["assignment_summary"]["aurora_engine_choice"]
+        roles = {e["engine"]: e["role"] for e in _architecture_engines(report)}
+        assert roles[choice["engine"]] == "Migration target"
+        assert "retained" not in report["recommended_architecture"]["rationale"].lower()
+
     def test_executive_summary_names_the_heterogeneous_choice(self, pipeline_report) -> None:
         _, report, _ = pipeline_report
         assert (
@@ -142,6 +155,12 @@ class TestAdventureWorksDeliverablesRender:
         assert b"<html" in decision_html[:200] or decision_html.startswith(b"<!DOCTYPE html")
         analysis_html = out["analysis-report"].content
         assert b"<html" in analysis_html[:200] or analysis_html.startswith(b"<!DOCTYPE html")
+        # #287 round-1 review (C1): the Decision Report's architecture table renders
+        # each engine's role in a <td class=role> cell -- the chosen Aurora engine
+        # must read "Migration target" there, never "Retained" (SQL Server has no
+        # Aurora dialect of its own).
+        assert b"Migration target" in decision_html
+        assert b">Retained<" not in decision_html
 
     def test_pdf_and_pptx_render(self, pipeline_report) -> None:
         store, _, version = pipeline_report

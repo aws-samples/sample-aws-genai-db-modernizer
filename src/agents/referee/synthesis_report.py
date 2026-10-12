@@ -2275,12 +2275,36 @@ def build_architecture_recommendation(
     # call it "Retained" and the deck puts it in the no-migration Wave 1.
     designed_engines, _not_designed_engines = designed_and_not_designed_engines(ranking)
     no_schema_design = not designed_engines
+    # #287: the broadened listing above (every workload engine, so the rationale
+    # below is never empty) must not sweep in the retained engine too -- the one
+    # whose dialect the source database already speaks, so it carries no data
+    # migration of its own. Decided from the homogeneous mapping only
+    # (SOURCE_ENGINE_TO_AURORA), never ``_source_compatible_aurora_engine``'s
+    # broader guess: that helper also returns whichever Aurora engine the
+    # heterogeneous resolver (SQL Server/Oracle/DB2, #381) picked as a real
+    # migration target when neither Aurora dialect matches the source, and
+    # mapping a source engine ``SOURCE_ENGINE_TO_AURORA`` has no entry for
+    # (every heterogeneous source) correctly yields ``None`` -- no retained
+    # engine. Also ``None`` unless that engine actually carries workload here,
+    # so a homogeneous source fully migrated off its native Aurora engine is
+    # never named "retained" for work it no longer does. Excluded from
+    # ``databases`` the same way the mixed-run case below already excludes an
+    # undesigned retained engine, letting it fall through to the "Retained"
+    # status check in ``renderers._engine_role`` instead of reading as a
+    # migration target.
+    retained_engine: str | None = None
+    if no_schema_design:
+        candidate = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
+        if candidate in engines_with_workload:
+            retained_engine = candidate
     databases = []
     for r in ranking:
         engine = r["target"]
         tables = engine_tables.get(engine, [])
         if not tables and not r.get("schema_design_available"):
             if not (no_schema_design and engine in engines_with_workload):
+                continue
+            if engine == retained_engine:
                 continue
 
         databases.append(
@@ -2294,8 +2318,11 @@ def build_architecture_recommendation(
             }
         )
 
-    rationale = _architecture_rationale(arch_type, databases, ranking)
-    if databases and no_schema_design:
+    rationale = _architecture_rationale(arch_type, databases, ranking, retained_engine)
+    # #287 round 2: an Aurora-only run (``databases`` empty, everything retained)
+    # still has not run schema design -- the note is about the run, not about
+    # how many tables ``databases`` happens to list, so it belongs here too.
+    if no_schema_design and (databases or retained_engine):
         rationale += " Schema design was not run, so no tables are allocated yet."
     return {
         "databases": databases,
@@ -2445,23 +2472,89 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     return ". ".join(parts) + "."
 
 
+# A short functional label for an engine's role in the rationale (#287 round 2),
+# used in place of "primary data storage" once the retained relational core
+# already carries most of the workload -- at that point the other engine is a
+# carve-out for a specific access pattern, not "the" primary store. Covers the
+# engines ``build_architecture_recommendation`` can actually list alongside a
+# retained engine; anything else falls back to a neutral phrase rather than a
+# guess at what it is for.
+_ENGINE_FUNCTION_PHRASE = {
+    "dynamodb": "key-value access",
+    "documentdb": "document workloads",
+    "opensearch": "full-text search",
+}
+
+
+def _engine_function_phrase(engine: str) -> str:
+    return _ENGINE_FUNCTION_PHRASE.get(engine, "secondary workload")
+
+
+def _workload_share(ranking: list[dict], engine: str) -> float | None:
+    """``workload_percent`` of ``engine`` in ``ranking``, or ``None`` if absent."""
+    entry = next((r for r in ranking if r.get("target") == engine), None)
+    value = entry.get("workload_percent") if entry else None
+    return float(value) if value is not None else None
+
+
 def _architecture_rationale(
     arch_type: str,
     databases: list[dict],
     ranking: list[dict],
+    retained_engine: str | None = None,
 ) -> str:
-    """Generate architecture-level rationale."""
+    """Generate architecture-level rationale.
+
+    ``retained_engine`` (#287) names the engine the source database already speaks,
+    kept with no data migration of its own -- it never appears in ``databases``
+    (``build_architecture_recommendation`` excludes it), so without this it went
+    unnamed here even when it is the only, or the only non-cache, engine in the
+    architecture ("Insufficient data to recommend a specific architecture." for an
+    Aurora-only run that in fact recommends keeping Aurora, or a cache-only
+    sentence for an Aurora-plus-cache run that silently dropped the Aurora side).
+
+    #287 round 2: when the retained engine carries the most workload of any
+    non-cache engine, the other engine is never called "primary data storage"
+    (contradicting "retained as the relational core" in the same sentence) --
+    it is named by function instead, and the retained engine's own share is
+    quoted, e.g. "Aurora PostgreSQL retained as the relational core (77% of
+    queries); dynamodb for key-value access; elasticache for caching hot data".
+    """
+    retained_share = _workload_share(ranking, retained_engine) if retained_engine else None
+    retained_clause = ""
+    if retained_engine:
+        retained_clause = f"{display_name(retained_engine)} retained as the relational core"
+        if retained_share:
+            retained_clause += f" ({retained_share:.0f}% of queries)"
     if arch_type == "SINGLE_DATABASE":
         if databases:
             return (
                 f"Workload analysis indicates {databases[0]['service']} as the primary "
                 f"target with {engine_confidence(databases[0]):.0f}% confidence."
             )
+        if retained_engine:
+            return f"{retained_clause}, with no data migration."
         return "Insufficient data to recommend a specific architecture."
     elif arch_type == "HYBRID_WITH_CACHE":
         primary = [d for d in databases if "cache" not in d["service"].lower()]
         cache = [d for d in databases if "cache" in d["service"].lower()]
+        primary_share = _workload_share(ranking, primary[0]["service"]) if primary else None
+        retained_leads = (
+            bool(retained_engine)
+            and bool(primary)
+            and (primary_share is None or (retained_share or 0) >= primary_share)
+        )
+        if retained_leads:
+            parts = [
+                retained_clause,
+                f"{primary[0]['service']} for {_engine_function_phrase(primary[0]['service'])}",
+            ]
+            if cache:
+                parts.append(f"{cache[0]['service']} for caching hot data")
+            return f"Hybrid architecture: {'; '.join(parts)}."
         parts = []
+        if retained_engine:
+            parts.append(retained_clause)
         if primary:
             parts.append(f"{primary[0]['service']} for primary data storage")
         if cache:
@@ -2469,7 +2562,16 @@ def _architecture_rationale(
         return f"Hybrid architecture: {' and '.join(parts)}."
     else:
         services = [d["service"] for d in databases[:3]]
-        return f"Multi-database architecture using {', '.join(services)} based on workload pattern analysis."
+        if retained_engine:
+            labeled = [f"{s} for {_engine_function_phrase(s)}" for s in services]
+            return (
+                f"Multi-database architecture: {retained_clause}, with "
+                f"{', '.join(labeled)} based on workload pattern analysis."
+            )
+        return (
+            f"Multi-database architecture using {', '.join(services)} based on "
+            "workload pattern analysis."
+        )
 
 
 # What one schema-design object is called per engine (for the summary, #219).
