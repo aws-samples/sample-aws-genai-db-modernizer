@@ -624,6 +624,13 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
     src_tables = {d.get("service"): d.get("table_count") for d in dbs}
     schema_designs = report.get("schema_designs") or {}
     costs = _engine_costs(report)
+    # #524: per-engine fallback for the branch below, read from the same
+    # per-wave ``table_count`` the tile and the roadmap already use.
+    wave_tables: dict[str, int] = {}
+    for w in resolve_migration_waves(report):
+        if w.get("moves_from") and w.get("homogeneity") is None:
+            for e in w.get("engines") or []:
+                wave_tables[e] = wave_tables.get(e, 0) + int(w.get("table_count") or 0)
 
     rows: list[dict[str, Any]] = []
     for r in ranking:
@@ -636,6 +643,13 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
         migrates = 0
         if role == "Migration target":
             n = src_tables.get(eng)
+            has_design = (schema_designs.get(eng) or {}).get("status") == "completed"
+            if not n and not has_design:
+                # No schema design has mapped source tables to this engine yet
+                # (table_mappings/table_count stay 0): read the same wave figure
+                # the tile and the roadmap already show, instead of a bare 0.
+                wave_n = wave_tables.get(eng)
+                n = wave_n if isinstance(wave_n, int) and wave_n > 0 else n
             migrates = n if isinstance(n, int) else (objs or 0)
             served = _design_source_tables(design_tables)
             scope = (

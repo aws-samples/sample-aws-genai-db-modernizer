@@ -1,0 +1,1996 @@
+{
+  "agent_type": "referee-synthesis",
+  "assignment_summary": {
+    "aurora_engine_choice": null,
+    "co_dependency_groups": 1,
+    "in_scope_count": 107,
+    "query_count": 107,
+    "source": "reality_check",
+    "status": "auto_generated",
+    "version": 2
+  },
+  "cache_overlay": {
+    "call_share_percent": 83.4,
+    "calls_per_second": 185.07,
+    "dropped_query_ids": [],
+    "engine": "elasticache",
+    "max_rows_avg": 100.0,
+    "min_calls_per_second": 1.0,
+    "notes": [],
+    "owners": {
+      "aurora_mysql": 3,
+      "dynamodb": 17
+    },
+    "patterns": {
+      "point_lookup": 19,
+      "reference_read": 1
+    },
+    "query_count": 20,
+    "safety_net_notes": []
+  },
+  "contract_version": "1.7",
+  "database_name": "wordpress",
+  "job_id": "19fd8da6",
+  "migration_waves": [
+    {
+      "cutover_query_count": 107,
+      "engines": [
+        "aurora_mysql"
+      ],
+      "fronts": null,
+      "gate": "Schema and data parity validated against the source database before cutover; decommission the legacy source once replication lag is zero.",
+      "homogeneity": "homogeneous",
+      "moves_from": [
+        "mysql"
+      ],
+      "query_count": 49,
+      "rationale": "The whole source database (MySQL 8.0.45) moves 1:1 to Aurora MySQL: same engine family. The collector reports engine and version only; feature compatibility is not assessed here. 49 queries (45.8%) remain on Aurora MySQL once later waves have moved their share; later waves move subsets of these 50 tables and views out of Aurora MySQL.",
+      "serves_from": [],
+      "share_basis": "queries",
+      "table_count": 50,
+      "table_groups": null,
+      "table_owners": null,
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_claims",
+        "wordpress.wp_actionscheduler_groups",
+        "wordpress.wp_actionscheduler_logs",
+        "wordpress.wp_commentmeta",
+        "wordpress.wp_comments",
+        "wordpress.wp_links",
+        "wordpress.wp_options",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_terms",
+        "wordpress.wp_usermeta",
+        "wordpress.wp_users",
+        "wordpress.wp_wc_admin_note_actions",
+        "wordpress.wp_wc_admin_notes",
+        "wordpress.wp_wc_category_lookup",
+        "wordpress.wp_wc_customer_lookup",
+        "wordpress.wp_wc_download_log",
+        "wordpress.wp_wc_order_addresses",
+        "wordpress.wp_wc_order_coupon_lookup",
+        "wordpress.wp_wc_order_operational_data",
+        "wordpress.wp_wc_order_product_lookup",
+        "wordpress.wp_wc_order_stats",
+        "wordpress.wp_wc_order_tax_lookup",
+        "wordpress.wp_wc_orders",
+        "wordpress.wp_wc_orders_meta",
+        "wordpress.wp_wc_product_attributes_lookup",
+        "wordpress.wp_wc_product_download_directories",
+        "wordpress.wp_wc_product_meta_lookup",
+        "wordpress.wp_wc_rate_limits",
+        "wordpress.wp_wc_reserved_stock",
+        "wordpress.wp_wc_tax_rate_classes",
+        "wordpress.wp_wc_webhooks",
+        "wordpress.wp_woocommerce_api_keys",
+        "wordpress.wp_woocommerce_attribute_taxonomies",
+        "wordpress.wp_woocommerce_downloadable_product_permissions",
+        "wordpress.wp_woocommerce_log",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items",
+        "wordpress.wp_woocommerce_payment_tokenmeta",
+        "wordpress.wp_woocommerce_payment_tokens",
+        "wordpress.wp_woocommerce_sessions",
+        "wordpress.wp_woocommerce_shipping_zone_locations",
+        "wordpress.wp_woocommerce_shipping_zone_methods",
+        "wordpress.wp_woocommerce_shipping_zones",
+        "wordpress.wp_woocommerce_tax_rate_locations",
+        "wordpress.wp_woocommerce_tax_rates"
+      ],
+      "title": "Move to Aurora MySQL",
+      "wave": 1,
+      "workload_share_percent": 45.8
+    },
+    {
+      "cutover_query_count": null,
+      "engines": [
+        "elasticache"
+      ],
+      "fronts": "aurora_mysql",
+      "gate": "Cache hit rate and invalidation verified against Aurora MySQL.",
+      "homogeneity": null,
+      "moves_from": [],
+      "query_count": 20,
+      "rationale": "20 hot reads (83.4% of calls), cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads: no data migration, fully reversible. It takes the read pressure off before the data migrations that follow. These reads belong to queries that move in wave 3 (DynamoDB) and wave 1 (Aurora MySQL); this share overlaps the owner shares, which alone sum to 100%.",
+      "serves_from": [],
+      "share_basis": "calls",
+      "table_count": 0,
+      "table_groups": null,
+      "table_owners": null,
+      "tables": [],
+      "title": "Cache hot reads with ElastiCache",
+      "wave": 2,
+      "workload_share_percent": 83.4
+    },
+    {
+      "cutover_query_count": null,
+      "engines": [
+        "dynamodb"
+      ],
+      "fronts": null,
+      "gate": "Dual-write/backfill validated and query parity confirmed per table group. 7 tables (wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups, wordpress.wp_options, wordpress.wp_postmeta, wordpress.wp_termmeta, wordpress.wp_woocommerce_api_keys, wordpress.wp_woocommerce_order_itemmeta) stay dual-read by Aurora MySQL queries, which remain on Aurora MySQL; keep a copy in sync via CDC. 29 queries read 10 tables (wordpress.wp_actionscheduler_logs, wordpress.wp_comments, wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_terms, wordpress.wp_users, wordpress.wp_wc_reserved_stock, wordpress.wp_woocommerce_downloadable_product_permissions, wordpress.wp_woocommerce_order_items) Aurora MySQL owns (wave 1) and keeps owning; keep a DynamoDB copy of them in sync via CDC.",
+      "homogeneity": null,
+      "moves_from": [
+        "aurora_mysql"
+      ],
+      "query_count": 58,
+      "rationale": "58 key-value and point-lookup queries (54.2% of query patterns) across 1 table group, respecting co-dependent tables where possible: the pattern DynamoDB fits best, and the smallest-blast-radius data migration available once the cache wave has absorbed the read pressure.",
+      "serves_from": [],
+      "share_basis": "queries",
+      "table_count": 8,
+      "table_groups": [
+        {
+          "kind": "independent",
+          "query_count": 29,
+          "tables": [
+            "wordpress.wp_actionscheduler_actions",
+            "wordpress.wp_actionscheduler_groups",
+            "wordpress.wp_options",
+            "wordpress.wp_postmeta",
+            "wordpress.wp_termmeta",
+            "wordpress.wp_wc_tax_rate_classes",
+            "wordpress.wp_woocommerce_api_keys",
+            "wordpress.wp_woocommerce_order_itemmeta"
+          ]
+        }
+      ],
+      "table_owners": null,
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups",
+        "wordpress.wp_options",
+        "wordpress.wp_postmeta",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_wc_tax_rate_classes",
+        "wordpress.wp_woocommerce_api_keys",
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "title": "Move key-value and point-lookup queries to DynamoDB",
+      "wave": 3,
+      "workload_share_percent": 54.2
+    }
+  ],
+  "needs_deeper_analysis": false,
+  "query_groups": [
+    {
+      "access_patterns": [
+        {
+          "design_rps": 12.742997685185186,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0001",
+          "query_ids": [
+            "q0001"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.2115277777777778,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0002",
+          "query_ids": [
+            "q0002"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.17862268518518518,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0003",
+          "query_ids": [
+            "q0003"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_terms",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.466,
+          "frequency_per_hour": 45874.791666666664,
+          "query_id": "q0001",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonom",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.9,
+          "frequency_per_hour": 761.5,
+          "query_id": "q0002",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` , `tr` . `object_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.547,
+          "frequency_per_hour": 643.0416666666666,
+          "query_id": "q0003",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` INNER JOIN `wp_term_relationships` AS `tr` ON `tr` . `term_taxonom",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 13.13314814814815
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 3.1870023148148148,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0004",
+          "query_ids": [
+            "q0004"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_termmeta, wordpress.wp_terms",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.634,
+          "frequency_per_hour": 11473.208333333334,
+          "query_id": "q0004",
+          "query_text": "SELECT DISTINCTROW `t` . `term_id` FROM `wp_terms` AS `t` LEFT JOIN `wp_termmeta` ON ( `t` . `term_id` = `wp_termmeta` . `term_id` AND `wp_termmeta` . `meta_key` = ? ) INNER JOIN `wp_term_taxonomy` AS",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 3.1870023148148148
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.28856481481481483,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0005",
+          "query_ids": [
+            "q0005"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 1.2445949074074074,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0006",
+          "query_ids": [
+            "q0006"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.03019675925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0007",
+          "query_ids": [
+            "q0007"
+          ],
+          "reason_index": 1
+        },
+        {
+          "design_rps": 0.13195601851851851,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0008",
+          "query_ids": [
+            "q0008"
+          ],
+          "reason_index": 2
+        },
+        {
+          "design_rps": 0.12449074074074074,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0009",
+          "query_ids": [
+            "q0009"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.0870486111111111,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0010",
+          "query_ids": [
+            "q0010"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.21835648148148148,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0011",
+          "query_ids": [
+            "q0011"
+          ],
+          "reason_index": 1
+        },
+        {
+          "design_rps": 0.21869212962962964,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0012",
+          "query_ids": [
+            "q0012"
+          ],
+          "reason_index": 1
+        },
+        {
+          "design_rps": 0.10200231481481481,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0013",
+          "query_ids": [
+            "q0013"
+          ],
+          "reason_index": 1
+        },
+        {
+          "design_rps": 0.04372685185185185,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0014",
+          "query_ids": [
+            "q0014"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.04372685185185185,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0015",
+          "query_ids": [
+            "q0015"
+          ],
+          "reason_index": 1
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_posts",
+      "reasons": [
+        "highest confidence for aurora_mysql (tie with opensearch: source-compatible engine) | [capability] dynamodb lacks required capability: aggregation; [capability] elasticache lacks\u2026",
+        "reality check: consolidated from opensearch \u2192 aurora_mysql (no unique value \u2014 fit=100, data synced for wordpress.wp_posts)",
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 18.685,
+          "frequency_per_hour": 1038.8333333333333,
+          "query_id": "q0005",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` != ? AND `wp_posts` . `post_status` != ? ) ) ORDER BY `wp_p",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.363,
+          "frequency_per_hour": 4480.541666666667,
+          "query_id": "q0006",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_parent` = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_pos",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 13.902,
+          "frequency_per_hour": 108.70833333333333,
+          "query_id": "q0007",
+          "query_text": "SELECT COUNT ( DISTINCTROW `posts` . `id` ) AS `count` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 2.198,
+          "frequency_per_hour": 475.0416666666667,
+          "query_id": "q0008",
+          "query_text": "SHOW FULL FIELDS FROM `wp_posts`",
+          "query_type": "OTHER"
+        },
+        {
+          "execution_time_ms_avg": 0.471,
+          "frequency_per_hour": 448.1666666666667,
+          "query_id": "q0009",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) ORDER BY `wp_posts` . `post_date` DESC LIMIT ?, ...",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.669,
+          "frequency_per_hour": 313.375,
+          "query_id": "q0010",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` != ? AND `wp_posts` . `post_status` != ? ) ) ORDER BY `wp_p",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.248,
+          "frequency_per_hour": 786.0833333333334,
+          "query_id": "q0011",
+          "query_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND ( ( `wp_posts` . `post_type` = ? AND ( `wp_posts` . `post_status` = ? ) ) ) GROUP BY `wp_posts",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.209,
+          "frequency_per_hour": 787.2916666666666,
+          "query_id": "q0012",
+          "query_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? ) ) GROUP BY `wp_posts`",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.228,
+          "frequency_per_hour": 367.2083333333333,
+          "query_id": "q0013",
+          "query_text": "SELECT `wp_posts` . * FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND ( ( `wp_posts` . `post_type` = ? AND ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_st",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.423,
+          "frequency_per_hour": 157.41666666666666,
+          "query_id": "q0014",
+          "query_text": "SELECT `post_status` , COUNT ( * ) AS `num_posts` FROM `wp_posts` WHERE `post_type` = ? GROUP BY `post_status`",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.211,
+          "frequency_per_hour": 157.41666666666666,
+          "query_id": "q0015",
+          "query_text": "SELECT `wp_posts` . `ID` FROM `wp_posts` WHERE ? = ? AND `wp_posts` . `post_name` IN (...) AND ( ? = ? ) AND `wp_posts` . `post_type` = ? AND ( ( `wp_posts` . `post_status` = ? OR `wp_posts` . `post_s",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 2.533356481481481
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 1.4360648148148147,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0016",
+          "query_ids": [
+            "q0016"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_options",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.727,
+          "frequency_per_hour": 5169.833333333333,
+          "query_id": "q0016",
+          "query_text": "SHOW FULL FIELDS FROM `wp_options`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 1.4360648148148147
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.9519791666666667,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0017",
+          "query_ids": [
+            "q0017"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_usermeta",
+      "reasons": [
+        "reality check: consolidated from opensearch \u2192 aurora_mysql (no unique value \u2014 fit=80, aurora_mysql can serve this pattern)"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.311,
+          "frequency_per_hour": 3427.125,
+          "query_id": "q0017",
+          "query_text": "SELECT `user_id` , `meta_key` , `meta_value` FROM `wp_usermeta` WHERE `user_id` IN (...) ORDER BY `umeta_id` ASC",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.9519791666666667
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.8273495370370371,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0018",
+          "query_ids": [
+            "q0018"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_woocommerce_api_keys",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 2.17,
+          "frequency_per_hour": 2978.4583333333335,
+          "query_id": "q0018",
+          "query_text": "SHOW FULL FIELDS FROM `wp_woocommerce_api_keys`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.8273495370370371
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.6775925925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0019",
+          "query_ids": [
+            "q0019"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "Table not identified by the collector",
+      "reasons": [
+        "reality check: consolidated from documentdb \u2192 aurora_mysql (no unique value \u2014 fit=60, data synced for an unresolved table)"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.116,
+          "frequency_per_hour": 2439.3333333333335,
+          "query_id": "q0019",
+          "query_text": "SELECT `FOUND_ROWS` ( )",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.6775925925925926
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.11171296296296296,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0020",
+          "query_ids": [
+            "q0020"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.35648148148148145,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0021",
+          "query_ids": [
+            "q0021"
+          ],
+          "reason_index": 1
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_postmeta",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026",
+        "highest confidence for aurora_mysql | [capability] dynamodb lacks required capability: aggregation; [capability] elasticache lacks required capability: aggregation"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.723,
+          "frequency_per_hour": 402.1666666666667,
+          "query_id": "q0020",
+          "query_text": "SHOW FULL FIELDS FROM `wp_postmeta`",
+          "query_type": "OTHER"
+        },
+        {
+          "execution_time_ms_avg": 0.428,
+          "frequency_per_hour": 1283.3333333333333,
+          "query_id": "q0021",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_postmeta` WHERE `meta_key` = ? AND `post_id` = ?",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.4681944444444444
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.4547800925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0022",
+          "query_ids": [
+            "q0022"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups",
+      "reasons": [
+        "reality check: consolidated from OpenSearch \u2192 Aurora MySQL (justification floor \u2014 no search predicate with relevance ranking, fuzzy matching or a facet in this query; fit=62, data\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 52.735,
+          "frequency_per_hour": 1637.2083333333333,
+          "query_id": "q0022",
+          "query_text": "SELECT `a` . `action_id` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `g` . `group_id` = `a` . `group_id` WHERE ? = ? AND `g` . `slug` = ? AND `a` . `hook` = ? AN",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.4547800925925926
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.4547337962962963,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0023",
+          "query_ids": [
+            "q0023"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_terms",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | Aurora MySQL runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.559,
+          "frequency_per_hour": 1637.0416666666667,
+          "query_id": "q0023",
+          "query_text": "SELECT `p` . `ID` FROM `wp_posts` `p` INNER JOIN `wp_term_relationships` `tr` ON `tr` . `object_id` = `p` . `ID` INNER JOIN `wp_term_taxonomy` `tt` ON `tr` . `term_taxonomy_id` = `tt` . `term_taxonomy",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.4547337962962963
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.35648148148148145,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "INSERT",
+          "pattern_id": "relational-aurora_mysql-q0024",
+          "query_ids": [
+            "q0024"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.0895949074074074,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0025",
+          "query_ids": [
+            "q0025"
+          ],
+          "reason_index": 1
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_wc_product_meta_lookup",
+      "reasons": [
+        "reality check: consolidated from documentdb \u2192 aurora_mysql (no unique value \u2014 fit=94, data synced for wordpress.wp_wc_product_meta_lookup)",
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 8.593,
+          "frequency_per_hour": 1283.3333333333333,
+          "query_id": "q0024",
+          "query_text": "REPLACE INTO `wp_wc_product_meta_lookup` ( `product_id` , `sku` , `virtual` , `downloadable` , `min_price` , `max_price` , `onsale` , `stock_quantity` , `stock_status` , `rating_count` , `average_rati",
+          "query_type": "INSERT"
+        },
+        {
+          "execution_time_ms_avg": 2.028,
+          "frequency_per_hour": 322.5416666666667,
+          "query_id": "q0025",
+          "query_text": "SHOW FULL FIELDS FROM `wp_wc_product_meta_lookup`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.44607638888888884
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.16952546296296298,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0026",
+          "query_ids": [
+            "q0026"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.26621527777777776,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0027",
+          "query_ids": [
+            "q0027"
+          ],
+          "reason_index": 1
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_comments",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026",
+        "highest confidence for aurora_mysql | [capability] dynamodb lacks required capability: aggregation; [capability] elasticache lacks required capability: aggregation"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 2.186,
+          "frequency_per_hour": 610.2916666666666,
+          "query_id": "q0026",
+          "query_text": "SHOW FULL FIELDS FROM `wp_comments`",
+          "query_type": "OTHER"
+        },
+        {
+          "execution_time_ms_avg": 0.405,
+          "frequency_per_hour": 958.375,
+          "query_id": "q0027",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_comments` WHERE `comment_post_ID` = ? AND `comment_approved` = ?",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.43574074074074076
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.17862268518518518,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0028",
+          "query_ids": [
+            "q0028"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.14015046296296296,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0029",
+          "query_ids": [
+            "q0029"
+          ],
+          "reason_index": 1
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation, complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache\u2026",
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.137,
+          "frequency_per_hour": 643.0416666666666,
+          "query_id": "q0028",
+          "query_text": "SELECT COUNT ( DISTINCTROW `ID` ) FROM `wp_posts` `p` LEFT JOIN ( SELECT `object_id` FROM `wp_term_relationships` WHERE `term_taxonomy_id` IN (...) ) AS `exclude_join` ON `exclude_join` . `object_id` ",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 1.086,
+          "frequency_per_hour": 504.5416666666667,
+          "query_id": "q0029",
+          "query_text": "SELECT DISTINCTROW `ID` FROM `wp_posts` `p` LEFT JOIN ( SELECT `object_id` FROM `wp_term_relationships` WHERE `term_taxonomy_id` IN (...) ) AS `exclude_join` ON `exclude_join` . `object_id` = `p` . `I",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.31877314814814817
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.03019675925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0030",
+          "query_ids": [
+            "q0030"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.03019675925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0031",
+          "query_ids": [
+            "q0031"
+          ],
+          "reason_index": 1
+        },
+        {
+          "design_rps": 0.16782407407407407,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0032",
+          "query_ids": [
+            "q0032"
+          ],
+          "reason_index": 2
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_postmeta, wordpress.wp_posts",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation, complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache\u2026",
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform\u2026",
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation; [capability] elasticache lacks required capability: aggregation"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 911.209,
+          "frequency_per_hour": 108.70833333333333,
+          "query_id": "q0030",
+          "query_text": "SELECT SUM ( `meta__order_total` . `meta_value` ) AS `total_sales` , SUM ( `meta__order_shipping` . `meta_value` ) AS `total_shipping` , SUM ( `meta__order_tax` . `meta_value` ) AS `total_tax` , SUM (",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 13.66,
+          "frequency_per_hour": 108.70833333333333,
+          "query_id": "q0031",
+          "query_text": "SELECT `parent_meta__order_total` . `meta_value` AS `total_refund` , `parent_meta__order_shipping` . `meta_value` AS `total_shipping` , `parent_meta__order_tax` . `meta_value` AS `total_tax` , `parent",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.462,
+          "frequency_per_hour": 604.1666666666666,
+          "query_id": "q0032",
+          "query_text": "SELECT SUM ( `postmeta` . `meta_value` ) FROM `wp_postmeta` AS `postmeta` INNER JOIN `wp_posts` AS `posts` ON ( `posts` . `post_type` = ? AND `posts` . `post_parent` = ? ) WHERE `postmeta` . `meta_key",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.22821759259259258
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.07104166666666667,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0033",
+          "query_ids": [
+            "q0033"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.07104166666666667,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0034",
+          "query_ids": [
+            "q0034"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.035451388888888886,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0035",
+          "query_ids": [
+            "q0035"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_usermeta, wordpress.wp_users",
+      "reasons": [
+        "reality check: consolidated from OpenSearch \u2192 Aurora MySQL (justification floor \u2014 no search predicate with relevance ranking, fuzzy matching or a facet in this query; fit=100\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.541,
+          "frequency_per_hour": 255.75,
+          "query_id": "q0033",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `ID` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key` = ? AND `wp_",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.439,
+          "frequency_per_hour": 255.75,
+          "query_id": "q0034",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `ID` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key` = ? AND `wp_",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.517,
+          "frequency_per_hour": 127.625,
+          "query_id": "q0035",
+          "query_text": "SELECT SQL_CALC_FOUND_ROWS `wp_users` . `user_registered` FROM `wp_users` INNER JOIN `wp_usermeta` ON ( `wp_users` . `ID` = `wp_usermeta` . `user_id` ) WHERE ? = ? AND ( ( ( `wp_usermeta` . `meta_key`",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.17753472222222222
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.12040509259259259,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0036",
+          "query_ids": [
+            "q0036"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_wc_reserved_stock",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.867,
+          "frequency_per_hour": 433.4583333333333,
+          "query_id": "q0036",
+          "query_text": "SHOW FULL FIELDS FROM `wp_wc_reserved_stock`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.12040509259259259
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.10114583333333334,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0037",
+          "query_ids": [
+            "q0037"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_woocommerce_order_itemmeta",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.744,
+          "frequency_per_hour": 364.125,
+          "query_id": "q0037",
+          "query_text": "SHOW FULL FIELDS FROM `wp_woocommerce_order_itemmeta`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.10114583333333334
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.09712962962962964,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0038",
+          "query_ids": [
+            "q0038"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_actionscheduler_logs",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.827,
+          "frequency_per_hour": 349.6666666666667,
+          "query_id": "q0038",
+          "query_text": "SHOW FULL FIELDS FROM `wp_actionscheduler_logs`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.09712962962962964
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.09712962962962964,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0039",
+          "query_ids": [
+            "q0039"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_woocommerce_order_items",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.77,
+          "frequency_per_hour": 349.6666666666667,
+          "query_id": "q0039",
+          "query_text": "SHOW FULL FIELDS FROM `wp_woocommerce_order_items`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.09712962962962964
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.09711805555555555,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0040",
+          "query_ids": [
+            "q0040"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 2.092,
+          "frequency_per_hour": 349.625,
+          "query_id": "q0040",
+          "query_text": "SHOW FULL FIELDS FROM `wp_woocommerce_downloadable_product_permissions`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.09711805555555555
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.03019675925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0041",
+          "query_ids": [
+            "q0041"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.03019675925925926,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0042",
+          "query_ids": [
+            "q0042"
+          ],
+          "reason_index": 0
+        },
+        {
+          "design_rps": 0.035451388888888886,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0043",
+          "query_ids": [
+            "q0043"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_posts, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_woocommerce_order_items",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation, complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 214.66,
+          "frequency_per_hour": 108.70833333333333,
+          "query_id": "q0041",
+          "query_text": "SELECT SUM ( `order_item_meta__qty` . `meta_value` ) AS `order_item_count` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_woocommerce_order_items` AS `order_items` ON",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.824,
+          "frequency_per_hour": 108.70833333333333,
+          "query_id": "q0042",
+          "query_text": "SELECT `order_items` . `order_item_name` AS `order_item_name` , SUM ( `order_item_meta_discount_amount` . `meta_value` ) AS `discount_amount` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS ",
+          "query_type": "SELECT"
+        },
+        {
+          "execution_time_ms_avg": 0.564,
+          "frequency_per_hour": 127.625,
+          "query_id": "q0043",
+          "query_text": "SELECT SUM ( `order_item_meta__qty` . `meta_value` ) AS `order_item_count` FROM `wp_posts` AS `posts` INNER JOIN `wp_woocommerce_order_items` AS `order_items` ON ( `posts` . `ID` = `order_items` . `or",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.0958449074074074
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.0895949074074074,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0044",
+          "query_ids": [
+            "q0044"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_termmeta",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.68,
+          "frequency_per_hour": 322.5416666666667,
+          "query_id": "q0044",
+          "query_text": "SHOW FULL FIELDS FROM `wp_termmeta`",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.0895949074074074
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.06039351851851852,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0045",
+          "query_ids": [
+            "q0045"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_postmeta, wordpress.wp_posts, wordpress.wp_woocommerce_order_items",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation, complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 1.156,
+          "frequency_per_hour": 217.41666666666666,
+          "query_id": "q0045",
+          "query_text": "SELECT `posts` . `id` AS `refund_id` , `meta__refund_amount` . `meta_value` AS `total_refund` , `posts` . `post_date` AS `post_date` , `order_items` . `order_item_type` AS `item_type` , `meta__order_t",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.06039351851851852
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.049108796296296296,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0046",
+          "query_ids": [
+            "q0046"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_commentmeta",
+      "reasons": [
+        "reality check: consolidated from documentdb \u2192 aurora_mysql (no unique value \u2014 fit=85, aurora_mysql can serve this pattern)"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.254,
+          "frequency_per_hour": 176.79166666666666,
+          "query_id": "q0046",
+          "query_text": "SELECT `comment_id` , `meta_key` , `meta_value` FROM `wp_commentmeta` WHERE `comment_id` IN (...) ORDER BY `meta_id` ASC",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.049108796296296296
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.04341435185185185,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0047",
+          "query_ids": [
+            "q0047"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_wc_admin_notes",
+      "reasons": [
+        "reality check: consolidated from documentdb \u2192 aurora_mysql (no unique value \u2014 fit=82, aurora_mysql can serve this pattern)"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.318,
+          "frequency_per_hour": 156.29166666666666,
+          "query_id": "q0047",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_wc_admin_notes` WHERE ? = ? AND TYPE IN (...) AND STATUS IN (...) AND `is_deleted` = ?",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.04341435185185185
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.043020833333333335,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "SELECT",
+          "pattern_id": "relational-aurora_mysql-q0048",
+          "query_ids": [
+            "q0048"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "wordpress.wp_term_taxonomy, wordpress.wp_terms",
+      "reasons": [
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation; [capability] elasticache lacks required capability: aggregation"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.366,
+          "frequency_per_hour": 154.875,
+          "query_id": "q0048",
+          "query_text": "SELECT COUNT ( * ) FROM `wp_terms` AS `t` INNER JOIN `wp_term_taxonomy` AS `tt` ON `t` . `term_id` = `tt` . `term_id` WHERE `tt` . `taxonomy` IN (...)",
+          "query_type": "SELECT"
+        }
+      ],
+      "total_design_rps": 0.043020833333333335
+    },
+    {
+      "access_patterns": [
+        {
+          "design_rps": 0.035451388888888886,
+          "engine": "aurora_mysql",
+          "in_scope": true,
+          "operation": "OTHER",
+          "pattern_id": "relational-aurora_mysql-q0049",
+          "query_ids": [
+            "q0049"
+          ],
+          "reason_index": 0
+        }
+      ],
+      "engines": [
+        "aurora_mysql"
+      ],
+      "group_name": "Utility and session statements",
+      "reasons": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache\u2026"
+      ],
+      "source_queries": [
+        {
+          "execution_time_ms_avg": 0.084,
+          "frequency_per_hour": 127.625,
+          "query_id": "q0049",
+          "query_text": "SET SESSION `SQL_BIG_SELECTS` = ?",
+          "query_type": "OTHER"
+        }
+      ],
+      "total_design_rps": 0.035451388888888886
+    }
+  ],
+  "ranking": [
+    {
+      "access_patterns": 0,
+      "aggregate_count": 41,
+      "analysis_confidence": 50,
+      "anti_patterns_detected": 2,
+      "assigned_queries": 58,
+      "assigned_queries_in_scope": 58,
+      "assignment_reason_summary": [
+        "highest confidence for dynamodb",
+        "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=100, data synced for wordpress.wp_posts)",
+        "reality check: consolidated from aurora_mysql \u2192 dynamodb (no unique value \u2014 fit=99, data synced for wordpress.wp_postmeta)"
+      ],
+      "complexity_score": null,
+      "confidence_score": 50,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "monthly_cost_usd": 98.41,
+      "pattern_groups": 0,
+      "pattern_score": null,
+      "patterns_detected": 8,
+      "performance_score": null,
+      "primary_tables": 8,
+      "rationale": "97% mean fit across 58 queries (18 rated tables), led by key-value lookups (25 of 58). estimated $98.41/month.",
+      "routed_confidence": 97,
+      "routed_confidence_basis": "owned_queries",
+      "routed_confidence_evidence": "table",
+      "routed_lead": "key_value_lookups",
+      "routed_lead_count": 25,
+      "routed_queries": 58,
+      "routed_queries_without_table_evidence": 0,
+      "routed_tables": 18,
+      "schema_design_available": false,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 11,
+      "tables_marginal": 0,
+      "tables_not_suitable": 28,
+      "tables_suitable": 11,
+      "target": "dynamodb",
+      "target_tables": 0,
+      "weight": 0.501,
+      "workload_percent": 54.2
+    },
+    {
+      "access_patterns": 0,
+      "aggregate_count": 0,
+      "analysis_confidence": 50,
+      "anti_patterns_detected": 3,
+      "assigned_queries": 49,
+      "assigned_queries_in_scope": 49,
+      "assignment_reason_summary": [
+        "utility/metadata statement \u2014 kept on source-compatible relational engine (aurora_mysql) | [capability] dynamodb lacks required capability: sql_admin; [capability] elasticache lacks required capability: sql_admin; [capability] documentdb lacks required capability: sql_admin; [capability] opensearch lacks required capability: sql_admin",
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: aggregation, complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store; [capability] documentdb lacks required capability: aggregation, complex_joins; [capability] opensearch lacks required capability: aggregation, complex_joins",
+        "co-dependency group \u2192 aurora_mysql | [capability] dynamodb lacks required capability: complex_joins; [ec-no-complex-join] Excluded from elasticache: ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store; [capability] documentdb lacks required capability: complex_joins; [capability] opensearch lacks required capability: complex_joins"
+      ],
+      "complexity_score": null,
+      "confidence_score": 50,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "monthly_cost_usd": 318.8,
+      "pattern_groups": 0,
+      "pattern_score": null,
+      "patterns_detected": 19,
+      "performance_score": null,
+      "primary_tables": 14,
+      "rationale": "88% mean fit across 49 queries (21 rated tables; 2 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search and multi-table joins (35 of 49). estimated $318.80/month.",
+      "routed_confidence": 88,
+      "routed_confidence_basis": "owned_queries",
+      "routed_confidence_evidence": "partial",
+      "routed_lead": "aggregations",
+      "routed_lead_count": 21,
+      "routed_queries": 49,
+      "routed_queries_without_table_evidence": 2,
+      "routed_tables": 21,
+      "schema_design_available": false,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 11,
+      "tables_marginal": 3,
+      "tables_not_suitable": 28,
+      "tables_suitable": 8,
+      "target": "aurora_mysql",
+      "target_tables": 0,
+      "weight": 0.397,
+      "workload_percent": 45.8
+    },
+    {
+      "access_patterns": 0,
+      "aggregate_count": 0,
+      "analysis_confidence": 48,
+      "anti_patterns_detected": 0,
+      "assigned_queries": 0,
+      "assigned_queries_in_scope": 0,
+      "assignment_reason_summary": [],
+      "cache_call_share_percent": 83.4,
+      "cache_calls_per_second": 185.07,
+      "cache_min_calls_per_second": 1.0,
+      "cache_overlay_owners": {
+        "aurora_mysql": 3,
+        "dynamodb": 17
+      },
+      "cache_overlay_queries": 20,
+      "complexity_score": null,
+      "confidence_score": 48,
+      "cost_score": null,
+      "migration_complexity_avg": "LOW",
+      "monthly_cost_usd": 165.55,
+      "pattern_groups": 0,
+      "pattern_score": null,
+      "patterns_detected": 4,
+      "performance_score": null,
+      "primary_tables": 0,
+      "rationale": "Cache layer for 20 hot reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 76% mean cache fit across 20 cached reads (12 rated tables). estimated $165.55/month (185.07 calls/s combined across these reads clears the 1 calls/s hot-read floor).",
+      "role": "cache_layer",
+      "routed_confidence": 76,
+      "routed_confidence_basis": "cached_reads",
+      "routed_confidence_evidence": "table",
+      "routed_lead": "point_lookup",
+      "routed_lead_count": 19,
+      "routed_queries": 20,
+      "routed_queries_without_table_evidence": 0,
+      "routed_tables": 12,
+      "schema_design_available": false,
+      "tables_analyzed": 50,
+      "tables_highly_suitable": 9,
+      "tables_marginal": 5,
+      "tables_not_suitable": 30,
+      "tables_suitable": 6,
+      "target": "elasticache",
+      "target_tables": 0,
+      "weight": 0.64,
+      "workload_percent": 0.0
+    }
+  ],
+  "reality_check": {
+    "after_distribution": {
+      "aurora_mysql": 49,
+      "dynamodb": 58
+    },
+    "architectural_patterns": [],
+    "before_distribution": {
+      "aurora_mysql": 58,
+      "documentdb": 6,
+      "dynamodb": 33,
+      "opensearch": 10
+    },
+    "consolidations": [
+      {
+        "action": "partial",
+        "from_engine": "aurora_mysql",
+        "queries_retained": [
+          "q0030",
+          "q0041",
+          "q0001",
+          "q0005",
+          "q0016",
+          "q0004",
+          "q0018",
+          "q0006",
+          "q0031",
+          "q0026",
+          "q0008",
+          "q0023",
+          "q0036",
+          "q0040",
+          "q0028",
+          "q0020",
+          "q0002",
+          "q0025",
+          "q0038",
+          "q0037",
+          "q0039",
+          "q0021",
+          "q0029",
+          "q0044",
+          "q0027",
+          "q0003",
+          "q0032",
+          "q0045",
+          "q0009",
+          "q0010",
+          "q0042",
+          "q0043",
+          "q0014",
+          "q0048",
+          "q0049"
+        ],
+        "query_count": 23,
+        "reason": "aurora_mysql provides no unique capabilities \u2014 23 queries can be served by existing engines (35 retained due to capability requirements)",
+        "retention_reason": "Queries require capabilities no committed engine provides",
+        "saved_cost_estimate": 0.0,
+        "to_engine": "dynamodb"
+      },
+      {
+        "action": "full",
+        "from_engine": "documentdb",
+        "queries_retained": [],
+        "query_count": 4,
+        "reason": "documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines",
+        "retention_reason": null,
+        "saved_cost_estimate": 500.0,
+        "to_engine": "aurora_mysql"
+      },
+      {
+        "action": "full",
+        "from_engine": "documentdb",
+        "queries_retained": [],
+        "query_count": 2,
+        "reason": "documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines",
+        "retention_reason": null,
+        "saved_cost_estimate": 0.0,
+        "to_engine": "dynamodb"
+      },
+      {
+        "action": "full",
+        "from_engine": "opensearch",
+        "queries_retained": [],
+        "query_count": 10,
+        "reason": "10 opensearch queries moved to aurora_mysql; no in-scope opensearch query remains (4 queries of these, moved by the justification floor: no search predicate with relevance ranking, fuzzy matching or a facet in this query)",
+        "retention_reason": null,
+        "saved_cost_estimate": 450.0,
+        "to_engine": "aurora_mysql"
+      }
+    ],
+    "recommendations": [
+      "Consolidated 23 queries from aurora_mysql \u2192 dynamodb: aurora_mysql provides no unique capabilities \u2014 23 queries can be served by existing engines (35 retained due to capability requirements). No operational savings are claimed: this move does not remove aurora_mysql from the architecture.",
+      "Consolidated 4 queries from documentdb \u2192 aurora_mysql: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Removes $367.39/mo of infrastructure cost (documentdb's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated documentdb cluster.",
+      "Consolidated 2 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. documentdb leaves the architecture.",
+      "Consolidated 10 queries from opensearch \u2192 aurora_mysql: 10 opensearch queries moved to aurora_mysql; no in-scope opensearch query remains (4 queries of these, moved by the justification floor: no search predicate with relevance ranking, fuzzy matching or a facet in this query). Removes $240.96/mo of infrastructure cost (opensearch's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated opensearch cluster."
+    ]
+  },
+  "recommended_architecture": {
+    "architecture_type": "HYBRID_WITH_CACHE",
+    "databases": [
+      {
+        "confidence_score": 50,
+        "rationale": "97% mean fit across 58 queries (18 rated tables), led by key-value lookups (25 of 58). estimated $98.41/month.",
+        "routed_confidence": 97,
+        "service": "dynamodb",
+        "table_count": 0,
+        "tables": []
+      },
+      {
+        "confidence_score": 48,
+        "rationale": "Cache layer for 20 hot reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 76% mean cache fit across 20 cached reads (12 rated tables). estimated $165.55/month (185.07 calls/s combined across these reads clears the 1 calls/s hot-read floor).",
+        "routed_confidence": 76,
+        "service": "elasticache",
+        "table_count": 0,
+        "tables": []
+      }
+    ],
+    "rationale": "Hybrid architecture: Aurora MySQL retained as the relational core (46% of queries) and dynamodb for primary data storage and elasticache for caching hot data. Schema design was not run, so no tables are allocated yet."
+  },
+  "risk_assessment": {
+    "mitigation_strategies": [
+      "RISK-001 (HIGH, DynamoDB; wordpress.wp_posts): Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+      "RISK-002 (HIGH, DynamoDB; wordpress.wp_actionscheduler_logs, wordpress.wp_comments, wordpress.wp_options and 4 more): Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+      "Load-test the queries behind RISK-001 on DynamoDB with production-scale data before cutover.",
+      "Add in-scope access patterns for the 14 queries the DynamoDB schema design does not serve (RISK-002), or route them to an engine that serves them.",
+      "Use blue-green deployment with rollback for the tables behind the HIGH risks: wordpress.wp_actionscheduler_logs, wordpress.wp_comments, wordpress.wp_options, wordpress.wp_posts, wordpress.wp_wc_reserved_stock, wordpress.wp_wc_tax_rate_classes, wordpress.wp_woocommerce_api_keys, wordpress.wp_woocommerce_downloadable_product_permissions.",
+      "Monitor DynamoDB and Aurora MySQL closely during the first 2 weeks post-migration."
+    ],
+    "overall_risk_level": "HIGH",
+    "resolved_risks": [
+      {
+        "affected_tables": [
+          "wordpress.wp_posts",
+          "wordpress.wp_woocommerce_order_itemmeta",
+          "wordpress.wp_woocommerce_order_items"
+        ],
+        "description": "[dynamodb] Complex GROUP BY / HAVING / multi-table aggregations. DynamoDB doesn't support server-side aggregation \u2014 these need to move to application layer, pre-computed aggregates, or a separate analytics store.",
+        "engine": "dynamodb",
+        "query_ids": [
+          "q0014",
+          "q0015",
+          "q0011",
+          "q0042",
+          "q0012",
+          "q0013",
+          "q0007",
+          "q0041"
+        ],
+        "reason": "the queries run as SQL on Aurora MySQL",
+        "resolved_on": "aurora_mysql",
+        "severity": "HIGH"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_options"
+        ],
+        "description": "[aurora_mysql] Single-row SELECT by primary key at very high frequency (>100 calls/second). DynamoDB provides single-digit millisecond latency for key-value lookups at any scale \u2014 Aurora adds unnecessary overhead for this access pattern.",
+        "engine": "aurora_mysql",
+        "query_ids": [
+          "q0050"
+        ],
+        "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+        "resolved_on": "dynamodb",
+        "severity": "HIGH"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_product_meta_lookup",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "description": "[aurora_mysql] Kept on Aurora MySQL because of a utility or DDL statement and aggregation on this table.",
+        "engine": "aurora_mysql",
+        "query_ids": [
+          "q0018",
+          "q0046",
+          "q0026",
+          "q0027",
+          "q0038",
+          "q0016",
+          "q0040",
+          "q0036",
+          "q0024",
+          "q0025",
+          "q0047"
+        ],
+        "reason": "Aurora MySQL is also required for a utility or DDL statement and aggregation on this table, so keeping it there is a deliberate routing decision, not an open risk; revisit DynamoDB for this table's simple key-value reads in a later wave if those other queries are retired or move too",
+        "resolved_on": "aurora_mysql",
+        "severity": "MEDIUM"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "description": "[aurora_mysql] Table with no foreign keys and no join participation \u2014 all queries are single-table CRUD. This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups).",
+        "engine": "aurora_mysql",
+        "query_ids": [
+          "q0051",
+          "q0052",
+          "q0053",
+          "q0054",
+          "q0055",
+          "q0056",
+          "q0050",
+          "q0057",
+          "q0058",
+          "q0059",
+          "q0060",
+          "q0061",
+          "q0062",
+          "q0063"
+        ],
+        "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+        "resolved_on": "dynamodb",
+        "severity": "MEDIUM"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_commentmeta",
+          "wordpress.wp_wc_admin_notes",
+          "wordpress.wp_wc_product_meta_lookup"
+        ],
+        "description": "[aurora_mysql] Kept on Aurora MySQL because of a utility or DDL statement on this table.",
+        "engine": "aurora_mysql",
+        "query_ids": [
+          "q0046",
+          "q0019",
+          "q0024",
+          "q0047"
+        ],
+        "reason": "Aurora MySQL is also required for a utility or DDL statement on this table, so keeping it there is a deliberate routing decision, not an open risk; revisit DynamoDB for this table's simple key-value reads in a later wave if those other queries are retired or move too",
+        "resolved_on": "aurora_mysql",
+        "severity": "MEDIUM"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "description": "[aurora_mysql] Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. This is a key-value workload wearing a relational costume \u2014 no query optimizer benefit.",
+        "engine": "aurora_mysql",
+        "query_ids": [
+          "q0051",
+          "q0052",
+          "q0054",
+          "q0055",
+          "q0058",
+          "q0061"
+        ],
+        "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+        "resolved_on": "dynamodb",
+        "severity": "MEDIUM"
+      }
+    ],
+    "risks": [
+      {
+        "affected_tables": [
+          "wordpress.wp_posts"
+        ],
+        "description": "[dynamodb] Complex GROUP BY / HAVING / multi-table aggregations. DynamoDB doesn't support server-side aggregation \u2014 these need to move to application layer, pre-computed aggregates, or a separate analytics store. (0% of queries resolved by schema design, 1 remaining)",
+        "mitigation": "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics.",
+        "query_ids": [
+          "q0064"
+        ],
+        "risk_id": "RISK-001",
+        "risk_type": "PERFORMANCE_DEGRADATION",
+        "severity": "HIGH"
+      },
+      {
+        "affected_tables": [
+          "wordpress.wp_actionscheduler_logs",
+          "wordpress.wp_comments",
+          "wordpress.wp_options",
+          "wordpress.wp_wc_reserved_stock",
+          "wordpress.wp_wc_tax_rate_classes",
+          "wordpress.wp_woocommerce_api_keys",
+          "wordpress.wp_woocommerce_downloadable_product_permissions"
+        ],
+        "coverage_gap": true,
+        "description": "[dynamodb] Schema design gap: 14 queries assigned to DynamoDB have no in-scope access pattern: UPDATE `wp_woocommerce_api_keys` SET `last_access` = ? WHERE `key_id` = ?; SELECT `key_id` , `user_id` , `permissions` , `consumer_key` , `consumer_secr...; DELETE FROM `wp_options` WHERE `option_name` = ?; and 11 more (0% of queries resolved by schema design, 14 remaining)",
+        "mitigation": "Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+        "query_ids": [
+          "q0051",
+          "q0052",
+          "q0053",
+          "q0054",
+          "q0055",
+          "q0056",
+          "q0050",
+          "q0057",
+          "q0058",
+          "q0059",
+          "q0060",
+          "q0061",
+          "q0062",
+          "q0063"
+        ],
+        "risk_id": "RISK-002",
+        "risk_type": "MIGRATION_COMPLEXITY",
+        "severity": "HIGH"
+      }
+    ]
+  },
+  "schema_designs": {
+    "aurora_mysql": {
+      "status": "not_available"
+    },
+    "dynamodb": {
+      "status": "not_available"
+    },
+    "elasticache": {
+      "status": "not_available"
+    }
+  },
+  "status": "completed",
+  "summary": "Analyzed 50 source tables and 107 query patterns across 3 target database(s). Workload split: dynamodb handles 58 queries (54.2%), aurora_mysql handles 49 queries (45.8%). Cache layer: elasticache fronts 20 hot reads (83.4% of calls) cache-aside and owns no queries. Estimated monthly cost: $582.76. 2 open migration risks (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: wordpress.wp_term_taxonomy (+2 more), wordpress.wp_term_taxonomy + wordpress.wp_term_relationships (+2 more), wordpress.wp_posts. Other targets evaluated: documentdb (consolidated into aurora_mysql by the reality check), opensearch (consolidated into aurora_mysql by the reality check).",
+  "summary_deterministic": "Analyzed 50 source tables and 107 query patterns across 3 target database(s). Workload split: dynamodb handles 58 queries (54.2%), aurora_mysql handles 49 queries (45.8%). Cache layer: elasticache fronts 20 hot reads (83.4% of calls) cache-aside and owns no queries. Estimated monthly cost: $582.76. 2 open migration risks (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: wordpress.wp_term_taxonomy (+2 more), wordpress.wp_term_taxonomy + wordpress.wp_term_relationships (+2 more), wordpress.wp_posts. Other targets evaluated: documentdb (consolidated into aurora_mysql by the reality check), opensearch (consolidated into aurora_mysql by the reality check).",
+  "summary_llm": null,
+  "summary_source": "deterministic",
+  "summary_validation_warnings": [],
+  "table_mappings": [],
+  "tco_analysis": {
+    "assumptions": [
+      "On-demand capacity mode for all target databases",
+      "Region: us-east-1",
+      "Current RDS cost estimated from instance class (actual billing may differ)",
+      "Does not include data transfer, backups, or global tables"
+    ],
+    "cost_breakdown": [
+      {
+        "database": "dynamodb",
+        "monthly_cost_usd": 98.41,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "elasticache",
+        "monthly_cost_usd": 165.55,
+        "pricing_mode": "on-demand"
+      },
+      {
+        "database": "aurora_mysql",
+        "monthly_cost_usd": 318.8,
+        "pricing_mode": "on-demand"
+      }
+    ],
+    "current_cost_known": false,
+    "current_monthly_cost": 0.0,
+    "eliminated_engine_costs": [
+      {
+        "database": "documentdb",
+        "monthly_cost_usd": 367.39
+      },
+      {
+        "database": "opensearch",
+        "monthly_cost_usd": 240.96
+      }
+    ],
+    "projected_monthly_cost": 582.76,
+    "savings_percent": 0.0
+  },
+  "timestamp": "2026-10-12T06:15:43.278602Z",
+  "trade_offs": [
+    {
+      "description": "Consolidated 23 queries from aurora_mysql \u2192 dynamodb: aurora_mysql provides no unique capabilities \u2014 23 queries can be served by existing engines (35 retained due to capability requirements). No operational savings are claimed: this move does not remove aurora_mysql from the architecture.",
+      "engine": "reality-check",
+      "impact": "Consolidated 23 queries from aurora_mysql \u2192 dynamodb: aurora_mysql provides no unique capabilities \u2014 23 queries can be served by existing engines (35 retained due to capability requirements). No operational savings are claimed: this move does not remove aurora_mysql from the architecture.",
+      "query_ids": [],
+      "source_tables": [],
+      "target_tables": []
+    },
+    {
+      "description": "Consolidated 4 queries from documentdb \u2192 aurora_mysql: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Removes $367.39/mo of infrastructure cost (documentdb's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated documentdb cluster.",
+      "engine": "reality-check",
+      "impact": "Consolidated 4 queries from documentdb \u2192 aurora_mysql: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. Removes $367.39/mo of infrastructure cost (documentdb's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated documentdb cluster.",
+      "query_ids": [],
+      "source_tables": [],
+      "target_tables": []
+    },
+    {
+      "description": "Consolidated 2 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. documentdb leaves the architecture.",
+      "engine": "reality-check",
+      "impact": "Consolidated 2 queries from documentdb \u2192 dynamodb: documentdb provides no unique capabilities \u2014 6 queries can be served by existing engines. documentdb leaves the architecture.",
+      "query_ids": [],
+      "source_tables": [],
+      "target_tables": []
+    },
+    {
+      "description": "Consolidated 10 queries from opensearch \u2192 aurora_mysql: 10 opensearch queries moved to aurora_mysql; no in-scope opensearch query remains (4 queries of these, moved by the justification floor: no search predicate with relevance ranking, fuzzy matching or a facet in this query). Removes $240.96/mo of infrastructure cost (opensearch's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated opensearch cluster.",
+      "engine": "reality-check",
+      "impact": "Consolidated 10 queries from opensearch \u2192 aurora_mysql: 10 opensearch queries moved to aurora_mysql; no in-scope opensearch query remains (4 queries of these, moved by the justification floor: no search predicate with relevance ranking, fuzzy matching or a facet in this query). Removes $240.96/mo of infrastructure cost (opensearch's own analysed estimate before removal), plus a qualitative reduction in operational overhead -- one fewer engine's worth of team expertise, monitoring, backups and failover to maintain -- by avoiding a dedicated opensearch cluster.",
+      "query_ids": [],
+      "source_tables": [],
+      "target_tables": []
+    }
+  ],
+  "unresolved_names": {
+    "count": 0,
+    "names": []
+  }
+}
