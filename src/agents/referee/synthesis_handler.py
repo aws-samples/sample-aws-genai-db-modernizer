@@ -277,6 +277,12 @@ def run_synthesis_deterministic(
                 1 for qa in data.assignment.get("query_assignments", []) if qa.get("in_scope", True)
             ),
             "co_dependency_groups": len(data.assignment.get("co_dependency_groups", [])),
+            # #503 review item 1: a per-query exact-score tie no ADR-031 rule
+            # decided, counted here so the approval gate and the deliverables
+            # can show it without re-walking query_assignments themselves.
+            "tie_unresolved_count": sum(
+                1 for qa in data.assignment.get("query_assignments", []) if qa.get("tied_engines")
+            ),
             # #381 review: the only way this choice reached report.json before was
             # buried inside wave 1's rationale text -- carry the structured decision
             # itself so the decision/engineering reports and the UI can all point at
@@ -554,6 +560,18 @@ def _write_synthesis_report(
         # views), structured so a renderer no longer has to parse it out of
         # summary_deterministic's prose.
         "source_table_count": source_table_count(data),
+        # #503: the actual queries behind AssignmentSummary.tie_unresolved_count,
+        # so the decision report and the engineering report can list them
+        # too, not just the gate.
+        "tied_queries": [
+            {
+                "query_id": qa["query_id"],
+                "assigned_engine": qa["assigned_engine"],
+                "tied_engines": qa["tied_engines"],
+            }
+            for qa in (data.assignment or {}).get("query_assignments", [])
+            if qa.get("tied_engines")
+        ],
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

@@ -288,6 +288,191 @@ class TestCanEngineServeQuery:
         )
 
 
+class TestTiedQueryCountsAsNativeEvidenceForTheCreditedEngineOnly:
+    """#503 (the maintainer's design call): a tied query counts as native
+    evidence for the ONE engine the first
+    assignment's placeholder already credited it to (``assigned_engine``),
+    never for every tied engine and never for none. Here DocumentDB's ONLY
+    query (q_tied) is such a placeholder; DynamoDB has two other,
+    genuinely decided queries. DocumentDB therefore has 1 real (if
+    redundant) native query and IS evaluated in Phase 1, and q_tied's tie
+    -- which the fresh resolver trace also sees as an exact 70/70 tie
+    between the two -- resolves definitively onto DynamoDB once DocumentDB
+    is judged redundant and removed: a real, explainable decision that
+    clears the tie, not a second placeholder pick.
+    """
+
+    def test_documentdb_is_evaluated_and_the_tie_clears_onto_dynamodb(self):
+        assignment = _make_assignment(
+            [("q1", "dynamodb"), ("q2", "dynamodb"), ("q_tied", "documentdb")]
+        )
+        for qa in assignment["query_assignments"]:
+            if qa["query_id"] == "q_tied":
+                qa["tied_engines"] = ["documentdb", "dynamodb"]
+        triage = _make_triage()
+        collector = _make_collector(["q1", "q2", "q_tied"])
+        # The same table, same confidence for both engines -- q1, q2 and
+        # q_tied all score an exact 70/70 tie in the fresh resolver trace
+        # ``run_reality_check`` recomputes.
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+            "documentdb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        # DocumentDB IS evaluated now (it has one native query, q_tied) --
+        # the round-1 shape excluded it entirely, which is what C1/C2 found
+        # could crash or silently drop a tied workload elsewhere.
+        assert "documentdb" in result["unique_value_assessment"]
+        revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
+        assert revised_by_id["q_tied"]["assigned_engine"] == "dynamodb"
+        # A real decision now -- the tie is cleared, not re-placeholdered.
+        assert revised_by_id["q_tied"]["tied_engines"] == []
+        assert revised_by_id["q1"]["assigned_engine"] == "dynamodb"
+        assert revised_by_id["q2"]["assigned_engine"] == "dynamodb"
+
+
+class TestTiedQueriesNeverCrashOrSilentlyDropToAWeakerEngine:
+    """#503: excluding a tied query from EVERY engine's native set could
+    leave an engine whose only queries were tied uncommitted with no
+    fallback, crashing ``run_reality_check``'s placement invariant once
+    nothing else was eligible either; in the same situation with a weaker
+    engine present, the tie could silently disappear instead -- the
+    workload moving onto the weaker engine with no sign a tie was ever
+    involved.
+
+    Three queries, all recorded on DynamoDB with ``tied_engines =
+    ["documentdb", "dynamodb"]`` (both score 70 for them); no other query
+    exists at all.
+    """
+
+    def _assignment_and_fixtures(self):
+        assignment = _make_assignment([("q1", "dynamodb"), ("q2", "dynamodb"), ("q3", "dynamodb")])
+        for qa in assignment["query_assignments"]:
+            qa["tied_engines"] = ["documentdb", "dynamodb"]
+        collector = _make_collector(["q1", "q2", "q3"])
+        return assignment, collector
+
+    def test_c1_no_crash_when_only_the_two_tied_engines_are_candidates(self):
+        assignment, collector = self._assignment_and_fixtures()
+        triage = _make_triage()
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+            "documentdb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+        }
+
+        # Must not raise.
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
+        for qid in ("q1", "q2", "q3"):
+            # DynamoDB has all three native queries' credit; DocumentDB has
+            # none, so DynamoDB is the real, explainable survivor -- not a
+            # crash, and not a second placeholder pick.
+            assert revised_by_id[qid]["assigned_engine"] == "dynamodb"
+            assert revised_by_id[qid]["tied_engines"] == []
+
+    def test_c2_a_much_weaker_third_engine_never_silently_absorbs_the_tie(self):
+        assignment, collector = self._assignment_and_fixtures()
+        triage = {
+            "selected_agents": [
+                {"agent_type": "dynamodb"},
+                {"agent_type": "documentdb"},
+                {"agent_type": "aurora_postgresql"},
+            ],
+            "signals": [],
+        }
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+            "documentdb": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 70}]
+            },
+            "aurora_postgresql": {
+                "table_recommendations": [{"table_id": "db.users", "confidence_score": 50}]
+            },
+        }
+
+        result = run_reality_check(assignment, triage, analysis, collector)
+
+        revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
+        for qid in ("q1", "q2", "q3"):
+            # The round-1 shape moved these to aurora_postgresql with "no
+            # unique value -- dynamodb scores n/a, aurora_postgresql scores
+            # 50.0" because Phase 1 never got to evaluate either tied
+            # engine at all. They must stay on DynamoDB -- its native,
+            # settled 70 clearly beats aurora_postgresql's 50 -- not fall
+            # to the weaker engine.
+            assert revised_by_id[qid]["assigned_engine"] == "dynamodb"
+            assert revised_by_id[qid]["tied_engines"] == []
+
+
+class TestTiedQueryEligibilityIsPlaceholderIndependent:
+    """#503: a join query tied 70/70 between DocumentDB and DynamoDB, both
+    committed, settled counts favoring DynamoDB 10 to 1. The
+    join-consolidation gate (``_query_eligible_engines``) used to read only
+    the ONE engine recorded as "current" -- with the placeholder on
+    DynamoDB the join block never fires (DynamoDB is already "current"),
+    but with the placeholder on DocumentDB, DynamoDB looked like a
+    *consolidation* target away from a non-Aurora, non-DynamoDB engine, so
+    the join block made DynamoDB ineligible and DocumentDB "won" by default
+    -- the placeholder's own, otherwise-inconsequential pick decided the
+    result. Both starting placeholders must now give the SAME answer.
+    """
+
+    @staticmethod
+    def _place(placeholder: str) -> dict:
+        trace_by_query = {"qj": {"engines": {"documentdb": 70, "dynamodb": 70}}}
+        tied_engines_by_qid = {"qj": ["documentdb", "dynamodb"]}
+        query_map = {"qj": {"has_joins": True}}
+        qa = [
+            {
+                "query_id": "qj",
+                "assigned_engine": placeholder,
+                "assignment_reason": "placeholder",
+                "tied_engines": ["documentdb", "dynamodb"],
+            }
+        ]
+        revised, _ = _place_settled_queries(
+            query_assignments=qa,
+            committed_engines={"documentdb", "dynamodb"},
+            mandatory_query_ids=set(),
+            current_engine_by_qid={"qj": placeholder},
+            query_signals={},
+            query_map=query_map,
+            query_capabilities=None,
+            trace_by_query=trace_by_query,
+            source_compatible_engine=None,
+            workload_justified={},
+            tie_unresolved_qids={"qj"},
+            settled_counts={"dynamodb": 10, "documentdb": 1},
+            tied_engines_by_qid=tied_engines_by_qid,
+        )
+        return revised[0]
+
+    def test_both_starting_placeholders_give_the_same_answer(self):
+        from_dynamodb = self._place("dynamodb")
+        from_documentdb = self._place("documentdb")
+
+        assert from_dynamodb["assigned_engine"] == from_documentdb["assigned_engine"]
+        assert from_dynamodb["tied_engines"] == from_documentdb["tied_engines"]
+        # DynamoDB carries more of the settled workload (10 vs 1), so it is
+        # the placeholder either way -- never DocumentDB "winning" only
+        # because the join block happened to disqualify DynamoDB when IT,
+        # not DocumentDB, was the one recorded as current.
+        assert from_dynamodb["assigned_engine"] == "dynamodb"
+
+
 class TestRunRealityCheck:
     """Test the full reality check flow."""
 
@@ -1082,7 +1267,8 @@ class TestAbsorptionAppliedToAssignments:
     def test_partial_absorption_records_reason_on_moved_queries(self):
         result = self._run_partial_scenario()
         moved = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "dq1")
-        assert moved["assignment_reason"].startswith("reality check: consolidated from documentdb")
+        # #503: display name, not the raw engine code.
+        assert moved["assignment_reason"].startswith("reality check: consolidated from DocumentDB")
 
     def test_full_absorption_counts_each_query_once(self):
         """A fully absorbed engine yields one consolidation record set, not two."""
@@ -2931,6 +3117,218 @@ class TestGroupKeepsItsEngineWhenNoSingleSurvivorFitsEveryMember:
         assert engine_of["g1"] == "documentdb"
         assert engine_of["g2"] == "documentdb"
         assert consolidations == []
+
+
+class TestGroupTieHashSeedInPhaseTwoIsOrderIndependent:
+    """#503: Phase 2's group tie-break seeded the placeholder hash with
+    ``qid``, whichever member happened to come first in
+    ``trace_by_query``'s own iteration order -- not the sorted member
+    list the resolver (``assignment_resolver.py``'s Step 6b) and the
+    justification floor's group tie-break both use. That let the SAME two
+    tied engines re-pick a different winner in Phase 2 purely because of
+    input order, which the stable-seed rule everywhere else is meant to
+    rule out.
+
+    Repro: a group {q1, q101} tied 80/80 between DocumentDB and DynamoDB,
+    both already an unresolved tie from the first assignment (so no
+    stability candidate exists either), both engines still committed. The
+    fix is to seed with ``",".join(sorted(member_ids))`` -- this test
+    builds ``trace_by_query`` with the two members in each order and
+    asserts the group lands on the same engine either way.
+    """
+
+    GROUP = {"key": "g101", "scores": {"documentdb": 80, "dynamodb": 80}}
+
+    @staticmethod
+    def _members(order: list[str]) -> dict[str, dict]:
+        return {
+            qid: {
+                "engines": {"documentdb": 80, "dynamodb": 80},
+                "group": TestGroupTieHashSeedInPhaseTwoIsOrderIndependent.GROUP,
+            }
+            for qid in order
+        }
+
+    def _place(self, trace_order: list[str]) -> dict[str, str]:
+        query_assignments = [
+            {
+                "query_id": qid,
+                "assigned_engine": "documentdb",
+                "assignment_reason": "placeholder",
+                "tied_engines": ["documentdb", "dynamodb"],
+            }
+            for qid in ("q1", "q101")
+        ]
+        revised, _ = _place_settled_queries(
+            query_assignments=query_assignments,
+            committed_engines={"documentdb", "dynamodb"},
+            mandatory_query_ids=set(),
+            current_engine_by_qid={"q1": "documentdb", "q101": "documentdb"},
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=self._members(trace_order),
+            source_compatible_engine=None,
+            workload_justified={},
+            tie_unresolved_qids={"q1", "q101"},
+            settled_counts={},
+            tied_engines_by_qid={
+                "q1": ["documentdb", "dynamodb"],
+                "q101": ["documentdb", "dynamodb"],
+            },
+        )
+        return {qa["query_id"]: qa["assigned_engine"] for qa in revised}
+
+    def test_the_group_lands_on_the_same_engine_regardless_of_trace_order(self):
+        forward = self._place(["q1", "q101"])
+        backward = self._place(["q101", "q1"])
+
+        assert forward["q1"] == forward["q101"]
+        assert backward["q1"] == backward["q101"]
+        assert forward["q1"] == backward["q1"]
+
+
+class TestGroupMembersOnTwoTiedEnginesIsUnresolvedNotStability:
+    """#503 review item 3: a co-dependency group's members can sit on two
+    different engines today. If both of those engines are ALSO tied for the
+    group's top score, there is no single "the" current engine for
+    stability to grab onto -- this must not silently fall back to picking
+    whichever of the two sorts first by name under the guise of
+    "stability" (the exact bug ``tie_break.break_tie`` fixes at the shared
+    function level; this test exercises it through the real Phase 2 caller,
+    ``_place_settled_queries``'s group branch).
+
+    g1 is currently on documentdb, g2 is currently on dynamodb -- two
+    different engines -- and the group's score ties exactly between
+    documentdb and dynamodb (80 each). No source-compatible engine is in
+    play, so neither rule 1 nor rule 2 of ``break_tie`` can fire; the group
+    must move together onto whichever placeholder engine the maintainer's
+    unresolved-tie rule picks, carrying the honest tie-unresolved reason --
+    never a plain "no unique value" sentence that would misreport this as a
+    settled decision.
+    """
+
+    GROUP = {"key": "tiedacrosstwo", "scores": {"documentdb": 80, "dynamodb": 80}}
+    TRACE_BY_QUERY = {
+        "g1": {"engines": {"documentdb": 80, "dynamodb": 60}, "group": GROUP},
+        "g2": {"engines": {"documentdb": 60, "dynamodb": 80}, "group": GROUP},
+    }
+    CURRENT_ENGINE_BY_QID = {"g1": "documentdb", "g2": "dynamodb"}
+
+    def test_the_group_moves_together_as_an_unresolved_tie(self):
+        query_assignments = [
+            {"query_id": "g1", "assigned_engine": "documentdb", "assignment_reason": "test"},
+            {"query_id": "g2", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+        ]
+
+        revised, consolidations = _place_settled_queries(
+            query_assignments=query_assignments,
+            committed_engines={"documentdb", "dynamodb"},
+            mandatory_query_ids=set(),
+            current_engine_by_qid=self.CURRENT_ENGINE_BY_QID,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=self.TRACE_BY_QUERY,
+            source_compatible_engine=None,
+            workload_justified={},
+        )
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in revised}
+        reason_of = {qa["query_id"]: qa.get("assignment_reason", "") for qa in revised}
+        original_engine = {"g1": "documentdb", "g2": "dynamodb"}
+
+        # The group moves as one unit, onto one of the two tied engines --
+        # never split, and never left straddling both.
+        assert engine_of["g1"] == engine_of["g2"]
+        assert engine_of["g1"] in {"documentdb", "dynamodb"}
+
+        # Exactly one member had to actually change engine (they started on
+        # different engines).
+        moved = [qid for qid in ("g1", "g2") if engine_of[qid] != original_engine[qid]]
+        assert len(moved) == 1
+
+        # #503: this tie first appears here (it was never flagged on the
+        # input), so BOTH members' reasons report
+        # it honestly -- the one that stays put is not left silently
+        # reading its old, pre-tie "test" reason either.
+        for qid in ("g1", "g2"):
+            assert "no routing rule decides between them" in reason_of[qid]
+            assert "ADR-031" not in reason_of[qid]
+            assert "non-preferential" not in reason_of[qid]
+            assert "tie_unresolved" not in reason_of[qid]
+
+
+class TestReResolvingAnUnresolvedTieInPhaseTwo:
+    """#503 review item 2: a query already flagged ``tied_engines`` from the
+    first assignment is re-resolved in Phase 2 among whichever of the
+    originally tied engines are still committed/eligible -- its placeholder
+    current engine earns no stability credit (it was never a real "today",
+    just the earlier placeholder's own pick). If only one of the tied
+    engines survives, that is a real, explainable decision: the tie clears.
+    If two or more still tie, ``tied_engines`` is refreshed, not left stale.
+    """
+
+    TRACE_BY_QUERY = {"q1": {"engines": {"documentdb": 70, "dynamodb": 70}}}
+    CURRENT_ENGINE_BY_QID = {"q1": "documentdb"}
+
+    def _query_assignments(self) -> list[dict]:
+        return [
+            {
+                "query_id": "q1",
+                "assigned_engine": "documentdb",
+                "assignment_reason": "placeholder",
+                "tied_engines": ["documentdb", "dynamodb"],
+            }
+        ]
+
+    def test_only_one_surviving_tied_engine_clears_the_tie(self):
+        revised, _ = _place_settled_queries(
+            query_assignments=self._query_assignments(),
+            committed_engines={"documentdb"},  # dynamodb no longer committed
+            mandatory_query_ids=set(),
+            current_engine_by_qid=self.CURRENT_ENGINE_BY_QID,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=self.TRACE_BY_QUERY,
+            source_compatible_engine=None,
+            workload_justified={},
+            tie_unresolved_qids={"q1"},
+            settled_counts={},
+            tied_engines_by_qid={"q1": ["documentdb", "dynamodb"]},
+        )
+        q1 = next(qa for qa in revised if qa["query_id"] == "q1")
+        assert q1["assigned_engine"] == "documentdb"
+        # A real, explainable decision now -- not an open tie anymore.
+        assert q1["tied_engines"] == []
+        # #503 review round 3, suggestion 2: the reason says WHY the tie
+        # cleared (DynamoDB no longer qualifies), not just that it did.
+        assert q1["assignment_reason"] == (
+            "reality check: DocumentDB is kept -- DynamoDB no longer qualifies "
+            "for this query, so the earlier scores tie is resolved"
+        )
+
+    def test_two_surviving_tied_engines_stay_an_unresolved_tie(self):
+        revised, _ = _place_settled_queries(
+            query_assignments=self._query_assignments(),
+            committed_engines={"documentdb", "dynamodb"},  # both still committed
+            mandatory_query_ids=set(),
+            current_engine_by_qid=self.CURRENT_ENGINE_BY_QID,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=self.TRACE_BY_QUERY,
+            source_compatible_engine=None,
+            workload_justified={},
+            tie_unresolved_qids={"q1"},
+            settled_counts={},
+            tied_engines_by_qid={"q1": ["documentdb", "dynamodb"]},
+        )
+        q1 = next(qa for qa in revised if qa["query_id"] == "q1")
+        # Still an open tie between the same two engines -- refreshed, not
+        # stale, and the placeholder's current engine (documentdb) earned no
+        # stability credit just for being where the earlier placeholder put it.
+        assert q1["tied_engines"] == ["documentdb", "dynamodb"]
 
 
 class TestJustificationFloorMovesACoDependencyGroupTogether:

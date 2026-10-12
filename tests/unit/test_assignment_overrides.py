@@ -211,6 +211,98 @@ class TestApplyAssignmentOverrides:
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
 
 
+class TestCustomerOverrideClearsAnOpenTie:
+    """#503 review: a customer's own engine pick is a real decision, so it
+    must clear any ``tied_engines`` the query carried in (round 2, finding
+    I5) -- otherwise the gate banner and the counts keep reading "pending
+    your choice" after the customer already chose -- and the reason text
+    must say so too (round 3, finding 4), rather than keep reading the old
+    "... pending your choice" sentence after the field it described has
+    already been cleared.
+    """
+
+    def test_overriding_a_tied_query_clears_tied_engines_and_rewrites_the_reason(self) -> None:
+        store = _MemStore()
+        q1 = _qa("q1", "documentdb", ["t.users"]).model_copy(
+            update={
+                "tied_engines": ["documentdb", "dynamodb"],
+                "assignment_reason": (
+                    "scores tie with DynamoDB; no routing rule decides between them; "
+                    "listed under DocumentDB pending your choice"
+                ),
+            }
+        )
+        q2 = _qa("q2", "dynamodb", ["t.posts"])
+        _seed(store, [q1, q2], engines=["dynamodb", "documentdb", "opensearch"])
+
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q1"].assigned_engine == "dynamodb"
+        assert by_id["q1"].customer_override is True
+        assert by_id["q1"].tied_engines == []
+        assert by_id["q1"].assignment_reason == (
+            "Placed on DynamoDB by your choice; scores tied with DocumentDB."
+        )
+        assert "pending your choice" not in by_id["q1"].assignment_reason
+        # Untouched query keeps whatever it had (empty here).
+        assert by_id["q2"].tied_engines == []
+
+    def test_propagated_co_dependent_member_also_clears_its_tie(self) -> None:
+        # q1/q2 share a significant JOIN; overriding q1 propagates to q2
+        # (ADR-029 Amendment 3). q2 came in tied -- the propagated move is
+        # also a real decision for it, so its tie clears too.
+        store = _MemStore()
+        q1 = _qa("q1", "dynamodb", ["t.orders", "t.items"])
+        q2 = _qa("q2", "dynamodb", ["t.orders", "t.items"]).model_copy(
+            update={"tied_engines": ["dynamodb", "documentdb"]}
+        )
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=[q1, q2],
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": q,
+                            "tables_accessed": ["t.orders", "t.items"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        }
+                        for q in ("q1", "q2")
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("dynamodb", "aurora_postgresql", "documentdb"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="aurora_postgresql")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q2"].co_dependency_propagated is True
+        assert by_id["q2"].assigned_engine == "aurora_postgresql"
+        assert by_id["q2"].tied_engines == []
+
+
 class TestHeterogeneousAuroraChoiceOverrides:
     """#381 review: Assignment.aurora_engine_choice.engine is authoritative --
     load_assignment_for_edit drops the losing engine's analysis, and (round 2) the

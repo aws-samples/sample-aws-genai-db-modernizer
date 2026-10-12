@@ -180,6 +180,20 @@ export function survivingDistribution(dist, eliminated) {
   return result;
 }
 
+/**
+ * How many `queryAssignments` carry a non-empty `tied_engines` (#503): an
+ * exact score tie no ADR-031 rule decided, listed under a deterministic
+ * placeholder engine pending the customer's own choice. Mirrors the server's
+ * `query_tie_unresolved_count` (reality-check output) / `tie_unresolved_count`
+ * (synthesis `AssignmentSummary`) so the approval gate can show the same
+ * number without waiting on either of those fields to be wired through every
+ * call site -- the structured per-query field is the one the UI already
+ * receives in `query_assignments`.
+ */
+export function countTieUnresolvedQueries(queryAssignments = []) {
+  return queryAssignments.filter((qa) => (qa?.tied_engines || []).length > 0).length;
+}
+
 // #381 review round 2: the resolver may have picked one of the two competing
 // Aurora engines for a heterogeneous source (SQL Server, Oracle, DB2 -- no Aurora
 // dialect of its own), recorded on the assignment as `aurora_engine_choice.engine`.

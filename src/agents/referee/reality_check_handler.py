@@ -479,6 +479,12 @@ def write_reality_check_result(
             "eliminated_engines": sorted(eliminated),
             "lightweight_recommendations": result.get("lightweight_recommendations", []),
             "validation_incomplete": result.get("validation_incomplete", []),
+            # #503 review item 1: how many queries are still an unresolved,
+            # per-query exact-score tie once the reality check has
+            # re-resolved what it can.
+            "query_tie_unresolved_count": sum(
+                1 for qa in result.get("revised_assignments", []) if qa.get("tied_engines")
+            ),
         }
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"

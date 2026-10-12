@@ -146,7 +146,11 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     # Phase 1 settles the committed engine set from each engine's own native queries,
     # judged by the resolver's own per-query scores (ADR-031), one engine removed per
     # round and the rest re-evaluated fresh against the smaller set each time. Aurora
-    # MySQL and DynamoDB both keep real, if smaller, shares (64/43 of the 107 queries).
+    # MySQL and DynamoDB both keep real, if smaller, shares (63/44 of the 107 queries --
+    # #503 review: one query that used to land on documentdb only because an exact
+    # dynamodb/documentdb tie broke alphabetically now lands on dynamodb, the engine
+    # with more settled, non-tied workload on this sample -- the maintainer-decided
+    # placeholder for a tie ADR-031 itself has no rule for; see tie_break.py).
     # #287: Aurora MySQL carries no data migration of its own here -- it is the
     # source-compatible engine, retained as-is -- so it stays out of ``databases``
     # (the same way a mixed run already keeps a retained engine out) rather than
@@ -162,7 +166,7 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     assert roles["elasticache"] == "Cache layer"
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(60% of queries); dynamodb for key-value access; elasticache for "
+        "(59% of queries); dynamodb for key-value access; elasticache for "
         "caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )

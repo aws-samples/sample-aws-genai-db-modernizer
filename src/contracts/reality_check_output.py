@@ -33,6 +33,16 @@ Version History:
   query left, computed once by ``src.shared.engine_elimination`` -- the
   handler, the UI and synthesis previously disagreed on this whenever an
   engine kept only out-of-scope queries (#235)
+- 1.9 (2026-10-12, #503): Added ``query_tie_unresolved_count``: how many of
+  ``revised_assignments`` carry a non-empty ``QueryAssignment.tied_engines``
+  once the reality check has re-resolved what it can -- a per-QUERY
+  exact-score tie no ADR-031 rule decided, surfaced as a count here
+  (synthesis carries the same count on its own ``AssignmentSummary``) so
+  the approval gate can show it alongside the existing, engine-level
+  ``tie_unresolved`` already on ``UniqueValueAssessment``. Defaults to 0,
+  so artifacts written before this version read as having no unresolved
+  query ties. Bumped from the originally-proposed 1.8 to 1.9 after #542
+  merged its own, unrelated 1.8 (``eliminated_engines``) first.
 """
 
 from pydantic import BaseModel, Field
@@ -163,7 +173,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.8", description="Contract version")
+    contract_version: str = Field(default="1.9", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -232,5 +242,15 @@ class RealityCheckOutputContract(BaseModel):
             "Consolidation validation batches that got no LLM verdict (from_engine, "
             "to_engine, batch as 1-based start-end of total, error); their moves stand "
             "unreviewed"
+        ),
+    )
+    query_tie_unresolved_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many queries in revised_assignments still carry a non-empty "
+            "QueryAssignment.tied_engines after the reality check (#503): a per-query "
+            "exact-score tie no ADR-031 rule decided. 0 for an artifact written before "
+            "this field existed."
         ),
     )

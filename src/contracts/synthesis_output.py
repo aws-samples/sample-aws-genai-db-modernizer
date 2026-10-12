@@ -185,6 +185,19 @@ Version History:
   first and only falls back to the regex, then to the migration-wave union,
   for a report synthesized before this field existed. Backward compatible --
   defaults to ``None``.
+- 1.11 (2026-10-12, #503 review item 1): Added ``AssignmentSummary.
+  tie_unresolved_count``: how many ``query_assignments`` carry a non-empty
+  ``tied_engines`` -- an exact score tie no ADR-031 rule decided, listed
+  under a deterministic placeholder engine pending the customer's own
+  choice. Defaults to 0, so a report synthesized before this field existed
+  reads as having no unresolved query ties.
+- 1.12 (2026-10-12, #503): Added ``tied_queries``
+  (``list[TiedQuery]``): the actual queries behind ``tie_unresolved_count``,
+  each with its placeholder ``assigned_engine`` and its ``tied_engines``, so
+  the decision report and the engineering report can list the same queries
+  the approval gate already does from the assignment directly, instead of
+  having nothing to render for the count alone. None for a report
+  synthesized before this field existed.
 """
 
 from datetime import datetime
@@ -344,6 +357,15 @@ class AssignmentSummary(BaseModel):
     query_count: int = Field(..., ge=0)
     in_scope_count: int = Field(..., ge=0)
     co_dependency_groups: int = Field(default=0, ge=0)
+    tie_unresolved_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many query_assignments carry a non-empty tied_engines (#503): an "
+            "exact score tie no ADR-031 rule decided, surfaced to the customer at the "
+            "approval gate. 0 for a report synthesized before this field existed."
+        ),
+    )
     aurora_engine_choice: AuroraEngineChoice | None = Field(
         None,
         description=(
@@ -352,6 +374,23 @@ class AssignmentSummary(BaseModel):
             "for a homogeneous source and for a report synthesized before this field "
             "existed."
         ),
+    )
+
+
+class TiedQuery(BaseModel):
+    """One query an exact score tie left unresolved (#503): no ADR-031 rule
+    decided between ``tied_engines``, so
+    ``assigned_engine`` is a deterministic placeholder, not a preference.
+    Carried on the report so the decision report and the engineering report
+    can show the SAME affected queries the approval gate already lists from
+    ``QueryAssignment.tied_engines`` directly -- the "deliverables agree"
+    invariant otherwise had nothing here to agree on.
+    """
+
+    query_id: str = Field(..., description="Query identifier from the collector")
+    assigned_engine: str = Field(..., description="The placeholder engine the query sits under")
+    tied_engines: list[str] = Field(
+        ..., description="The engines this query's score ties between (length >= 2)"
     )
 
 
@@ -523,7 +562,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.10",
+        default="1.12",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -603,6 +642,16 @@ class SynthesisOutputContract(BaseModel):
             "The collected schema's own tables-only total (no views, #530 review): the "
             "same figure summary_deterministic's 'Analyzed N source tables ...' opening "
             "sentence already states, as a structured field. None for a report "
+            "synthesized before this field existed."
+        ),
+    )
+    tied_queries: list[TiedQuery] | None = Field(
+        None,
+        description=(
+            "Queries an exact score tie left unresolved (#503), copied from the final "
+            "assignment's own QueryAssignment.tied_engines "
+            "so the decision report and the engineering report can list the same "
+            "queries the approval gate does. Empty list when none; None for a report "
             "synthesized before this field existed."
         ),
     )

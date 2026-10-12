@@ -1189,6 +1189,25 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    # #503: the same unresolved engine ties the decision report and the
+    # engineering report list ("Pending engine choices" / "Unresolved
+    # engine ties"), so the deck/PDF shows the same fact too.
+    tied_queries = [t for t in (rep.get("tied_queries") or []) if isinstance(t, dict)]
+    if tied_queries:
+        tied_engine_names = sorted({e for t in tied_queries for e in (t.get("tied_engines") or [])})
+        decisions.append(
+            {
+                "question": "Pick the engine for tied queries?",
+                "badge": f"{len(tied_queries)} {plural_noun(len(tied_queries), 'query', 'queries')}",
+                "accent": ORANGE,
+                "against": (
+                    f"Scores tie between {join_names([ENGINE_LABEL.get(e, e) for e in tied_engine_names])}; "
+                    "no routing rule decides between them."
+                ),
+                "action": "Listed under a placeholder engine pending your choice.",
+            }
+        )
+
     # ---- waves ----------------------------------------------------------------
     # Synthesis writes the incremental roadmap deterministically from the
     # assignment (#225) -- one sequencing rule: cache, then key-value/point

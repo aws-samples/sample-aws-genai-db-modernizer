@@ -150,12 +150,24 @@ class TestEliminatedEnginesOrderIsHashSeedIndependent:
 
 
 class TestAbsorberTieBreakIsOrderIndependent:
-    """``_find_best_absorber_for_query`` iterated a set of committed engines and
-    sorted on a partial key, so a fit/overlap tie went to whichever engine the
-    set yielded first (#288)."""
+    """``_find_best_absorber_for_query`` iterated a set of committed engines
+    and used to sort a fit tie by table overlap, then how many queries an
+    engine already had, then its name (#288). ADR-031 Decision 2 has no
+    overlap or query-count rule for a non-Aurora tie (#503): it now shares
+    ``break_tie`` with the resolver's ``break_owner_tie`` and this module's
+    own ``_pick_winner``, so a tie is either source-compatible or
+    deterministically ``tie_unresolved`` -- never decided by how many
+    queries an engine already has, and (being deterministic) still never
+    by set iteration order."""
 
     @staticmethod
-    def _pick(committed_order: list[str], dynamodb_queries: int = 1) -> str:
+    def _pick(
+        committed_order: list[str],
+        dynamodb_queries: int = 1,
+        source_compatible_engine: str | None = None,
+        second_engine: str = "aurora_postgresql",
+        settled_counts: dict[str, int] | None = None,
+    ) -> str:
         from src.agents.referee.reality_check import _find_best_absorber_for_query
 
         analysis = {"table_recommendations": [{"table_id": "t1", "confidence_score": 80}]}
@@ -171,17 +183,19 @@ class TestAbsorberTieBreakIsOrderIndependent:
                 "q2": {"tables_accessed": ["t1"]},
                 "q3": {"tables_accessed": ["t1"]},
             },
-            {"aurora_postgresql": analysis, "dynamodb": analysis},
+            {second_engine: analysis, "dynamodb": analysis},
             {
-                "aurora_postgresql": [{"query_id": "q2"}],
+                second_engine: [{"query_id": "q2"}],
                 "dynamodb": [{"query_id": "q3"}, *extra],
             },
             set(),
             "dynamodb",
             # Both candidates tied on resolver score too (#502 review round
             # 5, finding N3 swapped the scorer here) -- the tie this test
-            # checks is in the overlap/existing-queries tiebreak, not score.
-            {"q1": {"engines": {"aurora_postgresql": 80, "dynamodb": 80}}},
+            # checks is the ADR-031 Decision 2 tie-break itself (#503).
+            {"q1": {"engines": {second_engine: 80, "dynamodb": 80}}},
+            source_compatible_engine=source_compatible_engine,
+            settled_counts=settled_counts,
         )
         assert absorber is not None
         return str(absorber["target_engine"])
@@ -189,12 +203,54 @@ class TestAbsorberTieBreakIsOrderIndependent:
     def test_tie_goes_to_the_same_engine_whatever_the_iteration_order(self):
         forward = self._pick(["aurora_postgresql", "dynamodb", "documentdb"])
         backward = self._pick(["documentdb", "dynamodb", "aurora_postgresql"])
-        assert forward == backward == "aurora_postgresql"
+        assert forward == backward
+        assert forward in {"aurora_postgresql", "dynamodb"}
 
-    def test_tie_goes_to_the_engine_already_serving_more_queries(self):
-        forward = self._pick(["aurora_postgresql", "dynamodb", "documentdb"], dynamodb_queries=3)
-        backward = self._pick(["documentdb", "dynamodb", "aurora_postgresql"], dynamodb_queries=3)
-        assert forward == backward == "dynamodb"
+    def test_the_tie_does_not_depend_on_which_engine_already_has_more_queries(self):
+        """#503: this used to be the "whichever has more existing queries
+        wins" rule -- giving dynamodb 3 queries against aurora_postgresql's
+        1 used to flip the pick from aurora_postgresql to dynamodb. The
+        ``dynamodb_queries`` knob here only grows this function's own
+        ``engine_queries`` argument (table-overlap bookkeeping); it is not
+        the maintainer-decided placeholder's ``settled_counts`` (#503
+        review item 2 follow-up), a separate, explicit argument this test
+        leaves at its default -- so growing it must not move the pick,
+        unlike the pre-#503 rule it replaced.
+        """
+        forward = self._pick(["aurora_postgresql", "dynamodb", "documentdb"], dynamodb_queries=1)
+        with_more_queries = self._pick(
+            ["aurora_postgresql", "dynamodb", "documentdb"], dynamodb_queries=3
+        )
+        assert forward == with_more_queries
+
+    def test_settled_counts_decides_the_tie_when_it_favors_one_engine(self):
+        """The maintainer-decided placeholder's primary rule (ADR-031
+        Decision 12): the tied engine with more SETTLED (non-tied) workload
+        wins. Passed explicitly here, independent of ``engine_queries``/
+        ``dynamodb_queries`` above."""
+        winner = self._pick(
+            ["aurora_postgresql", "dynamodb", "documentdb"],
+            settled_counts={"aurora_postgresql": 1, "dynamodb": 9},
+        )
+        assert winner == "dynamodb"
+
+    def test_the_source_compatible_engine_wins_the_absorber_tie_too(self):
+        """The issue (#503) reported that this absorber had "no
+        source-compatible rule at all". ADR-031's source-compatible rule
+        only ever applies to the Aurora engine matching the source
+        dialect, so the tie here is between dynamodb and aurora_mysql (not
+        aurora_postgresql, which could never be the source-compatible
+        engine in the same tie as a tie between it and dynamodb for a
+        MySQL-sourced database) -- marking aurora_mysql as the
+        source-compatible engine must flip the pick to it, the same
+        ``break_tie`` the resolver and ``_pick_winner`` use.
+        """
+        winner = self._pick(
+            ["aurora_mysql", "dynamodb", "documentdb"],
+            second_engine="aurora_mysql",
+            source_compatible_engine="aurora_mysql",
+        )
+        assert winner == "aurora_mysql"
 
 
 _ASSIGNMENT_CHILD = textwrap.dedent("""

@@ -221,7 +221,9 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.8"
+        # #503: bumped to 1.9 for query_tie_unresolved_count, since #542
+        # merged its own, unrelated 1.8 (eliminated_engines) first.
+        assert output.contract_version == "1.9"
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.

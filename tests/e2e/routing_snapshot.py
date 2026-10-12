@@ -101,13 +101,16 @@ def categorize(reason: str) -> str:
     if "no unique value" in reason:
         return "reality_check_no_unique_value"
     if "co-dependency group" in reason:
-        return "co_dependency_tie" if "(tie" in reason else "co_dependency_group"
+        # "scores tie with" (#503): break_owner_tie's wording changed from
+        # "(tie with X: ...)" to a full, honest sentence built with
+        # display_engine, so the tie marker moved with it.
+        return "co_dependency_tie" if "scores tie with" in reason else "co_dependency_group"
     if "no analysis available" in reason:
         return "fallback_no_analysis"
     if "signal override:" in reason:
         return "signal_override"
     if "highest confidence for" in reason:
-        return "individual_tie" if "(tie with" in reason else "individual_highest_confidence"
+        return "individual_tie" if "scores tie with" in reason else "individual_highest_confidence"
     if "no engine scored this query" in reason:
         return "fallback_no_score"
     if "Auto-reassigned from" in reason:
@@ -127,21 +130,25 @@ def parse_fit(reason: str) -> int | None:
 
 
 # ``break_owner_tie``'s own rule strings (``src/agents/referee/
-# assignment_resolver.py``), mapped to a short, stable code.
-_TIE_BREAK_CODES = (
-    ("source-compatible engine", "source_compatible"),
-    ("serves more of these tables' traffic", "table_traffic"),
-    ("serves more queries", "query_count"),
-    ("name order", "name_order"),
-)
+# assignment_resolver.py``, via the shared ``tie_break.break_tie``, #503),
+# mapped to a short, stable code. ADR-031 Decision 2 recognizes exactly one
+# rule for a non-Aurora tie -- there is none -- so "table_traffic",
+# "query_count" and "name_order" are gone: a tie that is not
+# source-compatible is reported as ``tie_unresolved``, never decided by one
+# of those.
+def tie_break_code(tie_kind: str) -> str:
+    """A short, stable code for a ``RoutingTrace.tie_break_by_query`` entry.
 
-
-def tie_break_code(rule_text: str) -> str:
-    """A short, stable code for a ``RoutingTrace.tie_break_by_query`` rule string."""
-    for phrase, code in _TIE_BREAK_CODES:
-        if phrase in rule_text:
-            return code
-    return "other"
+    ``record_tie`` stores ``break_owner_tie``'s structured ``tie_kind``
+    directly (``"source_compatible"`` or ``"tie_unresolved"``) rather than
+    its customer-facing prose sentence (#503: a customer-facing sentence
+    should never be the thing a test parses to find out what happened) --
+    this is now a thin pass-through, kept as its
+    own function so a caller never has to know ``RoutingTrace``'s raw field
+    name, and so an unrecognized value still falls back to ``"other"``
+    instead of silently misreporting one of the two known kinds.
+    """
+    return tie_kind if tie_kind in ("source_compatible", "tie_unresolved") else "other"
 
 
 def _latest(job_dir: Path, sub: str, name: str) -> Path:

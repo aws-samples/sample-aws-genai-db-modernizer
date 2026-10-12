@@ -250,6 +250,12 @@
   border-left: 3px solid var(--dbm-accent-orange);
 }
 
+/* #503: mark a query with an unresolved engine tie so the top banner's
+   count has a visible row to point at. */
+.query-list-row--tied {
+  border-left: 3px solid var(--dbm-text-secondary);
+}
+
 .query-list-row__summary {
   display: flex;
   align-items: center;

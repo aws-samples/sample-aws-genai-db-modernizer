@@ -1391,8 +1391,17 @@ class TestTextSearchOverrideNeedsJustification:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine != "opensearch"
+        # The real thing under test is that the override never fires: both
+        # engines score 0 for this query on their own merits (dynamodb lacks
+        # the inverted_index capability a bare to_tsvector needs; opensearch
+        # gets no credit either, with no @@ match to show real search depth),
+        # an exact tie ADR-031 has no rule for -- #503 review: which
+        # placeholder engine an unresolved, zero-score tie like this lands on
+        # is not a thing this test should pin, the way asserting
+        # ``assigned_engine != "opensearch"`` used to (coincidentally true
+        # only because the pre-#503 tie-break sorted engine names).
         assert q1.signal_override is None
+        assert "signal override" not in q1.assignment_reason
 
     def test_real_search_depth_at_sufficient_traffic_still_overrides(self):
         """The gate is a floor, not a ban: a genuine, well-trafficked search
@@ -2135,3 +2144,57 @@ class TestRoutingTraceAdjustment:
         assert entry["base"] == 75
         assert entry["used"] == 70
         assert entry["adj"] == -5
+
+
+class TestCoDependencyGroupTieHashSeedIsOrderIndependent:
+    """#503: the group tie-break's hash seed must not depend on which
+    member happens to come first in the collector's own
+    query list -- ``build_co_dependency_groups`` preserves input order, so
+    ``",".join(qids)`` (unsorted) gave a different seed, and could give a
+    different placeholder winner, purely because of input order. The fix is
+    ``",".join(sorted(qids))``.
+    """
+
+    @staticmethod
+    def _resolve(query_order: list[str]) -> dict:
+        tables = ["db.shared"]
+        collector = {
+            "job_id": "t",
+            "database_schema": {"tables": [{"table_id": "db.shared", "table_name": "shared"}]},
+            "queries": {
+                "query_patterns": [
+                    {
+                        "query_id": qid,
+                        "query_text": "SELECT ... JOIN ...",
+                        "query_type": "SELECT",
+                        "tables_accessed": tables,
+                        "join_count": 2,
+                        "has_joins": True,
+                        "has_aggregations": False,
+                        "filter_tables": [],
+                        "calls_per_second": 1.0,
+                        "rows_returned_avg": 10,
+                    }
+                    for qid in query_order
+                ]
+            },
+        }
+        triage = _make_triage(["dynamodb", "documentdb"])
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", tables, confidence=70),
+            "documentdb": _make_analysis("documentdb", tables, confidence=70),
+        }
+        resolver = AssignmentResolver()
+        result = resolver.resolve(triage, analysis, collector)
+        return {qa.query_id: qa.assigned_engine for qa in result.query_assignments}
+
+    def test_the_group_resolves_the_same_way_whichever_member_is_listed_first(self):
+        forward = self._resolve(["qa", "qb"])
+        backward = self._resolve(["qb", "qa"])
+
+        # Both queries always move together (a co-dependency group).
+        assert forward["qa"] == forward["qb"]
+        assert backward["qa"] == backward["qb"]
+        # And the group's winner does not flip just because the collector
+        # happened to list the members in a different order.
+        assert forward["qa"] == backward["qa"]

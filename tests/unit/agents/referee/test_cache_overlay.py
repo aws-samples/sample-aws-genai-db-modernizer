@@ -2,8 +2,10 @@
 
 ElastiCache never owns a query. A hot, bounded read keeps its system-of-record
 owner and may carry ``cache_engine``. Exact score ties go to the
-source-compatible engine, then the engine serving more of the tables' traffic,
-then more queries, then name. The leaderboard signal is a hint for hot reads only.
+source-compatible engine; the first assignment has no other ADR-031 rule for a
+tie, so anything else is reported as an unresolved tie, never decided by table
+traffic, query count or engine name (#503). The leaderboard signal is a hint
+for hot reads only.
 """
 
 from __future__ import annotations
@@ -525,12 +527,26 @@ class TestTieBreak:
         assert qa.assigned_engine == "aurora_postgresql"
         assert "source-compatible" in qa.assignment_reason
 
-    def test_tie_goes_to_the_engine_serving_more_of_the_tables_traffic(self):
-        # "warm" puts orders traffic on documentdb; "tied" ties documentdb/dynamodb
+    def test_a_non_aurora_tie_is_not_decided_by_which_engine_has_more_table_traffic(self):
+        """#503: before this fix, ``break_owner_tie`` gave a non-Aurora tie
+        to whichever engine already served more of the tied query's
+        tables' traffic. Here dynamodb ends up carrying far more of that
+        traffic (4.0 calls/s on "items", via "heavy") than documentdb (0.2,
+        via "bulk1"/"bulk2" on "orders") -- the old rule would hand "tied"
+        to dynamodb purely because of that unrelated traffic.
+
+        ADR-031 itself has no rule for this; the maintainer-decided
+        placeholder (ADR-031 Decision 12, #503 review item 2) instead looks
+        at the SETTLED (non-tied) query count: documentdb settles 2 queries
+        here (bulk1, bulk2) before "tied" is resolved, dynamodb settles 1
+        (heavy), so documentdb -- not traffic, not alphabetical order --
+        wins the placeholder. ``test_tie_break.py`` tests the placeholder
+        rule directly, including its hash fallback when counts also tie.
+        """
         queries = [
-            _q("warm", tables=["orders"], cps=4.0),
-            _q("bulk1", tables=["items"], cps=0.1),
-            _q("bulk2", tables=["items"], cps=0.1),
+            _q("heavy", tables=["items"], cps=4.0),
+            _q("bulk1", tables=["orders"], cps=0.1),
+            _q("bulk2", tables=["orders"], cps=0.1),
             _q("tied", tables=["orders", "items"], cps=0.1),
         ]
         analysis = {
@@ -538,11 +554,17 @@ class TestTieBreak:
             "dynamodb": _analysis({"orders": 40, "items": 80}),
         }
         qa = self._resolve(queries, analysis)
-        assert qa["warm"].assigned_engine == "documentdb"
-        assert {qa["bulk1"].assigned_engine, qa["bulk2"].assigned_engine} == {"dynamodb"}
-        # dynamodb serves more queries (2) but documentdb more of the traffic (4.0 calls/s)
+        assert qa["heavy"].assigned_engine == "dynamodb"
+        assert {qa["bulk1"].assigned_engine, qa["bulk2"].assigned_engine} == {"documentdb"}
         assert qa["tied"].assigned_engine == "documentdb"
-        assert "traffic" in qa["tied"].assignment_reason
+        # Structured, not prose-parsed (#503).
+        assert qa["tied"].tied_engines == ["documentdb", "dynamodb"]
+        assert "no routing rule decides between them" in qa["tied"].assignment_reason
+        assert "ADR-031" not in qa["tied"].assignment_reason
+        assert "tie_unresolved" not in qa["tied"].assignment_reason
+        # The settled, real decisions never carry a tied_engines flag.
+        assert qa["heavy"].tied_engines == []
+        assert qa["bulk1"].tied_engines == []
 
     def test_low_traffic_never_tips_a_tie_to_the_cache(self):
         analysis = {
@@ -551,33 +573,49 @@ class TestTieBreak:
             "documentdb": _analysis({"users": 70}),
         }
         qa = self._resolve([_q("q", cps=0.01)], analysis)["q"]
-        assert qa.assigned_engine == "documentdb"  # name order among owners
+        # tie_unresolved: no settled workload for either engine (this is the
+        # only query), so the placeholder falls back to its hash tiebreak --
+        # either engine is a valid, deterministic pick, never the cache.
+        assert qa.assigned_engine in {"dynamodb", "documentdb"}
+        assert qa.tied_engines == ["documentdb", "dynamodb"]
         assert qa.cache_engine is None
 
     def test_break_owner_tie_order(self):
-        by_id = {"q": {"tables_accessed": ["t"]}}
-        assert break_owner_tie(["dynamodb", "aurora_mysql"], ["q"], by_id, "aurora_mysql", {}, {})[
-            0
-        ] == ("aurora_mysql")
-        traffic = {("t", "dynamodb"): 1.0}
-        assert break_owner_tie(["documentdb", "dynamodb"], ["q"], by_id, None, traffic, {}) == (
-            "dynamodb",
-            "serves more of these tables' traffic (1.00 calls/s)",
+        winner0, why0, kind0 = break_owner_tie(["dynamodb", "aurora_mysql"], "aurora_mysql")
+        assert (winner0, kind0) == ("aurora_mysql", "source_compatible")
+        assert "source-compatible" in why0
+        winner, why, tie_kind = break_owner_tie(
+            ["documentdb", "dynamodb"],
+            None,
+            settled_counts={"documentdb": 3, "dynamodb": 1},
+            query_id="q",
         )
-        assert break_owner_tie(
-            ["documentdb", "dynamodb"], ["q"], by_id, None, {}, {"dynamodb": 3}
-        ) == ("dynamodb", "serves more queries")
-        assert break_owner_tie(["dynamodb", "documentdb"], ["q"], by_id, None, {}, {}) == (
-            "documentdb",
-            "name order",
+        assert winner == "documentdb"  # more settled workload, not a name preference
+        assert tie_kind == "tie_unresolved"
+        assert "no routing rule decides between them" in why
+        assert "ADR-031" not in why
+        assert "tie_unresolved" not in why
+        assert "non-preferential" not in why
+        assert "documentdb" not in why  # customer-facing wording uses display names
+        # Order of the tied list never matters either.
+        winner2, why2, tie_kind2 = break_owner_tie(
+            ["dynamodb", "documentdb"],
+            None,
+            settled_counts={"documentdb": 3, "dynamodb": 1},
+            query_id="q",
         )
+        assert winner2 == winner
+        assert tie_kind2 == "tie_unresolved"
+        assert why2 == why
 
     def test_tie_break_is_independent_of_engine_order(self):
         queries = [_q("q")]
         a = {"dynamodb": _analysis({"users": 70}), "documentdb": _analysis({"users": 70})}
         b = dict(reversed(list(a.items())))
-        assert self._resolve(queries, a)["q"].assigned_engine == "documentdb"
-        assert self._resolve(queries, b)["q"].assigned_engine == "documentdb"
+        winner_a = self._resolve(queries, a)["q"].assigned_engine
+        winner_b = self._resolve(queries, b)["q"].assigned_engine
+        assert winner_a == winner_b
+        assert winner_a in {"dynamodb", "documentdb"}
 
 
 # ---------------------------------------------------------------------------

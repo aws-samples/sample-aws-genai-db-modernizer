@@ -335,6 +335,21 @@ def apply_assignment_overrides(
         ):
             qa.assigned_engine = override.assigned_engine
             qa.customer_override = True
+            # #503: the customer's own pick is a real decision, so any open
+            # tie this query carried is resolved by it, not left to still
+            # read "pending your choice" after the customer chose -- and the
+            # reason itself is rewritten to say so, rather than leave the old
+            # tie sentence standing after the field it was about has already
+            # been cleared.
+            if qa.tied_engines:
+                others = ", ".join(
+                    display_engine(e) for e in sorted(qa.tied_engines) if e != qa.assigned_engine
+                )
+                qa.assignment_reason = (
+                    f"Placed on {display_engine(qa.assigned_engine)} by your choice; "
+                    f"scores tied with {others}."
+                )
+                qa.tied_engines = []
         if override.in_scope is not None:
             qa.in_scope = override.in_scope
 
@@ -508,6 +523,7 @@ def _propagate_codependent_overrides(
             if qa.assigned_engine != target:
                 qa.assigned_engine = target
                 qa.co_dependency_propagated = True
+                qa.tied_engines = []  # #503: a propagated move is a real decision too
                 qa.assignment_reason = (
                     f"Co-located with co-dependent query group of {anchor} (shared JOIN) "
                     f"after a customer routing change."

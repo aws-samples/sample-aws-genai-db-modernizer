@@ -207,9 +207,17 @@ class TestNoIssueTagsReachCustomerFacingArtifacts:
         (report_path,) = job_dir.glob("synthesis/v*/report.json")
         report = json.loads(report_path.read_text())
 
+        # #503: the sweep covered reality-check output and the synthesis
+        # report, but not every assignment version written along the way --
+        # each is read by the approval gate too.
+        assignment_paths = sorted(job_dir.glob("assignment/v*/assignment.json"))
+        assert assignment_paths, f"no assignment/v*/assignment.json under {job_dir}"
+        assignments = [(path, json.loads(path.read_text())) for path in assignment_paths]
+
         for artifact_path, artifact in (
             (reality_check_path, reality_check),
             (report_path, report),
+            *assignments,
         ):
             tags = [
                 (path, value)

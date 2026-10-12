@@ -10,6 +10,7 @@
 import i18next from 'i18next';
 import {
   buildAssignmentSummary,
+  countTieUnresolvedQueries,
   effectiveEngines,
   eliminatedEngines,
   engineOptionsForAssignment,
@@ -398,5 +399,27 @@ describe('survivingDistribution', () => {
 
   test('tolerates a missing distribution', () => {
     expect(survivingDistribution(undefined, ['documentdb'])).toEqual({});
+  });
+});
+
+describe('countTieUnresolvedQueries', () => {
+  test('counts only queries with a non-empty tied_engines', () => {
+    const queryAssignments = [
+      { query_id: 'q1', tied_engines: ['documentdb', 'dynamodb'] },
+      { query_id: 'q2', tied_engines: [] },
+      { query_id: 'q3' },
+      { query_id: 'q4', tied_engines: ['opensearch', 'dynamodb'] },
+    ];
+    expect(countTieUnresolvedQueries(queryAssignments)).toBe(2);
+  });
+
+  test('returns 0 for an empty or missing list', () => {
+    expect(countTieUnresolvedQueries([])).toBe(0);
+    expect(countTieUnresolvedQueries(undefined)).toBe(0);
+  });
+
+  test('returns 0 when no query is tied', () => {
+    const queryAssignments = [{ query_id: 'q1' }, { query_id: 'q2', tied_engines: [] }];
+    expect(countTieUnresolvedQueries(queryAssignments)).toBe(0);
   });
 });

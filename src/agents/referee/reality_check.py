@@ -24,8 +24,8 @@ from __future__ import annotations
 import itertools
 import re
 import warnings
-from collections import defaultdict
-from collections.abc import Iterable
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -36,6 +36,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
+from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_elimination import in_scope_distribution
@@ -605,7 +606,7 @@ def _resolver_score(trace_by_query: dict[str, dict], qid: str, engine: str) -> f
 def _query_eligible_engines(
     qid: str,
     qa: dict,
-    current_engine: str,
+    current_engine: str | Iterable[str],
     candidates: Iterable[str],
     trace_by_query: dict[str, dict],
     query_signals: dict[str, list[str]],
@@ -618,6 +619,18 @@ def _query_eligible_engines(
     one phase's purposes and ineligible for the other's (#502 review:
     this gap is exactly how a query could end up stranded on an engine
     Phase 1 had already removed).
+
+    ``current_engine`` is normally the single engine the query is on today.
+    For a query still flagged ``tied_engines`` (#503), callers pass the
+    whole tied set instead of the one, arbitrary
+    placeholder engine: judging eligibility from a single tied engine let
+    the placeholder's own, otherwise-inconsequential pick decide the
+    result through this gate -- a join query tied 70/70 between DocumentDB
+    and DynamoDB became eligible for DynamoDB or not purely depending on
+    which of the two the placeholder happened to be recorded as, silently
+    turning a non-decision into one. Treating every tied engine as
+    "current" means the gates below answer the same way regardless of
+    which placeholder a prior run happened to pick.
 
     Four gates, all of which must pass:
     - the resolver's own score exists at all (``_resolver_score`` is not
@@ -637,14 +650,16 @@ def _query_eligible_engines(
     """
     required_caps = (query_capabilities or {}).get(qid, [])
     query = query_map.get(qid, qa)
+    current_set = {current_engine} if isinstance(current_engine, str) else set(current_engine)
     # Named for what it gates, not what it checks (#502 review round 5):
     # this is true exactly when considering ``e`` for ``qid`` would be a
     # *consolidation onto* ``e`` away from an engine that is neither
     # DynamoDB nor Aurora -- the join-on-DynamoDB block below only applies
     # to that case, never to a join query already on DynamoDB or Aurora.
-    leaving_non_aurora_non_dynamodb_engine = (
-        current_engine != "dynamodb" and current_engine not in AURORA_ENGINES
-    )
+    # With a tied set, this is False (not "leaving") as soon as ANY tied
+    # engine is dynamodb/Aurora -- the best case for dynamodb's own
+    # eligibility, so an arbitrary OTHER placeholder pick can't block it.
+    leaving_non_aurora_non_dynamodb_engine = not (current_set & ({"dynamodb"} | AURORA_ENGINES))
 
     def ok(e: str) -> bool:
         if _resolver_score(trace_by_query, qid, e) is None:
@@ -657,7 +672,9 @@ def _query_eligible_engines(
         # own already-matched query whenever no triage signal/capability
         # happened to be attached to it, moving it away for no score
         # reason at all).
-        if e != current_engine and not may_absorb(e, qid, query, query_signals, query_capabilities):
+        if e not in current_set and not may_absorb(
+            e, qid, query, query_signals, query_capabilities
+        ):
             return False
         if not can_engine_serve_capability(e, required_caps):
             return False
@@ -672,6 +689,21 @@ def _query_eligible_engines(
     return [e for e in candidates if ok(e)]
 
 
+def _current_for_eligibility(
+    qid: str,
+    current_engine_by_qid: dict[str, str],
+    tied_engines_by_qid: Mapping[str, list[str]] | None,
+) -> str | list[str]:
+    """What ``_query_eligible_engines`` should treat as ``qid``'s current
+    engine(s): its whole ``tied_engines`` set when it has one (#503), else
+    the one real engine it is on today."""
+    if tied_engines_by_qid:
+        tied = tied_engines_by_qid.get(qid)
+        if tied:
+            return tied
+    return current_engine_by_qid.get(qid, "")
+
+
 def _group_eligible_engines(
     qid: str,
     trace_by_query: dict[str, dict],
@@ -681,6 +713,7 @@ def _group_eligible_engines(
     query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
+    tied_engines_by_qid: Mapping[str, list[str]] | None = None,
 ) -> list[str]:
     """``candidates`` eligible to hold ``qid`` -- group-aware (#502 review
     round 5, finding G).
@@ -697,6 +730,11 @@ def _group_eligible_engines(
     group, so it is excluded from the "every member" requirement here, the
     same way Phase 2 already excludes it when it applies the group's move.
 
+    ``tied_engines_by_qid`` (#503) is forwarded to ``_query_eligible_engines``
+    for every member still flagged with a
+    tie, so eligibility never depends on which arbitrary engine a prior
+    run's placeholder happened to pick.
+
     This is the ONE eligibility entry point both Phase 1
     (``_evaluate_engine_removal``, ``_settle_committed_engines``) and
     Phase 2 (``_place_settled_queries``) use, for grouped and ungrouped
@@ -704,7 +742,7 @@ def _group_eligible_engines(
     primitive this calls, never a second, divergent rule.
     """
     candidates = list(candidates)
-    current_engine = current_engine_by_qid.get(qid, "")
+    current_engine = _current_for_eligibility(qid, current_engine_by_qid, tied_engines_by_qid)
     group_info = trace_by_query.get(qid, {}).get("group")
     if not group_info:
         return _query_eligible_engines(
@@ -732,7 +770,7 @@ def _group_eligible_engines(
             in _query_eligible_engines(
                 m_qid,
                 query_map.get(m_qid, {"query_id": m_qid}),
-                current_engine_by_qid.get(m_qid, ""),
+                _current_for_eligibility(m_qid, current_engine_by_qid, tied_engines_by_qid),
                 {e},
                 trace_by_query,
                 query_signals,
@@ -755,6 +793,7 @@ def _evaluate_engine_removal(
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
     committed_count: int,
+    tied_engines_by_qid: Mapping[str, list[str]] | None = None,
 ) -> tuple[bool, dict, float]:
     """Phase 1's per-engine question (#502 review): judged on ``engine``'s
     own native queries alone, using the resolver's own per-query scores
@@ -813,6 +852,7 @@ def _evaluate_engine_removal(
             query_signals,
             query_map,
             query_capabilities,
+            tied_engines_by_qid,
         )
         if not eligible_alts:
             irreplaceable.append(qid)
@@ -874,6 +914,7 @@ def _removal_tiebreak_key(
     query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
+    tied_engines_by_qid: Mapping[str, list[str]] | None = None,
 ) -> tuple[int, float]:
     """Data-driven tiebreaker between two candidates tied on burden-per-unique-
     query (#502 review round 5, finding N1; round 6 corrected the second
@@ -908,6 +949,7 @@ def _removal_tiebreak_key(
             query_signals,
             query_map,
             query_capabilities,
+            tied_engines_by_qid,
         )
         if not alts:
             continue
@@ -929,6 +971,7 @@ def _settle_committed_engines(
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
     max_rounds: int,
+    tied_engines_by_qid: Mapping[str, list[str]] | None = None,
 ) -> tuple[set[str], dict[str, dict]]:
     """Phase 1 (#502 review): settle which engines earn a place, independent
     of the order they happen to be evaluated in.
@@ -982,6 +1025,7 @@ def _settle_committed_engines(
                 query_map,
                 query_capabilities,
                 len(snapshot),
+                tied_engines_by_qid,
             )
             # #502 review: no engine is "primary" anymore -- every engine is
             # judged the same way. The contract field stays (a breaking
@@ -1021,6 +1065,7 @@ def _settle_committed_engines(
                         query_signals,
                         query_map,
                         query_capabilities,
+                        tied_engines_by_qid,
                     )
                     for c in tied
                 }
@@ -1045,6 +1090,7 @@ def _settle_committed_engines(
                     query_signals,
                     query_map,
                     query_capabilities,
+                    tied_engines_by_qid,
                 )
                 for qa in native_qas
                 if qa["query_id"] not in mandatory_query_ids
@@ -1070,34 +1116,100 @@ def _pick_winner(
     scores: dict[str, float],
     current_engines: set[str],
     source_compatible_engine: str | None,
+    settled_counts: Mapping[str, int] | None = None,
+    query_id: str = "",
 ) -> tuple[str, str | None]:
     """Highest score wins. Returns ``(winner, tie_kind)``; ``tie_kind`` is
-    ``None`` when one engine strictly scores highest (no tie to resolve).
-
-    Tie order (#502 review round 3), none of it alphabetical:
-    1. the source-compatible engine (ADR-031), when it is tied for the top
-       score -- ``tie_kind="source_compatible"``;
-    2. otherwise, the query's own current engine (or, for a co-dependency
-       group, any member's), when IT is tied for the top -- a tie is not
-       "strictly higher," so it is never an opportunity for some other
-       engine to pick up queries it did not already have;
-       ``tie_kind="stability"``;
-    3. otherwise there is no ADR-031 rule for this tie yet (#503): a
-       deterministic choice is still returned (engines are sorted by name
-       only so two runs on the same input agree, not because the name
-       decides anything), but it is reported honestly as
-       ``tie_kind="tie_unresolved"`` rather than presented as a real rule.
+    ``None`` when one engine strictly scores highest (no tie to resolve),
+    otherwise the result of ``break_tie`` (shared with the resolver's
+    ``break_owner_tie`` and this module's absorber tie-break, #503) -- see
+    its docstring for the three-rule order (source-compatible, then
+    stability, then an honestly-reported ``tie_unresolved``, decided by the
+    maintainer's placeholder when it comes to that -- ``settled_counts``/
+    ``query_id`` feed that placeholder only).
     """
-    top = max(scores.values())
-    tied = sorted(e for e, s in scores.items() if s == top)
+    tied = _top_scorers(scores)
     if len(tied) == 1:
         return tied[0], None
-    if source_compatible_engine and source_compatible_engine in tied:
-        return source_compatible_engine, "source_compatible"
-    staying = sorted(set(tied) & current_engines)
-    if staying:
-        return staying[0], "stability"
-    return tied[0], "tie_unresolved"
+    return break_tie(tied, current_engines, source_compatible_engine, settled_counts, query_id)
+
+
+def _top_scorers(scores: dict[str, float]) -> list[str]:
+    """Engines tied at the top of ``scores`` (length 1 when there is no tie)."""
+    top = max(scores.values())
+    return sorted(e for e, s in scores.items() if s == top)
+
+
+def _tie_unresolved_note(tied: Iterable[str], winner: str) -> str:
+    """Customer-facing fragment for an unresolved tie (#503 review item 4):
+    display names only -- no raw engine code, no internal ADR-031
+    reference, and the placeholder pick is never called "non-preferential"
+    (it is named for what it is: a placeholder pending the customer's
+    choice, not a decided rule)."""
+    others = ", ".join(display_engine(e) for e in sorted(set(tied)) if e != winner)
+    return (
+        f" (scores tie with {others}; no routing rule decides between them; "
+        f"listed under {display_engine(winner)} pending your choice)"
+    )
+
+
+def _phase2_reason(
+    current_engine: str,
+    winner: str,
+    eligible_scores: dict[str, float],
+    tie_kind: str | None,
+    *,
+    moved: bool,
+    group: bool,
+    original_tied: Iterable[str] | None = None,
+) -> str:
+    """Build a Phase 2 ``assignment_reason`` honestly (#503): engines named
+    with ``display_engine``, no raw code and no internal ``ADR-031``
+    reference, and rebuilt from the CURRENT verdict every time a tie is
+    involved -- even when the engine does not change (a tie that clears
+    while the query stays put must not keep reading an earlier "pending
+    your choice" sentence written before it cleared). ``original_tied``
+    (the engines this query was tied between before this phase ran) names
+    why a now-cleared tie cleared, when it did -- which of those engines
+    this phase removed from consideration -- rather than a generic "is now
+    resolved" with no reason given."""
+    winner_name = display_engine(winner)
+    if moved:
+        basis = (
+            "co-dependency group moves together"
+            if group
+            else (
+                f"{display_engine(current_engine)} scores "
+                f"{eligible_scores.get(current_engine, 'n/a')}, {winner_name} scores "
+                f"{eligible_scores[winner]}"
+            )
+        )
+        tie_note = (
+            _tie_unresolved_note(_top_scorers(eligible_scores), winner)
+            if tie_kind == "tie_unresolved"
+            else ""
+        )
+        return (
+            f"reality check: consolidated from {display_engine(current_engine)} → "
+            f"{winner_name} (no unique value — {basis}{tie_note})"
+        )
+    if tie_kind == "tie_unresolved":
+        return (
+            "reality check: no unique value elsewhere"
+            f"{_tie_unresolved_note(_top_scorers(eligible_scores), winner)}"
+        )
+    removed = sorted(e for e in (original_tied or []) if e != winner and e not in eligible_scores)
+    if removed:
+        removed_text = ", ".join(display_engine(e) for e in removed)
+        verb = "no longer qualifies" if len(removed) == 1 else "no longer qualify"
+        return (
+            f"reality check: {winner_name} is kept -- {removed_text} {verb} for this "
+            "query, so the earlier scores tie is resolved"
+        )
+    return (
+        f"reality check: {winner_name} is kept -- the earlier scores tie between "
+        "engines is now resolved"
+    )
 
 
 def _place_settled_queries(
@@ -1111,6 +1223,9 @@ def _place_settled_queries(
     trace_by_query: dict[str, dict],
     source_compatible_engine: str | None,
     workload_justified: dict[str, bool | None],
+    tie_unresolved_qids: set[str] | None = None,
+    settled_counts: Mapping[str, int] | None = None,
+    tied_engines_by_qid: Mapping[str, list[str]] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
     engine within the settled committed set, using the SAME per-query
@@ -1136,25 +1251,62 @@ def _place_settled_queries(
     query should ever end up on a removed engine; ``run_reality_check``
     asserts that invariant right after this call rather than trusting it
     silently.
+
+    ``tie_unresolved_qids``/``tied_engines_by_qid`` (#503 review, both
+    rounds) mark queries whose FIRST-ASSIGNMENT engine is only a
+    placeholder pick from an unresolved tie: that placeholder is never
+    passed to ``_pick_winner`` as a stability candidate (a placeholder pick
+    is not "today's real engine," so it earns no stability credit), and
+    such a query is RE-RESOLVED HERE AMONG THE ORIGINALLY TIED ENGINES
+    FIRST (round 2, findings C1/C2): if one or more of them are still
+    committed and eligible, the candidate pool is restricted to just those
+    -- never opened up to the full committed set while a tied engine still
+    survives. Only when NONE of the originally tied engines survive does
+    the query fall back to the full committed set, placed on its
+    best-scoring survivor there with an honest reason, same as any other
+    consolidation. Either way, every query this bookkeeping touches gets a
+    FRESH ``tied_engines``/reason from the verdict just computed (round 2,
+    findings I2/I3): a tie that clears, even while the engine does not
+    change, is never left reading a stale "pending your choice" sentence,
+    and a tie that first appears here (two non-source-compatible engines
+    newly tying for the top score during consolidation) is recorded too,
+    not silently dropped because it was never tied before.
     """
+    tie_unresolved_qids = tie_unresolved_qids or set()
+    tied_engines_by_qid = tied_engines_by_qid or {}
     revised = deepcopy(query_assignments)
     revised_by_id = {qa["query_id"]: qa for qa in revised}
     moves: dict[tuple[str, str], list[str]] = defaultdict(list)
     tie_unresolved_moves: dict[tuple[str, str], int] = defaultdict(int)
 
+    def _refresh_tied_engines(qa: dict, tie_kind: str | None, scores: dict) -> None:
+        """Set ``qa["tied_engines"]`` from the verdict just computed."""
+        qa["tied_engines"] = _top_scorers(scores) if tie_kind == "tie_unresolved" else []
+
+    def _candidate_pool(original_tied: list[str] | None) -> set[str]:
+        """The engines Phase 2 may place this query/group on: the
+        originally tied engines that are still committed, FIRST (#503) --
+        the full committed set only once none of them survive at all."""
+        if not original_tied:
+            return committed_engines
+        survivors = {e for e in original_tied if e in committed_engines}
+        return survivors or committed_engines
+
     def _place_individual(qid: str, qa: dict) -> None:
         """Place one (ungrouped, or mandatory-stripped) query on its
         highest-scoring committed, eligible engine."""
         current_engine = qa["assigned_engine"]
+        original_tied = tied_engines_by_qid.get(qid) if qid in tie_unresolved_qids else None
         eligible_engines = _group_eligible_engines(
             qid,
             trace_by_query,
             current_engine_by_qid,
-            committed_engines,
+            _candidate_pool(original_tied),
             mandatory_query_ids,
             query_signals,
             query_map,
             query_capabilities,
+            tied_engines_by_qid,
         )
         eligible_scores: dict[str, float] = {
             e: score
@@ -1163,20 +1315,37 @@ def _place_settled_queries(
         }
         if not eligible_scores:
             return  # nothing eligible at all; leave it where it is (should not happen)
-        winner, tie_kind = _pick_winner(eligible_scores, {current_engine}, source_compatible_engine)
-        if winner == current_engine:
-            return
-        current_score = eligible_scores.get(current_engine, "n/a")
-        tie_note = (
-            " (tie_unresolved between engines, pending #503)"
-            if tie_kind == "tie_unresolved"
-            else ""
+        # A placeholder pick from an unresolved tie earns no stability credit
+        # (#503 review item 2): it is not "today's real engine," so it is
+        # never passed as a stability candidate here.
+        stability_candidates = set() if original_tied else {current_engine}
+        winner, tie_kind = _pick_winner(
+            eligible_scores, stability_candidates, source_compatible_engine, settled_counts, qid
         )
+        tie_relevant = bool(original_tied) or tie_kind == "tie_unresolved"
+        if tie_relevant:
+            _refresh_tied_engines(qa, tie_kind, eligible_scores)
+        if winner == current_engine:
+            if tie_relevant:
+                qa["assignment_reason"] = _phase2_reason(
+                    current_engine,
+                    winner,
+                    eligible_scores,
+                    tie_kind,
+                    moved=False,
+                    group=False,
+                    original_tied=original_tied,
+                )
+            return
         qa["assigned_engine"] = winner
-        qa["assignment_reason"] = (
-            f"reality check: consolidated from {current_engine} → {winner} "
-            f"(no unique value — {current_engine} scores {current_score}, "
-            f"{winner} scores {eligible_scores[winner]}{tie_note})"
+        qa["assignment_reason"] = _phase2_reason(
+            current_engine,
+            winner,
+            eligible_scores,
+            tie_kind,
+            moved=True,
+            group=False,
+            original_tied=original_tied,
         )
         moves[(current_engine, winner)].append(qid)
         if tie_kind == "tie_unresolved":
@@ -1202,6 +1371,13 @@ def _place_settled_queries(
             ]
             if not members:
                 continue
+            # A tied group's members all carry the SAME tied_engines (the
+            # resolver resolves a group's tie once, for every member --
+            # ``assignment_resolver``'s Step 6b); use the group's own
+            # trigger query's tied set as the group's.
+            group_original_tied = (
+                tied_engines_by_qid.get(qid) if qid in tie_unresolved_qids else None
+            )
             # The same group-aware eligibility rule Phase 1 used to decide
             # this group's current engine was safe to keep or remove (#502
             # review round 5, finding G) -- not a second, Phase-2-only
@@ -1211,11 +1387,12 @@ def _place_settled_queries(
                 qid,
                 trace_by_query,
                 current_engine_by_qid,
-                committed_engines,
+                _candidate_pool(group_original_tied),
                 mandatory_query_ids,
                 query_signals,
                 query_map,
                 query_capabilities,
+                tied_engines_by_qid,
             )
             eligible = {
                 e: s for e, s in group_info["scores"].items() if e in eligible_group_engines
@@ -1229,21 +1406,49 @@ def _place_settled_queries(
                 # "should not happen" outcome ``_place_individual`` uses,
                 # never split apart to force a placement.
                 continue
-            current_engines = {e for _, e in members}
-            winner, tie_kind = _pick_winner(eligible, current_engines, source_compatible_engine)
+            # A member's current engine earns stability credit only when it
+            # is not itself a placeholder pick from an unresolved tie (#503
+            # review items 2 and 3): two different members sitting on two
+            # different, still-tied engines is not "the" current engine
+            # either way -- ``break_tie`` reports that as unresolved on its
+            # own once ``current_engines`` holds more than one tied engine.
+            current_engines = {e for mqid, e in members if mqid not in tie_unresolved_qids}
+            # Sorted member ids, not ``qid`` (whichever member happens to come
+            # first in ``trace_by_query``'s own iteration order) -- the same
+            # stable seed the resolver (``assignment_resolver.py``'s Step 6b)
+            # and the floor's group tie-break use, so Phase 2 can never
+            # re-pick between the same two tied engines just because of input
+            # order (#503).
+            group_seed = ",".join(sorted(mqid for mqid, _ in members))
+            winner, tie_kind = _pick_winner(
+                eligible, current_engines, source_compatible_engine, settled_counts, group_seed
+            )
+            group_tie_relevant = bool(group_original_tied) or tie_kind == "tie_unresolved"
             for member_qid, member_engine in members:
                 member_qa = revised_by_id[member_qid]
+                if group_tie_relevant:
+                    _refresh_tied_engines(member_qa, tie_kind, eligible)
                 if member_engine == winner:
+                    if group_tie_relevant:
+                        member_qa["assignment_reason"] = _phase2_reason(
+                            member_engine,
+                            winner,
+                            eligible,
+                            tie_kind,
+                            moved=False,
+                            group=True,
+                            original_tied=group_original_tied,
+                        )
                     continue
                 member_qa["assigned_engine"] = winner
-                tie_note = (
-                    " (tie_unresolved between engines, pending #503)"
-                    if tie_kind == "tie_unresolved"
-                    else ""
-                )
-                member_qa["assignment_reason"] = (
-                    f"reality check: consolidated from {member_engine} → {winner} "
-                    f"(no unique value — co-dependency group moves together{tie_note})"
+                member_qa["assignment_reason"] = _phase2_reason(
+                    member_engine,
+                    winner,
+                    eligible,
+                    tie_kind,
+                    moved=True,
+                    group=True,
+                    original_tied=group_original_tied,
                 )
                 moves[(member_engine, winner)].append(member_qid)
                 if tie_kind == "tie_unresolved":
@@ -1288,8 +1493,8 @@ def _place_settled_queries(
                     f"served by {to}"
                     + (f" ({len(retained_qids)} retained)" if retained_qids else "")
                     + (
-                        f" ({n_tie_unresolved} decided by an unresolved tie between engines, "
-                        "pending #503)"
+                        f" ({n_tie_unresolved} of them tied on score, with no routing rule "
+                        "to decide)"
                         if n_tie_unresolved
                         else ""
                     )
@@ -1383,7 +1588,29 @@ def run_reality_check(
         source_database_engine(collector_output) if source_engine is None else source_engine
     )
 
-    # Build engine query counts
+    # Queries whose FIRST-ASSIGNMENT engine is only a placeholder pick from
+    # an unresolved tie (#503): no ADR-031 rule, and no real tiebreak rule
+    # either, decided these -- ``QueryAssignment.tied_engines`` is non-empty.
+    tie_unresolved_qids: set[str] = {
+        qa["query_id"] for qa in query_assignments if qa.get("tied_engines")
+    }
+    tied_engines_by_qid: dict[str, list[str]] = {
+        qa["query_id"]: list(qa["tied_engines"])
+        for qa in query_assignments
+        if qa.get("tied_engines")
+    }
+
+    # Build engine query counts. A tied query counts as native evidence for
+    # exactly the ONE engine the first assignment's placeholder already
+    # credited it to (``assigned_engine``) -- never for every tied engine,
+    # and never for none at all (#503: excluding a tied query from EVERY
+    # engine's native set could leave an engine whose only queries were
+    # tied uncommitted with no fallback -- crashing the invariant check
+    # below when nothing else was eligible either -- or silently drop a
+    # tied workload onto a much weaker committed engine when Phase 1 never
+    # even evaluated either tied engine). The query still carries
+    # ``tied_engines`` and stays visible to the customer either way; this
+    # only decides which engine's justification it counts toward in Phase 1.
     engine_queries: dict[str, list[dict]] = defaultdict(list)
     for qa in query_assignments:
         engine_queries[qa["assigned_engine"]].append(qa)
@@ -1421,6 +1648,22 @@ def run_reality_check(
     _trace = RoutingTrace()
     AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
     trace_by_query = _trace.by_query
+    # The resolver's OWN settled-workload snapshot (#503), persisted on the
+    # trace rather than recomputed here from
+    # the final v1 assignment: the resolver's snapshot is taken before the
+    # Aurora fallback, the utility pin and signal overrides fill in more
+    # queries, so recomputing it here from the fuller v1 picture could make
+    # an otherwise-unchanged tie re-pick between the same two engines for no
+    # real reason. Falls back to a v1-based recompute only for an assignment
+    # produced before this was persisted (``_trace.settled_counts`` empty
+    # with no tie to explain it).
+    settled_counts: dict[str, int] = _trace.settled_counts or dict(
+        Counter(
+            qa["assigned_engine"]
+            for qa in query_assignments
+            if qa["query_id"] not in tie_unresolved_qids and qa.get("assigned_engine")
+        )
+    )
     # Each query's engine as it stands before either phase runs -- stable
     # throughout both, since neither phase mutates ``query_assignments``
     # itself (Phase 2 works on a ``deepcopy``). Shared by both phases'
@@ -1450,6 +1693,7 @@ def run_reality_check(
         query_map,
         query_capabilities,
         max_rounds,
+        tied_engines_by_qid,
     )
 
     # -------------------------------------------------------------------
@@ -1472,6 +1716,9 @@ def run_reality_check(
         trace_by_query,
         source_compatible_engine,
         workload_justified,
+        tie_unresolved_qids,
+        settled_counts,
+        tied_engines_by_qid,
     )
     lightweight_recommendations: list[dict] = []
 
@@ -1579,21 +1826,42 @@ def run_reality_check(
                 if not eligible:
                     floor_unplaced.extend(member_qas)
                     continue
-                # ``sorted()`` first so an exact score tie resolves the same
-                # way every run, never by set iteration order (#288).
-                winner = max(
-                    sorted(eligible),
-                    key=lambda e: group_info["scores"].get(
-                        e, _resolver_score(trace_by_query, qid, e)
+
+                group_scores = {
+                    e: group_info["scores"].get(e, _resolver_score(trace_by_query, qid, e)) or 0
+                    for e in eligible
+                }
+                top_group_score = max(group_scores.values())
+                tied_group = sorted(e for e, s in group_scores.items() if s == top_group_score)
+                tie_note = ""
+                tie_kind: str | None = None
+                if len(tied_group) == 1:
+                    winner = tied_group[0]
+                else:
+                    # No ADR-031 rule prefers one engine over another by name
+                    # or by how many queries it already has (#503): the same
+                    # ``break_tie`` the resolver and ``_pick_winner`` use.
+                    # Sorted member ids (#503): a stable seed, not whichever
+                    # member happens to come first in ``trace_by_query``'s
+                    # own iteration order.
+                    winner, tie_kind = break_tie(
+                        tied_group,
+                        set(),
+                        source_compatible_engine,
+                        settled_counts,
+                        ",".join(sorted(members)),
                     )
-                    or 0,
-                )
-                winner_fit = round(
-                    group_info["scores"].get(winner, _resolver_score(trace_by_query, qid, winner))
-                    or 0
-                )
-                reason = f"fit={winner_fit}, co-dependency group moves together"
+                    tie_note = (
+                        _tie_unresolved_note(tied_group, winner)
+                        if tie_kind == "tie_unresolved"
+                        else " (tie: source-compatible engine)"
+                    )
+                winner_fit = round(group_scores[winner])
+                reason = f"fit={winner_fit}, co-dependency group moves together{tie_note}"
+                # #503: a tie this floor pass resolves (or decides for real)
+                # is recorded, same as Phase 2.
                 for member_qa in member_qas:
+                    member_qa["tied_engines"] = tied_group if tie_kind == "tie_unresolved" else []
                     floor_placement[winner].append((member_qa, reason))
                 continue
 
@@ -1609,10 +1877,13 @@ def run_reality_check(
                 "",
                 trace_by_query,
                 query_capabilities,
+                source_compatible_engine,
+                settled_counts,
             )
             if absorber is None:
                 floor_unplaced.append(qa)
                 continue
+            qa["tied_engines"] = absorber.get("tied_engines", [])
             floor_placement[absorber["target_engine"]].append((qa, absorber["reason"]))
 
         moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _ in placed}
@@ -2248,6 +2519,8 @@ def _find_best_absorber_for_query(
     primary_engine: str,
     trace_by_query: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None = None,
+    source_compatible_engine: str | None = None,
+    settled_counts: Mapping[str, int] | None = None,
 ) -> dict | None:
     """Find the best committed engine to absorb a single query.
 
@@ -2259,7 +2532,17 @@ def _find_best_absorber_for_query(
     use; the earlier Aurora-absorption pass this PR does not touch still
     has its own, separate ``_engine_fit_score`` calls -- #490's full
     scorer unification is later, broader work), with mandatory secondary
-    engines getting a tiebreaker bonus (data already flowing via sync).
+    engines getting a tiebreaker bonus (data already flowing via sync -- a
+    real operational reason, not a preference of convenience).
+
+    A tie that survives even that -- same fit score, same mandatory-
+    secondary status -- is never decided by table overlap, how many
+    queries the engine already has, or its name (#503): it goes through
+    ``break_tie``, the same ADR-031 Decision 2 tie-break the resolver's
+    ``break_owner_tie`` and this module's ``_pick_winner`` use, so the
+    source-compatible engine wins first and anything still tied is
+    reported as ``tie_unresolved`` in the returned reason, not silently
+    picked.
 
     Respects the serviceability gate: if query_capabilities are provided,
     only considers engines that can serve the query's hard requirements.
@@ -2341,8 +2624,6 @@ def _find_best_absorber_for_query(
                 "target_engine": target_engine,
                 "fit_score": fit,
                 "is_mandatory_secondary": is_mandatory_secondary,
-                "table_overlap": len(overlap),
-                "existing_queries": len(engine_queries.get(target_engine, [])),
                 "reason": reason,
             }
         )
@@ -2350,20 +2631,36 @@ def _find_best_absorber_for_query(
     if not candidates:
         return None
 
-    # Sort: highest fit score wins, with mandatory secondary and table overlap
-    # as tiebreakers. A remaining tie goes to the engine already serving more
-    # queries, so ties reinforce consolidation, and finally to the engine name,
-    # so the pick never depends on set order (and so PYTHONHASHSEED) (#288).
-    candidates.sort(
-        key=lambda c: (
-            -c["fit_score"],
-            not c["is_mandatory_secondary"],
-            -c["table_overlap"],
-            -c["existing_queries"],
-            c["target_engine"],
-        )
+    # Highest fit score wins, mandatory-secondary next (data already
+    # synced, a real reason -- #502 review round 5, finding N3). A tie that
+    # survives both is an ADR-031 Decision 2 tie (#503): resolved by
+    # ``break_tie``, never by table overlap, how many queries the engine
+    # already has, or its name.
+    def _rank(c: dict) -> tuple[int, bool]:
+        return (-c["fit_score"], not c["is_mandatory_secondary"])
+
+    best_rank = min(_rank(c) for c in candidates)
+    tied = [c for c in candidates if _rank(c) == best_rank]
+    if len(tied) == 1:
+        return {**tied[0], "tied_engines": []}
+
+    tied_engine_names = [c["target_engine"] for c in tied]
+    winner_engine, tie_kind = break_tie(
+        tied_engine_names, set(), source_compatible_engine, settled_counts, qid
     )
-    return candidates[0]
+    winner = next(c for c in tied if c["target_engine"] == winner_engine)
+    tie_note = (
+        _tie_unresolved_note(tied_engine_names, winner_engine)
+        if tie_kind == "tie_unresolved"
+        else " (tie: source-compatible engine)"
+    )
+    # #503: a tie the absorber itself resolves (or decides for real) is
+    # recorded, same as Phase 1/2.
+    return {
+        **winner,
+        "reason": f"{winner['reason']}{tie_note}",
+        "tied_engines": sorted(tied_engine_names) if tie_kind == "tie_unresolved" else [],
+    }
 
 
 def _suggest_lightweight_for_orphans(
@@ -2815,8 +3112,7 @@ def _build_recommendations(
         recs.append(
             f"{display_engine(engine_a)} and {display_engine(engine_b)} are tied on "
             "operational cost per unique query, and no rule yet exists to decide between "
-            "two such engines (#503) -- both are kept rather than one being removed "
-            "arbitrarily."
+            "two such engines -- both are kept rather than one being removed arbitrarily."
         )
 
     if not recs:

@@ -16,8 +16,8 @@ Implements the assignment resolution algorithm:
 Only system-of-record engines own queries (#296): ElastiCache is a cache layer
 (``cache_overlay.CACHE_OVERLAY_ENGINES``) and never owns one, and an engine that
 is not a system of record never owns a write. Exact score ties go to the
-source-compatible engine, then to the engine already serving more of the query's
-tables' traffic (calls/s), then to the engine with more queries, then by name.
+source-compatible engine; any other tie has no ADR-031 rule and is reported as
+unresolved rather than decided by table traffic, query count or name (#503).
 
 The key insight: assignment happens QUERY BY QUERY, not table by table.
 Triage signals like text_search→opensearch override table-level averages
@@ -53,6 +53,7 @@ from src.agents.referee.capability_registry import (
 from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
 from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.assignment_models import (
@@ -267,8 +268,16 @@ class RoutingTrace:
         self.by_query: dict[str, dict] = {}
         # query_id -> {"key": <12-hex group key>, "scores": {engine: group_score}}
         self.group_by_query: dict[str, dict] = {}
-        # query_id -> the tie-break rule text from ``break_owner_tie``
+        # query_id -> the structured tie_kind ("source_compatible" | "tie_unresolved")
+        # break_owner_tie resolved it with (#503: a customer-facing sentence should
+        # never be the thing a test parses to find out what happened, so this stores
+        # the structured kind directly rather than break_owner_tie's prose "why").
         self.tie_break_by_query: dict[str, str] = {}
+        # Every non-tied query's engine, snapshotted once at Step 6b (#503) --
+        # persisted here so the reality check reuses the SAME settled-workload
+        # counts the resolver's own tie-break used, instead of recomputing a
+        # different one later from the final v1 assignment.
+        self.settled_counts: dict[str, int] = {}
 
     def record(self, query_id: str, payload: dict) -> None:
         self.by_query[query_id] = payload
@@ -286,9 +295,14 @@ class RoutingTrace:
         for qid in members:
             self.group_by_query[qid] = payload
 
-    def record_tie(self, query_id: str, rule: str) -> None:
-        """The tie-break rule ``break_owner_tie`` used to decide ``query_id``."""
-        self.tie_break_by_query[query_id] = rule
+    def record_tie(self, query_id: str, tie_kind: str) -> None:
+        """The structured ``tie_kind`` ``break_owner_tie`` resolved ``query_id`` with."""
+        self.tie_break_by_query[query_id] = tie_kind
+
+    def record_settled_counts(self, counts: Mapping[str, int]) -> None:
+        """The resolver's own settled-workload snapshot (#503) -- see the
+        attribute's own docstring."""
+        self.settled_counts = dict(counts)
 
 
 class AssignmentResolver:
@@ -490,8 +504,8 @@ class AssignmentResolver:
         # rest are assigned, since it can depend on how many queries each
         # Aurora engine already serves (#288).
         fallback_qids: list[str] = []
-        # Exact score ties, resolved once every untied query is placed: the
-        # tie-break looks at the traffic each engine already serves (#296).
+        # Exact score ties, resolved once every untied query is placed:
+        # source-compatible wins, otherwise reported as unresolved (#503).
         tied: list[tuple[list[str], list[str], int, str]] = []
 
         for group in co_dep_groups:
@@ -560,27 +574,50 @@ class AssignmentResolver:
                 assigned_confidence[qid] = 0
                 assigned_reason[qid] = "no engine scored this query"
 
-        # Step 6b: Resolve exact ties against the traffic already placed (#296).
+        # Step 6b: Resolve exact ties (ADR-031 Decision 2, #503). ``settled_counts``
+        # is a snapshot of every non-tied query's engine, taken once here, before
+        # this loop resolves ANY tie -- so one tie's placeholder pick never feeds
+        # the settled-workload count another tie in the same batch is judged
+        # against (that would make the result depend on the order ``tied`` happens
+        # to be in, which #503 explicitly rules out). Computed unconditionally
+        # (not only ``if tied:``) and persisted onto ``routing_trace`` (#503): the
+        # reality check reuses this SAME snapshot -- rather than recomputing its
+        # own, later,
+        # from the final v1 assignment (after the Aurora fallback, the utility
+        # pin and signal overrides have filled in more queries) -- so a tie that
+        # is otherwise unchanged can never silently re-pick between the same two
+        # engines just because the two stages measured "settled" differently.
+        settled_counts = Counter(e for e in assigned.values() if e)
+        if routing_trace is not None:
+            routing_trace.record_settled_counts(settled_counts)
+        assigned_tied_engines: dict[str, list[str]] = {}
         if tied:
             source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
-            table_traffic, engine_counts = _placed_traffic(assigned, query_by_id)
             for qids, best, top_score, kind in tied:
-                winner, why = break_owner_tie(
-                    best, qids, query_by_id, source_aurora, table_traffic, engine_counts
+                # Sorted member ids (#503): the hash fallback's seed must not
+                # depend on ``qids``'s own input order,
+                # which here comes from ``build_co_dependency_groups``'s (or the
+                # query list's) incidental order, not a stable identifier.
+                hash_seed = ",".join(sorted(qids))
+                winner, why, tie_kind = break_owner_tie(
+                    best, source_aurora, settled_counts=settled_counts, query_id=hash_seed
                 )
                 for qid in qids:
                     if routing_trace is not None:
-                        routing_trace.record_tie(qid, why)
+                        routing_trace.record_tie(qid, tie_kind)
                     assigned[qid] = winner
+                    if tie_kind == "tie_unresolved":
+                        assigned_tied_engines[qid] = sorted(best)
                     if kind == "individual":
                         assigned_confidence[qid] = top_score
                         assigned_reason[qid] = (
-                            f"highest confidence for {winner} (tie with "
-                            f"{', '.join(e for e in best if e != winner)}: {why})"
+                            f"highest confidence for {display_engine(winner)} ({why})"
                         )
                     else:
                         assigned_confidence[qid] = scores.get(qid, {}).get(winner, 0)
-                        assigned_reason[qid] = f"co-dependency group → {winner} (tie: {why})"
+                        assigned_reason[qid] = (
+                            f"co-dependency group → {display_engine(winner)} ({why})"
+                        )
 
         if fallback_qids:
             # #381 review: still ``selected_engines`` (the fallback must use whichever
@@ -750,6 +787,7 @@ class AssignmentResolver:
                     cache_engine=overlay_by_id[qid]["cache_engine"],
                     cache_pattern=overlay_by_id[qid]["cache_pattern"],
                     cache_reason=overlay_by_id[qid]["cache_reason"],
+                    tied_engines=assigned_tied_engines.get(qid, []),
                 )
             )
 
@@ -999,7 +1037,7 @@ class AssignmentResolver:
 
 
 # ---------------------------------------------------------------------------
-# Owner tie-break (#296)
+# Owner tie-break (#296, #503)
 # ---------------------------------------------------------------------------
 
 
@@ -1007,57 +1045,61 @@ def _overlay_model(summary: dict | None) -> CacheOverlaySummary | None:
     return CacheOverlaySummary(**summary) if summary else None
 
 
-def _placed_traffic(
-    assigned: Mapping[str, str], query_by_id: Mapping[str, dict]
-) -> tuple[dict[tuple[str, str], float], Counter]:
-    """``(table, engine) -> calls/s`` and ``engine -> queries`` of the placed queries."""
-    traffic: dict[tuple[str, str], float] = defaultdict(float)
-    counts: Counter = Counter()
-    for qid, engine in assigned.items():
-        if not engine:
-            continue
-        counts[engine] += 1
-        q = query_by_id.get(qid) or {}
-        cps = float(q.get("calls_per_second") or 0)
-        for table in q.get("tables_accessed") or []:
-            traffic[(table, engine)] += cps
-    return traffic, counts
-
-
 def break_owner_tie(
     engines: list[str],
-    qids: list[str],
-    query_by_id: Mapping[str, dict],
     source_aurora: str | None,
-    table_traffic: Mapping[tuple[str, str], float],
-    engine_counts: Mapping[str, int],
-) -> tuple[str, str]:
-    """Pick the owner among engines with the same score, and say why (#296).
+    *,
+    settled_counts: Mapping[str, int] | None = None,
+    query_id: str = "",
+) -> tuple[str, str, str]:
+    """Pick the owner among engines with the same score, and say why
+    (ADR-031 Decision 2, #503).
 
-    1. the source-compatible engine (the Aurora engine of the source's dialect);
-    2. the engine already serving more of the queries' tables' traffic (calls/s);
-    3. the engine already serving more queries;
-    4. the engine name, so the pick never depends on dict or set order.
+    1. the source-compatible engine (the Aurora engine of the source's
+       dialect), when it is one of the tied engines;
+    2. otherwise there is no ADR-031 rule for this tie: a deterministic
+       engine is still returned (``pick_unresolved_tie_placeholder``'s
+       maintainer-decided placeholder, via ``break_tie``), but it is
+       reported honestly, in customer-facing wording, as an unresolved tie
+       rather than a real rule.
 
-    Cache engines are never in ``engines`` (they own nothing), so a tie can never
-    tip a query, hot or not, onto the cache.
+    The returned ``reason`` is the WHOLE customer-facing explanation, not a
+    fragment a caller wraps in its own sentence with a raw engine code
+    (#503): no raw engine code, no internal ``ADR-031``/issue reference, and
+    the pick is never called a "preference" or "non-preferential" either way.
+
+    Table traffic and the engine's name are never the reason a non-Aurora
+    tie is decided (#503) -- this is the same ``break_tie`` the reality
+    check's placement step uses, so the two cannot drift back out of
+    agreement on what a tie means. ``settled_counts``/``query_id`` feed the
+    unresolved-tie placeholder only; they never affect the source-compatible
+    rule above.
+
+    Cache engines are never in ``engines`` (they own nothing), so a tie can
+    never tip a query, hot or not, onto the cache. The first assignment has
+    no "current engine" for a query yet (nothing is assigned before this
+    runs), so ``break_tie``'s stability rule never fires here -- only in the
+    reality check, where a query already has one.
+
+    Returns ``(winner, reason, tie_kind)``.
     """
-    if source_aurora in engines:
-        return source_aurora, "source-compatible engine"
-    tables = sorted(
-        {t for qid in qids for t in (query_by_id.get(qid) or {}).get("tables_accessed") or []}
+    winner, tie_kind = break_tie(
+        engines, set(), source_aurora, settled_counts=settled_counts, query_id=query_id
     )
-
-    def traffic(e: str) -> float:
-        return round(sum(table_traffic.get((t, e), 0.0) for t in tables), 6)
-
-    ranked = sorted(engines, key=lambda e: (-traffic(e), -engine_counts.get(e, 0), e))
-    winner, runner_up = ranked[0], ranked[1]
-    if traffic(winner) > traffic(runner_up):
-        return winner, f"serves more of these tables' traffic ({traffic(winner):.2f} calls/s)"
-    if engine_counts.get(winner, 0) > engine_counts.get(runner_up, 0):
-        return winner, "serves more queries"
-    return winner, "name order"
+    others = ", ".join(display_engine(e) for e in sorted(engines) if e != winner)
+    if tie_kind == "source_compatible":
+        return (
+            winner,
+            f"scores tie with {others}; {display_engine(winner)} is the source-compatible "
+            "relational engine",
+            tie_kind,
+        )
+    return (
+        winner,
+        f"scores tie with {others}; no routing rule decides between them; "
+        f"listed under {display_engine(winner)} pending your choice",
+        tie_kind,
+    )
 
 
 # ---------------------------------------------------------------------------

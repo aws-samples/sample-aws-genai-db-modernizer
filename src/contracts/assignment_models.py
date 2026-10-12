@@ -51,6 +51,13 @@ Version History:
   legacy-migration note). Every deliverable except the engineering report
   reads this field instead of ``cache_notes``. Defaults to an empty list, so
   artifacts written before 1.7 still load.
+- 1.8 (2026-10-12): Added ``QueryAssignment.tied_engines`` (#503 review): the
+  engines an exact score tie left unresolved -- no ADR-031 rule decided
+  between them -- so the customer can see and choose at the approval gate,
+  rather than only inferring it from free-text ``assignment_reason``. Empty
+  (the common case: no tie, or a tie a real rule like source-compatible or
+  stability decided) for every query, and for every artifact written before
+  this version.
 """
 
 from datetime import datetime
@@ -173,6 +180,15 @@ class QueryAssignment(BaseModel):
         description=(
             "True when the post-schema safety net removed the cache overlay because the "
             "cache's schema design has no in-scope access pattern for the query."
+        ),
+    )
+    tied_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The engines an exact score tie left unresolved for this query (#503): no "
+            "ADR-031 rule -- not source-compatible, not stability -- decided between them, "
+            "so assigned_engine is a deterministic placeholder, not a preference. Empty "
+            "when there was no tie, or a real rule decided it. Sorted, length >= 2 when set."
         ),
     )
 

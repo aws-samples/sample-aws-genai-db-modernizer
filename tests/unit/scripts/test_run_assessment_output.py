@@ -322,10 +322,16 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # for it now correctly wins). #500 round 1: the pattern-match bonus and
     # its 100-point cap that #302 had added on top of the table average are
     # removed outright -- a query's own tables are the whole score, no bonus.
+    # #503 review: one query exactly tied between dynamodb and documentdb used
+    # to land on documentdb only because the old tie-break sorted engine names
+    # alphabetically; the maintainer-decided placeholder for a tie ADR-031
+    # itself has no rule for now looks at settled (non-tied) workload share
+    # first, and dynamodb already carries more of it on this sample --
+    # dynamodb +1, documentdb -1.
     assert rc["before_distribution"] == {
-        "dynamodb": 38,
+        "dynamodb": 39,
         "aurora_mysql": 61,
-        "documentdb": 8,
+        "documentdb": 7,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
     assert "opensearch" not in rc["after_distribution"]  # consolidated away

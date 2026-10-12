@@ -1149,6 +1149,7 @@ def render_decision_report_html(
         if note_bits:
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
+    out += _tied_queries_html(report)
     out += _why_engines_were_dropped_html(report)
     out += _roadmap_html(report)
 
@@ -1804,6 +1805,34 @@ _FULLY_ELIMINATED_RE = re.compile(r"no in-scope (\w+) query remains")
 _CONSOLIDATED_FROM_TO_RE = re.compile(r"^Consolidated \d+ quer(?:y|ies) from (\w+) → (\w+)")
 
 
+def _tied_queries_html(report: dict[str, Any]) -> list[str]:
+    """Decision Report "Pending engine choices" callout (#503): the same
+    ``tied_queries`` the engineering report lists and the approval gate
+    already shows per query, so a reader of either report sees the same
+    unresolved ties, not just a bare count.
+    """
+    esc = escaping.html_text
+    tied = [t for t in (report.get("tied_queries") or []) if isinstance(t, dict)]
+    if not tied:
+        return []
+    items = []
+    for t in sorted(tied, key=lambda t: str(t.get("query_id", ""))):
+        tied_names = ", ".join(esc(display_engine(e)) for e in sorted(t.get("tied_engines") or []))
+        under = esc(display_engine(t.get("assigned_engine", "")))
+        items.append(
+            f"<li><code>{esc(str(t.get('query_id', '?')))}</code>: scores tie between "
+            f"{tied_names}; no routing rule decides between them; listed under "
+            f"<b>{under}</b> pending your choice.</li>"
+        )
+    return [
+        f"<h2 class=section-title>Pending engine choices "
+        f"({len(tied)} {esc(plural_noun(len(tied), 'query', 'queries'))})</h2>",
+        "<div class=card><div class=card-b><ul>",
+        *items,
+        "</ul></div></div>",
+    ]
+
+
 def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
     """Decision Report "Engines not used" note (#326, #167): state why.
 
@@ -2084,6 +2113,40 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
+def _tied_queries_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report section for unresolved query ties (#503); empty
+    without any.
+
+    ``report["tied_queries"]`` is the structured list (``TiedQuery``):
+    every query an exact score tie left unresolved, each with the engines
+    it ties between and the deterministic placeholder it currently sits
+    under -- the same per-query fact the approval gate shows from
+    ``QueryAssignment.tied_engines`` directly, so the two never disagree.
+    """
+    tied = [t for t in (report.get("tied_queries") or []) if isinstance(t, dict)]
+    if not tied:
+        return []
+    out = [
+        f"## Unresolved engine ties ({len(tied)} {plural_noun(len(tied), 'query', 'queries')})",
+        "",
+        "No routing rule decides between the engines listed for each of these "
+        "queries; each is listed under a deterministic placeholder pending the "
+        "customer's own choice.",
+        "",
+        "| Query | Tied engines | Currently listed under |",
+        "|---|---|---|",
+    ]
+    for t in sorted(tied, key=lambda t: str(t.get("query_id", ""))):
+        tied_names = ", ".join(display_engine(e) for e in sorted(t.get("tied_engines") or []))
+        out.append(
+            f"| `{escaping.md_code(str(t.get('query_id', '?')))}` "
+            f"| {escaping.md_cell(tied_names)} "
+            f"| {escaping.md_cell(display_engine(t.get('assigned_engine', '')))} |"
+        )
+    out.append("")
+    return out
+
+
 def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report section for the cache layer (#296); empty without one.
 
@@ -2256,6 +2319,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             )
         out.append("")
 
+    out += _tied_queries_md(report)
     out += _cache_layer_md(report)
     out += _roadmap_md(report)
 
