@@ -104,6 +104,19 @@ class AtxArtifactStore(ArtifactStore):
         return calculate_digest(content)  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------ reads
+    @staticmethod
+    def _is_customer_upload_key(path: str) -> bool:
+        """True for the two ways this store reads a customer's raw upload:
+        an ``artifact://<id>`` direct read (its label/path is not ours to
+        control), or the seed key the collector reads a staged upload from
+        (``core.default_input_key``, ``{db}/{job}/uploads/collector-output.json``).
+
+        False for the pipeline's own STATE writes (collector/analysis/schema
+        output, etc.) -- those are bounded by what we ourselves wrote and
+        don't need the ingestion size check (#142 round 2, N1).
+        """
+        return path.startswith(ARTIFACT_SCHEME) or path.endswith("/uploads/collector-output.json")
+
     def read_json(self, path: str) -> dict:
         artifact_id = self._resolve_id(path)
         if artifact_id is None:
@@ -112,6 +125,13 @@ class AtxArtifactStore(ArtifactStore):
             tmp_path = tmp.name
         try:
             self._sdk.download_artifact(artifact_id, tmp_path)
+            if self._is_customer_upload_key(path):
+                # Check the downloaded file's size before parsing it (#142):
+                # only for a customer upload, the one untrusted input read
+                # through this store.
+                from src.tools.validation.ingestion_limits import check_file_size
+
+                check_file_size(os.path.getsize(tmp_path), source=path)
             with open(tmp_path, encoding="utf-8") as fh:
                 return json.load(fh)  # type: ignore[no-any-return]
         finally:

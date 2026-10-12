@@ -49,6 +49,7 @@ TOOL_USE_RULE = (
 
 COMMANDS_WITH_TOOL_USE_RULE = [
     "modernize.md",
+    "collect.md",
     "reality-check.md",
     "synthesize.md",
     "design-schema-dynamodb.md",

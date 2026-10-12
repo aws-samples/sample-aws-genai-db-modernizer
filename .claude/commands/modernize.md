@@ -9,7 +9,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 ## Arguments
 
-- `<collector_file>` — path to collector output JSON (required)
+- `<collector_file>` — path to collector output JSON (required); must be the `.json` file itself, not a `.zip` archive
 - `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve); on a phase failure, abort (see Error Handling). Equivalent to `-y`.
 - `--mode chat|ui|both` — experience mode. Default is `both`: results appear in chat while the local UI runs alongside. `--mode chat` is chat only, with no UI, for environments with no browser or people who want pure chat. `--mode ui` is UI-first: the UI carries the detail, and chat is limited to the approval-gate numbers, UI pointers, and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
 

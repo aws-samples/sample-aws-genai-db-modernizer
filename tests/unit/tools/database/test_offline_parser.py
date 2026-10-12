@@ -24,6 +24,7 @@ class TestSentinelRegex:
         from src.tools.database.offline_parser import fetch_offline_json
 
         mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {"ContentLength": len(body_text.encode("utf-8"))}
         mock_s3.get_object.return_value = {
             "Body": MagicMock(read=lambda: body_text.encode("utf-8"))
         }
@@ -100,6 +101,94 @@ class TestSentinelRegex:
         result = self._run_fetch(content)
         # Round-trip through json to prove it's a real dict
         assert json.loads(json.dumps(result))["tables"] == [{"table_name": "t1"}]
+
+
+class TestFetchOfflineJsonSizeLimit:
+    """fetch_offline_json rejects an oversized object before reading its body
+    into memory (#142): it checks S3's reported ContentLength via head_object
+    first, so a huge object is never downloaded just to be rejected."""
+
+    @staticmethod
+    def _run_fetch(body_text: str, content_length: int, *, env=None):
+        from src.tools.database.offline_parser import fetch_offline_json
+
+        mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {"ContentLength": content_length}
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=lambda: body_text.encode("utf-8"))
+        }
+        with patch("src.tools.database.offline_parser.boto3.client", return_value=mock_s3):
+            with patch.dict("os.environ", env or {}, clear=False):
+                return fetch_offline_json("bucket", "key"), mock_s3
+
+    def test_passes_under_limit(self):
+        result, mock_s3 = self._run_fetch(
+            '{"tables":[]}', 10, env={"MODERNIZER_MAX_UPLOAD_BYTES": "1000"}
+        )
+        assert result == {"tables": []}
+        mock_s3.get_object.assert_called_once()
+
+    def test_rejects_oversized_object_without_downloading_body(self):
+        from src.tools.validation.ingestion_limits import IngestionLimitError
+
+        mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {"ContentLength": 1_000_000}
+        with patch("src.tools.database.offline_parser.boto3.client", return_value=mock_s3):
+            with patch.dict("os.environ", {"MODERNIZER_MAX_UPLOAD_BYTES": "100"}, clear=False):
+                from src.tools.database.offline_parser import fetch_offline_json
+
+                with pytest.raises(IngestionLimitError, match="1,000,000"):
+                    fetch_offline_json("bucket", "key")
+        mock_s3.get_object.assert_not_called()
+
+
+class TestParseOfflineCollectionCounts:
+    """parse_offline_collection rejects a collection whose table or query
+    count exceeds the configured ingestion ceiling (#142), before building
+    the (more expensive) nested column/index/FK structures."""
+
+    def test_passes_under_limits(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = {"tables": [{"table_name": "t1"}], "queries": [{"query_text": "SELECT 1"}]}
+        with patch.dict(
+            "os.environ",
+            {"MODERNIZER_MAX_UPLOAD_TABLES": "10", "MODERNIZER_MAX_UPLOAD_QUERIES": "10"},
+            clear=False,
+        ):
+            result = parse_offline_collection(data)
+        assert len(result["tables"]) == 1
+
+    def test_rejects_too_many_tables(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.validation.ingestion_limits import IngestionLimitError
+
+        data = {"tables": [{"table_name": f"t{i}"} for i in range(5)], "queries": []}
+        with patch.dict("os.environ", {"MODERNIZER_MAX_UPLOAD_TABLES": "3"}, clear=False):
+            with pytest.raises(IngestionLimitError, match="5"):
+                parse_offline_collection(data)
+
+    def test_rejects_too_many_queries(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.validation.ingestion_limits import IngestionLimitError
+
+        data = {
+            "tables": [],
+            "queries": [{"query_text": f"SELECT {i}"} for i in range(5)],
+        }
+        with patch.dict("os.environ", {"MODERNIZER_MAX_UPLOAD_QUERIES": "3"}, clear=False):
+            with pytest.raises(IngestionLimitError, match="5"):
+                parse_offline_collection(data)
+
+    def test_explicit_null_tables_and_queries_do_not_crash(self):
+        """#142 round 1 (S3): a collection with an explicit JSON ``null`` for
+        ``tables``/``queries`` (not just a missing key) must count as zero,
+        not raise an AttributeError/TypeError out of the count check."""
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = {"tables": None, "queries": None}
+        result = parse_offline_collection(data)
+        assert result["tables"] == []
 
 
 class TestMergeQueryVariants:

@@ -241,6 +241,10 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         )  # nosemgrep: tempfile-without-flush -- file created on disk by NamedTemporaryFile; path used correctly
     try:
         artifacts.download_artifact(artifact_id, tmp_path)
+        # Check the downloaded file's size before parsing it (#142).
+        from src.tools.validation.ingestion_limits import check_file_size
+
+        check_file_size(os.path.getsize(tmp_path), source=f"artifact {artifact_id}")
         with open(tmp_path, encoding="utf-8") as fh:
             collection = json.load(fh)
         store.write_json(seed_key, collection)
@@ -321,11 +325,19 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     )
     from src.contracts.collector_input import CollectorInput
     from src.tools.database.offline_parser import parse_offline_collection
+    from src.tools.validation.ingestion_limits import check_collection_counts
 
     contract_version = raw_input.get("contract_version")
     is_contract = isinstance(contract_version, str) and contract_version.startswith("3")
 
     if is_contract:
+        # Non-contract input is counted inside parse_offline_collection (#142);
+        # contract-format input bypasses that parser, so check it here.
+        check_collection_counts(
+            table_count=len((raw_input.get("database_schema") or {}).get("tables") or []),
+            query_count=len((raw_input.get("queries") or {}).get("query_patterns") or []),
+            source=f"{database_name}/{job_id}",
+        )
         collector_data = raw_input
     else:
         parsed = parse_offline_collection(raw_input)

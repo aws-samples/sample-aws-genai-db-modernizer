@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import uuid
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,6 +23,11 @@ from src.shared.database_name import (  # noqa: E402
     validate_database_name,
 )
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
+from src.tools.validation.ingestion_limits import (  # noqa: E402
+    IngestionLimitError,
+    check_collection_counts,
+    check_file_size,
+)
 
 
 def _output(data: dict) -> None:
@@ -65,15 +71,39 @@ def main() -> None:
     if not os.path.exists(args.file):
         _error(f"File not found: {args.file}")
 
+    # Check the file size before reading it into memory (#142).
+    try:
+        check_file_size(os.path.getsize(args.file), source=args.file)
+    except IngestionLimitError as exc:
+        _error(str(exc))
+
+    if zipfile.is_zipfile(args.file):
+        _error(f"{args.file} is a zip archive; unzip it first and pass the .json file inside.")
+
     # Read and parse the collector file
-    with open(args.file, encoding="utf-8") as f:
-        content = extract_json_object(f.read(), source=args.file)
-        input_data = json.loads(content)
+    try:
+        with open(args.file, encoding="utf-8") as f:
+            raw_text = f.read()
+    except UnicodeDecodeError:
+        _error(f"{args.file} is not a UTF-8 JSON collection.")
+
+    content = extract_json_object(raw_text, source=args.file)
+    input_data = json.loads(content)
 
     # Detect format: contract (processed) vs raw (collection script output)
     is_contract = isinstance(input_data.get("contract_version"), str) and input_data[
         "contract_version"
     ].startswith("3")
+
+    if is_contract:
+        try:
+            check_collection_counts(
+                table_count=len((input_data.get("database_schema") or {}).get("tables") or []),
+                query_count=len((input_data.get("queries") or {}).get("query_patterns") or []),
+                source=args.file,
+            )
+        except IngestionLimitError as exc:
+            _error(str(exc))
 
     from src.storage.local_store import LocalArtifactStore
 
@@ -117,7 +147,10 @@ def main() -> None:
             parse_offline_collection,
         )
 
-        parsed = parse_offline_collection(input_data)
+        try:
+            parsed = parse_offline_collection(input_data)
+        except IngestionLimitError as exc:
+            _error(str(exc))
 
         # Build collector contract output
         from src.agents.collector.mysql_collector import (

@@ -13,13 +13,20 @@ import re
 import boto3
 
 from src.tools.database.collection_text import extract_json_object
+from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
 
 logger = logging.getLogger(__name__)
 
 
 def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict:
-    """Download the offline collection JSON from S3."""
+    """Download the offline collection JSON from S3.
+
+    Checks the object's size via ``head_object`` (#142) and rejects it before
+    downloading the body if it exceeds the configured ingestion limit.
+    """
     s3 = boto3.client("s3", region_name=region)
+    head = s3.head_object(Bucket=bucket, Key=key)
+    check_file_size(head["ContentLength"], source=f"s3://{bucket}/{key}")
     resp = s3.get_object(Bucket=bucket, Key=key)
     content = extract_json_object(
         resp["Body"].read().decode("utf-8"), source=f"s3://{bucket}/{key}"
@@ -57,7 +64,18 @@ def parse_offline_collection(data: dict) -> dict:
     Returns dict with keys: metadata, tables (list of table dicts with
     nested columns/indexes/fks/pk), views, procedures, triggers,
     queries, global_stats.
+
+    Raises:
+        IngestionLimitError: the collection's table or query count exceeds the
+            configured ingestion limit (#142). Checked here, before the more
+            expensive nested column/index/FK/PK structures are built below.
     """
+    check_collection_counts(
+        table_count=len(data.get("tables") or []),
+        query_count=len(data.get("queries") or []),
+        source="offline collection",
+    )
+
     metadata = data.get("metadata", {})
     if isinstance(metadata, str):
         metadata = json.loads(metadata)
@@ -110,7 +128,7 @@ def parse_offline_collection(data: dict) -> dict:
     db_name = metadata.get("database_name", "unknown") if isinstance(metadata, dict) else "unknown"
     known_table_names: set[str] = set()
     tables = []
-    for t in data.get("tables", []):
+    for t in data.get("tables") or []:
         tbl_name = t["table_name"]
         table_id = t.get("table_id") or f"{db_name}.{tbl_name}"
         known_table_names.add(tbl_name)
@@ -145,7 +163,7 @@ def parse_offline_collection(data: dict) -> dict:
         "views": data.get("views", []),
         "procedures": data.get("procedures", []),
         "triggers": data.get("triggers", []),
-        "queries": _transform_queries(data.get("queries", []), db_name, known_table_names),
+        "queries": _transform_queries(data.get("queries") or [], db_name, known_table_names),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
         "wait_events": data.get("wait_events", []),

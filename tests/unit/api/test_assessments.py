@@ -247,6 +247,36 @@ class TestConfirmUpload:
         resp = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db")
         assert resp.status_code == 404
 
+    def test_413_when_upload_exceeds_size_limit(self, mock_services, monkeypatch):
+        """#142: an oversized upload is rejected before the pipeline reads it,
+        and the oversized object is deleted rather than left for a retry."""
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "100")
+        mock_services["s3"].client.head_object.return_value = {"ContentLength": 101}
+        mock_services["s3"].bucket = "test-bucket"
+
+        resp = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db")
+
+        assert resp.status_code == 413
+        assert "MODERNIZER_MAX_UPLOAD_BYTES" in resp.json()["detail"]
+        mock_services["s3"].client.delete_object.assert_called_once_with(
+            Bucket="test-bucket",
+            Key="test_db/job-1/uploads/collector-output.json",
+        )
+
+    def test_413_even_when_delete_of_oversized_upload_fails(self, mock_services, monkeypatch):
+        """#142 round 1 (S1): a delete failure (e.g. permissions, already gone)
+        must not hide the 413 -- the caller still needs to know the upload was
+        rejected, even if cleanup didn't happen."""
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "100")
+        mock_services["s3"].client.head_object.return_value = {"ContentLength": 101}
+        mock_services["s3"].client.delete_object.side_effect = Exception("boom")
+        mock_services["s3"].bucket = "test-bucket"
+
+        resp = client.post("/api/v1/assessments/job-1/uploads/confirm?database_name=test_db")
+
+        assert resp.status_code == 413
+        assert "MODERNIZER_MAX_UPLOAD_BYTES" in resp.json()["detail"]
+
 
 # === GET /api/v1/assessments/{job_id}/uploads ===
 

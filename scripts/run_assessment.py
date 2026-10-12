@@ -40,6 +40,7 @@ import os
 import re
 import sys
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -51,6 +52,11 @@ from src.shared.database_name import (  # noqa: E402
     validate_database_name,
 )
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
+from src.tools.validation.ingestion_limits import (  # noqa: E402
+    IngestionLimitError,
+    check_collection_counts,
+    check_file_size,
+)
 
 os.environ.setdefault("RUNTIME_MODE", "local")
 os.environ.setdefault("ARTIFACT_DIR", "./artifacts")
@@ -173,14 +179,41 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     if not os.path.exists(collector_file):
         _error("collect", f"File not found: {collector_file}")
 
-    with open(collector_file, encoding="utf-8") as f:
-        content = extract_json_object(f.read(), source=collector_file)
-        input_data = json.loads(content)
+    # Check the file size before reading it into memory (#142).
+    try:
+        check_file_size(os.path.getsize(collector_file), source=collector_file)
+    except IngestionLimitError as exc:
+        _error("collect", str(exc))
+
+    if zipfile.is_zipfile(collector_file):
+        _error(
+            "collect",
+            f"{collector_file} is a zip archive; unzip it first and pass the .json file inside.",
+        )
+
+    try:
+        with open(collector_file, encoding="utf-8") as f:
+            raw_text = f.read()
+    except UnicodeDecodeError:
+        _error("collect", f"{collector_file} is not a UTF-8 JSON collection.")
+
+    content = extract_json_object(raw_text, source=collector_file)
+    input_data = json.loads(content)
 
     is_contract = isinstance(input_data.get("contract_version"), str) and input_data[
         "contract_version"
     ].startswith("3")
     is_raw = "collection_version" in input_data or isinstance(input_data.get("queries"), list)
+
+    if is_contract:
+        try:
+            check_collection_counts(
+                table_count=len((input_data.get("database_schema") or {}).get("tables") or []),
+                query_count=len((input_data.get("queries") or {}).get("query_patterns") or []),
+                source=collector_file,
+            )
+        except IngestionLimitError as exc:
+            _error("collect", str(exc))
 
     job_id = str(uuid.uuid4())[:8]
     explicit_db = db_name  # already validated by _run() when the caller passed --db
@@ -220,7 +253,10 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
             parse_offline_collection,
         )
 
-        parsed = parse_offline_collection(input_data)
+        try:
+            parsed = parse_offline_collection(input_data)
+        except IngestionLimitError as exc:
+            _error("collect", str(exc))
 
         # Build collector contract output
         import time

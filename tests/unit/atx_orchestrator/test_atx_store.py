@@ -8,6 +8,7 @@ import json
 import pytest
 
 from src.atx_orchestrator.runtime.atx_store import ARTIFACT_SCHEME, AtxArtifactStore
+from src.tools.validation.ingestion_limits import IngestionLimitError
 
 
 class _FakeSdkStore:
@@ -169,6 +170,73 @@ class TestArtifactScheme:
     def test_exists_true_for_artifact_uri(self) -> None:
         store, _ = _store()
         assert store.exists(f"{ARTIFACT_SCHEME}art-anything") is True
+
+    def test_read_by_artifact_uri_rejects_oversized_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#142 round 1 (C1): the customer upload is read by artifact id (its
+        label/path is not ours to control), so the size check has to happen on
+        the downloaded tmp file before json.load, same as any other key."""
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
+        store, sdk = _store()
+        aid = sdk.upload_artifact(
+            json.dumps({"k": "x" * 1000}).encode(),
+            "d",
+            category_type="STATE",
+            file_type="JSON",
+            label="whatever",
+        )
+
+        with pytest.raises(IngestionLimitError, match="MODERNIZER_MAX_UPLOAD_BYTES"):
+            store.read_json(f"{ARTIFACT_SCHEME}{aid}")
+
+    def test_drives_run_collect_core_with_artifact_input_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: the collector is handed an ``artifact://<id>`` input_key
+        (the real shape the ATX orchestrator passes for a customer upload) and
+        rejects an oversized one before parsing."""
+        from src.atx_orchestrator.core import run_collect_core
+
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
+        store, sdk = _store()
+        aid = sdk.upload_artifact(
+            json.dumps(
+                {"collection_version": 1, "tables": [], "queries": [], "pad": "x" * 1000}
+            ).encode(),
+            "d",
+            category_type="CUSTOMER_INPUT",
+            file_type="JSON",
+            label="customer-collection.json",
+        )
+
+        with pytest.raises(IngestionLimitError, match="MODERNIZER_MAX_UPLOAD_BYTES"):
+            run_collect_core("job-1", "testdb", input_key=f"{ARTIFACT_SCHEME}{aid}", store=store)
+
+
+class TestSizeCheckScope:
+    """#142 round 2 (N1): the size check applies only to the two ways this
+    store reads a customer upload (an ``artifact://`` key, or the collector's
+    seed upload key) -- never to the pipeline's own STATE artifacts, which
+    are bounded by what the pipeline itself already wrote."""
+
+    def test_large_state_artifact_read_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
+        store, _ = _store()
+        store.write_json("db/job/collector/output.json", {"k": "x" * 1000})
+
+        # Must not raise, even though the content is far over the (tiny) cap:
+        # this is the pipeline's own output, not an untrusted upload.
+        assert store.read_json("db/job/collector/output.json") == {"k": "x" * 1000}
+
+    def test_large_seed_upload_key_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
+        store, _ = _store()
+        seed_key = "db/job/uploads/collector-output.json"
+        store.write_json(seed_key, {"k": "x" * 1000})
+
+        with pytest.raises(IngestionLimitError, match="MODERNIZER_MAX_UPLOAD_BYTES"):
+            store.read_json(seed_key)
 
 
 class TestLoadIndexPaginationAndDedup:

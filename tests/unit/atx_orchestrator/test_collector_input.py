@@ -291,6 +291,28 @@ class TestDiscoverUploadedInput:
         assert fake.downloaded == ["art-1"]
         assert store.read_json(seed) == {"collection_version": 9}
 
+    def test_oversized_upload_rejected_before_staging(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#142: the downloaded artifact's size is checked before it is parsed
+        or staged. An oversized upload raises and is never written to the
+        store's seed key."""
+        from src.tools.validation.ingestion_limits import IngestionLimitError
+
+        monkeypatch.setenv("MODERNIZER_MAX_UPLOAD_BYTES", "10")
+        fake = _FakeArtifactStore(
+            [_artifact("art-1", "default", path="discourse-collection.json")],
+            content={"collection_version": 7, "padding": "x" * 1000},
+        )
+        _inject_sdk(monkeypatch, fake)
+        store = _FakeStore()
+        seed = core.default_input_key("uuid1", "discourse")
+
+        with pytest.raises(IngestionLimitError, match="MODERNIZER_MAX_UPLOAD_BYTES"):
+            core._discover_uploaded_input(store, "uuid1", "discourse")
+
+        assert not store.exists(seed)
+
 
 # =============================================================================
 # orchestrator wiring: run_assessment_core_via_a2a reads the upload-gate's key

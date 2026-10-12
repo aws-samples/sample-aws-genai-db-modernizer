@@ -1,5 +1,6 @@
 """Assessment routes — job lifecycle and monitoring."""
 
+import logging
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,9 @@ from src.api.models.responses import (
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.shared.ranking import engine_confidence, main_engine
+from src.tools.validation.ingestion_limits import IngestionLimitError, check_file_size
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
 
@@ -92,18 +96,29 @@ async def confirm_upload(job_id: str, database_name: str):
 
     try:
         head = s3_svc.client.head_object(Bucket=s3_svc.bucket, Key=upload_key)
-        return {
-            "job_id": job_id,
-            "status": "confirmed",
-            "filename": "collector-output.json",
-            "size_bytes": head["ContentLength"],
-            "upload_key": upload_key,
-        }
     except Exception as e:
         raise HTTPException(
             status_code=404,
             detail=f"Upload not found at {upload_key}. Did the presigned URL upload complete?",
         ) from e
+
+    # Reject an oversized upload before the pipeline ever reads it (#142).
+    try:
+        check_file_size(head["ContentLength"], source=upload_key)
+    except IngestionLimitError as exc:
+        try:
+            s3_svc.client.delete_object(Bucket=s3_svc.bucket, Key=upload_key)
+        except Exception:
+            logger.warning("confirm_upload: failed to delete oversized upload %s", upload_key)
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
+    return {
+        "job_id": job_id,
+        "status": "confirmed",
+        "filename": "collector-output.json",
+        "size_bytes": head["ContentLength"],
+        "upload_key": upload_key,
+    }
 
 
 @router.get("/{job_id}/uploads")
