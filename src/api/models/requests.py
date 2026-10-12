@@ -1,6 +1,8 @@
 """Request models for the Database Modernizer Assessment API."""
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from src.shared.database_name import validate_database_name as _validate_database_name
 
 
 class ConnectionDetails(BaseModel):
@@ -40,6 +42,11 @@ class AssessmentRequest(BaseModel):
     )
     job_id: str | None = None  # Pre-created job ID from /assessments/prepare
 
+    @field_validator("database_name")
+    @classmethod
+    def _check_database_name(cls, value: str) -> str:
+        return _validate_database_name(value)
+
     @model_validator(mode="after")
     def validate_connection_required(self):
         if self.collection_mode in ("live", "ddl") and not self.connection:
@@ -52,3 +59,8 @@ class AssessmentRequest(BaseModel):
 class PrepareAssessmentRequest(BaseModel):
     database_name: str
     source_database_type: str = "mysql"
+
+    @field_validator("database_name")
+    @classmethod
+    def _check_database_name(cls, value: str) -> str:
+        return _validate_database_name(value)

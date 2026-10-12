@@ -89,6 +89,14 @@ def main() -> None:
         print(json.dumps({"status": "error", "message": violation}))
         sys.exit(1)
 
+    from src.shared.database_name import validate_database_name
+
+    try:
+        args.db = validate_database_name(args.db)
+    except ValueError as exc:
+        print(json.dumps({"status": "error", "message": str(exc)}))
+        sys.exit(1)
+
     result = run(args.job_id, args.db, args.artifact_root, args.assignment_version)
     print(json.dumps(result))
     sys.exit(0 if result["status"] != "error" else 1)

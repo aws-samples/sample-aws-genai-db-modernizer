@@ -46,6 +46,10 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts._compact_output import CompactConsole, display_path, want_verbose  # noqa: E402
+from src.shared.database_name import (  # noqa: E402
+    DERIVED_DATABASE_NAME_ERROR,
+    validate_database_name,
+)
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 
 os.environ.setdefault("RUNTIME_MODE", "local")
@@ -179,19 +183,31 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
     is_raw = "collection_version" in input_data or isinstance(input_data.get("queries"), list)
 
     job_id = str(uuid.uuid4())[:8]
+    explicit_db = db_name  # already validated by _run() when the caller passed --db
 
     if is_contract:
         collector_data = input_data
-        db_name = db_name or (
+        db_name = explicit_db or (
             collector_data.get("metadata", {})
             .get("source_database", {})
             .get("database_name", "unknown_db")
         )
+        if explicit_db is None:
+            try:
+                db_name = validate_database_name(db_name)
+            except ValueError:
+                _error("collect", DERIVED_DATABASE_NAME_ERROR)
     elif is_raw:
-        db_name = db_name or input_data.get("metadata", {}).get("database_name", "unknown_db")
-        if not db_name and isinstance(input_data.get("metadata"), str):
+        db_name = explicit_db or input_data.get("metadata", {}).get("database_name", "unknown_db")
+        if not explicit_db and isinstance(input_data.get("metadata"), str):
             meta = json.loads(input_data["metadata"])
             db_name = meta.get("database_name", meta.get("schema_name", "unknown_db"))
+
+        if explicit_db is None:
+            try:
+                db_name = validate_database_name(db_name)
+            except ValueError:
+                _error("collect", DERIVED_DATABASE_NAME_ERROR)
 
         # Upload raw file
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
@@ -813,6 +829,12 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     violation = sandbox_violation(args)
     if violation:
         _error("init", violation)
+
+    if args.db is not None:
+        try:
+            args.db = validate_database_name(args.db)
+        except ValueError as exc:
+            _error("init", str(exc))
 
     from src.storage.local_store import LocalArtifactStore
 

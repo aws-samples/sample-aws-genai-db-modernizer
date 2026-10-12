@@ -17,6 +17,10 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.shared.database_name import (  # noqa: E402
+    DERIVED_DATABASE_NAME_ERROR,
+    validate_database_name,
+)
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 
 
@@ -52,6 +56,12 @@ def main() -> None:
     if violation:
         _error(violation)
 
+    if args.db is not None:
+        try:
+            args.db = validate_database_name(args.db)
+        except ValueError as exc:
+            _error(str(exc))
+
     if not os.path.exists(args.file):
         _error(f"File not found: {args.file}")
 
@@ -78,12 +88,23 @@ def main() -> None:
             .get("source_database", {})
             .get("database_name", "unknown_db")
         )
+        if args.db is None:
+            try:
+                db_name = validate_database_name(db_name)
+            except ValueError:
+                _error(DERIVED_DATABASE_NAME_ERROR)
     else:
         # Raw collection script output — parse with offline parser
         db_name = args.db or input_data.get("metadata", {}).get("database_name", "unknown_db")
         if not args.db and isinstance(input_data.get("metadata"), str):
             meta = json.loads(input_data["metadata"])
             db_name = meta.get("database_name", meta.get("schema_name", "unknown_db"))
+
+        if args.db is None:
+            try:
+                db_name = validate_database_name(db_name)
+            except ValueError:
+                _error(DERIVED_DATABASE_NAME_ERROR)
 
         # Upload raw file
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"

@@ -662,6 +662,13 @@ def main() -> None:
     if violation:
         _error(violation)
 
+    from src.shared.database_name import validate_database_name
+
+    try:
+        args.db = validate_database_name(args.db)
+    except ValueError as exc:
+        _error(str(exc))
+
     if args.check_costs is not None and args.check_costs_all:
         _error("--check-costs and --check-costs-all are mutually exclusive")
 

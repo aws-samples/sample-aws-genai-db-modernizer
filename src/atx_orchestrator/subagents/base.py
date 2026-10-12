@@ -20,17 +20,14 @@ import logging
 import re
 from collections.abc import Callable
 
+from src.shared.database_name import validate_database_name
+
 logger = logging.getLogger(__name__)
 
 
 def _validate_database_name(params: dict) -> dict:
     """Constrain the caller's database identifier before constructing artifact keys."""
-    name = params.get("database_name", "")
-    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name.strip()):
-        raise ValueError(
-            "database_name must contain 1 to 128 ASCII letters, digits, underscores or hyphens."
-        )
-    params["database_name"] = name.strip()
+    params["database_name"] = validate_database_name(params.get("database_name", ""))
     return params
 
 

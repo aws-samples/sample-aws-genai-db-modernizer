@@ -43,6 +43,13 @@ def main() -> None:
     if violation:
         _error(violation)
 
+    from src.shared.database_name import validate_database_name
+
+    try:
+        args.db = validate_database_name(args.db)
+    except ValueError as exc:
+        _error(str(exc))
+
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)

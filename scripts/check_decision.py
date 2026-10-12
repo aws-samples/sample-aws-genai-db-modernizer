@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts._sandbox import NAME_ARGS, sandbox_violation  # noqa: E402
+from src.shared.database_name import validate_database_name  # noqa: E402
 from src.storage.local_store import LocalArtifactStore  # noqa: E402
 
 
@@ -45,6 +46,12 @@ def main() -> None:
     violation = sandbox_violation(args, name_args=(*NAME_ARGS, "decision"))
     if violation:
         print(json.dumps({"status": "error", "message": violation}))
+        sys.exit(2)
+
+    try:
+        args.db = validate_database_name(args.db)
+    except ValueError as exc:
+        print(json.dumps({"status": "error", "message": str(exc)}))
         sys.exit(2)
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
