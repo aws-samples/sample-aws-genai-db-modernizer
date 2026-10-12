@@ -172,6 +172,19 @@ Version History:
   entries, same as today; an access pattern with no ``reason_index`` reads
   its reason from ``description`` directly, same as every non-relational
   engine's entry always has.
+- 1.10 (2026-10-12, #530 review): Added optional ``source_table_count``:
+  the collected schema's own tables-only total (no views). ``build_summary``'s
+  "Analyzed N source tables ..." opening sentence already stated this number
+  in prose, the only place it existed; a renderer that needed it without a
+  completed schema design (``table_mappings`` stays empty then, #530) had to
+  parse it back out of that sentence with a regex
+  (``src.report.renderers._n_tables_mapped``'s ``_ANALYZED_SOURCE_TABLES``).
+  It is now also this structured field, computed the same way
+  (``synthesis_report.source_table_count``, which ``build_summary`` itself
+  now calls) so the two can never disagree; the renderer reads this field
+  first and only falls back to the regex, then to the migration-wave union,
+  for a report synthesized before this field existed. Backward compatible --
+  defaults to ``None``.
 """
 
 from datetime import datetime
@@ -510,7 +523,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.7",
+        default="1.10",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -581,6 +594,16 @@ class SynthesisOutputContract(BaseModel):
             "keyword, a column the SQL parser mistook for a table (#316). Copied "
             "unchanged from the assignment's own unresolved_table_names; None for a "
             "report synthesized before this field existed."
+        ),
+    )
+    source_table_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The collected schema's own tables-only total (no views, #530 review): the "
+            "same figure summary_deterministic's 'Analyzed N source tables ...' opening "
+            "sentence already states, as a structured field. None for a report "
+            "synthesized before this field existed."
         ),
     )
 

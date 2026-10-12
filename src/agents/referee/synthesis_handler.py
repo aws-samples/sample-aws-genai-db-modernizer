@@ -43,6 +43,7 @@ from src.agents.referee.synthesis_report import (
     designed_and_not_designed_engines,
     generate_executive_summary,
     schema_table_defs,
+    source_table_count,
 )
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.contracts.synthesis_output import SynthesisOutputContract
@@ -518,6 +519,10 @@ def _write_synthesis_report(
         "migration_waves": result.get("migration_waves"),
         # #225: how many table_assignments names the waves dropped as parser noise.
         "unresolved_names": result.get("unresolved_names"),
+        # #530 review: the collected schema's own tables-only total (no
+        # views), structured so a renderer no longer has to parse it out of
+        # summary_deterministic's prose.
+        "source_table_count": source_table_count(data),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

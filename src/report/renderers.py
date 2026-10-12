@@ -1402,6 +1402,59 @@ def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]]) -> st
     return ": " + ", ".join(f"{counts[p]} {p}" for p in order if counts.get(p))
 
 
+# "Analyzed 311 source tables and 1654 query patterns across 5 target
+# database(s)." -- ``build_summary``'s own fixed, deterministic opening
+# sentence (never the LLM-rewritten ``summary``, only ``summary_deterministic``,
+# whose format synthesis itself controls). Same precedent as
+# ``_RESOLVED_RISKS``/``_PER_ENGINE_APS`` above: read a count back out of this
+# one deterministic string rather than re-derive an approximation of it.
+_ANALYZED_SOURCE_TABLES = re.compile(r"\bAnalyzed (\d+) source tables?\b")
+
+
+def _n_tables_mapped(report: dict[str, Any]) -> tuple[int, bool]:
+    """(table count, from a completed schema design) for "N tables mapped to a
+    named target" (#530).
+
+    ``table_mappings`` gives the precise, per-table figure once a schema
+    design has run. Without one every entry is empty, so this read 0 while
+    the "Tables migrate" tile and roadmap, read from the same assignment,
+    already named real tables — the deck's own basis for the figure
+    contradicted the figure it was supposed to support.
+
+    Without a completed design, prefers ``source_table_count``
+    (``SynthesisOutputContract``, #530 review): the collected schema's own
+    tables-only total (no views), the same figure ``build_summary``'s
+    "Analyzed N source tables ..." opening sentence already states, now a
+    structured field. A report synthesized before this field existed has
+    none, so this falls back to parsing that sentence out of
+    ``summary_deterministic`` (``_ANALYZED_SOURCE_TABLES``), and only then to
+    the migration roadmap's own per-wave table lists
+    (``resolve_migration_waves``). Those lists mix in views -- wave 1
+    carries "every collected table and view" (#321) -- so their union can
+    overcount against the tables-only total by exactly the view count
+    (#530 round 2: discourse's ``badge_posts`` view inflated it from 311 to
+    312); it is a last resort only, for a report old enough to carry
+    neither ``source_table_count`` nor a parseable summary.
+
+    The second element says whether the figure came from a completed
+    design, so a caller can avoid claiming a per-table confidence score
+    that does not exist without one.
+    """
+    mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
+    if mappings:
+        return len(mappings), True
+    count = report.get("source_table_count")
+    if isinstance(count, int):
+        return count, False
+    m = _ANALYZED_SOURCE_TABLES.search(str(report.get("summary_deterministic") or ""))
+    if m:
+        return int(m.group(1)), False
+    tables: set[str] = set()
+    for w in resolve_migration_waves(report):
+        tables.update(str(t) for t in (w.get("tables") or []) if t)
+    return len(tables), False
+
+
 # The wave-specific engine buckets come from src/shared/migration_wave_engines.py
 # (#225), the same ones src.agents.referee.migration_waves
 # uses -- not the broader _CACHE_ENGINES/_RELATIONAL_ENGINES above (which also

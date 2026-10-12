@@ -65,6 +65,7 @@ from .renderers import (
     SHARED_TABLES_NOTE,
     _architecture_engines,
     _mapping_split,
+    _n_tables_mapped,
     clip,
     filtered_risks,
     fmt_num,
@@ -888,6 +889,76 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         for w in stored_waves
         if w.get("moves_from") and w.get("homogeneity") is None
     )
+    # #530: "Basis of the analysis" said "0 tables mapped to a named target" on
+    # the same run this ``migrated`` figure (and slide 2's tile) already call
+    # 8 -- read from ``table_mappings``, which stays empty without a completed
+    # schema design. Same fallback source as ``migrated`` above
+    # (``resolve_migration_waves``), so the two counts can't disagree.
+    n_tables, schema_mapped = _n_tables_mapped(rep)
+    # #530 round 2: without a completed design, name the actual wave
+    # relationship instead of a bare count -- "N tables mapped ... each with
+    # its own confidence score" implies a per-table figure that does not
+    # exist without a design, and a bare "N tables assigned" when nothing is
+    # known at all (no waves, no mappings) would be a fabricated zero.
+    if schema_mapped:
+        basis_table_line = (
+            f"{n_tables:,} {plural_noun(n_tables, 'table')} mapped to a named target, each "
+            "with its own confidence score"
+        )
+    elif not n_tables:
+        basis_table_line = "No source tables are mapped or assigned to a target yet"
+    else:
+        # #530 round 3 review: leads with the disclaimer, not the wave detail
+        # -- a clip below must never be able to cut the one clause that
+        # explains why there is no per-table confidence score.
+        disclaimer = "Schema mapping has not run, so there are no per-table confidence scores yet"
+        # Any wave with a ``homogeneity`` (homogeneous, heterogeneous or
+        # cross_engine, #381) is wave 1, the whole collected schema moving
+        # as one -- the same marker ``migrated`` above excludes by. A
+        # heterogeneous wave 1 names no engine (``engines`` is empty, #321),
+        # so it still falls through to the no-base-engine wording below.
+        base_wave = next((w for w in stored_waves if w.get("homogeneity") is not None), None)
+        base_engines = (base_wave or {}).get("engines") or []
+        base_label = ENGINE_LABEL.get(base_engines[0], base_engines[0]) if base_engines else None
+        migration_engines = [e for e in engines if e["role"] == "Migration target"]
+        target_names = join_names(
+            [ENGINE_LABEL.get(e["engine"], e["engine"]) for e in migration_engines]
+        )
+        if base_label and migrated and target_names:
+            detail = (
+                f"all {n_tables:,} source {plural_noun(n_tables, 'table')} "
+                f"{plural_verb(n_tables, 'is', 'are')} placed: the whole schema lands on "
+                f"{base_label} in wave 1, then {migrated:,} "
+                f"{plural_verb(migrated, 'moves', 'move')} on to {target_names}"
+            )
+        elif base_label:
+            detail = (
+                f"all {n_tables:,} source {plural_noun(n_tables, 'table')} "
+                f"{plural_verb(n_tables, 'is', 'are')} placed on {base_label} in wave 1"
+            )
+        elif stored_waves:
+            # There is a roadmap, just no single wave covering the whole
+            # schema to name (e.g. a heterogeneous wave 1 with no engine).
+            detail = (
+                f"{n_tables:,} source {plural_noun(n_tables, 'table')} "
+                f"{plural_verb(n_tables, 'is', 'are')} assigned across the migration roadmap"
+            )
+        else:
+            # No waves at all -- never name "the migration roadmap" when
+            # there isn't one.
+            detail = (
+                f"{n_tables:,} source {plural_noun(n_tables, 'table')} "
+                f"{plural_verb(n_tables, 'is', 'are')} assigned to a target engine"
+            )
+        basis_table_line = f"{disclaimer}; {detail}"
+        # Defensive clip (same risk ``_wave_card_text`` guards against for the
+        # Migration Sequencing card): a pathological number of migration-target
+        # engines joined by name could still run long enough to overflow this
+        # card's 5.05in x 1.85in text box, which also carries two more bullets.
+        # At real wordpress/discourse scale this estimates to 0.4-0.6in of
+        # that budget (see test_basis_table_count.py's height assertions); the
+        # disclaimer leads, so a clip here only ever drops the wave detail.
+        basis_table_line = clip(basis_table_line, 220)
     # The cache layer owns no query (#296): it is shown by the reads it fronts and
     # their share of calls, never by a share of the workload.
     cache = {
@@ -1199,7 +1270,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 rep,
             )
         ),
-        "n_tables": len(rep.get("table_mappings") or []),
+        "n_tables": n_tables,
+        "schema_mapped": schema_mapped,
+        "basis_table_line": basis_table_line,
         # ": 20 migrate, 1 to the cache layer" (#258); says where the rest go (#296)
         "mapping_split": _mapping_split(
             rep, [m for m in rep.get("table_mappings") or [] if isinstance(m, dict)]
@@ -1339,12 +1412,17 @@ def slide_summary(prs, f):
     caches = [e for e in f["engines"] if e.get("cached_queries")]
     # The summary beside this footer says "22 source tables mapped"; when some of
     # them map to the cache layer, the footer says how 21 relates to 22 (#258).
+    # #530 round 2: without a completed schema design, f["n_tables"] is the
+    # migration roadmap's own table count (or the deck's "Analyzed N source
+    # tables" line), not a per-table mapping -- "mapped source tables" would
+    # claim a precision that figure does not have.
     n_mig = f["migrated"]
     split = str(f.get("mapping_split") or "").lstrip(": ")
+    tables_noun = "mapped source tables" if f["schema_mapped"] else "source tables"
     subject = (
-        f"{n_mig} of the {f['n_tables']} mapped source tables" + (f" ({split})" if split else "")
+        f"{n_mig:,} of the {f['n_tables']:,} {tables_noun}" + (f" ({split})" if split else "")
         if f["n_tables"] > n_mig > 0
-        else f"{n_mig} source {plural_noun(n_mig, 'table')}"
+        else f"{n_mig:,} source {plural_noun(n_mig, 'table')}"
     )
     footer_note(
         s,
@@ -1418,11 +1496,14 @@ def slide_evidence(prs, f):
     tf = textbox(s, 6.85, 2.86, 5.05, 1.85)
     para(tf, "Basis of the analysis", size=11.0, bold=True, color=BLUE, first=True)
     co_dep = a.get("co_dependency_groups", 0)
+    # #530: the table-count bullet is built once, in derive(), as
+    # f["basis_table_line"] -- it needs the wave/engine data derive() already
+    # has in scope to name the actual wave relationship without a schema
+    # design, not just this slide's own facts.
     for line in (
         f"{a.get('in_scope_count', 0):,} of {query_count:,} query "
         f"{plural_noun(query_count, 'pattern')} in scope",
-        f"{f['n_tables']} {plural_noun(f['n_tables'], 'table')} mapped to a named target, each "
-        "with its own confidence score",
+        f["basis_table_line"],
         f"{co_dep} co-dependency {plural_noun(co_dep, 'group')} — table sets that must "
         "move together",
     ):

@@ -2698,6 +2698,21 @@ def _risk_sentence(n_open: int, level: str, n_resolved: int) -> str:
     return text + "."
 
 
+def source_table_count(data: SynthesisData) -> int:
+    """The collected schema's own tables-only total (no views, #530 review).
+
+    ``build_summary``'s "Analyzed N source tables ..." opening line was the
+    only place this number existed, forcing a renderer that needed it
+    (``src.report.renderers._n_tables_mapped``, when no schema design has
+    run) to parse it back out of that prose with a regex. Giving it its own
+    contract field (``SynthesisOutputContract.source_table_count``) makes it
+    a first-class, structured figure instead; this helper is the one place
+    that still computes it, so the field and the summary sentence can never
+    disagree.
+    """
+    return len(data.source_tables)
+
+
 def build_summary(
     data: SynthesisData,
     ranking: list[dict],
@@ -2720,7 +2735,7 @@ def build_summary(
         return "No analysis results available."
 
     top = ranking[0]
-    total_source_tables = len(data.source_tables)
+    total_source_tables = source_table_count(data)
     total_queries = len(data.source_queries)
 
     parts = []
