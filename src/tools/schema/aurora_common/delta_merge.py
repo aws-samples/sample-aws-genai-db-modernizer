@@ -35,8 +35,10 @@ from src.contracts.aurora_design_delta import (
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
     AgentCollectorInput,
+    AgentQueryPattern,
     AgentTable,
 )
+from src.tools.schema.aurora_common.access_patterns import derive_access_patterns
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     POSTGRES,
@@ -84,6 +86,13 @@ class AuroraDesignBase:
     source_engine: str
     tables: list[AgentTable]
     source_data_types: dict[tuple[str, str], str] = field(default_factory=dict)
+    queries: list[AgentQueryPattern] = field(default_factory=list)
+    """The observed query log, projected onto access patterns by the merge.
+
+    Defaulted rather than required so every existing construction site keeps
+    working: an empty log yields no access patterns, which is the same output
+    those callers produce today.
+    """
 
     @property
     def migration_strategy(self) -> str:
@@ -108,6 +117,7 @@ class AuroraDesignBase:
             source_engine=agent_collector.source_database_engine,
             tables=list(agent_collector.tables),
             source_data_types=source_data_types(raw_collector or {}),
+            queries=list(agent_collector.queries.query_patterns),
         )
 
     def generate(self, type_overrides: TypeOverrides | None = None) -> DdlResult:
@@ -507,6 +517,23 @@ def merge_design_delta(
     trade_offs = [t.model_dump(mode="json") for t in contract.trade_offs] or [
         _default_trade_off(base, len(base.tables))
     ]
+    # Derived here rather than taken from the delta, for the same reason
+    # ``generated_ddl`` is: the model does not author it. The delta contract
+    # declares no access patterns at all, so there is no path by which a
+    # measured ``design_rps`` can be re-authored - GitHub #136 is that field
+    # going wrong on the DocumentDB path, where the model does author it.
+    #
+    # Derived from ``base.tables``, which is the source index set the observed
+    # queries actually ran against, so ``index_used`` describes the measured
+    # baseline. Index add/modify entries in the delta are deliberately not
+    # reflected: re-deriving against the post-merge index set would describe the
+    # proposed design instead, which is a different (and also useful) question,
+    # but it needs an _Index -> AgentTable adaptation that belongs in its own
+    # change rather than riding along here.
+    derived = derive_access_patterns(base.queries, base.tables)
+    warnings.extend(
+        f"Access pattern '{r.get('pattern_id')}': {r.get('reason')}" for r in derived.residuals
+    )
     output = {
         "contract_version": "1.0",
         "job_id": base.job_id,
@@ -533,6 +560,7 @@ def merge_design_delta(
             for t, t_ddl in ((t, table_ddls[t.table_name]) for t in base.tables)
         ],
         "generated_ddl": assemble_full_ddl(ddl.tables),
+        "access_patterns": derived.patterns,
         "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
         + _time_zone_notes(ddl),
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
