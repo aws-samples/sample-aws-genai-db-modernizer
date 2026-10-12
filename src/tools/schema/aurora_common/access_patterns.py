@@ -253,7 +253,7 @@ def derive_access_patterns(
                     ),
                     "in_scope": False,
                     "out_of_scope_reason": (
-                        "Query does not touch any table designed for this target."
+                        "Query does not reference any table designed for this target."
                     ),
                 }
             )
