@@ -375,3 +375,100 @@ class TestUpsertTableExtraction:
         )
         result = _transform_queries([{"query_text": sql}], "blog", {"posts"})
         assert result[0]["tables_accessed"] == ["blog.posts"]
+
+    def test_lowercase_do_update_does_not_capture_set(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = (
+            "insert into posts (id, title) values (1, 'a')"
+            " on conflict (id) do update set title = excluded.title"
+        )
+        result = _transform_queries([{"query_text": sql}], "blog", {"posts"})
+        assert result[0]["tables_accessed"] == ["blog.posts"]
+
+    def test_schema_qualified_upsert_does_not_capture_set(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = (
+            "INSERT INTO app.application_requests (date, req_type, count)"
+            " VALUES ($1, $2, $3) ON CONFLICT (date, req_type)"
+            " DO UPDATE SET count = app.application_requests.count + $3"
+        )
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["app.application_requests"]
+
+
+class TestRefreshMaterializedViewTableExtraction:
+    """REFRESH MATERIALIZED VIEW [CONCURRENTLY] <name> must report the view."""
+
+    def test_refresh_materialized_view_concurrently(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "REFRESH MATERIALIZED VIEW CONCURRENTLY gamification_leaderboard_cache"
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["gamification_leaderboard_cache"]
+
+    def test_refresh_materialized_view_without_concurrently(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "REFRESH MATERIALIZED VIEW gamification_leaderboard_cache"
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["gamification_leaderboard_cache"]
+
+    def test_refresh_materialized_view_lowercase(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "refresh materialized view concurrently gamification_leaderboard_cache"
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["gamification_leaderboard_cache"]
+
+    def test_refresh_materialized_view_schema_qualified(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "REFRESH MATERIALIZED VIEW CONCURRENTLY reports.leaderboard_cache"
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["reports.leaderboard_cache"]
+
+    def test_refresh_materialized_view_quoted_name(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = 'REFRESH MATERIALIZED VIEW CONCURRENTLY "leaderboard_cache"'
+        result = _transform_queries([{"query_text": sql}], "discourse", set())
+        assert result[0]["tables_accessed"] == ["leaderboard_cache"]
+
+
+class TestNoSqlKeywordReturnedAsTable:
+    """A table regex match must never be a SQL keyword from the surrounding clause."""
+
+    _KEYWORDS = {
+        "SET",
+        "WHERE",
+        "VALUES",
+        "DO",
+        "ON",
+        "CONFLICT",
+        "NOTHING",
+        "RETURNING",
+        "CONCURRENTLY",
+        "KEY",
+        "DUPLICATE",
+    }
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO `wp_options` (`option_name`) VALUES (...)"
+            " ON DUPLICATE KEY UPDATE `option_name` = VALUES(`option_name`)",
+            'INSERT INTO "posts" ("id") VALUES (1)'
+            ' ON CONFLICT ("id") DO UPDATE SET "title" = EXCLUDED."title"',
+            "INSERT INTO post_timings (topic_id) SELECT $1 ON CONFLICT DO NOTHING",
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_cache",
+        ],
+    )
+    def test_no_keyword_in_tables_accessed(self, sql):
+        from src.tools.database.offline_parser import _transform_queries
+
+        result = _transform_queries([{"query_text": sql}], "db", set())
+        for table in result[0]["tables_accessed"]:
+            bare_name = table.split(".")[-1].strip('`"[]')
+            assert bare_name.upper() not in self._KEYWORDS

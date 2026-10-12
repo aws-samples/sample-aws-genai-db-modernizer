@@ -370,7 +370,11 @@ class PostgreSQLRemoteCollector:
 # ---------------------------------------------------------------------------
 
 _QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE)\b", re.I)
-_TABLE_RE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+(?:public\.)?\"?(\w+)\"?", re.I)
+_TABLE_RE = re.compile(
+    r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+"
+    r'(?:public\.)?"?(\w+)"?',
+    re.I,
+)
 _WHERE_COL_RE = re.compile(r"WHERE\s+.*?\"?(\w+)\"?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", re.I)
 _AND_COL_RE = re.compile(r"(?:AND|OR)\s+\"?(\w+)\"?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", re.I)
 _ORDER_COL_RE = re.compile(r"ORDER\s+BY\s+(.*?)(?:LIMIT|OFFSET|$)", re.I)

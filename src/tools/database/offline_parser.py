@@ -300,9 +300,10 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
         #   FROM "table"       (PostgreSQL/Oracle double quote)
         #   FROM [table]       (SQL Server bracket)
         #   FROM schema.table, FROM [schema].[table], FROM `schema`.`table`
+        #   REFRESH MATERIALIZED VIEW [CONCURRENTLY] <name> (PostgreSQL)
         # The named groups capture optional schema and the table.
         table_re = re.compile(
-            r"(?:FROM|JOIN|INTO|UPDATE)\s+"
+            r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+"
             r'(?:[`"\[]?(?P<schema>\w+)[`"\]]?\s*\.\s*)?'
             r'[`"\[]?(?P<table>\w+)[`"\]]?',
             re.I,

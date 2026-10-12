@@ -529,7 +529,10 @@ def get_database_insights(
 # ---------------------------------------------------------------------------
 
 _QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
-_TABLE_RE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+`?(\w+)`?", re.I)
+_TABLE_RE = re.compile(
+    r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+`?(\w+)`?",
+    re.I,
+)
 
 
 def _extract_query_type(sql: str) -> str:
@@ -538,7 +541,16 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    tables = list(dict.fromkeys(_TABLE_RE.findall(sql)))
+    # ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE name a column, not a
+    # table. Mask those clauses so the following identifier (e.g. SET) is
+    # not captured by the UPDATE alternative in _TABLE_RE.
+    scanned = re.sub(
+        r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
+        " ",
+        sql,
+        flags=re.I,
+    )
+    tables = list(dict.fromkeys(_TABLE_RE.findall(scanned)))
     return tables if tables else ["unknown"]
 
 
