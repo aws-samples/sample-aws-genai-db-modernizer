@@ -160,6 +160,10 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
   plus the rendered deliverables, keyed on the assignment version
 - `decisions/` (recorded approvals), `_logs/` (script logs)
 
+`artifacts/.trash/` (outside any job folder): job folders being deleted by
+`DELETE /assessments/{job_id}/artifacts`; leftover tombstones older than an
+hour are removed, up to 5 per later delete call.
+
 `.modernizer-state.json` at the repo root is the job cursor, not the source of
 truth.
 

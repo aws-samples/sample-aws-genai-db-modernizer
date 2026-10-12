@@ -59,3 +59,48 @@ describe('buildDashboardActionItems', () => {
     expect(idsOf(items)).not.toContain('cancel');
   });
 });
+
+// #529: a finished job's artifacts can be deleted from disk via
+// DELETE /assessments/{job_id}/artifacts. "Delete artifacts" takes Cancel's
+// place for exactly the jobs that no longer offer it (terminal ones) --
+// never offered alongside Cancel, never offered for a job still in flight.
+describe('buildDashboardActionItems -- delete artifacts (#529)', () => {
+  it.each(['SUCCEEDED', 'CANCELLED', 'FAILED'])(
+    'offers Delete artifacts when the selected job is %s (terminal)',
+    (status) => {
+      const items = buildDashboardActionItems(t, [{ jobId: 'job-1', status }]);
+      expect(idsOf(items)).toContain('delete-artifacts');
+      const deleteItem = items.find((item) => item.id === 'delete-artifacts');
+      expect(deleteItem.text).toBe('dashboard.actions.delete-artifacts');
+    },
+  );
+
+  it.each(['RUNNING', 'WAITING', 'PENDING'])(
+    'omits Delete artifacts when the selected job is %s (not terminal)',
+    (status) => {
+      const items = buildDashboardActionItems(t, [{ jobId: 'job-1', status }]);
+      expect(idsOf(items)).not.toContain('delete-artifacts');
+    },
+  );
+
+  it('never offers Delete artifacts and Cancel at the same time', () => {
+    for (const status of ['SUCCEEDED', 'CANCELLED', 'FAILED', 'RUNNING', 'WAITING', 'PENDING']) {
+      const items = buildDashboardActionItems(t, [{ jobId: 'job-1', status }]);
+      const ids = idsOf(items);
+      expect(ids.includes('cancel') && ids.includes('delete-artifacts')).toBe(false);
+    }
+  });
+
+  it('does not offer Delete artifacts when nothing is selected', () => {
+    const items = buildDashboardActionItems(t, []);
+    expect(idsOf(items)).not.toContain('delete-artifacts');
+  });
+
+  it('decides off the first selected job only', () => {
+    const items = buildDashboardActionItems(t, [
+      { jobId: 'job-1', status: 'RUNNING' },
+      { jobId: 'job-2', status: 'SUCCEEDED' },
+    ]);
+    expect(idsOf(items)).not.toContain('delete-artifacts');
+  });
+});

@@ -119,6 +119,7 @@ _ROUTES: list[tuple[str, str, dict, dict | None]] = [
     ),
     ("GET", "/api/v1/assessments/{job_id}", {}, None),
     ("DELETE", "/api/v1/assessments/{job_id}", {}, None),
+    ("DELETE", "/api/v1/assessments/{job_id}/artifacts", {"database_name": _VALID_DB}, None),
     ("GET", "/api/v1/assessments/{job_id}/agents", {}, None),
     ("GET", "/api/v1/assessments/{job_id}/execution-history", {}, None),
     # agent_interaction.py -- "schema-dynamodb", not "triage": this PR adds

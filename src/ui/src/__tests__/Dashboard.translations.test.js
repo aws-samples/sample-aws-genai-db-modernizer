@@ -1,15 +1,28 @@
 /**
- * #519: the Dashboard's "Delete" action only ever called
+ * #519: the Dashboard's old "Delete" action only ever called
  * `DELETE /assessments/{job_id}`, which cancels a job -- it never removed
  * artifacts. The UI called it "Delete" and told the user the analysis was
- * "permanently deleted", which was false. This test, mirroring
- * AnalysisResults.translations.test.js's pattern, scans Dashboard.js's (and
- * its action-item helper's) source for every literal `t('...')` call and
- * checks each key resolves to real English text (never falls back to the
- * raw key), then checks the cancel-specific strings are honest: no "cancel"
- * wording claims permanent deletion, and the old "delete" wording/keys are
- * gone. The action-visibility logic itself (hide Cancel for a terminal job)
- * is unit-tested directly in dashboardActions.test.js, not here.
+ * "permanently deleted", which was false. That action, its modal, and its
+ * i18n keys were removed outright (checked below, under their own
+ * identifiers/keys so a reintroduction is caught even if it's reworded).
+ *
+ * #529 added a real "Delete artifacts" action -- a different, genuine
+ * `DELETE /assessments/{job_id}/artifacts` call that actually removes
+ * files from disk -- under deliberately distinct identifiers/keys
+ * (`delete-artifacts`, `jobToDeleteArtifacts`, `dashboard.delete-artifacts-
+ * modal.*`) so it can never collide with the banned #519 ones.
+ *
+ * This test, mirroring AnalysisResults.translations.test.js's pattern,
+ * scans Dashboard.js's (and its action-item helper's) source for every
+ * literal `t('...')` call and checks each key resolves to real English
+ * text (never falls back to the raw key), then checks: the cancel-specific
+ * strings are honest (no "cancel" wording claims permanent deletion); the
+ * old #519 "delete" wording/keys are gone; and the #529 delete-artifacts
+ * strings are honest the other way (they *do* claim removal from disk, and
+ * never reuse the cancel modal's "not removed" claim). The action-
+ * visibility logic itself (hide Cancel for a terminal job, offer Delete
+ * artifacts instead) is unit-tested directly in dashboardActions.test.js,
+ * not here.
  */
 import fs from 'fs';
 import path from 'path';
@@ -36,9 +49,32 @@ test('every literal Dashboard-page translation resolves to an English label', as
   const keys = [...combinedSource.matchAll(/\bt\(['"]([^'"]+)['"]/g)].map((match) => match[1]);
   expect(keys).toContain('dashboard.cancel-modal.header');
   expect(keys).toContain('dashboard.actions.cancel-analysis');
+  expect(keys).toContain('dashboard.actions.delete-artifacts');
+  expect(keys).toContain('dashboard.delete-artifacts-modal.header');
   for (const key of new Set(keys)) {
     expect(i18n.exists(key, { count: 2 })).toBe(true);
     expect(i18n.t(key, { count: 2 })).not.toBe(key);
+  }
+});
+
+// #529: DELETE /assessments/{job_id}/artifacts actually removes files from
+// disk (unlike the retired "Delete" action #519 removed, which only
+// cancelled). The modal must say so plainly, and must stay a visibly
+// different action from Cancel -- not reuse any of its removed identifiers
+// or keys (checked above by the still-passing "Delete" removal tests).
+test('the delete-artifacts action and modal text are honest about removing files from disk (#529)', () => {
+  const deleteArtifactsKeys = Object.keys(en).filter((key) => key.startsWith('dashboard.delete-artifacts-modal.')
+    || key === 'dashboard.actions.delete-artifacts');
+  expect(deleteArtifactsKeys.length).toBeGreaterThan(0);
+
+  const warningText = en['dashboard.delete-artifacts-modal.warning'].toLowerCase();
+  expect(warningText).toContain('disk');
+  expect(warningText).toContain('cannot be undone');
+
+  // Distinct from the cancel modal's own (true, for cancel) claim that
+  // artifacts are not removed.
+  for (const key of deleteArtifactsKeys) {
+    expect(en[key].toLowerCase()).not.toContain('are not removed');
   }
 });
 

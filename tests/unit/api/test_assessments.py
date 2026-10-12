@@ -450,6 +450,173 @@ class TestCancelAssessment:
         assert client.delete("/api/v1/assessments/nope").status_code == 404
 
 
+# === DELETE /api/v1/assessments/{job_id}/artifacts ===
+
+
+class TestDeleteAssessmentArtifacts:
+    """Local-mode-only cleanup of a finished job's artifacts (#529). A
+    separate endpoint from DELETE /{job_id} above, which keeps meaning
+    "cancel" -- these tests never touch that route."""
+
+    def _delete(self, job_id="job-1", database_name="test_db"):
+        return client.delete(
+            f"/api/v1/assessments/{job_id}/artifacts",
+            params={"database_name": database_name},
+        )
+
+    def test_404_when_job_not_found(self, mock_services):
+        mock_services["sfn"].job_status.return_value = None
+        resp = self._delete()
+        assert resp.status_code == 404
+        mock_services["sfn"].delete_job_artifacts.assert_not_called()
+
+    @pytest.mark.parametrize("status", ["RUNNING", "WAITING", "PENDING"])
+    def test_409_when_job_is_not_terminal(self, mock_services, status):
+        mock_services["sfn"].job_status.return_value = status
+        resp = self._delete()
+        assert resp.status_code == 409
+        assert status in resp.text
+        mock_services["sfn"].delete_job_artifacts.assert_not_called()
+
+    @pytest.mark.parametrize("status", ["SUCCEEDED", "CANCELLED", "FAILED"])
+    def test_deletes_and_returns_removed_paths_for_a_terminal_job(self, mock_services, status):
+        mock_services["sfn"].job_status.return_value = status
+        mock_services["sfn"].delete_job_artifacts.return_value = [
+            "test_db/job-1/collector/output.json",
+            ".meta/job-1.json",
+        ]
+        resp = self._delete()
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == "job-1"
+        assert data["database_name"] == "test_db"
+        assert sorted(data["removed"]) == sorted(
+            ["test_db/job-1/collector/output.json", ".meta/job-1.json"]
+        )
+        mock_services["sfn"].delete_job_artifacts.assert_called_once_with("test_db", "job-1")
+
+    def test_404_when_delete_finds_nothing_despite_a_terminal_status(self, mock_services):
+        """A race between the status check and the delete call (or a status
+        marker surviving an already-cleaned-up folder) -- treated the same
+        as "never existed", not a 500."""
+        mock_services["sfn"].job_status.return_value = "SUCCEEDED"
+        mock_services["sfn"].delete_job_artifacts.return_value = None
+        resp = self._delete()
+        assert resp.status_code == 404
+
+    def test_400_when_s3_is_configured(self, mock_services, monkeypatch):
+        monkeypatch.setenv("S3_BUCKET", "some-bucket")
+        resp = self._delete()
+        assert resp.status_code == 400
+        mock_services["sfn"].job_status.assert_not_called()
+        mock_services["sfn"].delete_job_artifacts.assert_not_called()
+
+    def test_rejects_missing_database_name(self, mock_services):
+        resp = client.delete("/api/v1/assessments/job-1/artifacts")
+        assert resp.status_code == 422
+
+    def test_422_when_job_id_starts_with_underscore(self, mock_services):
+        """job_id_param allows a leading "_" (it's a valid artifact-path
+        character), but "_status.json"/".meta"-style names are internal
+        markers, never a real job -- this endpoint rejects it on its own
+        (#529 round-1 review, S2)."""
+        resp = self._delete(job_id="_status")
+        assert resp.status_code == 422
+        mock_services["sfn"].job_status.assert_not_called()
+        mock_services["sfn"].delete_job_artifacts.assert_not_called()
+
+    def test_400_when_job_status_raises_value_error(self, mock_services):
+        """A path-containment failure (a symlink planted directly on disk)
+        is a fixed 400 (#529 round-1 review, I1) -- the detail never
+        echoes the underlying ValueError's own message."""
+        mock_services["sfn"].job_status.side_effect = ValueError("path escapes the root: 'x'")
+        resp = self._delete()
+        assert resp.status_code == 400
+        assert "escapes the root" not in resp.text
+        mock_services["sfn"].delete_job_artifacts.assert_not_called()
+
+    def test_400_when_delete_job_artifacts_raises_value_error(self, mock_services):
+        mock_services["sfn"].job_status.return_value = "SUCCEEDED"
+        mock_services["sfn"].delete_job_artifacts.side_effect = ValueError(
+            "path escapes the root: 'x'"
+        )
+        resp = self._delete()
+        assert resp.status_code == 400
+        assert "escapes the root" not in resp.text
+
+    def test_409_when_delete_job_artifacts_raises_job_recently_modified(self, mock_services):
+        from src.api.services.local_execution import JobRecentlyModifiedError
+
+        mock_services["sfn"].job_status.return_value = "SUCCEEDED"
+        mock_services["sfn"].delete_job_artifacts.side_effect = JobRecentlyModifiedError(
+            "job 'job-1' has files modified in the last 60s; try again shortly"
+        )
+        resp = self._delete()
+        assert resp.status_code == 409
+        assert "try again shortly" in resp.text
+
+    def test_500_with_partial_removed_list_on_artifact_deletion_error(self, mock_services, caplog):
+        from src.api.services.local_execution import ArtifactDeletionError
+
+        mock_services["sfn"].job_status.return_value = "SUCCEEDED"
+        mock_services["sfn"].delete_job_artifacts.side_effect = ArtifactDeletionError(
+            ["test_db/job-1/collector/output.json"], OSError("boom")
+        )
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            resp = self._delete()
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["detail"]["message"] == "Could not remove all artifacts"
+        assert data["detail"]["removed"] == ["test_db/job-1/collector/output.json"]
+        assert any("partial failure" in record.message for record in caplog.records)
+
+
+class TestDeleteAssessmentArtifactsRealStore:
+    """At least one test against a real, filesystem-backed store (#529
+    round-1 review, I4) -- every other test in this file mocks
+    LocalExecutionService entirely, which would never catch a mismatch
+    between the mock's behavior and the real service's."""
+
+    def test_deletes_a_real_job_folder_end_to_end(self, tmp_path, monkeypatch):
+        import src.api.services.local_execution as local_execution_module
+        from src.api.services.local_execution import LocalExecutionService
+        from src.storage.local_store import LocalArtifactStore
+
+        # The staleness guard (I2) would otherwise refuse a file written
+        # moments ago by this very test.
+        monkeypatch.setattr(local_execution_module, "_STALE_WINDOW_SECONDS", -1)
+
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        store.write_json(
+            "test_db/job-1/collector/output.json",
+            {"metadata": {"source_database": {"engine": "mysql", "database_name": "test_db"}}},
+        )
+        store.write_json("test_db/job-1/referee-synthesis/report.json", {"done": True})
+
+        real_sfn = LocalExecutionService(store)
+        original_sfn = assessments.sfn_service
+        assessments.sfn_service = real_sfn
+        try:
+            resp = client.delete(
+                "/api/v1/assessments/job-1/artifacts",
+                params={"database_name": "test_db"},
+            )
+        finally:
+            assessments.sfn_service = original_sfn
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert sorted(data["removed"]) == sorted(
+            [
+                "test_db/job-1/collector/output.json",
+                "test_db/job-1/referee-synthesis/report.json",
+            ]
+        )
+        assert not (tmp_path / "test_db" / "job-1").exists()
+
+
 # === GET /api/v1/assessments/{job_id}/agents ===
 
 

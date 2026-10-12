@@ -31,6 +31,7 @@ _ROUTES: list[tuple[str, str, dict | None]] = [
     ("POST", "/api/v1/assessments/job1/uploads/confirm", None),
     ("GET", "/api/v1/assessments/job1/uploads", None),
     ("DELETE", "/api/v1/assessments/job1/uploads/collector-output.json", None),
+    ("DELETE", "/api/v1/assessments/job1/artifacts", None),
     # "schema-dynamodb", not "triage": #508 adds an allowlist for the agent
     # path parameter (src/api/routes/agent_interaction.py), so an arbitrary
     # placeholder here would 422 on *agent*, masking the database_name

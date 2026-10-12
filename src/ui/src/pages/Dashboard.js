@@ -91,6 +91,11 @@ const ComponentPage = memo(() => {
   const [cancellingJob, setCancellingJob] = useState(false);
   const [jobToCancel, setJobToCancel] = useState(null);
 
+  //-- Delete-artifacts modal state (#529)
+  const [showDeleteArtifactsModal, setShowDeleteArtifactsModal] = useState(false);
+  const [deletingArtifacts, setDeletingArtifacts] = useState(false);
+  const [jobToDeleteArtifacts, setJobToDeleteArtifacts] = useState(null);
+
   //-- Use ref for last update timestamp (doesn't need re-render)
   const lastUpdateTimestamp = useRef(null);
 
@@ -170,6 +175,7 @@ const ComponentPage = memo(() => {
                 // eslint-disable-next-line no-use-before-define
                 const newTableItems = newAssessments.map(assessment => ({
                   jobId: assessment.job_id,
+                  databaseName: assessment.database_name,
                   sourceDatabase: `${assessment.source_database_type} - ${assessment.database_name}`,
                   status: assessment.status,
                   statusText: getStatusText(assessment.status),
@@ -292,6 +298,21 @@ const ComponentPage = memo(() => {
       // For now, handle single cancellation (first selected item)
       setJobToCancel(selectedItems[0]);
       setShowCancelModal(true);
+    } else if (detail.id === 'delete-artifacts') {
+      if (selectedItems.length === 0) {
+        addFlashbarMessage({
+          type: 'warning',
+          header: t('dashboard.delete-artifacts-modal.no-selection-header'),
+          content: t('dashboard.delete-artifacts-modal.no-selection-content'),
+          dismissible: true,
+          id: `warning-${Date.now()}`
+        });
+        return;
+      }
+
+      // For now, handle a single deletion (first selected item)
+      setJobToDeleteArtifacts(selectedItems[0]);
+      setShowDeleteArtifactsModal(true);
     }
   }, [selectedItems, addFlashbarMessage, t]);
 
@@ -382,6 +403,86 @@ const ComponentPage = memo(() => {
       setJobToCancel(null);
     }
   }, [jobToCancel, addFlashbarMessage, gatherDashboardData, t]);
+
+
+  //##-- Delete-artifacts modal handlers (#529)
+  const handleDeleteArtifactsModalDismiss = useCallback(() => {
+    setShowDeleteArtifactsModal(false);
+    setJobToDeleteArtifacts(null);
+  }, []);
+
+
+  const handleDeleteArtifactsConfirm = useCallback(async () => {
+    if (!jobToDeleteArtifacts) return;
+
+    setDeletingArtifacts(true);
+
+    try {
+      const apiManager = new ApiManager();
+      const apiPath = `assessments/${jobToDeleteArtifacts.jobId}/artifacts?database_name=${encodeURIComponent(jobToDeleteArtifacts.databaseName || '')}`;
+
+      const apiCalls = [
+        {
+          id: 'delete-artifacts',
+          path: apiPath,
+          method: 'DELETE',
+          params: {}
+        }
+      ];
+
+      const results = await apiManager.execute(apiCalls);
+      console.log('Delete artifacts result:', results);
+
+      if (results['delete-artifacts']?.error) {
+        const result = results['delete-artifacts'];
+        const errorMessage = result.error?.message || 'Failed to delete artifacts';
+        const statusCode = result.status || 'Unknown';
+        const apiUrl = `${ApiConfigurations.baseUrl}${apiPath}`;
+
+        addFlashbarMessage({
+          type: 'error',
+          header: t('dashboard.delete-artifacts-modal.api-error-header', { statusCode }),
+          content: t('dashboard.delete-artifacts-modal.api-error-content', { apiUrl, errorMessage }),
+          dismissible: true,
+          id: `error-${Date.now()}`
+        });
+      } else if (results['delete-artifacts']?.success) {
+        const removedCount = (results['delete-artifacts'].removed || []).length;
+
+        addFlashbarMessage({
+          type: 'success',
+          header: t('dashboard.delete-artifacts-modal.success-header'),
+          content: t('dashboard.delete-artifacts-modal.success-content', {
+            count: removedCount,
+            jobId: jobToDeleteArtifacts.jobId,
+          }),
+          dismissible: true,
+          id: `success-${Date.now()}`
+        });
+
+        // Clear selection and refresh data -- the job's folder is gone, so
+        // it disappears from the list on the next load.
+        setSelectedItems([]);
+        gatherDashboardData();
+      }
+
+    } catch (error) {
+      console.error('Error deleting artifacts:', error);
+      const errorDetails = error.message || 'Failed to delete artifacts';
+
+      addFlashbarMessage({
+        type: 'error',
+        header: t('dashboard.delete-artifacts-modal.unexpected-error-header'),
+        content: t('dashboard.delete-artifacts-modal.unexpected-error-content', { errorDetails }),
+        dismissible: true,
+        id: `error-${Date.now()}`
+      });
+    } finally {
+      setDeletingArtifacts(false);
+      setShowDeleteArtifactsModal(false);
+      setJobToDeleteArtifacts(null);
+    }
+  }, [jobToDeleteArtifacts, addFlashbarMessage, gatherDashboardData, t]);
 
 
 
@@ -484,6 +585,7 @@ const ComponentPage = memo(() => {
   const tableItems = useMemo(() =>
                     assessments.map(assessment => ({
                                                     jobId: assessment.job_id,
+                                                    databaseName: assessment.database_name,
                                                     sourceDatabase: `${assessment.source_database_type} - ${assessment.database_name}`,
                                                     status: assessment.status,
                                                     statusText: getStatusText(assessment.status),
@@ -658,6 +760,41 @@ const ComponentPage = memo(() => {
                 <Box variant="strong">{t("dashboard.cancel-modal.database")}{jobToCancel.sourceDatabase}</Box>
                 <Box variant="strong">{t("dashboard.cancel-modal.status")}{jobToCancel.statusText}</Box>
                 <Box>{t("dashboard.cancel-modal.warning")}</Box>
+              </SpaceBetween>
+            </Box>
+          )}
+        </SpaceBetween>
+      </Modal>
+
+      <Modal
+        visible={showDeleteArtifactsModal}
+        onDismiss={handleDeleteArtifactsModalDismiss}
+        header={t("dashboard.delete-artifacts-modal.header")}
+        closeAriaLabel={t("dashboard.delete-artifacts-modal.close-aria")}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={handleDeleteArtifactsModalDismiss}>
+                {t("dashboard.delete-artifacts-modal.keep-job")}
+              </Button>
+              <Button variant="primary" onClick={handleDeleteArtifactsConfirm} loading={deletingArtifacts}>
+                {t("dashboard.delete-artifacts-modal.confirm")}
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <Box>
+            {t("dashboard.delete-artifacts-modal.confirm-question")}
+          </Box>
+          {jobToDeleteArtifacts && (
+            <Box color="text-status-warning">
+              <SpaceBetween size="xs">
+                <Box variant="strong">{t("dashboard.delete-artifacts-modal.job-id")}{jobToDeleteArtifacts.jobId}</Box>
+                <Box variant="strong">{t("dashboard.delete-artifacts-modal.folder")}{jobToDeleteArtifacts.databaseName}/{jobToDeleteArtifacts.jobId}/</Box>
+                <Box variant="strong">{t("dashboard.delete-artifacts-modal.status")}{jobToDeleteArtifacts.statusText}</Box>
+                <Box>{t("dashboard.delete-artifacts-modal.warning")}</Box>
               </SpaceBetween>
             </Box>
           )}

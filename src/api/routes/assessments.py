@@ -20,7 +20,11 @@ from src.api.models.responses import (
     ErrorDetail,
     StageProgress,
 )
-from src.api.services.local_execution import LocalExecutionService
+from src.api.services.local_execution import (
+    ArtifactDeletionError,
+    JobRecentlyModifiedError,
+    LocalExecutionService,
+)
 from src.api.services.local_s3 import LocalS3Service
 from src.shared.ranking import engine_confidence, main_engine
 from src.tools.validation.ingestion_limits import IngestionLimitError, check_file_size
@@ -34,6 +38,14 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
 # stopped). FAILED added in #518 round 2: a job the orchestrator recorded as
 # failed is just as terminal as SUCCEEDED or CANCELLED.
 _TERMINAL_STATUSES = frozenset({"SUCCEEDED", "CANCELLED", "FAILED"})
+
+# A fixed, never-echoed message for every path-containment failure in
+# delete_assessment_artifacts (#529 round-1 review, I1) -- job_id/
+# database_name are already validated by job_id_param/database_name_param,
+# so this only fires if a symlink was planted directly on disk; the
+# message deliberately carries no detail about which check failed or
+# where.
+_PATH_ERROR_DETAIL = "Could not safely resolve the job's artifact paths."
 
 # Services injected by main.py at startup
 sfn_service: LocalExecutionService | None = None
@@ -396,6 +408,97 @@ async def cancel_assessment(job_id: str = Depends(job_id_param)):
 
     sfn_svc.stop_execution(job_id)
     return {"job_id": job_id, "status": "CANCELLED", "message": "Assessment cancelled successfully"}
+
+
+@router.delete("/{job_id}/artifacts")
+async def delete_assessment_artifacts(
+    job_id: str = Depends(job_id_param),
+    database_name: str = Depends(database_name_param),
+):
+    """Delete a finished job's artifacts from disk (#529).
+
+    Local mode only: S3_BUCKET (src/storage/__init__.py) switches the
+    backing artifact store to the cloud S3ArtifactStore, which has no
+    on-disk job folder to delete -- refused with 400 rather than attempted.
+    The hosted Step Functions execution backend this would once also have
+    had to guard against is retired entirely (#175); there is no
+    equivalent toggle left to check for it.
+
+    Terminal jobs only (SUCCEEDED, CANCELLED, FAILED) -- a running or
+    waiting job must be cancelled first (409 otherwise). This is a
+    separate endpoint from plain DELETE /{job_id} above, which keeps
+    meaning "cancel"; the two can't be confused.
+
+    Removes exactly {database_name}/{job_id}/ and the job's orchestrator
+    marker .meta/{job_id}.json -- nothing else -- and returns the list of
+    paths removed, relative to the artifact root. See
+    LocalExecutionService.delete_job_artifacts for the full path-safety,
+    staleness, and partial-failure behavior (#529 round-1 review).
+
+    Error mapping: a path-containment failure (a symlink planted directly
+    on disk, since job_id/database_name are already validated) is a fixed
+    400; a file touched in the last minute is 409 (try again shortly); a
+    failure partway through the delete is 500, logged server-side, with
+    whatever was actually removed before the failure still reported.
+    """
+    if os.environ.get("S3_BUCKET"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Deleting job artifacts is only supported in local mode; "
+                "S3_BUCKET is configured."
+            ),
+        )
+
+    # _status.json, .meta/*.json etc. are internal markers, never a real
+    # job -- job_id_param allows a leading "_" (it's a valid artifact-path
+    # character), so this endpoint rejects it on its own (#529 round-1
+    # review, S2).
+    if job_id.startswith("_"):
+        raise HTTPException(
+            status_code=422,
+            detail="job_id must not start with '_' (reserved for internal markers).",
+        )
+
+    sfn_svc, _ = _require_services()
+
+    try:
+        status = sfn_svc.job_status(database_name, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_PATH_ERROR_DETAIL) from exc
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if status not in _TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Assessment is {status}; cancel it before deleting its artifacts.",
+        )
+
+    try:
+        removed = sfn_svc.delete_job_artifacts(database_name, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_PATH_ERROR_DETAIL) from exc
+    except JobRecentlyModifiedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ArtifactDeletionError as exc:
+        logger.error(
+            "delete_assessment_artifacts: partial failure for %s/%s after removing "
+            "%d path(s): %s",
+            database_name,
+            job_id,
+            len(exc.removed),
+            exc.cause,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Could not remove all artifacts", "removed": exc.removed},
+        ) from exc
+
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    return {"job_id": job_id, "database_name": database_name, "removed": removed}
 
 
 @router.get("/{job_id}/agents")
