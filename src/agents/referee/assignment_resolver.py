@@ -43,6 +43,7 @@ from src.agents.referee.aurora_choice import (
     choose_heterogeneous_engine,
     detect_heterogeneous_features,
     pick_aurora_engine,
+    pick_aurora_engine_with_tie,
     source_database_engine,
 )
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
@@ -54,6 +55,7 @@ from src.agents.referee.engine_exclusions import check_all_exclusions, check_exc
 from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.tie_break import break_tie
+from src.agents.referee.tie_break import settled_counts as settled_workload_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.assignment_models import (
@@ -625,20 +627,38 @@ class AssignmentResolver:
             # pre-#381 contract this fallback has always had), but with the Step 4b
             # loser explicitly excluded, so a heterogeneous source's fallback only ever
             # sees the engine the resolver actually chose, the same restriction every
-            # other step after Step 4b already respects.
+            # other step after Step 4b already respects. A two-Aurora-engine
+            # ``fallback_pool`` is reachable here (#550 review, Important 4): triage can
+            # select both for a heterogeneous source while fewer than two actually got
+            # analyzed, which skips the Step 4b collapse above and leaves both in
+            # ``selected_engines`` -- see
+            # ``test_fallback_reaches_the_shared_tie_break_with_both_aurora_engines``.
             fallback_pool = selected_engines - (
                 {e for e in AURORA_ENGINES if e != aurora_engine_choice.engine}
                 if aurora_engine_choice
                 else set()
             )
-            aurora_fallback = _resolve_aurora_fallback(
+            # #550 review (Critical 1/2): the SAME settled-workload snapshot Step 6b
+            # just used (``settled_counts``, taken before any tie -- including this
+            # one -- was resolved), never a fresh recount of ``assigned`` that would
+            # fold Step 6b's own placeholder picks back in; and a tie key built from
+            # these specific queries' own ids, the same way Step 6b's ``hash_seed`` is,
+            # so this fallback's tie-break is not a constant, workload-independent
+            # name preference.
+            aurora_fallback, fallback_tie_kind = _resolve_aurora_fallback(
                 fallback_pool,
                 source_engine,
-                Counter(e for e in assigned.values() if e),
+                settled_counts,
                 prior_choice=aurora_engine_choice.engine if aurora_engine_choice else None,
+                tie_key=",".join(sorted(fallback_qids)),
             )
+            fallback_tied = sorted(AURORA_ENGINES & fallback_pool)
             for qid in fallback_qids:
                 assigned[qid] = aurora_fallback
+                if fallback_tie_kind == "tie_unresolved":
+                    assigned_tied_engines[qid] = fallback_tied
+                    if routing_trace is not None:
+                        routing_trace.record_tie(qid, fallback_tie_kind)
 
         # Step 6c: Surface a reduced capability-redesign penalty's reason
         # (#477) in the assignment reason -- but only on the engine the note
@@ -663,23 +683,40 @@ class AssignmentResolver:
         # confidence-scoring path above picked, so every other artifact still
         # accounts for every collected query. If no Aurora engine is in play,
         # the scored assignment is left as-is rather than left unset.
+        utility_qids = [
+            query["query_id"]
+            for query in queries
+            if is_utility_statement(query.get("query_text"), query.get("tables_accessed"))
+        ]
+        # #550 review: the pre-tie ``settled_counts`` snapshot (Critical 2), never a
+        # fresh recount of ``assigned``, which by now also folds in Step 6b's own
+        # placeholder picks and the Aurora fallback just above; and a tie key built
+        # from these specific utility queries' own ids (Critical 1), the same way
+        # the fallback above and Step 6b's own ``hash_seed`` are. This candidate pool
+        # (``analysis_outputs.keys()``) cannot actually hold both Aurora engines by
+        # the time this runs though (Important 4): Step 4b above always collapses
+        # them to one when the source is heterogeneous and both were analyzed, and a
+        # homogeneous source's own dialect always resolves ``pick_aurora_engine``
+        # before a tie would ever matter -- so, unlike the fallback above, this stays
+        # on the plain, tie-kind-less ``pick_aurora_engine`` rather than building out
+        # ``tied_engines``/``record_tie`` bookkeeping for a tie this pool cannot
+        # produce today.
         utility_engine = pick_aurora_engine(
             analysis_outputs.keys(),
             source_engine,
-            Counter(e for e in assigned.values() if e),
+            settled_counts,
             prior_choice=aurora_engine_choice.engine if aurora_engine_choice else None,
+            tie_key=",".join(sorted(utility_qids)),
         )
         if utility_engine:
-            for query in queries:
-                qid = query["query_id"]
-                if is_utility_statement(query.get("query_text"), query.get("tables_accessed")):
-                    assigned[qid] = utility_engine
-                    assigned_confidence[qid] = 100
-                    assigned_reason[qid] = (
-                        "utility/metadata statement — kept on source-compatible "
-                        f"relational engine ({utility_engine})"
-                    )
-                    assigned_signal.pop(qid, None)
+            for qid in utility_qids:
+                assigned[qid] = utility_engine
+                assigned_confidence[qid] = 100
+                assigned_reason[qid] = (
+                    "utility/metadata statement — kept on source-compatible "
+                    f"relational engine ({utility_engine})"
+                )
+                assigned_signal.pop(qid, None)
 
         # Step 7c: Populate the opt-in routing trace (#497), off by default
         # (``routing_trace is None``). Reads ``exclusion_notes``, ``anti_pattern_map``
@@ -1113,23 +1150,33 @@ def _resolve_aurora_fallback(
     query_counts: Mapping[str, int] | None = None,
     *,
     prior_choice: str | None = None,
-) -> str:
-    """Determine which Aurora engine to use as fallback.
+    tie_key: str = "",
+) -> tuple[str, str | None]:
+    """Determine which Aurora engine to use as fallback, and the tie kind
+    when the pick stayed unresolved (``None`` otherwise, #550 Important 3).
 
     Uses the Aurora engine selected by triage. When both are selected, the one
-    matching the source database's dialect wins, then the one with more
-    queries, then Aurora PostgreSQL (``pick_aurora_engine``, #288). If no
-    Aurora engine was selected, uses a generic 'aurora' placeholder (legacy
-    behavior).
+    matching the source database's dialect wins, then the shared ADR-031
+    tie-break on the recorded SETTLED workload decides (``pick_aurora_engine_
+    with_tie``, #288, #550). If no Aurora engine was selected, uses a generic
+    'aurora' placeholder (legacy behavior) and no tie.
 
     ``prior_choice`` (#381 review) is ``Assignment.aurora_engine_choice.engine``
-    when the resolver already made that choice this run -- passed through to
-    ``pick_aurora_engine`` so a 0/0-count tie here never overrides it.
+    when the resolver already made that choice this run -- passed through so
+    a 0/0-count tie here never overrides it. ``query_counts`` must be a
+    genuine settled count (the resolver's own pre-tie snapshot, never a raw
+    recount of the current, possibly already-tied, assignment) and
+    ``tie_key`` a stable identifier for the queries this call is deciding --
+    see :func:`src.agents.referee.aurora_choice.pick_aurora_engine_with_tie`.
     """
-    return (
-        pick_aurora_engine(selected_engines, source_engine, query_counts, prior_choice=prior_choice)
-        or "aurora"
+    winner, tie_kind = pick_aurora_engine_with_tie(
+        selected_engines,
+        source_engine,
+        query_counts,
+        prior_choice=prior_choice,
+        tie_key=tie_key,
     )
+    return winner or "aurora", tie_kind
 
 
 # ---------------------------------------------------------------------------
@@ -1348,7 +1395,29 @@ def derive_table_assignments(
     # so the result is never a cache or search engine even in that corner case.
     global_counts = Counter(qa.assigned_engine for qa in query_assignments if qa.assigned_engine)
     global_owner_counts = {e: c for e, c in global_counts.items() if e not in NON_OWNER_ENGINES}
-    global_fallback = pick_aurora_engine(global_owner_counts, query_counts=global_owner_counts) or (
+    # #550 review (Critical 2): this function has no live resolver snapshot to
+    # reuse (it runs on the finished ``query_assignments``, after the resolver's
+    # own Step 6b already resolved every tie), so it computes the same settled
+    # count ``tie_break.settled_counts`` defines -- a query's own ``tied_engines``
+    # empty -- directly from ``query_assignments``, never a raw recount that
+    # would fold placeholder picks back in. ``retained_engine`` (Important 4) is
+    # passed as ``prior_choice``, not ``source_engine``: it is already resolved
+    # to an Aurora engine name (``aurora_mysql``/``aurora_postgresql``), never
+    # the raw source dialect ``pick_aurora_engine``'s own dialect lookup needs,
+    # so it is ``prior_choice`` -- "the engine already recorded" -- that
+    # actually makes a homogeneous source's own dialect win this fallback too,
+    # not left to the tie-break by omission.
+    settled_global_owner_counts = {
+        e: c
+        for e, c in settled_workload_counts(query_assignments).items()
+        if e not in NON_OWNER_ENGINES
+    }
+    global_fallback = pick_aurora_engine(
+        global_owner_counts,
+        query_counts=settled_global_owner_counts,
+        prior_choice=retained_engine,
+        tie_key=",".join(sorted({qa.query_id for qa in query_assignments})),
+    ) or (
         min(global_owner_counts, key=lambda e: (-global_owner_counts[e], e))
         if global_owner_counts
         else None

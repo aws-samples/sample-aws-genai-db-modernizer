@@ -9,12 +9,15 @@ tie-break within a close margin, and Aurora PostgreSQL on an exact tie.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from src.agents.referee.aurora_choice import (
     FEATURE_SIGNALS,
     MARGIN_RATIO,
     choose_heterogeneous_engine,
     detect_heterogeneous_features,
     pick_aurora_engine,
+    pick_aurora_engine_with_tie,
 )
 
 
@@ -177,13 +180,96 @@ class TestPickAuroraEngineHeterogeneous:
         )
         assert winner == "aurora_mysql"
 
-    def test_zero_zero_counts_with_no_prior_choice_falls_back_to_default(self):
+    def test_zero_zero_counts_go_through_the_tie_break_not_a_name_preference(self):
+        # #550: no score, no recorded settled workload at all -- this must not
+        # be decided by an engine-name preference. It goes through the shared
+        # ADR-031 tie-break (``tie_break.break_tie``) like every other tie in
+        # the routing code: no source-compatible engine survives this far
+        # (that already returned above), no "current" engine either, so
+        # rule 3's settled-workload-share placeholder decides -- and with both
+        # engines' settled count tied at zero, that placeholder falls through
+        # to its deterministic hash of ``tie_key`` and the engine's name.
+        # ``tie_key="q1"`` happens to hash to aurora_mysql for this pair; see
+        # ``test_two_different_tie_keys_land_on_different_engines`` for the
+        # same tied counts resolving the OTHER way under a different key --
+        # the point is the mechanism, not this one key's particular answer.
+        winner = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
+            tie_key="q1",
+        )
+        assert winner == "aurora_mysql"
+
+    def test_a_genuine_count_tie_is_not_decided_by_name(self):
+        # #550: a real, nonzero tie (both engines already carry the same
+        # amount of recorded workload) must resolve the same way a 0/0 tie
+        # does, for the SAME tie_key -- through ``tie_break.break_tie``'s
+        # settled-workload-share placeholder -- never by sorting the two
+        # engine names. Equal counts of 7 and of 0 both land on the same
+        # winner here (``tie_key="q1"``, same as the 0/0 case above) because
+        # the tie-break depends on which engines are tied and the key, not on
+        # the size of the tied count.
+        winner = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 7, "aurora_postgresql": 7},
+            tie_key="q1",
+        )
+        assert winner == "aurora_mysql"
+
+    def test_two_different_tie_keys_land_on_different_engines(self):
+        # #550 review Critical 1: the whole point of a per-call ``tie_key`` is
+        # that a tie between the SAME two engines, with the SAME counts, is
+        # free to resolve differently for different queries -- never a fixed
+        # preference for one engine's name across every workload. If this
+        # ever starts asserting the same winner for both keys, the fix has
+        # regressed back into a constant seed.
+        counts = {"aurora_mysql": 0, "aurora_postgresql": 0}
+        winner_a = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"}, "sqlserver", counts, tie_key="q1"
+        )
+        winner_b = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"}, "sqlserver", counts, tie_key="q2"
+        )
+        assert winner_a == "aurora_mysql"
+        assert winner_b == "aurora_postgresql"
+        assert winner_a != winner_b
+
+    def test_no_tie_key_passed_still_resolves_deterministically_but_is_not_a_default(self):
+        # #550 review: a caller that leaves ``tie_key`` at its default ``""``
+        # still gets a deterministic answer (never a crash, never a random
+        # pick) -- just whatever this exact empty seed happens to hash to for
+        # this engine pair, which must never be read as "PostgreSQL is the
+        # default winner of a tie": every real caller in
+        # ``assignment_resolver.py``/``consolidation_validator.py``/
+        # ``reality_check.py`` always passes a real one (see those modules'
+        # own tests), precisely so none of them repeat this degenerate case.
         winner = pick_aurora_engine(
             {"aurora_mysql", "aurora_postgresql"},
             "sqlserver",
             query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
         )
         assert winner == "aurora_postgresql"
+
+    def test_unequal_nonzero_counts_use_the_settled_workload_share_rule(self):
+        # #550: when the counts are NOT tied, the engine already carrying more
+        # of the recorded workload wins -- ADR-031 Decision 12's approved
+        # settled-workload-share placeholder, applied the same way
+        # ``pick_unresolved_tie_placeholder`` applies it anywhere else, not a
+        # bespoke count comparison local to this module.
+        winner = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 3, "aurora_postgresql": 10},
+        )
+        assert winner == "aurora_postgresql"
+        winner = pick_aurora_engine(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 10, "aurora_postgresql": 3},
+        )
+        assert winner == "aurora_mysql"
 
     def test_nonzero_counts_are_not_overridden_by_a_stale_prior_choice(self):
         # Once a real count exists, counts (reflecting what actually happened)
@@ -195,6 +281,107 @@ class TestPickAuroraEngineHeterogeneous:
             prior_choice="aurora_mysql",
         )
         assert winner == "aurora_postgresql"
+
+    def test_the_fallback_actually_calls_the_shared_tie_break(self):
+        # #550: the fix is the mechanism, not just the output -- a count-tied,
+        # score-less, prior-choice-less call must go through
+        # ``tie_break.break_tie`` itself (the one place ADR-031 Decision 2/12
+        # ties live), never a parallel, module-local comparison that happens
+        # to agree with it on this engine pair. #550 review (Suggestion 5):
+        # also checks the ``query_id`` ``break_tie`` actually received is the
+        # real ``tie_key`` passed in, and that it is non-empty -- a mock that
+        # only checked ``tied``/``settled_counts`` would have missed the
+        # constant-seed bug entirely, since that bug never touched either of
+        # those two arguments.
+        with patch(
+            "src.agents.referee.aurora_choice.break_tie",
+            return_value=("aurora_mysql", "tie_unresolved"),
+        ) as mock_break_tie:
+            winner = pick_aurora_engine(
+                {"aurora_mysql", "aurora_postgresql"},
+                "sqlserver",
+                query_counts={"aurora_mysql": 7, "aurora_postgresql": 7},
+                tie_key="q1,q2",
+            )
+        assert winner == "aurora_mysql"
+        mock_break_tie.assert_called_once()
+        args, kwargs = mock_break_tie.call_args
+        tied = args[0] if args else kwargs["tied"]
+        assert sorted(tied) == ["aurora_mysql", "aurora_postgresql"]
+        settled_counts = kwargs.get("settled_counts")
+        if settled_counts is None and len(args) >= 4:
+            settled_counts = args[3]
+        assert settled_counts == {"aurora_mysql": 7, "aurora_postgresql": 7}
+        query_id = kwargs.get("query_id")
+        if query_id is None and len(args) >= 5:
+            query_id = args[4]
+        assert query_id == "q1,q2"
+        assert query_id
+
+
+class TestPickAuroraEngineWithTie:
+    """#550 review Important 3: a caller that needs to know whether the pick
+    was an unresolved tie (to record ``QueryAssignment.tied_engines``/
+    ``routing_trace.record_tie``) calls ``pick_aurora_engine_with_tie``
+    directly, instead of ``pick_aurora_engine`` discarding it.
+    """
+
+    def test_source_compatible_match_reports_no_tie(self):
+        winner, tie_kind = pick_aurora_engine_with_tie(
+            {"aurora_mysql", "aurora_postgresql"}, "mysql"
+        )
+        assert (winner, tie_kind) == ("aurora_mysql", None)
+
+    def test_single_candidate_reports_no_tie(self):
+        winner, tie_kind = pick_aurora_engine_with_tie({"aurora_postgresql"}, "sqlserver")
+        assert (winner, tie_kind) == ("aurora_postgresql", None)
+
+    def test_scored_heterogeneous_decision_reports_no_tie(self):
+        winner, tie_kind = pick_aurora_engine_with_tie(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            score_totals={"aurora_mysql": 9000.0, "aurora_postgresql": 10.0},
+        )
+        assert (winner, tie_kind) == ("aurora_mysql", None)
+
+    def test_live_prior_choice_reports_no_tie(self):
+        winner, tie_kind = pick_aurora_engine_with_tie(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
+            prior_choice="aurora_mysql",
+        )
+        assert (winner, tie_kind) == ("aurora_mysql", None)
+
+    def test_no_candidates_reports_no_tie(self):
+        assert pick_aurora_engine_with_tie({"dynamodb"}, "sqlserver") == (None, None)
+
+    def test_the_no_score_fallback_reports_tie_unresolved(self):
+        winner, tie_kind = pick_aurora_engine_with_tie(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
+            tie_key="q1",
+        )
+        assert (winner, tie_kind) == ("aurora_mysql", "tie_unresolved")
+
+    def test_pick_aurora_engine_is_just_the_winner_half_of_this(self):
+        winner, tie_kind = pick_aurora_engine_with_tie(
+            {"aurora_mysql", "aurora_postgresql"},
+            "sqlserver",
+            query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
+            tie_key="q1",
+        )
+        assert tie_kind == "tie_unresolved"
+        assert (
+            pick_aurora_engine(
+                {"aurora_mysql", "aurora_postgresql"},
+                "sqlserver",
+                query_counts={"aurora_mysql": 0, "aurora_postgresql": 0},
+                tie_key="q1",
+            )
+            == winner
+        )
 
 
 class TestDetectHeterogeneousFeatures:

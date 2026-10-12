@@ -185,6 +185,61 @@ class TestApplyCorrections:
         assert len(result_c) == 0
 
 
+class TestApplyCorrectionsAuroraTieBreak:
+    """#550 review: the Aurora redirect target in ``apply_corrections`` uses
+    the SETTLED count (a query's own ``tied_engines`` empty), never a raw
+    recount of ``revised_assignments``, and a tie key built from the
+    corrections being redirected -- never a constant seed.
+    """
+
+    def test_an_unresolved_tie_elsewhere_does_not_feed_this_redirect(self):
+        assignments = [
+            {"query_id": "m1", "assigned_engine": "aurora_mysql", "tied_engines": []},
+            {
+                "query_id": "p1",
+                "assigned_engine": "aurora_postgresql",
+                "tied_engines": ["aurora_mysql", "aurora_postgresql"],
+            },
+            {"query_id": "q-1", "assigned_engine": "documentdb", "assignment_reason": "x"},
+        ]
+        corrections = [
+            {"query_id": "q-1", "original_engine": "documentdb", "reason": "complex joins"},
+        ]
+        # p1's own placement is itself an unresolved tie, so it must not count
+        # toward aurora_postgresql's settled share -- only m1 (settled, on
+        # aurora_mysql) does, so aurora_mysql wins outright here, not a tie
+        # the hash has to decide.
+        apply_corrections(
+            corrections,
+            assignments,
+            [],
+            surviving_engines={"aurora_mysql", "aurora_postgresql", "documentdb"},
+        )
+        q1 = next(qa for qa in assignments if qa["query_id"] == "q-1")
+        assert q1["assigned_engine"] == "aurora_mysql"
+
+    def test_two_different_correction_batches_can_redirect_differently(self):
+        winners = set()
+        for qid in ("q1", "q2"):
+            assignments = [
+                {"query_id": "m1", "assigned_engine": "aurora_mysql", "tied_engines": []},
+                {"query_id": "p1", "assigned_engine": "aurora_postgresql", "tied_engines": []},
+                {"query_id": qid, "assigned_engine": "documentdb", "assignment_reason": "x"},
+            ]
+            corrections = [{"query_id": qid, "original_engine": "documentdb", "reason": "r"}]
+            apply_corrections(
+                corrections,
+                assignments,
+                [],
+                surviving_engines={"aurora_mysql", "aurora_postgresql", "documentdb"},
+            )
+            winners.add(next(qa for qa in assignments if qa["query_id"] == qid)["assigned_engine"])
+        # m1/p1 are a genuine 1-vs-1 settled tie here, so the two different
+        # correction batches' own tie keys are free to resolve it differently
+        # -- never the same engine's name winning on every workload.
+        assert winners == {"aurora_mysql", "aurora_postgresql"}
+
+
 class TestBuildPrompt:
     """Tests for _build_validation_prompt()."""
 

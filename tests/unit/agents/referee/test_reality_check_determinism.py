@@ -268,7 +268,7 @@ _ASSIGNMENT_CHILD = textwrap.dedent("""
     ]
     print(json.dumps({
         "groups": build_co_dependency_groups(queries, []),
-        "fallback": _resolve_aurora_fallback({"aurora_mysql", "aurora_postgresql", "dynamodb"}),
+        "fallback": _resolve_aurora_fallback({"aurora_mysql", "aurora_postgresql", "dynamodb"})[0],
     }))
     """)
 
@@ -299,7 +299,9 @@ class TestAssignmentResolutionIsHashSeedIndependent:
 
 class TestAuroraChoiceFollowsTheSource:
     """With both Aurora engines available, the source's dialect wins; otherwise
-    the engine with more queries, then PostgreSQL (#288 review)."""
+    the engine with more of the recorded SETTLED workload, then the shared
+    ADR-031 tie-break's deterministic hash -- never a bare name preference
+    (#288 review, #550)."""
 
     BOTH = {"aurora_mysql", "aurora_postgresql", "dynamodb"}
 
@@ -309,8 +311,13 @@ class TestAuroraChoiceFollowsTheSource:
         assert pick_aurora_engine(self.BOTH, "mysql") == "aurora_mysql"
         assert pick_aurora_engine(self.BOTH, "MariaDB") == "aurora_mysql"
         assert pick_aurora_engine(self.BOTH, "postgresql") == "aurora_postgresql"
-        # The source does not decide: more queries, then PostgreSQL.
+        # The source does not decide: the engine with more settled workload wins.
         assert pick_aurora_engine(self.BOTH, "oracle", {"aurora_mysql": 3}) == "aurora_mysql"
+        # No settled workload at all (0 vs 0) and no tie_key: the shared ADR-031
+        # tie-break's placeholder hash decides -- for this call's default empty
+        # tie_key, that happens to land on aurora_postgresql, not because the name
+        # is preferred (see test_aurora_choice.py's tie_key tests for a key where
+        # it does not).
         assert pick_aurora_engine(self.BOTH, "") == "aurora_postgresql"
         # The source's dialect is not a candidate.
         assert pick_aurora_engine({"aurora_postgresql"}, "mysql") == "aurora_postgresql"
@@ -362,7 +369,13 @@ class TestAuroraChoiceFollowsTheSource:
 
     @pytest.mark.parametrize(
         ("source", "expected"),
-        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_postgresql")],
+        # #550 review: without a source, the two Aurora engines settle on an exact
+        # tie (1 query each), which now goes through the shared ADR-031 tie-break
+        # keyed on every query id this sweep sees -- a hash, never a bare name
+        # preference, so "aurora_mysql" here is this specific id set's hash result,
+        # not a universal "PostgreSQL wins ties" default (see
+        # test_aurora_choice.py's own tie_key tests for the general case).
+        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_mysql")],
     )
     def test_sanity_sweep_redirects_to_the_source_dialect(self, source, expected):
         from src.agents.referee.consolidation_validator import sanity_sweep
@@ -374,7 +387,6 @@ class TestAuroraChoiceFollowsTheSource:
             {"query_id": "p1", "assigned_engine": "aurora_postgresql"},
         ]
         updated, _ = sanity_sweep(revised, [], {}, source_engine=source)
-        # Without a source the Aurora engines tie on queries, so PostgreSQL wins.
         assert next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"] == expected
 
 
@@ -438,3 +450,66 @@ class TestAuroraAbsorptionFollowsTheSource:
         revised, consolidations = rerun_aurora_absorption(assignments, {}, analysis, collector)
         assert [c["to_engine"] for c in consolidations] == [expected]
         assert next(qa for qa in revised if qa["query_id"] == "d1")["assigned_engine"] == expected
+
+    def test_a_tied_assignment_does_not_count_toward_the_settled_workload(self):
+        # #550 review (Critical 2): m1's own placement is itself an
+        # unresolved tie (``tied_engines`` set), so it must not count toward
+        # aurora_mysql's settled share here -- p1 (settled, on
+        # aurora_postgresql) then wins outright, not a tie.
+        from src.agents.referee.reality_check import _run_aurora_absorption_pass
+
+        assignments = [
+            {
+                "query_id": "m1",
+                "assigned_engine": "aurora_mysql",
+                "tied_engines": ["aurora_mysql", "aurora_postgresql"],
+            },
+            {"query_id": "p1", "assigned_engine": "aurora_postgresql", "tied_engines": []},
+            {"query_id": "d1", "assigned_engine": "documentdb", "tied_engines": []},
+        ]
+        recs = {"table_recommendations": [{"table_id": "t", "confidence_score": 80}]}
+        analysis = {e: recs for e in ("aurora_mysql", "aurora_postgresql", "documentdb")}
+        engine_queries: dict[str, list[dict]] = {}
+        for qa in assignments:
+            engine_queries.setdefault(qa["assigned_engine"], []).append(qa)
+        result = _run_aurora_absorption_pass(
+            engine_queries=engine_queries,
+            surviving_engines=set(engine_queries),
+            mandatory_committed_engines=set(),
+            query_signals={},
+            query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
+            analysis_outputs=analysis,
+            query_capabilities={},
+        )
+        assert result.aurora_engine == "aurora_postgresql"
+
+    def test_two_different_query_sets_can_absorb_into_different_engines(self):
+        # #550 review (Critical 1): a genuine 1-vs-1 settled tie, keyed on
+        # every query id this absorption pass is looking at -- never a
+        # constant seed every workload hitting this exact tie would share.
+        from src.agents.referee.reality_check import _run_aurora_absorption_pass
+
+        recs = {"table_recommendations": [{"table_id": "t", "confidence_score": 80}]}
+        analysis = {e: recs for e in ("aurora_mysql", "aurora_postgresql", "documentdb")}
+
+        def _absorb(third_qid: str) -> str:
+            assignments: list[dict] = [
+                {"query_id": "m1", "assigned_engine": "aurora_mysql", "tied_engines": []},
+                {"query_id": "p1", "assigned_engine": "aurora_postgresql", "tied_engines": []},
+                {"query_id": third_qid, "assigned_engine": "documentdb", "tied_engines": []},
+            ]
+            engine_queries: dict[str, list[dict]] = {}
+            for qa in assignments:
+                engine_queries.setdefault(qa["assigned_engine"], []).append(qa)
+            result = _run_aurora_absorption_pass(
+                engine_queries=engine_queries,
+                surviving_engines=set(engine_queries),
+                mandatory_committed_engines=set(),
+                query_signals={},
+                query_map={qa["query_id"]: {"tables_accessed": ["t"]} for qa in assignments},
+                analysis_outputs=analysis,
+                query_capabilities={},
+            )
+            return result.aurora_engine
+
+        assert {_absorb("q1"), _absorb("q4")} == {"aurora_mysql", "aurora_postgresql"}

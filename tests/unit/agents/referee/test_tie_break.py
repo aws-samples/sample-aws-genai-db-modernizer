@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
-from src.agents.referee.tie_break import break_tie, pick_unresolved_tie_placeholder
+from src.agents.referee.tie_break import break_tie, pick_unresolved_tie_placeholder, settled_counts
 
 
 class TestSourceCompatibleWinsAnAuroraTie:
@@ -202,3 +202,58 @@ class TestPickUnresolvedTiePlaceholder:
         first, _ = pick_unresolved_tie_placeholder(["documentdb", "dynamodb"], counts, "q1")
         second, _ = pick_unresolved_tie_placeholder(["documentdb", "dynamodb"], counts, "q1")
         assert first == second
+
+
+class TestSettledCounts:
+    """#550/#549: the settled-workload-share definition, from a finished list
+    of query assignments rather than a live resolver run -- counts a query
+    toward its ``assigned_engine`` only when its own ``tied_engines`` is
+    empty.
+    """
+
+    def test_counts_only_untied_queries(self):
+        qas = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "tied_engines": []},
+            {"query_id": "q2", "assigned_engine": "dynamodb", "tied_engines": []},
+            {
+                "query_id": "q3",
+                "assigned_engine": "documentdb",
+                "tied_engines": ["documentdb", "dynamodb"],
+            },
+        ]
+        assert settled_counts(qas) == {"dynamodb": 2}
+
+    def test_missing_tied_engines_key_counts_as_untied(self):
+        # A legacy or hand-built dict with no ``tied_engines`` key at all --
+        # never a tie, same as an explicit empty list.
+        qas = [{"query_id": "q1", "assigned_engine": "dynamodb"}]
+        assert settled_counts(qas) == {"dynamodb": 1}
+
+    def test_no_assigned_engine_is_not_counted(self):
+        qas = [{"query_id": "q1", "assigned_engine": "", "tied_engines": []}]
+        assert settled_counts(qas) == {}
+
+    def test_empty_list_returns_an_empty_dict(self):
+        assert settled_counts([]) == {}
+
+    def test_accepts_query_assignment_objects_not_only_dicts(self):
+        from src.contracts.assignment_models import QueryAssignment
+
+        qas = [
+            QueryAssignment(
+                query_id="q1",
+                assigned_engine="aurora_mysql",
+                confidence=80,
+                source_tables=[],
+                assignment_reason="test",
+            ),
+            QueryAssignment(
+                query_id="q2",
+                assigned_engine="aurora_postgresql",
+                confidence=80,
+                source_tables=[],
+                assignment_reason="test",
+                tied_engines=["aurora_mysql", "aurora_postgresql"],
+            ),
+        ]
+        assert settled_counts(qas) == {"aurora_mysql": 1}

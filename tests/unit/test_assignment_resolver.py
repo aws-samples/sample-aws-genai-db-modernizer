@@ -1673,6 +1673,69 @@ class TestTableAssignmentPrimaryEngine:
         table = next(t for t in tables if t.table_id == "db.search_log")
         assert table.primary_engine == "aurora_mysql"
 
+    def test_global_fallback_with_retained_engine_honors_it_over_a_tie(self):
+        # #550 review (Important 4): both Aurora engines were used an equal
+        # number of times elsewhere -- a genuine tie for the global fallback
+        # -- but ``retained_engine`` is passed through as ``pick_aurora_
+        # engine``'s ``prior_choice``, so the source's own dialect still wins
+        # outright, never left to the tie-break's hash.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+            _qa("q2", "aurora_mysql", ["db.orders"]),
+            _qa("q3", "aurora_postgresql", ["db.accounts"]),
+        ]
+        tables, _ = derive_table_assignments(query_assignments, retained_engine="aurora_mysql")
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "aurora_mysql"
+
+    def test_global_fallback_breaks_a_genuine_aurora_tie_through_the_shared_rule(self):
+        # #550 review (Critical 1/2): with no retained_engine and an equal
+        # number of settled queries on each Aurora engine, the fallback goes
+        # through the shared ADR-031 tie-break, keyed on every query id in
+        # this assignment -- not a constant seed, so two different
+        # assignments with the same shape of tie are free to land on
+        # different engines.
+        tables_a, _ = derive_table_assignments(
+            [
+                _qa("q1", "opensearch", ["db.search_log"]),
+                _qa("q2", "aurora_mysql", ["db.orders"]),
+                _qa("q3", "aurora_postgresql", ["db.accounts"]),
+            ]
+        )
+        tables_b, _ = derive_table_assignments(
+            [
+                _qa("q1", "opensearch", ["db.search_log"]),
+                _qa("q2", "aurora_mysql", ["db.orders"]),
+                _qa("q3", "aurora_postgresql", ["db.accounts"]),
+                _qa("q4", "aurora_postgresql", ["db.invoices"]),
+            ]
+        )
+        winner_a = next(t for t in tables_a if t.table_id == "db.search_log").primary_engine
+        winner_b = next(t for t in tables_b if t.table_id == "db.search_log").primary_engine
+        assert winner_a == "aurora_mysql"
+        assert winner_b == "aurora_postgresql"
+
+    def test_global_fallback_ignores_a_tied_assignment_when_counting_settled_workload(self):
+        # #550 review (Critical 2): aurora_postgresql's own assignment here is
+        # itself an unresolved tie (``tied_engines`` set), so it must not
+        # count toward its settled share -- aurora_mysql's single, settled
+        # query then wins outright, not a tie the hash has to decide.
+        query_assignments = [
+            _qa("q1", "opensearch", ["db.search_log"]),
+            _qa("q2", "aurora_mysql", ["db.orders"]),
+            QueryAssignment(
+                query_id="q3",
+                assigned_engine="aurora_postgresql",
+                confidence=50,
+                source_tables=["db.accounts"],
+                assignment_reason="test",
+                tied_engines=["aurora_mysql", "aurora_postgresql"],
+            ),
+        ]
+        tables, _ = derive_table_assignments(query_assignments)
+        table = next(t for t in tables if t.table_id == "db.search_log")
+        assert table.primary_engine == "aurora_mysql"
+
     def test_primary_engine_unaffected_when_already_a_durable_owner(self):
         # A table already correctly owned by a durable engine keeps the same
         # primary_engine the old highest-count logic would have picked.

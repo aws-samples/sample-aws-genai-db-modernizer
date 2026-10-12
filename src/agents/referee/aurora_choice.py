@@ -8,10 +8,15 @@ engines compete on the total adjusted score the assignment resolver computed
 for every query (:func:`choose_heterogeneous_engine`), tipped by source
 features within a close margin, Aurora PostgreSQL on an exact tie (#381).
 Everywhere else -- a caller with no score totals, resolving a tie after the
-#381 choice already dropped the losing engine from scoring -- the engine with
-more queries wins, Aurora PostgreSQL the tie-break, as Reality Check's
-absorption pass does. Never the first element of a set: set order depends on
-PYTHONHASHSEED.
+#381 choice already dropped the losing engine from scoring -- the engine
+already carrying more of the recorded SETTLED workload wins; a genuine tie
+(including 0 vs 0, no settled workload recorded at all) goes through the
+shared ADR-031 tie-break (:func:`src.agents.referee.tie_break.break_tie`),
+the same rule set Reality Check's absorption pass uses, hashed together with
+a caller-supplied ``tie_key`` -- never a constant seed, and never a bare name
+preference (#550). :func:`pick_aurora_engine_with_tie` is the same decision,
+for a caller that also needs the tie kind, to record on the query. Never the
+first element of a set: set order depends on PYTHONHASHSEED.
 
 Within the margin, every signal this module tracks today (``PRIMARY_FEATURE_
 SIGNALS`` and the Babelfish last resort) favours Aurora PostgreSQL -- there is
@@ -27,6 +32,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 
 AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
@@ -40,7 +46,11 @@ AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
 # Oracle) can be expected to land close to parity whenever they stay close to ANSI SQL
 # too -- so the margin is generous: within 5% of the larger total counts as "close
 # enough" for source features to decide, and an exact tie (including 0 vs 0, no score
-# at all) goes to Aurora PostgreSQL, same as today's homogeneous tie-break default.
+# at all) goes to Aurora PostgreSQL. This is ``choose_heterogeneous_engine``'s own,
+# unchanged preference (out of scope for #550, which only fixed the OTHER, no-score
+# fallback below, in ``pick_aurora_engine``, to go through the shared ADR-031
+# tie-break instead of a bare name preference) -- it is not "the same as" that
+# fallback's default any more, now that the fallback has none of its own.
 MARGIN_RATIO = 0.05
 
 # Source features that tip a close Aurora MySQL vs Aurora PostgreSQL call (#381 design):
@@ -431,6 +441,73 @@ def choose_heterogeneous_engine(
     }
 
 
+def pick_aurora_engine_with_tie(
+    candidates: Iterable[str],
+    source_engine: str | None = None,
+    query_counts: Mapping[str, int] | None = None,
+    *,
+    score_totals: Mapping[str, float] | None = None,
+    features: Mapping[str, bool] | None = None,
+    prior_choice: str | None = None,
+    tie_key: str = "",
+) -> tuple[str | None, str | None]:
+    """:func:`pick_aurora_engine`'s decision, plus the ``tie_kind`` a caller
+    needs to record ``QueryAssignment.tied_engines``/``routing_trace.record_tie``
+    when the pick stayed unresolved (#550 review, Important 3).
+
+    ``tie_kind`` is ``None`` whenever nothing here needed a tie-break at all
+    -- a single candidate, the source-compatible dialect match, the #381
+    scored decision, or a live ``prior_choice`` all decide the engine
+    outright, with no ADR-031 Decision 12 fact to report. It is whatever
+    :func:`src.agents.referee.tie_break.break_tie` itself returns only on
+    the final, no-score fallback below -- in practice always
+    ``"tie_unresolved"`` here, since this function's own source-compatible
+    check already returned before ``break_tie`` ever runs (so its
+    ``"source_compatible"`` tie kind can never come from here), and there is
+    no "current engine for this decision" concept at this generic call site
+    for ``break_tie``'s stability rule (``"stability"``) to ever fire either.
+
+    ``tie_key`` (#550 review) is the stable identifier the no-score
+    fallback's tie-break hashes together with each candidate engine's name --
+    the sorted, comma-joined ids of the queries THIS call is deciding for,
+    the same way ``assignment_resolver``'s Step 6b builds its own
+    ``hash_seed``. The default ``""`` reproduces the exact bug #550 fixed: a
+    constant seed makes the hash a comparison BY the engine's name (every
+    caller that leaves it unset gets the same winner, on every workload),
+    not of it, together with something that actually varies -- so every
+    caller that reaches the fallback (not the single-candidate, dialect-match
+    or scored branches, which never consult it) must pass one of its own.
+    """
+    pool = sorted(AURORA_ENGINES.intersection(candidates))
+    if not pool:
+        return None, None
+    matched = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
+    if matched in pool:
+        return matched, None
+    if len(pool) == 1:
+        return pool[0], None
+    if score_totals:
+        winner, _ = choose_heterogeneous_engine(pool, score_totals, features)
+        return winner, None
+    counts = query_counts or {}
+    if prior_choice in pool and not any(counts.get(e) for e in pool):
+        return prior_choice, None
+    # #550: no score and no live prior choice -- this is exactly the kind of
+    # tie ADR-031 Decision 2 governs, so it goes through the one shared
+    # tie-break (``tie_break.break_tie``), not a module-local comparison.
+    # ``matched`` is already ``None`` or not in ``pool`` by this point (the
+    # source-compatible branch above already returned), and there is no
+    # "current engine for this decision" concept at this generic call site,
+    # so rule 3 -- the settled-workload-share placeholder ADR-031 Decision 12
+    # approved -- is what actually decides: the engine already carrying more
+    # of the recorded workload (``counts``, expected to be a genuine settled
+    # count -- see ``tie_break.settled_counts`` -- never a raw recount that
+    # includes placeholder picks) wins; a genuine tie (including 0 vs 0)
+    # falls through to the placeholder's deterministic hash of ``tie_key``
+    # and the engine's name, never a bare name preference.
+    return break_tie(pool, set(), matched, settled_counts=counts, query_id=tie_key)
+
+
 def pick_aurora_engine(
     candidates: Iterable[str],
     source_engine: str | None = None,
@@ -439,11 +516,15 @@ def pick_aurora_engine(
     score_totals: Mapping[str, float] | None = None,
     features: Mapping[str, bool] | None = None,
     prior_choice: str | None = None,
+    tie_key: str = "",
 ) -> str | None:
     """The Aurora engine to use among ``candidates``, or ``None`` if there is none.
 
     ``source_engine`` is the source database engine (``"mysql"``, ``"postgresql"``,
-    ...); ``query_counts`` maps engine to the queries it already serves.
+    ...); ``query_counts`` maps engine to the queries it already serves (a genuine
+    settled count, per :func:`src.agents.referee.tie_break.settled_counts` --
+    never a raw recount of every current assignment, which would feed
+    placeholder ties and reality-check moves back into this decision).
 
     ``score_totals`` (each engine's total adjusted score, #381) and ``features``
     (:func:`detect_heterogeneous_features`) make the same heterogeneous-source
@@ -458,22 +539,28 @@ def pick_aurora_engine(
     ``Assignment.aurora_engine_choice.engine``, when the caller has one. It is
     consulted only when every other signal is silent -- no ``score_totals``, and
     neither engine in ``pool`` has a nonzero ``query_counts`` entry (e.g. the
-    utility-statement pin running before any query has been assigned yet) -- so the
-    tie-break default (Aurora PostgreSQL) never silently overrides a choice the
-    resolver already made and recorded.
+    utility-statement pin running before any query has been assigned yet) -- so a
+    live ``prior_choice`` never gets silently overridden by a 0-vs-0 non-decision.
+
+    With no ``score_totals`` and no live ``prior_choice``, the remaining tie
+    between the two Aurora engines goes through the shared ADR-031 tie-break
+    (:func:`src.agents.referee.tie_break.break_tie`, #550): ``counts`` stands in
+    for its settled-workload-share placeholder, so the engine already carrying
+    more of the recorded workload wins, and a genuine tie (including 0 vs 0)
+    falls through to that placeholder's deterministic hash of ``tie_key`` and
+    the engine's name -- never a bare engine-name preference. See ``tie_key``
+    on :func:`pick_aurora_engine_with_tie` (this function's own default is the
+    same, and the same caveat applies): a caller that can reach the fallback
+    must pass a real one. Call :func:`pick_aurora_engine_with_tie` directly
+    when the caller also needs to know whether the pick was an unresolved tie.
     """
-    pool = sorted(AURORA_ENGINES.intersection(candidates))
-    if not pool:
-        return None
-    matched = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
-    if matched in pool:
-        return matched
-    if len(pool) == 1:
-        return pool[0]
-    if score_totals:
-        winner, _ = choose_heterogeneous_engine(pool, score_totals, features)
-        return winner
-    counts = query_counts or {}
-    if prior_choice in pool and not any(counts.get(e) for e in pool):
-        return prior_choice
-    return min(pool, key=lambda e: (-counts.get(e, 0), e != "aurora_postgresql"))
+    winner, _ = pick_aurora_engine_with_tie(
+        candidates,
+        source_engine,
+        query_counts,
+        score_totals=score_totals,
+        features=features,
+        prior_choice=prior_choice,
+        tie_key=tie_key,
+    )
+    return winner

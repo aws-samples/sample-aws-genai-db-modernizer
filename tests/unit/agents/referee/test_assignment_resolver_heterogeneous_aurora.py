@@ -14,7 +14,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.agents.referee.assignment_resolver import AssignmentResolver, retained_engine_for
+from src.agents.referee.assignment_resolver import (
+    AssignmentResolver,
+    RoutingTrace,
+    retained_engine_for,
+)
 from src.contracts.assignment_models import AuroraEngineChoice, QueryAssignment
 
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
@@ -352,3 +356,55 @@ class TestRetainedEngineForPrefersRecordedChoice:
 
     def test_none_when_nothing_is_available(self):
         assert retained_engine_for(self._co()) is None
+
+
+class TestFallbackReachesTheSharedTieBreak:
+    """#550 review (Important 4): a two-Aurora-engine pool DOES still reach
+    ``_resolve_aurora_fallback``'s ``break_tie`` call -- not when the source
+    is heterogeneous and both engines were analyzed (Step 4b above always
+    collapses that case to one before the fallback ever runs), but when
+    triage selected both for a heterogeneous source while FEWER than two were
+    actually analyzed, so Step 4b's own ``len(both_aurora) == 2`` guard never
+    fires and ``aurora_engine_choice`` stays ``None``. Every query then has no
+    score at all (``analysis_outputs`` is empty) and lands in the fallback,
+    with both engines still in ``selected_engines``.
+    """
+
+    def test_fallback_reaches_the_shared_tie_break_with_both_aurora_engines(self):
+        resolver = AssignmentResolver()
+        query_ids = [f"q{i}" for i in range(1, 4)]
+        collector = _collector(query_ids, engine="sqlserver")
+        triage = _triage(["aurora_mysql", "aurora_postgresql"])
+        trace = RoutingTrace()
+
+        result = resolver.resolve(triage, {}, collector, routing_trace=trace)
+
+        # Step 4b never ran (nothing was analyzed), so there was no scored
+        # heterogeneous choice to record.
+        assert result.aurora_engine_choice is None
+        assigned_engines = {qa.assigned_engine for qa in result.query_assignments}
+        assert assigned_engines <= {"aurora_mysql", "aurora_postgresql"}
+        for qa in result.query_assignments:
+            # #550 Important 3: the fallback's own unresolved tie is recorded
+            # on the query, the same way Step 6b's ties already are -- never a
+            # silent placeholder pick with no customer-visible trace of it.
+            assert qa.tied_engines == ["aurora_mysql", "aurora_postgresql"]
+            assert trace.tie_break_by_query[qa.query_id] == "tie_unresolved"
+
+    def test_two_different_fallback_batches_do_not_all_pick_the_same_engine(self):
+        """#550 Critical 1: the fallback's tie key comes from the queries it is
+        deciding for, not a constant -- two different query-id batches hitting
+        this same tie must be free to land on different engines, not every
+        workload converging on the one the hash of an empty seed happens to
+        favour.
+        """
+        resolver = AssignmentResolver()
+        triage = _triage(["aurora_mysql", "aurora_postgresql"])
+
+        winners = set()
+        for query_ids in (["q1"], ["q2"]):
+            collector = _collector(query_ids, engine="sqlserver")
+            result = resolver.resolve(triage, {}, collector)
+            winners.update(qa.assigned_engine for qa in result.query_assignments)
+
+        assert winners == {"aurora_mysql", "aurora_postgresql"}

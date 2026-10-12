@@ -23,6 +23,7 @@ from collections import Counter
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.agents.referee.aurora_choice import AURORA_ENGINES, pick_aurora_engine
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
+from src.agents.referee.tie_break import settled_counts
 
 logger = logging.getLogger(__name__)
 
@@ -234,8 +235,8 @@ def apply_corrections(
     a committed Aurora engine if one exists (these are relational patterns that
     Aurora handles natively). Falls back to the original engine only if no
     Aurora is available. With both Aurora engines available, the one matching
-    the source database's dialect wins, then the one with more queries, then
-    Aurora PostgreSQL (``pick_aurora_engine``, #288).
+    the source database's dialect wins, then the shared ADR-031 tie-break on
+    the recorded workload decides (``pick_aurora_engine``, #288, #550).
 
     Args:
         corrections: queries flagged as unserviceable on target
@@ -258,10 +259,18 @@ def apply_corrections(
     # Check both surviving engines AND original engines — Aurora may have been
     # temporarily consolidated but is still a valid relational safety net.
     candidate_pool = (surviving_engines or set()) | (all_original_engines or set())
+    # #550 review (Critical 2): the SETTLED count (a query's own ``tied_engines``
+    # empty), never a raw recount of ``revised_assignments`` -- which, by the time
+    # this runs, already carries Reality Check's own placeholder ties and moves,
+    # exactly the order-dependence Decision 12 rules out. A tie key built from the
+    # corrections actually being redirected (Critical 1), so this does not repeat
+    # the constant-seed bug every workload hitting this exact tie would otherwise
+    # share.
     redirect_engine = pick_aurora_engine(
         candidate_pool,
         source_engine,
-        Counter(qa["assigned_engine"] for qa in revised_assignments),
+        settled_counts(revised_assignments),
+        tie_key=",".join(sorted(c["query_id"] for c in corrections)),
     )
 
     # Build correction lookup: query_id → original_engine. A correction without
@@ -392,9 +401,18 @@ def sanity_sweep(
     # Count queries per engine
     engine_counts = Counter(qa["assigned_engine"] for qa in revised_assignments)
 
-    # Committed Aurora engine: the source's dialect, else the one with the most
-    # queries, else PostgreSQL (#288)
-    aurora_target = pick_aurora_engine(engine_counts, source_engine, engine_counts)
+    # Committed Aurora engine: the source's dialect, else the shared ADR-031
+    # tie-break on the recorded SETTLED workload decides (``pick_aurora_engine``,
+    # #288, #550 review). ``engine_counts`` stays the raw per-engine count for the
+    # orphan-detection logic below (unrelated to this pick); the Aurora decision
+    # itself gets the genuine settled count and a tie key built from every query
+    # in this sweep, so it never repeats #550's constant-seed, name-preference bug.
+    aurora_target = pick_aurora_engine(
+        engine_counts,
+        source_engine,
+        settled_counts(revised_assignments),
+        tie_key=",".join(sorted(qa["query_id"] for qa in revised_assignments)),
+    )
     if aurora_target is None:
         return revised_assignments, consolidations
 

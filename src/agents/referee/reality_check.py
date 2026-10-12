@@ -37,6 +37,7 @@ from src.agents.referee.capability_registry import (
     suggest_lightweight_alternative,
 )
 from src.agents.referee.tie_break import break_tie
+from src.agents.referee.tie_break import settled_counts as settled_workload_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_elimination import in_scope_distribution
@@ -2214,12 +2215,22 @@ def _run_aurora_absorption_pass(
         absorbed_queries=[], engines_eliminated=[], engines_reduced=[], aurora_engine=""
     )
 
-    # Committed Aurora engine: the source's dialect, else the one with more
-    # queries, else PostgreSQL (shared rule, #288)
+    # Committed Aurora engine: the source's dialect, else the shared ADR-031
+    # tie-break on the recorded SETTLED workload decides (shared rule, #288,
+    # #550 review). ``engine_queries``' own qa dicts already carry
+    # ``tied_engines`` from the main deterministic run (this pass only ever
+    # runs again from ``rerun_aurora_absorption``, on an already-revised
+    # assignment, with no live resolver snapshot of its own to reuse) --
+    # ``settled_counts`` filters to the ones that is empty for, never a raw
+    # ``len()`` of every current query regardless of whether its own
+    # placement was itself a tie. The tie key comes from every query this
+    # pass is looking at, so it does not repeat #550's constant-seed bug.
+    all_qas = [qa for qas in engine_queries.values() for qa in qas]
     aurora_engine = pick_aurora_engine(
         surviving_engines,
         source_engine,
-        {e: len(qas) for e, qas in engine_queries.items()},
+        settled_workload_counts(all_qas),
+        tie_key=",".join(sorted(qa["query_id"] for qa in all_qas)),
     )
     if aurora_engine is None:
         return empty_result

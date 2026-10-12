@@ -45,14 +45,57 @@ not as a quieter tiebreaker buried under a different name. Drift between
 runs on the same ADR-031 rule set is a bug; drift between a routing change
 and a prior run because a real rule changed is expected and reported, not
 suppressed here.
+
+:func:`settled_counts` (#550, #549) computes rule 1's settled-workload-share
+input from a finished list of query assignments, for a caller with no live
+resolver snapshot to reuse directly.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 TieKind = str  # "source_compatible" | "stability" | "tie_unresolved"
+
+
+def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:
+    """Each engine's share of the SETTLED workload (ADR-031 Decision 12), from
+    a finished list of query assignments rather than a live resolver run (#550,
+    #549).
+
+    Counts a query toward its ``assigned_engine`` only when its own
+    ``tied_engines`` is empty -- never a ``tie_unresolved`` query, and never
+    another placeholder pick -- the exact rule
+    :func:`pick_unresolved_tie_placeholder` already applies to the resolver's
+    own in-flight ``settled_counts`` snapshot (``assignment_resolver.py``'s
+    Step 6b). A caller that already has that live snapshot (the resolver
+    itself, mid-``resolve()``) should keep using it directly; this helper is
+    for every other caller that only has a finished assignment list to work
+    from -- the Reality Check LLM-correction re-run, the consolidation
+    validator's sanity sweep and corrections, ``derive_table_assignments``'s
+    global fallback -- so they compute the SAME settled count from it,
+    instead of a raw ``Counter`` over every current assignment (which
+    includes placeholder ties and reality-check moves, and so is not
+    "settled" at all).
+
+    Each entry in ``query_assignments`` may be a ``QueryAssignment`` or a
+    plain dict (the same dual shape ``assignment_resolver.retained_engine_for``
+    already accepts), so this works on raw collector-shaped assignments and
+    on validated contracts alike.
+    """
+    counts: dict[str, int] = {}
+    for qa in query_assignments:
+        if isinstance(qa, Mapping):
+            engine = qa.get("assigned_engine")
+            tied = qa.get("tied_engines")
+        else:
+            engine = getattr(qa, "assigned_engine", None)
+            tied = getattr(qa, "tied_engines", None)
+        if engine and not tied:
+            counts[engine] = counts.get(engine, 0) + 1
+    return counts
 
 
 def _settled_workload_leaders(tied: list[str], settled_counts: Mapping[str, int]) -> list[str]:
