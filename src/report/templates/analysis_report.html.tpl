@@ -45,6 +45,7 @@ __BANNER__
       <div class="section-header">Executive Summary</div>
       <p class="section-desc">The target architecture recommended for this database, its projected monthly cost, and the workload it covers.</p>
       <p class="section-body">__SUMMARY__</p>
+      __SUMMARY_FALLBACK_NOTE__
       <div class="grid grid-4">
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">__DATABASE_NAME__</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">__ENGINE_BADGES__</div></div>

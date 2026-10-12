@@ -25,11 +25,11 @@ import Pagination from "@cloudscape-design/components/pagination";
 import Modal from "@cloudscape-design/components/modal";
 import Tabs from "@cloudscape-design/components/tabs";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
-import Icon from "@cloudscape-design/components/icon";
 
 //##-- Custom
 import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
+import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import {
@@ -38,6 +38,7 @@ import {
   engineOptionsForQuery,
 } from "../utils/assignmentSummary";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
+import { summaryFallbackInfo } from "../utils/summaryFallback";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -372,6 +373,15 @@ const AssignmentGatePage = memo(() => {
     engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
     t,
   }), [realityCheck, databaseName, afterDist, tableCount, patterns, cacheOverlay, t]);
+
+  // #269: whether that LLM-generated reality-check summary was itself replaced
+  // by its deterministic fallback (a grounding check rejected it against the
+  // final records, #236) -- shown as a notice under the hero summary, with
+  // the rejection warnings in an expandable detail.
+  const summaryFallback = useMemo(() => summaryFallbackInfo(
+    realityCheck?.executive_summary_source,
+    realityCheck?.executive_summary_validation_warnings,
+  ), [realityCheck]);
 
   // Sankey data from after_distribution. #330: the cache layer is added as a
   // node fed by its owner engines' flows (never a flow source itself), so
@@ -720,6 +730,14 @@ const AssignmentGatePage = memo(() => {
         <div className="gate-hero">
           <div className="gate-hero__headline">{headline}</div>
           <div className="gate-hero__summary">{executiveSummary}</div>
+          {summaryFallback.isFallback && (
+            <SummaryFallbackNotice
+              className="gate-hero__fallback-note"
+              text={t('assignment-gate.summary.fallback-notice')}
+              warnings={summaryFallback.warnings}
+              detailsHeaderText={t('assignment-gate.summary.fallback-details-header')}
+            />
+          )}
         </div>
       </Container>
 

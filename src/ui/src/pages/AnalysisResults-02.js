@@ -38,8 +38,11 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
+import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
+import { summaryFallbackInfo } from "../utils/summaryFallback";
+import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
 import { buildAuroraDesigns } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
@@ -281,6 +284,15 @@ const AnalysisResultsPage = memo(() => {
   const cacheOverlay = getCacheOverlay(synthesis);
   const afterDist = ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay);
   const cacheLayerLine = formatCacheLayerLine(cacheOverlay, { t });
+
+  // #269: whether this synthesis summary was replaced by its deterministic
+  // fallback (a grounding check rejected the generated text against the final
+  // records, #205) -- the Decision Report already says so when it is
+  // (src/report/renderers.py); this keeps the Results page in agreement with it.
+  const summaryFallback = summaryFallbackInfo(
+    synthesis?.summary_source,
+    synthesis?.summary_validation_warnings,
+  );
 
   // #358: "Target engines" must list the cache layer too (labeled distinctly,
   // e.g. "ElastiCache (cache layer)") -- it owns no queries, so afterDist
@@ -1791,6 +1803,13 @@ const AnalysisResultsPage = memo(() => {
                 <Box variant="p" fontSize="body-m">
                   {synthesis?.summary || 'No summary available.'}
                 </Box>
+                {summaryFallback.isFallback && (
+                  <SummaryFallbackNotice
+                    text={t('analysis-results-v2.executive-summary.fallback-notice', {
+                      reason: fallbackWithheldReason(summaryFallback.warnings),
+                    })}
+                  />
+                )}
                 <ColumnLayout columns={4} variant="text-grid">
                   <Box>
                     <Box variant="awsui-key-label">{t('analysis-results-v2.executive-summary.database')}</Box>

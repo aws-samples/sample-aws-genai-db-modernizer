@@ -58,6 +58,7 @@ SHELL_SUBSTITUTIONS: list[tuple[str, str]] = [
     ("${safeDatabaseName}", "__DATABASE_NAME__"),
     ("${safeDatabaseNameStat}", "__DATABASE_NAME__"),
     ("${safeSummary}", "__SUMMARY__"),
+    ("${summaryFallbackNoteHtml}", "__SUMMARY_FALLBACK_NOTE__"),
     ("${engineBadges}", "__ENGINE_BADGES__"),
     ("${projectedCost}", "__PROJECTED_COST__"),
     ("${currentCostStat}", "__CURRENT_COST_STAT__"),

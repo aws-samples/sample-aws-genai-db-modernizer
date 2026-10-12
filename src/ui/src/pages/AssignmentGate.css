@@ -124,6 +124,11 @@
   line-height: 1.5;
 }
 
+/* #269: notice shown when the summary above is the deterministic fallback */
+.gate-hero__fallback-note {
+  margin-top: 8px;
+}
+
 /* Action bar at bottom of CTO view */
 .gate-actions {
   display: flex;

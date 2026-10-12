@@ -38,7 +38,7 @@ from typing import Any
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.parallel import map_parallel
 
-from . import escaping
+from . import escaping, renderers
 from .renderers import _cost_baseline_text, resolve_migration_waves
 
 logger = logging.getLogger(__name__)
@@ -449,6 +449,29 @@ def _read_journeys(
 # ---------------------------------------------------------------------------
 
 
+def _without_llm_original_text(value: Any) -> Any:
+    """Strips every ``*_llm`` field (#269 round 2) out of ``value``, at any depth.
+
+    ``summary_llm`` and ``executive_summary_llm`` hold the original AI-written
+    text, kept server-side for audit when a grounding check rejects it and
+    replaces it with the deterministic fallback. The notice built from these
+    fields names the *reason* the text was rejected
+    (``renderers.fallback_withheld_reason``); the rejected text itself must not
+    be recoverable from a customer-facing export, not just left out of the
+    rendered notice. Walks the whole value rather than naming the two known
+    fields' paths, mirroring ``utils/ExportReport.js``'s
+    ``withoutLlmOriginalText`` -- future-proof against a new ``*_llm`` field,
+    or a nesting change, in either artifact.
+    """
+    if isinstance(value, list):
+        return [_without_llm_original_text(v) for v in value]
+    if isinstance(value, dict):
+        return {
+            k: _without_llm_original_text(v) for k, v in value.items() if not k.endswith("_llm")
+        }
+    return value
+
+
 def _derive_reality_check(report: dict) -> dict:
     """Build the ``reality_check`` block the React exporter expects.
 
@@ -563,6 +586,16 @@ def build_export_data(
             **report,
             "cache_overlay": {k: v for k, v in cache_overlay.items() if k != "notes"},
         }
+    # #269 round 2: strip every ``*_llm`` field (``summary_llm``,
+    # ``executive_summary_llm``, ...) -- the original AI-written text kept for
+    # audit when a grounding check rejects it and replaces it with the
+    # deterministic fallback. The notice built from these fields names the
+    # *reason* the text was rejected (``renderers.fallback_withheld_reason``);
+    # the rejected text itself must not be recoverable from this
+    # customer-facing DATA blob, not just left out of the rendered notice --
+    # same fix applied to the standalone HTML export's own DATA
+    # (``utils/ExportReport.js``'s ``withoutLlmOriginalText``).
+    report = _without_llm_original_text(report)
     if report.get("query_groups"):
         report = {
             **report,
@@ -722,6 +755,30 @@ def _cache_layer_stat(synthesis: dict) -> str:
         + "</div>"
         + notes_html
         + "</div>"
+    )
+
+
+def _summary_fallback_note(synthesis: dict) -> str:
+    """Notice when the executive summary is the deterministic fallback (#269).
+
+    Mirrors ``summaryFallbackNoteHtml`` in ExportReport.js, and the Decision
+    Report's own note on the same field (``renderers.render_decision_report_html``'s
+    ``summary_source == "deterministic_fallback"`` branch) -- same wording, so the
+    interactive report agrees with it. ``fallback_withheld_reason`` is the one
+    place that reads ``summary_validation_warnings`` into a short reason clause,
+    shared with the Decision Report rather than re-derived here. A missing
+    ``summary_source`` (older artifacts) is not a fallback: no note.
+    """
+    if synthesis.get("summary_source") != "deterministic_fallback":
+        return ""
+    reason = renderers.fallback_withheld_reason(synthesis)
+    return (
+        '<p class="stat-note" style="margin-top: 8px;">'
+        + escaping.html_text(
+            f"The generated narrative was withheld because it {reason}; this summary "
+            "is built from the effective assignment."
+        )
+        + "</p>"
     )
 
 
@@ -953,6 +1010,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__EXPORT_DATE__": escaping.html_text(exported_human),
         "__DATABASE_NAME__": escaping.html_text(str(database_name)),
         "__SUMMARY__": escaping.html_text(synthesis.get("summary") or "No summary available."),
+        "__SUMMARY_FALLBACK_NOTE__": _summary_fallback_note(synthesis),
         "__ENGINE_BADGES__": _engine_badges(after, cache_overlay),
         "__PROJECTED_COST__": f"{projected:,.2f}",
         "__CURRENT_COST_STAT__": escaping.html_text(current_cost_stat),

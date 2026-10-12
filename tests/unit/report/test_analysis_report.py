@@ -545,6 +545,109 @@ def test_risk_assessment_script_carries_the_no_open_risks_caveat(rendered):
     ) in rendered
 
 
+# ---------------------------------------------------------------------------
+# #269 — executive summary deterministic-fallback notice
+# ---------------------------------------------------------------------------
+
+
+def _rendered_with_report(**report_overrides) -> str:
+    objects = _objects()
+    objects[f"{DB}/{JOB}/synthesis/v1/report.json"] = _report(**report_overrides)
+    data = ar.build_export_data(FakeStore(objects), JOB, DB, graph_fetcher=lambda *_: False)
+    return ar.render_analysis_report_html(data)
+
+
+def test_no_fallback_note_when_summary_source_is_llm():
+    html = _rendered_with_report(summary_source="llm")
+    assert "generated narrative was withheld" not in html
+
+
+def test_no_fallback_note_when_summary_source_is_missing():
+    """Older artifacts predate the field -- treated as llm, no note."""
+    html = _rendered_with_report()
+    assert "generated narrative was withheld" not in html
+
+
+def test_fallback_note_names_the_check_specific_reason():
+    """The note's reason clause matches ``renderers.fallback_withheld_reason`` --
+    one shared function, so the Decision Report and this report never disagree."""
+    html = _rendered_with_report(
+        summary_source="deterministic_fallback",
+        summary_validation_warnings=[
+            '[high confidence] Summary names an internal field, "tco_analysis".'
+        ],
+    )
+    assert (
+        "The generated narrative was withheld because it named one of this "
+        "codebase's internal field names; this summary is built from the "
+        "effective assignment."
+    ) in html
+    # No expandable detail or original-LLM-text label is added for this summary
+    # (unlike the reality-check summary on the Assignment review page).
+    assert "Why the AI summary was replaced" not in html
+    assert "Original AI-generated summary" not in html
+
+
+def test_fallback_note_falls_back_to_the_default_reason_with_no_warnings():
+    html = _rendered_with_report(summary_source="deterministic_fallback")
+    assert ("named a table under an engine that does not serve it") in html
+
+
+def test_fallback_note_escapes_a_hostile_warning_in_the_reason_lookup():
+    """A hostile warning never reaches the reason text at all -- it only ever
+    selects which fixed, safe clause is shown -- but the note itself must still
+    escape cleanly regardless."""
+    html = _rendered_with_report(
+        summary_source="deterministic_fallback",
+        summary_validation_warnings=["<script>alert(1)</script>"],
+    )
+    assert "<script>alert(1)</script>" not in html
+
+
+_MARKER = "MARKER-STALE-AI-NARRATIVE-DO-NOT-SHIP"
+
+
+def test_summary_llm_is_absent_from_the_whole_exported_file():
+    """The rejected AI text must not be recoverable from the file at all --
+    not even inside the embedded DATA blob, past the rendered notice."""
+    html = _rendered_with_report(
+        summary_source="deterministic_fallback",
+        summary_llm=_MARKER,
+    )
+    assert _MARKER not in html
+
+
+def test_executive_summary_llm_is_absent_from_the_whole_exported_file():
+    """Same guarantee for the reality-check summary's own ``*_llm`` field, if a
+    future change ever starts copying it into ``synthesis.reality_check``
+    (today's ``synthesis_handler.py`` does not)."""
+    html = _rendered_with_report(
+        reality_check={
+            "after_distribution": {"dynamodb": 100},
+            "executive_summary_llm": _MARKER,
+        },
+    )
+    assert _MARKER not in html
+
+
+def test_without_llm_original_text_strips_at_any_depth():
+    value = {
+        "summary": "ok",
+        "summary_llm": "stale",
+        "nested": {"executive_summary": "ok", "executive_summary_llm": "stale"},
+        "rows": [{"a_llm": "x", "b": 1}],
+        "llm_mode": "external",
+        "status": "awaiting_llm",
+    }
+    assert ar._without_llm_original_text(value) == {
+        "summary": "ok",
+        "nested": {"executive_summary": "ok"},
+        "rows": [{"b": 1}],
+        "llm_mode": "external",
+        "status": "awaiting_llm",
+    }
+
+
 def test_unfilled_placeholder_in_the_template_raises(monkeypatch):
     """A placeholder added by the sync script but not by the renderer must fail loudly."""
     real = ar._read_template

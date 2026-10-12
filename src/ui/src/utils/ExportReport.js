@@ -25,6 +25,8 @@ import {
   resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount,
 } from './cacheLayer';
 import { costBaselineStats } from './tcoAnalysis';
+import { summaryFallbackInfo } from './summaryFallback';
+import { fallbackWithheldReason } from './fallbackWithheldReason';
 
 // #358: this file is English-only (i18n-exempt, see header), so this is the
 // one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
@@ -216,7 +218,15 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // append, so sync_report_template.py's extractor (which only lifts
   // `script += '...'` lines into the static body) skips it -- it stays
   // here, the dynamic half of this function, not in the extracted template.
-  const results = withoutCumulativeCacheNotes(data.results);
+  //
+  // #269 round 2: also strip every `*_llm` field (`summary_llm`,
+  // `executive_summary_llm`, ...) -- the stale/rejected AI-written text kept
+  // server-side for audit when a grounding check replaces it with the
+  // deterministic fallback. The notice built from it already names the
+  // *reason* it was rejected (`fallbackWithheldReason`); the rejected text
+  // itself must not be recoverable from the exported file either, not just
+  // left out of the rendered notice.
+  const results = withoutLlmOriginalText(withoutCumulativeCacheNotes(data.results));
 
   // Build the script using string concatenation (not template literals)
   let script = '';
@@ -1432,6 +1442,31 @@ export function withoutCumulativeCacheNotes(results) {
   return { ...results, synthesis: { ...results.synthesis, cache_overlay: overlayWithoutNotes } };
 }
 
+/**
+ * Strips every `*_llm` field (#269 round 2) -- the original AI-written text
+ * (`summary_llm`, `executive_summary_llm`, ...) kept server-side for audit
+ * when a grounding check rejects it and replaces it with the deterministic
+ * fallback (`summary_source`/`executive_summary_source` ==
+ * `"deterministic_fallback"`). The notice built from these fields names the
+ * *reason* the text was rejected (`fallbackWithheldReason`); the rejected
+ * text itself must not be recoverable from the exported file, not just left
+ * out of the rendered notice -- so this walks the whole value, at any depth,
+ * rather than naming the two known fields' paths (future-proof against a new
+ * `*_llm` field, or a nesting change, in either artifact).
+ */
+export function withoutLlmOriginalText(value) {
+  if (Array.isArray(value)) return value.map(withoutLlmOriginalText);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.entries(value).forEach(([key, v]) => {
+      if (key.endsWith('_llm')) return;
+      out[key] = withoutLlmOriginalText(v);
+    });
+    return out;
+  }
+  return value;
+}
+
 export const generateHTMLReport = (data) => {
   const { results, schemaDesigns, collector, jobId, exportDate, queryJourneys } = data;
   const afterDist = results?.synthesis?.reality_check?.after_distribution || {};
@@ -1481,6 +1516,31 @@ export const generateHTMLReport = (data) => {
   const safeDatabaseNameStat = escapeHtml(results?.synthesis?.database_name || '—');
   const safeSummary = escapeHtml(results?.synthesis?.summary || 'No summary available.');
   const safeExportDate = escapeHtml(new Date(exportDate).toLocaleString());
+
+  // #269: whether the summary above is the deterministic fallback (a grounding
+  // check rejected the generated text against the final records, #205) -- the
+  // Decision Report already says so when it is (src/report/renderers.py); this
+  // keeps the standalone export in agreement with it, in the same wording
+  // (renderers.render_decision_report_html's own note: "The generated
+  // narrative was withheld because it {reason}; this summary is built from
+  // the effective assignment."). This file is i18n-exempt (English-only, see
+  // header), so the wording is a fixed literal, matching
+  // AnalysisResults-02.js's analysis-results-v2.executive-summary.fallback-notice
+  // key and src/report/analysis_report.py's _summary_fallback_note (kept in
+  // sync by hand, same reason as CACHE_LAYER_SUFFIX above). fallbackWithheldReason
+  // ports renderers.fallback_withheld_reason's own reason mapping.
+  const summaryFallback = summaryFallbackInfo(
+    results?.synthesis?.summary_source,
+    results?.synthesis?.summary_validation_warnings,
+  );
+  const summaryFallbackNoteHtml = summaryFallback.isFallback
+    ? '<p class="stat-note" style="margin-top: 8px;">'
+      + escapeHtml(
+        `The generated narrative was withheld because it ${fallbackWithheldReason(summaryFallback.warnings)}; `
+        + 'this summary is built from the effective assignment.'
+      )
+      + '</p>'
+    : '';
 
   // Only finite numbers are summed/counted: a string monthly_cost_usd would turn the
   // sum into string concatenation (and .toFixed into a TypeError that aborts the
@@ -1588,6 +1648,7 @@ export const generateHTMLReport = (data) => {
       <div class="section-header">Executive Summary</div>
       <p class="section-desc">The target architecture recommended for this database, its projected monthly cost, and the workload it covers.</p>
       <p class="section-body">${safeSummary}</p>
+      ${summaryFallbackNoteHtml}
       <div class="grid grid-4">
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${safeDatabaseNameStat}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
