@@ -113,8 +113,6 @@ def categorize(reason: str) -> str:
         return "individual_tie" if "scores tie with" in reason else "individual_highest_confidence"
     if "no engine scored this query" in reason:
         return "fallback_no_score"
-    if "Auto-reassigned from" in reason:
-        return "customer_override_reassignment"
     return "other"
 
 

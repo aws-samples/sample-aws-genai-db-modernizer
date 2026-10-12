@@ -15,6 +15,7 @@ import pytest
 
 from src.agents.referee.assignment_overrides import (
     AssignmentValidationFailed,
+    ExcludedEngineOverride,
     LosingAuroraEngineOverride,
     NoAssignmentFound,
     QueryOverrideInput,
@@ -66,8 +67,18 @@ def _qa(query_id: str, engine: str, tables: list[str], in_scope: bool = True) ->
     )
 
 
-def _seed(store: _MemStore, query_assignments: list[QueryAssignment], engines: list[str]) -> None:
-    """Seed v1 assignment + the collector/analysis the validator reads."""
+def _seed(
+    store: _MemStore,
+    query_assignments: list[QueryAssignment],
+    engines: list[str],
+    query_texts: dict[str, str] | None = None,
+) -> None:
+    """Seed v1 assignment + the collector/analysis the validator reads.
+
+    ``query_texts`` (query_id -> SQL) is optional and only needed by tests that
+    exercise ``check_exclusions`` (#548), which reads the collector's
+    ``query_text`` field; every other caller leaves it unset, same as before.
+    """
     assignment = Assignment(
         job_id=JOB,
         version=1,
@@ -82,13 +93,18 @@ def _seed(store: _MemStore, query_assignments: list[QueryAssignment], engines: l
     store.write_json(
         f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
     )
+    query_texts = query_texts or {}
     # Collector: one query_pattern per assignment (single-table so no co-dep groups form).
     store.write_json(
         f"{DB}/{JOB}/collector/output.json",
         {
             "queries": {
                 "query_patterns": [
-                    {"query_id": qa.query_id, "tables_accessed": qa.source_tables}
+                    {
+                        "query_id": qa.query_id,
+                        "tables_accessed": qa.source_tables,
+                        "query_text": query_texts.get(qa.query_id, ""),
+                    }
                     for qa in query_assignments
                 ]
             },
@@ -756,3 +772,179 @@ class TestCoDependencyPropagation:
         assert by_id["q2"].assigned_engine == "dynamodb"  # untouched
         assert by_id["q2"].co_dependency_propagated is False
         assert result.propagated_query_ids == []
+
+
+class TestExcludedEngineOverride:
+    """#548: an override onto an engine a hard exclusion rules out for the
+    query is rejected -- with a plain, customer-facing reason naming the
+    engine via ``display_engine`` -- never silently moved to a different
+    engine on the customer's behalf."""
+
+    def _seed_wildcard_query(self) -> _MemStore:
+        store = _MemStore()
+        _seed(
+            store,
+            [_qa("q1", "aurora_postgresql", ["t.posts"])],
+            engines=["aurora_postgresql", "dynamodb", "opensearch"],
+            query_texts={"q1": "SELECT id, title FROM t.posts WHERE title LIKE '%term%'"},
+        )
+        return store
+
+    def test_override_onto_an_excluded_engine_is_rejected_and_writes_nothing(self) -> None:
+        store = self._seed_wildcard_query()
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+            )
+        assert len(exc.value.excluded) == 1
+        assert exc.value.excluded[0].query_id == "q1"
+        assert exc.value.excluded[0].engine == "dynamodb"
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_rejection_reason_names_the_query_the_engine_and_the_plain_cause(self) -> None:
+        store = self._seed_wildcard_query()
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+            )
+        # The query id (round 2 review: a batch failure must name its row),
+        # display_engine (not the raw "dynamodb" code), and the plain
+        # customer_message fragment -- never the technical, log-only
+        # ``description``. Round 3 review: one "query" and one colon, and no
+        # specific literal like "'%term%'" that could read as a quote of the
+        # customer's own SQL.
+        assert str(exc.value) == (
+            "DynamoDB can't run query q1: it uses a leading-wildcard search (LIKE '%...')."
+        )
+
+    def test_override_onto_a_supported_engine_still_applies(self) -> None:
+        store = self._seed_wildcard_query()
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert by_id["q1"].assigned_engine == "opensearch"
+        assert by_id["q1"].customer_override is True
+        assert store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_batch_reports_every_excluded_override_not_just_the_first(self) -> None:
+        # #548 round 2 review item 2: a batch with two bad rows must name
+        # both, not just the first one encountered.
+        store = _MemStore()
+        _seed(
+            store,
+            [
+                _qa("q1", "aurora_postgresql", ["t.posts"]),
+                _qa("q2", "aurora_postgresql", ["t.comments"]),
+            ],
+            engines=["aurora_postgresql", "dynamodb"],
+            query_texts={
+                "q1": "SELECT id FROM t.posts WHERE title LIKE '%term%'",
+                "q2": "SELECT id FROM t.comments WHERE body LIKE '%other%'",
+            },
+        )
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="dynamodb"),
+                    QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                ],
+            )
+        assert {e.query_id for e in exc.value.excluded} == {"q1", "q2"}
+        # Round 3 review: one violation per line, so a batch of several
+        # stays easy to scan instead of running together as one paragraph.
+        assert str(exc.value) == (
+            "DynamoDB can't run query q1: it uses a leading-wildcard search (LIKE '%...').\n"
+            "DynamoDB can't run query q2: it uses a leading-wildcard search (LIKE '%...')."
+        )
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestGroupMoveRejectsOnAnExcludedMember:
+    """#548 round 2 review item 1: a co-dependency group moves as one unit
+    (ADR-029 Amendment 3), so a group-mate the target engine cannot run at
+    all blocks the WHOLE group's move -- not just that member, and not a
+    silent partial move. This is the review's own repro."""
+
+    def _seed_join_group(self) -> _MemStore:
+        store = _MemStore()
+        q1 = _qa("q1", "aurora_postgresql", ["t.posts", "t.users"])
+        q2 = _qa("q2", "aurora_postgresql", ["t.posts", "t.users"])
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=[q1, q2],
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_text": (
+                                "SELECT p.id FROM posts p JOIN users u ON u.id = "
+                                "p.author_id WHERE p.id = ?"
+                            ),
+                            "tables_accessed": ["t.posts", "t.users"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                        {
+                            "query_id": "q2",
+                            "query_text": (
+                                "SELECT p.id FROM posts p JOIN users u ON u.id = "
+                                "p.author_id WHERE p.title LIKE '%term%'"
+                            ),
+                            "tables_accessed": ["t.posts", "t.users"],
+                            "has_joins": True,
+                            "join_count": 2,
+                        },
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("aurora_postgresql", "dynamodb"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+        return store
+
+    def test_group_move_is_rejected_when_a_member_cannot_run_on_the_target(self) -> None:
+        store = self._seed_join_group()
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+            )
+        # Groups move as one unit: nothing is written, not even for q1, which
+        # has no exclusion problem of its own.
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        v1 = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
+        by_id = {qa["query_id"]: qa for qa in v1["query_assignments"]}
+        assert by_id["q1"]["assigned_engine"] == "aurora_postgresql"
+        assert by_id["q2"]["assigned_engine"] == "aurora_postgresql"
+        # The blocking group-mate (q2), not the query the customer actually
+        # overrode (q1), is named -- that is the whole point of the check.
+        assert len(exc.value.excluded) == 1
+        assert exc.value.excluded[0].query_id == "q2"
+        assert exc.value.excluded[0].engine == "dynamodb"
+        # Round 3 review: names both the query the customer moved (q1) and
+        # the blocking group-mate (q2), and no specific literal like
+        # "'%term%'".
+        assert str(exc.value) == (
+            "Can't move q1's group to DynamoDB: query q2 in that group uses a "
+            "leading-wildcard search (LIKE '%...')."
+        )

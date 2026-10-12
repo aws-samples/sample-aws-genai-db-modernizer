@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents.referee.assignment_overrides import (
+    AssignmentOverrideError,
     AssignmentValidationFailed,
     NoAssignmentFound,
     QueryOverrideInput,
-    UnknownQuery,
     apply_assignment_overrides,
 )
 from src.api.dependencies import database_name_param, job_id_param
@@ -131,8 +131,13 @@ async def put_assignments(
 
     Delegates to the shared ``apply_assignment_overrides`` helper (ADR-028) so the
     web route and the ATX review gate write byte-identical artifacts, then maps
-    the helper's domain errors to HTTP status codes.
-    Returns HTTP 422 for hard errors (e.g. query assigned to unanalyzed engine).
+    the helper's domain errors to HTTP status codes. Returns HTTP 404 when there
+    is no assignment to override, HTTP 422 for hard validation errors (e.g. query
+    assigned to an unanalyzed engine), and HTTP 400 for every other rejected
+    override -- an unknown query, the #381 losing-Aurora-engine override, or an
+    engine a hard exclusion rules out for it (#548) -- caught through the shared
+    ``AssignmentOverrideError`` base class (round 2 review) so a future rejection
+    gets a real status code for free instead of an unhandled 500.
     """
     store = _require_store()
 
@@ -160,8 +165,6 @@ async def put_assignments(
         raise HTTPException(
             status_code=404, detail="No assignment artifact found to override"
         ) from None
-    except UnknownQuery as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
     except AssignmentValidationFailed as exc:
         raise HTTPException(
             status_code=422,
@@ -171,6 +174,13 @@ async def put_assignments(
                 "warnings": exc.warnings,
             },
         ) from None
+    except AssignmentOverrideError as exc:
+        # Every other rejected override (UnknownQuery, LosingAuroraEngineOverride,
+        # ExcludedEngineOverride, and any future AssignmentOverrideError subclass)
+        # maps to the same 400 -- round 2 review: before this, only UnknownQuery
+        # and ExcludedEngineOverride were caught by name here, so
+        # LosingAuroraEngineOverride fell through to an unhandled 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
     return AssignmentResponse(
         assignment=result.assignment,

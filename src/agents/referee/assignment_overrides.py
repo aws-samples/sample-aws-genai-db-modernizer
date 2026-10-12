@@ -32,6 +32,7 @@ from src.agents.referee.cache_overlay import (
     refresh_cache_overlay,
     write_heavy_tables,
 )
+from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import (
     Assignment,
@@ -130,6 +131,73 @@ class LosingAuroraEngineOverride(AssignmentOverrideError):
             f"This assessment chose {display_engine(winner)} for this {source_name} "
             f"source; {display_engine(loser)} is not a target."
         )
+
+
+@dataclass
+class ExcludedOverride:
+    """One override in a batch that lands a query on an engine a hard
+    exclusion rules out for it (#548), with the fully rendered,
+    customer-facing sentence for it.
+
+    ``query_id`` is the query actually blocked -- for a direct override that
+    is the query the customer named; for a co-dependency group move it is the
+    group-mate whose own exclusion blocks the whole group's move, which may
+    differ from the query the customer explicitly overrode.
+    """
+
+    query_id: str
+    engine: str
+    message: str
+
+
+def _direct_exclusion_message(query_id: str, engine: str, reason: str) -> str:
+    """ "DynamoDB can't run query q1: it ..." (round-2 review: the query id
+    must be in the message so a batch failure names its row; round-3 review:
+    one "query" and one colon, not "Query q1: DynamoDB can't run this
+    query: ...")."""
+    return f"{display_engine(engine)} can't run query {query_id}: it {reason}."
+
+
+def _group_exclusion_message(
+    anchor_query_id: str, blocking_query_id: str, engine: str, reason: str
+) -> str:
+    """ "Can't move q1's group to DynamoDB: query q2 in that group ..." --
+    names both the query the customer actually moved (``anchor_query_id``,
+    round-3 review) and the group-mate the move would land on an engine that
+    cannot run it (``blocking_query_id``), since that may not be the same
+    query."""
+    return (
+        f"Can't move {anchor_query_id}'s group to {display_engine(engine)}: "
+        f"query {blocking_query_id} in that group {reason}."
+    )
+
+
+class ExcludedEngineOverride(AssignmentOverrideError):
+    """One or more overrides in a batch tried to move a query -- directly, or
+    as a co-dependency group-mate carried along with one -- onto an engine a
+    hard exclusion rules out for it (#548).
+
+    Rejected up front, before validation runs, the same way the #381
+    losing-Aurora-engine override is: the customer's own pick is a real
+    decision (#503), so a choice that cannot run at all is rejected with a
+    plain reason and left for the customer to pick again, instead of being
+    silently moved to some other engine on their behalf. Groups move as one
+    unit (ADR-029 Amendment 3): one member failing this check blocks the
+    whole group's move, not just that member.
+
+    Every excluded override in the batch is reported (round 2 review), not
+    just the first, so the customer can fix every bad row in one round trip --
+    one per line (round 3 review), so a batch of three or more stays easy to
+    scan instead of running together as one paragraph. Each message names the
+    engine with ``display_engine`` and quotes the exclusion's own
+    ``customer_message`` -- a plain-language fragment -- never
+    ``description``, which ``engine_exclusions.py`` documents as the
+    technical, log-only reason.
+    """
+
+    def __init__(self, excluded: list[ExcludedOverride]) -> None:
+        self.excluded = excluded
+        super().__init__("\n".join(e.message for e in excluded))
 
 
 def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> dict[str, dict]:
@@ -274,6 +342,12 @@ def apply_assignment_overrides(
     Raises:
         NoAssignmentFound: no assignment artifact exists yet.
         UnknownQuery: an override names a query not in the assignment.
+        LosingAuroraEngineOverride: an override names the #381 losing Aurora
+            engine for a heterogeneous source.
+        ExcludedEngineOverride: a direct override, or a co-dependency
+            group-mate it would carry along, would land on an engine a hard
+            exclusion rules out for it (#548); every such violation in the
+            batch is reported together.
         AssignmentValidationFailed: the result has hard validation errors (the
             new version is NOT written in that case).
     """
@@ -296,6 +370,11 @@ def apply_assignment_overrides(
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
     cache_notes: list[str] = []
+    # #548 round 2: every excluded override in the batch is collected and
+    # reported together (never just the first), and a group move is checked
+    # for every member before anything is written -- see
+    # ``_propagate_codependent_overrides`` below for the group half of this.
+    excluded: list[ExcludedOverride] = []
 
     # Per-query overrides. A changed engine marks the query customer-overridden;
     # an in_scope toggle is a scoping change, not an engine reassignment. A cache
@@ -333,23 +412,45 @@ def apply_assignment_overrides(
             override.assigned_engine is not None
             and override.assigned_engine not in CACHE_OVERLAY_ENGINES
         ):
-            qa.assigned_engine = override.assigned_engine
-            qa.customer_override = True
-            # #503: the customer's own pick is a real decision, so any open
-            # tie this query carried is resolved by it, not left to still
-            # read "pending your choice" after the customer chose -- and the
-            # reason itself is rewritten to say so, rather than leave the old
-            # tie sentence standing after the field it was about has already
-            # been cleared.
-            if qa.tied_engines:
-                others = ", ".join(
-                    display_engine(e) for e in sorted(qa.tied_engines) if e != qa.assigned_engine
+            # #548: reject a re-route onto an engine a hard exclusion rules out
+            # for this exact query, up front, the same way the #381
+            # losing-Aurora-engine check above does -- never silently move it
+            # to a different engine on the customer's behalf. Collected, not
+            # raised immediately, so the rest of the batch is still checked
+            # (round 2 review) -- nothing is written while any violation is
+            # outstanding (checked once, below, after the whole batch runs).
+            query_text = (query_by_id.get(override.query_id) or {}).get("query_text", "")
+            exclusion = check_exclusions(override.query_id, query_text, override.assigned_engine)
+            if exclusion:
+                excluded.append(
+                    ExcludedOverride(
+                        query_id=override.query_id,
+                        engine=override.assigned_engine,
+                        message=_direct_exclusion_message(
+                            override.query_id, override.assigned_engine, exclusion.customer_message
+                        ),
+                    )
                 )
-                qa.assignment_reason = (
-                    f"Placed on {display_engine(qa.assigned_engine)} by your choice; "
-                    f"scores tied with {others}."
-                )
-                qa.tied_engines = []
+            else:
+                qa.assigned_engine = override.assigned_engine
+                qa.customer_override = True
+                # #503: the customer's own pick is a real decision, so any open
+                # tie this query carried is resolved by it, not left to still
+                # read "pending your choice" after the customer chose -- and the
+                # reason itself is rewritten to say so, rather than leave the old
+                # tie sentence standing after the field it was about has already
+                # been cleared.
+                if qa.tied_engines:
+                    others = ", ".join(
+                        display_engine(e)
+                        for e in sorted(qa.tied_engines)
+                        if e != qa.assigned_engine
+                    )
+                    qa.assignment_reason = (
+                        f"Placed on {display_engine(qa.assigned_engine)} by your choice; "
+                        f"scores tied with {others}."
+                    )
+                    qa.tied_engines = []
         if override.in_scope is not None:
             qa.in_scope = override.in_scope
 
@@ -358,23 +459,32 @@ def apply_assignment_overrides(
     # group's other in-scope members with it so the JOIN stays co-located instead
     # of silently splitting. A cache request is not a re-route.
     owner_overrides = [o for o in overrides if o.assigned_engine not in CACHE_OVERLAY_ENGINES]
-    propagated_query_ids = _propagate_codependent_overrides(
-        qa_map, owner_overrides, collector_output
+    propagated_query_ids, group_excluded = _propagate_codependent_overrides(
+        qa_map, owner_overrides, query_by_id, collector_output
     )
+    excluded.extend(group_excluded)
+
+    # #548 round 2: reject the whole batch -- nothing written -- when any
+    # override, direct or propagated, lands on an engine a hard exclusion
+    # rules out. Checked once here, after both the direct loop and group
+    # propagation above have had a chance to find every violation, so the
+    # customer sees all of them in one round trip rather than one at a time.
+    if excluded:
+        raise ExcludedEngineOverride(excluded)
 
     # Table-level scope narrowing: a query whose tables are all excluded drops
     # out of scope; a partial overlap stays in scope with a low-severity warning.
     scope_warnings: list[str] = []
     if exclude_tables:
-        excluded = set(exclude_tables)
+        excluded_tables = set(exclude_tables)
         for qa in qa_map.values():
             tables = set(qa.source_tables)
-            if tables and tables.issubset(excluded):
+            if tables and tables.issubset(excluded_tables):
                 qa.in_scope = False
-            elif tables & excluded:
+            elif tables & excluded_tables:
                 scope_warnings.append(
                     f"WARNING [LOW]: Query {qa.query_id} accesses both in-scope and "
-                    f"excluded tables ({sorted(tables & excluded)}). Keeping query in scope."
+                    f"excluded tables ({sorted(tables & excluded_tables)}). Keeping query in scope."
                 )
 
     new_version = current_version + 1
@@ -472,21 +582,31 @@ def mark_assignment_customer_approved(
 def _propagate_codependent_overrides(
     qa_map: dict[str, QueryAssignment],
     overrides: list[QueryOverrideInput],
+    query_by_id: dict[str, dict],
     collector_output: dict,
-) -> list[str]:
+) -> tuple[list[str], list[ExcludedOverride]]:
     """Move a customer-re-routed query's co-dependent group-mates with it.
 
     When the customer changes a query's engine and that query shares a significant
     JOIN group with others (``co_dependency_groups``), the group's other IN-SCOPE
     members that the customer did NOT explicitly set are moved to the same engine,
     so the JOIN group stays co-located instead of silently splitting (ADR-029
-    Amendment 3). Mutates ``qa_map`` in place; returns the propagated query IDs.
+    Amendment 3). Mutates ``qa_map`` in place; returns ``(propagated_query_ids,
+    excluded)``.
 
     Respects explicit customer picks: a group the customer explicitly split (two
     members set to different engines in the same edit) is left as chosen — the
     resulting split is surfaced by the feasibility reviewer, not overridden here.
     A propagated query is tagged ``co_dependency_propagated`` (not
     ``customer_override``) so it is distinguishable from the customer's own picks.
+
+    A group moves as one unit (#548 round 2): before a group-mate is actually
+    moved, it is checked against ``check_exclusions`` the same way a direct
+    override is. A group-mate the target engine cannot run at all is never
+    silently left behind on its old engine either -- the group is moving as a
+    unit, so a member that cannot make the move blocks the whole move, which
+    the caller enforces by rejecting the batch when ``excluded`` is non-empty.
+    This function itself only reports the violations; it does not raise.
 
     Best-effort: any error building the groups leaves the explicit overrides intact
     and propagates nothing — propagation is an enhancement, never a blocker.
@@ -495,16 +615,17 @@ def _propagate_codependent_overrides(
         ov.query_id: ov.assigned_engine for ov in overrides if ov.assigned_engine is not None
     }
     if not explicit:
-        return []
+        return [], []
     try:
         groups = build_co_dependency_groups(
             collector_output.get("queries", {}).get("query_patterns", []),
             collector_output.get("database_schema", {}).get("tables", []),
         )
     except Exception:  # noqa: BLE001 - never block a customer edit on a grouping error
-        return []
+        return [], []
 
     propagated: list[str] = []
+    excluded: list[ExcludedOverride] = []
     for group in groups:
         touched = set(group) & set(explicit)
         if not touched:
@@ -520,6 +641,19 @@ def _propagate_codependent_overrides(
             qa = qa_map.get(qid)
             if qa is None or not qa.in_scope:
                 continue
+            query_text = (query_by_id.get(qid) or {}).get("query_text", "")
+            exclusion = check_exclusions(qid, query_text, target)
+            if exclusion:
+                excluded.append(
+                    ExcludedOverride(
+                        query_id=qid,
+                        engine=target,
+                        message=_group_exclusion_message(
+                            anchor, qid, target, exclusion.customer_message
+                        ),
+                    )
+                )
+                continue
             if qa.assigned_engine != target:
                 qa.assigned_engine = target
                 qa.co_dependency_propagated = True
@@ -529,7 +663,7 @@ def _propagate_codependent_overrides(
                     f"after a customer routing change."
                 )
                 propagated.append(qid)
-    return sorted(propagated)
+    return sorted(propagated), excluded
 
 
 def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> None:

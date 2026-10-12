@@ -17,7 +17,6 @@ import pytest
 from src.agents.referee.assignment_resolver import (
     AssignmentResolver,
     break_owner_tie,
-    enforce_exclusions_on_overrides,
 )
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.cache_overlay import (
@@ -479,31 +478,6 @@ class TestResolverOverlay:
             _triage(["dynamodb", "elasticache"]), analysis, _collector(queries)
         )
         assert {qa.assigned_engine for qa in result.query_assignments} == {"dynamodb"}
-
-    def test_customer_override_reassignment_never_picks_the_cache(self):
-        queries = [_q("q", "SELECT * FROM t WHERE body LIKE '%term%'")]
-        assignment = Assignment(
-            job_id="t",
-            version=2,
-            status=AssignmentStatus.CUSTOMER_MODIFIED,
-            timestamp=datetime.now(UTC),
-            query_assignments=[
-                QueryAssignment(
-                    query_id="q",
-                    assigned_engine="dynamodb",
-                    confidence=50,
-                    source_tables=["t"],
-                    assignment_reason="customer",
-                )
-            ],
-            table_assignments=[],
-            co_dependency_groups=[],
-            validation_warnings=[],
-        )
-        fixed = enforce_exclusions_on_overrides(
-            assignment, queries, {"dynamodb": {}, "elasticache": {}, "opensearch": {}}
-        )
-        assert fixed.query_assignments[0].assigned_engine == "opensearch"
 
 
 # ---------------------------------------------------------------------------

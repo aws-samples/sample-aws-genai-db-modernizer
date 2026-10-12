@@ -3,10 +3,15 @@ Engine Exclusions — Hard rules that prevent query→engine assignment.
 
 Unlike anti-pattern penalties (which reduce confidence scores), exclusions are
 binary: if a query matches an exclusion rule for an engine, that engine CANNOT
-serve it. The query goes to the next-best engine instead.
+serve it. The first assignment's own scoring pass (``assignment_resolver.
+resolve``) zeroes that engine for the query instead of picking it.
 
-This also handles customer override validation: if a customer manually assigns
-a query to an excluded engine, the system overrides it back with a clear note.
+This also handles customer override validation: if a customer manually
+assigns a query to an engine excluded for it, the override is rejected
+(``assignment_overrides.ExcludedEngineOverride``, #548) with the plain,
+customer-facing ``customer_message`` below -- never ``description``, which is
+the technical, log-only reason -- so the customer can pick a different engine
+instead of having their choice silently moved somewhere else.
 
 Design: registry-based, so adding new engines (Neptune, ElastiCache, etc.)
 is just adding entries to EXCLUSION_RULES.
@@ -30,7 +35,19 @@ _RE_WRITE_WITH_SUBQUERY = re.compile(
 
 @dataclass(frozen=True)
 class ExclusionRule:
-    """A single exclusion rule for an engine."""
+    """A single exclusion rule for an engine.
+
+    ``description`` is the technical reason, for logs and the decision trace
+    only. ``customer_message`` is the plain-language fragment a customer-facing
+    rejection quotes (#548): what is wrong with the query for this engine, as
+    a verb phrase with no leading subject ("uses a leading-wildcard search
+    ...", not "it uses ..." or "This query uses ...") -- the caller's own
+    sentence supplies the subject ("the query", or a named group-mate), and
+    the fragment is appended straight after it. No engine name in it either
+    (the caller names the engine with ``display_engine``), and no mention of
+    where the query goes instead -- rejecting an override never implies a
+    move.
+    """
 
     engine: str
     rule_id: str
@@ -65,7 +82,9 @@ def _has_write_with_subquery(query_text: str) -> bool:
 #   - engine: which engine this excludes
 #   - rule_id: stable identifier for tracking
 #   - description: technical reason (for logs)
-#   - customer_message: human-readable note shown when overriding customer choice
+#   - customer_message: plain-language verb-phrase fragment for a
+#     customer-facing rejection (#548); no leading subject, no engine name,
+#     no "auto-reassigned" wording
 #   - check: function(query_text) -> bool
 # ---------------------------------------------------------------------------
 
@@ -75,10 +94,11 @@ EXCLUSION_RULES: list[ExclusionRule] = [
         engine="dynamodb",
         rule_id="ddb-no-leading-wildcard",
         description="Leading wildcard LIKE '%term' requires full scan; search engine territory",
-        customer_message=(  # nosemgrep: string-concat-in-list
-            "This query uses a leading wildcard pattern (LIKE '%...') which requires "
-            "a full table scan on DynamoDB. Auto-reassigned to a search engine."
-        ),
+        # round 3 review: "(LIKE '%...')", not a specific literal like
+        # "(LIKE '%term%')" -- the fixed example text could otherwise read
+        # like a quote of the customer's own SQL even when their actual
+        # pattern is something else, e.g. '%a%'.
+        customer_message="uses a leading-wildcard search (LIKE '%...')",
         check=_has_leading_wildcard,
     ),
     # OpenSearch exclusions
@@ -90,10 +110,8 @@ EXCLUSION_RULES: list[ExclusionRule] = [
             "The application layer must handle conditional insert/update logic before indexing."
         ),
         customer_message=(  # nosemgrep: string-concat-in-list
-            "This query performs a conditional write with a subquery which requires "
-            "transactional semantics OpenSearch cannot guarantee. Auto-reassigned to "
-            "the next best engine. Note: in a future migration phase, the application "
-            "layer can handle the conditional logic and index the result in OpenSearch."
+            "performs a conditional write with a subquery, which needs transactional "
+            "guarantees it can't provide"
         ),
         check=_has_write_with_subquery,
     ),
@@ -102,7 +120,7 @@ EXCLUSION_RULES: list[ExclusionRule] = [
         engine="elasticache",
         rule_id="ec-no-complex-join",
         description="ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store",
-        customer_message="This query uses multi-table JOINs which ElastiCache cannot serve. Auto-reassigned to a relational or document engine.",
+        customer_message="joins more than one table, and a key-value store can't serve joins",
         check=lambda q: bool(re.search(r"\bJOIN\b.*\bJOIN\b", q, re.IGNORECASE | re.DOTALL)),
     ),
 ]
@@ -161,8 +179,9 @@ def validate_customer_overrides(
     """Validate customer-assigned queries against exclusion rules.
 
     For each assignment where customer_override=True, checks if the assigned
-    engine is excluded for that query. Returns a list of override notifications
-    with the reassignment reason.
+    engine is excluded for that query. Returns a list of override violations
+    with the plain, customer-facing rejection reason (#548: the override is
+    rejected, never silently moved to a different engine).
 
     Args:
         query_assignments: list of assignment dicts with query_id, assigned_engine, customer_override

@@ -1635,10 +1635,10 @@ class TestTableAssignmentPrimaryEngine:
         assert table.engines == ["opensearch"]
 
     def test_primary_engine_without_retained_engine_never_falls_back_to_non_owner(self):
-        # #317 finding 3: no retained_engine (e.g. enforce_exclusions_on_overrides,
-        # or an unrecognized source engine) and no durable owner anywhere in the
-        # whole assignment either: the generic "aurora" placeholder wins, never
-        # opensearch — OpenSearch is a read model only.
+        # #317 finding 3: no retained_engine (e.g. an unrecognized source engine)
+        # and no durable owner anywhere in the whole assignment either: the
+        # generic "aurora" placeholder wins, never opensearch — OpenSearch is a
+        # read model only.
         query_assignments = [
             _qa("q1", "opensearch", ["db.search_log"]),
         ]

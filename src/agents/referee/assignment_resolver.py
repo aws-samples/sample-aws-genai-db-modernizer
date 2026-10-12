@@ -50,7 +50,7 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     detect_required_capabilities,
 )
-from src.agents.referee.engine_exclusions import check_all_exclusions, check_exclusions
+from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.tie_break import break_tie
@@ -1393,89 +1393,3 @@ def derive_table_assignments(
 
     sorted_unresolved = sorted(unresolved)
     return result, UnresolvedNames(count=len(sorted_unresolved), names=sorted_unresolved)
-
-
-# ---------------------------------------------------------------------------
-# Customer override enforcement (post-review validation)
-# ---------------------------------------------------------------------------
-
-
-def _query_type(query_id: str, queries: list[dict]) -> str:
-    return next((q.get("query_type", "") for q in queries if q.get("query_id") == query_id), "")
-
-
-def enforce_exclusions_on_overrides(
-    assignment: Assignment,
-    queries: list[dict],
-    analysis_outputs: dict[str, dict],
-) -> Assignment:
-    """Validate customer overrides against hard exclusions and auto-reassign violations.
-
-    After a customer reviews and modifies assignments, this function checks
-    if any customer-chosen engine is excluded for the query. If so, it:
-    1. Reassigns the query to the next-best valid engine
-    2. Adds a warning explaining why the override was rejected
-
-    Returns a new Assignment with violations corrected.
-    """
-    query_text_map = {q["query_id"]: q.get("query_text", "") for q in queries}
-    available_engines = set(analysis_outputs.keys())
-
-    updated_assignments = []
-    reassignment_count = 0
-
-    for qa in assignment.query_assignments:
-        query_text = query_text_map.get(qa.query_id, "")
-        exclusion = check_exclusions(qa.query_id, query_text, qa.assigned_engine)
-
-        if not exclusion:
-            updated_assignments.append(qa)
-            continue
-
-        # This assignment violates a hard exclusion — find the next-best engine
-        all_exclusions = check_all_exclusions(qa.query_id, query_text)
-        excluded_engines = {e.excluded_engine for e in all_exclusions}
-        valid_engines = {
-            e
-            for e in available_engines - excluded_engines
-            if can_own(e, {"query_type": _query_type(qa.query_id, queries)})
-        }
-
-        if valid_engines:
-            # Pick the first valid engine (in practice, the resolver would score these)
-            new_engine = sorted(valid_engines)[0]
-        else:
-            new_engine = "aurora"
-
-        warnings = list(qa.warnings)
-        warnings.append(exclusion.customer_message)
-
-        updated_assignments.append(
-            qa.model_copy(
-                update={
-                    "assigned_engine": new_engine,
-                    "assignment_reason": (
-                        f"Auto-reassigned from {qa.assigned_engine}: {exclusion.description}"
-                    ),
-                    "customer_override": False,
-                    "warnings": warnings,
-                }
-            )
-        )
-        reassignment_count += 1
-
-    if reassignment_count == 0:
-        return assignment
-
-    # Recompute table assignments. No collector schema is available here, so
-    # no filtering happens (#316): unresolved_table_names is carried over from
-    # ``assignment`` unchanged, since source_tables itself does not change in
-    # this reassignment pass.
-    table_assignments, _ = derive_table_assignments(updated_assignments)
-
-    return assignment.model_copy(
-        update={
-            "query_assignments": updated_assignments,
-            "table_assignments": table_assignments,
-        }
-    )

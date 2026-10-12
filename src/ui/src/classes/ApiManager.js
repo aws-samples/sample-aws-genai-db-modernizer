@@ -1,5 +1,6 @@
 import { ApiConfigurations } from '../config/GlobalConfigurations';
 import { getMockResponse } from '../config/apiMockData';
+import { errorFromResponse } from '../utils/apiErrors';
 
 class ApiManager {
     constructor(headers = {}) {
@@ -99,7 +100,7 @@ class ApiManager {
                         } else {
                             resolve({
                                 id: apiCall.id,
-                                error: new Error(`HTTP ${xhr.status}: ${xhr.statusText}`),
+                                error: errorFromResponse(xhr.status, xhr.statusText, xhr.responseText),
                                 success: false,
                                 status: xhr.status
                             });
