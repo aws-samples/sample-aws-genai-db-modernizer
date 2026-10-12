@@ -81,7 +81,7 @@ def test_architecture_engines_falls_back_to_the_migration_wave_count(
 
 def test_decision_report_scope_tile_and_roadmap_agree(report: dict[str, Any]) -> None:
     html = renderers.render_decision_report_html(report)
-    tile_n = int(re.search(r"<p>Tables migrate</p><h3>(\d+)</h3>", html).group(1))
+    tile_n = int(re.search(r"<p>Tables migrate</p><p class=val>(\d+)</p>", html).group(1))
     row = re.search(
         r"<span class=badge[^>]*>dynamodb</span></td><td class=role>Migration target</td>"
         r"<td>[\d.]+%</td><td>(\d+) source tables?</td>",
@@ -105,7 +105,7 @@ def test_deck_scope_column_matches_the_migrated_tile(report: dict[str, Any]) -> 
 
 def test_decision_report_and_deck_agree_with_each_other(report: dict[str, Any]) -> None:
     html = renderers.render_decision_report_html(report)
-    html_tile_n = int(re.search(r"<p>Tables migrate</p><h3>(\d+)</h3>", html).group(1))
+    html_tile_n = int(re.search(r"<p>Tables migrate</p><p class=val>(\d+)</p>", html).group(1))
     pptx_n = pptx_report.derive(report, {})["migrated"]
     assert html_tile_n == pptx_n == 8
 

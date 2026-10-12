@@ -225,8 +225,8 @@ def extract_shell(lines: list[str]) -> str:
 
     # ATX-only injection points.
     shell = shell.replace("</head>", "__META__\n</head>", 1)
-    shell = shell.replace('<div class="container">', '<div class="container">\n__BANNER__', 1)
-    shell = shell.replace("  </div>\n\n__SCRIPT__", "__PROVENANCE__\n  </div>\n\n__SCRIPT__", 1)
+    shell = shell.replace('<main class="container">', '<main class="container">\n__BANNER__', 1)
+    shell = shell.replace("  </main>\n\n__SCRIPT__", "__PROVENANCE__\n  </main>\n\n__SCRIPT__", 1)
 
     _assert_no_unmapped_interpolations(shell)
     return shell

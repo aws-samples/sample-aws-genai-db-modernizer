@@ -809,7 +809,7 @@ body { font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,Roboto,
 .pill b { color:#7CFFB0; }
 .tiles { display:flex; flex-wrap:wrap; gap:1rem; margin:1.5rem 0; }
 .tile { flex:1 1 150px; border-radius:12px; padding:1.2rem; color:#fff; text-align:center; display:flex; flex-direction:column-reverse; justify-content:flex-end; }
-.tile h3 { font-size:1.7rem; font-weight:700; margin:0 0 .2rem; }
+.tile .val { font-size:1.7rem; font-weight:700; margin:0 0 .2rem; opacity:1; }
 .tile p { margin:0; font-size:.85rem; opacity:.92; }
 .tile.green { background:linear-gradient(135deg,#00d563,#00a84f); }
 .tile.blue { background:linear-gradient(135deg,#0066cc,#0f3460); }
@@ -1016,23 +1016,28 @@ def render_decision_report_html(
         + "</title>",
         _meta_tags(prov),
         f"<style>{_DECISION_CSS}</style></head><body>",
-        "<div class=hero><div class=wrap>",
+        # Landmarks for assistive tech (#184): the hero is the banner, the body is
+        # the one main region, and the footer stays outside <main> so it keeps its
+        # contentinfo role.
+        "<header class=hero><div class=wrap>",
         "<h1>Database Modernization \u2014 Decision Report</h1>",
         f"<p class=sub>Source database: <b>{esc(db)}</b></p>",
         f'<span class=pill>Architecture <b>{esc(arch.get("architecture_type", "not determined"))}</b></span>',
         f"<span class=pill>Overall risk <b>{esc(risk_level)}</b></span>",
-        "</div></div>",
-        "<div class=wrap>",
+        "</div></header>",
+        "<div class=wrap><main>",
         "<div class=tiles>",
     ]
     current_cost_text, savings_text = _cost_baseline_text(tco)
+    # Tile figures are text, not <h3>: a heading that reads "$582.76" is noise when
+    # navigating by heading, and it skipped a level after the h1 (#184).
     out += [
-        f'<div class="tile slate"><p>Current monthly</p><h3>{esc(current_cost_text)}</h3></div>',
-        f'<div class="tile green"><p>Projected monthly</p><h3>{_fmt_usd(tco.get("projected_monthly_cost"))}</h3></div>',
-        f'<div class="tile green"><p>Savings</p><h3>{esc(savings_text)}</h3></div>',
-        f'<div class="tile blue"><p>Engines</p><h3>{len(engines)}</h3></div>',
-        f'<div class="tile slate"><p>Tables migrate</p><h3>{migrated}</h3></div>',
-        f'<div class="tile {_risk_tile_class(risk_level)}"><p>Overall risk</p><h3>{esc(risk_level)}</h3></div>',
+        f'<div class="tile slate"><p>Current monthly</p><p class=val>{esc(current_cost_text)}</p></div>',
+        f'<div class="tile green"><p>Projected monthly</p><p class=val>{_fmt_usd(tco.get("projected_monthly_cost"))}</p></div>',
+        f'<div class="tile green"><p>Savings</p><p class=val>{esc(savings_text)}</p></div>',
+        f'<div class="tile blue"><p>Engines</p><p class=val>{len(engines)}</p></div>',
+        f'<div class="tile slate"><p>Tables migrate</p><p class=val>{migrated}</p></div>',
+        f'<div class="tile {_risk_tile_class(risk_level)}"><p>Overall risk</p><p class=val>{esc(risk_level)}</p></div>',
         "</div>",
     ]
     eliminated_cost_text = _eliminated_engine_costs_text(tco)
@@ -1203,11 +1208,13 @@ def render_decision_report_html(
         out.append("</div></div>")
 
     out += [
+        "</main>",
         "<footer>Engine and query assignments are produced deterministically \u2014 no language "  # nosemgrep: string-concat-in-list -- intentional multi-line string
         "model decides which engine a table or query goes to. The executive summary is written "
         "over already-computed results and cannot change a recommendation. The complete "
-        "machine-readable assessment is available as the Assessment Data (JSON) artifact.</footer>",
-        _provenance_footer_html(prov),
+        "machine-readable assessment is available as the Assessment Data (JSON) artifact."
+        + _provenance_footer_html(prov)
+        + "</footer>",
         "</div></body></html>",
     ]
     return "\n".join(o for o in out if o)

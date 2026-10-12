@@ -38,10 +38,10 @@ class TestDecisionReportCostBaseline:
             "cost_breakdown": [],
         }
         html = render_decision_report_html(_report(tco))
-        assert "<p>Current monthly</p><h3>source cost not provided</h3>" in html
-        assert "<p>Savings</p><h3>not available</h3>" in html
-        assert "<p>Current monthly</p><h3>$0.00</h3>" not in html
-        assert "<p>Savings</p><h3>0%</h3>" not in html
+        assert "<p>Current monthly</p><p class=val>source cost not provided</p>" in html
+        assert "<p>Savings</p><p class=val>not available</p>" in html
+        assert "<p>Current monthly</p><p class=val>$0.00</p>" not in html
+        assert "<p>Savings</p><p class=val>0%</p>" not in html
 
     def test_known_baseline_shows_the_real_figures(self) -> None:
         tco = {
@@ -84,10 +84,10 @@ class TestDecisionReportCostBaseline:
             "cost_breakdown": [],
         }
         html = render_decision_report_html(_report(tco))
-        assert "<p>Current monthly</p><h3>source cost not provided</h3>" in html
-        assert "<p>Savings</p><h3>not available</h3>" in html
-        assert "<p>Current monthly</p><h3>$0.00</h3>" not in html
-        assert "<p>Savings</p><h3>0%</h3>" not in html
+        assert "<p>Current monthly</p><p class=val>source cost not provided</p>" in html
+        assert "<p>Savings</p><p class=val>not available</p>" in html
+        assert "<p>Current monthly</p><p class=val>$0.00</p>" not in html
+        assert "<p>Savings</p><p class=val>0%</p>" not in html
 
     def test_eliminated_engine_costs_are_traceable(self) -> None:
         tco = {

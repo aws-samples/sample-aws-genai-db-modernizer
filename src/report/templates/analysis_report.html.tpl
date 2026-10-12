@@ -12,7 +12,7 @@ __CSS__
 __META__
 </head>
 <body>
-  <div class="container">
+  <main class="container">
 __BANNER__
     <div class="section">
       <div class="report-head">
@@ -120,7 +120,7 @@ __BANNER__
       <div id="aurora-design-container"></div>
     </div>
 __PROVENANCE__
-  </div>
+  </main>
 
 __SCRIPT__
 

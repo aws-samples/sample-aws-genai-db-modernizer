@@ -104,18 +104,44 @@ def test_analysis_report_embeds_every_journey_and_draws_charts(
         assert box and box["width"] > 0 and box["height"] > 0, canvas
 
 
-@pytest.mark.parametrize("kind", list(REPORTS))
-def test_no_serious_accessibility_violations(page: Page, run: PipelineResult, kind: str) -> None:
+# axe impacts that fail the scan; "minor" findings are printed for visibility only.
+# #184 raised this from serious/critical once the moderate findings were fixed.
+BLOCKING_IMPACTS = ("critical", "serious", "moderate")
+
+# The three moderate rules #184 fixed, asserted by name so a regression says which
+# one is back: one <main> landmark, every piece of content inside a landmark, and
+# no skipped heading level.
+LANDMARK_AND_HEADING_RULES = ("landmark-one-main", "region", "heading-order")
+
+
+def _axe_violations(page: Page) -> list[dict]:
     from axe_playwright_python.sync_playwright import Axe
 
+    return Axe().run(page).response["violations"]
+
+
+@pytest.mark.parametrize("kind", list(REPORTS))
+def test_no_moderate_or_worse_accessibility_violations(
+    page: Page, run: PipelineResult, kind: str
+) -> None:
     marker, _ = REPORTS[kind]
     _open_offline(page, run.html(marker))
-    violations = Axe().run(page).response["violations"]
-    serious = [v["id"] for v in violations if v.get("impact") in ("serious", "critical")]
-    non_serious = [v["id"] for v in violations if v.get("impact") not in ("serious", "critical")]
-    if non_serious:
-        print(f"\naxe non-serious findings for {kind} report: {non_serious}")
-    assert serious == [], serious
+    violations = _axe_violations(page)
+    blocking = [v["id"] for v in violations if v.get("impact") in BLOCKING_IMPACTS]
+    minor = [v["id"] for v in violations if v.get("impact") not in BLOCKING_IMPACTS]
+    if minor:
+        print(f"\naxe minor findings for {kind} report: {minor}")
+    assert blocking == [], blocking
+
+
+@pytest.mark.parametrize("kind", list(REPORTS))
+def test_report_has_landmarks_and_sequential_headings(
+    page: Page, run: PipelineResult, kind: str
+) -> None:
+    marker, _ = REPORTS[kind]
+    _open_offline(page, run.html(marker))
+    found = {v["id"] for v in _axe_violations(page)} & set(LANDMARK_AND_HEADING_RULES)
+    assert found == set(), sorted(found)
 
 
 def _export_data_with_patterns() -> dict:

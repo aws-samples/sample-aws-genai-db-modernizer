@@ -1616,7 +1616,7 @@ export const generateHTMLReport = (data) => {
   <style>${REPORT_CSS}</style>
 </head>
 <body>
-  <div class="container">
+  <main class="container">
     <div class="section">
       <div class="report-head">
         <div>
@@ -1722,7 +1722,7 @@ export const generateHTMLReport = (data) => {
       <p class="section-desc">Tables, generated DDL and the queries the assignment routed to each Aurora engine. Aurora's schema design has no access patterns yet (tables carry over 1:1), so it doesn't appear in the explorer above.</p>
       <div id="aurora-design-container"></div>
     </div>
-  </div>
+  </main>
 
 ${generateReportScript(data, ENGINE_LABELS)}
 
