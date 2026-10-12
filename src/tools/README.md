@@ -10,6 +10,8 @@ Custom Strands tools used by agents.
 - **schema/** - Schema design tools
   - `dynamodb_schema_agent.py` — Strands agent with PE review loop for DynamoDB schema design
   - `dynamodb_schema_designer.py` — Legacy LLM-based schema designer (pre-contract)
+- **sql/** - SQL-text tools shared across collectors, detectors and parsers
+  - `normalize.py` — normalizes collector digest text before SQL parsing
 - **validation/** - Contract validation tools
 
 ## Implementation Guidelines
