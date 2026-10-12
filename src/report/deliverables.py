@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -19,6 +21,42 @@ from .analysis_report import GraphFetcher
 logger = logging.getLogger(__name__)
 
 FileType = Literal["HTML", "MARKDOWN", "JSON", "PDF", "PPTX"]
+
+
+def _select_frame(
+    frames: Sequence[traceback.FrameSummary],
+) -> traceback.FrameSummary | None:
+    """Pick the frame to report for a caught exception: the deepest one inside
+    this codebase (a path containing ``src/``) when one exists, else the
+    actual deepest frame.
+
+    The actual deepest frame can be inside a third-party library (jinja2,
+    python-pptx, ...), which isn't actionable -- our own frame nearest the
+    failure is. Split out from ``_raising_frame`` so the selection logic can
+    be tested against plain ``FrameSummary`` values, with no real traceback
+    (and no ``exec``/``compile``) needed.
+    """
+    if not frames:
+        return None
+    for f in reversed(frames):
+        path = f.filename.replace("\\", "/")
+        if "/src/" in path or path.startswith("src/"):
+            return f
+    return frames[-1]
+
+
+def _raising_frame(exc: BaseException) -> str:
+    """``file:line in function`` for the frame ``_select_frame`` picks for
+    ``exc``.
+
+    No message text: the caller logs this at WARNING, and the message can echo
+    the report's own content (#146) -- same reasoning as #143. The frame alone
+    is still enough to find the bug without a debug-level log line.
+    """
+    frame = _select_frame(traceback.extract_tb(exc.__traceback__))
+    if frame is None:
+        return "<no traceback>"
+    return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
 
 
 @dataclass(frozen=True)
@@ -56,8 +94,12 @@ def render_deliverables(
     analysis report and the executive summary are optional: a failure in either is
     recorded in ``errors`` and the rest are still returned.
 
-    Each entry in ``errors`` and ``warnings`` is also logged here at WARNING;
-    callers should forward them, not re-log them.
+    Each entry in ``errors`` and ``warnings`` is also logged here; callers should
+    forward them, not re-log them. An ``errors`` entry wraps a caught exception's
+    own message, which can echo the report's content (#146), so WARNING only gets
+    the artifact name, the exception type and the raising frame -- never the
+    message (#143); ``exc_info=True`` at DEBUG carries the full traceback.
+    ``warnings`` are static, deterministic text, so they go to WARNING in full.
     """
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
@@ -142,6 +184,12 @@ def render_deliverables(
             )
     except Exception as e:  # noqa: BLE001 - optional deliverable
         out.errors.append(f"analysis-report: {type(e).__name__}: {e}")
+        logger.debug("deliverable skipped: analysis-report", exc_info=True)
+        logger.warning(
+            "deliverable skipped: analysis-report (%s at %s)",
+            type(e).__name__,
+            _raising_frame(e),
+        )
 
     try:
         # export_data is passed even when the analysis report failed above (it is
@@ -151,13 +199,15 @@ def render_deliverables(
         out.items += [
             # Fixed names, unlike the other deliverables above: this is the reusable
             # executive deliverable, called the same thing in every engagement. The
-            # job it belongs to is already in the key prefix, so no date-stamped
-            # stem is needed.
+            # job it belongs to is already in the key prefix (synthesis/v<N>/...), so
+            # no per-round stem is needed on disk. The label still carries the round
+            # (#146, #147 tracks the on-disk/download name too) so the panel can
+            # tell rounds apart without opening the file.
             Deliverable(
                 "executive-summary-pptx",
                 deck,
                 "PPTX",
-                f"Executive Summary Deck — {database_name}",
+                f"Executive Summary Deck — {database_name} (v{assignment_version})",
                 pptx_report.FILENAME,
                 stage=True,
                 # The editable deck is staged but not published -- the PDF is the
@@ -168,7 +218,7 @@ def render_deliverables(
                 "executive-summary-pdf",
                 deck_pdf,
                 "PDF",
-                f"Executive Summary Report — {database_name}",
+                f"Executive Summary Report — {database_name} (v{assignment_version})",
                 pdf_report.FILENAME,
                 stage=True,
                 publish=True,
@@ -176,9 +226,13 @@ def render_deliverables(
         ]
     except Exception as e:  # noqa: BLE001 - optional deliverable
         out.errors.append(f"executive-summary: {type(e).__name__}: {e}")
+        logger.debug("deliverable skipped: executive-summary", exc_info=True)
+        logger.warning(
+            "deliverable skipped: executive-summary (%s at %s)",
+            type(e).__name__,
+            _raising_frame(e),
+        )
 
-    for err in out.errors:
-        logger.warning("deliverable skipped: %s", err)
     for warn in out.warnings:
         logger.warning("deliverable warning: %s", warn)
     return out

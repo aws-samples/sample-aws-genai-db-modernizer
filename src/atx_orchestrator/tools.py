@@ -1420,6 +1420,14 @@ def _publish_synthesis_deliverables(job_id: str, database_name: str, payload: di
             # The ATX store is JSON-only; the graph travels as a published artifact.
             graph_fetcher=graph_transport.download_graph,
         )
+        if rendered.errors:
+            # render_deliverables already logged each failure's own detail
+            # (artifact, exception type, raising frame); this is the ATX-level
+            # summary so a synthesis round that shipped fewer deliverables is
+            # visible from this call site too, not just from the shared
+            # renderer's own logs (#146).
+            failed = [err.split(":", 1)[0] for err in rendered.errors]
+            logger.warning("ATX synthesis deliverables failed to render: %s", ", ".join(failed))
         for d in rendered.items:
             if d.stage:
                 binary = d.file_type in ("PDF", "PPTX")

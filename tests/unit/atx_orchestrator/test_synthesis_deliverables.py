@@ -17,7 +17,9 @@ report from the deployed ``v2-e2e-09`` run) — see
 
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +29,7 @@ import pytest
 
 from src.atx_orchestrator.runtime import graph_transport
 from src.atx_orchestrator.tools import run_synthesis_via_a2a
+from src.report import deliverables as report_deliverables
 from src.report.deliverables import DeliverableSet
 
 FIXTURE = Path(__file__).resolve().parents[1] / "report" / "fixtures" / "e2e09_report.json"
@@ -129,7 +132,7 @@ class TestSynthesisDeliverables:
             "Engineering Report — discourse",
             "Assessment Data (raw) — discourse",
             "Interactive Analysis Report — discourse",
-            "Executive Summary Report — discourse",
+            "Executive Summary Report — discourse (v1)",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 
@@ -236,3 +239,101 @@ class TestSynthesisDeliverables:
         _, kwargs = mock_render.call_args
         assert kwargs["graph_fetcher"] is graph_transport.download_graph
         assert kwargs["assignment_version"] == 1
+
+    def test_logs_failed_artifact_names_without_a_count(
+        self, report: dict, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When render_deliverables reports failures, the ATX-level summary
+        names them so a round that shipped fewer deliverables is visible from
+        this call site (#146) -- as a plain list, not an "N of M" count that
+        would need the reader to know how many deliverables are even possible."""
+        payload = {"response": {"report_artifact": self.KEY, "engines_ranked": 5}}
+        store = _FakeStore({self.KEY: report})
+        failed_set = DeliverableSet(
+            errors=[
+                "executive-summary: RuntimeError: boom",
+                "analysis-report: ValueError: no collector",
+            ]
+        )
+        with (
+            patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload),
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.report.deliverables.render_deliverables", return_value=failed_set),
+            patch("src.atx_orchestrator.runtime.artifacts.publish", return_value={}),
+            caplog.at_level(logging.WARNING, logger="src.atx_orchestrator.tools"),
+        ):
+            run_synthesis_via_a2a("job-x", "discourse")
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(
+            "executive-summary" in m and "analysis-report" in m and "failed to render" in m
+            for m in messages
+        )
+        assert not any(re.search(r"\b\d+ of \d+\b", m) for m in messages)
+
+    def test_re_entry_regenerates_distinct_deliverables_per_version(self, report: dict) -> None:
+        """A re-entry round (new assignment version, ADR-029) must render and
+        publish a fresh executive summary reflecting the new round's content,
+        not reuse or silently skip the prior round's file (#146). v2 gets a
+        changed report (a different overall risk level, which the exec summary
+        deck renders), so this also proves the PDF bytes actually differ, not
+        just the path and filename they land at."""
+        key_v1 = self.KEY
+        key_v2 = "discourse/job-x/synthesis/v2/report.json"
+        report_v2 = copy.deepcopy(report)
+        report_v2["risk_assessment"]["overall_risk_level"] = "CRITICAL"
+        store = _FakeStore({key_v1: report, key_v2: report_v2})
+        publishes: list = []
+        render_calls: list = []
+        real_render = report_deliverables.render_deliverables
+
+        def _record_publish(items: list) -> dict:
+            publishes.append(items)
+            return {}
+
+        def _spy_render(*args, **kwargs):
+            render_calls.append(kwargs)
+            return real_render(*args, **kwargs)
+
+        with (
+            patch("src.atx_orchestrator.tools._make_store", return_value=store),
+            patch("src.report.deliverables.render_deliverables", side_effect=_spy_render),
+            patch(
+                "src.atx_orchestrator.runtime.artifacts.publish",
+                side_effect=_record_publish,
+            ),
+        ):
+            for key, version in ((key_v1, 1), (key_v2, 2)):
+                payload = {
+                    "response": {
+                        "report_artifact": key,
+                        "assignment_version": version,
+                        "engines_ranked": 5,
+                    }
+                }
+                with patch("src.atx_orchestrator.tools.invoke_and_wait", return_value=payload):
+                    run_synthesis_via_a2a("job-x", "discourse")
+
+        # render_deliverables is called with the version each round actually
+        # reported, not a value stuck at the first round's.
+        assert [c["assignment_version"] for c in render_calls] == [1, 2]
+
+        # Each re-entry round published its own full set of five deliverables --
+        # the second round is not skipped because the first already ran.
+        assert len(publishes) == 2
+        for items in publishes:
+            assert [it[1] for it in items] == ["HTML", "MARKDOWN", "JSON", "HTML", "PDF"]
+
+        # The durable copy of the executive summary PDF lands at each round's own
+        # version *path* (the filename itself is fixed, #147) -- v2 neither
+        # overwrites nor is skipped in favor of v1.
+        pdf_keys = sorted(k for k in store.byte_writes if k.endswith(".pdf"))
+        assert pdf_keys == [
+            "discourse/job-x/synthesis/v1/summary-executive-report.pdf",
+            "discourse/job-x/synthesis/v2/summary-executive-report.pdf",
+        ]
+
+        # The two rounds' content actually differs -- not just the path.
+        pdf_v1 = store.byte_writes["discourse/job-x/synthesis/v1/summary-executive-report.pdf"]
+        pdf_v2 = store.byte_writes["discourse/job-x/synthesis/v2/summary-executive-report.pdf"]
+        assert pdf_v1 != pdf_v2
