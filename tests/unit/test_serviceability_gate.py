@@ -307,6 +307,36 @@ class TestFindBestAbsorberWithCapabilities:
 
     def test_absorber_skips_engine_lacking_capability(self):
         qa = {"query_id": "q-1", "assigned_engine": "opensearch"}
+        committed = {"dynamodb"}
+        query_signals: dict = {"q-1": ["text_search"]}
+        query_map = {"q-1": {"tables_accessed": ["posts"]}}
+        query_capabilities = {"q-1": ["inverted_index"]}
+
+        result = _find_best_absorber_for_query(
+            qa=qa,
+            committed_engines=committed,
+            source_engine="opensearch",
+            query_signals=query_signals,
+            query_map=query_map,
+            analysis_outputs={},
+            engine_queries={"dynamodb": []},
+            mandatory_committed_engines=set(),
+            primary_engine="dynamodb",
+            trace_by_query={},
+            query_capabilities=query_capabilities,
+        )
+
+        # dynamodb lacks inverted_index
+        assert result is None
+
+    def test_absorber_includes_documentdb_now_that_it_has_the_capability(self):
+        """#485: ``ENGINE_CAPABILITIES`` now lists ``documentdb`` as having
+
+        ``inverted_index`` (the same unindexed-scan position as Aurora
+        MySQL), so the serviceability gate stops skipping it here too --
+        unlike DynamoDB, which still genuinely lacks it.
+        """
+        qa = {"query_id": "q-1", "assigned_engine": "opensearch"}
         committed = {"dynamodb", "documentdb"}
         query_signals: dict = {"q-1": ["text_search"]}
         query_map = {"q-1": {"tables_accessed": ["posts"]}}
@@ -322,12 +352,12 @@ class TestFindBestAbsorberWithCapabilities:
             engine_queries={"dynamodb": [], "documentdb": []},
             mandatory_committed_engines=set(),
             primary_engine="dynamodb",
-            trace_by_query={},
+            trace_by_query={"q-1": {"engines": {"documentdb": 60}}},
             query_capabilities=query_capabilities,
         )
 
-        # Neither dynamodb nor documentdb has inverted_index
-        assert result is None
+        assert result is not None
+        assert result["target_engine"] == "documentdb"
 
     def test_absorber_allows_engine_with_capability(self):
         qa = {"query_id": "q-1", "assigned_engine": "documentdb"}

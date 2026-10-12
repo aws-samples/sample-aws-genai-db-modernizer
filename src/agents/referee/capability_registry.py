@@ -41,7 +41,14 @@ __all__ = [
 
 ENGINE_CAPABILITIES: dict[str, set[str]] = {
     "dynamodb": {"strong_consistency"},
-    "documentdb": {"multi_doc_acid", "strong_consistency", "aggregation"},
+    # $regex (LIKE/regex-equivalent) and $text are both native query
+    # operators; a leading-wildcard $regex runs unindexed, the same scan
+    # cost Aurora MySQL's LIKE pays below -- so inverted_index is a
+    # capability DocumentDB has, even though it is not an indexed one
+    # (only Aurora PostgreSQL's pg_trgm indexes it). Previously omitted
+    # here, which hard-excluded DocumentDB while admitting Aurora MySQL for
+    # the identical unindexed position -- fixed by #485.
+    "documentdb": {"multi_doc_acid", "strong_consistency", "aggregation", "inverted_index"},
     "opensearch": {"inverted_index", "scan_engine", "aggregation"},
     "aurora_postgresql": {
         "multi_doc_acid",

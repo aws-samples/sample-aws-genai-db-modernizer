@@ -1058,12 +1058,17 @@ class TestTextSearchCapabilityScopedPenalty:
             assert q1.confidence == 60, f"order={order}"  # 90 - 30, not 90 - 0
             assert "runs this search pattern natively" not in q1.assignment_reason, f"order={order}"
 
-    def test_documentdb_is_hard_excluded_from_a_leading_wildcard_like(self):
-        """A literal leading wildcard (``LIKE '%x%'``) trips the HARD
+    def test_documentdb_is_no_longer_hard_excluded_from_a_leading_wildcard_like(self):
+        """#485: a literal leading wildcard (``LIKE '%x%'``) used to trip the
 
-        ``inverted_index`` capability gate (``capability_registry``), which
-        excludes DocumentDB before this exemption is ever consulted --
-        tracked as #485, not fixed here.
+        HARD ``inverted_index`` capability gate (``capability_registry``)
+        for DocumentDB only, scoring it 0 before the soft, per-engine
+        exemption logic below was ever consulted -- even though Aurora
+        MySQL runs the identical pattern the same way (an unindexed scan)
+        and was never gated. Now that the registry lists ``inverted_index``
+        as a capability DocumentDB has too, it falls through to that same
+        scoring path and wins on its own table confidence (90) against
+        OpenSearch's 50.
         """
         resolver = AssignmentResolver()
         triage = _make_triage(["opensearch", "documentdb"])
@@ -1078,8 +1083,10 @@ class TestTextSearchCapabilityScopedPenalty:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine != "documentdb"
-        assert "documentdb lacks required capability: inverted_index" in q1.assignment_reason
+        assert q1.assigned_engine == "documentdb"
+        assert q1.confidence == 90  # unpenalized -- documentdb is exempt from wildcard-search
+        assert "documentdb lacks required capability" not in q1.assignment_reason
+        assert "runs this search pattern natively" in q1.assignment_reason
 
     def test_documentdb_is_exempt_for_a_parameterized_like(self):
         """A query with no literal wildcard in its text (``LIKE ?``) never

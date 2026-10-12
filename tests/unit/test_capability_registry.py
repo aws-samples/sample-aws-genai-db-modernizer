@@ -1,7 +1,5 @@
 """Unit tests for the capability registry."""
 
-import pytest
-
 from src.agents.referee.capability_registry import (
     ENGINE_CAPABILITIES,
     LIGHTWEIGHT_ALTERNATIVES,
@@ -37,31 +35,28 @@ class TestTextSearchEnginesVsCapabilityRegistry:
 
     ``capability_registry.ENGINE_CAPABILITIES``'s ``inverted_index`` set the
     same way ``ACID_TRANSACTION_ENGINES`` agrees with ``multi_doc_acid``
-    above. The two Aurora engines already do; DocumentDB does not, because
-    the hard gate excludes it from a leading-wildcard query while admitting
-    Aurora MySQL, which runs that query the same way (an unindexed scan) --
-    tracked as #485.
+    above -- an equality check, not a subset one, so the two facts cannot
+    drift apart again the way they did before #485: DocumentDB was
+    hard-excluded from a leading-wildcard query by this gate while Aurora
+    MySQL, which runs that query the same way (an unindexed scan), was
+    admitted. ``inverted_index`` also covers OpenSearch, which
+    ``TEXT_SEARCH_ENGINES`` deliberately excludes (see its own docstring:
+    it is the engine these signals come FROM, not a capability question
+    for that set) -- so the two are not literally the same set, only
+    ``TEXT_SEARCH_ENGINES`` plus OpenSearch.
+
+    ``inverted_index`` is itself now a misleading name (review of #485):
+    every engine here except DynamoDB has it, but only Aurora PostgreSQL
+    (``pg_trgm``) or OpenSearch actually indexes a leading wildcard -- the
+    other two still run it, just unindexed. Renaming it, and scoring that
+    index-vs-scan difference for real, is left to #491.
     """
 
-    def test_aurora_engines_agree_with_inverted_index(self):
+    def test_agrees_with_text_search_engines_plus_opensearch(self):
         inverted_index_engines = frozenset(
             engine for engine, caps in ENGINE_CAPABILITIES.items() if "inverted_index" in caps
         )
-        assert {"aurora_postgresql", "aurora_mysql"} <= TEXT_SEARCH_ENGINES
-        assert {"aurora_postgresql", "aurora_mysql"} <= inverted_index_engines
-
-    @pytest.mark.xfail(strict=True, reason="#485")
-    def test_documentdb_is_in_inverted_index(self):
-        # Not an equality check against TEXT_SEARCH_ENGINES: inverted_index
-        # also contains opensearch, which is never in TEXT_SEARCH_ENGINES
-        # (see its docstring), so that equality could never pass even once
-        # #485 is fixed. This asserts the specific gap instead, so it goes
-        # from xfail to a loud failure (strict=True) exactly when #485 is
-        # fixed, prompting removal of the marker.
-        inverted_index_engines = frozenset(
-            engine for engine, caps in ENGINE_CAPABILITIES.items() if "inverted_index" in caps
-        )
-        assert "documentdb" in inverted_index_engines
+        assert inverted_index_engines == TEXT_SEARCH_ENGINES | {"opensearch"}
 
 
 class TestDetectRequiredCapabilities:
@@ -144,8 +139,14 @@ class TestCanEngineServeCapability:
     def test_dynamodb_lacks_inverted_index(self):
         assert can_engine_serve_capability("dynamodb", ["inverted_index"]) is False
 
-    def test_documentdb_lacks_inverted_index(self):
-        assert can_engine_serve_capability("documentdb", ["inverted_index"]) is False
+    def test_documentdb_has_inverted_index(self):
+        """#485: an unindexed ``$regex`` scan is the same position Aurora
+
+        MySQL's unindexed ``LIKE`` scan is in -- a capability DocumentDB
+        has, just not an indexed one, so the hard gate no longer excludes
+        it.
+        """
+        assert can_engine_serve_capability("documentdb", ["inverted_index"]) is True
 
     def test_opensearch_has_scan_engine(self):
         assert can_engine_serve_capability("opensearch", ["scan_engine"]) is True

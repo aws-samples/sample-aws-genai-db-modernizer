@@ -106,18 +106,17 @@ ACID_TRANSACTION_ENGINES: frozenset[str] = frozenset(
 # second, independent fact, not inferred from it: a future engine could gain
 # one capability without the other.
 #
-# Known gap, tracked as #485, not fixed here: the HARD capability gate
+# #485 (fixed): the HARD capability gate
 # (``capability_registry.ENGINE_CAPABILITIES``'s ``inverted_index``, checked
 # in ``AssignmentResolver.resolve`` Step 3b, before this set is ever
-# consulted) excludes DocumentDB but not Aurora MySQL, even though both only
-# run these patterns unindexed. Its detector fires both on a leading
-# wildcard (``LIKE '%term'``) and on full-text syntax (``MATCH ... AGAINST``,
-# ``tsvector``/``tsquery``), so a leading-wildcard query AND a full-text
-# query both still score 0 on DocumentDB after this fix, hard-excluded
-# before this set is ever reached. A non-leading LIKE or a regex query is
-# unaffected by the hard gate and does benefit from the exemption below.
-# ``tests/unit/test_capability_registry.py`` tracks the gap against #485
-# instead of asserting it as a permanent spec.
+# consulted) used to exclude DocumentDB but not Aurora MySQL, even though
+# both only run these patterns unindexed. Its detector fires both on a
+# leading wildcard (``LIKE '%term'``) and on full-text syntax
+# (``MATCH ... AGAINST``, ``tsvector``/``tsquery``), so a leading-wildcard
+# query or a full-text query used to score 0 on DocumentDB, hard-excluded
+# before this set was ever reached. ``ENGINE_CAPABILITIES`` now lists
+# ``inverted_index`` for DocumentDB too, so both gates agree and the soft
+# exemption below is reachable for every pattern this set covers.
 TEXT_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_mysql", "documentdb"})
 
 # Engines with a native fuzzy/similarity-match operator. Today that is only

@@ -2454,6 +2454,95 @@ class TestRealityCheckRechecksSmallEngines:
         assert engine_of["util2"] == "aurora_mysql"
 
 
+class TestRemovalDoesNotStrandAnInheritedRescue:
+    """#485 review: removing engine A can rescue a query/group onto engine
+
+    B when B is the ONLY other committed engine eligible for it (the same
+    ``_group_eligible_engines`` gate Phase 1 and Phase 2 share). That
+    rescue must itself be protected in later rounds: if B is then judged
+    removable purely on ITS OWN, unrelated native queries, B must stay
+    committed anyway, because the rescued query now depends on it and has
+    no other home. Before this fix, ``_evaluate_engine_removal`` only
+    checked an engine's own ``native_qas`` (frozen from the first
+    assignment, never updated as other engines are removed), so B's
+    rescue of A's query was invisible to B's own removability check --
+    B was removed anyway, and the rescued query was left pointing at A, a
+    removed engine, tripping ``run_reality_check``'s own stranded-query
+    invariant.
+
+    Mirrors the production shape #485 exposed: Aurora MySQL's only
+    native query/group needs a pattern only DocumentDB (among the other
+    committed engines) can serve; DocumentDB's own native queries are
+    otherwise fully redundant with DynamoDB. Removing Aurora MySQL first
+    (highest burden) rescues that query onto DocumentDB -- DocumentDB must
+    not then be removed too, stranding it.
+    """
+
+    def test_rescuer_engine_is_protected_once_it_inherits_a_dependent_query(self):
+        engine_queries = {
+            "aurora_mysql": [
+                {"query_id": "q1", "assigned_engine": "aurora_mysql", "assignment_reason": "test"},
+            ],
+            "documentdb": [
+                {"query_id": "qd1", "assigned_engine": "documentdb", "assignment_reason": "test"},
+                {"query_id": "qd2", "assigned_engine": "documentdb", "assignment_reason": "test"},
+            ],
+            "dynamodb": [
+                {"query_id": "qk1", "assigned_engine": "dynamodb", "assignment_reason": "test"},
+            ],
+        }
+        current_engine_by_qid = {
+            "q1": "aurora_mysql",
+            "qd1": "documentdb",
+            "qd2": "documentdb",
+            "qk1": "dynamodb",
+        }
+        trace_by_query = {
+            # Only Aurora MySQL and DocumentDB can serve q1 at all (DynamoDB
+            # has no score -- simulating a capability DynamoDB structurally
+            # lacks); DocumentDB is the better fit, so q1 looks redundant
+            # (not "unique") for Aurora MySQL on its own.
+            "q1": {"engines": {"aurora_mysql": 70, "documentdb": 90}},
+            # DocumentDB's own native queries are fully redundant with
+            # DynamoDB -- nothing protects DocumentDB on its own merits.
+            "qd1": {"engines": {"documentdb": 80, "dynamodb": 95}},
+            "qd2": {"engines": {"documentdb": 80, "dynamodb": 95}},
+            # DynamoDB's own query has no alternative anywhere -- always
+            # irreplaceable, keeping DynamoDB committed throughout so the
+            # scenario has a stable floor.
+            "qk1": {"engines": {"dynamodb": 95}},
+        }
+
+        committed, assessment = _settle_committed_engines(
+            engine_queries=engine_queries,
+            mandatory_query_ids=set(),
+            mandatory_committed_engines=set(),
+            trace_by_query=trace_by_query,
+            current_engine_by_qid=current_engine_by_qid,
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            max_rounds=5,
+        )
+
+        # Aurora MySQL earns no unique value against DocumentDB and is
+        # removed. DocumentDB, despite having no unique value of its OWN
+        # either, must stay: it is q1's only remaining eligible home now
+        # that Aurora MySQL is gone.
+        assert committed == {"documentdb", "dynamodb"}
+        assert assessment["documentdb"]["irreplaceable_queries"] == ["q1"]
+
+        # #485 review (Important 2): the stranded, inherited query must not
+        # wipe DocumentDB's OWN, real native stats -- qd1/qd2 really are
+        # redundant (DynamoDB scores them higher) and DocumentDB's own
+        # unique_ratio is really 0, both computed from native_qas alone,
+        # unaffected by q1 landing in irreplaceable_queries too.
+        assert assessment["documentdb"]["redundant_queries"] == ["qd1", "qd2"]
+        assert assessment["documentdb"]["unique_queries"] == []
+        assert assessment["documentdb"]["unique_ratio"] == 0.0
+        assert assessment["documentdb"]["total_queries"] == 2
+
+
 class TestRemovalTiesAreResolvedByDataNotName:
     """#502 review round 5, finding N1: the reviewer's reproduction --
     "two engines at 150 per unique query".

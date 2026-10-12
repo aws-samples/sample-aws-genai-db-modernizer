@@ -794,6 +794,7 @@ def _evaluate_engine_removal(
     query_capabilities: dict[str, list[str]] | None,
     committed_count: int,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
+    orphaned_qas: list[dict] | None = None,
 ) -> tuple[bool, dict, float]:
     """Phase 1's per-engine question (#502 review): judged on ``engine``'s
     own native queries alone, using the resolver's own per-query scores
@@ -814,17 +815,58 @@ def _evaluate_engine_removal(
     value is worth the fixed cost of keeping it (#494: unchanged, flat
     ``EXTRA_ENGINE_BURDEN_MONTHLY`` and ``> 100`` cut-off).
 
+    ``orphaned_qas`` (#485 review) are the native queries of engines
+    ALREADY removed earlier in this same settling pass -- one flat,
+    ever-growing list, not tracked per rescuing engine. The single rule:
+    every one of them must still have an eligible home among
+    ``other_committed`` (``engine`` excluded, like everything else here),
+    whichever engine that turns out to be. Without this, ``engine``'s own
+    removability check only ever saw ``native_qas`` (frozen from the first
+    assignment), so a query rescued onto ``engine`` -- because ``engine``
+    was its only eligible survivor when its own original engine was
+    removed -- was invisible here, stranding it if ``engine`` was removed
+    too, judged purely on ITS unrelated native queries. A stranded one is
+    added to ``irreplaceable_queries`` (sorted, alongside any native ones)
+    so ``engine`` is protected the same hard way a mandatory signal
+    override is -- but ``total_queries``, ``unique_queries``,
+    ``redundant_queries`` and ``unique_ratio`` below are computed from
+    ``native_qas`` alone, same as if ``orphaned_qas`` were empty: it is
+    not actually ``engine``'s own native workload.
+
     Also returns a rank key (burden per unique query) ``_settle_committed_engines``
     uses to decide WHICH removable engine to remove first when more than
     one is removable in the same round -- the worst value for the fixed
     operational cost, not evaluation order.
     """
+
+    def _stranded(qas: Iterable[dict]) -> list[str]:
+        stranded = []
+        for qa in qas:
+            qid = qa["query_id"]
+            if qid in mandatory_query_ids:
+                continue
+            if not _group_eligible_engines(
+                qid,
+                trace_by_query,
+                current_engine_by_qid,
+                other_committed,
+                mandatory_query_ids,
+                query_signals,
+                query_map,
+                query_capabilities,
+                tied_engines_by_qid,
+            ):
+                stranded.append(qid)
+        return stranded
+
+    orphan_stranded = _stranded(orphaned_qas or [])
+
     if not native_qas:
         return (
-            True,
+            not orphan_stranded,
             {
                 "total_queries": 0,
-                "irreplaceable_queries": [],
+                "irreplaceable_queries": sorted(orphan_stranded),
                 "unique_queries": [],
                 "redundant_queries": [],
                 "unique_ratio": 0,
@@ -869,7 +911,7 @@ def _evaluate_engine_removal(
     avg_delta = sum(deltas) / len(deltas) if deltas else 0
     assessment = {
         "total_queries": len(native_qas),
-        "irreplaceable_queries": irreplaceable,
+        "irreplaceable_queries": sorted(set(irreplaceable) | set(orphan_stranded)),
         "unique_queries": unique_by_score,
         "redundant_queries": redundant,
         "unique_ratio": (
@@ -881,7 +923,7 @@ def _evaluate_engine_removal(
     total_burden = ENGINE_BASE_COST.get(engine, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
     rank_key = total_burden / max(len(unique_by_score), 1)
 
-    if irreplaceable:
+    if irreplaceable or orphan_stranded:
         return False, assessment, 0.0
     if not unique_by_score:
         return True, assessment, rank_key
@@ -1006,6 +1048,16 @@ def _settle_committed_engines(
     """
     committed = {e for e in engine_queries if engine_queries.get(e)}
     assessment: dict[str, dict] = {}
+    # #485 review: the native, non-mandatory queries of every engine
+    # ALREADY removed earlier in this same settling pass -- one flat,
+    # ever-growing list, not tracked per rescuing engine. Every engine's
+    # removability check (``_evaluate_engine_removal``) re-verifies that
+    # all of them still have a home among whichever engines remain, so a
+    # chain of rescues (an engine that absorbed one of these, later
+    # removed itself) is handled the same way a single rescue is, with no
+    # per-destination bookkeeping: a query is appended exactly once, when
+    # its own original engine is removed, never again afterward.
+    orphaned_qas: list[dict] = []
     round_num = 0
     converged = False
     while round_num < max_rounds:
@@ -1026,6 +1078,7 @@ def _settle_committed_engines(
                 query_capabilities,
                 len(snapshot),
                 tied_engines_by_qid,
+                orphaned_qas,
             )
             # #502 review: no engine is "primary" anymore -- every engine is
             # judged the same way. The contract field stays (a breaking
@@ -1080,6 +1133,11 @@ def _settle_committed_engines(
             candidate = decisive[0]
             survivors = survivors_by_candidate[candidate]
             native_qas = engine_queries.get(candidate, [])
+            # #485 review: removing `candidate` must leave a home for its
+            # own native queries AND for every query already orphaned by
+            # an earlier removal this pass -- the same single rule
+            # `_evaluate_engine_removal` just applied when it judged
+            # `candidate` removable against this same `survivors` set.
             if all(
                 _group_eligible_engines(
                     qa["query_id"],
@@ -1092,11 +1150,17 @@ def _settle_committed_engines(
                     query_capabilities,
                     tied_engines_by_qid,
                 )
-                for qa in native_qas
+                for qa in native_qas + orphaned_qas
                 if qa["query_id"] not in mandatory_query_ids
             ):
                 committed.discard(candidate)
                 removed_one = True
+                # `candidate`'s own native queries are now orphaned too --
+                # appended exactly once, here, never re-added on a later
+                # removal (they are already in the list by then).
+                orphaned_qas.extend(
+                    qa for qa in native_qas if qa["query_id"] not in mandatory_query_ids
+                )
                 break
         if not removed_one:
             converged = True

@@ -328,10 +328,20 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # itself has no rule for now looks at settled (non-tied) workload share
     # first, and dynamodb already carries more of it on this sample --
     # dynamodb +1, documentdb -1.
+    # #485: the inverted_index hard gate used to score DocumentDB 0 on every
+    # leading-wildcard/full-text query regardless of its own table
+    # confidence, while Aurora MySQL (which runs the identical pattern the
+    # same way, an unindexed scan) was never gated -- so DocumentDB now
+    # genuinely competes on one such query here (``59163c18...``, highest
+    # table confidence 87 vs Aurora MySQL's), winning the first assignment
+    # -- aurora_mysql -1, documentdb +1. (It does not keep it: the reality
+    # check still consolidates it back to Aurora MySQL for lacking unique
+    # value once there, which the ``before_distribution`` below -- the
+    # first-assignment count -- does not reflect.)
     assert rc["before_distribution"] == {
         "dynamodb": 39,
-        "aurora_mysql": 61,
-        "documentdb": 7,
+        "aurora_mysql": 60,
+        "documentdb": 8,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
     assert "opensearch" not in rc["after_distribution"]  # consolidated away
