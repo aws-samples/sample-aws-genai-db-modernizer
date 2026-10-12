@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.agents.answer_validation import validate_answer
+from src.api.dependencies import database_name_param
 from src.contracts.agent_interaction_models import AgentAnswers, AgentQuestions
 from src.contracts.assignment_models import ValidationResult
 from src.storage.artifact_store import ArtifactStore
@@ -70,7 +71,7 @@ def _answers_path(db: str, job_id: str, agent: str) -> str:
 async def get_questions(
     job_id: str,
     agent: str,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Read the questions artifact for an agent."""
     store = _require_store()
@@ -86,7 +87,7 @@ async def put_answers(
     job_id: str,
     agent: str,
     body: SubmitAnswersRequest,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Write the answers artifact for an agent."""
     store = _require_store()
@@ -120,7 +121,7 @@ async def validate_single_answer(
     job_id: str,
     agent: str,
     body: ValidateAnswerRequest,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Validate a single answer using tiered validation.
 

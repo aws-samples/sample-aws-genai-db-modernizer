@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from src.api.dependencies import database_name_param
 from src.api.services.local_execution import LocalExecutionService
 from src.contracts.schema_revision_models import (
     SchemaConfirmation,
@@ -150,7 +151,7 @@ def _write_confirmed_json(
 async def get_schema(
     job_id: str,
     engine: str,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
     version: int | None = Query(None, description="Schema version (omit for latest)"),
 ):
     """Return schema output and version metadata for a specific engine and version."""
@@ -185,7 +186,7 @@ async def get_schema(
 async def get_schema_versions(
     job_id: str,
     engine: str,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Return full version history for an engine, ordered by version number ascending."""
     store = _require_store()
@@ -218,7 +219,7 @@ async def put_schema_revision(
     job_id: str,
     engine: str,
     body: SchemaRevisionRequest,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Submit a schema revision request for an engine.
 
@@ -278,7 +279,7 @@ async def put_schema_revision(
 async def confirm_schema(
     job_id: str,
     engine: str,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Confirm the latest schema version for an engine. Writes confirmed.json."""
     store = _require_store()
@@ -298,7 +299,7 @@ async def confirm_schema(
 @router.post("/{job_id}/schema/confirm-all", response_model=ConfirmAllResponse)
 async def confirm_all_schemas(
     job_id: str,
-    database_name: str = Query(..., description="Database name for artifact lookup"),
+    database_name: str = Depends(database_name_param),
 ):
     """Confirm the latest schema version for every active engine.
 

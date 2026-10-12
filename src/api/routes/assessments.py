@@ -4,8 +4,9 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from src.api.dependencies import database_name_param, validated_filename
 from src.api.models.requests import AssessmentRequest, PrepareAssessmentRequest
 from src.api.models.responses import (
     AgentStatus,
@@ -81,7 +82,7 @@ async def prepare_assessment(request: PrepareAssessmentRequest):
 
 
 @router.post("/{job_id}/uploads/confirm")
-async def confirm_upload(job_id: str, database_name: str):
+async def confirm_upload(job_id: str, database_name: str = Depends(database_name_param)):
     """Confirm that the file upload completed successfully.
 
     Checks that the collector output file exists in S3 at the expected
@@ -107,7 +108,7 @@ async def confirm_upload(job_id: str, database_name: str):
 
 
 @router.get("/{job_id}/uploads")
-async def list_uploads(job_id: str, database_name: str):
+async def list_uploads(job_id: str, database_name: str = Depends(database_name_param)):
     """List uploaded files for a prepared assessment."""
     _, s3_svc = _require_services()
     prefix = f"{database_name}/{job_id}/uploads/"
@@ -138,7 +139,11 @@ async def list_uploads(job_id: str, database_name: str):
 
 
 @router.delete("/{job_id}/uploads/{filename}")
-async def delete_upload(job_id: str, database_name: str, filename: str):
+async def delete_upload(
+    job_id: str,
+    database_name: str = Depends(database_name_param),
+    filename: str = Depends(validated_filename),
+):
     """Delete an uploaded file from a prepared assessment."""
     _, s3_svc = _require_services()
     key = f"{database_name}/{job_id}/uploads/{filename}"

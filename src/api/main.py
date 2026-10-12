@@ -3,8 +3,11 @@
 import hashlib
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.shared.package_version import get_package_version
 
@@ -55,6 +58,32 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy", "version": BUILD_VERSION}
+
+
+# ============================================================
+# Validation errors — never echo the rejected value back
+# ============================================================
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """FastAPI's default 422 handler puts the rejected value in each error's
+    "input" field (and sometimes mirrors it into "ctx") -- including a
+    pydantic field_validator's own ValueError, e.g. AssessmentRequest's
+    database_name/job_id checks (#420/#505/#508), which deliberately never
+    echo the rejected value in their *message* so it can't carry
+    attacker-controlled text into a response, only for FastAPI's default
+    serialization to put it right back via "input"/"ctx". Strip both here,
+    for every validation error, not just those two fields."""
+    errors = jsonable_encoder(exc.errors())
+    cleaned = []
+    for error in errors:
+        rejected = error.pop("input", None)
+        ctx = error.get("ctx")
+        if isinstance(ctx, dict):
+            error["ctx"] = {k: v for k, v in ctx.items() if v != rejected}
+            if not error["ctx"]:
+                del error["ctx"]
+        cleaned.append(error)
+    return JSONResponse(status_code=422, content={"detail": cleaned})
 
 
 # ============================================================
