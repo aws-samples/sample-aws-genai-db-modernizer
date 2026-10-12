@@ -12,7 +12,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from src.agents.referee.query_scoring import ScoringContext
 
 from src.agents.referee.assignment_resolver import (
     build_co_dependency_groups,
@@ -34,6 +37,7 @@ from src.agents.referee.cache_overlay import (
 )
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
@@ -238,17 +242,29 @@ def _drop_losing_aurora_analysis(analysis_outputs: dict[str, dict], raw: dict) -
 
 def load_assignment_for_edit(
     store: _Store, database_name: str, job_id: str, version: int
-) -> tuple[dict, dict, dict[str, dict]]:
-    """``(assignment, collector_output, analysis_outputs)`` with legacy cache owners moved.
+) -> tuple[dict, dict, dict[str, dict], dict]:
+    """``(assignment, collector_output, analysis_outputs, triage)`` with legacy
+    cache owners moved.
 
     An assignment written before the cache overlay (#296) can have ElastiCache
     owners, which the validator rejects; they are moved to their system-of-record
     engine here, in memory, with a note in ``cache_notes``, so the assignment
     stays viewable and editable. The stored artifact is not rewritten.
+
+    ``triage`` is read the same way ``collector_output`` is (missing reads as
+    ``{}``) and passed to :func:`normalize_cache_owners` so its
+    ``query_capabilities`` -- the collector-signal-aware capability map
+    triage.json itself carries -- feeds the fallback owner's capability gate
+    (#549 round-2 review, Critical 1), the same way
+    ``AssignmentResolver.resolve()`` reads it. Returned too, so a caller that
+    also needs it (``apply_assignment_overrides``'s own ``fallback_owner``
+    calls) does not read triage.json a second time.
     """
     raw = store.read_json(assignment_artifact_path(database_name, job_id, version))
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    triage = store.read_json(triage_key) if store.exists(triage_key) else {}
     analysis_outputs = _read_analysis_outputs(store, database_name, job_id)
     # #381 review: triage selected both Aurora engines for a heterogeneous source, so
     # both have an analysis artifact on disk -- drop the one the resolver's recorded
@@ -260,6 +276,8 @@ def load_assignment_for_edit(
         collector_output.get("queries", {}).get("query_patterns", []),
         analysis_outputs,
         source_database_engine(collector_output),
+        triage=triage,
+        collector=collector_output,
     ):
         qas = [QueryAssignment.model_validate(qa) for qa in raw["query_assignments"]]
         table_assignments, unresolved_table_names = derive_table_assignments(
@@ -271,7 +289,7 @@ def load_assignment_for_edit(
         )
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
-    return raw, collector_output, analysis_outputs
+    return raw, collector_output, analysis_outputs, triage
 
 
 def _apply_cache_override(
@@ -283,18 +301,36 @@ def _apply_cache_override(
     analysis_outputs: dict[str, dict],
     source_engine: str,
     owner_counts: dict[str, int],
+    triage: dict | None,
+    collector: dict | None,
+    ctx: ScoringContext | None = None,
 ) -> str | None:
     """Apply a cache request to ``qa`` in place; return the note to record, if any."""
     wants_cache = override.cached is True or override.assigned_engine in CACHE_OVERLAY_ENGINES
     if wants_cache:
         note = None
         if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
-            owner = fallback_owner(query, analysis_outputs, source_engine, owner_counts)
-            note = (
-                f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot own "
-                f"it; owned by {owner}, cached by {cache} as requested."
+            owner, tied, fallback_reason = fallback_owner(
+                query,
+                analysis_outputs,
+                source_engine,
+                owner_counts,
+                triage=triage,
+                collector=collector,
+                ctx=ctx,
             )
+            if fallback_reason:
+                note = (
+                    f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot "
+                    f"own it; {fallback_reason} It is cached by {cache} as requested."
+                )
+            else:
+                note = (
+                    f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot "
+                    f"own it; owned by {owner}, cached by {cache} as requested."
+                )
             qa.assigned_engine = owner
+            qa.tied_engines = tied
         elif override.assigned_engine in CACHE_OVERLAY_ENGINES:
             note = (
                 f"Query {qa.query_id}: requested engine {override.assigned_engine} is a "
@@ -355,7 +391,7 @@ def apply_assignment_overrides(
     if current_version == 0:
         raise NoAssignmentFound
 
-    raw, collector_output, analysis_outputs = load_assignment_for_edit(
+    raw, collector_output, analysis_outputs, triage = load_assignment_for_edit(
         store, database_name, job_id, current_version
     )
     current = Assignment.model_validate(raw)
@@ -364,9 +400,23 @@ def apply_assignment_overrides(
     cache = available_cache_engine(analysis_outputs) or "elasticache"
     heavy = write_heavy_tables(queries)
     source_engine = source_database_engine(collector_output)
-    owner_counts: dict[str, int] = {}
-    for existing in current.query_assignments:
-        owner_counts[existing.assigned_engine] = owner_counts.get(existing.assigned_engine, 0) + 1
+    # The settled-workload count ``fallback_owner`` passes on to an unresolved
+    # tie's placeholder (ADR-031 Decision 12): a query already carrying its
+    # own ``tied_engines`` must not feed another tie's count (#549 review,
+    # Important 3), so this is ``tie_break.settled_counts``, never a raw
+    # count of every ``assigned_engine``.
+    owner_counts = settled_counts(current.query_assignments)
+    # Built once, before the per-override loop below, and handed to every
+    # ``_apply_cache_override``/``fallback_owner`` call as ``ctx=`` (#549
+    # round-3 review, Suggestion 3): a customer edit can carry several
+    # overrides in one request, and rebuilding the anti-pattern map (and the
+    # capability map, when triage needs re-detecting it) per override rather
+    # than once is wasted, measurable work.
+    ctx = None
+    if isinstance(analysis_outputs, Mapping):
+        from src.agents.referee.query_scoring import ScoringContext
+
+        ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
     cache_notes: list[str] = []
@@ -405,6 +455,9 @@ def apply_assignment_overrides(
             analysis_outputs,
             source_engine,
             owner_counts,
+            triage,
+            collector_output,
+            ctx,
         )
         if note:
             cache_notes.append(note)

@@ -171,6 +171,12 @@ def run(request: pytest.FixtureRequest, e2e_root: Path) -> PipelineResult:
     return _run_pipeline_cached(sample, e2e_root / "artifacts", job_id=f"e2e-{sample[:4]}")
 
 
+@pytest.fixture(scope="session")
+def discourse_run(e2e_root: Path) -> PipelineResult:
+    """The cached discourse run, for tests whose checks are specific to that sample."""
+    return _run_pipeline_cached("discourse", e2e_root / "artifacts", job_id="e2e-disc")
+
+
 def _ensure_port_free(port: int) -> None:
     """Fail fast, with a clear message, instead of silently talking to whatever
     (possibly stale) process is already listening on ``port``."""

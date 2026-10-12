@@ -97,7 +97,7 @@ def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -
     """Read a specific assignment version (legacy cache owners moved, #296)."""
     from src.agents.referee.assignment_overrides import load_assignment_for_edit
 
-    data, _, _ = load_assignment_for_edit(store, db, job_id, version)
+    data, _, _, _ = load_assignment_for_edit(store, db, job_id, version)
     return Assignment.model_validate(data)
 
 

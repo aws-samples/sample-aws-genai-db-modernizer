@@ -38,9 +38,14 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
 
+from src.agents.referee.tie_break import break_tie, settled_counts
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
+
+if TYPE_CHECKING:
+    from src.agents.referee.query_scoring import ScoringContext
 
 # Engines that can only be a cache layer: they never own a query.
 CACHE_OVERLAY_ENGINES = frozenset({"elasticache"})
@@ -308,46 +313,203 @@ def apply_cache_overlay(
     return query_assignments
 
 
+def _candidate_scores(
+    query: Mapping,
+    candidates: list[str],
+    engines: Iterable[str] | Mapping[str, Mapping],
+    triage: Mapping | None,
+    collector: Mapping | None,
+    ctx: ScoringContext | None = None,
+) -> dict[str, float] | None:
+    """Each serviceable ``candidate``'s own adjusted score, or ``None`` when
+    ``engines`` carries no real per-engine analysis to score with at all.
+
+    The score is :func:`src.agents.referee.query_scoring.score_query_for_engine`,
+    scored against ``ctx`` when the caller already built one (:func:`fallback_owner`'s
+    batch callers do this once, #549 round-3 review, Suggestion 3), else a
+    fresh :meth:`src.agents.referee.query_scoring.ScoringContext.from_pipeline`
+    -- the exclusion gate, the capability gate (``triage``'s own
+    ``query_capabilities`` when it has one, else detected from ``collector``,
+    #549 round-2 review, Critical 1), the base confidence and the
+    anti-pattern penalty, clamped at 0 (ADR-031 Decision 2 steps 2-5) -- the
+    exact pipeline ``AssignmentResolver.resolve()`` uses, so a candidate that
+    cannot actually serve the query at all is never compared against one
+    that can, and never scored on its raw base alone with the penalty
+    silently skipped (#549 round-2 review, Important 1). A candidate
+    ``score_query_for_engine`` gates to ``None`` is left out of the returned
+    mapping entirely, never recorded as a 0 a real, lower-but-serviceable
+    score could lose to by accident.
+
+    ``engines`` is a plain engine-name iterable at some call sites (e.g.
+    ``normalize_cache_owners``'s synthesis-time caller, which only has the
+    selected engine list, not their analysis) and the real
+    ``{engine: analysis}`` mapping at others. ``None`` here -- rather than a
+    partial score for whichever candidates happen to have analysis and a
+    silent exclusion for the rest -- means every remaining candidate is
+    treated as tied (:func:`fallback_owner`), which is the honest answer
+    when there is no fitness signal to compare them with, never a stand-in
+    for "the engine with no analysis loses."
+    """
+    if not isinstance(engines, Mapping):
+        return None
+    from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
+
+    if ctx is None:
+        ctx = ScoringContext.from_pipeline(engines, triage, collector)
+    scores: dict[str, float] = {}
+    for engine in candidates:
+        analysis = engines.get(engine)
+        if not isinstance(analysis, Mapping) or not analysis:
+            return None
+        result = score_query_for_engine(query, engine, ctx)
+        if result.score is not None:
+            scores[engine] = result.score
+    return scores
+
+
+# Customer-facing reason for fallback_owner's "no serviceable candidate"
+# fallback (#549 round-3 review, Important 1): the relational engine is
+# always picked here (never one of the just-excluded candidates), because
+# every registered capability includes both Aurora engines
+# (``capability_registry.ENGINE_CAPABILITIES``) and ``engine_exclusions``
+# has no rule that targets either one -- the capability gate can never rule
+# out the relational engine. For a homogeneous source it is also the engine
+# that already runs the source SQL unchanged.
+NO_SERVICEABLE_CANDIDATE_REASON = (
+    "No analyzed engine can serve this query; it stays on {engine}, which runs the "
+    "source SQL as is."
+)
+
+
 def fallback_owner(
     query: Mapping | None,
-    engines: Iterable[str],
+    engines: Iterable[str] | Mapping[str, Mapping],
     source_engine: str = "",
     owner_counts: Mapping[str, int] | None = None,
-) -> str:
+    *,
+    triage: Mapping | None,
+    collector: Mapping | None,
+    ctx: ScoringContext | None = None,
+) -> tuple[str, list[str], str | None]:
     """The system-of-record engine for a query a cache owned (legacy) or was pinned to.
 
-    The source-compatible Aurora engine when analyzed, else the Aurora engine
-    ``pick_aurora_engine`` picks, else the owner candidate already serving the most
-    queries, then by name. With no candidate at all, the source-compatible Aurora
-    engine (the relational baseline).
+    Every owner candidate -- Aurora included -- is scored the same way
+    (:func:`_candidate_scores`, the resolver's own
+    ``query_scoring.score_query_for_engine``, #549, scored against ``triage``
+    and ``collector`` the same way ``AssignmentResolver.resolve()`` would, or
+    against ``ctx`` directly when the caller already built one): the highest
+    wins outright. An exact tie, or no score at all (``engines`` has no real
+    per-engine analysis to score with), goes through
+    :func:`src.agents.referee.tie_break.break_tie`, the one shared ADR-031
+    tie-break every other routing call site uses: the source-compatible
+    engine wins ONLY an exact tie that includes it (ADR-031 Decision 2 says
+    nothing about Aurora winning outright before any score is compared --
+    #549 review, Important 2), else the maintainer's placeholder for a tie
+    ADR-031 does not itself resolve (ADR-031 Decision 12). ``owner_counts``
+    is never a direct bias here (#549, before this fix it was the FIRST
+    thing compared, with name as the second): it only ever reaches the
+    placeholder as the settled-workload-share signal that rule is allowed
+    to use. ``triage``/``collector`` are required keyword-only arguments
+    (#549 round-3 review, Suggestion 4): there is no default that would let
+    a new call site quietly skip the capability gate's real data.
+
+    When there is no candidate at all, or every candidate fails the
+    exclusion/capability gate (``_candidate_scores`` returns ``{}``, not
+    ``None``), there is no serviceable owner -- this is never a tie to
+    resolve among engines already known unable to serve the query. Both
+    cases fall back to the source-compatible Aurora engine (the relational
+    baseline): for a HOMOGENEOUS source this is the same answer
+    ``AssignmentResolver.resolve()``'s own Step 7 Aurora fallback gives a
+    query no engine could score at all; for a heterogeneous source (SQL
+    Server, Oracle, DB2) ``resolve()``'s Step 7 instead follows the #381
+    ``aurora_engine_choice`` recorded for the run (via
+    ``_resolve_aurora_fallback``'s ``prior_choice``), which this function
+    does not have access to, so it always defaults to ``aurora_postgresql``
+    there regardless of which Aurora engine #381 chose (#549 round-3 review,
+    Suggestion 1).
+
+    Returns ``(owner, tied_engines, fallback_reason)``. ``tied_engines`` is
+    the sorted tied candidate set when ``break_tie`` reports the pick as an
+    unresolved tie (for the caller's own ``QueryAssignment.tied_engines``,
+    recorded the same way every other tie-break call site in this codebase
+    records it), else empty. ``fallback_reason`` is ``None`` for every real,
+    scored (or tied-and-resolved) pick; it is
+    :data:`NO_SERVICEABLE_CANDIDATE_REASON` -- a complete, customer-facing
+    sentence naming the owner with :func:`src.shared.engine_names.
+    display_engine` -- for the "no candidate"/"no serviceable candidate"
+    fallback above, so a caller never has to say "owned by {engine}" as if
+    that engine had actually been compared and won (#549 round-3 review,
+    Important 1: before this fix, both ``normalize_cache_owners`` and
+    ``assignment_overrides._apply_cache_override`` wrote exactly that).
     """
-    from src.agents.referee.aurora_choice import pick_aurora_engine
     from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 
     counts = owner_counts or {}
+    default = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower(), "aurora_postgresql")
+    fallback_reason = NO_SERVICEABLE_CANDIDATE_REASON.format(engine=display_engine(default))
     candidates = sorted(owner_candidates(set(engines), query))
-    aurora = pick_aurora_engine(candidates, source_engine, counts)
-    if aurora:
-        return aurora
-    if candidates:
-        return min(candidates, key=lambda e: (-counts.get(e, 0), e))
-    return SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower(), "aurora_postgresql")
+    if not candidates:
+        return default, [], fallback_reason
+    scores = (
+        _candidate_scores(query, candidates, engines, triage, collector, ctx) if query else None
+    )
+    if scores is None:
+        # No fitness signal available at all (no real analysis to score
+        # with): every original candidate is tied -- break_tie still
+        # resolves it deterministically, rather than this function picking
+        # one by name.
+        tied = candidates
+    elif not scores:
+        # Every candidate failed the exclusion/capability gate: there is no
+        # serviceable owner among them, so this is not a tie either.
+        return default, [], fallback_reason
+    else:
+        top = max(scores.values())
+        tied = sorted(e for e in scores if scores[e] == top)
+    if len(tied) == 1:
+        return tied[0], [], None
+    query_id = str((query or {}).get("query_id") or "")
+    source_aurora = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
+    winner, tie_kind = break_tie(tied, set(), source_aurora, counts, query_id)
+    return winner, (sorted(tied) if tie_kind == "tie_unresolved" else []), None
 
 
 def normalize_cache_owners(
     assignment: dict,
     queries: Iterable[Mapping],
-    engines: Iterable[str],
+    engines: Iterable[str] | Mapping[str, Mapping],
     source_engine: str = "",
+    *,
+    triage: Mapping | None,
+    collector: Mapping | None,
 ) -> list[str]:
     """Move queries a cache owns to a system-of-record engine, in place (#296).
 
     An assignment written before the cache overlay has ElastiCache owners; left
     as is, every customer edit fails validation and Reality Check re-runs keep
     them. Each such query is owned by :func:`fallback_owner` and stays cached
-    when it is a hot read. Records one note in ``cache_notes``, refreshes the
-    overlay summary and returns the new notes (empty when nothing was owned by a
-    cache). Derived table views are the caller's to recompute.
+    when it is a hot read. ``engines`` is passed through to ``fallback_owner``
+    as given (a plain engine-name iterable at some call sites, the real
+    ``{engine: analysis}`` mapping at others, #549) rather than collapsed to a
+    name set here, so a caller that has real analysis lets ``fallback_owner``
+    score with it. ``triage``/``collector`` are required keyword-only
+    arguments (#549 round-3 review, Suggestion 4: no default that would let a
+    new call site quietly skip the capability gate's real data) and, when
+    ``engines`` is a real ``{engine: analysis}`` mapping, feed ONE
+    :meth:`src.agents.referee.query_scoring.ScoringContext.from_pipeline`
+    built here, before the loop below, and handed to every ``fallback_owner``
+    call as ``ctx=`` -- #549 round-3 review, Suggestion 3: this assignment
+    can carry many legacy-owned rows, and building a fresh context (the
+    anti-pattern map, and the capability map when triage needs re-detecting
+    it) per row rather than once was measured to cost real time on a large
+    sample's worth of them. The settled-workload counts ``fallback_owner``
+    passes on to an unresolved tie's placeholder come from
+    :func:`tie_break.settled_counts` (#549 review, Important 3), never a raw
+    count of every ``assigned_engine`` -- a query already carrying its own
+    ``tied_engines`` must not feed another tie's count. Records one note in
+    ``cache_notes``, refreshes the overlay summary and returns the new notes
+    (empty when nothing was owned by a cache). Derived table views are the
+    caller's to recompute.
     """
     qas = assignment.get("query_assignments") or []
     legacy = [qa for qa in qas if qa.get("assigned_engine") in CACHE_OVERLAY_ENGINES]
@@ -355,25 +517,29 @@ def normalize_cache_owners(
         return []
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
-    engine_set = set(engines)
     heavy = write_heavy_tables(query_list)
-    counts = Counter(
-        qa.get("assigned_engine")
-        for qa in qas
-        if qa.get("assigned_engine") and qa.get("assigned_engine") not in CACHE_OVERLAY_ENGINES
-    )
+    counts = settled_counts(qas)
+    ctx = None
+    if isinstance(engines, Mapping):
+        from src.agents.referee.query_scoring import ScoringContext
+
+        ctx = ScoringContext.from_pipeline(engines, triage, collector)
     moved: Counter = Counter()
     kept = 0
     cache = legacy[0]["assigned_engine"]
     for qa in legacy:
         q = by_id.get(qa.get("query_id"))
-        owner = fallback_owner(q, engine_set, source_engine, counts)
+        owner, tied, fallback_reason = fallback_owner(
+            q, engines, source_engine, counts, triage=triage, collector=collector, ctx=ctx
+        )
+        owner_clause = fallback_reason or f"owned by {owner}"
         qa["assignment_reason"] = (
             f"cache overlay migration: {qa['assigned_engine']} owned this query in an "
-            f"assignment written before the cache overlay; owned by {owner} "
+            f"assignment written before the cache overlay; {owner_clause} "
             f"(was: {qa.get('assignment_reason', '')})"
         )
         qa["assigned_engine"] = owner
+        qa["tied_engines"] = tied
         qa["signal_override"] = None
         moved[owner] += 1
         verdict = cache_eligibility(q, heavy) if q else None

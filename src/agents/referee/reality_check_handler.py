@@ -120,6 +120,8 @@ def run_reality_check_deterministic(
         collector_output.get("queries", {}).get("query_patterns", []),
         analysis_outputs,
         source_database_engine(collector_output),
+        triage=triage,
+        collector=collector_output,
     )
 
     # Extract query capabilities from triage

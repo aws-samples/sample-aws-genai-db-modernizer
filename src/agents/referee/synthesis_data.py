@@ -145,6 +145,8 @@ def load_synthesis_data(
             data.source_queries,
             data.selected_engines,
             source_database_engine(data.collector),
+            triage=data.triage,
+            collector=data.collector,
         )
 
     # Engines consolidation (or a customer re-route) eliminated — those with no

@@ -3,7 +3,7 @@
 Lives next to ``migration_wave_engines.py`` (engine roles) because this is the
 same kind of fact: a per-engine property every caller must agree on rather
 than re-derive its own copy of. Before this module existed,
-``assignment_resolver.ANTI_PATTERN_PENALTIES``'s "patterns detected by other
+``query_scoring.ANTI_PATTERN_PENALTIES``'s "patterns detected by other
 engines penalise OTHER engines" step treated a capability signal (e.g. "this
 query needs ACID transactions") the same as a pure workload-fit anti-pattern
 (e.g. "this query is a better fit elsewhere"): it penalised every other
@@ -57,7 +57,7 @@ from __future__ import annotations
 #     write into DynamoDB's own API rather than "already having" a SQL-shaped
 #     transaction -- using it, or an idempotent multi-step flow instead, is a
 #     redesign with a real cost, not a pre-existing capability. See
-#     ``CAPABILITY_REDESIGN_PENALTIES`` in ``assignment_resolver`` for how
+#     ``CAPABILITY_REDESIGN_PENALTIES`` in ``query_scoring`` for how
 #     that cost stays visible instead of collapsing to either "no penalty" or
 #     "wrong engine".
 #   - opensearch / elasticache: neither is a system of record for
@@ -142,7 +142,7 @@ FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
 # primary-key lookup on the same table.
 #
 # Both the assignment resolver's per-query confidence
-# (``assignment_resolver._compute_query_confidence``) and the reality
+# (``query_scoring.compute_query_confidence``) and the reality
 # check's per-query fit score (``reality_check._engine_fit_score``) key off
 # this set, with the same precedence: an engine in it never gets a
 # non-zero score from a table-wide average. It first checks whether the

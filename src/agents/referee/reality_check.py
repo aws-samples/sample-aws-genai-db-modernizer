@@ -2485,7 +2485,7 @@ def _engine_fit_score(
     # handling, not whether THIS query does, so it never stands in for this
     # query's own fit -- table_scores stays empty, and pattern_scores (the
     # query's own matched pattern, mirroring the resolver's own first branch,
-    # ``AssignmentResolver._compute_query_confidence``) is checked instead,
+    # ``query_scoring.compute_query_confidence``) is checked instead,
     # below. Every other engine keeps using table_scores as before; adding
     # pattern_scores there too would double-count the same evidence. Both
     # kinds of engine still fall through to the flat basic-CRUD baseline

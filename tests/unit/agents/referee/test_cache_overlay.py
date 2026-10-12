@@ -23,6 +23,7 @@ from src.agents.referee.cache_overlay import (
     CACHE_MAX_ROWS_AVG,
     CACHE_OVERLAY_ENGINES,
     HOT_READ_MIN_CALLS_PER_SECOND,
+    NO_SERVICEABLE_CANDIDATE_REASON,
     NON_SYSTEM_OF_RECORD_ENGINES,
     WRITE_HEAVY_TABLE_MIN_WRITE_SHARE,
     apply_cache_overlay,
@@ -30,13 +31,16 @@ from src.agents.referee.cache_overlay import (
     cache_eligibility,
     cache_pattern,
     can_own,
+    fallback_owner,
     is_locking_read,
     is_write_query,
+    normalize_cache_owners,
     overlay_summary,
     refresh_cache_overlay,
     safety_net_note,
     write_heavy_tables,
 )
+from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import triage
 from src.contracts.assignment_models import (
     Assignment,
@@ -590,6 +594,300 @@ class TestTieBreak:
         winner_b = self._resolve(queries, b)["q"].assigned_engine
         assert winner_a == winner_b
         assert winner_a in {"dynamodb", "documentdb"}
+
+
+# ---------------------------------------------------------------------------
+# fallback_owner: a cache's legacy/pinned query needs a real owner (#549)
+# ---------------------------------------------------------------------------
+
+
+def _fallback_owner(
+    query, engines, source_engine="", owner_counts=None, triage=None, collector=None
+):
+    """Test shim: supplies ``fallback_owner``'s required ``triage``/
+    ``collector`` keyword-only arguments, defaulting to "none available" so
+    most tests can still call it almost positionally -- the one place the
+    bare, unsupervised defaults #549 round-3 review warns production code
+    away from are allowed to live.
+    """
+    return fallback_owner(
+        query, engines, source_engine, owner_counts, triage=triage, collector=collector
+    )
+
+
+class TestFallbackOwner:
+    def test_no_candidate_falls_back_to_source_compatible_aurora(self):
+        owner, tied, fallback_reason = _fallback_owner(None, [], source_engine="mysql")
+        assert (owner, tied) == ("aurora_mysql", [])
+        assert fallback_reason == NO_SERVICEABLE_CANDIDATE_REASON.format(engine="Aurora MySQL")
+
+    def test_no_candidate_with_no_source_defaults_to_aurora_postgresql(self):
+        owner, tied, fallback_reason = _fallback_owner(None, [])
+        assert (owner, tied) == ("aurora_postgresql", [])
+        assert fallback_reason == NO_SERVICEABLE_CANDIDATE_REASON.format(engine="Aurora PostgreSQL")
+
+    def test_source_compatible_engine_wins_a_full_tie_with_no_score_data(self):
+        """With no analysis to score with, every candidate is tied
+        (:func:`_candidate_scores` returns ``None``) -- ``break_tie``'s own
+        first rule, not a pre-scoring Aurora short-circuit, is what hands
+        this to the source-compatible engine (#549 review, Important 2).
+        This is a real, scored (if data-starved) tie, not the "no
+        serviceable candidate" fallback, so it carries no fallback reason.
+        """
+        owner, tied, fallback_reason = _fallback_owner(
+            _q("q"), {"aurora_mysql", "dynamodb"}, source_engine="mysql"
+        )
+        assert (owner, tied) == ("aurora_mysql", [])
+        assert fallback_reason is None
+
+    def test_source_compatible_engine_wins_only_an_exact_tie_via_break_tie(self):
+        """#549 review, Important 2/Suggestion 3: with real, equal scores for
+        aurora_mysql and dynamodb, the source-compatible engine still wins --
+        but only because ``break_tie`` says this is an exact tie that
+        includes it (ADR-031 Decision 2), not because Aurora is scored at
+        all before the comparison.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {"aurora_mysql": _analysis({"items": 70}), "dynamodb": _analysis({"items": 70})}
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, source_engine="mysql")
+        assert (owner, tied) == ("aurora_mysql", [])
+        assert fallback_reason is None
+
+    def test_aurora_no_longer_wins_before_the_score_is_compared(self):
+        """#549 review, Important 2 repro: a mysql source with aurora_mysql
+        scoring far WORSE than dynamodb for this query must not still hand
+        it to aurora_mysql just because Aurora is a candidate -- ADR-031
+        Decision 2 gives the source-compatible engine an exact tie, never an
+        outright win regardless of score.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {"aurora_mysql": _analysis({"items": 10}), "dynamodb": _analysis({"items": 90})}
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, source_engine="mysql")
+        assert (owner, tied) == ("dynamodb", [])
+        assert fallback_reason is None
+
+    def test_a_non_source_compatible_aurora_engine_does_not_win_either(self):
+        """#549 review, Important 2 repro: an Oracle source has no Aurora
+        dialect of its own (``SOURCE_ENGINE_TO_AURORA`` has no "oracle"
+        entry), so aurora_postgresql is not even source-compatible here --
+        it must not win just for being an Aurora candidate while documentdb
+        scores far higher.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {
+            "aurora_postgresql": _analysis({"items": 10}),
+            "documentdb": _analysis({"items": 90}),
+        }
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, source_engine="oracle")
+        assert (owner, tied) == ("documentdb", [])
+        assert fallback_reason is None
+
+    def test_capability_gate_excludes_an_unserviceable_candidate(self):
+        """#549 review, Critical 1 repro: an aggregation query needs the
+        "aggregation" capability, which DynamoDB does not have at all
+        (``ENGINE_CAPABILITIES``) -- it must not win just because its base
+        table confidence (90) beats documentdb's (10). The resolver would
+        score dynamodb 0 for lacking the capability and pick documentdb;
+        ``fallback_owner`` must agree -- fed the same ``triage.
+        query_capabilities`` the resolver itself reads (#549 round-2 review,
+        Critical 1: a bare per-query re-detection with no triage/collector on
+        hand is NOT enough on its own for a signal-only requirement, but
+        "aggregation" here is text-detectable either way).
+        """
+        query = _q(
+            "q",
+            text="SELECT category, COUNT(*) FROM items GROUP BY category",
+            tables=["items"],
+        )
+        analysis = {"dynamodb": _analysis({"items": 90}), "documentdb": _analysis({"items": 10})}
+        triage_in = {"query_capabilities": {"q": ["aggregation"]}}
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, triage=triage_in)
+        assert (owner, tied) == ("documentdb", [])
+        assert fallback_reason is None
+
+    def test_capability_gate_falls_back_to_collector_signals_without_triage(self):
+        """#549 round-2 review, Critical 1: with no triage ``query_capabilities``
+        at all, ``fallback_owner`` still derives the capability gate from the
+        collector's own signals (``ScoringContext.from_pipeline``) rather than
+        a bare text-only guess -- a ``text_search`` signal's "inverted_index"
+        requirement, which a parameterized ``LIKE ?`` alone would not surface
+        from text, excludes dynamodb (no inverted_index) and leaves
+        aurora_mysql (which has it) as the only serviceable candidate.
+        """
+        query = _q("q", text="SELECT * FROM items WHERE name LIKE ?", tables=["items"])
+        analysis = {"dynamodb": _analysis({"items": 90}), "aurora_mysql": _analysis({"items": 10})}
+        triage_in = {
+            "signals": [
+                {"signal": "text_search", "targets": ["opensearch"], "query_ids": ["q"]},
+            ]
+        }
+        collector = _collector([query])
+        owner, tied, fallback_reason = _fallback_owner(
+            query, analysis, triage=triage_in, collector=collector
+        )
+        assert (owner, tied) == ("aurora_mysql", [])
+        assert fallback_reason is None
+
+    def test_real_score_difference_decides_a_non_aurora_tie_not_query_count(self):
+        """#549: before this fix, ``fallback_owner`` picked whichever
+        candidate already owned more queries, then by name -- it never
+        looked at this query's own fitness at all. Here "documentdb" scores
+        far higher for "q" (90 vs 10 on its own table "items"), but
+        "dynamodb" already owns many more queries. The old rule would hand
+        "q" to dynamodb purely because of that unrelated count.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {"dynamodb": _analysis({"items": 10}), "documentdb": _analysis({"items": 90})}
+        owner_counts = {"dynamodb": 20, "documentdb": 1}
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, owner_counts=owner_counts)
+        assert (owner, tied) == ("documentdb", [])
+        assert fallback_reason is None
+
+    def test_a_real_score_tie_goes_through_break_tie_not_the_name(self):
+        query = _q("q", tables=["items"])
+        analysis = {"dynamodb": _analysis({"items": 70}), "documentdb": _analysis({"items": 70})}
+        owner_counts = {"dynamodb": 1, "documentdb": 3}
+        owner, tied, fallback_reason = _fallback_owner(query, analysis, owner_counts=owner_counts)
+        expected_winner, expected_kind = break_tie(
+            ["documentdb", "dynamodb"], set(), None, owner_counts, "q"
+        )
+        assert owner == expected_winner == "documentdb"  # more settled workload, not a name sort
+        assert expected_kind == "tie_unresolved"
+        assert tied == ["documentdb", "dynamodb"]
+        assert fallback_reason is None
+
+    def test_no_analysis_at_all_treats_every_candidate_as_tied(self):
+        """``engines`` is a plain name set here (no per-engine analysis to
+        score with), the shape ``normalize_cache_owners``'s synthesis-time
+        caller passes. With no fitness signal, every surviving candidate is
+        tied -- resolved by ``break_tie``'s placeholder, never by whichever
+        name happens to sort first.
+        """
+        query = _q("q", tables=["items"])
+        owner_counts = {"dynamodb": 1, "documentdb": 5}
+        owner, tied, fallback_reason = _fallback_owner(
+            query, {"dynamodb", "documentdb"}, owner_counts=owner_counts
+        )
+        expected_winner, expected_kind = break_tie(
+            ["documentdb", "dynamodb"], set(), None, owner_counts, "q"
+        )
+        assert owner == expected_winner == "documentdb"
+        assert expected_kind == "tie_unresolved"
+        assert tied == ["documentdb", "dynamodb"]
+        assert fallback_reason is None
+
+    def test_partial_analysis_coverage_also_falls_back_to_a_tie(self):
+        """One candidate's analysis is missing (not just empty) -- comparing
+        a real score for one engine against a silent 0 for the other would
+        not be a fair comparison, so this is treated the same as having no
+        score for either.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {"dynamodb": _analysis({"items": 90}), "documentdb": {}}  # not analyzed yet
+        owner, tied, fallback_reason = _fallback_owner(
+            query, analysis, owner_counts={"dynamodb": 1, "documentdb": 1}
+        )
+        assert owner in {"dynamodb", "documentdb"}
+        assert tied == ["documentdb", "dynamodb"]
+        assert fallback_reason is None
+
+    def test_single_remaining_candidate_is_not_a_tie(self):
+        owner, tied, fallback_reason = _fallback_owner(_q("q"), {"dynamodb"})
+        assert (owner, tied) == ("dynamodb", [])
+        assert fallback_reason is None
+
+    def test_penalty_review_round2_repro(self):
+        """#549 round-2 review, Important 1 repro: dynamodb's base confidence
+        (90) alone beats documentdb's (70), but a ``multi-index-joins``
+        anti-pattern on this query (penalty 25, ``ANTI_PATTERN_PENALTIES``)
+        knocks it down to 65 -- the resolver's own anti-pattern penalty,
+        which ``fallback_owner`` must apply too, not just the raw base.
+        """
+        query = _q("q1", tables=["items"])
+        analysis = {
+            "dynamodb": {
+                "table_recommendations": [{"table_id": "items", "confidence_score": 90}],
+                "workload_analysis": {
+                    "anti_patterns_detected": [
+                        {"anti_pattern_type": "multi-index-joins", "query_ids": ["q1"]}
+                    ],
+                },
+            },
+            "documentdb": _analysis({"items": 70}),
+        }
+        owner, tied, fallback_reason = _fallback_owner(query, analysis)
+        assert (owner, tied) == ("documentdb", [])
+        assert fallback_reason is None
+
+    def test_no_serviceable_candidate_falls_back_to_source_compatible_aurora(self):
+        """#549 round-2 review, Suggestion 3, and round-3 review, Important 1:
+        when every candidate fails the exclusion/capability gate, there is no
+        serviceable owner among them at all -- this is not a tie among
+        engines already known unable to serve the query, so the relational
+        baseline wins, the same answer the "no candidate" case returns,
+        never one of the excluded engines. Neither dynamodb nor opensearch
+        has the "complex_joins" capability (only the Aurora engines do,
+        ``ENGINE_CAPABILITIES``). The caller is told this was a fallback,
+        not a real scored pick, with a complete, customer-facing sentence
+        naming the engine by its display name.
+        """
+        query = _q("q", tables=["items"])
+        analysis = {"dynamodb": _analysis({"items": 90}), "opensearch": _analysis({"items": 10})}
+        triage_in = {"query_capabilities": {"q": ["complex_joins"]}}
+        owner, tied, fallback_reason = _fallback_owner(
+            query, analysis, source_engine="mysql", triage=triage_in
+        )
+        assert (owner, tied) == ("aurora_mysql", [])
+        assert fallback_reason == (
+            "No analyzed engine can serve this query; it stays on Aurora MySQL, which "
+            "runs the source SQL as is."
+        )
+
+
+# ---------------------------------------------------------------------------
+# normalize_cache_owners: the recorded owner carries the real tie (#549)
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeCacheOwnersTie:
+    def test_a_non_aurora_tie_is_recorded_on_the_query(self):
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": "q",
+                    "assigned_engine": "elasticache",
+                    "assignment_reason": "legacy",
+                }
+            ]
+        }
+        queries = [_q("q", tables=["items"], cps=0.01)]
+        analysis = {"dynamodb": _analysis({"items": 70}), "documentdb": _analysis({"items": 70})}
+        normalize_cache_owners(assignment, queries, analysis, triage=None, collector=None)
+        qa = assignment["query_assignments"][0]
+        assert qa["assigned_engine"] in {"dynamodb", "documentdb"}
+        assert qa["tied_engines"] == ["documentdb", "dynamodb"]
+
+    def test_a_clear_score_winner_carries_no_tie(self):
+        """dynamodb sorts AFTER documentdb alphabetically, so making it the
+        clear winner (#549 review, Suggestion 2) means this can only pass on
+        the score -- the old count-then-name rule would have had no reason
+        to prefer it either.
+        """
+        assignment = {
+            "query_assignments": [
+                {
+                    "query_id": "q",
+                    "assigned_engine": "elasticache",
+                    "assignment_reason": "legacy",
+                }
+            ]
+        }
+        queries = [_q("q", tables=["items"], cps=0.01)]
+        analysis = {"dynamodb": _analysis({"items": 90}), "documentdb": _analysis({"items": 10})}
+        normalize_cache_owners(assignment, queries, analysis, triage=None, collector=None)
+        qa = assignment["query_assignments"][0]
+        assert qa["assigned_engine"] == "dynamodb"
+        assert qa["tied_engines"] == []
 
 
 # ---------------------------------------------------------------------------

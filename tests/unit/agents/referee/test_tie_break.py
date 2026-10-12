@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 
 from src.agents.referee.tie_break import break_tie, pick_unresolved_tie_placeholder, settled_counts
+from src.contracts.assignment_models import QueryAssignment
 
 
 class TestSourceCompatibleWinsAnAuroraTie:
@@ -237,8 +238,6 @@ class TestSettledCounts:
         assert settled_counts([]) == {}
 
     def test_accepts_query_assignment_objects_not_only_dicts(self):
-        from src.contracts.assignment_models import QueryAssignment
-
         qas = [
             QueryAssignment(
                 query_id="q1",
@@ -257,3 +256,31 @@ class TestSettledCounts:
             ),
         ]
         assert settled_counts(qas) == {"aurora_mysql": 1}
+
+    def test_a_mixed_list_of_dicts_and_models_is_counted_the_same_way(self):
+        """#549 round-2 review, Suggestion 2: not covered by #550's own
+        ``TestSettledCounts`` -- a batch of raw dicts and ``QueryAssignment``
+        models together, the shape ``fallback_owner``'s callers can see.
+        """
+        rows = [
+            {"query_id": "q1", "assigned_engine": "dynamodb", "tied_engines": []},
+            QueryAssignment(
+                query_id="q2",
+                assigned_engine="documentdb",
+                confidence=70,
+                source_tables=["t"],
+                assignment_reason="r",
+            ),
+        ]
+        assert settled_counts(rows) == {"dynamodb": 1, "documentdb": 1}
+
+    def test_accepts_a_generator_not_just_a_list(self):
+        """#549 round-2 review, Suggestion 2: not covered by #550's own
+        ``TestSettledCounts`` -- ``settled_counts`` only ever iterates its
+        argument once, so a generator works as well as a list.
+        """
+        rows = (
+            {"query_id": f"q{i}", "assigned_engine": "dynamodb", "tied_engines": []}
+            for i in range(3)
+        )
+        assert settled_counts(rows) == {"dynamodb": 3}

@@ -153,9 +153,9 @@ class TestServiceabilityGateAggregationAndJoins:
 
         # The capability gate needs the triage-computed query_capabilities, not
         # the resolver's own detection -- build it the way the pipeline does.
-        from src.agents.referee.triage import _detect_query_capabilities
+        from src.agents.referee.triage import detect_query_capabilities
 
-        query_capabilities = _detect_query_capabilities(collector, [])
+        query_capabilities = detect_query_capabilities(collector, [])
         assert "aggregation" in query_capabilities.get("count1", [])
         assert "aggregation" in query_capabilities.get("found1", [])
         triage["query_capabilities"] = query_capabilities

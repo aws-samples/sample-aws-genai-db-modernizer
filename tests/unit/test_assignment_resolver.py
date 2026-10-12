@@ -3,12 +3,15 @@
 from unittest.mock import patch
 
 from src.agents.referee.assignment_resolver import (
-    ANTI_PATTERN_PENALTIES,
-    CAPABILITY_SIGNAL_ENGINES,
     AssignmentResolver,
     RoutingTrace,
-    _capability_scoped_penalty,
     derive_table_assignments,
+)
+from src.agents.referee.query_scoring import (
+    ANTI_PATTERN_PENALTIES,
+    CAPABILITY_SIGNAL_ENGINES,
+    _capability_scoped_penalty,
+    compute_query_confidence,
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import QueryAssignment
@@ -733,7 +736,7 @@ class TestCapabilityScopedCrossEnginePenalty:
         DynamoDB's own analysis flags the same query as both
         ``acid-transactions`` (capability-scoped, reduced to 10) and
         ``complex-aggregation`` (not a capability key, full 50) -- the max()
-        in ``_build_anti_pattern_map`` must pick the bigger, unscoped 50 and
+        in ``build_anti_pattern_map`` must pick the bigger, unscoped 50 and
         drop the redesign note, regardless of which anti-pattern is listed
         first.
         """
@@ -1029,7 +1032,7 @@ class TestTextSearchCapabilityScopedPenalty:
         Aurora PostgreSQL's own analysis flags the same query as both
         ``wildcard-search`` (capability-scoped, exempt -- 0) and
         ``high-frequency-pk-lookup`` (not a capability key, full 30): the
-        max() in ``_build_anti_pattern_map`` must pick the unscoped 30 and
+        max() in ``build_anti_pattern_map`` must pick the unscoped 30 and
         must not show the exempt note, regardless of which pattern is listed
         first.
         """
@@ -1224,7 +1227,6 @@ class TestComputeQueryConfidence:
         tables were rated), the last resort averages across every table
         recommendation for the engine -- unchanged by #302.
         """
-        resolver = AssignmentResolver()
         analysis = {
             "table_recommendations": [
                 {"table_id": "db.users", "confidence_score": 80},
@@ -1232,7 +1234,7 @@ class TestComputeQueryConfidence:
             ],
         }
         query = {"query_id": "q1", "tables_accessed": []}
-        score = resolver._compute_query_confidence("q1", query, "dynamodb", analysis)
+        score = compute_query_confidence("q1", query, "dynamodb", analysis)
         assert score == 60  # mean(80, 40)
 
     def test_opensearch_scores_zero_without_its_own_pattern_match(self):
@@ -1242,10 +1244,9 @@ class TestComputeQueryConfidence:
         this query a non-zero score through the table-average fallback that
         every other engine still uses.
         """
-        resolver = AssignmentResolver()
         analysis = _make_analysis("opensearch", ["db.users"], confidence=90)
         query = {"query_id": "q1", "tables_accessed": ["db.users"]}
-        score = resolver._compute_query_confidence("q1", query, "opensearch", analysis)
+        score = compute_query_confidence("q1", query, "opensearch", analysis)
         assert score == 0
 
     def test_non_pattern_only_engine_still_gets_the_table_average_fallback(self):
@@ -1253,10 +1254,9 @@ class TestComputeQueryConfidence:
         every other engine (#475): Aurora/DynamoDB/DocumentDB's table-level
         recommendation really does generalize across a table's queries.
         """
-        resolver = AssignmentResolver()
         analysis = _make_analysis("dynamodb", ["db.users"], confidence=90)
         query = {"query_id": "q1", "tables_accessed": ["db.users"]}
-        score = resolver._compute_query_confidence("q1", query, "dynamodb", analysis)
+        score = compute_query_confidence("q1", query, "dynamodb", analysis)
         assert score == 90
 
     def test_pattern_only_engine_is_unaffected_by_the_302_fix(self):
@@ -1266,7 +1266,6 @@ class TestComputeQueryConfidence:
         tables_accessed as a base for OpenSearch would reintroduce #475's
         table-wide classification bleed.
         """
-        resolver = AssignmentResolver()
         analysis = {
             "table_recommendations": [
                 {"table_id": "db.users", "confidence_score": 70},
@@ -1286,7 +1285,7 @@ class TestComputeQueryConfidence:
         # tables_accessed includes db.posts too, but opensearch must never
         # average over it, nor add a bonus on top of the pattern's own score.
         query = {"query_id": "q1", "tables_accessed": ["db.users", "db.posts"]}
-        score = resolver._compute_query_confidence("q1", query, "opensearch", analysis)
+        score = compute_query_confidence("q1", query, "opensearch", analysis)
         assert score == 70
 
 
@@ -1296,7 +1295,7 @@ class TestOpenSearchScoresTheQueryNotTheTable:
     SEARCH the moment any one query against it needs full-text/wildcard/
     regex search, and that table-wide confidence then leaked into every
     other, unrelated query on the same table through
-    ``_compute_query_confidence``'s table-average fallback. The resolver's
+    ``compute_query_confidence``'s table-average fallback. The resolver's
     atomic unit is the query, not the table it happens to touch.
     """
 
@@ -1355,6 +1354,15 @@ class TestTextSearchOverrideNeedsJustification:
                 }
             ],
         )
+        # Isolates the signal-override justification floor under test from
+        # the hard capability gate: a real ``triage.triage()`` run would also
+        # mark this query's own ``text_search`` signal as requiring
+        # "inverted_index" (``SIGNAL_TO_CAPABILITY``), which this test is not
+        # about -- an explicit, empty ``query_capabilities`` (triage ran, and
+        # for THIS synthetic fixture found nothing structurally required)
+        # keeps the capability gate out of the way (#549 round-2 review:
+        # ``ScoringContext.from_pipeline`` trusts an explicit ``{}`` as-is).
+        triage["query_capabilities"] = {}
         collector = _make_collector(["q1"])
         for q in collector["queries"]["query_patterns"]:
             q["query_text"] = "SELECT * FROM db.users WHERE name LIKE ?"
@@ -1487,6 +1495,10 @@ class TestTextSearchOverrideNeedsJustification:
                 }
             ],
         )
+        # See test_shallow_low_traffic_like_does_not_override: isolates the
+        # justification floor from the hard capability gate a real
+        # ``triage.triage()`` run would also apply to this signal.
+        triage["query_capabilities"] = {}
         collector = _make_collector(["deep", "shallow"])
         for q in collector["queries"]["query_patterns"]:
             if q["query_id"] == "deep":
@@ -2188,19 +2200,17 @@ class TestRoutingTraceAdjustment:
         collector = _make_collector(["q1"])
         analysis = {"dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=70)}
 
-        original = AssignmentResolver._compute_query_confidence
-        calls = {"n": 0}
-
-        def drifting(self, query_id, query, engine, analysis_output):
-            calls["n"] += 1
-            base = original(self, query_id, query, engine, analysis_output)
-            # The first call is resolve()'s own Step 4 scoring; only the second
-            # (the trace's Step 7c diagnostic recompute) drifts, simulating a
-            # future change that silently diverges from what Step 4 used.
-            return base + 5 if calls["n"] > 1 else base
+        def drifted(query_id, query, engine, analysis_output):
+            return compute_query_confidence(query_id, query, engine, analysis_output) + 5
 
         trace = RoutingTrace()
-        with patch.object(AssignmentResolver, "_compute_query_confidence", drifting):
+        # Step 4's used score goes through ``score_query_for_engine``
+        # (``query_scoring``'s own, unpatched ``compute_query_confidence``);
+        # only Step 7c's diagnostic recompute below calls this module's
+        # separately-imported name, so patching just that name simulates
+        # exactly the silent divergence #497 was written to catch, with no
+        # call-counting trick needed.
+        with patch("src.agents.referee.assignment_resolver.compute_query_confidence", drifted):
             result = resolver.resolve(triage, analysis, collector, routing_trace=trace)
 
         # No crash, and the real assignment is unaffected by the trace's own

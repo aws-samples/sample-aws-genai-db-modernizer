@@ -139,7 +139,7 @@ def triage(collector_output: dict) -> TriageResult:
     result = _select_agents(signals, aurora_agents=aurora_agents)
 
     # Detect hard capability requirements per query
-    result.query_capabilities = _detect_query_capabilities(collector_output, signals)
+    result.query_capabilities = detect_query_capabilities(collector_output, signals)
 
     return result
 
@@ -583,7 +583,7 @@ def _build_signal(
 # ---------------------------------------------------------------------------
 
 
-def _detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str, list[str]]:
+def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str, list[str]]:
     """Detect hard capability requirements per query.
 
     Combines regex detection on SQL text with signal-based derivation.

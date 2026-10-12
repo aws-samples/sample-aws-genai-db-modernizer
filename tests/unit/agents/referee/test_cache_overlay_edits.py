@@ -73,7 +73,7 @@ class TestLegacy:
         assert sum(qa["assigned_engine"] == "elasticache" for qa in v2) == 34
 
     def test_load_moves_cache_owners_to_the_source_compatible_engine(self, legacy_store):
-        raw, collector, analysis = load_assignment_for_edit(legacy_store, DB, JOB, 2)
+        raw, collector, analysis, _triage = load_assignment_for_edit(legacy_store, DB, JOB, 2)
         assert "elasticache" not in _owners(raw["query_assignments"])
         moved = [
             qa
@@ -106,7 +106,9 @@ class TestLegacy:
 
     def test_normalize_is_a_no_op_without_cache_owners(self):
         assignment = {"query_assignments": [{"query_id": "q", "assigned_engine": "dynamodb"}]}
-        assert normalize_cache_owners(assignment, [], ["dynamodb"]) == []
+        assert (
+            normalize_cache_owners(assignment, [], ["dynamodb"], triage=None, collector=None) == []
+        )
         assert "cache_notes" not in assignment
 
 

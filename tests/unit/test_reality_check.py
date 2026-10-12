@@ -198,7 +198,7 @@ class TestEngineFitScore:
         score whenever it lacks table-level evidence -- it first checks
         whether the query itself appears in one of OpenSearch's own
         detected patterns (mirroring the resolver's own first branch,
-        ``AssignmentResolver._compute_query_confidence``), and uses that
+        ``query_scoring.compute_query_confidence``), and uses that
         pattern's own table confidence, not the query's ``tables_accessed``
         (``db.other`` below is never consulted; only the pattern's own
         ``db.posts``).
@@ -1491,6 +1491,7 @@ class TestOpenSearchJustificationFloor:
         os_cps: float,
         source_engine: str | None = None,
         include_aurora: bool = False,
+        query_capabilities: dict[str, list[str]] | None = None,
     ):
         from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 
@@ -1529,6 +1530,20 @@ class TestOpenSearchJustificationFloor:
                 {"signal": "text_search", "targets": ["opensearch"], "query_ids": ["search"]}
             ],
         }
+        if query_capabilities is not None:
+            # Isolates the #326 justification floor under test from the hard
+            # capability gate: a real ``triage.triage()`` run would also mark
+            # "search"'s own ``text_search`` signal as requiring
+            # "inverted_index" (``SIGNAL_TO_CAPABILITY``) regardless of
+            # whether the query shows real search depth -- some of these
+            # tests are about that gate directly ("no eligible destination"
+            # keeps OpenSearch because nothing else can serve it); others
+            # are purely about the floor itself and pass an explicit ``{}``
+            # here to keep the capability gate out of the resolver trace
+            # ``run_reality_check`` re-derives internally (#549 round-2
+            # review: ``ScoringContext.from_pipeline`` trusts an explicit
+            # ``{}`` as-is, never recomputing it).
+            triage["query_capabilities"] = query_capabilities
         collector: dict = {
             "queries": {
                 "query_patterns": [
@@ -1578,8 +1593,18 @@ class TestOpenSearchJustificationFloor:
         return run_reality_check(assignment, triage, analysis, collector)
 
     def test_like_prefix_query_at_low_traffic_is_dropped(self):
-        """The wordpress shape: LIKE admin search, 4 queries at well under 1 call/s."""
-        result = self._run("SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?", 0.07)
+        """The wordpress shape: LIKE admin search, 4 queries at well under 1 call/s.
+
+        An explicit, empty ``query_capabilities`` isolates the floor from
+        the hard capability gate ``text_search`` would also trigger (see
+        ``_run``) -- this test is about the floor, not about whether
+        DynamoDB structurally can run ``LIKE ?``.
+        """
+        result = self._run(
+            "SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?",
+            0.07,
+            query_capabilities={},
+        )
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert engine_of["search"] == "dynamodb"
         from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
@@ -1587,9 +1612,16 @@ class TestOpenSearchJustificationFloor:
         assert "justification floor" in from_os[0]["reason"] or "326" in from_os[0]["reason"]
 
     def test_plain_join_with_no_search_predicate_is_dropped(self):
-        """The Action Scheduler shape: a join with no text predicate at all."""
+        """The Action Scheduler shape: a join with no text predicate at all.
+
+        Same isolation as above -- a real triage run would not even raise
+        the ``text_search`` signal for this query at all, so an explicit,
+        empty ``query_capabilities`` is the more realistic choice here.
+        """
         result = self._run(
-            "SELECT a.action_id FROM actions a LEFT JOIN groups g ON g.id = a.group_id", 0.45
+            "SELECT a.action_id FROM actions a LEFT JOIN groups g ON g.id = a.group_id",
+            0.45,
+            query_capabilities={},
         )
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert engine_of["search"] == "dynamodb"
@@ -1678,9 +1710,16 @@ class TestOpenSearchJustificationFloor:
         present its removal as an infrastructure saving -- even though a
         real cost estimate exists (``_engine_infra_cost`` is not patched out
         of this fixture's bare ``analysis`` dict here, so the "Removes $"
-        branch is the only other thing that could fire).
+        branch is the only other thing that could fire). An explicit, empty
+        ``query_capabilities`` isolates the floor under test from the hard
+        capability gate the same way ``test_like_prefix_query_at_low_
+        traffic_is_dropped`` does.
         """
-        result = self._run("SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?", 0.07)
+        result = self._run(
+            "SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?",
+            0.07,
+            query_capabilities={},
+        )
         os_recs = [r for r in result["recommendations"] if "opensearch" in r.lower()]
         assert os_recs, result["recommendations"]
         assert "No saving is claimed" in os_recs[0]

@@ -326,7 +326,7 @@ class TestHeterogeneousAuroraChoiceOverrides:
 
     def test_load_assignment_for_edit_drops_the_losing_engines_analysis(self) -> None:
         store = _store_with_heterogeneous_aurora_choice()
-        _, _, analysis_outputs = load_assignment_for_edit(store, DB, JOB, 1)
+        _, _, analysis_outputs, _ = load_assignment_for_edit(store, DB, JOB, 1)
         assert "aurora_mysql" not in analysis_outputs
         assert "aurora_postgresql" in analysis_outputs
 
