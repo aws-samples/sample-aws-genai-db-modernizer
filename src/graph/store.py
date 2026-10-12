@@ -19,6 +19,44 @@ MAX_RESULT_ROWS = 1_000
 # bounds the memory one handle can use for pages and intermediate results.
 READ_BUFFER_POOL_BYTES = 256 * 1024 * 1024
 
+# Guards the one-time selection of ladybug's native backend (see
+# _ensure_backend_loaded below).
+_BACKEND_INIT_LOCK = threading.Lock()
+_backend_loaded = False
+
+
+def _ensure_backend_loaded() -> None:
+    """Force ladybug's lazy backend selection to run once per process, under a lock.
+
+    ``ladybug.Database`` picks its native backend (pybind, falling back to a
+    ctypes C API) the first time any ``Database`` is constructed, caching the
+    choice in module-level globals inside ``ladybug._backend`` that are set
+    with a check-then-act pattern and no lock of their own. When two threads
+    construct the first ``GraphStore`` of the process at the same time (for
+    example ``GraphStoreCache`` opening several ``(db_name, job_id)`` keys in
+    parallel), one thread can observe the other's "already attempted" flag
+    before that other thread's import has actually finished. It then sees no
+    backend selected yet and falls back to the C API backend, whose shared
+    library this package does not ship -- raising "Could not find lbug C API
+    shared library" (issue #470).
+
+    Opening a disposable in-memory database under our own lock forces that
+    one-time, process-wide backend selection to complete before any other
+    thread even starts it. ``lazy_init=True`` skips the (comparatively
+    expensive) full database init -- backend selection alone is all this
+    warm-up needs. Every call after the first successful one returns
+    immediately (the module-level flag below is set); a failed warm-up is
+    not cached, so the next caller retries it.
+    """
+    global _backend_loaded
+    if _backend_loaded:
+        return
+    with _BACKEND_INIT_LOCK:
+        if _backend_loaded:
+            return
+        lb.Database(":memory:", lazy_init=True).close()
+        _backend_loaded = True
+
 
 class GraphStore:
     """Embedded graph database backed by LadybugDB.
@@ -48,6 +86,7 @@ class GraphStore:
         self.path = db_path
         self.read_only = read_only
         self._timeout_ms = query_timeout_ms
+        _ensure_backend_loaded()
         self._db = lb.Database(db_path, read_only=read_only, buffer_pool_size=buffer_pool_size)
         self._lock = threading.Lock()
         self._conn: lb.Connection | None = None
