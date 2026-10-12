@@ -24,12 +24,21 @@ _ENGINES = (
 # phases.py's resume route and schema_revisions.py's confirm-all route both
 # check LocalExecutionService.is_cancelled() before doing anything, so a
 # cancelled job can't be resumed or have its schema confirmed over the API.
+#
+# The same file also carries a script-driven failure (scripts/_job_status.py,
+# #517): status FAILED, written by a scripts/run_*.py entry point's _error()
+# call or an unhandled exception, since that CLI path never touches
+# .meta/<job_id>.json the way the orchestrator's own /resume does (#518
+# round 1). Read separately by _script_failure, below, at a lower priority
+# than a CANCELLED marker or a synthesis report -- see _infer_status's
+# docstring for the exact ordering.
 _STATUS_MARKER = "_status.json"
 
-# The only status values _infer_status trusts from a _status.json marker.
-# stop_execution only ever writes "CANCELLED" -- a marker with anything else
-# (a corrupted write, a future bug, a hand-edited file) is ignored rather
-# than trusted outright, falling through to artifact-derived status instead.
+# The only status values _infer_status trusts outright from a _status.json
+# marker, before anything else. stop_execution only ever writes "CANCELLED"
+# -- a marker with anything else (FAILED included -- see _script_failure,
+# which checks for it separately and later) is ignored here rather than
+# trusted outright, falling through to artifact-derived status instead.
 _KNOWN_MARKER_STATUSES = frozenset({"CANCELLED"})
 
 
@@ -388,14 +397,32 @@ class LocalExecutionService:
         schema design hasn't started. Shared by ``get_execution_history``
         (the stage list) and ``_infer_status`` (the job's own status, #518
         round 1) so the two never disagree about this gate.
+
+        ``approval_given`` is true once either the API's own
+        confirm-all/resume routes recorded ``assignment_review`` completed
+        in ``.meta/<job_id>.json``, or ``scripts/run_schema_design.py`` /
+        ``scripts/run_synthesis.py`` recorded the same gate passed
+        (``mark_assignment_reviewed``, #517) -- in ``.meta`` too when it
+        already exists, else in ``decisions/assignment_review.json``
+        (``is_assignment_reviewed``, #517 round-2 review N1: never a
+        hand-written ``.meta``, which ``LocalOrchestrator`` would then load
+        as the job's *entire* progression). Either way this closes the gap
+        for a job approved in chat, or run with ``--llm-mode none``
+        straight through to Synthesis: either script can only ever run
+        after this gate, so it records that fact itself the moment it
+        starts, instead of leaving this method to keep reporting WAITING
+        for a job that is actually running.
         """
+        from src.shared.job_status import is_assignment_reviewed
+
         has_schema = any((job_dir / f"schema-{e}").exists() for e in _ENGINES)
         assignment_done = self._store.exists(
             f"{db_name}/{job_id}/assignment/v1/assignment.json"
         ) or self._store.exists(f"{db_name}/{job_id}/assignment/assignments.json")
-        approval_given = self._store.exists(f".meta/{job_id}.json") and self._is_phase_completed(
-            job_id, "assignment_review"
-        )
+        approval_given = (
+            self._store.exists(f".meta/{job_id}.json")
+            and self._is_phase_completed(job_id, "assignment_review")
+        ) or is_assignment_reviewed(self._store, db_name, job_id)
         return assignment_done and not has_schema and not approval_given
 
     def _is_schema_design_awaiting_llm(self, job_prefix: str) -> bool:
@@ -463,6 +490,34 @@ class LocalExecutionService:
                 return ("WAITING", None)
         return None
 
+    def _script_failure(self, job_prefix: str) -> tuple[str, str | None, str] | None:
+        """A ``scripts/run_*.py`` failure marker (``_job_status.write_failure_marker``,
+        #517): the ``_status.json`` marker ``stop_execution`` also writes, but
+        with ``status: FAILED`` instead of ``CANCELLED``. Returns None when
+        the file is absent, unreadable, or carries any other status (a
+        CANCELLED marker is already handled earlier in ``_infer_status``;
+        anything else -- SUPERSEDED, a corrupted write -- falls through to
+        artifact-derived status), so the caller falls through the same way
+        ``_progression_phase_issue`` does for the orchestrator's own FAILED.
+        """
+        marker_path = f"{job_prefix}{_STATUS_MARKER}"
+        if not self._store.exists(marker_path):
+            return None
+        try:
+            marker = self._store.read_json(marker_path)
+        except Exception:
+            return None
+        if marker.get("status") != "FAILED":
+            return None
+
+        phase = marker.get("phase") or "unknown"
+        engine = marker.get("engine")
+        phase_label = f"{phase}[{engine}]" if engine else phase
+        error_type = marker.get("error_type")
+        reason = marker.get("message") or "unknown error"
+        detail = f"{error_type}: {reason}" if error_type else reason
+        return ("FAILED", marker.get("failed_at"), f"{phase_label}: {detail}")
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -499,15 +554,17 @@ class LocalExecutionService:
         artifact presence. Returns ``(status, stopped_at, error)``; ``error``
         is only ever set for FAILED.
 
-        Order matters (#383, #518 round 1):
+        Order matters (#383, #517, #518 round 1):
 
         1. A recorded cancellation always wins, even over a synthesis report
            that shows up afterward -- a cancelled job must never flip back to
            looking finished or running.
         2. A synthesis report means the job is genuinely done, even if some
            earlier phase's stale FAILED record is still sitting in
-           ``.meta/<job>.json`` from a retried run.
-        3. The orchestrator's own progression file (FAILED or AWAITING_REVIEW).
+           ``_status.json`` or ``.meta/<job>.json`` from a retried run.
+        3. A script-driven failure marker (``_job_status.write_failure_marker``,
+           #517) or the orchestrator's own progression file (FAILED or
+           AWAITING_REVIEW).
         4. The remaining WAITING gates: assignment approval, schema design or
            synthesis waiting on an external LLM response, Reality Check
            waiting on one.
@@ -542,6 +599,10 @@ class LocalExecutionService:
                     stopped_at = None
                 return ("SUCCEEDED", stopped_at, None)
 
+        script_failure = self._script_failure(job_prefix)
+        if script_failure is not None:
+            return script_failure
+
         progression_issue = self._progression_phase_issue(job_id)
         if progression_issue is not None:
             status, error = progression_issue
@@ -568,9 +629,6 @@ class LocalExecutionService:
             except Exception:
                 pass  # nosec B110 - fall through to RUNNING
 
-        # A script-driven failure (scripts/run_assessment.py et al.) still has
-        # no durable marker -- only the orchestrator's own resume path (read
-        # above via .meta/<job>.json) records FAILED. See #517.
         return ("RUNNING", None, None)
 
     def _dir_mtime_iso(self, path: Path) -> str | None:

@@ -30,6 +30,13 @@ from src.tools.validation.ingestion_limits import (  # noqa: E402
     check_file_size,
 )
 
+# Phase name for the durable failure marker (#517). Set once job_id and
+# db_name are both resolved -- unlike the other scripts/run_*.py entry
+# points, this one creates the job rather than resuming one, so most
+# _error() calls happen before there is anywhere to write a marker.
+_PHASE = "collect"
+_JOB: dict = {}
+
 
 def _output(data: dict) -> None:
     """Print JSON to stdout (the only output the caller parses)."""
@@ -37,8 +44,36 @@ def _output(data: dict) -> None:
 
 
 def _error(message: str, code: int = 1) -> None:
+    # Status line first (#517 round-1 review, I1): the marker write is a
+    # best-effort side effect and must never delay or risk the one output
+    # callers actually parse.
     _output({"status": "error", "message": message})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        # require_existing_job=False (#517 round-1 review, I2): this script
+        # is what *creates* collector/output.json -- it never exists yet at
+        # any point main() can still fail.
+        write_failure_marker(
+            _JOB["store"],
+            _JOB["db"],
+            _JOB["job_id"],
+            _PHASE,
+            "ScriptError",
+            message,
+            require_existing_job=False,
+        )
     sys.exit(code)
+
+
+def _set_job_context(store, db_name: str, job_id: str) -> None:
+    """Record job/db once both are known so a later _error() in this same
+    run can mark the failure (#517). A fresh job has nothing to clear, but
+    clear anyway in case --job-id reused an existing one."""
+    from scripts._job_status import clear_failure_marker
+
+    _JOB.update(store=store, db=db_name, job_id=job_id)
+    clear_failure_marker(store, db_name, job_id, _PHASE, require_existing_job=False)
 
 
 def main() -> None:
@@ -130,6 +165,7 @@ def main() -> None:
                 db_name = validate_database_name(db_name)
             except ValueError:
                 _error(DERIVED_DATABASE_NAME_ERROR)
+        _set_job_context(store, db_name, job_id)
     else:
         # Raw collection script output — parse with offline parser
         db_name = args.db or input_data.get("metadata", {}).get("database_name", "unknown_db")
@@ -142,6 +178,7 @@ def main() -> None:
                 db_name = validate_database_name(db_name)
             except ValueError:
                 _error(DERIVED_DATABASE_NAME_ERROR)
+        _set_job_context(store, db_name, job_id)
 
         # Upload raw file
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
@@ -232,5 +269,13 @@ def main() -> None:
     )
 
 
+def _job_ctx():
+    if not _JOB:
+        return None
+    return (_JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, None, False)
+
+
 if __name__ == "__main__":
-    main()
+    from scripts._job_status import run_main
+
+    run_main(main, _job_ctx)

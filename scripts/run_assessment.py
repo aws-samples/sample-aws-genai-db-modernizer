@@ -104,6 +104,9 @@ LOG_NAME = "run_assessment.log"
 _CONSOLE: CompactConsole | None = None
 # The phase running now, so an unexpected exception is reported against it.
 _CURRENT_PHASE = "init"
+# Set once job/db are known (alongside _attach_log) so _error() and main()'s
+# own exception handler can record a durable failure marker (#517).
+_JOB: dict = {}
 
 
 def _want_verbose(flag: bool, stdout=None) -> bool:
@@ -125,14 +128,85 @@ def _attach_log(artifact_root: str, db: str, job_id: str) -> None:
         _CONSOLE.attach(os.path.join(artifact_root, db, job_id, "_logs", LOG_NAME))
 
 
+# The two phases this script itself fans out across every selected engine
+# (#517 round-2 review, I3): clearing one of these must match a FAILED
+# marker for *any* engine, since the whole phase -- not one specific
+# engine -- is about to rerun. phase_analysis/phase_schema_design run every
+# selected engine every time this script calls them; there is no per-engine
+# retry entry point here the way scripts/run_analysis.py and
+# scripts/run_schema_design.py are (those still clear with their own,
+# specific --engine).
+_FAN_OUT_PHASES = {"analysis", "schema_design"}
+
+
+def _clear_phase_marker(store, db: str, job_id: str, phase: str) -> None:
+    from scripts._job_status import clear_failure_marker
+    from src.shared.job_status import ANY_ENGINE
+
+    engine = ANY_ENGINE if phase in _FAN_OUT_PHASES else None
+    clear_failure_marker(store, db, job_id, phase, engine=engine)
+
+
+def _set_job_context(store, db: str, job_id: str) -> None:
+    """Record job/db once both are known, alongside ``_attach_log`` (#517),
+    so ``_error()`` and ``main()``'s own exception handler can write a
+    durable failure marker, and clear a stale marker for the phase running
+    right now (usually "collect", or "init" for a resume -- harmless, since
+    nothing ever fails as "init"). Each later ``_start_phase`` call clears
+    its own phase the same way, since this one script can run several
+    phases in a single invocation (#517 round-1 review, I4: clearing is
+    scoped to the exact phase about to (re)run, so retrying "triage" after
+    an "analysis" failure doesn't erase that still-relevant record before
+    "analysis" actually runs again)."""
+    _JOB.update(store=store, db=db, job_id=job_id)
+    _clear_phase_marker(store, db, job_id, _CURRENT_PHASE)
+
+
 def _start_phase(phase: str) -> None:
     global _CURRENT_PHASE
     _CURRENT_PHASE = phase
+    if _JOB:
+        _clear_phase_marker(_JOB["store"], _JOB["db"], _JOB["job_id"], phase)
 
 
 def _error(phase: str, message: str) -> None:
+    # Status line first (#517 round-1 review, I1): the marker write is a
+    # best-effort side effect and must never delay or risk the one output
+    # callers actually parse.
     _output(phase, {"status": "error", "message": message})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"], _JOB["db"], _JOB["job_id"], phase, "ScriptError", message
+        )
     sys.exit(1)
+
+
+def _mark_unhandled_failure(exc: BaseException) -> None:
+    """Record an unhandled exception against ``_CURRENT_PHASE`` (#517), the
+    same job/db ``_error()`` writes to. A no-op before job/db are known
+    (``_set_job_context`` hasn't run yet -- e.g. collect itself failed).
+
+    Delegates to the shared, public ``record_unhandled_failure`` (#517
+    round-2 review nit: this script has its own try/except shape, since it
+    prints its own status line first, so it can't just use ``run_main``
+    like the other scripts/run_*.py entry points -- but it must still go
+    through the one public helper rather than reaching into
+    ``scripts._job_status``'s private message constants). That helper is
+    also where the content-free message itself comes from (#143's logging
+    rule, #517 round-1 review C1): never str(exc), which can carry
+    customer-derived content. The traceback and the str(exc)-carrying
+    stdout status line this script already printed are unaffected; this
+    only changes what ``_status.json`` records.
+    """
+    if not _JOB:
+        return
+    from scripts._job_status import record_unhandled_failure
+
+    record_unhandled_failure(
+        (_JOB["store"], _JOB["db"], _JOB["job_id"], _CURRENT_PHASE, None, True), exc
+    )
 
 
 def _log(phase: str, msg: str) -> None:
@@ -828,6 +902,11 @@ def main() -> None:
         sys.stdout = _ColorizedStream(sys.stdout)  # type: ignore[assignment]
         try:
             _run(args)
+        except SystemExit:
+            raise  # _error() already recorded the failure, if any (#517)
+        except BaseException as exc:  # incl. KeyboardInterrupt: still mark the phase
+            _mark_unhandled_failure(exc)
+            raise
         finally:
             sys.stdout = sys.stdout._stream  # type: ignore[attr-defined]
         return
@@ -850,6 +929,7 @@ def main() -> None:
         info = console.pointer()
         message = f"{type(exc).__name__}: {exc}"[:1000]
         _output(_CURRENT_PHASE, {"status": "error", "message": message, "log": info["log"]})
+        _mark_unhandled_failure(exc)
         exc.__compact_logged__ = True  # type: ignore[attr-defined]
         raise
     finally:
@@ -888,6 +968,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         if not args.job_id or not args.db:
             _error("init", "--resume-reality-check requires --job-id and --db")
         _attach_log(args.artifact_root, args.db, args.job_id)
+        _set_job_context(store, args.db, args.job_id)
         _start_phase("reality_check")
         phase_reality_check_finalize(store, args.job_id, args.db)
         state = _read_state()
@@ -917,6 +998,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         _start_phase("collect")
         job_id, db_name = phase_collect(args.file, args.db, store)
         _attach_log(args.artifact_root, db_name, job_id)
+        _set_job_context(store, db_name, job_id)
         state = {
             "job_id": job_id,
             "database_name": db_name,
@@ -934,6 +1016,7 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         if not db_name:
             _error("init", "--db is required when using --job-id")
         _attach_log(args.artifact_root, db_name, job_id)
+        _set_job_context(store, db_name, job_id)
         state = _read_state()
         if state and args.mode:
             state["experience_mode"] = args.mode

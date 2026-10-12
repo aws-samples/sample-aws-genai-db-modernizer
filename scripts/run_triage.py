@@ -15,6 +15,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Phase name for the durable failure marker (#517). Set once job/db are known
+# (main(), right after the artifact store is created) so _error() and
+# run_main's catch-all below can record a failure against this job.
+_PHASE = "triage"
+_JOB: dict = {}
+
 
 def _output(data: dict) -> None:
     """Print JSON to stdout (the only output the caller parses)."""
@@ -22,7 +28,16 @@ def _output(data: dict) -> None:
 
 
 def _error(message: str, code: int = 1) -> None:
+    # Status line first (#517 round-1 review, I1): the marker write is a
+    # best-effort side effect and must never delay or risk the one output
+    # callers actually parse.
     _output({"status": "error", "message": message})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, "ScriptError", message
+        )
     sys.exit(code)
 
 
@@ -52,9 +67,12 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
+    from scripts._job_status import clear_failure_marker
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
+    _JOB.update(store=store, db=args.db, job_id=args.job_id)
+    clear_failure_marker(store, args.db, args.job_id, _PHASE)
 
     # Verify collector output exists
     collector_path = f"{args.db}/{args.job_id}/collector/output.json"
@@ -92,5 +110,13 @@ def main() -> None:
     )
 
 
+def _job_ctx():
+    if not _JOB:
+        return None
+    return (_JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, None, True)
+
+
 if __name__ == "__main__":
-    main()
+    from scripts._job_status import run_main
+
+    run_main(main, _job_ctx)

@@ -18,6 +18,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Phase name for the durable failure marker (#517). Set once job/db are known
+# (main(), right after the artifact store is created) so _error() and the
+# __main__ catch-all below can record a failure against this job.
+_PHASE = "synthesis"
+_JOB: dict = {}
+
 
 def _output(data: dict) -> None:
     """Print JSON to stdout (the only output the caller parses)."""
@@ -25,7 +31,16 @@ def _output(data: dict) -> None:
 
 
 def _error(message: str, code: int = 1) -> None:
+    # Status line first (#517 round-1 review, I1): the marker write is a
+    # best-effort side effect and must never delay or risk the one output
+    # callers actually parse.
     _output({"status": "error", "message": message})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, "ScriptError", message
+        )
     sys.exit(code)
 
 
@@ -173,10 +188,18 @@ def main() -> None:
     except ValueError as exc:
         _error(str(exc))
 
+    from scripts._job_status import clear_failure_marker, mark_assignment_reviewed
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
     version = _resolve_version(store, args.job_id, args.db, args.assignment_version)
+
+    _JOB.update(store=store, db=args.db, job_id=args.job_id)
+    clear_failure_marker(store, args.db, args.job_id, _PHASE)
+    # Synthesis can only ever run after the assignment review gate -- record
+    # that fact even for a job approved in chat, or run with --llm-mode none,
+    # that never touched .meta/<job_id>.json through the API (#517).
+    mark_assignment_reviewed(store, args.db, args.job_id, _PHASE)
 
     if args.finalize:
         run_finalize(store, args.job_id, args.db, version)
@@ -184,5 +207,13 @@ def main() -> None:
         run_standard(store, args.job_id, args.db, version, args.llm_mode)
 
 
+def _job_ctx():
+    if not _JOB:
+        return None
+    return (_JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, None, True)
+
+
 if __name__ == "__main__":
-    main()
+    from scripts._job_status import run_main
+
+    run_main(main, _job_ctx)

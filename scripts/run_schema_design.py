@@ -60,13 +60,37 @@ _SKILL_PROMPTS = {
 }
 
 
+# Phase name for the durable failure marker (#517). Set once job/db are
+# known for a driving (not read-only) invocation -- see main() -- so
+# _error() and the __main__ catch-all below can record a failure against
+# this job. Left empty for --status/--check-costs/--check-costs-all, which
+# are read-only and must not affect the job's own status.
+_PHASE = "schema_design"
+_JOB: dict = {}
+
+
 def _output(data: dict) -> None:
     """Print JSON to stdout (the only output the caller parses)."""
     print(json.dumps(data))
 
 
 def _error(message: str, code: int = 1) -> NoReturn:
+    # Status line first (#517 round-1 review, I1): the marker write is a
+    # best-effort side effect and must never delay or risk the one output
+    # callers actually parse.
     _output({"status": "error", "message": message})
+    if _JOB:
+        from scripts._job_status import write_failure_marker
+
+        write_failure_marker(
+            _JOB["store"],
+            _JOB["db"],
+            _JOB["job_id"],
+            _PHASE,
+            "ScriptError",
+            message,
+            engine=_JOB.get("engine"),
+        )
     sys.exit(code)
 
 
@@ -697,6 +721,19 @@ def main() -> None:
     store = LocalArtifactStore(base_dir=args.artifact_root)
     version = _resolve_version(store, args.job_id, args.db, args.assignment_version)
 
+    if not args.status:
+        # --status is read-only (see its help text) -- everything else here
+        # actually drives the job forward, so only these branches record a
+        # failure marker or the assignment-review gate (#517).
+        from scripts._job_status import clear_failure_marker, mark_assignment_reviewed
+
+        _JOB.update(store=store, db=args.db, job_id=args.job_id, engine=args.engine)
+        clear_failure_marker(store, args.db, args.job_id, _PHASE, engine=args.engine)
+        # Schema design can only ever run after the assignment review gate --
+        # record that fact even for a job approved in chat that never
+        # touched .meta/<job_id>.json through the API.
+        mark_assignment_reviewed(store, args.db, args.job_id, _PHASE)
+
     if args.finalize:
         run_finalize(store, args.job_id, args.db, args.engine, version)
     elif args.split:
@@ -711,5 +748,13 @@ def main() -> None:
         run_bedrock(store, args.job_id, args.db, args.engine, version)
 
 
+def _job_ctx():
+    if not _JOB:
+        return None
+    return (_JOB["store"], _JOB["db"], _JOB["job_id"], _PHASE, _JOB.get("engine"), True)
+
+
 if __name__ == "__main__":
-    main()
+    from scripts._job_status import run_main
+
+    run_main(main, _job_ctx)

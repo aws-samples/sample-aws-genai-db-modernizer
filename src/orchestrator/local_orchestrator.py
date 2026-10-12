@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 # Phases that fan out across engines and can run in parallel
 _FAN_OUT_PHASES = {Phase.ANALYSIS, Phase.SCHEMA_DESIGN}
 
+# scripts/run_*.py's own failure-marker phase names (scripts/_job_status.py,
+# #517) don't match this orchestrator's Phase values one-for-one: Collect and
+# Triage are two separate scripts (and two separate markers), but one single
+# Phase.COLLECT_TRIAGE here. Resuming that one phase must therefore clear
+# both script phases' markers (#517 round-2 review, I3). Every other phase's
+# own value already matches its script's phase name exactly.
+_SCRIPT_PHASES_FOR = {Phase.COLLECT_TRIAGE: ("collect", "triage")}
+
 
 class LocalOrchestrator(Orchestrator):
     """Local-dev orchestrator: direct function calls, same phase ordering rules.
@@ -601,6 +609,27 @@ class LocalOrchestrator(Orchestrator):
             return SCHEMA_DESIGN_SKIP_REASON_NO_LLM
         return None
 
+    def _clear_script_markers_for_phase(
+        self, job_id: str, phase: Phase, database_name: str | None = None
+    ) -> None:
+        """Clear a stale ``scripts/run_*.py`` failure marker for ``phase``
+        (#517 round-1 review, I3) right as this orchestrator is about to
+        (re)run it -- whether directly (``resume``) or as a prerequisite
+        ``_auto_complete_prerequisites`` is about to force through (#517
+        round-3 review). Scoped to the exact phase (and, for a fan-out
+        phase, any engine -- #517 round-2 review, I3/I4): resuming the
+        whole phase reruns every engine at once, not one specific engine
+        retrying on its own, and Collect/Triage are two separate scripts
+        (two separate possible markers) under this one orchestrator phase.
+        """
+        from src.shared.job_status import ANY_ENGINE, clear_failure_marker
+
+        if database_name is None:
+            database_name = self._get_database_name(job_id)
+        engine = ANY_ENGINE if phase in _FAN_OUT_PHASES else None
+        for script_phase in _SCRIPT_PHASES_FOR.get(phase, (phase.value,)):
+            clear_failure_marker(self.store, database_name, job_id, script_phase, engine=engine)
+
     def _auto_complete_prerequisites(self, job_id: str, phase: Phase) -> None:
         """Run any incomplete prerequisite phases before proceeding.
 
@@ -615,7 +644,11 @@ class LocalOrchestrator(Orchestrator):
                 self._auto_complete_prerequisites(job_id, prereq)
                 # Reload progression (may have been updated by recursive call)
                 progression = self._load_progression(job_id)
-                # Run the prerequisite phase
+                # Run the prerequisite phase, clearing any stale script
+                # marker for it first (#517 round-3 review) -- this call is
+                # itself the "job is moving again" evidence for prereq, the
+                # same as resume() is for its own top-level phase.
+                self._clear_script_markers_for_phase(job_id, prereq)
                 self._set_phase_status(progression, prereq, PhaseStatus.IN_PROGRESS)
                 self._save_progression(progression)
                 self._run_phase(job_id, prereq)
@@ -682,13 +715,22 @@ class LocalOrchestrator(Orchestrator):
         """
         self._validate_prerequisites(job_id, phase)
 
+        # An API-driven resume of this exact phase starting is itself
+        # evidence the job is moving again -- clear a stale scripts/run_*.py
+        # failure marker for it (#517 round-1 review, I3). database_name is
+        # resolved once and reused below instead of _run_phase re-deriving
+        # it (#517 round-2 review nit: _get_database_name scans the whole
+        # artifact tree).
+        database_name = self._get_database_name(job_id)
+        self._clear_script_markers_for_phase(job_id, phase, database_name)
+
         progression = self._load_progression(job_id)
 
         self._set_phase_status(progression, phase, PhaseStatus.IN_PROGRESS)
         self._save_progression(progression)
 
         try:
-            self._run_phase(job_id, phase, scope=scope)
+            self._run_phase(job_id, phase, config={"database_name": database_name}, scope=scope)
         except Exception as exc:
             self._set_phase_status(
                 progression,
