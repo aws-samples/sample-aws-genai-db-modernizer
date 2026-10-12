@@ -221,7 +221,7 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        assert output.contract_version == "1.7"
+        assert output.contract_version == "1.8"
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.
@@ -235,6 +235,18 @@ class TestRealityCheckOutputContract:
         valid_reality_check_data["validation_incomplete"] = [gap]
         dumped = RealityCheckOutputContract.model_validate(valid_reality_check_data).model_dump()
         assert dumped["validation_incomplete"] == [gap]
+
+    def test_eliminated_engines_defaults_and_roundtrips(self, valid_reality_check_data):
+        # Additive in 1.8 (#235): an output written before this field existed still
+        # validates, with the handler's and the UI's old disagreement replaced by one
+        # settled answer.
+        assert (
+            RealityCheckOutputContract.model_validate(valid_reality_check_data).eliminated_engines
+            == []
+        )
+        valid_reality_check_data["eliminated_engines"] = ["opensearch"]
+        dumped = RealityCheckOutputContract.model_validate(valid_reality_check_data).model_dump()
+        assert dumped["eliminated_engines"] == ["opensearch"]
 
     def test_summary_audit_fields_default_and_roundtrip(self, valid_reality_check_data):
         # Additive in 1.3 (#236): outputs written before the fields existed still validate.

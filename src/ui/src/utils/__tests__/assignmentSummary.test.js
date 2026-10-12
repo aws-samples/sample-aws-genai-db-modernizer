@@ -10,8 +10,11 @@
 import i18next from 'i18next';
 import {
   buildAssignmentSummary,
+  effectiveEngines,
+  eliminatedEngines,
   engineOptionsForAssignment,
   engineOptionsForQuery,
+  survivingDistribution,
 } from '../assignmentSummary';
 import en from '../../locales/en.json';
 
@@ -291,5 +294,109 @@ describe('engineOptionsForQuery', () => {
     expect(engineOptionsForQuery(OPTIONS, 'SELECT', 'SELECT * FROM t WHERE id = ?')).toEqual(
       OPTIONS,
     );
+  });
+});
+
+// #235: effectiveEngines reads the *current* assignment's own in-scope owners
+// and cache-fronting engine, independent of the reality check's own snapshot.
+describe('effectiveEngines', () => {
+  test('includes owners and the cache-fronting engine for in-scope queries', () => {
+    const qas = [
+      { assigned_engine: 'dynamodb', in_scope: true },
+      { assigned_engine: 'dynamodb', cache_engine: 'elasticache', in_scope: true },
+      { assigned_engine: 'documentdb', in_scope: false },
+    ];
+    expect(effectiveEngines(qas)).toEqual(new Set(['dynamodb', 'elasticache']));
+  });
+
+  test('treats a missing in_scope key as in scope', () => {
+    expect(effectiveEngines([{ assigned_engine: 'dynamodb' }])).toEqual(new Set(['dynamodb']));
+  });
+
+  test('empty or missing input gives an empty set', () => {
+    expect(effectiveEngines([])).toEqual(new Set());
+    expect(effectiveEngines(undefined)).toEqual(new Set());
+  });
+});
+
+// #235: candidates are the union of the reality check's settled
+// eliminated_engines and ownerBeforeDist's keys, filtered by effective -- the
+// *current* assignment's in-scope engines -- so a later customer edit is
+// reflected in both directions.
+describe('eliminatedEngines', () => {
+  test('an engine the reality check settled as eliminated, with no later edit, stays eliminated', () => {
+    const realityCheck = { eliminated_engines: ['documentdb'] };
+    expect(
+      eliminatedEngines(realityCheck, { dynamodb: 1, documentdb: 2 }, new Set(['dynamodb'])),
+    ).toEqual(['documentdb']);
+  });
+
+  test('direction A: a later customer edit restores an engine the reality check eliminated', () => {
+    const realityCheck = { eliminated_engines: ['documentdb'] };
+    // The customer moved a query back onto documentdb -- the current
+    // assignment now has an in-scope documentdb query.
+    const effective = new Set(['dynamodb', 'documentdb']);
+    expect(eliminatedEngines(realityCheck, { dynamodb: 1, documentdb: 2 }, effective)).toEqual([]);
+  });
+
+  test('direction B: a later customer edit eliminates an engine the reality check kept', () => {
+    // The reality check settled nothing as eliminated (opensearch survived
+    // the reality check); a later customer edit moved every opensearch query
+    // elsewhere, so it has no in-scope query in the current assignment.
+    const realityCheck = { eliminated_engines: [] };
+    const effective = new Set(['dynamodb']);
+    expect(eliminatedEngines(realityCheck, { dynamodb: 1, opensearch: 3 }, effective)).toEqual([
+      'opensearch',
+    ]);
+  });
+
+  test('an empty settled field reports nothing once effective covers every candidate', () => {
+    const realityCheck = { eliminated_engines: [] };
+    const effective = new Set(['dynamodb', 'opensearch']);
+    expect(eliminatedEngines(realityCheck, { dynamodb: 1, opensearch: 3 }, effective)).toEqual([]);
+  });
+
+  test('falls back to the ownerBeforeDist half of the union for a reality check written before #235', () => {
+    const realityCheck = { before_distribution: { dynamodb: 1, opensearch: 3 } };
+    const effective = new Set(['dynamodb']);
+    expect(eliminatedEngines(realityCheck, { dynamodb: 1, opensearch: 3 }, effective)).toEqual([
+      'opensearch',
+    ]);
+  });
+
+  test('no reality check at all means nothing to union in', () => {
+    expect(eliminatedEngines(null, {}, new Set())).toEqual([]);
+  });
+
+  test('accepts effective as a plain array, not only a Set', () => {
+    const realityCheck = { eliminated_engines: ['documentdb'] };
+    expect(eliminatedEngines(realityCheck, { documentdb: 2 }, ['documentdb'])).toEqual([]);
+  });
+});
+
+// #235: survivingEngines, the headline, the summary sentence and the Sankey
+// diagram must not call an engine "surviving" just because after_distribution
+// has a nonzero entry for it -- that entry can be an out-of-scope leftover
+// query on an engine that is actually eliminated.
+describe('survivingDistribution', () => {
+  test('drops an eliminated engine even though it still has a nonzero entry', () => {
+    // documentdb kept one out-of-scope query -- after_distribution still
+    // lists it, but it is eliminated.
+    const afterDist = { dynamodb: 2, documentdb: 1 };
+    expect(survivingDistribution(afterDist, ['documentdb'])).toEqual({ dynamodb: 2 });
+  });
+
+  test('keeps every engine when nothing is eliminated', () => {
+    const afterDist = { dynamodb: 2, elasticache: 3 };
+    expect(survivingDistribution(afterDist, [])).toEqual(afterDist);
+  });
+
+  test('tolerates a missing or undefined eliminated list', () => {
+    const afterDist = { dynamodb: 2 };
+    expect(survivingDistribution(afterDist, undefined)).toEqual(afterDist);
+  });
+
+  test('tolerates a missing distribution', () => {
+    expect(survivingDistribution(undefined, ['documentdb'])).toEqual({});
   });
 });

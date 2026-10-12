@@ -42,6 +42,7 @@ from src.agents.referee.reality_check_request import (
 from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
+from src.shared.engine_elimination import eliminated_engines as settled_eliminated_engines
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
     next_assignment_version,
@@ -438,10 +439,18 @@ def write_reality_check_result(
     ``write_revision`` is False).
     """
     _settle_records(result)
+    # #235's single rule: an engine is eliminated when no in-scope query remains on
+    # it, computed once from this check's own before/after assignments. Written to
+    # the output below, and threaded into the summary check further down, so the
+    # handler, the UI, synthesis and the summary all read this one answer instead
+    # of each re-deriving their own.
+    eliminated = settled_eliminated_engines(
+        result["assignment"].get("query_assignments", []), result["revised_assignments"]
+    )
     # The summary was written before the steps that settle the records (in external
     # mode, by the LLM from the deterministic preview): it must describe the final
     # records, or be replaced by one that does (#236).
-    finalize_executive_summary(result)
+    finalize_executive_summary(result, eliminated)
     consolidated = bool(result["consolidations"]) and write_revision
     # max() guards a store whose listing lags its reads: the revision must land
     # above its own input even then.
@@ -467,6 +476,7 @@ def write_reality_check_result(
             "recommendations": result["recommendations"],
             "before_distribution": result["before_distribution"],
             "after_distribution": result["after_distribution"],
+            "eliminated_engines": sorted(eliminated),
             "lightweight_recommendations": result.get("lightweight_recommendations", []),
             "validation_incomplete": result.get("validation_incomplete", []),
         }
@@ -504,14 +514,14 @@ def write_reality_check_result(
     # routing, refresh validation warnings, and drop per-query warnings that
     # name an engine consolidation eliminated, instead of spreading the
     # previous version's stale derived views and dead-engine warnings forward.
-    eliminated_engines = set(result["before_distribution"]) - {
-        engine for engine, count in result["after_distribution"].items() if count > 0
-    }
+    # ``eliminated`` (computed above, #235) is the shared in-scope rule, not the
+    # any-query diff this used to compute inline -- an engine left with only
+    # out-of-scope queries now has its warnings dropped too.
     revised_assignment = refresh_consolidated_assignment(
         revised_assignment,
         result["collector_output"],
         result["analysis_outputs"],
-        dead_engines=eliminated_engines,
+        dead_engines=eliminated,
     )
     revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
     store.write_json(revised_key, revised_assignment)

@@ -14,7 +14,11 @@ import json
 
 import pytest
 
-from src.agents.referee.synthesis_grounding import eliminated_engines, ground_risks
+from src.agents.referee.synthesis_grounding import (
+    eliminated_engines,
+    ground_risks,
+    reality_check_settled_engines,
+)
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
 
@@ -296,6 +300,57 @@ class TestEliminatedEngines:
             ],
         }
         assert eliminated_engines({"dynamodb", "aurora_mysql"}, rc) == {}
+
+    def test_direction_a_a_later_edit_restores_what_the_reality_check_eliminated(self) -> None:
+        """#235: the reality check settled documentdb as eliminated; a later
+        customer edit (a newer assignment version than the one the reality check
+        produced) gave it an in-scope query back -- ``effective`` reflects that,
+        so it is not reported."""
+        rc = {
+            "eliminated_engines": ["documentdb"],
+            "before_distribution": {"dynamodb": 5, "documentdb": 2},
+            "consolidations": [
+                {
+                    "from_engine": "documentdb",
+                    "to_engine": "dynamodb",
+                    "query_count": 2,
+                    "action": "full",
+                }
+            ],
+        }
+        assert eliminated_engines({"dynamodb", "documentdb"}, rc) == {}
+
+    def test_direction_b_a_later_edit_eliminates_what_the_reality_check_kept(self) -> None:
+        """#235: the reality check kept opensearch (its own ``eliminated_engines``
+        does not name it); a later customer edit emptied it of in-scope queries.
+        It is still reported -- sourced from the ``before_distribution`` half of
+        the candidate union, not the settled list."""
+        rc = {
+            "eliminated_engines": [],
+            "before_distribution": {"dynamodb": 5, "opensearch": 3},
+            "consolidations": [],
+        }
+        assert eliminated_engines({"dynamodb"}, rc) == {"opensearch": None}
+
+
+class TestRealityCheckSettledEngines:
+    """The strict subset of ``eliminated_engines``'s result the reality check
+    itself settled, used to gate "by the reality check" wording (#235)."""
+
+    def test_no_reality_check_means_nothing_settled(self) -> None:
+        assert reality_check_settled_engines(None) == set()
+
+    def test_reads_the_settled_field_directly(self) -> None:
+        assert reality_check_settled_engines({"eliminated_engines": ["opensearch"]}) == {
+            "opensearch"
+        }
+
+    def test_an_empty_settled_field_means_nothing_settled(self) -> None:
+        assert reality_check_settled_engines({"eliminated_engines": []}) == set()
+
+    def test_falls_back_to_consolidation_from_engines_for_pre_1_8_artifacts(self) -> None:
+        rc = {"consolidations": [{"from_engine": "opensearch", "to_engine": "dynamodb"}]}
+        assert reality_check_settled_engines(rc) == {"opensearch"}
 
 
 class TestGroundRisks:

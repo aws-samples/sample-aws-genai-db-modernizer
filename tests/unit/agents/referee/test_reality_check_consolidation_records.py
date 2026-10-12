@@ -506,6 +506,67 @@ class TestWrittenOutput:
         _assert_invariant(before, revised, out["consolidations"])
 
 
+class TestEliminatedEnginesField:
+    """The written output's ``eliminated_engines`` is the shared in-scope rule (#235),
+    not the any-query diff ``before_distribution``/``after_distribution`` give --
+    an engine can still own an out-of-scope query and be eliminated here."""
+
+    def _write(self, tmp_path, before: list[dict], revised: list[dict]) -> dict:
+        result = {
+            "revised_assignments": revised,
+            "consolidations": reconcile_consolidations(before, revised, []),
+            "architectural_patterns": [],
+            "recommendations": [],
+            "unique_value_assessment": {},
+            "executive_summary": None,
+            "before_distribution": _distribution(before),
+            "after_distribution": _distribution(revised),
+            "lightweight_recommendations": [],
+            "assignment": {"query_assignments": before},
+            "collector_output": {},
+            "analysis_outputs": {},
+        }
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        write_reality_check_result(store, "job-1", "mydb", result, 1, write_revision=False)
+        return store.read_json("mydb/job-1/reality-check/output.json")
+
+    def test_engine_left_with_only_out_of_scope_queries_is_eliminated(self, tmp_path) -> None:
+        before = [
+            _qa("doc-1", "documentdb", in_scope=True),
+            _qa("doc-2", "documentdb", in_scope=False),
+            _qa("ddb-1", "dynamodb", in_scope=True),
+        ]
+        revised = [
+            _moved("doc-1", "documentdb", "dynamodb"),
+            _qa("doc-2", "documentdb", in_scope=False),
+            _qa("ddb-1", "dynamodb", in_scope=True),
+        ]
+        out = self._write(tmp_path, before, revised)
+        # documentdb still owns a query (doc-2) -- the any-query distribution says so.
+        assert out["after_distribution"].get("documentdb") == 1
+        # ... but it is out of scope, so the rule still calls documentdb eliminated.
+        assert out["eliminated_engines"] == ["documentdb"]
+
+    def test_engine_that_keeps_an_in_scope_query_is_not_eliminated(self, tmp_path) -> None:
+        before = [
+            _qa("os-1", "opensearch", in_scope=True),
+            _qa("os-2", "opensearch", in_scope=True),
+            _qa("ddb-1", "dynamodb", in_scope=True),
+        ]
+        revised = [
+            _moved("os-1", "opensearch", "dynamodb"),
+            _qa("os-2", "opensearch", in_scope=True),
+            _qa("ddb-1", "dynamodb", in_scope=True),
+        ]
+        out = self._write(tmp_path, before, revised)
+        assert out["eliminated_engines"] == []
+
+    def test_no_consolidation_eliminates_nothing(self, tmp_path) -> None:
+        before = [_qa("ddb-1", "dynamodb", in_scope=True)]
+        out = self._write(tmp_path, before, before)
+        assert out["eliminated_engines"] == []
+
+
 class TestEngineeringReport:
     def test_trade_off_whose_impact_repeats_its_title_renders_once(self) -> None:
         line = "Consolidated 6 queries from documentdb → dynamodb: no unique capabilities."

@@ -38,6 +38,7 @@ from src.agents.referee.capability_registry import (
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
+from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
 # ---------------------------------------------------------------------------
@@ -2548,11 +2549,12 @@ def reconcile_consolidations(
     """
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
     after_engine = {qa["query_id"]: qa["assigned_engine"] for qa in after_assignments}
-    had_in_scope = {qa["assigned_engine"] for qa in before_assignments if qa.get("in_scope", True)}
-    remaining: dict[str, int] = defaultdict(int)
-    for qa in after_assignments:
-        if qa.get("in_scope", True):
-            remaining[qa["assigned_engine"]] += 1
+    # The single rule ("no in-scope query remains") lives in one place
+    # (src.shared.engine_elimination, #235); ``had_in_scope`` and ``remaining``
+    # are its two halves, kept as separate names here because ``remaining``'s
+    # per-engine counts are also used below for the "stays for N queries" text.
+    had_in_scope = set(in_scope_distribution(before_assignments))
+    remaining: dict[str, int] = defaultdict(int, in_scope_distribution(after_assignments))
 
     moves: dict[tuple[str, str], int] = {}
     moved_qids: dict[tuple[str, str], set[str]] = defaultdict(set)

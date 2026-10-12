@@ -2721,15 +2721,23 @@ def build_summary(
     risks: dict,
     query_groups: list[dict],
     eliminated: dict[str, str | None] | None = None,
+    reality_check_settled: set[str] | None = None,
 ) -> str:
     """Build a comprehensive executive summary.
 
     With assignment data the summary describes the whole workload split: schema-design
     totals over every engine that carries queries, and "other targets" are only the
-    engines that carry none (left empty by the assignment, or eliminated by the
-    reality check, see ``synthesis_grounding.eliminated_engines``). With an
-    assignment the ranking is ordered by workload share (#152); without one
-    ``ranking[0]`` is the analysis-weight leader.
+    engines that carry none (left empty by the assignment, or eliminated, see
+    ``synthesis_grounding.eliminated_engines``). With an assignment the ranking is
+    ordered by workload share (#152); without one ``ranking[0]`` is the
+    analysis-weight leader.
+
+    ``reality_check_settled`` (``synthesis_grounding.reality_check_settled_engines``,
+    #235) names which of ``eliminated``'s engines the reality check itself
+    settled, so only those get "by the reality check" in prose -- an engine
+    ``eliminated`` reports only because a *later* customer edit emptied it (the
+    reality check itself kept it) gets neutral wording instead. ``None`` treats
+    every ``eliminated`` engine as reality-check wording.
     """
     if not ranking:
         return "No analysis results available."
@@ -2902,11 +2910,19 @@ def build_summary(
         for engine, absorber in (eliminated or {}).items():
             if engine in listed:
                 continue
-            others.append(
-                f"{engine} (consolidated into {absorber} by the reality check)"
-                if absorber
-                else f"{engine} (eliminated by the reality check)"
-            )
+            settled = reality_check_settled is None or engine in reality_check_settled
+            if absorber:
+                others.append(
+                    f"{engine} (consolidated into {absorber} by the reality check)"
+                    if settled
+                    else f"{engine} (consolidated into {absorber})"
+                )
+            else:
+                others.append(
+                    f"{engine} (eliminated by the reality check)"
+                    if settled
+                    else f"{engine} (removed from the assignment)"
+                )
         if others:
             parts.append(f"Other targets evaluated: {', '.join(others)}.")
     elif len(ranking) > 1:

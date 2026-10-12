@@ -396,6 +396,50 @@ def test_reality_check_status_line_reports_unchanged_distribution(tmp_path, monk
     assert artifact["schema_design_engines"] == []
 
 
+def test_reality_check_status_line_carries_eliminated_engines(tmp_path, monkeypatch):
+    # #235: the status line must carry the reality check's own settled
+    # eliminated_engines (contract 1.8+), not make the orchestrator infer
+    # survived/dropped from before/after_distribution -- an engine can show a
+    # nonzero after_distribution entry (an out-of-scope leftover query) while
+    # still being eliminated.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {
+            "before_distribution": {"dynamodb": 9, "documentdb": 2},
+            "after_distribution": {"dynamodb": 10, "documentdb": 1},
+            "eliminated_engines": ["documentdb"],
+            "consolidations": [],
+        },
+    )
+    store.write_json("wordpress/job-1/assignment/v1/assignment.json", {"version": 1})
+    artifact = run_assessment._reality_check_artifact(store, "job-1", "wordpress")
+    assert artifact["eliminated_engines"] == ["documentdb"]
+    assert artifact["after_distribution"]["documentdb"] == 1  # still a nonzero entry
+
+
+def test_reality_check_status_line_eliminated_engines_defaults_empty_for_an_older_artifact(
+    tmp_path, monkeypatch
+):
+    # A reality-check output written before contract 1.8 has no eliminated_engines
+    # field at all; the status line must not error, and must not claim anything
+    # was eliminated that the artifact never said was.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {"before_distribution": {"dynamodb": 10}, "after_distribution": {"dynamodb": 10}},
+    )
+    store.write_json("wordpress/job-1/assignment/v1/assignment.json", {"version": 1})
+    artifact = run_assessment._reality_check_artifact(store, "job-1", "wordpress")
+    assert artifact["eliminated_engines"] == []
+
+
 def test_schema_design_engines_includes_the_cache_layer_engine(tmp_path, monkeypatch):
     # Regression test for the #329 review (PR #407): a run where the cache
     # layer fronts hot reads for two owner engines. after_distribution only

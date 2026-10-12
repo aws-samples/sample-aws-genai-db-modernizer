@@ -20,6 +20,7 @@ import pytest
 from src.agents.referee.reality_check_summary import (
     build_final_summary,
     check_summary_against_records,
+    final_outcome,
     finalize_executive_summary,
 )
 
@@ -364,6 +365,94 @@ class TestFinalizeExecutiveSummary:
         assert result["executive_summary"] is None
         assert result["executive_summary_source"] is None
         assert result["executive_summary_llm"] is None
+
+
+class TestFinalOutcomeEliminatedOverride:
+    """#235: ``final_outcome`` (and everything built on it --
+    ``check_summary_against_records``, ``build_final_summary``,
+    ``finalize_executive_summary``) must use the caller's authoritative
+    ``eliminated`` set when given one, not re-derive its own from
+    ``consolidations``' ``action`` field."""
+
+    def test_default_none_reproduces_the_original_derivation(self):
+        """No ``eliminated`` passed: byte-for-byte the pre-#235 behavior."""
+        kept, eliminated = final_outcome(BEFORE, AFTER, CONSOLIDATIONS)
+        assert eliminated == {"documentdb", "opensearch"}
+        assert kept == AFTER
+
+    def test_an_explicit_set_overrides_the_derivation_entirely(self):
+        """Even an engine the consolidations' ``action`` field alone would call
+        "kept" is treated as eliminated once the caller says so."""
+        kept, eliminated = final_outcome(BEFORE, AFTER, CONSOLIDATIONS, {"dynamodb"})
+        assert eliminated == {"dynamodb"}
+        assert "dynamodb" not in kept
+
+    def test_an_engine_with_only_an_out_of_scope_leftover_is_still_eliminated(self):
+        """The #235 bug shape: an engine keeps a nonzero after_distribution entry
+        (an out-of-scope query), which the old action-based derivation would
+        call "kept" with no consolidation record naming it at all. The caller's
+        settled set (computed from the real per-query in-scope data) overrides
+        that misreading."""
+        before = {"dynamodb": 5, "documentdb": 2}
+        after = {"dynamodb": 6, "documentdb": 1}  # documentdb's 1 remaining query is out of scope
+        kept, eliminated = final_outcome(before, after, [], {"documentdb"})
+        assert eliminated == {"documentdb"}
+        assert "documentdb" not in kept
+
+    def test_check_summary_against_records_threads_the_override_through(self):
+        # Without the override, DynamoDB (63 queries) reads as kept, so a summary
+        # calling it eliminated is rejected.
+        assert (
+            check_summary_against_records("DynamoDB is eliminated.", BEFORE, AFTER, CONSOLIDATIONS)
+            != []
+        )
+        # With the override, the same claim is accepted instead.
+        assert (
+            check_summary_against_records(
+                "DynamoDB is eliminated.", BEFORE, AFTER, CONSOLIDATIONS, {"dynamodb"}
+            )
+            == []
+        )
+
+    def test_build_final_summary_threads_the_override_through(self):
+        # Nothing moved (no consolidations) -- without an override, both engines
+        # read as kept.
+        before = {"dynamodb": 10, "opensearch": 2}
+        after = {"dynamodb": 10, "opensearch": 2}
+        default_text = build_final_summary(before, after, [])
+        assert "OpenSearch" in default_text
+        # With the override forcing opensearch eliminated -- despite its unchanged,
+        # nonzero after_distribution entry and no consolidation record -- the final
+        # architecture is stated as DynamoDB alone.
+        overridden_text = build_final_summary(before, after, [], {"opensearch"})
+        assert "The final architecture runs all of them on DynamoDB." in overridden_text
+        assert (
+            check_summary_against_records(overridden_text, before, after, [], {"opensearch"}) == []
+        )
+        # A claim that OpenSearch is still part of the architecture now contradicts
+        # the override, even though its after_distribution entry never changed.
+        assert (
+            check_summary_against_records(
+                "OpenSearch is part of the final architecture.", before, after, [], {"opensearch"}
+            )
+            != []
+        )
+
+    def test_finalize_executive_summary_passes_eliminated_through(self):
+        result = {
+            "executive_summary": "DynamoDB is eliminated; everything else is unchanged.",
+            "before_distribution": dict(BEFORE),
+            "after_distribution": dict(AFTER),
+            "consolidations": [dict(c) for c in CONSOLIDATIONS],
+        }
+        # Without the override, this summary contradicts the records (DynamoDB
+        # keeps 63 queries) and is rejected.
+        finalize_executive_summary(dict(result))
+        # With the override naming dynamodb eliminated, the same summary passes.
+        overridden = dict(result)
+        finalize_executive_summary(overridden, {"dynamodb"})
+        assert overridden["executive_summary_source"] == "llm"
+        assert overridden["executive_summary_validation_warnings"] == []
 
 
 # ---------------------------------------------------------------------------

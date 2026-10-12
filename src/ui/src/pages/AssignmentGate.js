@@ -34,8 +34,11 @@ import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import {
   buildAssignmentSummary,
+  effectiveEngines as computeEffectiveEngines,
+  eliminatedEngines as computeEliminatedEngines,
   engineOptionsForAssignment,
   engineOptionsForQuery,
+  survivingDistribution,
 } from "../utils/assignmentSummary";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -331,15 +334,37 @@ const AssignmentGatePage = memo(() => {
   );
   const cacheLayerLine = useMemo(() => formatCacheLayerLine(cacheOverlay, { t }), [cacheOverlay, t]);
 
-  // Eliminated engines
-  const eliminatedEngines = useMemo(() => {
-    const before = new Set(Object.keys(beforeDist));
-    const after = new Set(Object.keys(afterDist));
-    return [...before].filter(e => !after.has(e));
-  }, [beforeDist, afterDist]);
+  // The current assignment's own in-scope engines (#235) -- a later customer
+  // edit can be newer than the reality check's own before/after snapshot, so
+  // elimination is always re-checked against this, not just realityCheck.
+  const effectiveEngines = useMemo(
+    () => computeEffectiveEngines(assignmentData?.assignment?.query_assignments),
+    [assignmentData],
+  );
+
+  // Eliminated engines (#235: no in-scope query remains on them in the
+  // current assignment) -- the reality check's settled eliminated_engines,
+  // unioned with the first assignment's engines, filtered by effectiveEngines
+  // so a later customer edit is reflected in both directions.
+  const eliminatedEngines = useMemo(
+    () => computeEliminatedEngines(realityCheck, beforeDist, effectiveEngines),
+    [realityCheck, beforeDist, effectiveEngines],
+  );
+
+  // Every deliverable below (survivingEngines, the headline, the summary
+  // sentence and the Sankey) reads this instead of afterDist directly, so an
+  // eliminated engine's leftover out-of-scope query never renders as
+  // surviving (#235).
+  const survivingAfterDist = useMemo(
+    () => survivingDistribution(afterDist, eliminatedEngines),
+    [afterDist, eliminatedEngines],
+  );
 
   // Surviving engines
-  const survivingEngines = useMemo(() => Object.keys(afterDist), [afterDist]);
+  const survivingEngines = useMemo(
+    () => Object.keys(survivingAfterDist),
+    [survivingAfterDist],
+  );
 
   // Total savings
   const totalSavings = useMemo(() => {
@@ -362,17 +387,19 @@ const AssignmentGatePage = memo(() => {
   }, [survivingEngines]);
 
   // Build executive summary — the fact line (database, size) always leads; the
-  // LLM-generated reality-check summary follows it when available (#250)
+  // LLM-generated reality-check summary follows it when available (#250).
+  // afterDist -> survivingAfterDist (#235): the deterministic "We map N to X"
+  // sentence must not list an eliminated engine's leftover out-of-scope count.
   const executiveSummary = useMemo(() => buildAssignmentSummary({
     llmSummary: realityCheck?.executive_summary,
     databaseName,
-    afterDist,
+    afterDist: survivingAfterDist,
     tableCount,
     patterns,
     cacheOverlay,
     engineLabel: (engine) => ENGINE_COLORS[engine]?.label || engine,
     t,
-  }), [realityCheck, databaseName, afterDist, tableCount, patterns, cacheOverlay, t]);
+  }), [realityCheck, databaseName, survivingAfterDist, tableCount, patterns, cacheOverlay, t]);
 
   // #269: whether that LLM-generated reality-check summary was itself replaced
   // by its deterministic fallback (a grounding check rejected it against the
@@ -387,18 +414,18 @@ const AssignmentGatePage = memo(() => {
   // node fed by its owner engines' flows (never a flow source itself), so
   // cache coverage is visible in the diagram instead of only in cacheLayerLine.
   const sankeyData = useMemo(() => {
-    if (Object.keys(afterDist).length === 0) return null;
+    if (Object.keys(survivingAfterDist).length === 0) return null;
 
     const nodes = [{ id: 'queries' }];
     const links = [];
 
-    Object.entries(afterDist).forEach(([engine, count]) => {
+    Object.entries(survivingAfterDist).forEach(([engine, count]) => {
       nodes.push({ id: engine });
       links.push({ source: 'queries', target: engine, value: count });
     });
 
     return addCacheOverlayNode({ nodes, links }, cacheOverlay);
-  }, [afterDist, cacheOverlay]);
+  }, [survivingAfterDist, cacheOverlay]);
 
   // Consolidated query IDs (for highlighting in advanced view)
   const consolidatedQueryIds = useMemo(() => {
@@ -752,7 +779,7 @@ const AssignmentGatePage = memo(() => {
         >
           <ChartSankey
             width={900}
-            height={Math.max(250, Object.keys(afterDist).length * 120)}
+            height={Math.max(250, Object.keys(survivingAfterDist).length * 120)}
             data={sankeyData}
             onNodeClick={handleSankeyNodeClick}
           />

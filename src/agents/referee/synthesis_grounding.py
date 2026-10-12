@@ -112,19 +112,61 @@ def split_sentences(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def reality_check_settled_engines(reality_check: dict | None) -> set[str]:
+    """Engines the reality check itself settled as eliminated (#235).
+
+    ``reality_check["eliminated_engines"]`` (contract 1.8+): the reality check's own
+    settled answer to its single rule -- no in-scope query remains -- computed by
+    ``src.shared.engine_elimination`` from its own before/after assignments. An
+    older reality-check output has no such field; this falls back to naming every
+    consolidation ``from_engine`` (an approximation -- not necessarily the same one
+    ``assignmentSummary.js``'s UI-side fallback reaches for the same old artifact,
+    which is fine: both are superseded the next time the job's reality check runs).
+
+    This is a strict subset of :func:`eliminated_engines`'s return value: an engine
+    that function reports can also be one *not* in this set -- a candidate only via
+    ``before_distribution`` (the first assignment had it) that a *later* customer
+    edit, not the reality check, removed. Callers that attribute an elimination to
+    the reality check in prose (``synthesis_report.build_summary``'s "eliminated by
+    the reality check") must check this set first.
+    """
+    if not reality_check:
+        return set()
+    settled = reality_check.get("eliminated_engines")
+    if settled is not None:
+        return set(settled)
+    return {
+        c.get("from_engine")
+        for c in (reality_check.get("consolidations") or [])
+        if c.get("from_engine")
+    }
+
+
 def eliminated_engines(
     effective: Iterable[str],
     reality_check: dict | None,
 ) -> dict[str, str | None]:
-    """Map each engine the reality check eliminated to the engine that absorbed it.
+    """Map each engine no longer effective to the engine that absorbed it.
 
-    An engine is eliminated only when the reality check removed it from the effective
-    assignment: it carried queries before the reality check (``before_distribution``)
-    or was a consolidation ``from_engine``, and has no in-scope query in ``effective``.
-    Engines triage selected but the assignment never routed anything to are not
-    "eliminated" here. The absorber is the effective ``to_engine`` that took the most
-    queries from it (None when nothing absorbed it). No reality check, nothing
-    eliminated.
+    An engine is eliminated only when it was a candidate (below) and has no
+    in-scope query in ``effective``. Engines triage selected but the assignment
+    never routed anything to are not "eliminated" here. The absorber is the
+    effective ``to_engine`` that took the most queries from it (None when nothing
+    absorbed it). No reality check, nothing eliminated.
+
+    The candidate set is the union of :func:`reality_check_settled_engines` (the
+    reality check's own settled answer) and the any-query ``before_distribution``
+    keys (the first assignment this check ran against), #235: the settled set alone
+    would miss an engine the reality check *kept* but a later customer edit then
+    emptied of in-scope queries (direction B below). ``effective`` (built from the
+    *current* assignment, which can be a later version than the one the reality
+    check produced -- a customer edit, a re-entry) has the final say either way:
+
+    - direction A: the reality check settled an engine as eliminated, a later edit
+      gave it an in-scope query back -- not reported (it is in ``effective``).
+    - direction B: the reality check kept an engine, a later edit emptied it of
+      in-scope queries -- reported, even though it is not in
+      ``reality_check_settled_engines`` (only in ``before_distribution``).
     """
     if not reality_check:
         return {}
@@ -132,9 +174,9 @@ def eliminated_engines(
     # the lineage check (reality-check output versioning) is tracked in #215.
     effective_set = set(effective)
     consolidations = reality_check.get("consolidations") or []
-    candidates = set(reality_check.get("before_distribution") or {}) | {
-        c.get("from_engine") for c in consolidations
-    }
+    candidates = reality_check_settled_engines(reality_check) | set(
+        reality_check.get("before_distribution") or {}
+    )
     out: dict[str, str | None] = {}
     for engine in sorted(e for e in candidates if e and e not in effective_set):
         moves = [

@@ -118,6 +118,68 @@ export function buildAssignmentSummary({
   return parts.join(' ');
 }
 
+/**
+ * Engines with at least one in-scope query in `queryAssignments` -- the
+ * *current* assignment's owners (`assigned_engine`) plus the cache layer when
+ * it fronts a query (`cache_engine`, #296) (#235).
+ *
+ * Mirrors `synthesis_handler`'s `effective` set: the one place that answers
+ * "is this engine still part of the architecture", read from the assignment
+ * actually loaded (which can be newer than the reality check's own
+ * before/after snapshot -- a customer edit, a re-entry).
+ */
+export function effectiveEngines(queryAssignments) {
+  const result = new Set();
+  (queryAssignments || []).forEach((qa) => {
+    if (qa && qa.in_scope === false) return;
+    if (qa && qa.assigned_engine) result.add(qa.assigned_engine);
+    if (qa && qa.cache_engine) result.add(qa.cache_engine);
+  });
+  return result;
+}
+
+/**
+ * Engines no longer effective -- no in-scope query remains on them -- for the
+ * Assignment review modal's "Eliminated" line (#235).
+ *
+ * Mirrors `synthesis_grounding.eliminated_engines`: the candidate set is the
+ * union of the reality check's own settled `eliminated_engines` (contract
+ * 1.8+; empty for an older artifact) and `ownerBeforeDist`'s keys (the first
+ * assignment this check ran against), filtered by `effective` -- the
+ * *current* assignment's in-scope engines (`effectiveEngines`), not the
+ * reality check's own, possibly stale, snapshot. A later customer edit is
+ * therefore reflected in both directions: one it restored to an engine the
+ * reality check eliminated, or one it removed from an engine the reality
+ * check kept.
+ */
+export function eliminatedEngines(realityCheck, ownerBeforeDist, effective) {
+  const settled = realityCheck && Array.isArray(realityCheck.eliminated_engines)
+    ? realityCheck.eliminated_engines
+    : [];
+  const candidates = new Set([...settled, ...Object.keys(ownerBeforeDist || {})]);
+  const effectiveSet = effective instanceof Set ? effective : new Set(effective || []);
+  return [...candidates].filter((e) => !effectiveSet.has(e));
+}
+
+/**
+ * `dist` (an owner distribution, e.g. `after_distribution`) with every
+ * `eliminated` engine dropped (#235).
+ *
+ * An eliminated engine can still carry a nonzero entry in `after_distribution`
+ * -- an out-of-scope query it kept -- so "has an entry" does not mean
+ * "survived". `AssignmentGate.js`'s survivingEngines, headline, summary and
+ * Sankey diagram all read this instead of `after_distribution` directly, so
+ * an eliminated engine never appears in any of them.
+ */
+export function survivingDistribution(dist, eliminated) {
+  const dropped = new Set(eliminated || []);
+  const result = {};
+  Object.entries(dist || {}).forEach(([engine, count]) => {
+    if (!dropped.has(engine)) result[engine] = count;
+  });
+  return result;
+}
+
 // #381 review round 2: the resolver may have picked one of the two competing
 // Aurora engines for a heterogeneous source (SQL Server, Oracle, DB2 -- no Aurora
 // dialect of its own), recorded on the assignment as `aurora_engine_choice.engine`.

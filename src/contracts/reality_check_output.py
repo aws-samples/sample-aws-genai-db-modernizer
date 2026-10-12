@@ -29,6 +29,10 @@ Version History:
   fail the justification floor (#326, #167) but have no eligible destination
   either, so the engine is kept with the reason stated rather than silently
   unchanged (review of #502, round 6)
+- 1.8 (2026-10-12): eliminated_engines records which engines have no in-scope
+  query left, computed once by ``src.shared.engine_elimination`` -- the
+  handler, the UI and synthesis previously disagreed on this whenever an
+  engine kept only out-of-scope queries (#235)
 """
 
 from pydantic import BaseModel, Field
@@ -159,7 +163,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.7", description="Contract version")
+    contract_version: str = Field(default="1.8", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -207,6 +211,16 @@ class RealityCheckOutputContract(BaseModel):
     )
     after_distribution: dict[str, int] = Field(
         ..., description="Query count per engine after reality check"
+    )
+    eliminated_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Engines the single rule (#235) eliminates: an engine that had an in-scope "
+            "query before this check and has none after it (src.shared.engine_elimination). "
+            "Not the same as before_distribution/after_distribution, which count every "
+            "query, in or out of scope -- an engine can be eliminated here while still "
+            "owning out-of-scope queries"
+        ),
     )
     lightweight_recommendations: list[LightweightRecommendation] = Field(
         default_factory=list,

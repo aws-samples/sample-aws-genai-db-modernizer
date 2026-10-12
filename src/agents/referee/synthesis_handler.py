@@ -29,6 +29,7 @@ from src.agents.referee.synthesis_grounding import (
     eliminated_engines,
     engine_table_scope,
     never_justified_engines,
+    reality_check_settled_engines,
     recompute_reality_check_patterns,
 )
 from src.agents.referee.synthesis_report import (
@@ -183,7 +184,14 @@ def run_synthesis_deterministic(
         for r in ranking
     )
     deterministic_summary = build_summary(
-        data, ranking, table_mappings, tco, risk_assessment, query_groups, eliminated
+        data,
+        ranking,
+        table_mappings,
+        tco,
+        risk_assessment,
+        query_groups,
+        eliminated,
+        reality_check_settled=reality_check_settled_engines(reality_check_output),
     )
     trade_offs = _collect_trade_offs(data)
 

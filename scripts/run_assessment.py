@@ -683,6 +683,12 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
         rc = store.read_json(key)
         out["before_distribution"] = rc.get("before_distribution", {})
         out["after_distribution"] = rc.get("after_distribution", {})
+        # #235: before/after_distribution count ANY query, in or out of scope, so
+        # an engine can show a nonzero after_distribution entry and still be
+        # eliminated -- eliminated_engines (contract 1.8+) is the settled answer
+        # (src.shared.engine_elimination) a chat-only approval gate reads for its
+        # survived/dropped labels instead of re-deriving one from the counts.
+        out["eliminated_engines"] = rc.get("eliminated_engines", [])
         out["consolidations"] = _compact_consolidations(rc.get("consolidations", []))
 
     assignment_path = assignment_artifact_path(db, job_id, version)

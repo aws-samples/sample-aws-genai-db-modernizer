@@ -80,8 +80,17 @@ def _data() -> SynthesisData:
     )
 
 
-def _summary(ranking=RANKING, eliminated=None) -> str:
-    return build_summary(_data(), ranking, MAPPINGS, TCO, RISKS, GROUPS, eliminated)
+def _summary(ranking=RANKING, eliminated=None, reality_check_settled=None) -> str:
+    return build_summary(
+        _data(),
+        ranking,
+        MAPPINGS,
+        TCO,
+        RISKS,
+        GROUPS,
+        eliminated,
+        reality_check_settled=reality_check_settled,
+    )
 
 
 def test_schema_totals_cover_every_engine_with_workload() -> None:
@@ -157,6 +166,35 @@ def test_eliminated_and_empty_engines_are_the_other_targets() -> None:
         "(consolidated into aurora_mysql by the reality check), neptune (eliminated by "
         "the reality check)."
     )
+
+
+def test_reality_check_settled_defaults_to_every_eliminated_engine() -> None:
+    """``reality_check_settled=None`` (not passed) must read exactly as before
+    this parameter existed -- every ``eliminated`` engine gets "by the reality
+    check" wording."""
+    ranking = RANKING + [_rank("documentdb", 0.3, 0, 0.0, 0, 0, 0)]
+    text = _summary(
+        ranking, {"opensearch": "aurora_mysql", "neptune": None}, reality_check_settled=None
+    )
+    assert "opensearch (consolidated into aurora_mysql by the reality check)" in text
+    assert "neptune (eliminated by the reality check)" in text
+
+
+def test_an_engine_eliminated_only_by_a_later_customer_edit_gets_neutral_wording() -> None:
+    """#235: an engine in ``eliminated`` but not in ``reality_check_settled`` was
+    removed by something other than the reality check (a later customer edit)
+    -- the summary must not attribute it."""
+    ranking = RANKING + [_rank("documentdb", 0.3, 0, 0.0, 0, 0, 0)]
+    text = _summary(
+        ranking,
+        {"opensearch": "aurora_mysql", "neptune": None},
+        reality_check_settled=set(),
+    )
+    assert text.endswith(
+        "Other targets evaluated: documentdb (no queries assigned), opensearch "
+        "(consolidated into aurora_mysql), neptune (removed from the assignment)."
+    )
+    assert "by the reality check" not in text
 
 
 def test_source_table_mapping_is_stated_once() -> None:

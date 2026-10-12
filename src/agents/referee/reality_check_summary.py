@@ -206,11 +206,32 @@ def final_outcome(
     before_distribution: dict[str, int],
     after_distribution: dict[str, int],
     consolidations: list[dict],
+    eliminated: set[str] | None = None,
 ) -> tuple[dict[str, int], set[str]]:
-    """Engines that keep queries (with their counts) and engines consolidated away."""
-    fully_moved = {c["from_engine"] for c in consolidations if c.get("action", "full") == "full"}
-    kept = {e: n for e, n in after_distribution.items() if n > 0 and e not in fully_moved}
-    eliminated = (set(before_distribution) | fully_moved) - set(kept)
+    """Engines that keep queries (with their counts) and engines consolidated away.
+
+    ``eliminated``, when given, is the reality check's own settled answer
+    (``src.shared.engine_elimination.eliminated_engines``, #235) computed from the
+    actual per-query before/after assignments, not re-derived here from
+    ``consolidations``' ``action`` field -- the two already agree whenever
+    ``reconcile_consolidations`` produced ``consolidations`` (it now uses the same
+    shared helper, #235), but a caller that already has the authoritative set
+    should read it, not keep a second copy that could drift from it.
+
+    ``None`` (the default, used by every caller before this parameter existed)
+    re-derives it the original way: an engine is "fully moved" when a
+    consolidation record names it as the source of a ``full`` action; eliminated
+    is the before-state engines plus every fully-moved one, minus whatever still
+    keeps a nonzero count in ``after_distribution``.
+    """
+    if eliminated is None:
+        fully_moved = {
+            c["from_engine"] for c in consolidations if c.get("action", "full") == "full"
+        }
+        kept = {e: n for e, n in after_distribution.items() if n > 0 and e not in fully_moved}
+        eliminated = (set(before_distribution) | fully_moved) - set(kept)
+        return kept, eliminated
+    kept = {e: n for e, n in after_distribution.items() if n > 0 and e not in eliminated}
     return kept, eliminated
 
 
@@ -251,15 +272,18 @@ def check_summary_against_records(
     before_distribution: dict[str, int],
     after_distribution: dict[str, int],
     consolidations: list[dict],
+    eliminated: set[str] | None = None,
 ) -> list[str]:
     """Contradictions between ``summary`` and the final records; empty when consistent.
 
     An engine named as kept must keep queries; an engine named as eliminated must
     have none. An engine named both ways passes when the records eliminate it (the
     summary says where its queries went, then that it is gone), and fails when they
-    keep it.
+    keep it. ``eliminated``: see :func:`final_outcome`.
     """
-    kept, eliminated = final_outcome(before_distribution, after_distribution, consolidations)
+    kept, eliminated = final_outcome(
+        before_distribution, after_distribution, consolidations, eliminated
+    )
     said_kept, said_gone = _claims(summary or "")
     findings: list[str] = []
     for engine in sorted(said_gone):
@@ -295,13 +319,16 @@ def build_final_summary(
     before_distribution: dict[str, int],
     after_distribution: dict[str, int],
     consolidations: list[dict],
+    eliminated: set[str] | None = None,
 ) -> str:
     """A short, customer-readable summary of the final records.
 
     Names engines by display name and states query counts only: no costs, no
-    confidence figures.
+    confidence figures. ``eliminated``: see :func:`final_outcome`.
     """
-    kept, eliminated = final_outcome(before_distribution, after_distribution, consolidations)
+    kept, eliminated = final_outcome(
+        before_distribution, after_distribution, consolidations, eliminated
+    )
     total = sum(after_distribution.values())
     evaluated = [display_engine(e) for e in before_distribution]
     ranked = sorted(kept, key=lambda e: (-kept[e], e))
@@ -337,7 +364,7 @@ def build_final_summary(
     return " ".join(sentences)
 
 
-def finalize_executive_summary(result: dict) -> None:
+def finalize_executive_summary(result: dict, eliminated: set[str] | None = None) -> None:
     """Make ``result["executive_summary"]`` describe the final records.
 
     Call once the consolidation records and ``after_distribution`` are final. Sets
@@ -346,6 +373,12 @@ def finalize_executive_summary(result: dict) -> None:
     ``llm`` when the summary is consistent with the records, ``deterministic_fallback``
     when it contradicts them and was replaced by :func:`build_final_summary`, None
     when there is no summary. Mutates ``result``.
+
+    ``eliminated`` (#235): the caller's own settled answer
+    (``src.shared.engine_elimination.eliminated_engines``), passed through to
+    :func:`check_summary_against_records` and :func:`build_final_summary` instead
+    of letting :func:`final_outcome` re-derive it from ``consolidations``. ``None``
+    (the default) keeps the original re-derivation.
     """
     # Re-running over an earlier fallback checks the original LLM text again, not the
     # fallback; otherwise executive_summary is the LLM text to check (a new one too).
@@ -362,13 +395,13 @@ def finalize_executive_summary(result: dict) -> None:
     before = result["before_distribution"]
     after = result["after_distribution"]
     consolidations = result["consolidations"]
-    findings = check_summary_against_records(llm_summary, before, after, consolidations)
+    findings = check_summary_against_records(llm_summary, before, after, consolidations, eliminated)
     result["executive_summary_validation_warnings"] = findings
     if findings:
         for finding in findings:
             print(f"[reality-check] WARNING: {finding}")
         print("[reality-check] Executive summary replaced by one built from the final records")
-        result["executive_summary"] = build_final_summary(before, after, consolidations)
+        result["executive_summary"] = build_final_summary(before, after, consolidations, eliminated)
         result["executive_summary_source"] = "deterministic_fallback"
     else:
         result["executive_summary"] = llm_summary
