@@ -292,6 +292,35 @@ class TestValidateSchemaDesignOutput:
         result = validate_schema_design_output({}, "opensearch")
         assert result["valid"] is False
 
+    def test_opensearch_top_level_inner_hits_rejected(self):
+        """Issue #95: a top-level inner_hits key fails contract validation with
+        a message pointing at the problem, not just a generic schema error."""
+        bad_output = {
+            "job_id": "job-001",
+            "source_database": "mydb",
+            "access_patterns": [
+                {
+                    "pattern_id": "OS-AP-1",
+                    "name": "Get items with nested meta by id",
+                    "description": "Fetch items and their nested meta array by id",
+                    "query_ids": ["q-1"],
+                    "source_tables": ["public.items"],
+                    "source_query": "SELECT * FROM items WHERE id IN (?)",
+                    "opensearch_dsl": (
+                        '{"query": {"terms": {"id": ["1", "2"]}}, "_source": '
+                        '["id", "meta"], "inner_hits": {"path": {"meta": {}}}}'
+                    ),
+                    "index_or_stream": "items",
+                    "operation": "search",
+                    "design_rps": 1.0,
+                }
+            ],
+            "validation_passed": True,
+        }
+        result = validate_schema_design_output(bad_output, "opensearch")
+        assert result["valid"] is False
+        assert any("inner_hits" in e for e in result["errors"])
+
     def test_elasticache_contract_route_exercised(self):
         result = validate_schema_design_output({}, "elasticache")
         assert result["valid"] is False

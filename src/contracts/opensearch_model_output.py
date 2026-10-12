@@ -7,9 +7,65 @@ with ISM policies (time-series workload), plus access pattern translations.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+import json
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .schema_design_output import TradeOff
+
+# ---------------------------------------------------------------------------
+# opensearch_dsl validation
+#
+# ``inner_hits`` only makes sense nested inside a ``nested``/``has_child``/
+# ``has_parent`` query clause, or inside ``collapse``. A top-level
+# ``inner_hits`` key in the search body is rejected by OpenSearch with an
+# HTTP 400 ``parsing_exception`` ("Unknown key for a START_OBJECT in
+# [inner_hits]") -- see issue #95. Since the LLM designer generates this DSL
+# freehand, this is enforced as a contract-level gate rather than left to
+# hope the prompt gets it right every time.
+#
+# ``opensearch_dsl`` is not always a single JSON object: ``get_by_id`` is a
+# literal request line (``GET /<index>/_doc/<id>``) and ``bulk_index`` can be
+# NDJSON (one JSON document per line, no enclosing object). Neither parses as
+# a single JSON value, so this check only fires when the string *does* parse
+# to a dict -- anything else is left alone rather than rejected.
+# ---------------------------------------------------------------------------
+
+
+class OpenSearchDSLError(ValueError):
+    """Raised when generated OpenSearch query DSL is structurally invalid."""
+
+
+def validate_opensearch_dsl(dsl: str) -> None:
+    """Raise :class:`OpenSearchDSLError` when ``dsl`` has a top-level ``inner_hits`` key.
+
+    ``dsl`` is only checked when it parses as a single JSON object (the
+    ``search``/``aggregate`` shape). Forms that are not a single JSON object --
+    ``get_by_id``'s request line, or ``bulk_index``'s NDJSON -- are not valid
+    JSON on their own and are passed through untouched; there is nothing
+    structural to check in those shapes. When ``dsl`` does parse to a dict,
+    its own top-level keys must not include ``inner_hits``: ``inner_hits``
+    nested under ``query`` (inside a ``nested``/``has_child``/``has_parent``
+    clause) or under ``collapse`` is untouched -- only a bare top-level
+    ``inner_hits`` key is rejected, since that is the shape OpenSearch always
+    refuses.
+    """
+    try:
+        parsed = json.loads(dsl)
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    if isinstance(parsed, dict) and "inner_hits" in parsed:
+        raise OpenSearchDSLError(
+            "opensearch_dsl has a top-level 'inner_hits' key, which OpenSearch "
+            "rejects with HTTP 400 (parsing_exception: Unknown key for a "
+            "START_OBJECT in [inner_hits]). inner_hits is only valid nested "
+            "inside a 'nested', 'has_child', or 'has_parent' query clause, or "
+            "inside 'collapse'. If the nested array is already returned via "
+            "'_source', drop inner_hits entirely instead of leaving it at the "
+            "top level."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Custom analyzers and settings
@@ -190,7 +246,15 @@ class AccessPattern(BaseModel):
         ..., description="Source table_ids accessed by the original queries"
     )
     source_query: str = Field(..., description="Original SQL query")
-    opensearch_dsl: str = Field(..., description="Equivalent OpenSearch query DSL as a JSON string")
+    opensearch_dsl: str = Field(
+        ...,
+        description=(
+            "Equivalent OpenSearch query DSL as a JSON string (or, for get_by_id/"
+            "bulk_index, the literal request line/NDJSON). Never a top-level "
+            "inner_hits key -- inner_hits is only valid nested inside a nested/"
+            "has_child/has_parent query clause, or inside collapse."
+        ),
+    )
     index_or_stream: str = Field(
         ..., description="Index or data stream name that serves this pattern"
     )
@@ -206,6 +270,12 @@ class AccessPattern(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("opensearch_dsl")
+    @classmethod
+    def _validate_dsl(cls, v: str) -> str:
+        validate_opensearch_dsl(v)
+        return v
 
 
 class UnsupportedPattern(BaseModel):

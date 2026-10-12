@@ -31,6 +31,7 @@ You are a senior Principal Engineer reviewing an OpenSearch schema design produc
 
 - Every query pattern in the analysis output must have either an `AccessPattern` translation or an `UnsupportedPattern` entry → BLOCKER if a query is silently omitted.
 - `AccessPattern.opensearch_dsl` must be non-empty → BLOCKER if blank.
+- `opensearch_dsl` with a top-level `inner_hits` key → BLOCKER. OpenSearch rejects this with HTTP 400; `inner_hits` is only valid nested inside a `nested`/`has_child`/`has_parent` query clause or inside `collapse`. If the pattern only needs the nested array already returned by `_source`, the fix is to drop `inner_hits` entirely, not to move it.
 - Aggregations targeting `text` fields without a `.keyword` subfield → BLOCKER (runtime error).
 - `operation` field must be one of: `search`, `aggregate`, `get_by_id`, `bulk_index` → WARNING for unexpected values.
 

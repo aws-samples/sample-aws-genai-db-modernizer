@@ -148,6 +148,15 @@ Flag queries as `UnsupportedPattern` when they require:
 - Recursive / hierarchical queries (CTEs)
 - Aggregations that require exact counts on high-cardinality keyword fields at scale (suggest approximate with `cardinality` agg)
 
+### `inner_hits` placement
+
+`inner_hits` is **never** a top-level key of the DSL document. OpenSearch rejects a top-level `inner_hits` with HTTP 400 (`parsing_exception: Unknown key for a START_OBJECT in [inner_hits]`). It is only valid in two places:
+
+- Nested **inside** a `nested`, `has_child`, or `has_parent` query clause, e.g. `{"query": {"nested": {"path": "meta", "query": {...}, "inner_hits": {...}}}}`.
+- Nested inside `collapse`, e.g. `{"collapse": {"field": "user_id", "inner_hits": {...}}}`.
+
+For a `nested` field, retrieving the whole nested array for a document (no per-element filtering or pagination) does **not** need `inner_hits` at all — `_source` already returns it. Only add `inner_hits` when the access pattern needs the nested-query score, highlighting, or independent pagination/sorting of the matched sub-documents; attach it to the specific `nested`/`has_child`/`has_parent` clause it belongs to, never to the top level.
+
 ## Anti-Patterns to Flag
 
 Add structured `TradeOff` objects to `trade_offs` when any of these are detected:
@@ -233,7 +242,7 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 - All TIMESERIES-workload tables have a `DataStreamConfig`
 - Every data stream has an `@timestamp` field mapping
 - Shard counts follow the sizing rules (20-30GB for search, 40-50GB for time-series)
-- Every access pattern has a non-empty `opensearch_dsl`
+- Every access pattern has a non-empty `opensearch_dsl`. For `search`/`aggregate` it must parse as JSON. It never has a top-level `inner_hits` key (see "`inner_hits` placement" above) -- `get_by_id`/`bulk_index` are exempt from the JSON requirement (request line / NDJSON per "Common translations" above) but still must not carry a top-level `inner_hits`.
 - Every access pattern references a valid `index_or_stream`
 
 `validation_failures` — one string per failed check above when `validation_passed=false`.
