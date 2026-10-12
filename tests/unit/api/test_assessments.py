@@ -373,12 +373,47 @@ class TestCancelAssessment:
         mock_services["sfn"].stop_execution.assert_called_once_with("job-1")
 
     def test_skips_stop_for_completed(self, mock_services):
+        """A terminal job can't be cancelled -- DELETE must report what the job
+        actually is, not fabricate CANCELLED (#518 round 1 suggestion)."""
         mock_services["sfn"].describe_execution.return_value = {
             **MOCK_EXECUTION,
             "status": "SUCCEEDED",
         }
-        client.delete("/api/v1/assessments/job-1")
+        data = client.delete("/api/v1/assessments/job-1").json()
+        assert data["status"] == "SUCCEEDED"
         mock_services["sfn"].stop_execution.assert_not_called()
+
+    def test_skips_stop_for_already_cancelled(self, mock_services):
+        mock_services["sfn"].describe_execution.return_value = {
+            **MOCK_EXECUTION,
+            "status": "CANCELLED",
+        }
+        data = client.delete("/api/v1/assessments/job-1").json()
+        assert data["status"] == "CANCELLED"
+        mock_services["sfn"].stop_execution.assert_not_called()
+
+    def test_skips_stop_for_failed(self, mock_services):
+        """A FAILED job is also terminal -- DELETE reports FAILED, not a
+        fabricated CANCELLED, and never calls stop_execution (#518 round 2)."""
+        mock_services["sfn"].describe_execution.return_value = {
+            **MOCK_EXECUTION,
+            "status": "FAILED",
+        }
+        data = client.delete("/api/v1/assessments/job-1").json()
+        assert data["status"] == "FAILED"
+        mock_services["sfn"].stop_execution.assert_not_called()
+
+    def test_cancels_waiting(self, mock_services):
+        """A job waiting on an external LLM response can be cancelled too (#383)
+        -- it is blocked, not finished, so it isn't exempt like SUCCEEDED is."""
+        mock_services["sfn"].describe_execution.return_value = {
+            **MOCK_EXECUTION,
+            "status": "WAITING",
+        }
+        mock_services["sfn"].stop_execution.return_value = True
+        data = client.delete("/api/v1/assessments/job-1").json()
+        assert data["status"] == "CANCELLED"
+        mock_services["sfn"].stop_execution.assert_called_once_with("job-1")
 
     def test_404_when_not_found(self, mock_services):
         mock_services["sfn"].describe_execution.return_value = None

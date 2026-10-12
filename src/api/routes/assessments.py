@@ -24,6 +24,12 @@ from src.shared.ranking import engine_confidence, main_engine
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assessments"])
 
+# Statuses that already mean the job is done -- cancelling them again is a
+# no-op (#383: everything else, including RUNNING and WAITING, can still be
+# stopped). FAILED added in #518 round 2: a job the orchestrator recorded as
+# failed is just as terminal as SUCCEEDED or CANCELLED.
+_TERMINAL_STATUSES = frozenset({"SUCCEEDED", "CANCELLED", "FAILED"})
+
 # Services injected by main.py at startup
 sfn_service: LocalExecutionService | None = None
 s3_service: LocalS3Service | None = None
@@ -343,15 +349,25 @@ async def get_assessment(job_id: str):
 
 @router.delete("/{job_id}")
 async def cancel_assessment(job_id: str):
-    """Cancel a running assessment or delete a completed one."""
+    """Cancel a running or waiting assessment.
+
+    A job already in a terminal status (SUCCEEDED or CANCELLED) can't be
+    cancelled -- this reports that actual status instead of fabricating
+    CANCELLED for a job that, say, already succeeded (#518 round 1 suggestion).
+    """
     sfn_svc, _ = _require_services()
     execution = sfn_svc.describe_execution(job_id)
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
-    if execution["status"] == "RUNNING":
-        sfn_svc.stop_execution(job_id)
+    if execution["status"] in _TERMINAL_STATUSES:
+        return {
+            "job_id": job_id,
+            "status": execution["status"],
+            "message": f"Assessment already {execution['status'].lower()}",
+        }
 
+    sfn_svc.stop_execution(job_id)
     return {"job_id": job_id, "status": "CANCELLED", "message": "Assessment cancelled successfully"}
 
 

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from src.api.services.local_execution import LocalExecutionService
 from src.contracts.schema_revision_models import (
     SchemaConfirmation,
     SchemaRevisionRequest,
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/api/v1/assessments", tags=["schema-revisions"])
 # Injected by main.py at startup
 artifact_store: ArtifactStore | None = None
 orchestrator: object | None = None  # LocalOrchestrator
+sfn_service: LocalExecutionService | None = None
 
 
 def _require_store() -> ArtifactStore:
@@ -301,9 +303,17 @@ async def confirm_all_schemas(
     """Confirm the latest schema version for every active engine.
 
     Active engines are read from the triage output. Returns a mapping of
-    engine → confirmed_version. Returns 400 if no engines are found.
+    engine → confirmed_version. Returns 400 if no engines are found, or 409
+    if the job was cancelled (#518 round 1): cancelling blocks any further
+    API-driven phase, including confirming schema designs.
     """
     store = _require_store()
+
+    if sfn_service is not None and sfn_service.is_cancelled(job_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} was cancelled; cannot confirm schema designs",
+        )
 
     engines = _get_active_engines(store, database_name, job_id)
     if not engines:

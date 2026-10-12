@@ -15,6 +15,23 @@ _ENGINES = (
     "aurora_mysql",
 )
 
+# Written by stop_execution, read by _infer_status before anything else (#383):
+# the only durable record that a job was deliberately stopped. The API only
+# ever runs a phase synchronously inside the POST /resume request handler
+# (src/api/routes/phases.py) -- by the time that call returns (success,
+# error, or an awaiting-LLM pause) there is no still-running phase left to
+# interrupt. This marker instead blocks any *further* API-driven phase:
+# phases.py's resume route and schema_revisions.py's confirm-all route both
+# check LocalExecutionService.is_cancelled() before doing anything, so a
+# cancelled job can't be resumed or have its schema confirmed over the API.
+_STATUS_MARKER = "_status.json"
+
+# The only status values _infer_status trusts from a _status.json marker.
+# stop_execution only ever writes "CANCELLED" -- a marker with anything else
+# (a corrupted write, a future bug, a hand-edited file) is ignored rather
+# than trusted outright, falling through to artifact-derived status instead.
+_KNOWN_MARKER_STATUSES = frozenset({"CANCELLED"})
+
 
 class LocalExecutionService:
     """Filesystem-backed execution service for local development.
@@ -54,7 +71,7 @@ class LocalExecutionService:
             return None
 
         started_at = self._read_started_at(db_name, job_id)
-        status, stopped_at = self._infer_status(job_dir)
+        status, stopped_at, error = self._infer_status(job_dir)
 
         result: dict = {
             "status": status,
@@ -65,6 +82,9 @@ class LocalExecutionService:
                 "source_database_type": self._read_source_engine(db_name, job_id),
             },
         }
+        if error is not None:
+            result["error"] = "PhaseFailed"
+            result["cause"] = error
 
         # Merge full input from _meta.json if available
         meta_path = f"{db_name}/{job_id}/_meta.json"
@@ -230,13 +250,7 @@ class LocalExecutionService:
 
         # Human gate: if assignment is done but no schema dirs exist,
         # check whether the user already approved via the orchestrator.
-        assignment_done = self._store.exists(
-            f"{db_name}/{job_id}/assignment/v1/assignment.json"
-        ) or self._store.exists(f"{db_name}/{job_id}/assignment/assignments.json")
-        approval_given = self._store.exists(f".meta/{job_id}.json") and self._is_phase_completed(
-            job_id, "assignment_review"
-        )
-        if assignment_done and not has_schema and not approval_given:
+        if self._is_awaiting_assignment_approval(db_name, job_id, job_dir):
             stages.append(
                 {
                     "name": "WaitForAssignmentApproval",
@@ -270,8 +284,42 @@ class LocalExecutionService:
         ]
 
     def stop_execution(self, job_id: str) -> bool:
-        """No-op in local mode — always succeeds."""
+        """Record that the job was cancelled so it stops reporting RUNNING or
+        WAITING forever (#383).
+
+        The API only runs a phase synchronously inside the POST /resume
+        request (``src/api/routes/phases.py``), which cannot be interrupted
+        mid-run -- it either finishes, raises, or pauses awaiting an LLM
+        response before the HTTP call ever returns. There is nothing left
+        running by the time this is called. What cancelling does instead is
+        write a durable ``_status.json`` marker (status, timestamp, last
+        completed phase) that ``_infer_status`` checks before anything else,
+        including a synthesis report that might appear later, and that
+        ``is_cancelled`` uses to block any further resume or schema-confirm
+        call from the API. Returns False if the job isn't found.
+        """
+        db_name, job_dir = self._find_job_dir(job_id)
+        if job_dir is None:
+            return False
+
+        marker = {
+            "status": "CANCELLED",
+            "stopped_at": datetime.now(UTC).isoformat(),
+            "last_phase": self._last_phase(job_id),
+        }
+        self._store.write_json(f"{db_name}/{job_id}/{_STATUS_MARKER}", marker)
         return True
+
+    def _last_phase(self, job_id: str) -> str | None:
+        """Return the name of the last completed (else in-progress) stage."""
+        last_completed: str | None = None
+        last_in_progress: str | None = None
+        for stage in self.get_execution_history(job_id):
+            if stage["status"] == "completed":
+                last_completed = stage["name"]
+            elif stage["status"] == "in-progress":
+                last_in_progress = stage["name"]
+        return last_completed or last_in_progress
 
     def list_executions(
         self, status_filter: str | None = None, max_results: int = 50
@@ -289,7 +337,7 @@ class LocalExecutionService:
                 if not job_dir.is_dir() or job_dir.name.startswith("_"):
                     continue
                 job_id = job_dir.name
-                status, stopped_at = self._infer_status(job_dir)
+                status, stopped_at, _error = self._infer_status(job_dir)
                 started_at = self._read_started_at(db_name, job_id)
 
                 entry = {
@@ -313,6 +361,17 @@ class LocalExecutionService:
     def _execution_arn(self, job_id: str) -> str:
         return f"local://{job_id}"
 
+    def is_cancelled(self, job_id: str) -> bool:
+        """True once ``stop_execution`` has recorded this job as CANCELLED.
+
+        Used by ``phases.py``'s resume route and ``schema_revisions.py``'s
+        confirm-all route (#518 round 1) to refuse any *further* API-driven
+        phase once a job is cancelled -- see ``stop_execution``'s docstring
+        for why there is nothing already-running left to interrupt.
+        """
+        execution = self.describe_execution(job_id)
+        return execution is not None and execution["status"] == "CANCELLED"
+
     def _is_phase_completed(self, job_id: str, phase_name: str) -> bool:
         """Check if a phase is marked completed in the orchestrator progression file."""
         try:
@@ -322,6 +381,87 @@ class LocalExecutionService:
             return result
         except Exception:
             return False
+
+    def _is_awaiting_assignment_approval(self, db_name: str, job_id: str, job_dir: Path) -> bool:
+        """True at the WaitForAssignmentApproval human gate: Reality Check (or
+        the assignment resolver) is done, nothing has approved it yet, and
+        schema design hasn't started. Shared by ``get_execution_history``
+        (the stage list) and ``_infer_status`` (the job's own status, #518
+        round 1) so the two never disagree about this gate.
+        """
+        has_schema = any((job_dir / f"schema-{e}").exists() for e in _ENGINES)
+        assignment_done = self._store.exists(
+            f"{db_name}/{job_id}/assignment/v1/assignment.json"
+        ) or self._store.exists(f"{db_name}/{job_id}/assignment/assignments.json")
+        approval_given = self._store.exists(f".meta/{job_id}.json") and self._is_phase_completed(
+            job_id, "assignment_review"
+        )
+        return assignment_done and not has_schema and not approval_given
+
+    def _is_schema_design_awaiting_llm(self, job_prefix: str) -> bool:
+        """True if any engine's ``--llm-mode external`` schema design request
+        is still waiting on a response: ``llm_requests/schema_design_<engine>.json``
+        exists but that engine has no ``schema_output.json`` yet (#518 round 1)."""
+        for engine in _ENGINES:
+            request_path = f"{job_prefix}llm_requests/schema_design_{engine}.json"
+            if not self._store.exists(request_path):
+                continue
+            output_prefix = f"{job_prefix}schema-{engine}/"
+            has_output = any(
+                key.endswith("/schema_output.json")
+                for key in self._store.list_prefix(output_prefix)
+            )
+            if not has_output:
+                return True
+        return False
+
+    def _is_synthesis_awaiting_llm(self, db_name: str, job_id: str, job_prefix: str) -> bool:
+        """True if ``--llm-mode external`` synthesis is waiting on a response:
+        its ``llm_input.json`` exists but no ``report.json`` candidate does
+        (#518 round 1). Mirrors ``_synthesis_key``/``_report_key`` in
+        ``scripts/run_synthesis.py`` for the versioned vs. legacy path."""
+        from src.storage.assignment_versioning import (
+            resolve_effective_assignment_version,
+            synthesis_report_candidates,
+        )
+
+        version = resolve_effective_assignment_version(self._store, db_name, job_id)
+        llm_input_key = (
+            f"{job_prefix}synthesis/v{version}/llm_input.json"
+            if version > 0
+            else f"{job_prefix}synthesis/llm_input.json"
+        )
+        if not self._store.exists(llm_input_key):
+            return False
+        return not any(
+            self._store.exists(candidate)
+            for candidate in synthesis_report_candidates(self._store, db_name, job_id)
+        )
+
+    def _progression_phase_issue(self, job_id: str) -> tuple[str, str | None] | None:
+        """Read ``.meta/<job_id>.json`` directly (never through a helper that
+        writes an inferred progression as a side effect, like
+        ``LocalOrchestrator.get_progression``/``_load_progression`` -- #518
+        round 1 / I4) and report the one thing from it that changes the job's
+        own status: a FAILED phase (with its error), else an AWAITING_REVIEW
+        phase (WAITING). Returns None when the file is absent or neither
+        applies, so the caller falls through to artifact-derived status.
+        """
+        meta_path = f".meta/{job_id}.json"
+        if not self._store.exists(meta_path):
+            return None
+        try:
+            phases = self._store.read_json(meta_path).get("phases", {})
+        except Exception:
+            return None
+
+        for record in phases.values():
+            if record.get("status") == "failed":
+                return ("FAILED", record.get("error_message"))
+        for record in phases.values():
+            if record.get("status") == "awaiting_review":
+                return ("WAITING", None)
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -354,26 +494,84 @@ class LocalExecutionService:
                 return (db_dir.name, job_dir)
         return ("", None)
 
-    def _infer_status(self, job_dir: Path) -> tuple[str, str | None]:
-        """Infer SUCCEEDED / RUNNING / FAILED from artifact presence."""
+    def _infer_status(self, job_dir: Path) -> tuple[str, str | None, str | None]:
+        """Infer CANCELLED / SUCCEEDED / FAILED / WAITING / RUNNING from
+        artifact presence. Returns ``(status, stopped_at, error)``; ``error``
+        is only ever set for FAILED.
+
+        Order matters (#383, #518 round 1):
+
+        1. A recorded cancellation always wins, even over a synthesis report
+           that shows up afterward -- a cancelled job must never flip back to
+           looking finished or running.
+        2. A synthesis report means the job is genuinely done, even if some
+           earlier phase's stale FAILED record is still sitting in
+           ``.meta/<job>.json`` from a retried run.
+        3. The orchestrator's own progression file (FAILED or AWAITING_REVIEW).
+        4. The remaining WAITING gates: assignment approval, schema design or
+           synthesis waiting on an external LLM response, Reality Check
+           waiting on one.
+        5. RUNNING otherwise.
+        """
+        db_name, job_id = job_dir.parent.name, job_dir.name
+        job_prefix = f"{db_name}/{job_id}/"
+
+        marker_path = f"{job_prefix}{_STATUS_MARKER}"
+        if self._store.exists(marker_path):
+            try:
+                marker = self._store.read_json(marker_path)
+                status = marker.get("status")
+                if status in _KNOWN_MARKER_STATUSES:
+                    return (str(status), marker.get("stopped_at"), None)
+            except Exception:
+                pass  # nosec B110 - fall through to artifact-derived status
+
         from src.storage.assignment_versioning import synthesis_report_candidates
 
         # Every synthesis output location, versioned first (ADR-028)
-        db_name, job_id = job_dir.parent.name, job_dir.name
-        job_prefix = f"{db_name}/{job_id}/"
         completion_markers = [
             job_dir / key.removeprefix(job_prefix)
             for key in synthesis_report_candidates(self._store, db_name, job_id)
         ]
-        for marker in completion_markers:
-            if marker.exists():
+        for marker_path_obj in completion_markers:
+            if marker_path_obj.exists():
                 try:
-                    mtime = marker.stat().st_mtime
+                    mtime = marker_path_obj.stat().st_mtime
                     stopped_at = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
                 except OSError:
                     stopped_at = None
-                return ("SUCCEEDED", stopped_at)
-        return ("RUNNING", None)
+                return ("SUCCEEDED", stopped_at, None)
+
+        progression_issue = self._progression_phase_issue(job_id)
+        if progression_issue is not None:
+            status, error = progression_issue
+            return (status, None, error)
+
+        # The remaining WAITING gates are not the same as actively running --
+        # the job is blocked on a human or an external LLM response, not on
+        # local work (#383, #518 round 1).
+        if self._is_awaiting_assignment_approval(db_name, job_id, job_dir):
+            return ("WAITING", None, None)
+
+        if self._is_schema_design_awaiting_llm(job_prefix):
+            return ("WAITING", None, None)
+
+        if self._is_synthesis_awaiting_llm(db_name, job_id, job_prefix):
+            return ("WAITING", None, None)
+
+        awaiting_path = f"{job_prefix}reality-check/awaiting_llm.json"
+        if self._store.exists(awaiting_path):
+            try:
+                awaiting = self._store.read_json(awaiting_path)
+                if awaiting.get("status") == "awaiting_llm":
+                    return ("WAITING", None, None)
+            except Exception:
+                pass  # nosec B110 - fall through to RUNNING
+
+        # A script-driven failure (scripts/run_assessment.py et al.) still has
+        # no durable marker -- only the orchestrator's own resume path (read
+        # above via .meta/<job>.json) records FAILED. See #517.
+        return ("RUNNING", None, None)
 
     def _dir_mtime_iso(self, path: Path) -> str | None:
         """Return ISO timestamp from directory mtime, or None."""

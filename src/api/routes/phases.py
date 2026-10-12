@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from src.api.services.local_execution import LocalExecutionService
 from src.contracts.phase_models import Phase, PhaseProgression
 from src.orchestrator.base import (
     Orchestrator,
@@ -18,8 +19,9 @@ from src.orchestrator.base import (
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["phases"])
 
-# Service injected by main.py at startup
+# Services injected by main.py at startup
 orchestrator: Orchestrator | None = None
+sfn_service: LocalExecutionService | None = None
 
 
 def _require_orchestrator() -> Orchestrator:
@@ -66,9 +68,17 @@ async def get_phases(job_id: str):
 async def resume_phase(job_id: str, body: ResumeRequest):
     """Resume execution at the given phase.
 
-    Returns HTTP 409 if phase prerequisites are not met.
+    Returns HTTP 409 if phase prerequisites are not met, or if the job was
+    cancelled (#518 round 1): cancelling blocks any further API-driven phase,
+    since the API only ever runs a phase synchronously inside this request.
     """
     orch = _require_orchestrator()
+
+    if sfn_service is not None and sfn_service.is_cancelled(job_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} was cancelled; no further phases can be resumed",
+        )
 
     scope: PhaseScope | None = None
     if body.scope_engines:

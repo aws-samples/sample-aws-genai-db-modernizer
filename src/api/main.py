@@ -90,6 +90,8 @@ assessments.sfn_service = _sfn
 results.sfn_service = _sfn
 dashboard.sfn_service = _sfn
 query_journeys.sfn_service = _sfn
+phases.sfn_service = _sfn
+schema_revisions.sfn_service = _sfn
 assessments.s3_service = _s3
 results.s3_service = _s3
 

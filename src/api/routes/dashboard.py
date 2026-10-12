@@ -19,10 +19,13 @@ async def get_dashboard_stats():
     # Get all executions to compute stats
     all_executions = sfn_service.list_executions(max_results=100)
     running = sfn_service.list_executions(status_filter="RUNNING", max_results=100)
+    waiting = sfn_service.list_executions(status_filter="WAITING", max_results=100)
     succeeded = sfn_service.list_executions(status_filter="SUCCEEDED", max_results=100)
 
     total = len(all_executions)
-    active = len(running)
+    # A job waiting on a human or an external LLM response is unfinished,
+    # same as RUNNING (#383, #518 round 1) -- both count as active.
+    active = len(running) + len(waiting)
     success_count = len(succeeded)
     success_rate = (success_count / total * 100) if total > 0 else 0
 

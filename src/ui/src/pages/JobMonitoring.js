@@ -32,7 +32,17 @@ import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
+import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText } from "../utils/jobStatus";
 
+
+
+
+
+// A job already in one of these statuses is already finished -- DELETE on
+// one of these just reports that actual status without calling
+// stop_execution again (#518), so hide the Cancel action instead of letting
+// the user click it for nothing.
+const TERMINAL_JOB_STATUSES = new Set(['CANCELLED', 'SUCCEEDED', 'FAILED']);
 
 
 
@@ -441,42 +451,12 @@ const JobMonitoringPage = memo(() => {
   //--|#######################| Utility Functions Section  |#######################
 
 
-  const getStatusType = useCallback((status) => {
-          const statusMap = {
-            COMPLETED: "success",
-            SUCCEEDED: "success",
-            completed: "success",
-            success: "success",
-            RUNNING: "in-progress",
-            running: "in-progress",
-            "in-progress": "in-progress",
-            FAILED: "error",
-            failed: "error",
-            error: "error",
-            PENDING: "pending",
-            pending: "pending",
-          };
-          return statusMap[status] || "info";
-  }, []);
+  const getStatusType = useCallback((status) => sharedGetStatusType(status), []);
 
 
 
 
-  const getStatusText = useCallback((status) => {
-          if (!status) return 'Unknown';
-          const textMap = {
-            COMPLETED: "Completed",
-            SUCCEEDED: "Succeeded",
-            completed: "Completed",
-            RUNNING: "Running",
-            running: "Running",
-            FAILED: "Failed",
-            failed: "Failed",
-            PENDING: "Pending",
-            pending: "Pending",
-          };
-          return textMap[status] || status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-  }, []);
+  const getStatusText = useCallback((status) => sharedGetStatusText(t, status), [t]);
 
 
 
@@ -743,7 +723,7 @@ const JobMonitoringPage = memo(() => {
                   <Button iconName="download" variant="normal" onClick={handleDownloadLogs}>
                     {t("job-monitoring.actions.download-logs")}
                   </Button>
-                  {jobData?.progress?.percent_complete !== 100 && (
+                  {jobData?.progress?.percent_complete !== 100 && !TERMINAL_JOB_STATUSES.has(jobData?.status) && (
                     <Button iconName="close" variant="normal" onClick={handleCancelJobClick}>
                       {t("job-monitoring.actions.cancel-job")}
                     </Button>

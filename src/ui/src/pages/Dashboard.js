@@ -25,6 +25,7 @@ import { SideNavigationConfigurations, createLabelFunction, ApiConfigurations } 
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import CustomTable from "../components/CustomTable";
+import { getStatusType as sharedGetStatusType, getStatusText as sharedGetStatusText } from "../utils/jobStatus";
 
 
 
@@ -404,30 +405,12 @@ const ComponentPage = memo(() => {
   //--|#######################| Utility Functions Section  |#######################
 
 
-  const getStatusType = useCallback((status) => {
-          const statusMap = {
-            COMPLETED: "success",
-            SUCCEEDED: "success",
-            RUNNING: "in-progress",
-            FAILED: "error",
-            PENDING: "pending",
-          };
-          return statusMap[status] || "info";
-  }, []);
+  const getStatusType = useCallback((status) => sharedGetStatusType(status), []);
 
 
 
 
-  const getStatusText = useCallback((status) => {
-          const textMap = {
-            COMPLETED: "Completed",
-            SUCCEEDED: "Succeeded",
-            RUNNING: "Running",
-            FAILED: "Failed",
-            PENDING: "Pending",
-          };
-          return textMap[status] || status;
-  }, []);
+  const getStatusText = useCallback((status) => sharedGetStatusText(t, status), [t]);
 
 
 

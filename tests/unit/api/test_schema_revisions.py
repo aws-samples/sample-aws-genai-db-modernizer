@@ -28,10 +28,12 @@ def client():
     store = MagicMock()
     schema_revisions.artifact_store = store
     schema_revisions.orchestrator = None
+    schema_revisions.sfn_service = None
     yield TestClient(app), store
     # reset after test
     schema_revisions.artifact_store = None
     schema_revisions.orchestrator = None
+    schema_revisions.sfn_service = None
 
 
 # ---------------------------------------------------------------------------
@@ -587,3 +589,26 @@ class TestPostConfirmAll:
 
         assert resp.status_code == 200
         assert resp.json()["confirmed"]["dynamodb"] == 2
+
+    def test_returns_409_when_job_was_cancelled(self, client):
+        """Cancelling a job blocks any further API-driven phase (#383, #518
+        round 1) -- confirm-all must not write confirmed.json for a dead job."""
+        tc, store = client
+        from src.api.routes import schema_revisions
+
+        self._setup_multi_engine(store, "mydb", "job-1", ["dynamodb"])
+        mock_sfn = MagicMock()
+        mock_sfn.is_cancelled.return_value = True
+        schema_revisions.sfn_service = mock_sfn
+
+        resp = tc.post(
+            "/api/v1/assessments/job-1/schema/confirm-all",
+            params={"database_name": "mydb"},
+        )
+
+        assert resp.status_code == 409
+        mock_sfn.is_cancelled.assert_called_once_with("job-1")
+        confirmed_writes = [
+            c for c in store.write_json.call_args_list if "confirmed.json" in str(c)
+        ]
+        assert confirmed_writes == []

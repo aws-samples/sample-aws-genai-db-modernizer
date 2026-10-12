@@ -63,6 +63,8 @@ class TestDashboardStats:
         def side_effect(status_filter=None, max_results=100):
             if status_filter == "RUNNING":
                 return running
+            if status_filter == "WAITING":
+                return []
             if status_filter == "SUCCEEDED":
                 return succeeded
             return all_execs
@@ -74,6 +76,49 @@ class TestDashboardStats:
         assert data["active_jobs"] == 1
         assert data["success_rate_percent"] == 66.7
         assert data["average_duration_hours"] == 3.0
+
+    def test_active_jobs_counts_waiting_too(self, mock_services):
+        """A job waiting on an external LLM response or a human approval is
+        unfinished, same as RUNNING -- it must count as active too (#518
+        round 1, I2)."""
+        all_execs = [
+            {
+                "job_id": "j1",
+                "status": "RUNNING",
+                "started_at": "2026-02-23T10:00:00+00:00",
+                "stopped_at": None,
+            },
+            {
+                "job_id": "j2",
+                "status": "WAITING",
+                "started_at": "2026-02-23T11:00:00+00:00",
+                "stopped_at": None,
+            },
+            {
+                "job_id": "j3",
+                "status": "SUCCEEDED",
+                "started_at": "2026-02-23T12:00:00+00:00",
+                "stopped_at": "2026-02-23T13:00:00+00:00",
+            },
+        ]
+        running = [all_execs[0]]
+        waiting = [all_execs[1]]
+        succeeded = [all_execs[2]]
+
+        def side_effect(status_filter=None, max_results=100):
+            if status_filter == "RUNNING":
+                return running
+            if status_filter == "WAITING":
+                return waiting
+            if status_filter == "SUCCEEDED":
+                return succeeded
+            return all_execs
+
+        mock_services["sfn"].list_executions.side_effect = side_effect
+        response = client.get("/api/v1/dashboard/stats")
+        data = response.json()
+        assert data["total_assessments"] == 3
+        assert data["active_jobs"] == 2
 
     def test_handles_no_executions(self, mock_services):
         mock_services["sfn"].list_executions.return_value = []
