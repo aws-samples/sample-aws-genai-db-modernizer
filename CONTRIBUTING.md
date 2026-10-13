@@ -294,6 +294,10 @@ Every pull request must say `Closes #N` (or `Fixes`/`Resolves #N`, case-insensit
 
 Changes to `.github/workflows/issue-assignment-gate.yml` itself (or any other workflow) are requested for maintainer review by `.github/CODEOWNERS` -- the branch ruleset doesn't require that review, which is a separate maintainer decision. Checking out the base commit before running the gate's script stops a pull request from changing *what the script does*, but GitHub still reads the *workflow file* from the pull request's own merge ref; what actually keeps a pull request from changing what the workflow itself is allowed to do is that outside contributors' workflow runs always wait for a maintainer's approval, on every run and not just the first, so a workflow edit is seen before it ever runs -- plus the one approving review merging already needs regardless.
 
+### Reviewing a PR
+
+Reviewers using Claude Code can run the same checklist by hand -- routing bias and drift, deliverables agreeing, customer wording and escaping, contract bumps, whether new tests fail on main, evidence for behavior claims, public wording -- with the `pr-reviewer` subagent (`.claude/agents/pr-reviewer.md`): ask Claude Code to review the PR with the `pr-reviewer` agent, and it checks out the PR in its own disposable worktree, runs the hooks and guard tests, and posts one ranked comment.
+
 ---
 
 ## Code Standards
