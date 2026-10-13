@@ -2,23 +2,24 @@
 
 Each helper returns a leading-space-prefixed fragment (or empty string) so the
 DDL generator can concatenate them without worrying about spacing.
+
+Column defaults (#156) are collector text, so ``translate_default`` never
+pastes them into DDL. It parses each one under a small grammar for its source
+engine (a literal, a number, ``NULL``, a boolean, the current time or date, a
+UUID generator or a sequence) and re-renders the parsed parts for the target.
+Anything outside that grammar, or that the target column cannot take, is
+dropped with a reason for a migration note, never quoted into a fake literal.
 """
 
 from __future__ import annotations
 
-from src.contracts.schema_design_input import ForeignKeyAction
+import math
+import re
+from dataclasses import dataclass
 
-# Default values that are SQL expressions/keywords, not literals — passed through
-# verbatim rather than quoted.
-_SQL_KEYWORD_DEFAULTS = {
-    "CURRENT_TIMESTAMP",
-    "CURRENT_DATE",
-    "CURRENT_TIME",
-    "NOW()",
-    "NULL",
-    "TRUE",
-    "FALSE",
-}
+from src.contracts.aurora_design_delta import validate_aurora_type
+from src.contracts.schema_design_input import ForeignKeyAction
+from src.tools.schema.aurora_common.source_family import classify_source_family
 
 
 def identity_clause(is_auto_increment: bool | None) -> str:
@@ -30,44 +31,6 @@ def not_null_clause(nullable: bool) -> str:
     return "" if nullable else " NOT NULL"
 
 
-def is_expression_default(default_value: object) -> bool:
-    """A string default that is SQL (a cast or a call), not a literal value.
-
-    It is still rendered as a quoted literal (parsing ``'lit'::type`` is #156),
-    so the draft flags it for review.
-    """
-    if not isinstance(default_value, str):
-        return False
-    text = default_value.strip()
-    return text.upper() not in _SQL_KEYWORD_DEFAULTS and ("::" in text or "(" in text)
-
-
-def default_clause(
-    default_value: str | int | float | bool | None, *, backslash_escapes: bool = False
-) -> str:
-    """Render a column DEFAULT clause, quoting string literals safely.
-
-    ``backslash_escapes`` is for MySQL, where a backslash escapes the next
-    character inside a string literal (unless NO_BACKSLASH_ESCAPES is set):
-    without doubling it, ``x\\'`` would end the literal and let the rest of
-    the default inject DDL. Doubled, the value is kept under the default
-    sql_mode and the literal still cannot be closed early under
-    NO_BACKSLASH_ESCAPES.
-    """
-    if default_value is None:
-        return ""
-    if isinstance(default_value, bool):
-        return f" DEFAULT {'TRUE' if default_value else 'FALSE'}"
-    if isinstance(default_value, (int, float)):
-        return f" DEFAULT {default_value}"
-    # string
-    if default_value.strip().upper() in _SQL_KEYWORD_DEFAULTS:
-        return f" DEFAULT {default_value.strip()}"
-    escaped = default_value.replace("\\", "\\\\") if backslash_escapes else default_value
-    escaped = escaped.replace("'", "''")
-    return f" DEFAULT '{escaped}'"
-
-
 def fk_on_delete_clause(action: ForeignKeyAction | None) -> str:
     return f" ON DELETE {action.value}" if action is not None else ""
 
@@ -75,3 +38,514 @@ def fk_on_delete_clause(action: ForeignKeyAction | None) -> str:
 def mysql_auto_increment_clause(is_auto_increment: bool | None) -> str:
     """MySQL AUTO_INCREMENT replaces PostgreSQL IDENTITY."""
     return " AUTO_INCREMENT" if is_auto_increment else ""
+
+
+# ---------------------------------------------------------------------------
+# Column defaults (#156)
+# ---------------------------------------------------------------------------
+
+PG_TARGET = "aurora_postgresql"
+MYSQL_TARGET = "aurora_mysql"
+
+# The same identifier rule as the delta contract's IDENTIFIER.
+_IDENT = r"[A-Za-z_][A-Za-z0-9_$]{0,62}"
+_NUMBER = r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+_QUOTED = r"'(?P<lit>(?:[^']|'')*)'"
+# A PostgreSQL cast target, matched loosely here and allowlisted with
+# validate_aurora_type before it is ever rendered.
+_PG_CAST_TYPE = r"[A-Za-z_][A-Za-z0-9_ ]*(?:\(\s*\d+\s*(?:,\s*\d+\s*)?\))?(?:\[\])*"
+_PRECISION = r"(?:\(\s*(\d)?\s*\))?"  # the only capture group in a time pattern
+
+
+def _full(pattern: str, text: str) -> re.Match[str] | None:
+    # ASCII: \d must not match non-ASCII digits, which no SQL target accepts.
+    return re.fullmatch(pattern, text, flags=re.IGNORECASE | re.ASCII)
+
+
+@dataclass(frozen=True)
+class _Parsed:
+    """A source default reduced to parts the renderers rebuild DDL from."""
+
+    kind: str  # string number boolean null timestamp date time uuid sequence bits
+    text: str = ""  # literal body (unescaped), number, TRUE/FALSE, or bit string
+    cast: str | None = None  # PostgreSQL cast type of a literal, not yet allowlisted
+    precision: int | None = None
+
+
+def _precision(match: re.Match[str]) -> int | None:
+    value = next((g for g in match.groups() if g), None)
+    return int(value) if value else None
+
+
+MAX_PAREN_DEPTH = 32
+
+
+class _TooDeep(ValueError):
+    """A default nests parentheses deeper than ``MAX_PAREN_DEPTH``."""
+
+
+def _strip_parens(text: str) -> str:
+    """Remove outer parentheses that wrap the whole text (``((0))`` -> ``0``).
+
+    One quote-aware pass pairs every parenthesis, then the wrapping pairs are
+    peeled from both ends, so the cost is linear in the length. Nesting deeper
+    than ``MAX_PAREN_DEPTH`` raises ``_TooDeep``; unbalanced text is returned
+    as is (and then matches no grammar).
+    """
+    if not text.startswith("("):
+        return text
+    closing: dict[int, int] = {}
+    stack: list[int] = []
+    quoted = False
+    for i, ch in enumerate(text):
+        if ch == "'":
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif ch == "(":
+            stack.append(i)
+            if len(stack) > MAX_PAREN_DEPTH:
+                raise _TooDeep
+        elif ch == ")":
+            if not stack:
+                return text
+            closing[stack.pop()] = i
+    if stack or quoted:
+        return text
+    lo, hi = 0, len(text) - 1
+    while lo < hi and text[lo] == "(" and closing.get(lo) == hi:
+        lo, hi = lo + 1, hi - 1
+        while lo <= hi and text[lo].isspace():
+            lo += 1
+        while hi >= lo and text[hi].isspace():
+            hi -= 1
+    return text[lo : hi + 1]
+
+
+def _common(text: str) -> _Parsed | None:
+    """Forms every source spells the same way: a number or NULL."""
+    if _full(_NUMBER, text):
+        return _Parsed("number", text)
+    if _full("NULL", text):
+        return _Parsed("null")
+    return None
+
+
+def _parse_pg(text: str) -> _Parsed | None:
+    """PostgreSQL ``column_default``: always an expression (``'open'::character varying``)."""
+    s = text.strip()
+    m = _full(rf"{_QUOTED}(?:::(?P<cast>{_PG_CAST_TYPE}))?", s)
+    if m:
+        return _Parsed("string", m["lit"].replace("''", "'"), cast=m["cast"])
+    if m := _full(rf"\(\s*({_NUMBER})\s*\)", s):
+        return _Parsed("number", m[1])
+    if _full(rf"NULL(?:::{_PG_CAST_TYPE})?", s):
+        return _Parsed("null")
+    if _full("true|false", s):
+        return _Parsed("boolean", s.upper())
+    if m := _full(rf"now\(\s*\)|current_timestamp{_PRECISION}", s):
+        return _Parsed("timestamp", precision=_precision(m))
+    if _full("current_date", s):
+        return _Parsed("date")
+    if _full(rf"current_time{_PRECISION}", s):
+        return _Parsed("time")
+    if _full(r"(?:gen_random_uuid|uuid_generate_v4)\(\s*\)", s):
+        return _Parsed("uuid")
+    if _full(rf"nextval\(\s*'(?:{_IDENT}\.)?{_IDENT}'(?:::regclass)?\s*\)", s):
+        return _Parsed("sequence")
+    return _common(s)
+
+
+def _parse_mysql(text: str, mariadb: bool) -> _Parsed | None:
+    """MySQL ``COLUMN_DEFAULT``: the literal's text, unquoted, unless it is a keyword.
+
+    MariaDB (10.2.7+) quotes literals and reports expressions unquoted. A
+    MySQL default that starts like an expression (``(...)`` or ``f(...)``)
+    cannot be told from a literal without ``EXTRA``, so it is not guessed at.
+    """
+    s = text.strip()
+    if _full("NULL", s):
+        return _Parsed("null")
+    if m := _full(
+        rf"current_timestamp{_PRECISION}|localtimestamp{_PRECISION}|now\(\s*(\d)?\s*\)", s
+    ):
+        return _Parsed("timestamp", precision=_precision(m))
+    if _full(r"uuid\(\s*\)|\(\s*uuid\(\s*\)\s*\)", s):
+        return _Parsed("uuid")
+    if _full(r"curdate\(\s*\)|\(\s*curdate\(\s*\)\s*\)|current_date(?:\(\s*\))?", s):
+        return _Parsed("date")
+    if m := _full(r"b'(?P<bits>[01]{1,64})'", s):
+        return _Parsed("bits", m["bits"])
+    if mariadb:
+        if m := _full(_QUOTED, s):
+            return _Parsed("string", m["lit"].replace("''", "'"))
+        return _Parsed("string", s) if _full(_NUMBER, s) else None
+    if s.startswith("(") or re.match(rf"{_IDENT}\s*\(", s):
+        return None
+    return _Parsed("string", text)
+
+
+def _parse_sqlserver(text: str) -> _Parsed | None:
+    """SQL Server ``sys.default_constraints.definition``: parenthesized (``((0))``)."""
+    s = _strip_parens(text.strip())
+    if m := _full(rf"N?{_QUOTED}", s):
+        return _Parsed("string", m["lit"].replace("''", "'"))
+    if _full(r"getdate\(\s*\)|sysdatetime\(\s*\)|sysdatetimeoffset\(\s*\)|current_timestamp", s):
+        return _Parsed("timestamp")
+    if _full(r"newid\(\s*\)|newsequentialid\(\s*\)", s):
+        return _Parsed("uuid")
+    name = rf"(?:\[{_IDENT}\]|{_IDENT})"
+    if _full(rf"NEXT\s+VALUE\s+FOR\s+{name}(?:\.{name}){{0,2}}", s):
+        return _Parsed("sequence")
+    return _common(s)
+
+
+def _parse_oracle(text: str) -> _Parsed | None:
+    """Oracle ``DATA_DEFAULT``: an expression, often with trailing whitespace."""
+    s = _strip_parens(text.strip())
+    if m := _full(_QUOTED, s):
+        body = m["lit"].replace("''", "'")
+        return _Parsed("string", body) if body else _Parsed("null")  # '' is NULL in Oracle
+    if m := _full(
+        rf"sysdate|systimestamp{_PRECISION}|current_timestamp{_PRECISION}|"
+        rf"localtimestamp{_PRECISION}|current_date",
+        s,
+    ):
+        return _Parsed("timestamp")  # an Oracle DATE carries the time of day
+    if _full(r"sys_guid\(\s*\)", s):
+        return _Parsed("uuid")
+    name = rf'(?:"{_IDENT}"|{_IDENT})'
+    if _full(rf"(?:{name}\.){{0,2}}{name}\.nextval", s):
+        return _Parsed("sequence")
+    return _common(s)
+
+
+def _parse_db2(text: str) -> _Parsed | None:
+    """Db2 ``SYSCAT.COLUMNS.DEFAULT``: quoted literals and ``CURRENT TIMESTAMP``-style registers."""
+    s = _strip_parens(text.strip())
+    if m := _full(_QUOTED, s):
+        return _Parsed("string", m["lit"].replace("''", "'"))
+    if _full(r"current[ _]timestamp", s):
+        return _Parsed("timestamp")
+    if _full(r"current[ _]date", s):
+        return _Parsed("date")
+    if _full(r"current[ _]time", s):
+        return _Parsed("time")
+    name = rf'(?:"{_IDENT}"|{_IDENT})'
+    if _full(rf"(?:NEXT\s+VALUE|NEXTVAL)\s+FOR\s+(?:{name}\.)?{name}", s):
+        return _Parsed("sequence")
+    return _common(s)
+
+
+def _parse_unknown(text: str) -> _Parsed | None:
+    """A source with no grammar of its own: only a number, NULL or one quoted literal."""
+    s = text.strip()
+    if m := _full(_QUOTED, s):
+        return _Parsed("string", m["lit"].replace("''", "'"))
+    return _common(s)
+
+
+_SQLSERVER_SOURCES = {"sqlserver", "sql_server", "sql server", "mssql"}
+
+
+def _parse(value: str, source_engine: str) -> _Parsed | None:
+    engine = (source_engine or "").strip().lower()
+    family = classify_source_family(engine)
+    if family == "postgresql":
+        return _parse_pg(value)
+    if family == "mysql":
+        return _parse_mysql(value, mariadb=engine == "mariadb")
+    if engine in _SQLSERVER_SOURCES:
+        return _parse_sqlserver(value)
+    if engine == "oracle":
+        return _parse_oracle(value)
+    if engine == "db2":
+        return _parse_db2(value)
+    return _parse_unknown(value)
+
+
+@dataclass(frozen=True)
+class DefaultTranslation:
+    """How one source default reaches the target.
+
+    ``clause`` is the DDL fragment (``" DEFAULT ..."`` or empty). ``identity``
+    means the default drew from a sequence and the column becomes an identity
+    (AUTO_INCREMENT) column instead. A non-empty ``reason`` means the default
+    was dropped or rewritten; it holds no source text, the caller quotes that.
+    """
+
+    clause: str = ""
+    kind: str = "none"
+    reason: str = ""
+    identity: bool = False
+
+
+def _base(aurora_type: str) -> str:
+    return aurora_type.split("(")[0].split()[0].upper() if aurora_type.strip() else ""
+
+
+def _length(aurora_type: str) -> int | None:
+    m = re.search(r"\(\s*(\d+)", aurora_type)
+    return int(m[1]) if m else None
+
+
+def _pg_quote(body: str) -> str:
+    """A PostgreSQL literal that reads the same whatever standard_conforming_strings is.
+
+    A plain ``'...'`` treats a backslash as an escape when the setting is off,
+    so a body with a backslash is written as ``E'...'`` (always escape
+    syntax) with the backslashes doubled. Quotes are doubled in both forms.
+    """
+    if "\\" in body:
+        return "E'" + body.replace("\\", "\\\\").replace("'", "''") + "'"
+    return "'" + body.replace("'", "''") + "'"
+
+
+def _mysql_quote(body: str) -> str:
+    # MySQL treats \ as an escape inside a literal (unless NO_BACKSLASH_ESCAPES):
+    # doubled, the literal still cannot be closed early.
+    return "'" + body.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def _dropped(kind: str, why: str) -> DefaultTranslation:
+    return DefaultTranslation(
+        kind=kind, reason=f"{why}, so the target DDL drops it; set it by hand."
+    )
+
+
+def _of_type(aurora_type: str) -> str:
+    """``a column of type X``: no article to get wrong in front of the type name."""
+    return f"a column of type {aurora_type}"
+
+
+_ENGINE = {PG_TARGET: "Aurora PostgreSQL", MYSQL_TARGET: "Aurora MySQL"}
+_PG_INTEGERS = {"SMALLINT", "INTEGER", "INT", "BIGINT", "INT2", "INT4", "INT8"}
+_PG_NUMERIC = _PG_INTEGERS | {
+    "NUMERIC",
+    "DECIMAL",
+    "REAL",
+    "DOUBLE",
+    "FLOAT",
+    "FLOAT4",
+    "FLOAT8",
+    "MONEY",
+}
+_PG_STRINGS = {"CHAR", "CHARACTER", "VARCHAR", "TEXT", "CITEXT"}
+_PG_TEMPORAL = {"TIMESTAMP", "TIMESTAMPTZ", "DATE", "TIME", "TIMETZ"}
+_MYSQL_INTEGERS = {"TINYINT", "SMALLINT", "MEDIUMINT", "INT", "INTEGER", "BIGINT"}
+_MYSQL_NUMERIC = _MYSQL_INTEGERS | {
+    "DECIMAL",
+    "NUMERIC",
+    "FLOAT",
+    "DOUBLE",
+    "REAL",
+    "BIT",
+    "BOOLEAN",
+    "BOOL",
+}
+_MYSQL_STRINGS = {"CHAR", "VARCHAR", "BINARY", "VARBINARY"}
+# Aurora MySQL columns that take no literal DEFAULT (only an expression one).
+_MYSQL_NO_LITERAL = {
+    "TINYTEXT",
+    "TEXT",
+    "MEDIUMTEXT",
+    "LONGTEXT",
+    "TINYBLOB",
+    "BLOB",
+    "MEDIUMBLOB",
+    "LONGBLOB",
+    "JSON",
+    "GEOMETRY",
+    "POINT",
+    "LINESTRING",
+    "POLYGON",
+    "MULTIPOINT",
+    "MULTILINESTRING",
+    "MULTIPOLYGON",
+    "GEOMETRYCOLLECTION",
+}
+
+_RESTART = {
+    PG_TARGET: "ALTER TABLE ... ALTER COLUMN ... RESTART WITH <highest migrated value + 1>",
+    MYSQL_TARGET: "ALTER TABLE ... AUTO_INCREMENT = <highest migrated value + 1>",
+}
+
+
+def _sequence(target: str, base: str, identity_ok: bool) -> DefaultTranslation:
+    integers = _PG_INTEGERS if target == PG_TARGET else _MYSQL_INTEGERS
+    form = "GENERATED BY DEFAULT AS IDENTITY" if target == PG_TARGET else "AUTO_INCREMENT"
+    if identity_ok and base in integers:
+        return DefaultTranslation(
+            kind="sequence",
+            identity=True,
+            reason=(
+                f"draws from a source sequence; the target DDL declares the column {form} "
+                f"instead. After loading the data, start the identity above the highest "
+                f"migrated value ({_RESTART[target]})."
+            ),
+        )
+    need = (
+        "it must be a NOT NULL integer column"
+        if target == PG_TARGET
+        else "it must be an integer column that is the whole primary key, in a table with "
+        "no other AUTO_INCREMENT column"
+    )
+    return _dropped(
+        "sequence",
+        f"draws from a source sequence, which the target DDL does not create; the column "
+        f"cannot become {form} instead ({need})",
+    )
+
+
+def _number_mismatch(aurora_type: str) -> DefaultTranslation:
+    return _dropped("number", f"is a number, which {_of_type(aurora_type)} does not take")
+
+
+def _render_pg(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTranslation:
+    base = _base(aurora_type)
+    array = "[" in aurora_type
+    scalar = "" if array else base
+    if p.kind == "string":
+        clause = _pg_quote(p.text)
+        if p.cast:
+            try:
+                cast = validate_aurora_type(p.cast, PG_TARGET)
+            except ValueError:
+                cast = ""
+            if cast and cast.lower() == " ".join(aurora_type.split()).lower():
+                clause += f"::{cast}"
+        return DefaultTranslation(f" DEFAULT {clause}", "string")
+    if p.kind == "number":
+        if scalar == "BOOLEAN":
+            if p.text not in ("0", "1"):
+                return _dropped("number", "is a number other than 0 or 1 on a BOOLEAN column")
+            return DefaultTranslation(f" DEFAULT {'TRUE' if p.text == '1' else 'FALSE'}", "boolean")
+        if scalar not in _PG_NUMERIC | _PG_STRINGS:
+            return _number_mismatch(aurora_type)
+        return DefaultTranslation(f" DEFAULT {p.text}", "number")
+    if p.kind == "boolean":
+        if scalar in _PG_INTEGERS:  # PostgreSQL has no boolean-to-integer assignment
+            return DefaultTranslation(f" DEFAULT {'1' if p.text == 'TRUE' else '0'}", "number")
+        if scalar not in {"BOOLEAN"} | _PG_STRINGS:
+            return _dropped("boolean", f"is a boolean, which {_of_type(aurora_type)} does not take")
+        return DefaultTranslation(f" DEFAULT {p.text}", "boolean")
+    if p.kind in ("timestamp", "date", "time"):
+        if scalar not in _PG_TEMPORAL | _PG_STRINGS:
+            return _dropped(
+                p.kind, f"is the current {p.kind}, which {_of_type(aurora_type)} does not take"
+            )
+        if p.kind == "date":
+            return DefaultTranslation(" DEFAULT CURRENT_DATE", "date")
+        if p.kind == "time":
+            return DefaultTranslation(" DEFAULT CURRENT_TIME", "time")
+        precision = f"({p.precision})" if p.precision is not None else ""
+        return DefaultTranslation(f" DEFAULT CURRENT_TIMESTAMP{precision}", "timestamp")
+    if p.kind == "uuid":
+        length = _length(aurora_type)
+        fits = scalar in {"UUID", "TEXT", "CITEXT"} or (
+            scalar in {"CHAR", "CHARACTER", "VARCHAR"} and (length is None or length >= 36)
+        )
+        if not fits:
+            return _dropped("uuid", f"generates a UUID, which {_of_type(aurora_type)} cannot hold")
+        return DefaultTranslation(" DEFAULT gen_random_uuid()", "uuid")
+    if p.kind == "bits":
+        if scalar not in ("BIT", "VARBIT"):
+            return _dropped("bits", f"is a bit string on {_of_type(aurora_type)}")
+        return DefaultTranslation(f" DEFAULT B'{p.text}'", "bits")
+    return _sequence(PG_TARGET, scalar, identity_ok)
+
+
+def _render_mysql(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTranslation:
+    base = _base(aurora_type)
+    if p.kind in ("string", "number", "boolean", "bits") and base in _MYSQL_NO_LITERAL:
+        return _dropped(
+            p.kind, f"is a literal, and Aurora MySQL {base} columns take no literal DEFAULT"
+        )
+    if p.kind == "string":
+        return DefaultTranslation(f" DEFAULT {_mysql_quote(p.text)}", "string")
+    if p.kind in ("number", "boolean"):
+        if base not in _MYSQL_NUMERIC | _MYSQL_STRINGS:
+            return _dropped(p.kind, f"is a {p.kind}, which {_of_type(aurora_type)} does not take")
+        if p.kind == "boolean":
+            return DefaultTranslation(f" DEFAULT {'1' if p.text == 'TRUE' else '0'}", "boolean")
+        return DefaultTranslation(f" DEFAULT {p.text}", "number")
+    if p.kind == "timestamp":
+        if base not in ("DATETIME", "TIMESTAMP"):
+            return _dropped(
+                "timestamp",
+                "is the current time, which Aurora MySQL takes only on DATETIME or TIMESTAMP "
+                "columns",
+            )
+        # MySQL requires the default's fractional precision to match the column's.
+        length = _length(aurora_type)
+        precision = f"({length})" if length else ""
+        return DefaultTranslation(f" DEFAULT CURRENT_TIMESTAMP{precision}", "timestamp")
+    if p.kind == "date":
+        if base not in ("DATE", "DATETIME", "TIMESTAMP"):
+            return _dropped(
+                "date", f"is the current date, which {_of_type(aurora_type)} does not take"
+            )
+        return DefaultTranslation(" DEFAULT (CURDATE())", "date")
+    if p.kind == "time":
+        return _dropped(
+            "time", "is the current time of day, which the target DDL does not carry over"
+        )
+    if p.kind == "uuid":
+        length = _length(aurora_type)
+        if base not in ("CHAR", "VARCHAR") or (length is not None and length < 36):
+            return _dropped("uuid", f"generates a UUID, which {_of_type(aurora_type)} cannot hold")
+        return DefaultTranslation(" DEFAULT (UUID())", "uuid")
+    if p.kind == "bits":
+        if base != "BIT":
+            return _dropped("bits", f"is a bit string on {_of_type(aurora_type)}")
+        return DefaultTranslation(f" DEFAULT b'{p.text}'", "bits")
+    return _sequence(MYSQL_TARGET, base, identity_ok)
+
+
+def translate_default(
+    default_value: str | int | float | bool | None,
+    *,
+    source_engine: str,
+    target: str,
+    aurora_type: str,
+    nullable: bool = True,
+    identity_ok: bool = False,
+) -> DefaultTranslation:
+    """Translate one source column default for ``target`` (allowlist only, #156).
+
+    ``source_engine`` picks the grammar (PostgreSQL, MySQL/MariaDB, SQL Server,
+    Oracle, Db2; any other source keeps only a number, NULL or one quoted
+    literal). ``aurora_type`` is the column's resolved target type, which
+    decides what the target accepts (MySQL's CURRENT_TIMESTAMP precision,
+    BOOLEAN 0/1, no number on a date column, columns that take no literal).
+    ``identity_ok`` says whether the column may become an identity
+    (AUTO_INCREMENT) column when its default is a sequence.
+    """
+    if default_value is None:
+        return DefaultTranslation()
+    parsed: _Parsed | None
+    if isinstance(default_value, bool):
+        parsed = _Parsed("boolean", "TRUE" if default_value else "FALSE")
+    elif isinstance(default_value, (int, float)):
+        if not math.isfinite(default_value):
+            return _dropped("number", "is not a finite number")
+        parsed = _Parsed("number", repr(default_value))
+    else:
+        try:
+            parsed = _parse(default_value, source_engine)
+        except _TooDeep:
+            return _dropped(
+                "unrecognized", f"nests parentheses more than {MAX_PAREN_DEPTH} levels deep"
+            )
+        if parsed is None:
+            return _dropped(
+                "unrecognized",
+                f"is outside the DEFAULT grammar this tool translates for "
+                f"{_ENGINE.get(target, target)}",
+            )
+    if parsed.kind == "null":
+        return DefaultTranslation(" DEFAULT NULL" if nullable else "", "null")
+    if parsed.kind == "string" and "\x00" in parsed.text:
+        return _dropped("string", "contains a NUL character")
+    render = _render_mysql if target == MYSQL_TARGET else _render_pg
+    return render(parsed, aurora_type, identity_ok)

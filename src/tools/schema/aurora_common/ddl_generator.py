@@ -18,12 +18,12 @@ from dataclasses import dataclass, field
 from src.contracts.aurora_design_delta import validate_aurora_type
 from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
 from src.tools.schema.aurora_common.constraint_translator import (
-    default_clause,
+    DefaultTranslation,
     fk_on_delete_clause,
     identity_clause,
-    is_expression_default,
     mysql_auto_increment_clause,
     not_null_clause,
+    translate_default,
 )
 from src.tools.schema.aurora_common.source_family import classify_source_family
 from src.tools.schema.aurora_common.source_types import resolve_source_type
@@ -112,8 +112,9 @@ class DdlResult:
     # predicate Aurora cannot take): {"table", "index", "reason"}.
     index_notes: list[dict] = field(default_factory=list)
     # Columns that carry over but need a look: {"table", "column", "kind", "reason"};
-    # kind "default" (a SQL-expression default kept as a literal, #156) or
-    # "time_zone" (a time-zone-aware type mapped to one without, app-layer).
+    # kind "default" (a source default the draft dropped, or turned into an
+    # identity column, #156) or "time_zone" (a time-zone-aware type mapped to
+    # one without, app-layer).
     column_notes: list[dict] = field(default_factory=list)
 
 
@@ -157,31 +158,26 @@ def _column_ddl(
     source_family: str = "other",
     indexed: bool = False,
     notes: list[dict] | None = None,
+    source_engine: str = "",
+    identity_ok: bool = False,
 ) -> ColumnDDL:
     source_type = col.normalized_data_type.value if col.normalized_data_type else None
     notes = notes if notes is not None else []
-    if not col.is_auto_increment and is_expression_default(col.default_value):
-        notes.append(
-            {
-                "table": table_name,
-                "column": col.column_name,
-                "kind": "default",
-                "reason": (
-                    f"DEFAULT {excerpt(str(col.default_value))} is a source SQL expression; "
-                    "the draft keeps it as a quoted literal, so confirm or rewrite it."
-                ),
-            }
-        )
     if override is not None:
         # A model-decided type (#273): judged, so not script-derived and not a residual.
         resolution = TypeResolution(
             aurora_type=override.aurora_type, needs_judgment=True, reason=override.reason
         )
-        return _column_from(col, resolution, source_type, dialect, script_derived=False)
-    resolution = _resolve(col, dialect, source_family, indexed)
+    else:
+        resolution = _resolve(col, dialect, source_family, indexed)
+    default = _default(
+        table_name, col, resolution.aurora_type, dialect, notes, source_engine, identity_ok
+    )
+    if override is not None:
+        return _column_from(col, resolution, source_type, dialect, default, script_derived=False)
     if (
         dialect.backslash_escapes
-        and not col.is_auto_increment
+        and default.kind == "string"
         and isinstance(col.default_value, str)
         and "\\" in col.default_value
         and not resolution.needs_judgment
@@ -219,8 +215,42 @@ def _column_ddl(
             }
         )
     return _column_from(
-        col, resolution, source_type, dialect, script_derived=not resolution.needs_judgment
+        col, resolution, source_type, dialect, default, script_derived=not resolution.needs_judgment
     )
+
+
+def _default(
+    table_name: str,
+    col: AgentColumn,
+    aurora_type: str,
+    dialect: Dialect,
+    notes: list[dict],
+    source_engine: str,
+    identity_ok: bool,
+) -> DefaultTranslation:
+    """The column's DEFAULT for the target, noting any default dropped or rewritten (#156)."""
+    if col.is_auto_increment:
+        # An identity/auto-increment column carries no DEFAULT clause.
+        return DefaultTranslation()
+    translated = translate_default(
+        col.default_value,
+        source_engine=source_engine,
+        target=dialect.name,
+        aurora_type=aurora_type,
+        nullable=col.nullable,
+        identity_ok=identity_ok,
+    )
+    if translated.reason:
+        notes.append(
+            {
+                "table": table_name,
+                "column": col.column_name,
+                "kind": "default",
+                # Collector text is echoed only through excerpt() (repr'd, truncated).
+                "reason": f"DEFAULT {excerpt(str(col.default_value))} {translated.reason}",
+            }
+        )
+    return translated
 
 
 def _column_from(
@@ -228,24 +258,20 @@ def _column_from(
     resolution: TypeResolution,
     source_type: str | None,
     dialect: Dialect,
+    default: DefaultTranslation,
     *,
     script_derived: bool,
 ) -> ColumnDDL:
     auto_increment = dialect.auto_increment(
-        col.is_auto_increment
+        col.is_auto_increment or default.identity
     )  # nosemgrep: is-function-without-parentheses -- property, not a method
     # Identity/auto-increment and default are mutually exclusive — a column
     # cannot be both an identity/auto-increment column and carry a DEFAULT clause.
-    default = (
-        ""
-        if auto_increment
-        else default_clause(col.default_value, backslash_escapes=dialect.backslash_escapes)
-    )
     fragment = (
         f"{dialect.q(col.column_name)} {resolution.aurora_type}"
         f"{auto_increment}"
         f"{not_null_clause(col.nullable)}"
-        f"{default}"
+        f"{'' if auto_increment else default.clause}"
     )
     return ColumnDDL(
         name=col.column_name,
@@ -411,6 +437,20 @@ def _key_columns(table: AgentTable) -> set[str]:
     return cols
 
 
+def _identity_ok(table: AgentTable, col: AgentColumn, dialect: Dialect, has_auto: bool) -> bool:
+    """Whether a sequence default may make ``col`` an identity column (#156).
+
+    Identity implies NOT NULL. MySQL also allows a single AUTO_INCREMENT
+    column, which must be a key: here, the table's whole primary key.
+    """
+    if col.nullable:
+        return False
+    if dialect is MYSQL:
+        pk = [c.lower() for c in table.primary_key or []]
+        return not has_auto and pk == [col.column_name.lower()]
+    return True
+
+
 def _generate(
     tables: list[AgentTable],
     dialect: Dialect,
@@ -426,6 +466,7 @@ def _generate(
 
     for table in tables:
         keyed = _key_columns(table)
+        has_auto = any(c.is_auto_increment for c in table.columns)
         columns = [
             _column_ddl(
                 table.table_name,
@@ -436,6 +477,8 @@ def _generate(
                 source_family=family,
                 indexed=c.column_name.lower() in keyed,
                 notes=column_notes,
+                source_engine=source_engine,
+                identity_ok=_identity_ok(table, c, dialect, has_auto),
             )
             for c in table.columns
         ]

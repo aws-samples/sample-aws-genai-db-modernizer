@@ -409,6 +409,24 @@ def _time_zone_notes(ddl: DdlResult) -> list[dict]:
     ]
 
 
+def _default_notes(ddl: DdlResult) -> list[dict]:
+    """One deterministic app-layer note per source DEFAULT the DDL dropped or rewrote (#156).
+
+    The reason already quotes the source text through ``excerpt`` and, for a
+    sequence turned into an identity column, says to restart it above the
+    highest migrated value, so the note carries that step into the deliverables.
+    """
+    return [
+        {
+            "feature": "column_default",
+            "source_object": f"{n['table']}.{n['column']}",
+            "recommendation": n["reason"],
+        }
+        for n in ddl.column_notes
+        if n["kind"] == "default"
+    ]
+
+
 _FILTER_UNKNOWN = "filter predicate unknown"
 _NO_LEADING_INDEX = "no index leads with the filtered column(s)"
 _AMBIGUOUS_INDEX = "ambiguous index choice"
@@ -530,8 +548,8 @@ def merge_design_delta(
     if defaults:
         sample = ", ".join(f"{n['table']}.{n['column']}" for n in defaults[:5])
         warnings.append(
-            f"{len(defaults)} column(s) have a SQL-expression DEFAULT kept as a quoted literal "
-            f"(e.g. {sample}); review them in the draft's column_notes"
+            f"{len(defaults)} column(s) have a source DEFAULT the draft dropped or turned "
+            f"into an identity column (e.g. {sample}); review them in the draft's column_notes"
         )
     if ddl.residuals:
         sample = ", ".join(f"{r['table']}.{r['column']}" for r in ddl.residuals[:5])
@@ -605,7 +623,8 @@ def merge_design_delta(
         "generated_ddl": assemble_full_ddl(ddl.tables),
         "access_patterns": derived.patterns,
         "app_layer_notes": [n.model_dump(mode="json") for n in contract.app_layer_notes]
-        + _time_zone_notes(ddl),
+        + _time_zone_notes(ddl)
+        + _default_notes(ddl),
         "optimizations": [o.model_dump(mode="json") for o in contract.optimizations],
         "trade_offs": trade_offs,
         "validation_passed": not errors,

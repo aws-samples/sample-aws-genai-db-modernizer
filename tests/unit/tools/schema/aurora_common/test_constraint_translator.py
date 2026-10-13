@@ -1,9 +1,9 @@
 from src.contracts.schema_design_input import ForeignKeyAction
 from src.tools.schema.aurora_common.constraint_translator import (
-    default_clause,
     fk_on_delete_clause,
     identity_clause,
     not_null_clause,
+    translate_default,
 )
 
 
@@ -17,19 +17,25 @@ def test_not_null_clause():
     assert not_null_clause(True) == ""
 
 
+def _clause(value, aurora_type="TEXT"):
+    return translate_default(
+        value, source_engine="mysql", target="aurora_postgresql", aurora_type=aurora_type
+    ).clause
+
+
 def test_default_clause_types():
-    assert default_clause(None) == ""
-    assert default_clause(42) == " DEFAULT 42"
-    assert default_clause(3.5) == " DEFAULT 3.5"
-    assert default_clause(True) == " DEFAULT TRUE"
-    assert default_clause(False) == " DEFAULT FALSE"
-    assert default_clause("active") == " DEFAULT 'active'"
-    assert default_clause("O'Brien") == " DEFAULT 'O''Brien'"
+    assert _clause(None) == ""
+    assert _clause(42, "INTEGER") == " DEFAULT 42"
+    assert _clause(3.5, "REAL") == " DEFAULT 3.5"
+    assert _clause(True, "BOOLEAN") == " DEFAULT TRUE"
+    assert _clause(False, "BOOLEAN") == " DEFAULT FALSE"
+    assert _clause("active") == " DEFAULT 'active'"
+    assert _clause("O'Brien") == " DEFAULT 'O''Brien'"
 
 
 def test_default_clause_passes_through_sql_keywords():
-    assert default_clause("CURRENT_TIMESTAMP") == " DEFAULT CURRENT_TIMESTAMP"
-    assert default_clause("NULL") == " DEFAULT NULL"
+    assert _clause("CURRENT_TIMESTAMP", "TIMESTAMP") == " DEFAULT CURRENT_TIMESTAMP"
+    assert _clause("NULL") == " DEFAULT NULL"
 
 
 def test_fk_on_delete_clause():

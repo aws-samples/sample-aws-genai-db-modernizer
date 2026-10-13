@@ -2411,6 +2411,45 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
+def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
+    """An Aurora design's app-layer notes, column defaults listed on their own (#156).
+
+    ``column_default`` notes are the deterministic ones the schema merge writes
+    for each source DEFAULT the target DDL dropped or turned into an identity
+    column; the rest are time-zone and model-written notes.
+    """
+    notes = design.get("app_layer_notes") or []
+    if not isinstance(notes, list):
+        return []
+    notes = [n for n in notes if isinstance(n, dict)]
+    defaults = [n for n in notes if n.get("feature") == "column_default"]
+    others = [n for n in notes if n.get("feature") != "column_default"]
+    out: list[str] = []
+    if others:
+        out += [f"**Application-layer notes ({len(others)}):**", ""]
+        for n in others:
+            feature = str(n.get("feature") or "note").replace("_", " ")
+            out.append(
+                f"- {escaping.md_text(feature.capitalize())} on "
+                f"`{escaping.md_code(n.get('source_object') or '?')}`: "
+                f"{escaping.md_text(n.get('recommendation') or '')}"
+            )
+        out.append("")
+    if defaults:
+        out += [
+            f"**Column defaults changed or dropped ({len(defaults)}):** set these by hand "
+            "where the application relies on them.",
+            "",
+        ]
+        out += [
+            f"- `{escaping.md_code(n.get('source_object') or '?')}`: "
+            f"{escaping.md_text(n.get('recommendation') or '')}"
+            for n in defaults
+        ]
+        out.append("")
+    return out
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -2612,6 +2651,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     for mn in notes
                 ]
                 out.append("")
+            out += _app_layer_notes_md(dz)
             er = _mermaid_er(eng, dz)
             if er:
                 out += [er, ""]
