@@ -189,7 +189,7 @@ class TestExternalFinalizeRunsTheSameSweep:
         directly plus the shared sweep (what ``bedrock`` mode does inside
         the handler) and finalizing externally must write the same
         assignment and the same ``sweep_decisions``."""
-        corrections_payload = {"consolidation_corrections": []}
+        corrections_payload: dict[str, list] = {"consolidation_corrections": []}
 
         store_a = LocalArtifactStore(base_dir=str(tmp_path / "a"))
         _seed(store_a)

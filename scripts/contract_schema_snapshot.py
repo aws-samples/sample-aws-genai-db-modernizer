@@ -126,6 +126,8 @@ def all_contract_version_models() -> list[tuple[str, type[BaseModel]]]:
         if path.name == "__init__.py":
             continue
         module_name = f"src.contracts.{path.stem}"
+        # module_name comes from the repo's own src/contracts/*.py file list, not input.
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
         module = importlib.import_module(module_name)
         for name, obj in vars(module).items():
             if not isinstance(obj, type) or not issubclass(obj, BaseModel) or obj is BaseModel:
