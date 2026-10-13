@@ -117,6 +117,16 @@ repos:
         name: Validate commit message format
         stages: [commit-msg]
 
+  # Commit message shape: subject length, 2-4 line body, Closes/Refs trailer,
+  # no Co-Authored-By (#570). Skips merge and fixup/squash/amend commits.
+  - repo: local
+    hooks:
+      - id: check-commit-message
+        name: Check commit message shape (length, body, trailer)
+        entry: uv run python scripts/check_commit_message.py
+        language: system
+        stages: [commit-msg]
+        pass_filenames: true
 
   # Pre-commit / CI linter-version alignment
   - repo: local

@@ -23,6 +23,33 @@ validator (`scripts/validate_skills.py`). Same commands and arguments as the
 pre-commit hooks and the `lint` CI job, so a clean `pre-commit run --all-files`
 and a clean `ci/lint.sh` agree. No env vars. No prerequisites beyond `uv sync`.
 
+## `check_commits.sh`
+
+Checks every non-merge commit added on top of `origin/main`
+(`scripts/check_commit_message.py --range origin/main..HEAD`): subject at
+most 72 characters, a 2-4 non-blank-line body, a trailing `Closes #N` or
+`Refs #N` trailer, and no `Co-authored-by` trailer. Merge, fixup/squash/
+amend, and default `git revert` commits are skipped. The CI counterpart of
+the local `check-commit-message` pre-commit hook (`commit-msg` stage, so it
+only runs locally) -- this script also catches a `--no-verify` commit or a
+message edited after the hook ran.
+
+In this `--range` path only, a commit committed before
+`RULE_EFFECTIVE_DATE` (2026-10-13T00:00:00Z, the day this check landed, a
+named constant in `scripts/check_commit_message.py`) is grandfathered in --
+skipped, with `skipped <sha> (before the commit-message rule)` printed --
+rather than counted as a violation, so merging this check does not
+retroactively turn every already-open PR red for commits nobody could have
+made compliant. The local hook has no such cutoff: it only ever validates
+the message being written right now.
+
+A no-op on a push to main: the range is then empty, since `HEAD` already is
+`origin/main`. Needs `origin/main` available locally -- the `lint` CI job's
+checkout step uses `fetch-depth: 0` so a pull request build has it (and
+every commit the pull request adds) even though the pull request branch and
+`main` may not share history within a shallow clone; a normal local clone
+already has full history. No env vars.
+
 ## `test.sh`
 
 Unit, contract, property and graph tests (`tests/` minus `tests/integration`

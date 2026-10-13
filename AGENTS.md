@@ -188,12 +188,14 @@ truth.
 
 - Issues use the templates in `.github/ISSUE_TEMPLATE/`: `[Bug] ...`
   (label `bug`) or `[Feature] ...` (label `enhancement`), every section filled in.
-- One commit per issue: a short Conventional Commits subject plus a short
-  body (a sentence or two each on the problem and the fix), ending
-  `Closes #N` (or `Refs #N` for follow-ups). The full explanation, review
-  notes and test results go in the issue and the PR, not the commit (see
-  CONTRIBUTING.md's Commit Message Format).
-- Never add `Co-Authored-By` trailers; never use `--no-verify`.
+- One commit per issue: a short Conventional Commits subject (at most 72
+  characters) plus a 2-4 line body (a line or two each on the problem and
+  the fix), ending `Closes #N` (or `Refs #N` for follow-ups). The full
+  explanation, review notes and test results go in the issue and the PR,
+  not the commit (see CONTRIBUTING.md's Commit Message Format). A
+  `check-commit-message` pre-commit hook and `ci/check_commits.sh` enforce
+  this; merge and fixup/squash/amend commits are skipped (#570).
+- Never add `Co-Authored-By` trailers (also hook-enforced, see above); never use `--no-verify`.
 - Write tests first; keep PRs small; open them against `main`.
 - Public wording everywhere (issues, commits, docs, code): this is a public
   sample repository, so no internal system names or internal links.

@@ -219,13 +219,11 @@ Common scopes in this project:
 
 1. Use imperative mood: "add" not "added" or "adds"
 2. Don't end subject with period
-3. Limit subject line to 50 characters
+3. Aim for a 50-character subject line; 72 characters is the hard limit the hook below enforces.
 4. Separate subject from body with blank line
-5. Keep the body short: a sentence or two on the problem, a sentence or two
-   on the fix. The full explanation, review notes and test results go in
-   the issue and the PR, not the commit.
-6. Reference issues at the end of the body: "Closes #123" when the commit
-   finishes the issue, "Refs #123" for a follow-up
+5. Keep the body to 2-4 non-blank lines: a line or two on the problem, a line or two on the fix. The full explanation, review notes and test results go in the issue and the PR, not the commit.
+6. Reference exactly one issue at the end of the body: "Closes #123" when the commit finishes the issue, "Refs #123" for a follow-up. One commit per issue (see the Conventions in AGENTS.md), so "Closes #1, #2" (or any other multi-issue trailer) is rejected -- split multi-issue work into separate commits instead. Other git trailers (e.g. "Signed-off-by:") are recognized as trailers, not counted toward the 2-4 body lines in rule 5.
+7. A `check-commit-message` pre-commit hook (`commit-msg` stage) and `ci/check_commits.sh` enforce rules 3, 5 and 6 (subject at most 72 characters, 2-4 non-blank body lines, a trailing `Closes #N`/`Refs #N` trailer) plus no `Co-authored-by` trailer. Both ignore everything from a `git commit -v` scissors line down (the diff it appends for reference is never part of the message). Merge, fixup/squash/amend, and a default `git revert` message (`Revert "..."` plus only `This reverts commit <sha>.` lines -- a hand-edited revert message is checked normally) are skipped.
 
 ---
 
