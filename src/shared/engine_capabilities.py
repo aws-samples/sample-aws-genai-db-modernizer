@@ -147,8 +147,8 @@ FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
 #
 # ``query_scoring.compute_query_confidence`` keys off this set, with the
 # same precedence everywhere it is used -- the resolver's own ``resolve()``
-# and, since #490, the reality check's Aurora absorption pass and the
-# mandatory-engine floor's absorber, all through the one shared
+# and, since #490, the reality check's mandatory-engine floor's absorber,
+# all through the one shared
 # ``score_query_for_engine`` (#549): an engine in this set never gets a
 # non-zero score from a table-wide average. It first checks whether the
 # query itself appears in one of the engine's own detected patterns (real,

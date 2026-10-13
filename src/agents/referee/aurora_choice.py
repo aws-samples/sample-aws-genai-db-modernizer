@@ -12,7 +12,7 @@ Everywhere else -- a caller with no score totals, resolving a tie after the
 already carrying more of the recorded SETTLED workload wins; a genuine tie
 (including 0 vs 0, no settled workload recorded at all) goes through the
 shared ADR-031 tie-break (:func:`src.agents.referee.tie_break.break_tie`),
-the same rule set Reality Check's absorption pass uses, hashed together with
+the same rule set Reality Check's placement uses, hashed together with
 a caller-supplied ``tie_key`` -- never a constant seed, and never a bare name
 preference (#550). :func:`pick_aurora_engine_with_tie` is the same decision,
 for a caller that also needs the tie kind, to record on the query. Never the

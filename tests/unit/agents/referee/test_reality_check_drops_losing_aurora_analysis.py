@@ -6,8 +6,8 @@ heterogeneous source (SQL Server, Oracle, DB2), so both have an
 runs -- but the assignment resolver already collapsed them to one winner
 (``Assignment.aurora_engine_choice``) before anything was assigned.
 ``run_reality_check_deterministic`` must drop the loser's analysis from its own
-``analysis_outputs`` too, so the absorption pass and consolidation logic never
-treat it as a live candidate to move a query onto.
+``analysis_outputs`` too, so the consolidation logic never treats it as a live
+candidate to move a query onto.
 """
 
 from __future__ import annotations

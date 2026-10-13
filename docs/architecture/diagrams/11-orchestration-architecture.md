@@ -72,7 +72,7 @@ StartExecution
   → RunAnalysisPipelines (Map state, per triage-selected engine):
       → RunAnalysis (ecs:runTask.sync)
   → RunAssignmentResolution (ecs:runTask.sync)
-  → RunRealityCheck (ecs:runTask.sync, includes Aurora Absorption Pass)
+  → RunRealityCheck (ecs:runTask.sync, engine consolidation)
   → WaitForAssignmentApproval (waitForTaskToken — execution pauses indefinitely)
       → token stored in DynamoDB via states:dynamodb:updateItem
       → resumes when UI calls POST /assessments/{job_id}/resume

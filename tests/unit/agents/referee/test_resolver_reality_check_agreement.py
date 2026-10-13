@@ -77,10 +77,9 @@ def _assert_resolver_and_reality_check_agree(
     for engine in engines:
         from_trace = _resolver_score(trace.by_query, query_id, engine)
         standalone = score_query_for_engine(query_map[query_id], engine, ctx)
-        # Both reality-check scoring call sites (the mandatory-engine floor's
-        # absorber, the Aurora absorption pass -- both call
-        # ``score_query_for_engine`` directly now) must read the identical
-        # number the resolver itself used -- a hard gate (``None`` from
+        # The reality check's direct scoring call site (the mandatory-engine
+        # floor's absorber, which calls ``score_query_for_engine``) must read
+        # the identical number the resolver itself used -- a hard gate (``None`` from
         # ``_resolver_score``) has no standalone equivalent to compare
         # against, but both sides agree it is gated either way.
         if from_trace is not None:
@@ -222,12 +221,13 @@ class TestAbsorptionBehaviorChanges:
     2 Step 4's score (not Step 2's gate) is supposed to express. So none of
     them is added back as a hard capability; the two tests below pin the
     resulting, intentional absorption changes through the real entry points
-    (``_run_aurora_absorption_pass`` and ``_find_best_absorber_for_query``),
+    (``resettle_after_corrections`` -- #588, it replaced the Aurora absorption
+    pass -- and ``_find_best_absorber_for_query``),
     not just a per-engine score comparison, so they fail for a behavioural
     reason, not a changed signature.
 
     ``transactions`` (the anti-pattern penalty an engine's own analysis can
-    self-detect, scored by ``_absorb_tiny_mandatory_engine``) is the one old
+    self-detect, scored by the shared ``score_query_for_engine``) is the one old
     capability that already has a strictly better equivalent:
     ``query_scoring.ANTI_PATTERN_PENALTIES["acid-transactions"]``/
     ``CAPABILITY_SIGNAL_ENGINES`` exempts Aurora and DocumentDB outright and
@@ -253,55 +253,57 @@ class TestAbsorptionBehaviorChanges:
     docstring, not restored.
     """
 
-    def test_a_session_store_signal_no_longer_blocks_tiny_mandatory_absorption(self):
-        """The reviewer's repro: a 2-query, signal-mandatory DynamoDB engine
-        (``session_store``) next to a committed Aurora MySQL that scores 70
-        on DynamoDB's own tables.
+    def test_a_session_store_signal_does_not_protect_a_small_engine(self):
+        """A 2-query DynamoDB engine with a ``session_store`` (or
+        ``leaderboard_pattern``) signal, next to a committed Aurora MySQL that
+        scores its table 70 against DynamoDB's 60.
 
-        On main, ``_absorb_tiny_mandatory_engine``'s old "basic-covered
-        signal" shim had no ``session_store`` -> basic-capability entry in
-        ``SIGNAL_TO_BASIC_CAPABILITY`` (only ``text_search`` had one), so it
-        returned ``[]`` immediately for ANY other signal, keeping DynamoDB
-        regardless of Aurora's score. ``leaderboard_pattern`` is the same
-        case. Here, Aurora's own fit (70, no anti-pattern entry for either
-        signal) clears ``AURORA_ABSORPTION_MIN_FIT`` (50) on its own, so
-        DynamoDB is absorbed.
-
-        Goes through ``rerun_aurora_absorption`` -- a stable entry point
-        with the identical signature on main (#490 review round 2: calling
-        the lower-level ``_run_aurora_absorption_pass`` directly fails on
-        main with a ``TypeError`` from the changed signature, not a value
-        mismatch, which is a weaker regression pin).
+        Neither signal maps to a hard capability, so it protects nothing: the
+        shared rule removes DynamoDB (no query scores
+        ``UNIQUE_DELTA_THRESHOLD`` above Aurora) and its queries move to
+        Aurora. #588: this goes through ``resettle_after_corrections``, the
+        shared rule that replaced the Aurora absorption pass this test used to
+        call; the pass's tiny signal-pinned case is now the justification
+        floors' job, so these queries are plain, not signal-pinned.
         """
-        from src.agents.referee.reality_check import rerun_aurora_absorption
+        from src.agents.referee.reality_check import resettle_after_corrections
 
         for signal in ("session_store", "leaderboard_pattern"):
             revised_assignments = [
                 {"query_id": f"aq{i}", "assigned_engine": "aurora_mysql"} for i in range(30)
             ] + [
-                {"query_id": "s1", "assigned_engine": "dynamodb", "signal_override": signal},
-                {"query_id": "s2", "assigned_engine": "dynamodb", "signal_override": signal},
+                {"query_id": "s1", "assigned_engine": "dynamodb"},
+                {"query_id": "s2", "assigned_engine": "dynamodb"},
             ]
+            tables = {f"aq{i}": "db.main" for i in range(30)} | {
+                "s1": "db.sessions",
+                "s2": "db.sessions",
+            }
             collector_output = {
                 "queries": {
                     "query_patterns": [
-                        {"query_id": qa["query_id"], "tables_accessed": ["db.sessions"]}
-                        for qa in revised_assignments
+                        {"query_id": qid, "tables_accessed": [table]}
+                        for qid, table in tables.items()
                     ]
                 }
             }
             analysis_outputs = {
                 "aurora_mysql": {
-                    "table_recommendations": [{"table_id": "db.sessions", "confidence_score": 70}]
-                }
+                    "table_recommendations": [
+                        {"table_id": "db.main", "confidence_score": 90},
+                        {"table_id": "db.sessions", "confidence_score": 70},
+                    ]
+                },
+                "dynamodb": {
+                    "table_recommendations": [
+                        {"table_id": "db.main", "confidence_score": 30},
+                        {"table_id": "db.sessions", "confidence_score": 60},
+                    ]
+                },
             }
-            # The triage signal list, not just each qa's own ``signal_override``
-            # string, is what both the old ``_build_query_signals`` and (for
-            # a triage with no ``query_capabilities`` key) the new
-            # ``ScoringContext.from_pipeline`` fallback actually read.
             triage = {"signals": [{"signal": signal, "query_ids": ["s1", "s2"]}]}
 
-            revised, consolidations = rerun_aurora_absorption(
+            revised, consolidations = resettle_after_corrections(
                 revised_assignments, triage, analysis_outputs, collector_output
             )
 
@@ -311,30 +313,19 @@ class TestAbsorptionBehaviorChanges:
             assert {c["to_engine"] for c in consolidations} == {"aurora_mysql"}, signal
 
     def test_a_leaderboard_signal_no_longer_protects_a_small_specialist(self):
-        """A non-mandatory, 3-query DynamoDB specialist next to a committed
-        Aurora PostgreSQL, with DynamoDB scoring 60 on its own table and
-        Aurora scoring 50. (The round-1 review's suggested example,
-        ``key_value_lookups``, turns out not to isolate this: Aurora had
-        ``key_value_lookup`` in the old ``ENGINE_CAPABILITIES`` too, so both
-        sides got the same +20 bonus and it cancelled out of the delta --
-        confirmed by running this test, with that signal, against main,
-        where it still passed. ``leaderboard_pattern`` is asymmetric: only
-        DynamoDB had ``leaderboard_simple`` in the old table.)
+        """A 3-query DynamoDB specialist next to a committed Aurora
+        PostgreSQL, with DynamoDB scoring 60 on its own table and Aurora 50.
 
-        On main, the ``leaderboard_pattern`` triage signal gave DynamoDB
-        ``SIGNAL_MATCH_BONUS`` (+20) in ``_engine_fit_score`` and penalised
-        Aurora the same amount for lacking it (-20), so the specialist score
-        was 80 against Aurora's 30 -- a delta of 50, not below
-        ``SPECIALIST_DELTA_THRESHOLD`` (30), so DynamoDB was protected.
-        There is no equivalent bonus or penalty any more
-        (``leaderboard_pattern`` is not an anti-pattern/capability-signal
-        type at all), so the real delta is 60 - 50 = 10, below the
-        threshold: DynamoDB is absorbed. Goes through
-        ``rerun_aurora_absorption`` (see the previous test's docstring for
-        why), and this one does fail by value, not just ``TypeError``, when
-        run against main (confirmed the same way).
+        Before #490, the ``leaderboard_pattern`` triage signal gave DynamoDB a
+        +20 bonus and Aurora a -20 penalty in the reality check's own scorer,
+        so DynamoDB looked 50 points ahead and was protected. There is no such
+        bonus any more (``leaderboard_pattern`` is not an anti-pattern or
+        capability signal), so the real gap is 10 points, below
+        ``UNIQUE_DELTA_THRESHOLD``: DynamoDB has no unique value and its
+        queries move to Aurora. #588: through ``resettle_after_corrections``,
+        the shared rule that replaced the Aurora absorption pass.
         """
-        from src.agents.referee.reality_check import rerun_aurora_absorption
+        from src.agents.referee.reality_check import resettle_after_corrections
 
         revised_assignments = [
             {"query_id": f"aq{i}", "assigned_engine": "aurora_postgresql"} for i in range(30)
@@ -343,25 +334,33 @@ class TestAbsorptionBehaviorChanges:
             {"query_id": "k2", "assigned_engine": "dynamodb"},
             {"query_id": "k3", "assigned_engine": "dynamodb"},
         ]
+        tables = {f"aq{i}": "db.main" for i in range(30)} | {
+            k: "db.sessions" for k in ("k1", "k2", "k3")
+        }
         collector_output = {
             "queries": {
                 "query_patterns": [
-                    {"query_id": qa["query_id"], "tables_accessed": ["db.sessions"]}
-                    for qa in revised_assignments
+                    {"query_id": qid, "tables_accessed": [table]} for qid, table in tables.items()
                 ]
             }
         }
         analysis_outputs = {
             "aurora_postgresql": {
-                "table_recommendations": [{"table_id": "db.sessions", "confidence_score": 50}]
+                "table_recommendations": [
+                    {"table_id": "db.main", "confidence_score": 90},
+                    {"table_id": "db.sessions", "confidence_score": 50},
+                ]
             },
             "dynamodb": {
-                "table_recommendations": [{"table_id": "db.sessions", "confidence_score": 60}]
+                "table_recommendations": [
+                    {"table_id": "db.main", "confidence_score": 30},
+                    {"table_id": "db.sessions", "confidence_score": 60},
+                ]
             },
         }
         triage = {"signals": [{"signal": "leaderboard_pattern", "query_ids": ["k1", "k2", "k3"]}]}
 
-        revised, consolidations = rerun_aurora_absorption(
+        revised, consolidations = resettle_after_corrections(
             revised_assignments, triage, analysis_outputs, collector_output
         )
 

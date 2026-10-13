@@ -8,12 +8,16 @@ and operational burden. Does this engine earn its place?"
 Default posture: 2 engines max. A third engine must provide genuinely unique
 capabilities that no other committed engine can serve.
 
-Five passes:
-  0. Unique value assessment — does each engine provide irreplaceable capabilities?
-  1. Aurora absorption — absorb orphan queries from low-count engines into committed Aurora
-  2. Consolidation — absorb redundant engines into committed engines
-  3. Architectural pattern detection — CQRS, materialized views, event sourcing
-  4. Integration topology — recommend specific sync mechanisms and patterns
+Steps:
+  1. Settle (Phase 1) — which engines earn a place: an engine is removed when the
+     other committed engines can serve its queries (shared per-query scores)
+  2. Place (Phase 2) — every query on its highest-scoring remaining engine
+  3. Justification floors — a mandatory engine must still earn its fixed cost
+  4. Architectural pattern detection — CQRS, materialized views, event sourcing
+  5. Integration topology — recommend specific sync mechanisms and patterns
+
+After validation corrections bring back a removed engine, the same review runs
+again (``resettle_after_corrections``, ADR-031 Decision 7).
 
 The output is a revised assignment (new version) plus architectural recommendations
 that feed into synthesis.
@@ -27,17 +31,15 @@ import warnings
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.agents.referee.aurora_choice import pick_aurora_engine, source_database_engine
+from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
 from src.agents.referee.tie_break import break_tie
-from src.agents.referee.tie_break import settled_counts as settled_workload_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
@@ -117,23 +119,6 @@ def _mandatory_cost_share_reason(engine: str, qas: list[dict], total_queries: in
     return None
 
 
-# ---------------------------------------------------------------------------
-# Aurora Absorption Pass (Pass 1)
-# ---------------------------------------------------------------------------
-
-# Engines with fewer queries than this are candidates for Aurora absorption
-AURORA_ABSORPTION_QUERY_THRESHOLD = 10
-
-# Aurora must score at least this to absorb a query
-AURORA_ABSORPTION_MIN_FIT = 50
-
-# If the specialist engine scores this much higher than Aurora, query is protected
-SPECIALIST_DELTA_THRESHOLD = 30
-
-# Mandatory engines (signal overrides) at or below this many queries can still be
-# absorbed, when Aurora covers each query's signal at a basic level (#165)
-TINY_MANDATORY_QUERY_THRESHOLD = 5
-
 # Set of Aurora engine identifiers
 AURORA_ENGINES = {"aurora_postgresql", "aurora_mysql"}
 
@@ -141,16 +126,6 @@ AURORA_ENGINES = {"aurora_postgresql", "aurora_mysql"}
 def _query_has_join(query: dict) -> bool:
     """Whether ``query`` joins two or more tables (``has_joins``/``join_count``)."""
     return bool(query.get("has_joins")) or (query.get("join_count") or 0) >= 1
-
-
-@dataclass
-class AuroraAbsorptionResult:
-    """Result of the Aurora absorption pass."""
-
-    absorbed_queries: list[dict]
-    engines_eliminated: list[str]
-    engines_reduced: list[str]
-    aurora_engine: str
 
 
 # ---------------------------------------------------------------------------
@@ -1226,6 +1201,7 @@ def _place_settled_queries(
     tie_unresolved_qids: set[str] | None = None,
     settled_counts: Mapping[str, int] | None = None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
+    held_query_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
     engine within the settled committed set, using the SAME per-query
@@ -1271,9 +1247,14 @@ def _place_settled_queries(
     and a tie that first appears here (two non-source-compatible engines
     newly tying for the top score during consolidation) is recorded too,
     not silently dropped because it was never tied before.
+
+    ``held_query_ids`` (#588) are already part of ``mandatory_query_ids``
+    here (they never move either); this set only names them correctly in a
+    partial consolidation's ``retention_reason``.
     """
     tie_unresolved_qids = tie_unresolved_qids or set()
     tied_engines_by_qid = tied_engines_by_qid or {}
+    held_query_ids = held_query_ids or set()
     revised = deepcopy(query_assignments)
     revised_by_id = {qa["query_id"]: qa for qa in revised}
     moves: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -1480,7 +1461,10 @@ def _place_settled_queries(
         retained_qids = (
             [] if is_full else sorted(set(native_qids_by_engine.get(frm, [])) - moved_from[frm])
         )
-        retained_mandatory = [q for q in retained_qids if q in mandatory_query_ids]
+        retained_held = [q for q in retained_qids if q in held_query_ids]
+        retained_mandatory = [
+            q for q in retained_qids if q in mandatory_query_ids and q not in held_query_ids
+        ]
         retained_other = [q for q in retained_qids if q not in mandatory_query_ids]
         n_tie_unresolved = tie_unresolved_moves.get((frm, to), 0)
         consolidations.append(
@@ -1507,6 +1491,10 @@ def _place_settled_queries(
                         r
                         for r, present in (
                             ("Mandatory signal queries stay on their engine", retained_mandatory),
+                            (
+                                "Corrected queries stay where the correction placed them",
+                                retained_held,
+                            ),
                             (
                                 "No remaining engine scores these queries as well as this "
                                 "one does",
@@ -1557,11 +1545,19 @@ def run_reality_check(
     collector_output: dict,
     query_capabilities: dict[str, list[str]] | None = None,
     source_engine: str | None = None,
+    held_query_ids: Iterable[str] = (),
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
 
     ``source_engine`` is the source database engine (e.g. ``"mysql"``); it picks
     the Aurora engine when both are committed. Defaults to the collector's.
+
+    ``held_query_ids`` (#588) are queries that stay on their current engine:
+    they keep that engine committed and are never moved, the same protection
+    a signal override gets in Phase 1 and Phase 2, but they do not make the
+    engine "mandatory" for the justification floors. Used by
+    ``resettle_after_corrections`` for the queries a validation correction
+    placed.
 
     Thinks like a pragmatic CTO: "Every additional database is operational
     burden. Does this engine EARN its place, or can another engine already
@@ -1636,6 +1632,11 @@ def run_reality_check(
         if qa["query_id"] in mandatory_query_ids:
             mandatory_committed_engines.add(qa["assigned_engine"])
 
+    # Queries that never move (#588): the signal overrides above plus any
+    # held query. Only the signal overrides make an engine mandatory.
+    held = set(held_query_ids)
+    fixed_query_ids = mandatory_query_ids | held
+
     # Re-run the resolver once, with a trace attached, so Phase 1 and Phase
     # 2 read the IDENTICAL per-query scores (#502 review: Phase 1 judging
     # engines by the reality check's own, separate scorer, rather than
@@ -1653,8 +1654,8 @@ def run_reality_check(
     # floor's absorber (``_find_best_absorber_for_query``) scores each
     # candidate engine directly with this (``score_query_for_engine``)
     # instead of reading ``trace_by_query`` -- one scoring call site, same
-    # as the Aurora absorption pass and ``routed_confidence.py``, rather
-    # than a second way of reaching the identical number.
+    # as ``routed_confidence.py``, rather than a second way of reaching the
+    # identical number.
     scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
     # The resolver's OWN settled-workload snapshot (#503), persisted on the
     # trace rather than recomputed here from
@@ -1699,7 +1700,7 @@ def run_reality_check(
     source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
     committed_engines, unique_value_assessment = _settle_committed_engines(
         engine_queries,
-        mandatory_query_ids,
+        fixed_query_ids,
         mandatory_committed_engines,
         trace_by_query,
         current_engine_by_qid,
@@ -1723,7 +1724,7 @@ def run_reality_check(
     revised, consolidations = _place_settled_queries(
         query_assignments,
         committed_engines,
-        mandatory_query_ids,
+        fixed_query_ids,
         current_engine_by_qid,
         query_signals,
         query_map,
@@ -1734,16 +1735,17 @@ def run_reality_check(
         tie_unresolved_qids,
         settled_counts,
         tied_engines_by_qid,
+        held_query_ids=held,
     )
     lightweight_recommendations: list[dict] = []
 
     # -------------------------------------------------------------------
     # Mandatory-engine justification floor (#326, #167)
     #
-    # A signal override makes an engine "mandatory" through Pass 0-2 above,
-    # which protects queries Aurora absorption (#165) could not place either
-    # -- that is how a $150+/mo OpenSearch domain kept 4 LIKE/prefix admin
-    # queries at under 1 call/s in a maintainer's run. This is the last gate:
+    # A signal override makes an engine "mandatory" through Phase 1 and
+    # Phase 2 above, which never move its queries -- that is how a $150+/mo
+    # OpenSearch domain kept 4 LIKE/prefix admin queries at under 1 call/s in
+    # a maintainer's run. This is the last gate:
     # a mandatory engine that still owns only its mandatory queries, and does
     # not meet its justification floor, is not exempt forever. OpenSearch
     # gets the dedicated floor from #326 (traffic, search depth, native
@@ -1789,7 +1791,12 @@ def run_reality_check(
             verdicts = {
                 qa["query_id"]: (cost_reason is None, cost_reason or "") for qa in current_qas
             }
-        to_move_qas = [qa for qa in current_qas if not verdicts[qa["query_id"]][0]]
+        # A held query (#588) stays where it is even when it fails the floor.
+        to_move_qas = [
+            qa
+            for qa in current_qas
+            if not verdicts[qa["query_id"]][0] and qa["query_id"] not in held
+        ]
         if not to_move_qas:
             continue
 
@@ -1833,7 +1840,7 @@ def run_reality_check(
                     trace_by_query,
                     current_engine_by_qid,
                     floor_candidates,
-                    mandatory_query_ids,
+                    fixed_query_ids,
                     query_signals,
                     query_map,
                     query_capabilities,
@@ -2077,49 +2084,50 @@ def run_reality_check(
     }
 
 
-def rerun_aurora_absorption(
+def resettle_after_corrections(
     revised_assignments: list[dict],
     triage: dict,
     analysis_outputs: dict[str, dict],
     collector_output: dict,
     source_engine: str | None = None,
+    held_query_ids: Iterable[str] = (),
 ) -> tuple[list[dict], list[dict]]:
-    """Run Pass 1 again on an already-revised assignment (#166).
+    """Settle the engines again after validation corrections (#166, #588).
 
+    A correction can bring back an engine the reality check removed, so the
+    committed set it settled against has changed. This runs the same review
+    again on the corrected assignment (``run_reality_check``: Phase 1 settle,
+    Phase 2 placement and the justification floors), so an engine is removed
+    when the committed engines can serve its queries, and each moved query
+    goes to its highest-scoring remaining engine, by the same per-query
+    scores and eligibility gate as the first run (ADR-031 Decision 7). It
+    replaces the Aurora-only absorption pass and its own thresholds.
+
+    ``held_query_ids`` are the corrected queries: they stay where the
+    correction put them, so the engine a correction restored is not removed
+    again. The customer's own picks (``customer_override``) are handled the
+    way the first run handles them (``run_reality_check_deterministic``):
+    left out of the review and put back unchanged afterwards, so a pick
+    never commits an engine that other queries could then move onto.
     ``source_engine`` defaults to the collector's source database engine.
 
-    The LLM validator can restore an Aurora engine that Pass 0 removed, after
-    Pass 1 found no Aurora to absorb into. Call this once after corrections so
-    small engines get the same chance they would have had.
+    Note this can move queries that were not corrected onto the engine a
+    correction brought back, when it scores them higher.
 
     Returns (updated_assignments, new_consolidations). Assignments are copied.
     """
-    from src.agents.referee.query_scoring import ScoringContext
-
-    revised = deepcopy(revised_assignments)
-    engine_queries: dict[str, list[dict]] = defaultdict(list)
-    for qa in revised:
-        engine_queries[qa["assigned_engine"]].append(qa)
-    mandatory_committed_engines = {
-        qa["assigned_engine"] for qa in revised if _is_signal_override(qa)
-    }
-    queries = collector_output.get("queries", {}).get("query_patterns", [])
-
-    scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
-    absorption = _run_aurora_absorption_pass(
-        engine_queries=engine_queries,
-        surviving_engines={e for e, qas in engine_queries.items() if qas},
-        mandatory_committed_engines=mandatory_committed_engines,
-        query_map={q["query_id"]: q for q in queries},
-        ctx=scoring_ctx,
-        source_engine=(
-            source_database_engine(collector_output) if source_engine is None else source_engine
-        ),
+    candidates = [qa for qa in revised_assignments if not qa.get("customer_override")]
+    result = run_reality_check(
+        {"query_assignments": deepcopy(candidates)},
+        triage,
+        analysis_outputs,
+        collector_output,
+        source_engine=source_engine,
+        held_query_ids=held_query_ids,
     )
-    consolidations = _apply_aurora_absorption(
-        revised, absorption, engine_queries, mandatory_committed_engines
-    )
-    return revised, consolidations
+    revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
+    updated = [revised_by_id.get(qa["query_id"]) or deepcopy(qa) for qa in revised_assignments]
+    return updated, result["consolidations"]
 
 
 def _build_query_signals(signals: list[dict]) -> dict[str, list[str]]:
@@ -2131,68 +2139,6 @@ def _build_query_signals(signals: list[dict]) -> dict[str, list[str]]:
     return query_signals
 
 
-def _apply_aurora_absorption(
-    revised: list[dict],
-    absorption: AuroraAbsorptionResult,
-    engine_queries: dict[str, list[dict]],
-    mandatory_committed_engines: set[str],
-    workload_justified: dict[str, bool | None] | None = None,
-) -> list[dict]:
-    """Move absorbed queries in ``revised`` (in place) and return their consolidations (#168).
-
-    ``workload_justified`` (#475 review, defaults to empty so a caller with
-    no first-assignment context -- ``rerun_aurora_absorption``, the LLM
-    correction path -- gets ``None`` for every engine, same as having no
-    opinion) carries each engine's ``_workload_ever_justified`` verdict onto
-    its consolidation record.
-    """
-    workload_justified = workload_justified or {}
-    absorbed_by_id = {aq["query_id"]: aq for aq in absorption.absorbed_queries}
-    for qa in revised:
-        aq = absorbed_by_id.get(qa["query_id"])
-        if aq:
-            qa["assigned_engine"] = aq["to_engine"]
-            qa["assignment_reason"] = (
-                f"reality check: absorbed from {aq['from_engine']} → {aq['to_engine']} "
-                f"({aq['reason']})"
-            )
-
-    by_source: dict[str, list[dict]] = {}
-    for aq in absorption.absorbed_queries:
-        by_source.setdefault(aq["from_engine"], []).append(aq)
-
-    consolidations = []
-    for from_engine, queries in by_source.items():
-        is_full = from_engine in absorption.engines_eliminated
-        base_cost = ENGINE_BASE_COST.get(from_engine, 100)
-        consolidations.append(
-            {
-                "from_engine": from_engine,
-                "to_engine": absorption.aurora_engine,
-                "query_count": len(queries),
-                "reason": (
-                    f"Aurora absorption: {queries[0]['reason']}"
-                    if from_engine in mandatory_committed_engines
-                    else f"Aurora absorption: {from_engine} had "
-                    f"< {AURORA_ABSORPTION_QUERY_THRESHOLD} queries and Aurora "
-                    f"scores adequately on {'all' if is_full else 'absorbable subset'}"
-                ),
-                "saved_cost_estimate": (base_cost + EXTRA_ENGINE_BURDEN_MONTHLY) if is_full else 0,
-                "action": "full" if is_full else "partial",
-                "queries_retained": [
-                    qa["query_id"]
-                    for qa in engine_queries[from_engine]
-                    if qa["query_id"] not in absorbed_by_id
-                ],
-                "retention_reason": (
-                    None if is_full else "Specialist engine scores well ahead of Aurora"
-                ),
-                "workload_justified": workload_justified.get(from_engine),
-            }
-        )
-    return consolidations
-
-
 def _is_signal_override(qa: dict) -> bool:
     """True when a triage signal forced this query to its engine (#151).
 
@@ -2202,223 +2148,6 @@ def _is_signal_override(qa: dict) -> bool:
     if "signal_override" in qa:
         return bool(qa["signal_override"])
     return str(qa.get("assignment_reason", "")).startswith("signal override")
-
-
-def _run_aurora_absorption_pass(
-    engine_queries: dict[str, list[dict]],
-    surviving_engines: set[str],
-    mandatory_committed_engines: set[str],
-    query_map: dict[str, dict],
-    ctx: ScoringContext,
-    source_engine: str = "",
-) -> AuroraAbsorptionResult:
-    """Pass 1: Absorb orphan queries from low-count engines into committed Aurora.
-
-    Only runs when an Aurora engine is already committed. Engines with fewer than
-    AURORA_ABSORPTION_QUERY_THRESHOLD queries are candidates. Each query must pass
-    a dual-condition gate:
-      - Aurora fit score >= AURORA_ABSORPTION_MIN_FIT
-      - Specialist delta < SPECIALIST_DELTA_THRESHOLD
-
-    If the specialist engine scores significantly higher than Aurora on a query,
-    that query is protected (the specialist provides genuine operational value).
-
-    The fit score for both sides of that comparison is the resolver's own
-    (``query_scoring.score_query_for_engine``, #490/#549): the hard exclusion
-    and capability gates, then base table/pattern confidence
-    (``query_scoring.compute_query_confidence``) minus the resolver's
-    anti-pattern penalty, against the one ``ctx`` (``ScoringContext.
-    from_pipeline``) built once by the caller -- never this module's own,
-    separately drifting ``_engine_fit_score``. A gated engine
-    (``EngineScore.score is None``) scores 0 here: a hard-gated Aurora never
-    clears ``AURORA_ABSORPTION_MIN_FIT`` (so the query stays protected,
-    correctly refusing the absorption), and a hard-gated specialist is
-    already a contradiction (it currently owns this query), so there is no
-    better number to fall back to than 0 either way.
-
-    Latent edge (#490 review): ``AssignmentResolver.resolve()`` un-gates the
-    homogeneous source's own Aurora dialect outright (the "capability
-    guarantee" block -- this exact query already ran on the source
-    database, so its matching Aurora engine is always ownable and
-    serviceable for it), but ``score_query_for_engine`` has no equivalent --
-    it is a pure per-(query, engine) function with no notion of "the
-    source's own dialect". If a future exclusion or capability rule ever
-    gated that engine for a query it is actually guaranteed to serve, this
-    pass and ``_find_best_absorber_for_query`` would score it 0/``None``
-    while the resolver scored it normally. Not reachable today (no rule
-    gates an Aurora engine on its own source's queries), so this is a
-    comment, not a fix.
-    """
-    empty_result = AuroraAbsorptionResult(
-        absorbed_queries=[], engines_eliminated=[], engines_reduced=[], aurora_engine=""
-    )
-
-    # Committed Aurora engine: the source's dialect, else the shared ADR-031
-    # tie-break on the recorded SETTLED workload decides (shared rule, #288,
-    # #550 review). ``engine_queries``' own qa dicts already carry
-    # ``tied_engines`` from the main deterministic run (this pass only ever
-    # runs again from ``rerun_aurora_absorption``, on an already-revised
-    # assignment, with no live resolver snapshot of its own to reuse) --
-    # ``settled_counts`` filters to the ones that is empty for, never a raw
-    # ``len()`` of every current query regardless of whether its own
-    # placement was itself a tie. The tie key comes from every query this
-    # pass is looking at, so it does not repeat #550's constant-seed bug.
-    all_qas = [qa for qas in engine_queries.values() for qa in qas]
-    aurora_engine = pick_aurora_engine(
-        surviving_engines,
-        source_engine,
-        settled_workload_counts(all_qas),
-        tie_key=",".join(sorted(qa["query_id"] for qa in all_qas)),
-    )
-    if aurora_engine is None:
-        return empty_result
-
-    from src.agents.referee.query_scoring import score_query_for_engine
-
-    absorbed_queries: list[dict] = []
-    engines_eliminated: list[str] = []
-    engines_reduced: list[str] = []
-
-    # Identify candidates: non-Aurora, < threshold queries. Mandatory engines
-    # qualify only when tiny, and are handled all-or-nothing below.
-    candidates = [
-        e
-        for e in sorted(surviving_engines)
-        if e not in AURORA_ENGINES
-        and len(engine_queries.get(e, [])) > 0
-        and (
-            len(engine_queries[e]) <= TINY_MANDATORY_QUERY_THRESHOLD
-            if e in mandatory_committed_engines
-            else len(engine_queries[e]) < AURORA_ABSORPTION_QUERY_THRESHOLD
-        )
-    ]
-
-    for candidate_engine in candidates:
-        qas = engine_queries[candidate_engine]
-
-        if candidate_engine in mandatory_committed_engines:
-            mandatory_absorbed = _absorb_tiny_mandatory_engine(
-                candidate_engine,
-                aurora_engine,
-                qas,
-                query_map,
-                ctx,
-            )
-            if mandatory_absorbed:
-                absorbed_queries.extend(mandatory_absorbed)
-                engines_eliminated.append(candidate_engine)
-            continue
-
-        absorbable = []
-        protected = []
-
-        for qa in qas:
-            qid = qa["query_id"]
-            query = query_map.get(qid, qa)
-            aurora_result = score_query_for_engine(query, aurora_engine, ctx)
-            specialist_result = score_query_for_engine(query, candidate_engine, ctx)
-            aurora_fit = int(aurora_result.score) if aurora_result.score is not None else 0
-            specialist_fit = (
-                int(specialist_result.score) if specialist_result.score is not None else 0
-            )
-            delta = specialist_fit - aurora_fit
-
-            if aurora_fit >= AURORA_ABSORPTION_MIN_FIT and delta < SPECIALIST_DELTA_THRESHOLD:
-                absorbable.append(
-                    {
-                        "query_id": qid,
-                        "from_engine": candidate_engine,
-                        "to_engine": aurora_engine,
-                        "fit_score": aurora_fit,
-                        "specialist_score": specialist_fit,
-                        "delta": delta,
-                        "reason": (
-                            f"Aurora fit={aurora_fit}, specialist delta={delta} "
-                            f"(below threshold={SPECIALIST_DELTA_THRESHOLD})"
-                        ),
-                    }
-                )
-            else:
-                protected.append(qa)
-
-        # Decision logic
-        if len(absorbable) == len(qas):
-            # All queries absorbable: fully eliminate engine
-            absorbed_queries.extend(absorbable)
-            engines_eliminated.append(candidate_engine)
-        elif absorbable and len(protected) <= len(qas) // 2:
-            # Some absorbable, minority protected: partial absorption
-            absorbed_queries.extend(absorbable)
-            engines_reduced.append(candidate_engine)
-        # else: most queries protected, skip this engine
-
-    return AuroraAbsorptionResult(
-        absorbed_queries=absorbed_queries,
-        engines_eliminated=engines_eliminated,
-        engines_reduced=engines_reduced,
-        aurora_engine=aurora_engine,
-    )
-
-
-def _absorb_tiny_mandatory_engine(
-    candidate_engine: str,
-    aurora_engine: str,
-    qas: list[dict],
-    query_map: dict[str, dict],
-    ctx: ScoringContext,
-) -> list[dict]:
-    """Absorb every query of a tiny mandatory engine into Aurora, or none (#165).
-
-    Each query must pass ``query_scoring.score_query_for_engine``'s own gates
-    (the hard exclusion gate, then the hard capability gate --
-    ``capability_registry.can_engine_serve_capability`` against
-    ``ctx.query_capabilities``) and clear ``AURORA_ABSORPTION_MIN_FIT`` on its
-    base confidence minus the resolver's anti-pattern penalty (#490/#549).
-
-    The specialist delta check is skipped on purpose: the engine is mandatory
-    because a triage signal override pinned it there (``_is_signal_override``,
-    checked by this function's only caller), not because of a score -- there
-    is no "specialist score" to compare Aurora against for a query that was
-    never scored into contention in the first place. Partial absorption is
-    refused because the engine, and its cost, would stay. The old
-    "basic-covered signal" shim (treating a signal Aurora can only serve in a
-    basic form as neutral) is gone: the resolver's own anti-pattern/
-    capability-exemption scoring (``_capability_scoped_penalty``) already
-    accounts for Aurora's native, if weaker, support -- e.g. a text-search
-    signal costs Aurora nothing extra once ``wildcard-search``/
-    ``full-text-search`` exempt it. A signal with no anti-pattern-table entry
-    at all (``session_store``, ``leaderboard_pattern``, ...) costs Aurora
-    nothing either, which is new behaviour from #490 -- see the issue and the
-    PR body for the full list and the ADR-031 reasoning.
-    """
-    from src.agents.referee.query_scoring import score_query_for_engine
-
-    fits: dict[str, int] = {}
-
-    for qa in qas:
-        qid = qa["query_id"]
-        result = score_query_for_engine(query_map.get(qid, qa), aurora_engine, ctx)
-        if result.score is None or result.score < AURORA_ABSORPTION_MIN_FIT:
-            return []
-        fits[qid] = int(result.score)
-
-    reason = (
-        f"{candidate_engine} carries only {len(qas)} queries and {aurora_engine} "
-        f"serves them (fit {min(fits.values())}-{max(fits.values())}), so a dedicated "
-        f"{candidate_engine} deployment is not justified"
-    )
-    return [
-        {
-            "query_id": qa["query_id"],
-            "from_engine": candidate_engine,
-            "to_engine": aurora_engine,
-            "fit_score": fits[qa["query_id"]],
-            "specialist_score": None,
-            "delta": None,
-            "reason": reason,
-        }
-        for qa in qas
-    ]
 
 
 def _find_best_absorber_for_query(
@@ -2709,7 +2438,7 @@ def patterns_for_assignment(query_assignments: list[dict]) -> list[dict]:
 def refresh_patterns_and_recommendations(result: dict) -> None:
     """Recompute ``architectural_patterns`` and ``recommendations`` from the final assignment.
 
-    Patterns are first detected before the LLM corrections, the re-run Aurora absorption,
+    Patterns are first detected before the LLM corrections, the post-correction re-settle,
     the sanity sweep and the customer-override restore, any of which can still move
     queries; the output must describe the assignment it ships with, so no pattern names
     an engine that ends up with no in-scope query (#202). Only in-scope queries count.
@@ -2745,7 +2474,7 @@ def reconcile_consolidations(
 ) -> list[dict]:
     """Make the consolidation records describe the net per-query moves (#218).
 
-    Pass 2, the LLM corrections, the re-run Aurora absorption, the sanity sweep and
+    Pass 2, the LLM corrections, the post-correction re-settle, the sanity sweep and
     the customer-override restore each move queries and edit records on their own,
     so the records drifted from the assignment (unrecorded moves, overstated counts,
     savings for an engine that stays). This derives the moves from the before/after

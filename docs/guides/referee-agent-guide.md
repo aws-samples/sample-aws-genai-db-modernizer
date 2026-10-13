@@ -113,20 +113,24 @@ adds its target engines deterministically.
 
 Run after the initial assignment, before schema design. Default posture: at
 most 2 committed engines; a third must provide a genuinely unique capability
-no other committed engine can serve. Five deterministic passes
-(`src/agents/referee/reality_check.py`):
+no other committed engine can serve. Deterministic steps
+(`src/agents/referee/reality_check.py`), all reading the resolver's own
+per-query scores (ADR-031 Decision 7):
 
-0. **Unique value assessment** — per engine, which assigned queries does it
-   serve meaningfully better than the next-best alternative (`unique`) vs.
-   nearly-as-well (`redundant`)?
-1. **Aurora absorption** — pull orphan queries from low-count engines into
-   an already-committed Aurora engine when it can serve them.
-2. **Consolidation** — absorb a redundant engine's queries into a committed
-   engine (duplicate/already-assigned/can't-serve checks).
-3. **Architectural pattern detection** — CQRS, materialized views, event
+1. **Settle (unique value assessment)** — per engine, which assigned queries
+   does it serve meaningfully better than every other committed engine
+   (`unique`) vs. nearly-as-well (`redundant`)? An engine is removed when the
+   other committed engines can serve its queries.
+2. **Place** — every query goes to its highest-scoring remaining engine.
+3. **Justification floors** — an engine pinned by a signal override must
+   still earn its fixed cost.
+4. **Architectural pattern detection** — CQRS, materialized views, event
    sourcing.
-4. **Integration topology** — specific sync mechanisms between the
+5. **Integration topology** — specific sync mechanisms between the
    surviving engines.
+
+When a validation correction brings back an engine these steps removed, the
+same steps run again with the corrected queries held in place.
 
 The deterministic pass writes a **new assignment version**
 (`src/storage/assignment_versioning.py` — reality check and customer edits

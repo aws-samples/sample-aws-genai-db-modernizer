@@ -660,7 +660,8 @@ class TestRunRealityCheckHandlerBackwardCompatible:
 
 
 class TestAbsorptionRerunAfterLlmRestoresAurora:
-    """When the LLM brings Aurora back, small engines get a second absorption pass (#166)."""
+    """When the LLM brings Aurora back, the engines are settled again (#166) by
+    the same rule as the first run, not an Aurora-only pass (#588)."""
 
     @staticmethod
     def _det_with_aurora_consolidated() -> dict:
@@ -726,11 +727,22 @@ class TestAbsorptionRerunAfterLlmRestoresAurora:
                     + [{"query_id": qid, "tables_accessed": ["db.users"]} for qid in os_ids]
                 }
             },
+            # #588: every engine scores every table, so the re-settle decides
+            # on real per-query scores: DynamoDB keeps db.options (90 against
+            # Aurora's 50), Aurora takes db.posts and db.users.
             "analysis_outputs": {
                 "aurora_mysql": {
                     "table_recommendations": [
                         {"table_id": "db.posts", "confidence_score": 80},
                         {"table_id": "db.users", "confidence_score": 80},
+                        {"table_id": "db.options", "confidence_score": 50},
+                    ]
+                },
+                "dynamodb": {
+                    "table_recommendations": [
+                        {"table_id": "db.options", "confidence_score": 90},
+                        {"table_id": "db.posts", "confidence_score": 40},
+                        {"table_id": "db.users", "confidence_score": 40},
                     ]
                 },
                 "opensearch": {
@@ -748,6 +760,9 @@ class TestAbsorptionRerunAfterLlmRestoresAurora:
         return apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
 
     def test_tiny_engine_absorbed_into_restored_aurora(self):
+        """The 3 OpenSearch queries are signal-pinned but fail OpenSearch's
+        justification floor (no search depth, no traffic); once Aurora is
+        back, it is the committed engine that can serve them."""
         result = self._restore_aurora(self._det_with_aurora_consolidated())
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
@@ -761,6 +776,64 @@ class TestAbsorptionRerunAfterLlmRestoresAurora:
         assert len(from_os) == 1
         assert from_os[0]["to_engine"] == "aurora_mysql"
         assert from_os[0]["query_count"] == 3
+
+    def test_corrected_queries_stay_on_the_restored_aurora(self):
+        """The two corrected join queries are held: the re-settle does not
+        remove the restored Aurora again, nor move them back."""
+        result = self._restore_aurora(self._det_with_aurora_consolidated())
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["aq1"] == "aurora_mysql"
+        assert engine_of["aq2"] == "aurora_mysql"
+
+    def test_the_handler_holds_corrected_queries_even_when_they_score_higher_elsewhere(self):
+        """The corrected joins score 90 on DynamoDB and 50 on Aurora, so the
+        shared scores alone would move them straight back and remove Aurora
+        again; the handler holds them where the correction put them."""
+        det = self._det_with_aurora_consolidated()
+        for engine, score in (("aurora_mysql", 50), ("dynamodb", 90)):
+            for rec in det["analysis_outputs"][engine]["table_recommendations"]:
+                if rec["table_id"] == "db.posts":
+                    rec["confidence_score"] = score
+
+        result = self._restore_aurora(det)
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["aq1"] == "aurora_mysql"
+        assert engine_of["aq2"] == "aurora_mysql"
+
+    def test_restoring_a_non_aurora_engine_also_resettles(self):
+        """With no Aurora at all, a correction sends its query back to its
+        original engine; that engine is back, so the engines are settled
+        again and the tiny, unjustified OpenSearch moves onto it (#588)."""
+        det = self._det_with_aurora_consolidated()
+        for qa in det["revised_assignments"]:
+            if qa["query_id"] in ("aq1", "aq2"):
+                qa["assignment_reason"] = "reality check: consolidated from documentdb → dynamodb"
+        det["consolidations"][0]["from_engine"] = "documentdb"
+        det["before_distribution"] = {"dynamodb": 10, "documentdb": 2, "opensearch": 3}
+        det["analysis_outputs"] = {
+            "documentdb": {
+                "table_recommendations": [
+                    {"table_id": "db.posts", "confidence_score": 80},
+                    {"table_id": "db.users", "confidence_score": 70},
+                    {"table_id": "db.options", "confidence_score": 50},
+                ]
+            },
+            "dynamodb": det["analysis_outputs"]["dynamodb"],
+            "opensearch": det["analysis_outputs"]["opensearch"],
+        }
+        corrections = [
+            {"query_id": qid, "original_engine": "documentdb", "reason": "nested documents"}
+            for qid in ("aq1", "aq2")
+        ]
+
+        result = apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
+
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert engine_of["aq1"] == "documentdb"
+        assert {engine_of[q] for q in ("os1", "os2", "os3")} == {"documentdb"}
+        assert {engine_of[f"dq{i}"] for i in range(10)} == {"dynamodb"}
 
     def test_no_rerun_when_aurora_was_never_consolidated(self):
         det = self._det_with_aurora_consolidated()

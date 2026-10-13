@@ -484,8 +484,7 @@ def _signal_override_block(members: list[str], by_id: dict[str, dict]) -> str | 
     """A display-named "nowhere else to go" reason when any of ``members``
     carries a mandatory signal override (round 2 review, Important 2): the
     rest of the reality check treats a signal-override query as mandatory
-    for its engine (``mandatory_query_ids`` in Phase 1/2, ``mandatory_
-    committed_engines`` in the Aurora absorption pass) -- this sweep must
+    for its engine (``mandatory_query_ids`` in Phase 1/2) -- this sweep must
     not undo that protection just because the engine it is mandatory for
     happens to also be tiny. ``None`` when no member is a signal override.
     """

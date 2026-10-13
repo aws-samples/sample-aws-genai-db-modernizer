@@ -38,7 +38,7 @@ graph TB
     end
 
     AR[Assignment Resolution]
-    RC[Reality Check<br/>incl. Aurora Absorption Pass]
+    RC[Reality Check<br/>engine consolidation]
 
     GATE2[Human Gate 2<br/>WaitForAssignmentApproval]
 
@@ -96,7 +96,7 @@ graph TB
 | Human Gate 1 | WaitForTriageApproval | Pauses execution after triage; resumes on human approval via UI |
 | Analysis | Schema, Performance, Aurora MySQL, Aurora PostgreSQL, RDS, Cost, Security, Additional | Per-engine, inside RunAnalysisPipelines Map state |
 | Assignment Resolution | Single agent | After analysis map; determines target engine assignments |
-| Reality Check | Single agent (includes Aurora Absorption Pass) | After assignment resolution; validates feasibility |
+| Reality Check | Single agent (engine consolidation by the shared per-query scores) | After assignment resolution; validates feasibility |
 | Human Gate 2 | WaitForAssignmentApproval | Pauses execution after reality check; resumes on human approval via UI |
 | Schema Design | DynamoDB, OpenSearch, ElastiCache, DocumentDB | Per-engine, inside RunSchemaDesignPipelines Map state; includes PE review loop |
 | Load Test | k6-based agent | Per-engine, inside RunLoadTestPipelines Map state |

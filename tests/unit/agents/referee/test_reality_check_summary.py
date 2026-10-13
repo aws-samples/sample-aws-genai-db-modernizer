@@ -604,28 +604,57 @@ class TestHandlerShipsFinalSummary:
 
 
 class TestAbsorptionCandidates:
-    def test_small_engines_are_flagged_when_aurora_is_in_play(self):
+    """#588: finalize settles the engines again whenever a correction can bring
+    back an engine the preview removed, and that can remove any engine the
+    preview kept, whatever its size -- so every kept engine is flagged then,
+    and none is otherwise. There is no "small engine" cut-off any more."""
+
+    def test_every_kept_engine_is_flagged_when_a_removed_aurora_can_come_back(self):
         from src.agents.referee.reality_check_handler import absorption_candidates
 
         # The run-ui-wordpress preview (reality-check/llm_input.json): Aurora MySQL fully
-        # moved away, OpenSearch left with 4 queries.
+        # moved away. A correction redirects to Aurora, so Aurora can come back.
         before = dict(BEFORE)
         preview_after = {"dynamodb": 69, "elasticache": 34, "opensearch": 4}
-        # DocumentDB (6 in the input) is empty in the preview, but a correction could
-        # restore it and Aurora could then absorb it.
-        assert absorption_candidates(before, preview_after) == ["documentdb", "opensearch"]
+        assert absorption_candidates(before, preview_after) == [
+            "dynamodb",
+            "elasticache",
+            "opensearch",
+        ]
 
-    def test_an_engine_emptied_by_the_preview_is_still_a_candidate(self):
+    def test_an_engine_the_preview_emptied_stays_out_while_aurora_can_come_back(self):
+        """A correction goes to Aurora when there is one, never back to the
+        emptied OpenSearch, so OpenSearch's fate is already known; DynamoDB's
+        is not, even at 54 queries."""
         from src.agents.referee.reality_check_handler import absorption_candidates
 
         before = {"aurora_mysql": 20, "dynamodb": 30, "opensearch": 4}
-        assert absorption_candidates(before, {"dynamodb": 54}) == ["opensearch"]
-        assert absorption_candidates({"aurora_mysql": 3, "dynamodb": 30}, {"dynamodb": 33}) == []
+        assert absorption_candidates(before, {"dynamodb": 54}) == ["dynamodb"]
+        assert absorption_candidates({"aurora_mysql": 3, "dynamodb": 30}, {"dynamodb": 33}) == [
+            "dynamodb"
+        ]
 
-    def test_no_aurora_no_candidates(self):
+    def test_nothing_is_flagged_while_aurora_is_kept(self):
+        """Every correction lands on the kept Aurora, so nothing comes back."""
         from src.agents.referee.reality_check_handler import absorption_candidates
 
-        assert absorption_candidates({"dynamodb": 5, "opensearch": 2}, {"opensearch": 2}) == []
+        before = {"aurora_mysql": 20, "dynamodb": 30, "documentdb": 4}
+        assert absorption_candidates(before, {"aurora_mysql": 24, "dynamodb": 30}) == []
+
+    def test_without_aurora_a_removed_engine_can_come_back(self):
+        """With no Aurora, a correction returns its query to its original
+        engine, which can bring DynamoDB back."""
+        from src.agents.referee.reality_check_handler import absorption_candidates
+
+        assert absorption_candidates({"dynamodb": 5, "opensearch": 2}, {"opensearch": 2}) == [
+            "opensearch"
+        ]
+        assert (
+            absorption_candidates(
+                {"dynamodb": 5, "opensearch": 2}, {"dynamodb": 5, "opensearch": 2}
+            )
+            == []
+        )
 
     def test_llm_input_carries_the_flag(self):
         from src.agents.referee.reality_check_handler import (
@@ -636,4 +665,7 @@ class TestAbsorptionCandidates:
 
         det = run_reality_check_deterministic("job-1", "mydb", _mock_store(), 1)
         payload = prepare_reality_check_llm_input(det)
-        assert payload["executive_summary"]["absorption_candidates"] == []
+        # The preview removes DocumentDB and there is no Aurora, so a
+        # correction can bring DocumentDB back and re-settle DynamoDB (#588).
+        assert det["after_distribution"] == {"dynamodb": 3}
+        assert payload["executive_summary"]["absorption_candidates"] == ["dynamodb"]

@@ -27,12 +27,11 @@ from src.agents.referee.consolidation_validator import (
 )
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
-    AURORA_ABSORPTION_QUERY_THRESHOLD,
     AURORA_ENGINES,
     _build_query_signals,
     reconcile_consolidations,
     refresh_patterns_and_recommendations,
-    rerun_aurora_absorption,
+    resettle_after_corrections,
     run_reality_check,
 )
 from src.agents.referee.reality_check_request import (
@@ -106,8 +105,8 @@ def run_reality_check_deterministic(
     # (SQL Server, Oracle, DB2), so both are read back in above -- but the
     # assignment resolver already collapsed them to one winner
     # (``Assignment.aurora_engine_choice``) before anything was assigned. Drop the
-    # loser here too, so Reality Check's absorption pass and consolidation logic
-    # never treat it as a live candidate to move a query onto.
+    # loser here too, so Reality Check's consolidation logic
+    # never treats it as a live candidate to move a query onto.
     aurora_choice = assignment.get("aurora_engine_choice")
     winner = aurora_choice.get("engine") if aurora_choice else None
     if winner in AURORA_ENGINES:
@@ -203,25 +202,22 @@ def prepare_reality_check_llm_input(deterministic_result: dict) -> dict:
 def absorption_candidates(
     before_distribution: dict[str, int], after_distribution: dict[str, int]
 ) -> list[str]:
-    """Engines whose fate can still change after the LLM's corrections (#236).
+    """Engines whose fate can still change after the LLM's corrections (#236, #588).
 
-    When the input has an Aurora engine, a correction that keeps Aurora re-runs the
-    Aurora absorption at finalize, and it can absorb any non-Aurora engine left with
-    fewer than ``AURORA_ABSORPTION_QUERY_THRESHOLD`` queries. That includes an engine
-    the preview already emptied, which corrections can restore, so the input counts
-    are what matters (the preview count too, should a move have grown a small
-    engine). The external LLM writes its summary before that, so it must not state
-    these engines' final fate.
+    A correction moves its query to a committed-or-original Aurora engine when
+    there is one, else back to its original engine. When that brings back an
+    engine the preview removed, finalize settles the engines again
+    (``resettle_after_corrections``) with the same rule as the first run, which
+    can remove any engine the preview kept, whatever its size. So every engine
+    the preview kept is listed; none is when no correction can bring an engine
+    back. The external LLM writes its summary before that, so it must not
+    state these engines' final fate.
     """
-    if not AURORA_ENGINES & set(before_distribution):
-        return []
-    small = {
-        engine
-        for distribution in (before_distribution, after_distribution)
-        for engine, count in distribution.items()
-        if 0 < count < AURORA_ABSORPTION_QUERY_THRESHOLD
-    }
-    return sorted(small - AURORA_ENGINES)
+    kept = {engine for engine, count in after_distribution.items() if count > 0}
+    removed = {engine for engine, count in before_distribution.items() if count > 0} - kept
+    aurora_pool = AURORA_ENGINES & (kept | removed)
+    restorable = (aurora_pool - kept) if aurora_pool else removed
+    return sorted(kept) if restorable else []
 
 
 # ---------------------------------------------------------------------------
@@ -260,17 +256,21 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
                 all_original_engines=all_original_engines,
                 source_engine=source_database_engine(result.get("collector_output", {})),
             )
-            # The LLM can restore an Aurora that Pass 1 never saw; absorb again (#166)
+            # A correction can bring back an engine the reality check removed;
+            # the engines were settled without it, so settle them again with
+            # the same rule (#166, #588). The corrected queries stay put; the
+            # customer's own picks are left out and put back, as in the first run.
             corrected_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
-            if (AURORA_ENGINES & corrected_engines) - surviving_engines:
-                result["revised_assignments"], absorbed = rerun_aurora_absorption(
+            if corrected_engines - surviving_engines:
+                result["revised_assignments"], resettled = resettle_after_corrections(
                     result["revised_assignments"],
                     result.get("triage", {}),
                     result.get("analysis_outputs", {}),
                     result.get("collector_output", {}),
                     source_engine=source_database_engine(result.get("collector_output", {})),
+                    held_query_ids={c["query_id"] for c in corrections},
                 )
-                result["consolidations"] = result["consolidations"] + absorbed
+                result["consolidations"] = result["consolidations"] + resettled
             # Patterns and recommendations must follow the corrected assignment
             refresh_patterns_and_recommendations(result)
             # Recompute after_distribution
