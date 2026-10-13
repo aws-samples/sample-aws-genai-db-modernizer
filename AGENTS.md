@@ -83,6 +83,15 @@ uv pip install "agent-builder-sdk-aws-transform>=1.0.0"   # needed for a fully g
 The UI needs Node 22 (`npm ci`, then `npm run build`, in `src/ui/`); `ci/e2e.sh`
 and `ci/e2e-llm.sh` build it for you.
 
+## Parallel worktrees
+
+- Run `uv sync` in each worktree; a worktree's `.venv` is its own.
+- The main clone's editable install points at its own `src/`, so if you reuse
+  it from another worktree, set `PYTHONPATH` and `UV_NO_SYNC=1` instead.
+- Regenerate generated baselines (the routing snapshot, the contract schema
+  snapshot) on top of main rather than merging them.
+- Land shared extractions before the fixes that depend on them.
+
 ## Which test tier for which change
 
 | Tier | Command | Checks | Cost / time |
@@ -183,6 +192,22 @@ truth.
   `src/contracts/aurora_design_delta.py`), so collector text never reaches
   DDL unchecked.
 - Engine/query assignment is deterministic; a model may explain it, not decide it.
+
+## Routing changes
+
+The routing model lives in one place, [ADR-031](docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md).
+This section is a pointer, not a restatement.
+
+- The query is the unit everywhere: routing, waves, deliverable figures, cost
+  and scope. A table's `primary_engine` is a summary label.
+- There is one scorer: `query_scoring.score_query_for_engine`, used with
+  `ScoringContext.from_pipeline`. Never add a private fit function.
+- Ties go through `tie_break.break_tie`, using `settled_counts` only.
+  [`test_no_engine_bias.py`](tests/unit/agents/referee/test_no_engine_bias.py)
+  enforces this.
+- An override onto an engine that can't serve the query is rejected.
+- Explain drift with the [routing snapshot](tests/e2e/routing_snapshot.py),
+  and regenerate it on rebase. Never hand-merge it.
 
 ## Conventions
 
