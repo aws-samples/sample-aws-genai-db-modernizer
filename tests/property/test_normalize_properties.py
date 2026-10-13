@@ -49,6 +49,7 @@ _dialect = st.sampled_from(["mysql", "mariadb", "postgresql", "sqlserver"])
 @example(query_text="SELECT * FROM t WHERE name = 'what?' AND id = ?", dialect="mysql")
 @example(query_text="SELECT * FROM t /* it's ? */ WHERE a = ?", dialect="mysql")
 @example(query_text="SELECT 1 WHERE a = ? -- comment", dialect="mysql")
+@example(query_text="?AS", dialect="mysql")
 @example(query_text="SELECT $$it's a $1 test$$ WHERE a = $2", dialect="postgresql")
 @example(query_text="SELECT * FROM t WHERE a = 'it\\'s' AND b = ?", dialect="mysql")
 def test_normalization_is_idempotent_and_truncated_is_stable(query_text: str, dialect: str) -> None:

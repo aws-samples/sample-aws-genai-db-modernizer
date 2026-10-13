@@ -380,6 +380,10 @@ _LIST_ELLIPSIS_RE = re.compile(r"\?\s*,\s*\.\.\.")
 _PLACEHOLDER_RE = re.compile(r"\?")
 
 
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch in "_$"
+
+
 def _apply_rule(
     text: str, mask: list[bool], pattern: re.Pattern[str], rule_name: str, replacement: str
 ) -> tuple[str, list[bool], list[str]]:
@@ -402,8 +406,15 @@ def _apply_rule(
             continue
         text_parts.append(text[last_end:start])
         mask_parts.append(mask[last_end:start])
-        text_parts.append(replacement)
-        mask_parts.append([False] * len(replacement))
+        # Keep the replacement a separate token: "?AS" must become "NULL AS",
+        # not "NULLAS", or a second pass would read a different statement.
+        piece = replacement
+        if start > 0 and _is_word_char(text[start - 1]):
+            piece = " " + piece
+        if end < len(text) and _is_word_char(text[end]):
+            piece = piece + " "
+        text_parts.append(piece)
+        mask_parts.append([False] * len(piece))
         applied.append(rule_name)
         last_end = end
 
