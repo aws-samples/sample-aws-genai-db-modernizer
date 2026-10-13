@@ -1,6 +1,6 @@
 # Understand the results
 
-This describes the deliverables the pipeline produces today. It will be updated as [Epic #340](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/340) changes recommendations.
+This describes the deliverables the pipeline produces today.
 
 ## The pipeline, in plain terms
 
@@ -8,7 +8,7 @@ This describes the deliverables the pipeline produces today. It will be updated 
 2. **Triage** looks at workload signals (key-value lookups, text search, time-series, etc.) and picks the engines worth analyzing.
 3. **Analyze** scores every query against each candidate engine, deterministically, with an optional model advisor.
 4. **Assign** resolves each query to the best-fit engine, resolving co-dependencies between queries that touch the same tables.
-5. **Reality Check** folds engines that picked up only a few low-confidence queries into stronger ones. A model can check that each move works, but the consolidation is deterministic and does not need it. Queries no other engine can serve go back to Aurora.
+5. **Reality Check** removes an engine once the engines that remain can serve its queries just as well, and moves each of its queries onto its own best-fit remaining engine. If a later correction brings a removed engine back, Reality Check re-settles with the corrected queries held in place. The source-compatible Aurora engine survives this consolidation unless another engine scores better, or is at least 40% and $100/month cheaper. A model can check that each move still works; the consolidation itself is deterministic and does not need it.
 6. **Schema Design** produces concrete schemas per engine: DynamoDB table definitions, DocumentDB collections, OpenSearch mappings, the relational DDL that stays.
 7. **Synthesis** produces the final report: ranking, TCO, risks, and an executive summary.
 
@@ -38,6 +38,8 @@ OpenSearch serves search and analytics queries, but every table it serves keeps 
 ## Migration waves
 
 The deliverables lay out a suggested step-by-step path that starts with the relational move. For example: Wave 1 moves the source database to Aurora with no data model changes yet; Wave 2 adds a cache layer in front of the hot reads; Wave 3 moves key-value queries to DynamoDB; Wave 4 adds OpenSearch as a read model for search and analytics queries. The fully decomposed target architecture appears next to it as the direct, single-step option. The wave order is a suggestion; other orders work too, and the end-state schema is the same either way.
+
+Each wave lists every table its queries use, not only the tables its engine owns, and the report shows both numbers as "N served, M move". The tables that move go to the wave's engine. The rest stay owned by their current engine (usually Aurora) and are kept in sync with a copy on the new engine.
 
 ## Risks
 

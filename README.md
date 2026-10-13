@@ -94,7 +94,7 @@ Open the repository in Claude Code and run, with the collector file as the argum
 
 By default `/modernize` opens the local UI next to the chat. The chat reports each phase, and the UI shows the assignment, the schema designs and the full report. When the chat says the UI is ready, open <http://localhost:3000>.
 
-The run stops once, after Reality Check, for your approval. The chat shows the final engine assignment and asks you to approve it. Outside chat-only mode it first points you to the Sankey and assignment view in the UI. After you approve, the run goes on by itself through Schema Design and Synthesis to the finished deliverables. For a terminal-only run (no browser, or a headless environment), use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat`.
+The run stops once, after Reality Check, for your approval. The chat shows the final engine assignment and asks you to approve it. An unresolved tie between engines shows as "Tied," and overriding a query onto an engine that can't run it is rejected with a reason. Outside chat-only mode it first points you to the Sankey and assignment view in the UI. After you approve, the run goes on by itself through Schema Design and Synthesis to the finished deliverables. For a terminal-only run (no browser, or a headless environment), use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat`.
 
 The individual commands (`/collect`, `/triage`, `/analyze`, `/assign`, `/reality-check`, `/design-schema`, `/synthesize`) run one phase at a time. See [Use Claude Code](https://aws-samples.github.io/sample-aws-genai-db-modernizer/use-claude-code/) on the help site.
 
