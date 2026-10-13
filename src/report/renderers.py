@@ -1087,7 +1087,8 @@ def render_decision_report_html(
     eliminated_cost_text = _eliminated_engine_costs_text(tco)
     if eliminated_cost_text:
         out.append(
-            f"<p class=note>Already removed from this comparison: {esc(eliminated_cost_text)}, "
+            "<p class=note data-figure=eliminated-engines>Already removed from this comparison: "
+            f"{esc(eliminated_cost_text)}, "
             "retired before this projection; see Engines not used below.</p>"
         )
 
@@ -1134,20 +1135,23 @@ def render_decision_report_html(
                 total_cost += c
             if isinstance(wl, (int, float)):
                 total_wl += wl
+            # data-engine/data-figure: stable hooks for the deliverable-figures
+            # e2e test (#573), which reads each figure back from the page.
             out.append(
-                f"<tr><td>{_engine_badge(e['engine'])}</td>"
+                f"<tr data-engine=\"{escaping.html_attr(e['engine'])}\">"
+                f"<td>{_engine_badge(e['engine'])}</td>"
                 f"<td class=role>{esc(e['role'])}</td>"
-                f"<td>{_workload_cell(e)}</td>"
-                f"<td>{esc(e['scope'])}</td>"
-                f"<td>{_fmt_usd(c)}</td>"
+                f"<td data-figure=workload>{_workload_cell(e)}</td>"
+                f"<td data-figure=scope>{esc(e['scope'])}</td>"
+                f"<td data-figure=monthly-cost>{_fmt_usd(c)}</td>"
                 f"<td class=why>{esc(e['rationale'] or DASH)}</td></tr>"
             )
         out.append(
-            f"<tr><td colspan=2>Total</td>"
+            f"<tr data-figure=total><td colspan=2>Total</td>"
             f"<td>{total_wl:.0f}%</td>"
-            f"<td>{migrated} {plural_noun(migrated, 'table')} "
+            f"<td data-figure=scope>{migrated} {plural_noun(migrated, 'table')} "
             f"{plural_verb(migrated, 'migrates', 'migrate')}</td>"
-            f"<td>{_fmt_usd(total_cost)}</td><td></td></tr>"
+            f"<td data-figure=monthly-cost>{_fmt_usd(total_cost)}</td><td></td></tr>"
         )
         out.append("</tbody></table></div></div>")
 
@@ -1234,7 +1238,8 @@ def render_decision_report_html(
                 else ""
             )
             out.append(
-                f"<p>Overall risk <b>{esc(risk_level)}</b>. {len(risks)} open migration "
+                f"<p data-figure=risk-summary>Overall risk <b>{esc(risk_level)}</b>. "
+                f"{len(risks)} open migration "
                 f"{plural_noun(len(risks), 'risk')} "
                 f"({sev_txt}) across {esc(types_txt)}.{resolved_txt} The full "
                 "risk register, with "
@@ -1904,12 +1909,64 @@ def _tied_queries_html(report: dict[str, Any]) -> list[str]:
             f"<b>{under}</b> pending your choice.</li>"
         )
     return [
+        "<section data-figure=tied-queries>",
         f"<h2 class=section-title>Pending engine choices "
         f"({len(tied)} {esc(plural_noun(len(tied), 'query', 'queries'))})</h2>",
         "<div class=card><div class=card-b><ul>",
         *items,
         "</ul></div></div>",
+        "</section>",
     ]
+
+
+def _dropped_engines(report: dict[str, Any]) -> list[str]:
+    """Engines the reality check removed from the architecture, in a stable order.
+
+    #547: an engine counts as dropped when it owned queries before the reality
+    check (``before_distribution``), a full consolidation moved it out, or the
+    TCO lists its cost as already removed (the "Already removed" note's own
+    source) -- and it owns nothing afterwards. A trade-off line carrying
+    ``reconcile_consolidations``' "no in-scope X query remains" marker also
+    counts, for reports written before the distributions were recorded. A
+    partial consolidation leaves its engine in the architecture, so it is
+    never listed.
+    """
+    rc = report.get("reality_check") or {}
+    after = rc.get("after_distribution") or {}
+    cache = (report.get("cache_overlay") or {}).get("engine")
+    candidates: list[str] = []
+    for t in report.get("trade_offs") or []:
+        desc = str((t or {}).get("description") or "")
+        elim = _FULLY_ELIMINATED_RE.search(desc)
+        m = _CONSOLIDATED_FROM_TO_RE.match(desc)
+        candidates += [x.group(1) for x in (elim, m) if x]
+    candidates += [
+        str(c.get("from_engine") or "")
+        for c in rc.get("consolidations") or []
+        if isinstance(c, dict) and c.get("action") == "full"
+    ]
+    candidates += sorted(e for e, n in (rc.get("before_distribution") or {}).items() if n)
+    eliminated = [
+        str(row.get("database") or "")
+        for row in (report.get("tco_analysis") or {}).get("eliminated_engine_costs") or []
+        if isinstance(row, dict)
+    ]
+    candidates += eliminated
+    marked = set(eliminated) | {
+        m.group(1)
+        for t in report.get("trade_offs") or []
+        if (m := _FULLY_ELIMINATED_RE.search(str((t or {}).get("description") or "")))
+    }
+    out: list[str] = []
+    for e in candidates:
+        if not e or e in out or e == cache or after.get(e):
+            continue
+        if not after and e not in marked:
+            # No distributions recorded (an older report): only the marker or
+            # an eliminated cost says an engine left; a bare line does not.
+            continue
+        out.append(e)
+    return out
 
 
 def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
@@ -1921,24 +1978,45 @@ def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
     trade-off line for a fully eliminated engine already carries the
     OpenSearch justification floor's reason (#326) or the generalized
     cost-share floor's reason (#167), appended by ``reconcile_consolidations``.
+
+    #547: every dropped engine (``_dropped_engines``) is listed, once, with
+    every consolidation line that moved its queries -- not only an engine
+    whose line carries the "no in-scope X query remains" marker, so the
+    "see Engines not used below" pointer always has this section to point at.
     """
+    esc = escaping.html_text
+    rc = report.get("reality_check") or {}
     items: list[str] = []
-    seen: set[str] = set()
-    for t in report.get("trade_offs") or []:
-        desc = str((t or {}).get("description") or "")
-        elim = _FULLY_ELIMINATED_RE.search(desc)
-        if not elim or elim.group(1) in seen:
-            continue
-        seen.add(elim.group(1))
-        name = escaping.html_text(display_engine(elim.group(1)))
-        m = _CONSOLIDATED_FROM_TO_RE.match(desc)
-        arrow = f" → {escaping.html_text(display_engine(m.group(2)))}" if m else ""
-        items.append(f"<li><b>{name}</b>{arrow}: {escaping.html_text(desc)}</li>")
+    for engine in _dropped_engines(report):
+        lines: list[str] = []
+        targets: list[str] = []
+        for t in report.get("trade_offs") or []:
+            desc = str((t or {}).get("description") or "")
+            m = _CONSOLIDATED_FROM_TO_RE.match(desc)
+            elim = _FULLY_ELIMINATED_RE.search(desc)
+            if (m and m.group(1) == engine) or (elim and elim.group(1) == engine):
+                if desc not in lines:
+                    lines.append(desc)
+                if m and m.group(2) not in targets:
+                    targets.append(m.group(2))
+        for c in rc.get("consolidations") or []:
+            if isinstance(c, dict) and c.get("from_engine") == engine:
+                to = str(c.get("to_engine") or "")
+                if to and to not in targets:
+                    targets.append(to)
+                if not lines and c.get("reason"):
+                    lines.append(str(c["reason"]))
+        reason = " ".join(lines) or "The reality check removed it from the architecture."
+        arrow = " → " + ", ".join(esc(display_engine(x)) for x in targets) if targets else ""
+        items.append(
+            f'<li data-engine="{escaping.html_attr(engine)}"><b>{esc(display_engine(engine))}</b>'
+            f"{arrow}: {esc(reason)}</li>"
+        )
     if not items:
         return []
     return [
         "<h2 class=section-title>Engines not used</h2>",
-        "<div class=card><div class=card-b><ul>",
+        "<div class=card data-figure=engines-not-used><div class=card-b><ul>",
         *items,
         "</ul></div></div>",
     ]
@@ -1969,8 +2047,9 @@ def _roadmap_html(report: dict[str, Any]) -> list[str]:
         title_html = esc(w["title"]) if w.get("title") else names
         wave_no = esc(str(w.get("wave") or ""))
         out.append(
-            f"<p><b>Wave {wave_no}: {title_html}</b> — "
-            f"{esc(count_phrase)}{esc(table_bit)}. "
+            f'<p data-wave="{escaping.html_attr(str(w.get("wave") or ""))}">'
+            f"<b>Wave {wave_no}: {title_html}</b> — "
+            f"<span data-figure=wave-stats>{esc(count_phrase)}{esc(table_bit)}</span>. "
             f"{esc(w.get('rationale') or '')}</p>"
         )
         if w.get("gate"):

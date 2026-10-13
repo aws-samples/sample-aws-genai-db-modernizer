@@ -95,12 +95,12 @@ def test_decision_report_and_deck_agree_on_the_split(report: dict[str, Any]) -> 
     html = renderers.render_decision_report_html(report)
     dynamo_row = re.search(
         r"<span class=badge[^>]*>dynamodb</span></td><td class=role>Migration target</td>"
-        r"<td>[\d.]+%</td><td>(\d+) source tables?</td>",
+        r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )
     doc_row = re.search(
         r"<span class=badge[^>]*>documentdb</span></td><td class=role>Migration target</td>"
-        r"<td>[\d.]+%</td><td>(\d+) source tables?</td>",
+        r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )
     assert dynamo_row is not None, html

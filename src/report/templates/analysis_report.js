@@ -482,7 +482,9 @@
         const color = engineColor(engine);
         const label = ENGINE_LABELS[engine] || engine;
         html += '<rect x="' + targetX + '" y="' + (targetY - nodeHeight/2) + '" width="' + nodeWidth + '" height="' + nodeHeight + '" fill="' + escapeHtml(color) + '" stroke="' + escapeHtml(color) + '" rx="2" opacity="0.8" />';
-        html += '<text x="' + (targetX - 10) + '" y="' + targetY + '" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">' + escapeHtml(label) + ' (' + Number(count).toFixed(1) + '%)</text>';
+        const share = totalQueries > 0 ? (count / totalQueries) * 100 : 0;
+        const countText = count + (count === 1 ? ' query, ' : ' queries, ') + share.toFixed(1) + '%';
+        html += '<text data-engine="' + escapeHtml(engine) + '" data-figure="engine-queries" x="' + (targetX - 10) + '" y="' + targetY + '" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">' + escapeHtml(label) + ' (' + escapeHtml(countText) + ')</text>';
       });
       html += '</svg></div>';
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
@@ -724,7 +726,7 @@
       if (waves.length === 0) { container.innerHTML = '<p>No migration roadmap available.</p>'; return; }
       let html = '';
       waves.forEach(wave => {
-        html += '<div class="item-card">';
+        html += '<div class="item-card" data-wave="' + escapeHtml(wave.wave) + '">';
         html += '<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">';
         html += '<span class="badge">Wave ' + escapeHtml(wave.wave) + '</span>';
         (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });
@@ -741,7 +743,7 @@
             stats += ' · ' + wave.table_count + ' source tables';
           }
         }
-        html += '<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
+        html += '<div data-figure="wave-stats" style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
         html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(wave.rationale) + '</div>';
         if ((wave.tables || []).length > 0) {
           const waveTables = wave.tables;

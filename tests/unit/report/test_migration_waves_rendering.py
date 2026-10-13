@@ -234,7 +234,7 @@ class TestDecisionReportRoadmap:
         # never 50 (which would wrongly call the whole-schema Aurora move a
         # "purpose-built engine" migration).
         html = render_decision_report_html(_report_aurora_first_no_schema_design())
-        assert "<td>19 tables migrate</td>" in html
+        assert "<td data-figure=scope>19 tables migrate</td>" in html
         assert "69 tables" not in html
         assert "50 tables migrate" not in html
 

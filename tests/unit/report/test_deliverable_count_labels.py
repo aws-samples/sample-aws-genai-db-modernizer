@@ -419,7 +419,7 @@ class TestNumberFormatting:
         rep = _shared_tables_report()
         rep["ranking"][0]["workload_percent"] = 58.900000000000006
         html = renderers.render_decision_report_html(rep)
-        assert "<td>58.9%</td>" in html
+        assert "<td data-figure=workload>58.9%</td>" in html
         assert "58.900000" not in html
 
     def test_deck_throughput_uses_thousands_separators(self) -> None:

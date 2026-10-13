@@ -84,12 +84,14 @@ def test_decision_report_scope_tile_and_roadmap_agree(report: dict[str, Any]) ->
     tile_n = int(re.search(r"<p>Tables migrate</p><p class=val>(\d+)</p>", html).group(1))
     row = re.search(
         r"<span class=badge[^>]*>dynamodb</span></td><td class=role>Migration target</td>"
-        r"<td>[\d.]+%</td><td>(\d+) source tables?</td>",
+        r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )
     assert row is not None, html
     scope_n = int(row.group(1))
-    roadmap = re.search(r"<p><b>Wave \d+:[^<]*DynamoDB</b>.*?(\d+) source tables?\.", html)
+    roadmap = re.search(
+        r"<p data-wave=\"\d+\"><b>Wave \d+:[^<]*DynamoDB</b>.*?(\d+) source tables?</span>\.", html
+    )
     assert roadmap is not None, html
     roadmap_n = int(roadmap.group(1))
     assert scope_n == tile_n == roadmap_n == 8

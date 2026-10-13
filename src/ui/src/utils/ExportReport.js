@@ -799,7 +799,13 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const color = engineColor(engine);\n';
   script += '        const label = ENGINE_LABELS[engine] || engine;\n';
   script += '        html += \'<rect x="\' + targetX + \'" y="\' + (targetY - nodeHeight/2) + \'" width="\' + nodeWidth + \'" height="\' + nodeHeight + \'" fill="\' + escapeHtml(color) + \'" stroke="\' + escapeHtml(color) + \'" rx="2" opacity="0.8" />\';\n';
-  script += '        html += \'<text x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + escapeHtml(label) + \' (\' + Number(count).toFixed(1) + \'%)</text>\';\n';
+  // #573: the label used to print the owned query COUNT with a "%" sign
+  // ("Aurora PostgreSQL (897.0%)"); it states the count and its share of the
+  // owned queries, the same figures every other deliverable shows. data-engine
+  // and data-figure are stable hooks for the deliverable-figures e2e test.
+  script += '        const share = totalQueries > 0 ? (count / totalQueries) * 100 : 0;\n';
+  script += '        const countText = count + (count === 1 ? \' query, \' : \' queries, \') + share.toFixed(1) + \'%\';\n';
+  script += '        html += \'<text data-engine="\' + escapeHtml(engine) + \'" data-figure="engine-queries" x="\' + (targetX - 10) + \'" y="\' + targetY + \'" dy="0.35em" text-anchor="end" font-size="14" font-weight="600" fill="var(--color-text)">\' + escapeHtml(label) + \' (\' + escapeHtml(countText) + \')</text>\';\n';
   script += '      });\n';
   script += '      html += \'</svg></div>\';\n';
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
@@ -1105,7 +1111,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (waves.length === 0) { container.innerHTML = \'<p>No migration roadmap available.</p>\'; return; }\n';
   script += '      let html = \'\';\n';
   script += '      waves.forEach(wave => {\n';
-  script += '        html += \'<div class="item-card">\';\n';
+  // data-wave/data-figure: stable hooks for the deliverable-figures e2e test (#573).
+  script += '        html += \'<div class="item-card" data-wave="\' + escapeHtml(wave.wave) + \'">\';\n';
   script += '        html += \'<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">\';\n';
   script += '        html += \'<span class="badge">Wave \' + escapeHtml(wave.wave) + \'</span>\';\n';
   script += '        (wave.engines || []).forEach(engine => { html += engineBadge(engine, ENGINE_LABELS[engine] || engine); });\n';
@@ -1122,7 +1129,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '            stats += \' · \' + wave.table_count + \' source tables\';\n';
   script += '          }\n';
   script += '        }\n';
-  script += '        html += \'<div style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';
+  script += '        html += \'<div data-figure="wave-stats" style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';
   script += '        html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(wave.rationale) + \'</div>\';\n';
   script += '        if ((wave.tables || []).length > 0) {\n';
   script += '          const waveTables = wave.tables;\n';
