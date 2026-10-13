@@ -118,7 +118,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 description=f"Detected {len(caching_queries)} high-frequency SELECT queries suitable for caching",
                 query_ids=[str(q["query_id"]) for q in caching_queries if q.get("query_id")],
                 table_ids=caching_table_ids,
-                frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
+                frequency_percent=len(caching_queries) / len(queries) * 100 if queries else None,
             )
         )
 
@@ -134,7 +134,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 description="Detected session or user lookup patterns",
                 query_ids=[str(q["query_id"]) for q in session_queries if q.get("query_id")],
                 table_ids=session_table_ids,
-                frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
+                frequency_percent=len(session_queries) / len(queries) * 100 if queries else None,
             )
         )
 
@@ -150,7 +150,9 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 description="Detected ranking/leaderboard query patterns (ORDER BY + LIMIT)",
                 query_ids=[str(q["query_id"]) for q in leaderboard_queries if q.get("query_id")],
                 table_ids=leaderboard_table_ids,
-                frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
+                frequency_percent=(
+                    len(leaderboard_queries) / len(queries) * 100 if queries else None
+                ),
             )
         )
 
@@ -166,7 +168,13 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 description="Detected time series aggregation patterns",
                 query_ids=[str(q["query_id"]) for q in timeseries_queries if q.get("query_id")],
                 table_ids=timeseries_table_ids,
-                frequency_percent=len(geospatial_queries) / len(queries) * 100 if queries else None,
+                # The two time-series checks above (#452, left as-is here) can both
+                # append the same query, so this list can briefly outgrow `queries`;
+                # clamp so the percentage stays valid rather than raising in Pattern's
+                # <=100 validation. #452 removes the double count at its source.
+                frequency_percent=(
+                    min(len(timeseries_queries) / len(queries) * 100, 100.0) if queries else None
+                ),
             )
         )
 
