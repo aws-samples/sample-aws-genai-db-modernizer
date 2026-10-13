@@ -155,6 +155,8 @@ output = CollectorOutput(
 | Rename field | MAJOR | 1.2 → 2.0 |
 | Change field type | MAJOR | 1.2 → 2.0 |
 | Make optional field required | MAJOR | 1.2 → 2.0 |
+| Tighten a constraint (`ge`/`le`/`gt`/`lt`/`min_length`/`max_length`/`pattern`) | MAJOR | 1.2 → 2.0 |
+| Loosen a constraint | MINOR | 1.0 → 1.1 |
 
 ### 2.4 Contract Version Declaration
 

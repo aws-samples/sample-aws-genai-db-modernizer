@@ -456,6 +456,28 @@ Breaking changes to contracts (`src/contracts/`) require special process:
 
 See `docs/contracts/agent-contracts-spec.md` for details.
 
+**Any** contract change (breaking or not) needs a `contract_version` bump:
+MINOR for an additive optional field or a new enum value, MAJOR for a
+removal, a type change, a newly required field, a removed enum value, or a
+tightened constraint (`ge`/`le`/`gt`/`lt`/`min_length`/`max_length`/
+`pattern`); loosening a constraint is MINOR (the full table is in
+`docs/contracts/agent-contracts-spec.md`'s Versioning Strategy section).
+`tests/contract/test_schema_snapshot.py` enforces this against a committed
+JSON Schema snapshot of every versioned contract, keyed by model, in
+`tests/contract/schema_snapshot.json` -- it fails if a schema changes
+without its version, or if the version changes without the snapshot being
+regenerated, naming the exact nested path that changed (e.g.
+`agent_metadata.retries`, not just the top-level field) and the bump it
+requires. Regenerate it deliberately and review the diff like the routing
+snapshot (`tests/e2e/routing_snapshot.py`):
+
+```bash
+uv run python scripts/contract_schema_snapshot.py --write
+```
+
+If two in-flight PRs both touch a contract, whichever lands second
+regenerates the snapshot.
+
 ---
 
 ## Maintainer Sync

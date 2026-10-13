@@ -41,8 +41,10 @@ repos:
         # tests/e2e/baselines/routing_snapshot.json (#497): a per-query routing
         # snapshot keyed by sha256-ish query ids -- real data, not a secret, but
         # high-entropy hex that would otherwise need baselining one entry per
-        # query. Excluded here rather than scanned at all.
-        exclude: (^package-lock\.json$|^tests/e2e/baselines/routing_snapshot\.json$)
+        # query. tests/contract/schema_snapshot.json (#574): same situation --
+        # sha256 schema_hash values, one per contract. Both excluded here rather
+        # than scanned at all.
+        exclude: (^package-lock\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$)
 
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves
