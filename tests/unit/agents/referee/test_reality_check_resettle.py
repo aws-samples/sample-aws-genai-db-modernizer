@@ -246,10 +246,8 @@ class TestResettleUsesTheSharedRule:
         so both earn their place; DocumentDB's one query ties across all three
         engines, so DocumentDB goes and the tie between the two Aurora engines
         goes to the source-compatible one (ADR-031 Decision 2). No source is
-        passed, so it comes from the collector.
-
-        Not a three-way exact tie on every query: that shape hits #600, where
-        Phase 1 removes the source-compatible engine on fixed cost.
+        passed, so it comes from the collector. The three-way exact tie on
+        every query is covered by the next test.
         """
         assignments = _assignments(
             {"aurora_mysql": ["m1", "m2"], "aurora_postgresql": ["p1", "p2"], "documentdb": ["d1"]}
@@ -269,6 +267,28 @@ class TestResettleUsesTheSharedRule:
         assert _engine_of(revised)["d1"] == expected
         assert _engine_of(revised)["m1"] == "aurora_mysql"
         assert _engine_of(revised)["p1"] == "aurora_postgresql"
+
+    @pytest.mark.parametrize(
+        ("source", "expected"), [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql")]
+    )
+    def test_a_three_way_exact_tie_keeps_the_collectors_source_engine(self, source, expected):
+        """#600 regression, the fixture this test file first used: every
+        engine scores every query identically, so the source-compatible
+        Aurora engine survives Phase 1 and keeps all four queries (ADR-031
+        Decisions 2 and 13: DocumentDB's $200 against Aurora's $250 is 20%
+        and $50, short of both cost thresholds)."""
+        assignments = _assignments(
+            {"aurora_mysql": ["m1", "m2"], "aurora_postgresql": ["p1"], "documentdb": ["d1"]}
+        )
+        analysis = _analysis(
+            {"aurora_mysql": {"t": 80}, "aurora_postgresql": {"t": 80}, "documentdb": {"t": 80}}
+        )
+        collector = _collector({"m1": "t", "m2": "t", "p1": "t", "d1": "t"})
+        collector["metadata"] = {"source_database": {"engine": source}}
+
+        revised, _ = resettle_after_corrections(assignments, {}, analysis, collector)
+
+        assert _engine_of(revised) == dict.fromkeys(("m1", "m2", "p1", "d1"), expected)
 
     def test_a_partial_move_names_the_held_queries_as_corrected(self):
         """Aurora keeps its two held queries and loses the one DynamoDB scores

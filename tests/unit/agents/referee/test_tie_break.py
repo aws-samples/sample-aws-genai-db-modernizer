@@ -9,7 +9,17 @@ from __future__ import annotations
 
 import hashlib
 
-from src.agents.referee.tie_break import break_tie, pick_unresolved_tie_placeholder, settled_counts
+import pytest
+
+from src.agents.referee.tie_break import (
+    CHEAPER_ENGINE_MIN_SAVING_MONTHLY,
+    CHEAPER_ENGINE_MIN_SAVING_SHARE,
+    break_tie,
+    cheaper_engine_displaces_source_compatible,
+    pick_unresolved_tie_placeholder,
+    settled_counts,
+    source_compatible_engine_survives,
+)
 from src.contracts.assignment_models import QueryAssignment
 
 
@@ -284,3 +294,60 @@ class TestSettledCounts:
             for i in range(3)
         )
         assert settled_counts(rows) == {"dynamodb": 3}
+
+
+class TestCheaperEngineDisplacesSourceCompatible:
+    """Maintainer decision 2026-10-13 (#600, ADR-031 Decision 13): the
+    source-compatible engine survives against an engine that scores no
+    better, unless that engine is at least 40% cheaper in standing cost AND
+    saves at least $100 a month.
+    """
+
+    def test_the_thresholds_are_the_recorded_decision(self):
+        assert CHEAPER_ENGINE_MIN_SAVING_SHARE == 0.40
+        assert CHEAPER_ENGINE_MIN_SAVING_MONTHLY == 100
+
+    def test_the_issue_repro_costs_keep_the_source_compatible_engine(self):
+        # Aurora $250 against DocumentDB $200: 20% and $50.
+        assert not cheaper_engine_displaces_source_compatible(250, 200)
+
+    def test_both_thresholds_met_displaces_it(self):
+        assert cheaper_engine_displaces_source_compatible(250, 0)
+
+    def test_45_percent_cheaper_but_only_60_dollars_saved_does_not(self):
+        source = 400 / 3  # 45% of $133.33 is $60
+        assert not cheaper_engine_displaces_source_compatible(source, source * 0.55)
+
+    def test_150_dollars_saved_but_only_30_percent_cheaper_does_not(self):
+        assert not cheaper_engine_displaces_source_compatible(500, 350)
+
+    @pytest.mark.parametrize(
+        ("source", "other", "expected"),
+        [
+            (250, 150, True),  # exactly 40% and exactly $100
+            (500, 300, True),  # exactly 40%, $200
+            (500, 300.01, False),  # just under 40%
+            (200, 100, True),  # 50%, exactly $100
+            (200, 100.01, False),  # just under $100
+        ],
+    )
+    def test_both_thresholds_are_inclusive_at_the_boundary(self, source, other, expected):
+        assert cheaper_engine_displaces_source_compatible(source, other) is expected
+
+    def test_an_equal_or_dearer_engine_never_displaces_it(self):
+        assert not cheaper_engine_displaces_source_compatible(250, 250)
+        assert not cheaper_engine_displaces_source_compatible(250, 400)
+
+    def test_a_free_source_compatible_engine_is_never_displaced(self):
+        assert not cheaper_engine_displaces_source_compatible(0, 0)
+
+
+class TestSourceCompatibleEngineSurvives:
+    def test_it_survives_when_one_query_has_no_cheap_enough_alternative(self):
+        assert source_compatible_engine_survives(250, [[0], [200]])
+
+    def test_it_goes_when_every_query_has_a_cheap_enough_alternative(self):
+        assert not source_compatible_engine_survives(250, [[0], [200, 150]])
+
+    def test_one_cheap_enough_best_alternative_per_query_is_enough(self):
+        assert not source_compatible_engine_survives(250, [[200, 0]])

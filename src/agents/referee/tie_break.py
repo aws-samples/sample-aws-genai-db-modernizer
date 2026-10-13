@@ -49,6 +49,15 @@ suppressed here.
 :func:`settled_counts` (#550, #549) computes rule 1's settled-workload-share
 input from a finished list of query assignments, for a caller with no live
 resolver snapshot to reuse directly.
+
+:func:`source_compatible_engine_survives` (#600, ADR-031 Decision 13)
+carries rule 1 over to the reality check's choice of which engine to REMOVE:
+Phase 1 keeps a source-compatible engine that scores every one of its
+queries equal to or higher than its best other committed engine (an exact
+tie, or a margin too small to count as unique value), unless that other
+engine is cheaper by both thresholds below. When the source-compatible
+engine scores lower on any one of its queries, the existing unique-value and
+burden rules apply unchanged, and standing cost can still remove it.
 """
 
 from __future__ import annotations
@@ -71,6 +80,58 @@ TIE_KIND_SOURCE_COMPATIBLE = "source_compatible"
 TIE_KIND_STABILITY = "stability"
 TIE_KIND_UNRESOLVED = "tie_unresolved"
 TIE_KINDS: tuple[str, ...] = (TIE_KIND_SOURCE_COMPATIBLE, TIE_KIND_STABILITY, TIE_KIND_UNRESOLVED)
+
+# Maintainer decision 2026-10-13 (#600, ADR-031 Decision 13): the
+# source-compatible engine is not removed in favour of an engine that scores
+# its queries no better, unless that engine is at least this much cheaper in
+# standing cost, as a share of the source-compatible engine's standing cost ...
+CHEAPER_ENGINE_MIN_SAVING_SHARE = 0.40
+# ... AND saves at least this much a month (USD). Both must hold; each is
+# inclusive at its boundary.
+CHEAPER_ENGINE_MIN_SAVING_MONTHLY = 100.0
+
+
+def cheaper_engine_displaces_source_compatible(
+    source_compatible_cost: float, other_cost: float
+) -> bool:
+    """Whether ``other_cost`` is cheap enough, against the source-compatible
+    engine's ``source_compatible_cost`` (both monthly standing costs), to take
+    its place (#600, ADR-031 Decision 13).
+
+    True only when the saving is at least ``CHEAPER_ENGINE_MIN_SAVING_SHARE``
+    of the source-compatible engine's cost AND at least
+    ``CHEAPER_ENGINE_MIN_SAVING_MONTHLY`` dollars.
+    """
+    if source_compatible_cost <= 0:
+        return False
+    saving = source_compatible_cost - other_cost
+    return (
+        saving >= CHEAPER_ENGINE_MIN_SAVING_MONTHLY
+        and saving / source_compatible_cost >= CHEAPER_ENGINE_MIN_SAVING_SHARE
+    )
+
+
+def source_compatible_engine_survives(
+    source_compatible_cost: float,
+    best_alternative_costs_per_query: Iterable[Iterable[float]],
+) -> bool:
+    """The one rule for keeping the source-compatible engine in Phase 1 (#600,
+    ADR-031 Decision 13).
+
+    The caller has already established that the source-compatible engine
+    scores every one of its queries equal to or higher than any alternative.
+    ``best_alternative_costs_per_query`` holds, per query, the standing costs
+    of that query's best-scoring alternatives. The engine is removed only when
+    EVERY query has at least one such alternative that
+    :func:`cheaper_engine_displaces_source_compatible`; otherwise it survives.
+    """
+    return not all(
+        any(
+            cheaper_engine_displaces_source_compatible(source_compatible_cost, cost)
+            for cost in costs
+        )
+        for costs in best_alternative_costs_per_query
+    )
 
 
 def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:

@@ -204,7 +204,7 @@ This section is a pointer, not a restatement.
   `ScoringContext.from_pipeline`. Never add a private fit function.
 - Ties go through `tie_break.break_tie`, using `settled_counts` only.
   [`test_no_engine_bias.py`](tests/unit/agents/referee/test_no_engine_bias.py)
-  enforces this.
+  enforces this. Engine removal keeps the source-compatible engine when it scores every query at least as well, unless the alternative is at least 40% and $100/mo cheaper (`tie_break.source_compatible_engine_survives`, ADR-031 Decision 13).
 - An override onto an engine that can't serve the query is rejected.
 - Explain drift with the [routing snapshot](tests/e2e/routing_snapshot.py),
   and regenerate it on rebase. Never hand-merge it.

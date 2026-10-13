@@ -39,7 +39,10 @@ from src.agents.referee.capability_registry import (
     can_engine_serve_capability,
     suggest_lightweight_alternative,
 )
-from src.agents.referee.tie_break import break_tie
+from src.agents.referee.tie_break import (
+    break_tie,
+    source_compatible_engine_survives,
+)
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
@@ -674,6 +677,7 @@ def _evaluate_engine_removal(
     committed_count: int,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     orphaned_qas: list[dict] | None = None,
+    source_compatible_engine: str | None = None,
 ) -> tuple[bool, dict, float]:
     """Phase 1's per-engine question (#502 review): judged on ``engine``'s
     own native queries alone, using the resolver's own per-query scores
@@ -716,6 +720,16 @@ def _evaluate_engine_removal(
     uses to decide WHICH removable engine to remove first when more than
     one is removable in the same round -- the worst value for the fixed
     operational cost, not evaluation order.
+
+    ``source_compatible_engine`` (#600, ADR-031 Decision 13): when ``engine``
+    is the source-compatible engine and every one of its native queries
+    scores it equal to or higher than its best other committed engine (an
+    exact tie, or a margin too small to count as unique), ``engine`` is not
+    removed on standing cost -- unless ``tie_break.
+    source_compatible_engine_survives`` finds, for every one of those
+    queries, a best other engine cheaper by both thresholds. Without this,
+    Aurora's higher standing cost alone removed it from a workload it served
+    at least as well, on a $50 difference.
     """
 
     def _stranded(qas: Iterable[dict]) -> list[str]:
@@ -758,6 +772,9 @@ def _evaluate_engine_removal(
     unique_by_score: list[str] = []
     redundant: list[str] = []
     deltas: list[float] = []
+    # #600: for each native query ``engine`` scores >= every alternative on,
+    # the best-scoring alternatives (the engines it would otherwise go to).
+    best_rivals_by_qid: dict[str, list[str]] = {}
 
     for qa in native_qas:
         qid = qa["query_id"]
@@ -779,9 +796,14 @@ def _evaluate_engine_removal(
             irreplaceable.append(qid)
             continue
         this_score = _resolver_score(trace_by_query, qid, engine) or 0
-        best_alt = max(_resolver_score(trace_by_query, qid, alt) or 0 for alt in eligible_alts)
+        alt_scores = {alt: _resolver_score(trace_by_query, qid, alt) or 0 for alt in eligible_alts}
+        best_alt = max(alt_scores.values())
         delta = this_score - best_alt
         deltas.append(delta)
+        if delta >= 0:
+            best_rivals_by_qid[qid] = [
+                alt for alt, score in alt_scores.items() if score == best_alt
+            ]
         if delta >= UNIQUE_DELTA_THRESHOLD:
             unique_by_score.append(qid)
         else:
@@ -803,6 +825,21 @@ def _evaluate_engine_removal(
     rank_key = total_burden / max(len(unique_by_score), 1)
 
     if irreplaceable or orphan_stranded:
+        return False, assessment, 0.0
+    if (
+        engine == source_compatible_engine
+        and len(best_rivals_by_qid) == len(native_qas)
+        and source_compatible_engine_survives(
+            ENGINE_BASE_COST.get(engine, 100),
+            (
+                [ENGINE_BASE_COST.get(rival, 100) for rival in rivals]
+                for rivals in best_rivals_by_qid.values()
+            ),
+        )
+    ):
+        # #600, ADR-031 Decisions 2 and 13: the source-compatible engine
+        # scores every query at least as well as any alternative, and no
+        # alternative is cheap enough to take its place.
         return False, assessment, 0.0
     if not unique_by_score:
         return True, assessment, rank_key
@@ -988,6 +1025,7 @@ def _settle_committed_engines(
                 len(snapshot),
                 tied_engines_by_qid,
                 orphaned_qas,
+                source_compatible_engine,
             )
             # #502 review: no engine is "primary" anymore -- every engine is
             # judged the same way. The contract field stays (a breaking
