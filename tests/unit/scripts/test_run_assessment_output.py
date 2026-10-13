@@ -437,6 +437,72 @@ def test_reality_check_status_line_carries_eliminated_engines(tmp_path, monkeypa
     assert artifact["after_distribution"]["documentdb"] == 1  # still a nonzero entry
 
 
+def test_reality_check_status_line_carries_sweep_kept(tmp_path, monkeypatch):
+    # #589: a tiny orphan engine the sanity sweep KEPT (instead of removing)
+    # must reach the approval gate too -- before this field, a kept engine
+    # left no trace anywhere the gate could read.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {
+            "before_distribution": {"dynamodb": 9, "opensearch": 2},
+            "after_distribution": {"dynamodb": 9, "opensearch": 2},
+            "consolidations": [],
+            "sweep_decisions": [
+                {
+                    "engine": "opensearch",
+                    "decision": "kept",
+                    "reason": (
+                        "not every query has a serviceable committed engine: "
+                        "s1 is mandatory for the text_search signal override"
+                    ),
+                    "blocking_query_ids": ["s1"],
+                    "blocking_rule": "signal_override",
+                },
+                {
+                    "engine": "documentdb",
+                    "decision": "removed",
+                    "reason": "3 queries, each with a serviceable committed engine",
+                    "blocking_query_ids": [],
+                    "blocking_rule": None,
+                },
+            ],
+        },
+    )
+    store.write_json("wordpress/job-1/assignment/v1/assignment.json", {"version": 1})
+    artifact = run_assessment._reality_check_artifact(store, "job-1", "wordpress")
+    assert artifact["sweep_kept"] == [
+        {
+            "engine": "opensearch",
+            "reason": (
+                "not every query has a serviceable committed engine: "
+                "s1 is mandatory for the text_search signal override"
+            ),
+        }
+    ]
+
+
+def test_reality_check_status_line_sweep_kept_defaults_empty_for_an_older_artifact(
+    tmp_path, monkeypatch
+):
+    # A reality-check output written before contract 1.10 has no
+    # sweep_decisions field at all; the status line must not error.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {"before_distribution": {"dynamodb": 10}, "after_distribution": {"dynamodb": 10}},
+    )
+    store.write_json("wordpress/job-1/assignment/v1/assignment.json", {"version": 1})
+    artifact = run_assessment._reality_check_artifact(store, "job-1", "wordpress")
+    assert artifact["sweep_kept"] == []
+
+
 def test_reality_check_status_line_eliminated_engines_defaults_empty_for_an_older_artifact(
     tmp_path, monkeypatch
 ):
@@ -543,6 +609,41 @@ def test_compact_consolidations_drops_a_repeated_reason():
     # A different from_engine's reason is unaffected by another engine's dedup.
     opensearch_entries = [c for c in compacted if c["from"] == "opensearch"]
     assert "reason" in opensearch_entries[0]
+
+
+def test_compact_sweep_kept_drops_removed_decisions():
+    # #589: a KEPT engine's reason reaches the approval gate; a REMOVED
+    # engine's outcome is already covered by consolidations, so it is
+    # dropped here rather than repeated under a second name.
+    sweep_decisions = [
+        {
+            "engine": "opensearch",
+            "decision": "kept",
+            "reason": "not every query has a serviceable committed engine: s1 is mandatory",
+            "blocking_query_ids": ["s1"],
+            "blocking_rule": "signal_override",
+        },
+        {
+            "engine": "documentdb",
+            "decision": "removed",
+            "reason": "3 queries, each with a serviceable committed engine: 3 to Aurora MySQL",
+            "blocking_query_ids": [],
+            "blocking_rule": None,
+        },
+    ]
+    compacted = run_assessment._compact_sweep_kept(sweep_decisions)
+    assert compacted == [
+        {
+            "engine": "opensearch",
+            "reason": "not every query has a serviceable committed engine: s1 is mandatory",
+        }
+    ]
+
+
+def test_compact_sweep_kept_truncates_a_long_reason():
+    sweep_decisions = [{"engine": "opensearch", "decision": "kept", "reason": "x" * 500}]
+    compacted = run_assessment._compact_sweep_kept(sweep_decisions)
+    assert len(compacted[0]["reason"]) <= run_assessment._REASON_LIMIT
 
 
 def test_truncate_keeps_long_reasons_within_the_limit():

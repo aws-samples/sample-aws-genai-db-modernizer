@@ -110,6 +110,7 @@ Show a compact table, one row per engine, built from that line's fields:
 - `before_distribution` vs `after_distribution`: each engine's query count v1 → final, and its share of the total
 - `eliminated_engines`: the engines to label dropped — read this list, never infer "dropped" from a zero (or even nonzero) `after_distribution` entry. An engine can keep a nonzero `after_distribution` count and still be eliminated (it kept an out-of-scope query), so "survived" is every engine in `after_distribution` that is *not* in `eliminated_engines`, and "dropped" is every engine in `eliminated_engines`, full stop
 - `consolidations`: each entry's `from`, `to`, `queries` and `reason` — the queries that were redirected and why
+- `sweep_kept`, when non-empty: each entry's `engine` and `reason` — a tiny engine the sanity sweep considered removing but kept, and why (at least one of its queries had no serviceable committed alternative); mention these alongside `consolidations` so a kept engine is not silently absent from the summary
 - `cache_overlay`, when present: `query_count` cached reads serving `call_share_percent`% of calls (`calls_per_second` is also on the line)
 - `schema_design_engines`: the engines Phase 6 will design next. When `cache_overlay` is present, its engine is in this list even though it owns no row in `after_distribution` — it still gets its own schema design, for the reads it fronts.
 

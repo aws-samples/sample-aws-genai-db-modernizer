@@ -7,6 +7,7 @@ from src.contracts.reality_check_output import (
     ArchitecturalPattern,
     Consolidation,
     RealityCheckOutputContract,
+    SweepDecision,
     UniqueValueAssessment,
 )
 
@@ -137,6 +138,40 @@ class TestConsolidation:
             )
 
 
+class TestSweepDecision:
+    """#589: the sanity sweep's own kept/removed verdict for an orphan engine."""
+
+    def test_a_kept_decision_carries_blocking_detail(self):
+        sd = SweepDecision(
+            engine="documentdb",
+            decision="kept",
+            reason="not every query has a serviceable committed engine: g1 (...)",
+            blocking_query_ids=["g1"],
+            blocking_rule="no_serviceable_engine",
+        )
+        assert sd.decision == "kept"
+        assert sd.blocking_query_ids == ["g1"]
+        assert sd.blocking_rule == "no_serviceable_engine"
+
+    def test_a_removed_decision_defaults_blocking_fields_empty(self):
+        sd = SweepDecision(
+            engine="opensearch",
+            decision="removed",
+            reason="3 queries, each with a serviceable committed engine: 3 to Aurora MySQL",
+        )
+        assert sd.decision == "removed"
+        assert sd.blocking_query_ids == []
+        assert sd.blocking_rule is None
+
+    def test_engine_decision_and_reason_are_required(self):
+        with pytest.raises(ValidationError):
+            SweepDecision(decision="kept", reason="x")  # missing engine
+        with pytest.raises(ValidationError):
+            SweepDecision(engine="documentdb", reason="x")  # missing decision
+        with pytest.raises(ValidationError):
+            SweepDecision(engine="documentdb", decision="kept")  # missing reason
+
+
 class TestArchitecturalPattern:
     """Test architectural pattern model."""
 
@@ -221,9 +256,41 @@ class TestRealityCheckOutputContract:
 
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
-        # #503: bumped to 1.9 for query_tie_unresolved_count, since #542
-        # merged its own, unrelated 1.8 (eliminated_engines) first.
-        assert output.contract_version == "1.9"
+        # #589: bumped to 1.10 for sweep_decisions.
+        assert output.contract_version == "1.10"
+
+    def test_sweep_decisions_defaults_and_roundtrips(self, valid_reality_check_data):
+        # Additive in 1.10 (#589): an output written before this field
+        # existed still validates, as having no sweep decisions.
+        assert (
+            RealityCheckOutputContract.model_validate(valid_reality_check_data).sweep_decisions
+            == []
+        )
+        kept = {
+            "engine": "documentdb",
+            "decision": "kept",
+            "reason": (
+                "not every query has a serviceable committed engine: "
+                "g1 (DynamoDB lacks multi_doc_acid)"
+            ),
+            "blocking_query_ids": ["g1"],
+            "blocking_rule": "no_serviceable_engine",
+        }
+        removed = {
+            "engine": "opensearch",
+            "decision": "removed",
+            "reason": "3 queries, each with a serviceable committed engine: 3 to Aurora MySQL",
+            "blocking_query_ids": [],
+            "blocking_rule": None,
+        }
+        valid_reality_check_data["sweep_decisions"] = [kept, removed]
+        output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
+        assert len(output.sweep_decisions) == 2
+        assert isinstance(output.sweep_decisions[0], SweepDecision)
+        assert output.sweep_decisions[0].blocking_query_ids == ["g1"]
+        assert output.sweep_decisions[1].blocking_rule is None
+        dumped = output.model_dump()
+        assert dumped["sweep_decisions"] == [kept, removed]
 
     def test_validation_incomplete_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.4 (#285): earlier outputs still validate.

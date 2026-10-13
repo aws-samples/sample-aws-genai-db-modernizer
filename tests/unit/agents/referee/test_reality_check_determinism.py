@@ -399,7 +399,7 @@ class TestAuroraChoiceFollowsTheSource:
         ]
         query_map = {qa["query_id"]: {"query_id": qa["query_id"]} for qa in revised}
 
-        updated, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine=source)
+        updated, _, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine=source)
 
         assert next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"] == expected
 
@@ -430,7 +430,7 @@ class TestAuroraChoiceFollowsTheSource:
             query_id="o1",
         )
 
-        updated, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine="")
+        updated, _, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine="")
 
         assert (
             next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"]

@@ -148,8 +148,15 @@ _SCHEMA_DDB = {
 }
 
 
-def _mock_store(with_reality_check: bool = False) -> MagicMock:
-    """Build a mock ArtifactStore pre-loaded with the shared fixture data."""
+def _mock_store(
+    with_reality_check: bool = False, reality_check_extra: dict | None = None
+) -> MagicMock:
+    """Build a mock ArtifactStore pre-loaded with the shared fixture data.
+
+    ``reality_check_extra`` (optional) merges extra keys onto the reality-check
+    output fixture -- e.g. ``{"sweep_decisions": [...]}`` (#589) -- without every
+    caller having to restate the whole fixture.
+    """
     store = MagicMock(spec=ArtifactStore)
     written: dict = {}
 
@@ -167,6 +174,7 @@ def _mock_store(with_reality_check: bool = False) -> MagicMock:
             "recommendations": ["Consider DynamoDB global tables for multi-region."],
             "before_distribution": {"dynamodb": 2},
             "after_distribution": {"dynamodb": 2},
+            **(reality_check_extra or {}),
         }
 
     def read_json(path: str) -> dict:
@@ -303,6 +311,63 @@ class TestRunSynthesisDeterministicProducesFullReport:
         result = run_synthesis_deterministic("job-1", "mydb", store)
         assert result["reality_check_summary"] is not None
         assert "consolidations" in result["reality_check_summary"]
+
+    def test_reality_check_summary_carries_sweep_decisions(self):
+        # #589: report.json must carry the sweep's own decisions verbatim,
+        # not just the trade-off text derived from them below.
+        kept = {
+            "engine": "opensearch",
+            "decision": "kept",
+            "reason": "not every query has a serviceable committed engine: ...",
+            "blocking_query_ids": ["s1"],
+            "blocking_rule": "signal_override",
+        }
+        store = _mock_store(
+            with_reality_check=True, reality_check_extra={"sweep_decisions": [kept]}
+        )
+        result = run_synthesis_deterministic("job-1", "mydb", store)
+        assert result["reality_check_summary"]["sweep_decisions"] == [kept]
+
+    def test_a_kept_sweep_decision_becomes_a_reality_check_trade_off(self):
+        # #589: a KEPT engine produces no consolidation and no recommendation
+        # (nothing moved) -- without converting it into a trade-off too, it
+        # had no way to reach the engineering report's "Migration
+        # trade-offs" section, the one place reality-check decisions already
+        # surface for the build team.
+        kept = {
+            "engine": "opensearch",
+            "decision": "kept",
+            "reason": "not every query has a serviceable committed engine: s1 is mandatory",
+            "blocking_query_ids": ["s1"],
+            "blocking_rule": "signal_override",
+        }
+        store = _mock_store(
+            with_reality_check=True, reality_check_extra={"sweep_decisions": [kept]}
+        )
+        result = run_synthesis_deterministic("job-1", "mydb", store)
+        rc_trade_offs = [t for t in result["trade_offs"] if t.get("engine") == "reality-check"]
+        assert any("OpenSearch kept" in t["description"] for t in rc_trade_offs)
+        matching = next(t for t in rc_trade_offs if "OpenSearch kept" in t["description"])
+        assert matching["query_ids"] == ["s1"]
+        assert matching["impact"] == matching["description"]
+
+    def test_a_removed_sweep_decision_does_not_duplicate_a_trade_off(self):
+        # Only "kept" decisions get a trade-off of their own (#589) -- a
+        # "removed" decision's outcome is already covered by the
+        # consolidation/recommendation-derived trade-offs, so adding a
+        # second one for it would just repeat the same fact.
+        removed = {
+            "engine": "opensearch",
+            "decision": "removed",
+            "reason": "3 queries, each with a serviceable committed engine: 3 to Aurora MySQL",
+            "blocking_query_ids": [],
+            "blocking_rule": None,
+        }
+        store = _mock_store(
+            with_reality_check=True, reality_check_extra={"sweep_decisions": [removed]}
+        )
+        result = run_synthesis_deterministic("job-1", "mydb", store)
+        assert not any("removed" in str(t.get("description", "")) for t in result["trade_offs"])
 
     def test_data_key_holds_synthesis_data(self):
         """The 'data' key must hold the SynthesisData object for downstream use."""

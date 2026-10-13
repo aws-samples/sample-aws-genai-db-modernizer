@@ -50,6 +50,7 @@ from src.agents.referee.synthesis_report import (
 )
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.contracts.synthesis_output import SynthesisOutputContract
+from src.shared.engine_names import display_engine
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -299,6 +300,11 @@ def run_synthesis_deterministic(
             "recommendations": reality_check_output.get("recommendations", []),
             "before_distribution": reality_check_output.get("before_distribution", {}),
             "after_distribution": reality_check_output.get("after_distribution", {}),
+            # #589: the sanity sweep's own kept/removed verdict for every tiny
+            # orphan engine it evaluated -- carried through verbatim so the UI
+            # and any other report.json reader can show the full record, not
+            # just the trade-off text derived from it below.
+            "sweep_decisions": reality_check_output.get("sweep_decisions", []),
         }
         reality_check_summary = recompute_reality_check_patterns(
             reality_check_summary, (data.assignment or {}).get("query_assignments", [])
@@ -316,6 +322,27 @@ def run_synthesis_deterministic(
                         "engine": "reality-check",
                     }
                 )
+        # #589: a KEPT engine never produces a consolidation or recommendation
+        # (nothing moved), so without this it left no trace in report.json at
+        # all -- the engineering report's "Migration trade-offs" section (and
+        # the Decision Report's trade-off-derived callouts) only ever learn
+        # about a sanity sweep decision through this list.
+        for sd in reality_check_summary["sweep_decisions"]:
+            if sd.get("decision") != "kept":
+                continue
+            desc = f"{display_engine(sd.get('engine', ''))} kept: {sd.get('reason', '')}"
+            if any(t.get("description") == desc for t in trade_offs):
+                continue
+            trade_offs.append(
+                {
+                    "description": desc,
+                    "impact": desc,
+                    "source_tables": [],
+                    "target_tables": [],
+                    "query_ids": list(sd.get("blocking_query_ids") or []),
+                    "engine": "reality-check",
+                }
+            )
 
     return {
         "job_id": job_id,

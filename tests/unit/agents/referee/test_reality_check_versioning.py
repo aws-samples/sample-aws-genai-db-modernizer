@@ -254,18 +254,23 @@ class TestHandlerVersions:
             query_signals,
         ):
             moved = [{**qa, "assigned_engine": "dynamodb"} for qa in revised]
-            return moved, consolidations or [
-                {
-                    "from_engine": "documentdb",
-                    "to_engine": "dynamodb",
-                    "query_count": 1,
-                    "reason": "orphan",
-                    "saved_cost_estimate": 0,
-                    "action": "full",
-                    "queries_retained": [],
-                    "retention_reason": None,
-                }
-            ]
+            return (
+                moved,
+                consolidations
+                or [
+                    {
+                        "from_engine": "documentdb",
+                        "to_engine": "dynamodb",
+                        "query_count": 1,
+                        "reason": "orphan",
+                        "saved_cost_estimate": 0,
+                        "action": "full",
+                        "queries_retained": [],
+                        "retention_reason": None,
+                    }
+                ],
+                [],
+            )
 
         with patch(
             "src.agents.referee.reality_check_handler.sanity_sweep", side_effect=_sweep_everything
@@ -296,7 +301,7 @@ class TestHandlerVersions:
         ):
             for qa in revised:
                 qa["assigned_engine"] = "dynamodb"
-            return revised, consolidations
+            return revised, consolidations, []
 
         with patch(
             "src.agents.referee.reality_check_handler.sanity_sweep", side_effect=_sweep_in_place

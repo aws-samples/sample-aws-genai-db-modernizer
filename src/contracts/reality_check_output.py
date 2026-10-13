@@ -43,6 +43,14 @@ Version History:
   so artifacts written before this version read as having no unresolved
   query ties. Bumped from the originally-proposed 1.8 to 1.9 after #542
   merged its own, unrelated 1.8 (``eliminated_engines``) first.
+- 1.10 (2026-10-13, #589): Added ``sweep_decisions``: the sanity sweep's own
+  kept-or-removed verdict for every tiny orphan engine it evaluated
+  (``consolidation_validator.sanity_sweep``). Before this field, that
+  explanation only ever reached a ``[reality-check]`` log line -- a KEPT
+  engine (at least one query, or co-dependency group, had no serviceable
+  committed destination) left no trace in the written artifact at all.
+  Defaults to an empty list, so an artifact written before this version
+  reads as having no sweep decisions.
 """
 
 from pydantic import BaseModel, Field
@@ -142,6 +150,44 @@ class Consolidation(BaseModel):
     )
 
 
+class SweepDecision(BaseModel):
+    """One sanity-sweep kept/removed verdict for a tiny orphan engine (#589).
+
+    ``consolidation_validator.sanity_sweep`` runs after every other
+    consolidation pass; for each engine at or under
+    ``ORPHAN_ENGINE_THRESHOLD`` queries it either removes the engine (every
+    query, or co-dependency group, has a serviceable, eligible committed
+    destination) or keeps it (at least one does not). Before this field the
+    explanation reached only a ``[reality-check]`` log line -- a KEPT engine
+    left no trace in the written artifact, since it generates no
+    :class:`Consolidation` record either.
+    """
+
+    engine: str = Field(..., description="The orphan engine the sweep evaluated")
+    decision: str = Field(..., description="'kept' or 'removed'")
+    reason: str = Field(..., description="Why the sweep kept or removed this engine")
+    blocking_query_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Query (or co-dependency group member) IDs that had no serviceable, "
+            "eligible committed destination -- what blocked a 'kept' decision. "
+            "Always empty for a 'removed' decision"
+        ),
+    )
+    blocking_rule: str | None = Field(
+        None,
+        description=(
+            "Why the blocking query/group had nowhere else to go: 'signal_override' "
+            "(mandatory for a signal override), 'no_serviceable_engine' (a hard "
+            "exclusion or missing capability on every other committed engine), "
+            "'ineligible_destination' (serviceable, but not somewhere the reality "
+            "check's own placement rule would ever put it), or 'mixed' when "
+            "different blocked queries/groups on the same engine had different "
+            "rules. None for a 'removed' decision"
+        ),
+    )
+
+
 class LightweightRecommendation(BaseModel):
     """Recommendation to use a lightweight managed service instead of a full engine."""
 
@@ -173,7 +219,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.9", description="Contract version")
+    contract_version: str = Field(default="1.10", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -252,5 +298,13 @@ class RealityCheckOutputContract(BaseModel):
             "QueryAssignment.tied_engines after the reality check (#503): a per-query "
             "exact-score tie no ADR-031 rule decided. 0 for an artifact written before "
             "this field existed."
+        ),
+    )
+    sweep_decisions: list[SweepDecision] = Field(
+        default_factory=list,
+        description=(
+            "The sanity sweep's own kept-or-removed verdict for every tiny orphan "
+            "engine it evaluated (#589). Empty when the sweep evaluated no orphan "
+            "engine, or for an artifact written before this field existed"
         ),
     )

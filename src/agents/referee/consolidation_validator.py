@@ -575,7 +575,7 @@ def sanity_sweep(
     co_dependency_groups: list[list[str]] | None = None,
     routing_trace: RoutingTrace | None = None,
     query_signals: Mapping[str, list[str]] | None = None,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Final pass: remove a tiny orphan engine the other committed engines
     can serve (ADR-031 Decision 7: "when an engine serves only a few
     queries, check whether the other engines can serve them, and if so
@@ -665,7 +665,14 @@ def sanity_sweep(
             direction (fewer, not more, destinations judged eligible).
 
     Returns:
-        (updated_assignments, updated_consolidations) — may be unchanged
+        (updated_assignments, updated_consolidations, sweep_decisions) —
+        the first two may be unchanged. ``sweep_decisions`` (#589) has one
+        entry per orphan engine this sweep evaluated: ``engine``,
+        ``decision`` ("kept" or "removed"), ``reason``, ``blocking_query_ids``
+        (the queries/group members with nowhere else to go, when kept; empty
+        when removed) and ``blocking_rule`` (why they had nowhere to go, when
+        kept; ``None`` when removed) -- the same explanation that otherwise
+        only ever reached a ``[reality-check]`` log line.
     """
     engine_counts = Counter(qa["assigned_engine"] for qa in revised_assignments)
     source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
@@ -694,19 +701,34 @@ def sanity_sweep(
         for qid in defined_group:
             group_by_qid[qid] = defined_group
 
+    # #589: the sweep's own kept/removed verdict for every orphan engine it
+    # evaluates below -- otherwise this explanation only ever reaches the
+    # ``print()`` lines further down, never ``reality-check/output.json``.
+    sweep_decisions: list[dict] = []
+
     for engine, count in list(engine_counts.items()):
         if engine in AURORA_ENGINES:
             continue
         if count > ORPHAN_ENGINE_THRESHOLD:
             continue
 
-        committed_elsewhere = [e for e in safe_destinations if e != engine]
-        if not committed_elsewhere:
-            continue  # nothing else exists to serve these queries
-
         engine_qids = [
             qa["query_id"] for qa in revised_assignments if qa["assigned_engine"] == engine
         ]
+
+        committed_elsewhere = [e for e in safe_destinations if e != engine]
+        if not committed_elsewhere:
+            sweep_decisions.append(
+                {
+                    "engine": engine,
+                    "decision": "kept",
+                    "reason": "no other committed engine exists to serve these queries",
+                    "blocking_query_ids": sorted(engine_qids),
+                    "blocking_rule": "no_serviceable_engine",
+                }
+            )
+            continue  # nothing else exists to serve these queries
+
         engine_qid_set = set(engine_qids)
 
         # Partition into co-dependency-group units (2+ members still on
@@ -727,6 +749,10 @@ def sanity_sweep(
                 seen.add(qid)
 
         blocked_notes: list[str] = []
+        # #589: the same information as blocked_notes, structured so a kept
+        # engine's sweep_decision can name exactly which queries/groups
+        # blocked it and under which rule, not just the printed sentence.
+        blocked_units: list[dict] = []
         resolved: list[tuple[list[str], str, str | None, list[str]]] = []
         for members in units:
             is_group = len(members) > 1
@@ -734,6 +760,7 @@ def sanity_sweep(
             override_reason = _signal_override_block(members, by_id)
             if override_reason is not None:
                 blocked_notes.append(override_reason)
+                blocked_units.append({"members": members, "rule": "signal_override"})
                 continue
 
             original_tied = next(
@@ -755,6 +782,7 @@ def sanity_sweep(
 
             if not scores:
                 blocked_notes.append(f"{label} ({'; '.join(reasons)})")
+                blocked_units.append({"members": members, "rule": "no_serviceable_engine"})
                 continue
 
             eligible = _eligible_destinations(
@@ -777,6 +805,7 @@ def sanity_sweep(
                     "placement rule -- the write/specialist-absorb gate or the "
                     "join-onto-DynamoDB block)"
                 )
+                blocked_units.append({"members": members, "rule": "ineligible_destination"})
                 continue
             scores = {e: s for e, s in scores.items() if e in eligible}
 
@@ -807,6 +836,31 @@ def sanity_sweep(
                 f"[reality-check] Sanity sweep: kept {display_engine(engine)} "
                 f"({count} queries) -- not every query has a serviceable committed "
                 f"engine: {'; '.join(blocked_notes)}"
+            )
+            # #589: the same verdict, structured -- blocking_query_ids/_rule
+            # name EVERY blocked unit, not just the first, the same way
+            # blocked_notes already does in the printed sentence above. This
+            # is never an engine pick (ADR-031/#571's bias scan is about
+            # choosing BETWEEN candidate engines) -- distinct_rules names
+            # which gate categories blocked this one engine, built by a
+            # plain append loop (never ``sorted``/``min``/``max`` or set
+            # order) so "one rule" vs. "several, so 'mixed'" never depends on
+            # iteration order either.
+            distinct_rules: list[str] = []
+            for u in blocked_units:
+                if u["rule"] not in distinct_rules:
+                    distinct_rules.append(u["rule"])
+            sweep_decisions.append(
+                {
+                    "engine": engine,
+                    "decision": "kept",
+                    "reason": (
+                        "not every query has a serviceable committed engine: "
+                        f"{'; '.join(blocked_notes)}"
+                    ),
+                    "blocking_query_ids": sorted({m for u in blocked_units for m in u["members"]}),
+                    "blocking_rule": distinct_rules[0] if len(distinct_rules) == 1 else "mixed",
+                }
             )
             continue
 
@@ -871,7 +925,24 @@ def sanity_sweep(
                 f"→ {moved} to {display_engine(to_engine)} (best-scoring committed engine)"
             )
 
-    return revised_assignments, consolidations
+        # #589: one "removed" verdict per engine, not per destination --
+        # the per-destination split is already on the Consolidation records
+        # above; this names the engine-level outcome the same way a "kept"
+        # verdict does.
+        dest_text = "; ".join(f"{moved_counts[d]} to {display_engine(d)}" for d in destinations)
+        sweep_decisions.append(
+            {
+                "engine": engine,
+                "decision": "removed",
+                "reason": (
+                    f"{count} queries, each with a serviceable committed engine: {dest_text}"
+                ),
+                "blocking_query_ids": [],
+                "blocking_rule": None,
+            }
+        )
+
+    return revised_assignments, consolidations, sweep_decisions
 
 
 def _call_llm_validator(

@@ -402,7 +402,7 @@ def run_reality_check_handler(
             "reality-check: assignment has no co_dependency_groups; the sanity sweep "
             "will treat every query as ungrouped"
         )
-    det["revised_assignments"], det["consolidations"] = sanity_sweep(
+    det["revised_assignments"], det["consolidations"], det["sweep_decisions"] = sanity_sweep(
         det["revised_assignments"],
         det["consolidations"],
         scoring_context,
@@ -515,6 +515,10 @@ def write_reality_check_result(
             "query_tie_unresolved_count": sum(
                 1 for qa in result.get("revised_assignments", []) if qa.get("tied_engines")
             ),
+            # #589: the sanity sweep's own kept/removed verdict for every
+            # tiny orphan engine it evaluated -- otherwise a KEPT engine left
+            # no trace in this artifact at all.
+            "sweep_decisions": result.get("sweep_decisions", []),
         }
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"

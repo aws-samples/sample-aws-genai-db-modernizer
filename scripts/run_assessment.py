@@ -624,6 +624,20 @@ def _compact_consolidations(consolidations: list[dict]) -> list[dict]:
     return out
 
 
+def _compact_sweep_kept(sweep_decisions: list[dict]) -> list[dict]:
+    """``engine``/``reason`` for every sanity-sweep decision that KEPT a tiny
+    orphan engine (#589) -- a ``removed`` decision is dropped here, since its
+    outcome already shows up in ``consolidations`` (``_compact_consolidations``
+    above); without this, a KEPT engine was invisible to the approval gate,
+    the one place #589 was raised to fix.
+    """
+    return [
+        {"engine": sd["engine"], "reason": _truncate(sd.get("reason", ""))}
+        for sd in sweep_decisions
+        if sd.get("decision") == "kept"
+    ]
+
+
 def _schema_design_engines(store, job_id: str, db: str, version: int) -> list[str]:
     """The engines that get a schema design: triage's selection, filtered to
     the ones with an in-scope query at ``version`` -- owners (``assigned_engine``)
@@ -661,8 +675,11 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
     a version number and a path. ``before_distribution``/``after_distribution``
     (the v1 -> vN per-engine query counts), a compact ``consolidations`` list
     (what moved, how many queries, why -- deduplicated, see
-    ``_compact_consolidations``), ``cache_overlay`` (the final assignment's
-    cache coverage, trimmed to the three fields the gate names) and
+    ``_compact_consolidations``), a compact ``sweep_kept`` list (#589: why the
+    sanity sweep KEPT a tiny orphan engine instead of removing it -- see
+    ``_compact_sweep_kept``; a removed one is covered by ``consolidations``
+    already), ``cache_overlay`` (the final assignment's cache coverage,
+    trimmed to the three fields the gate names) and
     ``schema_design_engines`` (see ``_schema_design_engines``) are read here,
     deterministically, so the orchestrator can present them, and dispatch
     schema design, without opening either file. Review of #329: keep this
@@ -690,6 +707,11 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
         # survived/dropped labels instead of re-deriving one from the counts.
         out["eliminated_engines"] = rc.get("eliminated_engines", [])
         out["consolidations"] = _compact_consolidations(rc.get("consolidations", []))
+        # #589: the sanity sweep's own reason for KEEPING a tiny orphan engine
+        # (contract 1.10+) -- compacted the same way as consolidations, so a
+        # kept engine's reason reaches the approval gate too, not only a
+        # removed one's.
+        out["sweep_kept"] = _compact_sweep_kept(rc.get("sweep_decisions", []))
 
     assignment_path = assignment_artifact_path(db, job_id, version)
     if store.exists(assignment_path):
