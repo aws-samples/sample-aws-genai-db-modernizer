@@ -149,7 +149,7 @@ describe('confidenceAlertText (Target Database Details, #152, #312)', () => {
 
   it('keeps the legacy wording for a report without routed confidence', () => {
     expect(confidenceAlertText({ target: 'dynamodb', confidence_score: 48 })).toBe(
-      'This database is recommended with 48% confidence based on workload analysis',
+      'This database is recommended with 48% workload fit based on workload analysis',
     );
   });
 

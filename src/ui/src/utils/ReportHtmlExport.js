@@ -15,6 +15,7 @@ import { html } from './escapeHtml';
 import { splitRankingByRole, formatCacheLayerLine } from './cacheLayer';
 import { analysisConfidence, confidenceText, hasRoutedConfidence } from './rankingConfidence';
 import { displayEngine } from './engineNames';
+import { WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL } from './workloadFitLabels';
 import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
 
 // A wave with more tables than this shows "+N more" rather than every name
@@ -223,7 +224,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
 
   <div class="section-separator">
     <h2>Database Ranking</h2>
-    <div class="desc">${t('report-results.ranking.description', { defaultValue: 'AWS database services ranked by share of query patterns; confidence is the fit of the queries routed to each engine' })}</div>
+    <div class="desc">${t('report-results.ranking.description', { defaultValue: `AWS database services ranked by share of query patterns. ${WORKLOAD_FIT_DEFINITION}` })}</div>
   </div>
 
   <div class="container">
@@ -235,7 +236,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
           <div class="confidence">${confidenceText(item, true)}</div>
           <div class="confidence-label">${hasRoutedConfidence(item)
             ? t('report-results.ranking.routed-confidence', { defaultValue: 'Fit of routed queries' })
-            : 'Confidence'}</div>
+            : WORKLOAD_FIT_LABEL}</div>
           ${hasRoutedConfidence(item) && analysisConfidence(item) !== null ? html`<div class="confidence-label">${t('report-results.ranking.analysis-confidence', { score: analysisConfidence(item), defaultValue: 'Analysis average {{score}}%' })}</div>` : ''}
           <div style="margin-top: 15px; font-size: 12px; color: #666;">
             ${item.tables_analyzed || 0} tables · ${item.access_patterns || 0} patterns<br>
@@ -254,7 +255,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
 
   <div class="section-separator">
     <h2>Table Mappings (${tableMappings.length})</h2>
-    <div class="desc">Recommended mapping of source tables to target databases with design patterns and confidence scores</div>
+    <div class="desc">Recommended mapping of source tables to target databases with design patterns and fit scores</div>
   </div>
 
   <div class="container">
@@ -265,7 +266,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
           <th>Target Database</th>
           <th>Target Table</th>
           <th>Pattern</th>
-          <th>Confidence</th>
+          <th>${WORKLOAD_FIT_LABEL}</th>
         </tr>
       </thead>
       <tbody>

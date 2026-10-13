@@ -43,7 +43,7 @@ Each wave lists every table its queries use, not only the tables its engine owns
 
 ## Risks
 
-The engineering report and the decision report both carry a risk section: anything the deterministic scoring flagged as low-confidence, any query that reality check had to redirect, and any assumption the model made that depends on data this tool couldn't see (traffic patterns, peak load, compliance requirements). Read it before treating the wave plan as a commitment.
+The engineering report and the decision report both carry a risk section: anything the deterministic scoring flagged as low-fit, any query that reality check had to redirect, and any assumption the model made that depends on data this tool couldn't see (traffic patterns, peak load, compliance requirements). Read it before treating the wave plan as a commitment.
 
 ## See it on real data
 

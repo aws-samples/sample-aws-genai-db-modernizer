@@ -14,7 +14,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     Artifacts land in `./artifacts/{db_name}/{job_id}/`. What you get without a model:
 
     - Workload signal detection (key-value, text search, aggregations, session stores, etc.)
-    - Per-engine analysis with confidence scores for every query
+    - Per-engine analysis with workload-fit scores for every query
     - Query-to-engine assignment with co-dependency resolution
     - Reality Check: engine consolidation, architectural pattern detection, cost savings analysis
 

@@ -37,6 +37,7 @@ from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.optimization_labels import OPTIMIZATION_DISPLAY_NAMES
+from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
 from src.storage.parallel import map_parallel
 
 from . import escaping, renderers
@@ -999,6 +1000,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         f"    const DATA = {_json(data_payload)};\n"
         f"    const ENGINE_LABELS = {_json(ENGINE_LABELS, compact=True)};\n"
         f"    const OPTIMIZATION_LABELS = {_json(OPTIMIZATION_LABELS, compact=True)};\n"
+        f"    const WORKLOAD_FIT_DEFINITION = {_json(WORKLOAD_FIT_DEFINITION, compact=True)};\n"
         + _read_template("analysis_report.js")
         + "\n  </script>\n"
     )

@@ -63,7 +63,7 @@ def run_analysis(
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% confidence")
+                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
             print(
                 f"[analysis/{agent_type}] Cost estimate: ${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
@@ -105,7 +105,7 @@ def run_analysis(
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% confidence")
+                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
             print(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
@@ -160,7 +160,7 @@ def run_analysis(
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% confidence")
+                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
             print(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
@@ -192,7 +192,7 @@ def run_analysis(
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% confidence")
+                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
             print(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
@@ -224,7 +224,7 @@ def run_analysis(
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% confidence")
+                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
             print(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"

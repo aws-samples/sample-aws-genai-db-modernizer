@@ -153,7 +153,7 @@ class TestRationale:
         assert dbs["dynamodb"]["rationale"].startswith(
             "90% mean fit across 6 queries (1 rated table), led by key-value lookups (6 of 6)."
         )
-        assert "average confidence across" not in dbs["opensearch"]["rationale"]
+        assert "average fit across" not in dbs["opensearch"]["rationale"]
         assert dbs["opensearch"]["routed_confidence"] == 0
 
     def test_cache_rationale_states_its_cache_fit(self):
@@ -170,9 +170,7 @@ class TestRationale:
     def test_without_assignment_the_rationale_keeps_the_analysis_average(self):
         data = _data(None)
         dynamodb = _by_target(build_ranking(data))["dynamodb"]
-        assert _engine_rationale(data, dynamodb).startswith(
-            "50% average confidence across 4 tables"
-        )
+        assert _engine_rationale(data, dynamodb).startswith("50% average fit across 4 tables")
 
 
 class TestNoTableEvidence:

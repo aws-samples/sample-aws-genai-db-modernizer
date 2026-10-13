@@ -66,6 +66,11 @@ from src.shared.ranking import confidence_text, engine_confidence, is_signal_onl
 from src.shared.risk_severity import SEVERITY_ORDER, UNRATED
 from src.shared.risk_severity import count_by_severity as _count_by_severity
 from src.shared.risk_severity import severity_of as _severity
+from src.shared.workload_fit_labels import (
+    WORKLOAD_FIT_DEFINITION,
+    WORKLOAD_FIT_LABEL,
+    fit_phrase,
+)
 
 from .renderers import (
     NO_OPEN_RISKS_CAVEAT,
@@ -793,7 +798,7 @@ def _evidence_signal(
 def _sequencing_rule_text(
     engines: list[dict[str, Any]], conf: dict[str, float], routed: bool = False
 ) -> str:
-    """The Engine Confidence slide's statement of the wave rule ``derive()`` applies.
+    """The Engine Fit slide's statement of the wave rule ``derive()`` applies.
 
     No-migration steps (cache layer, retained engine) always form Wave 1 because
     they are reversible; ``CONFIDENCE_FLOOR`` only orders the migration targets.
@@ -802,16 +807,25 @@ def _sequencing_rule_text(
     no-migration engine under the floor is named, so the exception is explicit;
     the migration-target clause is dropped when there are none.
 
-    With ``routed`` (the report carries ``routed_confidence``, #152) the slide says
-    what the figure is: the fit of the work each engine was given.
+    With ``routed`` (the report carries ``routed_confidence``, #152) the slide names
+    what the figure is -- the fit of the work each engine was given, not a forecast
+    -- without restating ``WORKLOAD_FIT_DEFINITION`` itself: that full definition is
+    stated exactly once in the deck, in ``footer_note(s, WORKLOAD_FIT_DEFINITION, ...)``
+    on the Workload Coverage slide (``slide_coverage``), the figure's first
+    appearance. Review round 1 found both slides stating it verbatim when
+    ``routed_confidence`` was present -- a reader-visible duplicate, not a second
+    legitimate appearance (bug: fit score presented as a confidence percentage).
     """
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
     has_targets = any(e["role"] == "Migration target" for e in engines)
     text = (
-        "Confidence is the mean fit of the queries routed to each engine (for the cache "
-        "layer, of the reads it fronts), not a forecast. "
+        "Fit is the mean of the queries routed to each engine (for the cache layer, "
+        "of the reads it fronts), not a forecast. "
         if routed
-        else "Confidence is the assessment's own measure of evidence strength, not a forecast. "
+        else (
+            "Fit is the assessment's own measure of evidence strength. It is not a "
+            "probability that the migration will succeed. "
+        )
     )
     if no_move:
         low = [e for e in no_move if conf.get(e["engine"], 0) < CONFIDENCE_FLOOR]
@@ -826,22 +840,16 @@ def _sequencing_rule_text(
             else ""
         )
         text += (
-            f"Steps that need no data migration{named} are reversible at any confidence: "
+            f"Steps that need no data migration{named} are reversible at any fit level: "
             "the engine already serving the data keeps serving it, so there is nothing to "
             "roll back."
         )
     if has_targets:
         text += (
-            f" Migration targets under {CONFIDENCE_FLOOR}% are sequenced last so they can be "
-            f"re-scoped once the earlier waves have produced real measurements."
+            f" Migration targets under {CONFIDENCE_FLOOR}% fit are sequenced last so they "
+            f"can be re-scoped once the earlier waves have produced real measurements."
         )
     return text.strip()
-
-
-def _confidence_phrase(text: str) -> str:
-    """``93%`` -> ``93% confidence``; ``60% (signal only)`` -> ``60% confidence (signal only)``."""
-    pct, _, note = text.partition(" (")
-    return f"{pct} confidence" + (f" ({note}" if note else "")
 
 
 def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
@@ -895,21 +903,21 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     n_tables, schema_mapped = _n_tables_mapped(rep)
     # #530 round 2: without a completed design, name the actual wave
     # relationship instead of a bare count -- "N tables mapped ... each with
-    # its own confidence score" implies a per-table figure that does not
+    # its own fit score" implies a per-table figure that does not
     # exist without a design, and a bare "N tables assigned" when nothing is
     # known at all (no waves, no mappings) would be a fabricated zero.
     if schema_mapped:
         basis_table_line = (
             f"{n_tables:,} {plural_noun(n_tables, 'table')} mapped to a named target, each "
-            "with its own confidence score"
+            "with its own fit score"
         )
     elif not n_tables:
         basis_table_line = "No source tables are mapped or assigned to a target yet"
     else:
         # #530 round 3 review: leads with the disclaimer, not the wave detail
         # -- a clip below must never be able to cut the one clause that
-        # explains why there is no per-table confidence score.
-        disclaimer = "Schema mapping has not run, so there are no per-table confidence scores yet"
+        # explains why there is no per-table fit score.
+        disclaimer = "Schema mapping has not run, so there are no per-table fit scores yet"
         # Any wave with a ``homogeneity`` (homogeneous, heterogeneous or
         # cross_engine, #381) is wave 1, the whole collected schema moving
         # as one -- the same marker ``migrated`` above excludes by. A
@@ -1118,16 +1126,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         lead = (
             "No table-level evidence; confirm the requirement"
             if is_signal_only(weakest)
-            else f"Lowest confidence of the {len(ranking)} {plural_noun(len(ranking), 'engine')}"
+            else f"Lowest fit of the {len(ranking)} {plural_noun(len(ranking), 'engine')}"
         )
         also = [ENGINE_LABEL.get(str(r.get("target")), str(r.get("target"))) for r in confirm[1:]]
         decisions.append(
             {
                 "question": f"Confirm {ENGINE_LABEL.get(eng, eng)}?",
                 "badge": (
-                    f"{conf_text(eng)} confidence"
-                    if not is_signal_only(weakest)
-                    else conf_text(eng)
+                    f"{conf_text(eng)} fit" if not is_signal_only(weakest) else conf_text(eng)
                 ),
                 "accent": ENGINE_COLOR.get(eng, ORANGE),
                 "against": (
@@ -1151,7 +1157,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
-                    f"Carries the most CRITICAL/HIGH risks · {conf_text(eng)} confidence · "
+                    f"Carries the most CRITICAL/HIGH risks · {conf_text(eng)} fit · "
                     f"{share_text(eng)}"
                 ),
                 "action": "Scope defined as the matching table subset.",
@@ -1506,7 +1512,7 @@ def slide_evidence(prs, f):
             line = (
                 f"{ENGINE_LABEL.get(eng, eng)}   {f['workload'].get(eng, 0):.1f}%   ·   "
                 f"{assigned:,} {plural_noun(assigned, 'query', 'queries')}   ·   "
-                + _confidence_phrase(f["conf_text"].get(eng, "0%"))
+                + fit_phrase(f["conf_text"].get(eng, "0%"))
             )
         para(tf, line, size=11.5, first=True)
 
@@ -1537,6 +1543,11 @@ def slide_evidence(prs, f):
         color=WHITE,
         first=True,
     )
+    # First appearance of a fit figure in the deck (the per-engine percentages
+    # above): the plain-language definition every deliverable states once,
+    # shared with the HTML, Markdown and UI deliverables (#152, bug: fit score
+    # presented as a confidence percentage).
+    footer_note(s, WORKLOAD_FIT_DEFINITION, size=8.5)
     return s
 
 
@@ -1592,7 +1603,7 @@ def slide_workload(prs, f):
 
     tf = textbox(s, 6.45, BODY_TOP, 5.6, 0.3)
     # Triage signals count the whole workload, before assignment; the Engine
-    # Confidence slide counts what was routed to one engine (#256).
+    # Fit slide counts what was routed to one engine (#256).
     para(
         tf,
         "WHAT THOSE QUERIES ARE DOING  ·  WHOLE WORKLOAD",
@@ -1685,14 +1696,14 @@ def _root_cause_sentence(n_crit_high: int, high_type: str) -> str:
 def slide_decisions(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
     d = f["decisions"]
-    set_title(s, "Engine Confidence and Open Decisions")
+    set_title(s, "Engine Fit and Open Decisions")
     weak = min(f["conf"].items(), key=lambda kv: (kv[1], kv[0])) if f["conf"] else None
     n_ranking = len(f["ranking"])
     engines_word = plural_noun(n_ranking, "engine")
     set_subtitle(
         s,
         (
-            f"{n_ranking} recommended {engines_word}  ·  lowest confidence "
+            f"{n_ranking} recommended {engines_word}  ·  lowest fit "
             f"{ENGINE_LABEL.get(weak[0], weak[0])} at "
             f"{f['conf_text'].get(weak[0], f'{weak[1]:.0f}%')}"
             if weak
@@ -1700,7 +1711,7 @@ def slide_decisions(prs, f):
         ),
     )
 
-    rows = [("Engine", "Workload", "Confidence", "CRITICAL/HIGH risks", "Role")]
+    rows = [("Engine", "Workload", WORKLOAD_FIT_LABEL, "CRITICAL/HIGH risks", "Role")]
     emph: dict[tuple[int, int], Any] = {}
     for i, r in enumerate(f["ranking"], start=1):
         eng = r.get("target")
@@ -2138,7 +2149,7 @@ def slide_sequencing(prs, f):
                 )
             ),
             # A labelled figure ("60% (signal only)") fills the cell on its own
-            w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} confidence",
+            w["conf_text"] if "(" in w["conf_text"] else f"{w['conf_text']} fit",
             f"{w['crit_high']} CRIT/HIGH {plural_noun(w['crit_high'], 'risk')}",
         )
         for j, val in enumerate(stats):

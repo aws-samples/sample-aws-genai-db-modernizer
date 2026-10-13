@@ -97,6 +97,6 @@ export function confidenceAlertText(item, t = defaultT) {
   }
   return t('report-results.target-db-mapping.confidence-alert', {
     score: engineConfidence(item),
-    defaultValue: 'This database is recommended with {{score}}% confidence based on workload analysis',
+    defaultValue: 'This database is recommended with {{score}}% workload fit based on workload analysis',
   });
 }

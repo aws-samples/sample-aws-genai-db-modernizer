@@ -417,7 +417,7 @@ class AssignmentResolver:
                     continue
                 assigned[qid] = best[0]
                 assigned_confidence[qid] = top_score
-                assigned_reason[qid] = f"highest confidence for {display_engine(best[0])}"
+                assigned_reason[qid] = f"highest fit for {display_engine(best[0])}"
             else:
                 # Step 7: Fallback to aurora engine from triage
                 fallback_qids.append(qid)
@@ -461,9 +461,7 @@ class AssignmentResolver:
                         assigned_tied_engines[qid] = sorted(best)
                     if kind == "individual":
                         assigned_confidence[qid] = top_score
-                        assigned_reason[qid] = (
-                            f"highest confidence for {display_engine(winner)} ({why})"
-                        )
+                        assigned_reason[qid] = f"highest fit for {display_engine(winner)} ({why})"
                     else:
                         assigned_confidence[qid] = scores.get(qid, {}).get(winner, 0)
                         assigned_reason[qid] = (
@@ -653,7 +651,7 @@ class AssignmentResolver:
             qid = query["query_id"]
             engine = assigned[qid]
             confidence = assigned_confidence.get(qid, 0)
-            reason = assigned_reason.get(qid, f"highest confidence for {display_engine(engine)}")
+            reason = assigned_reason.get(qid, f"highest fit for {display_engine(engine)}")
 
             # Append exclusion notes to the reason if this query was excluded from other engines
             if qid in exclusion_notes:

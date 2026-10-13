@@ -532,6 +532,24 @@ def test_render_leaves_no_unfilled_placeholders(rendered):
     assert not re.findall(r"__[A-Z_]+__", rendered)
 
 
+def test_embeds_the_literal_workload_fit_definition_not_the_build_call(rendered):
+    """Bug: Deliverables present a fit score as a confidence percentage, review
+    round 2. ``scripts/sync_report_template.py`` mechanically lifts every
+    ``script += '...';`` line out of ``ExportReport.js`` -- but ``const
+    WORKLOAD_FIT_DEFINITION = ' + jsonForScript(WORKLOAD_FIT_DEFINITION) + ';``
+    calls a build-time JS helper, which only runs in the browser when a user
+    clicks "Export"; it is dead text in the Python-rendered analysis report
+    unless ``analysis_report.py`` re-embeds the real value itself (the same way
+    it already does for ``ENGINE_LABELS``/``OPTIMIZATION_LABELS``). Before that
+    fix, this fixture's rendered HTML carried the literal, unevaluated
+    ``' + jsonForScript(WORKLOAD_FIT_DEFINITION) + '`` text instead of the
+    definition."""
+    from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
+
+    assert rendered.count(WORKLOAD_FIT_DEFINITION) == 1
+    assert "jsonForScript(WORKLOAD_FIT_DEFINITION)" not in rendered
+
+
 def test_risk_assessment_script_carries_the_no_open_risks_caveat(rendered):
     """#434 round-1 review: the client script's no-open-risk state must carry the
     same caveat the deck and the Decision Report do (``renderers.NO_OPEN_RISKS_CAVEAT``

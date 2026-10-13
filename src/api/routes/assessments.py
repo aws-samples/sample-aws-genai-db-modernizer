@@ -596,7 +596,7 @@ def _summarize_artifact(summary: dict | None) -> str | None:
         if "target_database" in summary:
             parts = [f"{summary.get('tables_analyzed', 0)} tables analyzed"]
             if summary.get("avg_confidence_score"):
-                parts.append(f"{summary['avg_confidence_score']}% confidence")
+                parts.append(f"{summary['avg_confidence_score']}% fit")
             if summary.get("monthly_cost_usd"):
                 parts.append(f"${summary['monthly_cost_usd']}/mo est.")
             return ", ".join(parts)
@@ -609,7 +609,7 @@ def _summarize_artifact(summary: dict | None) -> str | None:
                 # The engine owning the largest workload share, with the fit of the
                 # queries routed to it (#152); no shares (no assignment): the top entry
                 top = main.get("target", "unknown")
-                score = f"{engine_confidence(main):.0f}% confidence"
+                score = f"{engine_confidence(main):.0f}% fit"
                 if main.get("workload_percent") is not None:
                     return f"Main engine: {top} ({main['workload_percent']}% of workload, {score})"
                 return f"Top recommendation: {top} ({score})"

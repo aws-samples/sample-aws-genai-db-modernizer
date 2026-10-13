@@ -28,6 +28,7 @@ import { costBaselineStats } from './tcoAnalysis';
 import { summaryFallbackInfo } from './summaryFallback';
 import { fallbackWithheldReason } from './fallbackWithheldReason';
 import { OPTIMIZATION_LABELS } from './optimizationLabels';
+import { WORKLOAD_FIT_DEFINITION } from './workloadFitLabels';
 
 // #358: this file is English-only (i18n-exempt, see header), so this is the
 // one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
@@ -235,6 +236,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    const DATA = ' + jsonForScript({ results, schemaDesigns, collector, jobId, queryJourneys }, 2) + ';\n';
   script += '    const ENGINE_LABELS = ' + jsonForScript(ENGINE_LABELS) + ';\n';
   script += '    const OPTIMIZATION_LABELS = ' + jsonForScript(OPTIMIZATION_LABELS) + ';\n';
+  script += '    const WORKLOAD_FIT_DEFINITION = ' + jsonForScript(WORKLOAD_FIT_DEFINITION) + ';\n';
   script += '\n';
   script += '    // The palette lives only in the CSS :root block. Charts and SVG need real\n';
   script += '    // colour values, so read the custom properties back at runtime -- the\n';
@@ -1403,7 +1405,14 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // cache_engine (e.g. "elasticache") just flags that it is also served from a
   // cache layer, so it is shown as a small secondary line, never as the engine.
   script += '      tabsHtml += \'<div><div class="key-value-label">Assigned Engine</div><div><span class="badge badge-blue">\' + escapeHtml(assignment.assigned_engine || \'—\') + \'</span>\' + (assignment.cache_engine ? (\'<div style="margin-top: 4px; font-size: 12px; font-style: italic; color: var(--color-text-secondary);">Cached by \' + escapeHtml(ENGINE_LABELS[assignment.cache_engine] || assignment.cache_engine) + \'</div>\') : \'\') + \'</div></div>\';\n';
-  script += '      tabsHtml += \'<div><div class="key-value-label">Confidence</div><div>\' + escapeHtml(String(assignment.confidence || \'—\')) + \'%</div></div>\';\n';
+  script += '      tabsHtml += \'<div><div class="key-value-label">Workload Fit</div><div>\' + escapeHtml(String(assignment.confidence || \'—\')) + \'%</div></div>\';\n';
+  // First (and only) appearance of a fit figure in this document: the plain-
+  // language definition every deliverable states once, shared with the
+  // decision report, the engineering report and the deck (bug: fit score
+  // presented as a confidence percentage). WORKLOAD_FIT_DEFINITION is embedded
+  // as a top-level const (same as ENGINE_LABELS/OPTIMIZATION_LABELS above), so
+  // no quoting of its apostrophe is needed here.
+  script += '      tabsHtml += \'<div style="grid-column: 1 / -1; font-size: 12px; font-style: italic; color: var(--color-text-secondary); margin-top: -8px;">\' + escapeHtml(WORKLOAD_FIT_DEFINITION) + \'</div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Frequency (per hour)</div><div>\' + (source.frequency_per_hour ? source.frequency_per_hour.toFixed(2) : \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">Calls per Second</div><div>\' + (source.calls_per_second ? source.calls_per_second.toFixed(4) : \'—\') + \'</div></div>\';\n';
   script += '      tabsHtml += \'<div><div class="key-value-label">In Scope</div><div>\' + (assignment.in_scope ? \'Yes\' : \'No\') + \'</div></div>\';\n';

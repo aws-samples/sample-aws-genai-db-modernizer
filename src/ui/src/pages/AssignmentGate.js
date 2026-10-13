@@ -534,8 +534,8 @@ const AssignmentGatePage = memo(() => {
     },
     {
       key: 'confidence',
-      propertyLabel: 'Confidence',
-      groupValuesLabel: 'Confidence values',
+      propertyLabel: 'Workload fit',
+      groupValuesLabel: 'Workload fit values',
       operators: ['=', '!=', '>', '<', '>=', '<='],
     },
     {

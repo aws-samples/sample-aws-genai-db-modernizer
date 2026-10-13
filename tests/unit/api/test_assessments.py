@@ -657,13 +657,13 @@ class TestSynthesisStatusSummary:
         }
         assert (
             assessments._summarize_artifact(summary)
-            == "Main engine: dynamodb (91.6% of workload, 90% confidence)"
+            == "Main engine: dynamodb (91.6% of workload, 90% fit)"
         )
 
     def test_without_workload_shares_keeps_the_top_entry(self):
         summary = {"ranking": [{"target": "dynamodb", "confidence_score": 70}]}
         assert assessments._summarize_artifact(summary) == (
-            "Top recommendation: dynamodb (70% confidence)"
+            "Top recommendation: dynamodb (70% fit)"
         )
 
     def test_artifact_summary_carries_the_routed_fields(self):

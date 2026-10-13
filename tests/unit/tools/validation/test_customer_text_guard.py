@@ -207,6 +207,53 @@ class TestKnownLogOnlyPhrase:
         assert scan_text("joins more than one table, and a key-value store can't serve joins") == []
 
 
+class TestConfidenceWordingDetection:
+    """Bug: Deliverables present a fit score as a confidence percentage.
+
+    "NN% confidence" reads as a success probability; the figure is a
+    workload-fit score and must be labelled "fit"/"workload fit"
+    (``src.shared.workload_fit_labels``). This is a plain regression guard
+    against the old wording coming back, not a field exclusion list."""
+
+    def test_percent_confidence_is_flagged(self) -> None:
+        findings = scan_text("This database is recommended with 78% confidence based on it.")
+        assert [f.kind for f in findings] == ["confidence_wording"]
+        assert findings[0].text == "78% confidence"
+
+    def test_percent_fit_is_not_flagged(self) -> None:
+        assert scan_text("This database is recommended with 78% fit based on it.") == []
+
+    def test_triage_confidence_label_is_not_flagged(self) -> None:
+        # A different metric (triage's classification confidence) this bug does
+        # not cover, and its label has no percentage directly before the word.
+        assert scan_text("Triage confidence: 87%") == []
+
+    def test_case_insensitive_and_no_space_variant(self) -> None:
+        findings = scan_text("Lowest Confidence of the 3 engines: 40%CONFIDENCE here")
+        assert [f.text for f in findings] == ["40%CONFIDENCE"]
+
+    def test_confidence_interval_is_not_flagged(self) -> None:
+        # Review round 1: a real, unrelated statistics term -- not a mislabelled
+        # fit score -- must not trip this guard.
+        assert scan_text("This has a 95% confidence interval for the estimate.") == []
+
+    def test_confidence_level_is_not_flagged(self) -> None:
+        assert scan_text("This has a 90% confidence level for the test.") == []
+
+    def test_plural_confidence_intervals_is_not_flagged(self) -> None:
+        assert scan_text("This has 95% confidence intervals computed per table.") == []
+
+    def test_confidence_interval_case_insensitive(self) -> None:
+        assert scan_text("A 95% CONFIDENCE INTERVAL was used.") == []
+
+    def test_a_genuine_leak_right_before_the_word_interval_is_still_caught(self) -> None:
+        # The exclusion is scoped to "confidence interval/level" specifically --
+        # "confidence" followed by anything else (including a word that merely
+        # starts with "interval"-like text) is still flagged.
+        findings = scan_text("This database is recommended with 78% confidence, interval unknown.")
+        assert [f.kind for f in findings] == ["confidence_wording"]
+
+
 class TestScanJson:
     def test_id_holding_field_is_excluded_by_path_not_by_value(self) -> None:
         """``assigned_engine`` legitimately holds a raw engine id -- excluded by

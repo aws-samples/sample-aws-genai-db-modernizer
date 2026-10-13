@@ -50,7 +50,7 @@ Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --
 | **Collect**       | Connects to the source database (or parses offline output), extracts schema + query patterns               |
 | **Triage**        | Detects workload signals (key-value lookups, text search, time-series, etc.) and selects candidate engines |
 | **Analyze**       | Runs parallel analysis agents per engine, deterministic scoring + optional LLM advisor                     |
-| **Assign**        | Resolves query-to-engine assignments using confidence scores and co-dependency analysis                    |
+| **Assign**        | Resolves query-to-engine assignments using workload-fit scores and co-dependency analysis                  |
 | **Reality Check** | Consolidates under-committed engines, validates with LLM, redirects unserviceable queries                  |
 | **Schema Design** | Designs target schemas per engine (DynamoDB tables, DocumentDB collections, OpenSearch indices, etc.)      |
 | **Synthesis**     | Produces the final migration assessment report with TCO, risk analysis, and recommendations                |

@@ -51,6 +51,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
+import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 
 
 // ============================================
@@ -2894,8 +2895,15 @@ const AnalysisResultsPage = memo(() => {
                           value: queryJourneyData?.assignment?.assigned_engine || '—'
                         },
                         {
-                          label: 'Confidence',
-                          value: queryJourneyData?.assignment?.confidence ? `${queryJourneyData.assignment.confidence}%` : '—'
+                          label: 'Workload Fit',
+                          value: queryJourneyData?.assignment?.confidence ? (
+                            <SpaceBetween size="xxxs">
+                              <Box>{`${queryJourneyData.assignment.confidence}%`}</Box>
+                              <Box fontSize="body-s" color="text-status-inactive">
+                                {WORKLOAD_FIT_DEFINITION}
+                              </Box>
+                            </SpaceBetween>
+                          ) : '—'
                         },
                         {
                           label: 'In Scope',

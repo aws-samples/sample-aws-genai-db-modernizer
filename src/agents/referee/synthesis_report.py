@@ -96,9 +96,9 @@ def _dedupe_reason_clauses(reason: str) -> str:
 
     A query's own ``assignment_reason`` can state the same base reason twice
     -- once alone, once again as the prefix of a fuller clause (seen on the
-    real wordpress sample: "highest confidence for Aurora MySQL; highest
-    confidence for Aurora MySQL | excluded from ElastiCache: it joins more
-    than one table, and a key-value store can't serve joins"), from how the
+    real wordpress sample: "highest fit for Aurora MySQL; highest fit for
+    Aurora MySQL | excluded from ElastiCache: it joins more than one table,
+    and a key-value store can't serve joins"), from how the
     assignment resolver accumulates reasons across co-dependency
     propagation. Split on "; " (how the resolver joins
     separate reasons); drop a clause that exactly repeats an earlier one, or
@@ -2533,13 +2533,11 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         ]
     elif "assigned_queries" in r:
         parts = [
-            f"No queries routed; {r['confidence_score']}% average confidence across "
+            f"No queries routed; {r['confidence_score']}% average fit across "
             f"{r['tables_analyzed']} analyzed tables"
         ]
     else:
-        parts = [
-            f"{r['confidence_score']}% average confidence across {r['tables_analyzed']} tables"
-        ]
+        parts = [f"{r['confidence_score']}% average fit across {r['tables_analyzed']} tables"]
         if r["patterns_detected"] > 0:
             parts.append(f"{r['patterns_detected']} matching workload patterns")
     if r.get("target_tables", 0) > 0:
@@ -2610,7 +2608,7 @@ def _architecture_rationale(
         if databases:
             return (
                 f"Workload analysis indicates {display_name(databases[0]['service'])} as the "
-                f"primary target with {engine_confidence(databases[0]):.0f}% confidence."
+                f"primary target with {engine_confidence(databases[0]):.0f}% workload fit."
             )
         if retained_engine:
             return f"{retained_clause}, with no data migration."
@@ -2948,7 +2946,7 @@ def build_summary(
     else:
         parts.append(
             f"Top recommendation: {display_name(top['target'])} with "
-            f"{top['confidence_score']}% average confidence."
+            f"{top['confidence_score']}% average fit."
         )
         # Schema design summary
         if top.get("schema_design_available"):

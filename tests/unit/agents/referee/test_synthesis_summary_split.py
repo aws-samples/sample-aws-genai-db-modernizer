@@ -241,7 +241,7 @@ def test_without_assignment_the_top_engine_summary_is_kept() -> None:
         for r in RANKING
     ]
     text = _summary(ranking)
-    assert "Top recommendation: ElastiCache with 50% average confidence." in text
+    assert "Top recommendation: ElastiCache with 50% average fit." in text
     assert "Schema design produced 10 target tables with 13 in-scope access patterns" in text
     assert "Other targets evaluated: DynamoDB (50%), Aurora MySQL (50%)." in text
     assert text.count("source tables mapped") == 1

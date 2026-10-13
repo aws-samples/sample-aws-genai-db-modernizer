@@ -5,7 +5,7 @@ never survives in a reality-check consolidation's ``reason`` -- to every
 customer-facing string this pipeline writes: ``report.json``,
 ``assignment/v*/assignment.json`` (its per-query ``reason`` fields), the
 reality-check output, and the rendered deliverables (decision/analysis HTML,
-the engineering Markdown report, the deck). It flags four classes of leak:
+the engineering Markdown report, the deck). It flags five classes of leak:
 
 - a raw engine id (``dynamodb``) where a display name belongs -- the engine
   ids are read from ``src.shared.engine_names.ENGINE_DISPLAY_NAMES``'s keys,
@@ -40,7 +40,16 @@ the engineering Markdown report, the deck). It flags four classes of leak:
   ``ExclusionRule`` (``src.agents.referee.engine_exclusions``) -- its own
   module docstring documents ``description`` as "the technical reason, for
   logs and the decision trace only", with ``customer_message`` as the plain-
-  language counterpart meant for customer-facing text.
+  language counterpart meant for customer-facing text;
+- the old "confidence" wording for the routing fit score (bug: Deliverables
+  present a fit score as a confidence percentage) -- "NN% confidence" reads as
+  a success probability, when the figure is a workload-fit score
+  (``src.shared.ranking``). The label is now "fit"/"workload fit"
+  (``src.shared.workload_fit_labels``); this detector is a plain regex, not a
+  field exclusion list, since the old wording must never appear in rendered
+  text regardless of which field it came from. Triage's own classification
+  confidence is a different metric this bug does not cover and has no
+  adjacent percentage in its label, so it never matches.
 
 ``scan_json`` walks a parsed JSON document (``report.json``,
 ``assignment.json``, the reality-check output) and only scans STRING VALUES,
@@ -228,6 +237,24 @@ _SNAKE_REASON_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+:(?=\s+[A-Za-z])"
 # even quoted in backticks).
 _CODE_SPAN_RE = re.compile(r"`[^`\n]+`|<code\b[^>]*>.*?</code>", re.IGNORECASE | re.DOTALL)
 
+# A fit score presented as a confidence percentage (bug: Deliverables present a
+# fit score as a confidence percentage) -- "78% confidence" reads as "we are 78%
+# sure this will work", when the figure is actually a workload-fit score. The
+# label everywhere is now "fit"/"workload fit" (`src.shared.workload_fit_labels`);
+# this regression guard stops the old wording from coming back in rendered text.
+# Triage's own classification confidence (a different metric this bug does not
+# cover, e.g. "Triage confidence") has no adjacent percentage in its label, so it
+# never matches this shape.
+#
+# The negative lookahead excludes the legitimate statistical phrases "NN%
+# confidence interval"/"NN% confidence level" (and their plurals) -- a real,
+# unrelated statistics term this pipeline could reasonably write about data
+# quality or load testing, not a mislabelled fit score. Review round 1 found
+# this guard flagging "95% confidence interval" as a violation.
+_CONFIDENCE_WORDING_RE = re.compile(
+    r"\d+%\s*confidence\b(?!\s+(?:interval|level)s?\b)", re.IGNORECASE
+)
+
 # The technical, log-only reason text of every exclusion rule (never meant for a
 # customer -- see the module docstring above and engine_exclusions.py's own). Built
 # from the rules themselves so a new rule is covered automatically.
@@ -254,6 +281,7 @@ KNOWN_REASON_CODES: frozenset[str] = (
 @dataclass(frozen=True)
 class Finding:
     kind: str  # "engine_id" | "adr_reference" | "snake_case_reason_code" | "log_only_phrase"
+    # | "confidence_wording"
     path: str
     text: str
     excerpt: str
@@ -303,6 +331,10 @@ def scan_text(text: str, path: str = "", *, strict_reason_codes: bool = True) ->
             findings.append(
                 Finding("log_only_phrase", path, phrase, _excerpt(text, i, i + len(phrase)))
             )
+    for m in _CONFIDENCE_WORDING_RE.finditer(text):
+        findings.append(
+            Finding("confidence_wording", path, m.group(0), _excerpt(text, m.start(), m.end()))
+        )
     return findings
 
 

@@ -4,8 +4,11 @@
 ``src/ui/src/utils/ExportReport.js`` is the single source of truth for what the
 interactive analysis report *looks like*. Its ``generateHTMLReport`` is a pure
 function of one JSON object: the CSS is a static string constant, the ~13
-client-side functions are static text, and the only data-dependent output is
-``const DATA = {...}``.
+client-side functions are static text, and the data-dependent output is
+``const DATA = {...}`` plus the three shared-label consts (``ENGINE_LABELS``,
+``OPTIMIZATION_LABELS``, ``WORKLOAD_FIT_DEFINITION``), each re-embedded by
+``src.report.analysis_report`` from its own Python-side copy rather than lifted
+from the ``jsonForScript(...)``/``escapeHtml(...)`` call that builds it here.
 
 This script mechanically lifts those static parts into three files that the ATX
 synthesis renderer substitutes into:
@@ -162,12 +165,19 @@ def extract_css(lines: list[str]) -> str:
 def extract_script_body(lines: list[str]) -> str:
     """Return the static body of generateReportScript.
 
-    Skips the opening ``<script>`` tag and the three ``const`` declarations
-    (DATA, ENGINE_LABELS, OPTIMIZATION_LABELS) -- those are the dynamic part
-    and the HTML template emits them -- and stops before the closing
-    ``</script>`` tag for the same reason. Colours are deliberately absent:
-    they live in the CSS palette and the script reads them back with
-    ``paletteColor()``.
+    Skips the opening ``<script>`` tag and the four ``const`` declarations
+    (DATA, ENGINE_LABELS, OPTIMIZATION_LABELS, WORKLOAD_FIT_DEFINITION) -- those
+    are the dynamic part and the HTML template emits them -- and stops before
+    the closing ``</script>`` tag for the same reason. Each of those four lines
+    calls a build-time helper (``jsonForScript``/``escapeHtml``) rather than
+    embedding a literal value, so the mechanical ``script += '...';`` extraction
+    below would otherwise lift the unevaluated call expression itself as dead
+    text (bug: Deliverables present a fit score as a confidence percentage,
+    review round 2 -- WORKLOAD_FIT_DEFINITION was missing this skip entry, so
+    the Python-rendered analysis report showed the literal
+    ``' + jsonForScript(WORKLOAD_FIT_DEFINITION) + '`` instead of the
+    definition). Colours are deliberately absent: they live in the CSS palette
+    and the script reads them back with ``paletteColor()``.
     """
     start = next(i for i, ln in enumerate(lines) if ln.startswith("const generateReportScript ="))
     end = next(i for i, ln in enumerate(lines[start:], start) if ln.rstrip() == "  return script;")
@@ -178,6 +188,7 @@ def extract_script_body(lines: list[str]) -> str:
         "    const DATA = ",
         "    const ENGINE_LABELS = ",
         "    const OPTIMIZATION_LABELS = ",
+        "    const WORKLOAD_FIT_DEFINITION = ",
     )
 
     out: list[str] = []

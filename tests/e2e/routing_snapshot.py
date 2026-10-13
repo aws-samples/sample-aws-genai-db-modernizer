@@ -109,7 +109,7 @@ def categorize(reason: str) -> str:
         return "fallback_no_analysis"
     if "signal override:" in reason:
         return "signal_override"
-    if "highest confidence for" in reason:
+    if "highest fit for" in reason:
         return "individual_tie" if "scores tie with" in reason else "individual_highest_confidence"
     if "no engine scored this query" in reason:
         return "fallback_no_score"

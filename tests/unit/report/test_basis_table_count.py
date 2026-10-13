@@ -12,7 +12,7 @@ back to parsing the same number out of the deck's "Analyzed N source
 tables" line (``summary_deterministic``), and only then to the migration
 roadmap's own per-wave table lists (``resolve_migration_waves``). It reports
 whether the figure came from a design so the deck can avoid claiming a
-per-table confidence score that does not exist without one, and
+per-table fit score that does not exist without one, and
 ``pptx_report.derive()`` builds the "Basis of the analysis" bullet (and
 slide 2's footer) to match.
 
@@ -247,7 +247,7 @@ class TestBasisBullet:
         # #530 round 3 review: the disclaimer leads, so a defensive clip can
         # never cut it off -- only the wave detail after it is at risk.
         assert f["basis_table_line"] == (
-            "Schema mapping has not run, so there are no per-table confidence scores "
+            "Schema mapping has not run, so there are no per-table fit scores "
             "yet; all 50 source tables are placed: the whole schema lands on Aurora "
             "MySQL in wave 1, then 8 move on to DynamoDB"
         )
@@ -276,7 +276,7 @@ class TestBasisBullet:
         f = pptx_report.derive(rep, {})
         assert f["n_tables"] == 311
         assert f["basis_table_line"] == (
-            "Schema mapping has not run, so there are no per-table confidence scores "
+            "Schema mapping has not run, so there are no per-table fit scores "
             "yet; all 311 source tables are placed: the whole schema lands on Aurora "
             "PostgreSQL in wave 1, then 8 move on to DynamoDB"
         )
@@ -288,7 +288,7 @@ class TestBasisBullet:
     def test_with_a_completed_design_is_unchanged(self, designed_report: dict[str, Any]) -> None:
         f = pptx_report.derive(designed_report, {})
         assert f["basis_table_line"] == (
-            "92 tables mapped to a named target, each with its own confidence score"
+            "92 tables mapped to a named target, each with its own fit score"
         )
         text = " ".join(_deck_text(designed_report).split())
         assert f["basis_table_line"] in text
@@ -318,7 +318,7 @@ class TestBasisBullet:
         f = pptx_report.derive(rep, {})
         assert f["n_tables"] == 25
         assert f["basis_table_line"] == (
-            "Schema mapping has not run, so there are no per-table confidence scores "
+            "Schema mapping has not run, so there are no per-table fit scores "
             "yet; 25 source tables are assigned to a target engine"
         )
         assert "migration roadmap" not in f["basis_table_line"]
@@ -349,7 +349,7 @@ class TestBasisBullet:
         f = pptx_report.derive(rep, {})
         assert f["migrated"] == 0
         assert f["basis_table_line"] == (
-            "Schema mapping has not run, so there are no per-table confidence scores "
+            "Schema mapping has not run, so there are no per-table fit scores "
             "yet; 12 source tables are assigned across the migration roadmap"
         )
 
@@ -372,7 +372,7 @@ class TestBasisBullet:
         # can ever actually reach it (#530 round 3 review): the disclaimer
         # leads the sentence, so clip(line, 220) can only ever truncate what
         # comes after the "; ", never the disclaimer itself.
-        disclaimer = "Schema mapping has not run, so there are no per-table confidence scores yet"
+        disclaimer = "Schema mapping has not run, so there are no per-table fit scores yet"
         overlong_detail = "all 999,999 source tables are placed across " + ("Engine, " * 40)
         line = clip(f"{disclaimer}; {overlong_detail}", 220)
         assert line.startswith(disclaimer)

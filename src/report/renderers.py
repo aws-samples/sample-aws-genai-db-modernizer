@@ -24,6 +24,7 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_label,
     unsupported_pattern_text,
 )
+from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL
 
 from . import escaping
 
@@ -1159,6 +1160,11 @@ def render_decision_report_html(
             f"<td data-figure=monthly-cost>{_fmt_usd(total_cost)}</td><td></td></tr>"
         )
         out.append("</tbody></table></div></div>")
+        # First appearance of a fit figure in this report (inside "Why", e.g. "93%
+        # mean fit"): the plain-language definition every deliverable states once,
+        # shared with the engineering report, the deck and the UI (bug: fit score
+        # presented as a confidence percentage).
+        out.append(f"<p class=note>{esc(WORKLOAD_FIT_DEFINITION)}</p>")
 
         retained = [e["engine"] for e in engines if e["role"] == "Retained"]
         caches = [e["engine"] for e in engines if e["role"] == "Cache layer"]
@@ -2460,6 +2466,16 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 f"| {escaping.md_cell(share)} | {escaping.md_cell(e['rationale'] or '-')} |"
             )
         out.append("")
+        # First appearance of a fit figure in this report (inside "Why", e.g. "30%
+        # mean fit"): the plain-language definition every deliverable states once,
+        # shared with the decision report, the deck and the UI (bug: fit score
+        # presented as a confidence percentage). Stated here, not under "Migration
+        # map" below -- that section only renders once schema design has produced
+        # table_mappings, so a report rendered with no schema design (e.g. every
+        # ``--llm-mode none`` run) would otherwise never state the definition at
+        # all, even though "Target engines" above already shows the figure.
+        out.append(f"*{escaping.md_text(WORKLOAD_FIT_DEFINITION)}*")
+        out.append("")
 
     tco = report.get("tco_analysis") or {}
     if tco:
@@ -2487,7 +2503,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')}"
             f"{_mapping_split(report, mappings)})",
             "",
-            "| Source table | Target engine | Target | Pattern | Confidence |",
+            f"| Source table | Target engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
             "|---|---|---|---|---|",
         ]
         for m in mappings:

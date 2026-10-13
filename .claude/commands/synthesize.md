@@ -101,11 +101,11 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 5. **Present report**
    Show:
    - Engine ranking, in report order (largest workload share first, cache layer last),
-     with each engine's `routed_confidence`: the mean fit of the queries routed to it
-     (cache layer: of the reads it fronts). Say "no table-level evidence" when
-     `routed_confidence_evidence` is `signal_only`. `analysis_confidence` is the
-     average over every analyzed table, kept for audit; do not present it as the
-     engine's confidence
+     with each engine's `routed_confidence` presented as its workload fit: the mean
+     fit of the queries routed to it (cache layer: of the reads it fronts). Say "no
+     table-level evidence" when `routed_confidence_evidence` is `signal_only`.
+     `analysis_confidence` is the average over every analyzed table, kept for audit;
+     do not present it as the engine's fit
    - Architecture recommendation (single/multi/hybrid)
    - TCO comparison (current RDS vs target)
    - Top risks and mitigations

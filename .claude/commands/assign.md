@@ -22,7 +22,7 @@ Maps each query pattern to the best-fit target engine based on analysis results.
    Show:
    - Query distribution per engine (count and percentage)
    - Total queries assigned
-   - Any queries with low confidence that may need review
+   - Any queries with low workload fit that may need review
 
 4. **Decision gate**
    Ask user: "Review assignments in the UI at <http://localhost:3000/assignments> or approve here."

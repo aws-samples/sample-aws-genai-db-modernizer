@@ -14,7 +14,7 @@ SLIDE_TITLES = [
     "Assessment Summary",
     "Workload Coverage and Engine Assignment",
     "Query Workload Composition",
-    "Engine Confidence and Open Decisions",
+    "Engine Fit and Open Decisions",
     "Risk Profile",
     "Migration Sequencing",
 ]

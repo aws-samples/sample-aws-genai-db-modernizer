@@ -815,9 +815,7 @@ def deck_figures(slides: list[str], label: str) -> Figures:
         t = re.match(r"([\d,]+) source tables?\b", m.group(2))
         if t:
             f.add(f"tables:{eng}", _int(t.group(1)), "Assessment Summary engine table")
-    for m in re.finditer(
-        rf"({_NAMES_RE}) [\d.]+% · ([\d,]+) quer(?:y|ies) · \d+% confidence", text
-    ):
+    for m in re.finditer(rf"({_NAMES_RE}) [\d.]+% · ([\d,]+) quer(?:y|ies) · \d+% fit", text):
         f.add(f"queries:{engine_id(m.group(1))}", _int(m.group(2)), "Workload Coverage")
         f.name(engine_id(m.group(1)), "Workload Coverage")
     for m in re.finditer(rf"({_NAMES_RE}) cache layer · ([\d,]+) cached reads?", text):

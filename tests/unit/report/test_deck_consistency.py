@@ -151,10 +151,10 @@ class TestSequencingRule:
         # ... and the stated rule says exactly that about the no-migration step.
         text = " ".join(_deck_text(rep, exp).split())
         assert (
-            "Steps that need no data migration (ElastiCache at 48%) are reversible at any confidence"
+            "Steps that need no data migration (ElastiCache at 48%) are reversible at any fit level"
             in text
         )
-        assert "Migration targets under 50% are sequenced last" in text
+        assert "Migration targets under 50% fit are sequenced last" in text
 
     def test_low_confidence_relational_move_still_sequences_first(self) -> None:
         # #321: the relational move is wave 1 by rule, never re-ordered by
@@ -343,7 +343,7 @@ class TestSeveralNoMigrationEngines:
         rep = _with_retained_documentdb(80)
         rep["ranking"][0]["confidence_score"] = 70
         text = " ".join(_deck_text(rep, _export([])).split())
-        assert "Steps that need no data migration are reversible at any confidence" in text
+        assert "Steps that need no data migration are reversible at any fit level" in text
 
     def test_three_kept_engines_join(self) -> None:
         rep = _with_retained_documentdb(44)

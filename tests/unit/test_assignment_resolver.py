@@ -1589,7 +1589,7 @@ class TestAssignmentReasons:
         assert by_id["q1"].signal_override == "text_search"
         assert by_id["q2"].signal_override is None
 
-    def test_highest_confidence_reason(self):
+    def test_highest_fit_reason(self):
         resolver = AssignmentResolver()
         triage = _make_triage(["dynamodb", "opensearch"])
         collector = _make_collector(["q1"])
@@ -1600,7 +1600,7 @@ class TestAssignmentReasons:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert "highest confidence" in q1.assignment_reason
+        assert "highest fit" in q1.assignment_reason
 
 
 def _qa(query_id: str, engine: str, tables: list[str], confidence: int = 50) -> QueryAssignment:

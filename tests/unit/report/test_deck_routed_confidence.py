@@ -1,10 +1,12 @@
 """The deck uses routed confidence, not the all-analyzed-tables average (#152).
 
 discourse: OpenSearch's analysis average was 2% (311 analyzed tables), so the deck
-asked "Confirm OpenSearch? 2% confidence" although the 3 text-search queries routed
+asked "Confirm OpenSearch? 2% fit" although the 3 text-search queries routed
 to it fit it at 60%. The "Confirm" card, the wave split on ``CONFIDENCE_FLOOR``, the
-wave confidence and the ranking rows read ``routed_confidence``; a report written
-before it existed keeps ``confidence_score``.
+wave fit and the ranking rows read ``routed_confidence``; a report written
+before it existed keeps ``confidence_score``. ("Fit" is the customer-facing label;
+``routed_confidence`` / ``confidence_score`` stay the internal field names, #152 /
+bug: fit score presented as a confidence percentage.)
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import io
 from typing import Any
 
 from src.report import pptx_report
+from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
 
 
 def _report() -> dict[str, Any]:
@@ -91,7 +94,7 @@ class TestConfirmCard:
             if d["question"].startswith("Confirm")
         )
         assert card["question"] == "Confirm OpenSearch?"
-        assert card["badge"] == "40% confidence"
+        assert card["badge"] == "40% fit"
 
     def test_the_analysis_average_no_longer_picks_the_weakest(self) -> None:
         """OpenSearch's 2% analysis average is the lowest, its routed fit is not."""
@@ -113,7 +116,7 @@ class TestConfirmCard:
             for d in pptx_report.derive(rep, {})["decisions"]
             if d["question"].startswith("Confirm")
         )
-        assert card["badge"] == "2% confidence"
+        assert card["badge"] == "2% fit"
 
 
 class TestWaves:
@@ -141,18 +144,22 @@ class TestWaves:
 
 
 class TestRuleText:
-    def test_rule_says_what_the_confidence_measures(self) -> None:
+    def test_rule_says_what_the_fit_measures(self) -> None:
         f = pptx_report.derive(_report(), {})
         text = pptx_report._sequencing_rule_text(f["engines"], f["conf"], routed=True)
         assert text.startswith(
-            "Confidence is the mean fit of the queries routed to each engine "
-            "(for the cache layer, of the reads it fronts), not a forecast."
+            "Fit is the mean of the queries routed to each engine (for the cache "
+            "layer, of the reads it fronts), not a forecast."
         )
+        # Review round 1: the full WORKLOAD_FIT_DEFINITION is stated exactly once in
+        # the deck (the Workload Coverage slide's footer_note) -- this slide's own
+        # sequencing-rule text must never restate it verbatim.
+        assert WORKLOAD_FIT_DEFINITION not in text
 
     def test_legacy_rule_text_is_unchanged(self) -> None:
         f = pptx_report.derive(_report(), {})
         text = pptx_report._sequencing_rule_text(f["engines"], f["conf"])
-        assert text.startswith("Confidence is the assessment's own measure of evidence strength")
+        assert text.startswith("Fit is the assessment's own measure of evidence strength")
 
 
 def _signal_only(rep: dict[str, Any]) -> dict[str, Any]:
@@ -184,7 +191,7 @@ class TestSignalOnlyEvidence:
             if d["question"].startswith("Confirm")
         ]
         assert [c["question"] for c in cards] == ["Confirm DynamoDB?"]
-        assert cards[0]["badge"] == "45% confidence"
+        assert cards[0]["badge"] == "45% fit"
         assert cards[0]["against"].endswith("also confirm OpenSearch")
 
     def test_ranking_rows_and_waves_carry_the_label(self) -> None:
@@ -236,6 +243,6 @@ class TestSignalOnlyEvidence:
         assert "60% (signal only — no table-level evidence)" in text
 
 
-def test_confidence_phrase_keeps_the_label_after_the_word() -> None:
-    assert pptx_report._confidence_phrase("93%") == "93% confidence"
-    assert pptx_report._confidence_phrase("60% (signal only)") == "60% confidence (signal only)"
+def test_fit_phrase_keeps_the_label_after_the_word() -> None:
+    assert pptx_report.fit_phrase("93%") == "93% fit"
+    assert pptx_report.fit_phrase("60% (signal only)") == "60% fit (signal only)"
