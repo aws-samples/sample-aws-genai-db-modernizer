@@ -366,15 +366,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "iteration order."
     ),
     (
-        "consolidation_validator.py",
-        "sanity_sweep",
-        RULE_MINMAX_COUNT_OR_NAME,
-    ): (
-        "#579: tracked, open -- primary_engine=max(engine_counts, key=...) "
-        "protects the engine with the most queries from the orphan sweep by "
-        "raw count, not score."
-    ),
-    (
         "aurora_choice.py",
         "choose_heterogeneous_engine",
         RULE_LITERAL_PREFERENCE,

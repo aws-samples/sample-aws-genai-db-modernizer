@@ -25,9 +25,11 @@ from src.agents.referee.consolidation_validator import (
     sanity_sweep,
     validate_consolidations,
 )
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
     AURORA_ABSORPTION_QUERY_THRESHOLD,
     AURORA_ENGINES,
+    _build_query_signals,
     reconcile_consolidations,
     refresh_patterns_and_recommendations,
     rerun_aurora_absorption,
@@ -382,13 +384,39 @@ def run_reality_check_handler(
 
     # llm_mode == "none": skip LLM entirely, use det as-is
 
-    # Step 3: Sanity sweep — catch orphan engines with trivial query counts
-    query_capabilities = det.get("triage", {}).get("query_capabilities", {})
+    # Step 3: Sanity sweep — remove a tiny orphan engine the other committed
+    # engines can serve (ADR-031 Decision 7, #579), using the exact same
+    # shared scorer the rest of the pipeline uses -- never a raw query count.
+    query_map = {
+        q["query_id"]: q
+        for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
+    }
+    scoring_context = ScoringContext.from_pipeline(
+        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
+    )
+    if "co_dependency_groups" not in det.get("assignment", {}):
+        # Every version writes this key today (#579 round 3) -- only a
+        # legacy artifact predating it would land here, so this is a guard
+        # for the future, not a case any current run should ever hit.
+        logger.warning(
+            "reality-check: assignment has no co_dependency_groups; the sanity sweep "
+            "will treat every query as ungrouped"
+        )
     det["revised_assignments"], det["consolidations"] = sanity_sweep(
         det["revised_assignments"],
         det["consolidations"],
-        query_capabilities,
+        scoring_context,
+        query_map,
         source_engine=source_database_engine(det.get("collector_output", {})),
+        # Query structure, not current placement (#579 round 2): stays
+        # valid regardless of how many consolidations this run already
+        # made, so a co-dependency group still on the same orphan engine
+        # moves as one unit instead of being split between destinations.
+        co_dependency_groups=det.get("assignment", {}).get("co_dependency_groups", []),
+        # The same eligibility rule Phase 2 applies needs to know which
+        # specialty signals this query matched (#579 round 3,
+        # ``may_absorb``'s specialist-absorb restriction).
+        query_signals=_build_query_signals(det.get("triage", {}).get("signals", [])),
     )
     # Recompute after_distribution post-sweep
     sweep_distribution: dict[str, int] = defaultdict(int)

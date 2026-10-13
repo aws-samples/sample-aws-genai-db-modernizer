@@ -243,7 +243,16 @@ class TestHandlerVersions:
         _run(store)
         _customer_edit(store, 3)
 
-        def _sweep_everything(revised, consolidations, caps, source_engine=""):
+        def _sweep_everything(
+            revised,
+            consolidations,
+            scoring_context,
+            query_map,
+            source_engine="",
+            *,
+            co_dependency_groups,
+            query_signals,
+        ):
             moved = [{**qa, "assigned_engine": "dynamodb"} for qa in revised]
             return moved, consolidations or [
                 {
@@ -275,7 +284,16 @@ class TestHandlerVersions:
         _run(store)
         _customer_edit(store, 3)
 
-        def _sweep_in_place(revised, consolidations, caps, source_engine=""):
+        def _sweep_in_place(
+            revised,
+            consolidations,
+            scoring_context,
+            query_map,
+            source_engine="",
+            *,
+            co_dependency_groups,
+            query_signals,
+        ):
             for qa in revised:
                 qa["assigned_engine"] = "dynamodb"
             return revised, consolidations

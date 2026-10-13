@@ -19,11 +19,22 @@ import json
 import logging
 import os
 from collections import Counter
+from collections.abc import Iterable, Mapping
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.assignment_resolver import RoutingTrace
 from src.agents.referee.aurora_choice import AURORA_ENGINES, pick_aurora_engine
+from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
+from src.agents.referee.reality_check import (
+    _current_for_eligibility,
+    _group_eligible_engines,
+    _is_signal_override,
+    _query_eligible_engines,
+)
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
-from src.agents.referee.tie_break import settled_counts
+from src.agents.referee.tie_break import break_tie, settled_counts
+from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.shared.engine_names import display_engine
 
 logger = logging.getLogger(__name__)
 
@@ -374,97 +385,491 @@ def apply_corrections(
 ORPHAN_ENGINE_THRESHOLD = 5
 
 
+def _format_gate(engine: str, gate_kind: str | None, required_capabilities: Iterable[str]) -> str:
+    """A short, display-named reason an engine cannot serve a query (#579),
+    from :class:`~src.agents.referee.query_scoring.EngineScore`'s
+    structured ``gate_kind`` -- never its raw ``gate_reason`` text, which
+    names the engine by its internal id, not its customer-facing display
+    name. ``required_capabilities`` names the SPECIFIC missing capability
+    (round 2 review suggestion) rather than a generic "a capability".
+    """
+    name = display_engine(engine)
+    if gate_kind == "capability":
+        caps = ", ".join(sorted(required_capabilities)) or "a capability this query needs"
+        return f"{name} lacks {caps}"
+    if gate_kind == "hard_exclusion":
+        return f"{name} is hard-excluded for this query"
+    return f"{name} cannot serve this query"
+
+
+def _serviceable_scores(
+    query: Mapping,
+    candidates: Iterable[str],
+    scoring_context: ScoringContext,
+) -> tuple[dict[str, float], list[str]]:
+    """``candidates`` that can serve ``query`` and their scores (the shared
+    ADR-031 scorer, :func:`~src.agents.referee.query_scoring.
+    score_query_for_engine`), plus a display-named reason for EVERY
+    candidate that cannot (round 2 review: several different candidates
+    can be excluded for different reasons, and the kept note names all of
+    them, not just the first).
+    """
+    query_id = str(query.get("query_id") or "")
+    required_caps = scoring_context.query_capabilities.get(query_id, [])
+    scores: dict[str, float] = {}
+    reasons: list[str] = []
+    for candidate in candidates:
+        result = score_query_for_engine(query, candidate, scoring_context)
+        if result.score is None:
+            reasons.append(_format_gate(candidate, result.gate_kind, required_caps))
+            continue
+        scores[candidate] = result.score
+    return scores, reasons
+
+
+def _group_serviceable_scores(
+    member_qids: list[str],
+    candidates: Iterable[str],
+    query_map: Mapping[str, Mapping],
+    scoring_context: ScoringContext,
+) -> tuple[dict[str, float], list[str]]:
+    """A co-dependency group's combined score on each candidate: the mean of
+    every member's own score there (the maintainer's "a group's engine
+    comes from the members' combined score") -- but only once EVERY member
+    can actually be served by that candidate. One member gated there
+    excludes the candidate for the WHOLE group, the same way one query with
+    no serviceable committed engine blocks a whole orphan engine; it is
+    never scored as a 0 that could let the group "win" an engine that
+    structurally cannot serve one of its own members.
+    """
+    scores: dict[str, float] = {}
+    reasons: list[str] = []
+    for candidate in candidates:
+        member_scores: list[float] = []
+        blocked_reason: str | None = None
+        for mqid in member_qids:
+            query = query_map.get(mqid) or {"query_id": mqid}
+            required_caps = scoring_context.query_capabilities.get(mqid, [])
+            result = score_query_for_engine(query, candidate, scoring_context)
+            if result.score is None:
+                blocked_reason = _format_gate(candidate, result.gate_kind, required_caps)
+                break
+            member_scores.append(result.score)
+        if blocked_reason is not None:
+            reasons.append(blocked_reason)
+            continue
+        scores[candidate] = sum(member_scores) / len(member_scores)
+    return scores, reasons
+
+
+def _tied_candidate_pool(
+    original_tied: list[str] | None, safe_destinations: list[str]
+) -> list[str]:
+    """ADR-031 Decision 12, the same restriction
+    ``reality_check._place_settled_queries._candidate_pool`` applies: a
+    query (or group) that already carries ``tied_engines`` is re-resolved
+    among just the originally tied engines that are still safe
+    destinations FIRST -- never opened up to the full safe-destination set
+    while one of them survives. Only when NONE of them do is the full set
+    used, the same "survivors or everything" fallback ``_candidate_pool``
+    uses.
+    """
+    if not original_tied:
+        return safe_destinations
+    survivors = [e for e in original_tied if e in safe_destinations]
+    return survivors or safe_destinations
+
+
+def _signal_override_block(members: list[str], by_id: dict[str, dict]) -> str | None:
+    """A display-named "nowhere else to go" reason when any of ``members``
+    carries a mandatory signal override (round 2 review, Important 2): the
+    rest of the reality check treats a signal-override query as mandatory
+    for its engine (``mandatory_query_ids`` in Phase 1/2, ``mandatory_
+    committed_engines`` in the Aurora absorption pass) -- this sweep must
+    not undo that protection just because the engine it is mandatory for
+    happens to also be tiny. ``None`` when no member is a signal override.
+    """
+    for mqid in members:
+        qa = by_id[mqid]
+        if _is_signal_override(qa):
+            signal = qa.get("signal_override")
+            signal_name = signal if isinstance(signal, str) and signal else "a signal override"
+            return f"{mqid} is mandatory for the {signal_name} signal override"
+    return None
+
+
+def _eligible_destinations(
+    members: list[str],
+    engine: str,
+    original_tied: list[str] | None,
+    scores: dict[str, float],
+    query_signals: Mapping[str, list[str]],
+    query_map: Mapping[str, Mapping],
+    query_capabilities: Mapping[str, list[str]],
+) -> list[str]:
+    """``scores``' own candidates (already proven serviceable by the shared
+    scorer) filtered through the SAME eligibility rule Phase 2 uses
+    (``reality_check._query_eligible_engines``/``_group_eligible_engines``,
+    #579 round 3): the write/ownership gate and specialist-absorb
+    restriction (``may_absorb``, which calls ``can_own``), and the
+    join-off-a-non-Aurora-engine-never-onto-DynamoDB block. Without this,
+    the sweep could put a query (or group) somewhere Phase 2 itself would
+    refuse to -- an INSERT onto OpenSearch, or a join onto DynamoDB.
+
+    A synthetic trace, built only from ``scores`` -- never a second,
+    independent model, since those scores are the shared scorer's own
+    verdict -- satisfies these functions' own first gate ("the resolver's
+    own score exists at all"), which is otherwise redundant with the
+    serviceability check the caller already ran: the actual values do not
+    matter, only that an engine already proven serviceable has SOME
+    non-gated entry to read.
+    """
+    qid = members[0]
+    is_group = len(members) > 1
+    current_engine_by_qid: dict[str, str] = {m: engine for m in members}
+    tied_engines_by_qid: dict[str, list[str]] = (
+        {m: list(original_tied) for m in members} if original_tied else {}
+    )
+    trace_by_query: dict[str, dict] = {
+        m: {"engines": dict(scores), **({"group": {"key": "sanity-sweep"}} if is_group else {})}
+        for m in members
+    }
+    # Concrete-dict copies: ``_query_eligible_engines``/``_group_eligible_
+    # engines`` are typed against ``dict`` (invariant, so a ``Mapping``
+    # argument does not satisfy it statically even though every real
+    # caller passes a plain dict already) -- never a behavior difference,
+    # only what mypy needs to see.
+    signals_dict: dict[str, list[str]] = dict(query_signals)
+    query_map_dict: dict[str, dict] = {k: dict(v) for k, v in query_map.items()}
+    capabilities_dict: dict[str, list[str]] = dict(query_capabilities)
+    if is_group:
+        return _group_eligible_engines(
+            qid,
+            trace_by_query,
+            current_engine_by_qid,
+            list(scores),
+            set(),  # no mandatory member reaches here: _signal_override_block excludes one
+            signals_dict,
+            query_map_dict,
+            capabilities_dict,
+            tied_engines_by_qid,
+        )
+    return _query_eligible_engines(
+        qid,
+        query_map_dict.get(qid) or {"query_id": qid},
+        _current_for_eligibility(qid, current_engine_by_qid, tied_engines_by_qid),
+        list(scores),
+        trace_by_query,
+        signals_dict,
+        query_map_dict,
+        capabilities_dict,
+    )
+
+
 def sanity_sweep(
     revised_assignments: list[dict],
     consolidations: list[dict],
-    query_capabilities: dict[str, list[str]],
+    scoring_context: ScoringContext,
+    query_map: Mapping[str, Mapping],
     source_engine: str = "",
+    co_dependency_groups: list[list[str]] | None = None,
+    routing_trace: RoutingTrace | None = None,
+    query_signals: Mapping[str, list[str]] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Final pass: redirect tiny orphan engines to Aurora if available.
+    """Final pass: remove a tiny orphan engine the other committed engines
+    can serve (ADR-031 Decision 7: "when an engine serves only a few
+    queries, check whether the other engines can serve them, and if so
+    remove the engine; never move other queries onto it").
 
     After all consolidations and LLM corrections, some engines may survive
     with very few queries (e.g., 3 trivial queries that got bounced back).
-    If those queries have no hard capability requirements and an Aurora engine
-    is committed, redirect them there.
+    For each engine at or under :data:`ORPHAN_ENGINE_THRESHOLD`, every one
+    of its queries (or co-dependency group, moved as one unit -- see below)
+    is scored against every OTHER engine that has already earned its place
+    -- Aurora (always eligible: it is the consolidation target ADR-031
+    Decision 7 has in mind), or any engine with MORE than the orphan
+    threshold -- using the exact same shared scorer the rest of the
+    pipeline uses (:func:`~src.agents.referee.query_scoring.
+    score_query_for_engine`) -- never a raw query count (#579), and never a
+    second, independent fit model (ADR-031 Decision 7). A second tiny
+    engine is never a candidate destination either: two mutually
+    sub-threshold engines could otherwise absorb each other depending only
+    on which happened to be evaluated first, trading the old raw-count bias
+    for an iteration-order one.
+
+    Four things keep a query (or its whole group) from moving at all, and
+    each one keeps the WHOLE orphan engine, not just that one query (round
+    2/3 review): a mandatory signal override (nowhere else to go, the same
+    way the rest of the reality check treats it); no committed engine that
+    can serve it (a hard exclusion or missing capability); for a
+    co-dependency group, any one member failing either of those on a given
+    candidate, which excludes that candidate for every member; or no
+    candidate passing the SAME eligibility rule Phase 2 applies to every
+    move (``reality_check._query_eligible_engines``/``_group_eligible_
+    engines``, round 3) -- the write/ownership gate and specialist-absorb
+    restriction (``may_absorb``), and the join-off-a-non-Aurora-engine-
+    never-onto-DynamoDB block. A query the shared scorer calls serviceable
+    can still fail this: serviceability is "can this engine run the query
+    at all," eligibility is "would Phase 2 ever actually place it there."
+    Otherwise the engine is removed and each query/group moves to its own
+    best-scoring, eligible, serviceable committed engine. A query (or group) that
+    already carries ``tied_engines`` is re-resolved among just the
+    originally tied engines that are still safe destinations first (ADR-031
+    Decision 12); otherwise every safe destination competes. An exact tie
+    is broken by the shared ``tie_break.break_tie`` -- there is no
+    "current engine" stability candidate here (the orphan engine being
+    removed is never itself a safe destination, so passing it as one would
+    never do anything) -- and an unresolved tie records the surviving tied
+    set on ``tied_engines`` and, when ``routing_trace`` is given, calls its
+    ``record_tie`` the same way the resolver's own tie-break does. A
+    resolved tie or a plain move always OVERWRITES ``tied_engines`` from
+    the fresh verdict, so a query never keeps a stale tie naming the engine
+    this sweep just removed.
 
     This prevents the "DocumentDB for 3 SHOW FIELDS commands" problem.
 
     Args:
         revised_assignments: current query assignments (post-corrections)
         consolidations: current consolidation records
-        query_capabilities: {query_id: [capability_names]} from triage
-        source_engine: the source database engine (e.g. ``"mysql"``)
+        scoring_context: the shared ADR-031 scorer's context
+            (:meth:`~src.agents.referee.query_scoring.ScoringContext.
+            from_pipeline`), built from the same triage, analysis and
+            collector artifacts the rest of the reality check uses.
+        query_map: ``{query_id: query_pattern_dict}`` from the collector, so
+            each query can be scored against every candidate engine.
+        source_engine: the source database engine (e.g. ``"mysql"``), used
+            only to break an exact tie in the source-compatible engine's
+            favor (ADR-031 Decision 2).
+        co_dependency_groups: ``Assignment.co_dependency_groups`` (query
+            structure, not current placement, so it stays valid across
+            every consolidation this run has already made) -- a group with
+            2+ members still on the SAME orphan engine moves as one unit,
+            never split between two different destinations. The resolver
+            re-run's own ``RoutingTrace.group_by_query`` (what Phase 2
+            reads) and this list come from the same ``build_co_dependency_
+            groups(queries, tables)`` call on the same collector output, so
+            they agree -- except a group with no ownable candidate at all,
+            which the resolver sends through the Aurora fallback instead
+            and so never appears in its own trace; that group sits on
+            Aurora and never reaches this sweep either way.
+        routing_trace: an optional, live
+            :class:`~src.agents.referee.assignment_resolver.RoutingTrace`
+            to record an unresolved tie onto, when a caller has one; the
+            production handler does not build one for this phase, so this
+            is ``None`` there and recording is simply skipped.
+        query_signals: ``{query_id: [triage_signal_names]}``
+            (:func:`~src.agents.referee.reality_check._build_query_signals`),
+            fed to the eligibility check's specialist-absorb rule
+            (``may_absorb``) -- missing or empty means no engine is
+            treated as having a matching specialty, the more conservative
+            direction (fewer, not more, destinations judged eligible).
 
     Returns:
         (updated_assignments, updated_consolidations) — may be unchanged
     """
-    # Count queries per engine
     engine_counts = Counter(qa["assigned_engine"] for qa in revised_assignments)
-
-    # Committed Aurora engine: the source's dialect, else the shared ADR-031
-    # tie-break on the recorded SETTLED workload decides (``pick_aurora_engine``,
-    # #288, #550 review). ``engine_counts`` stays the raw per-engine count for the
-    # orphan-detection logic below (unrelated to this pick); the Aurora decision
-    # itself gets the genuine settled count and a tie key built from every query
-    # in this sweep, so it never repeats #550's constant-seed, name-preference bug.
-    aurora_target = pick_aurora_engine(
-        engine_counts,
-        source_engine,
-        settled_counts(revised_assignments),
-        tie_key=",".join(sorted(qa["query_id"] for qa in revised_assignments)),
+    source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
+    workload = settled_counts(revised_assignments)
+    by_id = {qa["query_id"]: qa for qa in revised_assignments}
+    # The engines a tiny orphan may actually move to: Aurora (the
+    # consolidation target ADR-031 Decision 7 has in mind), or any engine
+    # that has already earned its place by carrying more than the orphan
+    # threshold -- fixed ONCE, up front, from every engine's count before
+    # this sweep moves anything. Two mutually tiny engines can never absorb
+    # each other this way: whichever happened to be evaluated first would
+    # otherwise "win" purely by iteration order, which is exactly the kind
+    # of unprincipled bias #579 removed on the count axis -- reintroducing
+    # it on an order axis instead would not be a fix.
+    safe_destinations = sorted(
+        e for e, c in engine_counts.items() if e in AURORA_ENGINES or c > ORPHAN_ENGINE_THRESHOLD
     )
-    if aurora_target is None:
-        return revised_assignments, consolidations
-
-    # Find orphan engines (non-Aurora, few queries, not the primary engine)
-    primary_engine = max(engine_counts, key=lambda e: engine_counts[e])
+    # query_id -> the 2+-member group it belongs to (query structure, #579
+    # round 2 Important 3) -- only groups of 2+ matter here; a lone query
+    # whose other co-dependency members already sit elsewhere is placed as
+    # an individual, the same way it would be if it had no group at all.
+    group_by_qid: dict[str, list[str]] = {}
+    for defined_group in co_dependency_groups or []:
+        if len(defined_group) < 2:
+            continue
+        for qid in defined_group:
+            group_by_qid[qid] = defined_group
 
     for engine, count in list(engine_counts.items()):
         if engine in AURORA_ENGINES:
             continue
-        if engine == primary_engine:
-            continue
         if count > ORPHAN_ENGINE_THRESHOLD:
             continue
 
-        # Check if ALL queries in this engine have no hard capability requirements
+        committed_elsewhere = [e for e in safe_destinations if e != engine]
+        if not committed_elsewhere:
+            continue  # nothing else exists to serve these queries
+
         engine_qids = [
             qa["query_id"] for qa in revised_assignments if qa["assigned_engine"] == engine
         ]
-        has_hard_caps = any(query_capabilities.get(qid, []) for qid in engine_qids)
-        if has_hard_caps:
+        engine_qid_set = set(engine_qids)
+
+        # Partition into co-dependency-group units (2+ members still on
+        # THIS engine move together) and individual units -- never split a
+        # group that is on the orphan between two different destinations.
+        seen: set[str] = set()
+        units: list[list[str]] = []
+        for qid in engine_qids:
+            if qid in seen:
+                continue
+            co_group = group_by_qid.get(qid)
+            members_here = sorted(m for m in co_group if m in engine_qid_set) if co_group else []
+            if len(members_here) >= 2:
+                units.append(members_here)
+                seen.update(members_here)
+            else:
+                units.append([qid])
+                seen.add(qid)
+
+        blocked_notes: list[str] = []
+        resolved: list[tuple[list[str], str, str | None, list[str]]] = []
+        for members in units:
+            is_group = len(members) > 1
+
+            override_reason = _signal_override_block(members, by_id)
+            if override_reason is not None:
+                blocked_notes.append(override_reason)
+                continue
+
+            original_tied = next(
+                (by_id[m].get("tied_engines") for m in members if by_id[m].get("tied_engines")),
+                None,
+            )
+            pool = _tied_candidate_pool(original_tied, committed_elsewhere)
+
+            if is_group:
+                scores, reasons = _group_serviceable_scores(
+                    members, pool, query_map, scoring_context
+                )
+                label = f"co-dependency group {', '.join(members)}"
+            else:
+                qid = members[0]
+                query = query_map.get(qid) or {"query_id": qid}
+                scores, reasons = _serviceable_scores(query, pool, scoring_context)
+                label = qid
+
+            if not scores:
+                blocked_notes.append(f"{label} ({'; '.join(reasons)})")
+                continue
+
+            eligible = _eligible_destinations(
+                members,
+                engine,
+                original_tied,
+                scores,
+                query_signals or {},
+                query_map,
+                scoring_context.query_capabilities,
+            )
+            if not eligible:
+                # Serviceable (the shared scorer's gates passed) but still
+                # not somewhere Phase 2 would ever place this query/group
+                # (#579 round 3): the write/specialist-absorb rule or the
+                # join-off-non-Aurora-onto-DynamoDB block. Named so, never
+                # folded into the generic serviceability reason above.
+                blocked_notes.append(
+                    f"{label} (no destination eligible under the reality check's own "
+                    "placement rule -- the write/specialist-absorb gate or the "
+                    "join-onto-DynamoDB block)"
+                )
+                continue
+            scores = {e: s for e, s in scores.items() if e in eligible}
+
+            top = max(scores.values())
+            tied = sorted(e for e, s in scores.items() if s == top)
+            if len(tied) > 1:
+                # No "current engine" stability candidate: the orphan being
+                # removed is never itself a safe destination, so it can
+                # never be one of ``tied`` for this to matter (round 2
+                # review: the old ``{engine}`` stability set was meaningless
+                # for exactly this reason).
+                seed = ",".join(members)
+                winner, tie_kind = break_tie(
+                    tied, set(), source_compatible_engine, settled_counts=workload, query_id=seed
+                )
+            else:
+                (winner,) = tied
+                tie_kind = None
+            resolved.append((members, winner, tie_kind, tied))
+
+        if blocked_notes:
+            # At least one query (or co-dependency group) has nowhere else
+            # to go (#579): the whole engine stays, and nothing is moved
+            # onto it either -- never decided by raw count, and never by
+            # generalizing one blocked query's gate into protecting (or
+            # redirecting) every other query here too.
+            print(
+                f"[reality-check] Sanity sweep: kept {display_engine(engine)} "
+                f"({count} queries) -- not every query has a serviceable committed "
+                f"engine: {'; '.join(blocked_notes)}"
+            )
             continue
 
-        # Redirect all queries from this orphan engine to Aurora
-        for qa in revised_assignments:
-            if qa["assigned_engine"] == engine:
-                qa["assigned_engine"] = aurora_target
+        # Every query (and every co-dependency group, as one unit) has
+        # somewhere to go: remove the engine, each unit to its own
+        # best-scoring serviceable committed engine.
+        moved_counts: Counter[str] = Counter()
+        for members, winner, tie_kind, tied in resolved:
+            is_group = len(members) > 1
+            new_tied = sorted(tied) if tie_kind == "tie_unresolved" else []
+            basis = (
+                "co-dependency group moves together"
+                if is_group
+                else "best-scoring serviceable committed engine"
+            )
+            for mqid in members:
+                qa = by_id[mqid]
+                qa["assigned_engine"] = winner
+                # Always the FRESH verdict (round 2 review Important 1b):
+                # never left reading a stale tie that names the engine this
+                # sweep just removed.
+                qa["tied_engines"] = new_tied
                 qa["assignment_reason"] = (
-                    f"sanity sweep: redirected from {engine} to {aurora_target} "
-                    f"(orphan engine with {count} queries, no hard capability requirements)"
+                    f"sanity sweep: redirected from {display_engine(engine)} to "
+                    f"{display_engine(winner)} (orphan engine with {count} queries; {basis})"
                 )
+                moved_counts[winner] += 1
+                if tie_kind == "tie_unresolved" and routing_trace is not None:
+                    routing_trace.record_tie(mqid, tie_kind)
 
-        # Record as a consolidation
-        consolidations.append(
-            {
-                "from_engine": engine,
-                "to_engine": aurora_target,
-                "query_count": count,
-                "reason": (
-                    f"Sanity sweep: {engine} had only {count} queries with no hard "
-                    f"capability requirements — redirected to {aurora_target}"
-                ),
-                "saved_cost_estimate": 500.0,
-                "action": "full",
-                "queries_retained": [],
-                "retention_reason": None,
-            }
-        )
-
-        print(
-            f"[reality-check] Sanity sweep: {engine} ({count} queries) "
-            f"→ {aurora_target} (no hard capabilities required)"
-        )
+        # Name order only, for deterministic output -- every destination
+        # was already decided above, per query, by score and tie-break;
+        # this never picks a "winner" among them, so it is not the same
+        # shape as a count- or name-keyed engine pick.
+        destinations = sorted(moved_counts)
+        single_destination = len(destinations) == 1
+        for to_engine in destinations:
+            moved = moved_counts[to_engine]
+            consolidations.append(
+                {
+                    "from_engine": engine,
+                    "to_engine": to_engine,
+                    "query_count": moved,
+                    "reason": (
+                        f"Sanity sweep: {display_engine(engine)} had only {count} queries, "
+                        "each with a serviceable committed engine; "
+                        f"{moved} scored best on {display_engine(to_engine)}"
+                    ),
+                    # Split proportionally across every destination rather
+                    # than crediting one record with the whole estimate by
+                    # some other pick (e.g. its query share) -- which would
+                    # be exactly the count-keyed bias #579 removed, one
+                    # field over.
+                    "saved_cost_estimate": round(500.0 * moved / count, 2),
+                    "action": "full" if single_destination else "partial",
+                    "queries_retained": [],
+                    "retention_reason": None,
+                }
+            )
+            print(
+                f"[reality-check] Sanity sweep: {display_engine(engine)} ({count} queries) "
+                f"→ {moved} to {display_engine(to_engine)} (best-scoring committed engine)"
+            )
 
     return revised_assignments, consolidations
 

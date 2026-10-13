@@ -369,25 +369,66 @@ class TestAuroraChoiceFollowsTheSource:
 
     @pytest.mark.parametrize(
         ("source", "expected"),
-        # #550 review: without a source, the two Aurora engines settle on an exact
-        # tie (1 query each), which now goes through the shared ADR-031 tie-break
-        # keyed on every query id this sweep sees -- a hash, never a bare name
-        # preference, so "aurora_mysql" here is this specific id set's hash result,
-        # not a universal "PostgreSQL wins ties" default (see
-        # test_aurora_choice.py's own tie_key tests for the general case).
-        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_mysql")],
+        [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql")],
     )
-    def test_sanity_sweep_redirects_to_the_source_dialect(self, source, expected):
+    def test_sanity_sweep_ties_between_committed_aurora_engines_go_to_the_source_dialect(
+        self, source, expected
+    ):
+        # #579: sanity_sweep no longer picks one special-cased "aurora
+        # target" (``pick_aurora_engine``) for every orphan -- it scores
+        # opensearch's one query against every OTHER committed engine
+        # (here, just the two Aurora engines) and only reaches a tie-break
+        # because an empty ``ScoringContext`` ties everyone at 0. Decision
+        # 2's source-compatible rule still decides it, now by going through
+        # the exact same shared ``tie_break.break_tie`` every other tie in
+        # the pipeline uses, rather than a sanity_sweep-local Aurora pick.
         from src.agents.referee.consolidation_validator import sanity_sweep
+        from src.agents.referee.query_scoring import ScoringContext
 
-        revised = [{"query_id": f"d{i}", "assigned_engine": "dynamodb"} for i in range(10)]
-        revised += [
+        revised = [
             {"query_id": "o1", "assigned_engine": "opensearch"},
             {"query_id": "m1", "assigned_engine": "aurora_mysql"},
             {"query_id": "p1", "assigned_engine": "aurora_postgresql"},
         ]
-        updated, _ = sanity_sweep(revised, [], {}, source_engine=source)
+        query_map = {qa["query_id"]: {"query_id": qa["query_id"]} for qa in revised}
+
+        updated, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine=source)
+
         assert next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"] == expected
+
+    def test_sanity_sweep_tie_with_no_source_dialect_matches_the_shared_tie_break(self):
+        # With no source at all, the tie between the two committed Aurora
+        # engines falls to the same placeholder every other unresolved tie
+        # in the pipeline uses (ADR-031 Decision 12) -- computed here
+        # independently via ``break_tie`` itself, never hardcoded: #579
+        # keys this tie by the query's own id, not the whole sweep's query
+        # ids joined together the way the retired ``pick_aurora_engine``
+        # call used to.
+        from src.agents.referee.consolidation_validator import sanity_sweep
+        from src.agents.referee.query_scoring import ScoringContext
+        from src.agents.referee.tie_break import break_tie, settled_counts
+
+        revised = [
+            {"query_id": "o1", "assigned_engine": "opensearch"},
+            {"query_id": "m1", "assigned_engine": "aurora_mysql"},
+            {"query_id": "p1", "assigned_engine": "aurora_postgresql"},
+        ]
+        query_map = {qa["query_id"]: {"query_id": qa["query_id"]} for qa in revised}
+        workload = settled_counts(revised)
+        expected_winner, _ = break_tie(
+            ["aurora_mysql", "aurora_postgresql"],
+            set(),
+            None,
+            settled_counts=workload,
+            query_id="o1",
+        )
+
+        updated, _ = sanity_sweep(revised, [], ScoringContext(), query_map, source_engine="")
+
+        assert (
+            next(qa for qa in updated if qa["query_id"] == "o1")["assigned_engine"]
+            == expected_winner
+        )
 
 
 class TestAuroraAbsorptionFollowsTheSource:
