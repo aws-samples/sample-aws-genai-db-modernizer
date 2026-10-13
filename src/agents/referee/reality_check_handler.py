@@ -384,45 +384,10 @@ def run_reality_check_handler(
 
     # llm_mode == "none": skip LLM entirely, use det as-is
 
-    # Step 3: Sanity sweep — remove a tiny orphan engine the other committed
-    # engines can serve (ADR-031 Decision 7, #579), using the exact same
-    # shared scorer the rest of the pipeline uses -- never a raw query count.
-    query_map = {
-        q["query_id"]: q
-        for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
-    }
-    scoring_context = ScoringContext.from_pipeline(
-        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
-    )
-    if "co_dependency_groups" not in det.get("assignment", {}):
-        # Every version writes this key today (#579 round 3) -- only a
-        # legacy artifact predating it would land here, so this is a guard
-        # for the future, not a case any current run should ever hit.
-        logger.warning(
-            "reality-check: assignment has no co_dependency_groups; the sanity sweep "
-            "will treat every query as ungrouped"
-        )
-    det["revised_assignments"], det["consolidations"], det["sweep_decisions"] = sanity_sweep(
-        det["revised_assignments"],
-        det["consolidations"],
-        scoring_context,
-        query_map,
-        source_engine=source_database_engine(det.get("collector_output", {})),
-        # Query structure, not current placement (#579 round 2): stays
-        # valid regardless of how many consolidations this run already
-        # made, so a co-dependency group still on the same orphan engine
-        # moves as one unit instead of being split between destinations.
-        co_dependency_groups=det.get("assignment", {}).get("co_dependency_groups", []),
-        # The same eligibility rule Phase 2 applies needs to know which
-        # specialty signals this query matched (#579 round 3,
-        # ``may_absorb``'s specialist-absorb restriction).
-        query_signals=_build_query_signals(det.get("triage", {}).get("signals", [])),
-    )
-    # Recompute after_distribution post-sweep
-    sweep_distribution: dict[str, int] = defaultdict(int)
-    for qa in det["revised_assignments"]:
-        sweep_distribution[qa["assigned_engine"]] += 1
-    det["after_distribution"] = dict(sweep_distribution)
+    # Step 3: Sanity sweep — the same shared step every llm_mode runs, in the
+    # same order, after its own LLM phase has applied any corrections (#601):
+    # bedrock above, external at its own finalize_reality_check call.
+    _run_sanity_sweep(det)
 
     # Step 3b: the Bedrock summary describes the settled records, not the
     # pre-correction ones (#236); write_reality_check_result still checks it.
@@ -588,6 +553,11 @@ def finalize_reality_check(
     the external run prepared) and is a no-op when Reality Check already ran for
     the lineage, so finalizing twice never writes a duplicate version.
 
+    Runs ``_run_sanity_sweep`` right after applying the LLM response, the
+    same step in the same order as the handler's ``bedrock``/``none`` paths
+    (#601), so all three modes write the same assignment for the same input
+    and corrections.
+
     Returns the same summary shape as :func:`run_reality_check_handler`.
     """
     if assignment_version is None:
@@ -598,6 +568,12 @@ def finalize_reality_check(
 
     det = run_reality_check_deterministic(job_id, database_name, store, assignment_version)
     result = apply_reality_check_llm_output(det, llm_response)
+    # Same shared step the handler runs for every llm_mode, in the same
+    # order -- the model's response is applied first, then the sweep (#601).
+    # Before this, finalize wrote a result bedrock/none never would for the
+    # same input and corrections: a tiny orphan engine the sweep would have
+    # removed stayed in the external version.
+    _run_sanity_sweep(result)
     new_version = write_reality_check_result(
         store, job_id, database_name, result, assignment_version
     )
@@ -620,6 +596,59 @@ def _skipped(previous_run) -> dict:
         "input_version": previous_run.input_version,
         "output_version": previous_run.output_version,
     }
+
+
+def _run_sanity_sweep(det: dict) -> None:
+    """Remove a tiny orphan engine the other committed engines can serve
+    (ADR-031 Decision 7, #579), using the exact same shared scorer the rest
+    of the pipeline uses -- never a raw query count.
+
+    Every ``llm_mode`` calls this, in the same order, right after its own
+    LLM phase has applied any corrections: :func:`run_reality_check_handler`
+    for ``bedrock``/``none``/the external preview, and
+    :func:`finalize_reality_check` for the external finalize (#601 -- before
+    this was shared, finalize never called it, so it could write a different
+    result than ``bedrock``/``none`` for the same input and corrections).
+
+    Mutates ``det`` in place: ``revised_assignments``, ``consolidations``,
+    ``sweep_decisions`` and ``after_distribution``.
+    """
+    query_map = {
+        q["query_id"]: q
+        for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
+    }
+    scoring_context = ScoringContext.from_pipeline(
+        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
+    )
+    if "co_dependency_groups" not in det.get("assignment", {}):
+        # Every version writes this key today (#579 round 3) -- only a
+        # legacy artifact predating it would land here, so this is a guard
+        # for the future, not a case any current run should ever hit.
+        logger.warning(
+            "reality-check: assignment has no co_dependency_groups; the sanity sweep "
+            "will treat every query as ungrouped"
+        )
+    det["revised_assignments"], det["consolidations"], det["sweep_decisions"] = sanity_sweep(
+        det["revised_assignments"],
+        det["consolidations"],
+        scoring_context,
+        query_map,
+        source_engine=source_database_engine(det.get("collector_output", {})),
+        # Query structure, not current placement (#579 round 2): stays
+        # valid regardless of how many consolidations this run already
+        # made, so a co-dependency group still on the same orphan engine
+        # moves as one unit instead of being split between destinations.
+        co_dependency_groups=det.get("assignment", {}).get("co_dependency_groups", []),
+        # The same eligibility rule Phase 2 applies needs to know which
+        # specialty signals this query matched (#579 round 3,
+        # ``may_absorb``'s specialist-absorb restriction).
+        query_signals=_build_query_signals(det.get("triage", {}).get("signals", [])),
+    )
+    # Recompute after_distribution post-sweep
+    sweep_distribution: dict[str, int] = defaultdict(int)
+    for qa in det["revised_assignments"]:
+        sweep_distribution[qa["assigned_engine"]] += 1
+    det["after_distribution"] = dict(sweep_distribution)
 
 
 def _settle_records(result: dict) -> None:
