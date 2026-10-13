@@ -6,7 +6,7 @@ or list). Running each raw query in a short-lived child process bounds them:
 
 - the child opens the database read-only with a small buffer pool and a
   limited number of threads, and sets the engine query timeout;
-- a watchdog thread in the child exits it as soon as its peak resident memory
+- a watchdog thread in the child exits it as soon as its current resident memory
   passes ``MEMORY_LIMIT_BYTES``;
 - the parent kills the child if it has not answered within the timeout plus a
   short grace period;
@@ -14,7 +14,7 @@ or list). Running each raw query in a short-lived child process bounds them:
 
 The parent side is ``run_raw_query``. This file is also the child's entry point
 (``python raw_query_worker.py``), so it only imports the standard library and
-``ladybug`` at module level.
+``ladybug`` and ``psutil`` at module level.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ import threading
 import time
 import uuid
 from typing import Any
+
+import psutil
 
 MEMORY_LIMIT_BYTES = 768 * 1024 * 1024
 BUFFER_POOL_BYTES = 256 * 1024 * 1024
@@ -103,25 +105,13 @@ def run_raw_query(
 # --- child side ---------------------------------------------------------------
 
 
-_STATM = "/proc/self/statm"
-
-
 def _rss_bytes() -> int:
-    """Resident memory of this process.
+    """Current resident memory in bytes on Linux, macOS and Windows.
 
-    Linux carries the parent's peak RSS into a forked and exec'd child, so
-    ``ru_maxrss`` there can start above the limit; read the current RSS from
-    /proc instead. macOS has no /proc; its ``ru_maxrss`` (bytes) starts fresh.
+    Measuring current RSS avoids a forked child's inherited peak on Linux.
+    psutil also supports Windows, where the resource module is unavailable.
     """
-    try:
-        with open(_STATM) as f:
-            resident_pages = int(f.read().split()[1])
-        return resident_pages * os.sysconf("SC_PAGE_SIZE")
-    except (OSError, ValueError, IndexError):
-        import resource
-
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        return int(peak if sys.platform == "darwin" else peak * 1024)
+    return int(psutil.Process().memory_info().rss)
 
 
 def _watch_memory(limit: int, parent_pid: int) -> None:

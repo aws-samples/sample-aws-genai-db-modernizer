@@ -317,3 +317,5 @@ obvious entries lives here instead:
   public env-var page as of this writing; to be confirmed on the first real
   run (a timeout shows up as a killed Bash call in the transcript).
 - `Bash(curl *)` joins `wget`/`nc` in `deny` for the same reason.
+
+The raw-query large-server memory regression gates on Linux, macOS and Windows. The worker measures current RSS with psutil; on Windows run the Bash CI script from Git Bash, or run the equivalent pytest command directly.

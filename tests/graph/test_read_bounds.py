@@ -5,7 +5,6 @@ from __future__ import annotations
 import http.client
 import json
 import socket
-import sys
 import threading
 import time
 from pathlib import Path
@@ -485,19 +484,20 @@ def test_raw_query_child_exits_when_its_parent_is_gone(monkeypatch):
     assert exits == [worker._ORPHAN_EXIT_CODE]
 
 
-def test_worker_memory_reads_current_rss_not_inherited_peak(tmp_path, monkeypatch):
-    """On Linux the child inherits its parent's peak RSS, so the watchdog reads current RSS."""
-    import os
+def test_worker_memory_reads_current_rss_not_inherited_peak(monkeypatch):
+    """The watchdog uses current process RSS, in bytes, on every platform."""
+    from types import SimpleNamespace
 
     from src.graph import raw_query_worker as worker
 
-    statm = tmp_path / "statm"
-    statm.write_text("5000 1000 300 10 0 900 0\n")
-    monkeypatch.setattr(worker, "_STATM", str(statm))
-    assert worker._rss_bytes() == 1000 * os.sysconf("SC_PAGE_SIZE")
+    class Process:
+        def memory_info(self):
+            return SimpleNamespace(rss=123456789)
+
+    monkeypatch.setattr(worker.psutil, "Process", Process)
+    assert worker._rss_bytes() == 123456789
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux RSS inheritance")
 def test_raw_query_works_when_the_server_process_is_large(raw_client, monkeypatch):
     """A server already above the worker's memory cap can still run small raw queries."""
     from src.graph import raw_query_worker as worker
