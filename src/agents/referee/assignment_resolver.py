@@ -235,7 +235,17 @@ class AssignmentResolver:
         # no second run of the gates to find out why (#549 round-2 review,
         # Suggestion 1).
         scores: dict[str, dict[str, int]] = {}
-        exclusion_notes: dict[str, list[str]] = {}  # query_id → list of exclusion messages
+        # query_id -> list of exclusion notes. Each note keeps the raw ``engine`` id
+        # and ``gate`` kind (``EngineScore.gate_kind``, never a text match on
+        # ``gate_reason`` -- #572) separately from its ``customer_text``: the
+        # routing trace (Step 7c) and the homogeneous-Aurora pruning below only
+        # ever need to match on engine/gate, never on rendered prose. ``gate_reason``
+        # is already customer-safe prose -- display_engine, the exclusion's
+        # customer-facing ``customer_message``, a capability label, never the raw
+        # engine id, a rule_id tag or the technical, log-only ``description`` --
+        # built that way in ``query_scoring.score_query_for_engine`` itself (#572),
+        # so every caller of that one shared pipeline gets it for free.
+        exclusion_notes: dict[str, list[dict[str, str]]] = {}
         for engine in analysis_outputs:
             for query in queries:
                 qid = query["query_id"]
@@ -244,11 +254,17 @@ class AssignmentResolver:
                 result = score_query_for_engine(query, engine, scoring_ctx)
                 if result.score is None:
                     scores[qid][engine] = 0
-                    # A gated EngineScore always carries its reason (see
-                    # score_query_for_engine's own contract); the "if" is
-                    # just mypy narrowing, never expected to be False.
+                    # A gated EngineScore always carries its reason and kind (see
+                    # score_query_for_engine's own contract); the "if" is just
+                    # mypy narrowing, never expected to be False.
                     if result.gate_reason is not None:
-                        exclusion_notes.setdefault(qid, []).append(result.gate_reason)
+                        exclusion_notes.setdefault(qid, []).append(
+                            {
+                                "engine": engine,
+                                "gate": result.gate_kind or "",
+                                "customer_text": result.gate_reason,
+                            }
+                        )
                     continue
 
                 scores[qid][engine] = int(result.score)
@@ -321,10 +337,7 @@ class AssignmentResolver:
                 scores.setdefault(qid, {})[homogeneous_aurora] = max(0, base_score - penalty)
                 if qid in exclusion_notes:
                     exclusion_notes[qid] = [
-                        n
-                        for n in exclusion_notes[qid]
-                        if f"Excluded from {homogeneous_aurora}" not in n
-                        and f"capability] {homogeneous_aurora} " not in n
+                        n for n in exclusion_notes[qid] if n["engine"] != homogeneous_aurora
                     ]
                     if not exclusion_notes[qid]:
                         del exclusion_notes[qid]
@@ -375,7 +388,7 @@ class AssignmentResolver:
             for qid in group:
                 assigned[qid] = best[0]
                 assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
-                assigned_reason[qid] = f"co-dependency group → {best[0]}"
+                assigned_reason[qid] = f"co-dependency group → {display_engine(best[0])}"
 
         # Step 6: Assign remaining queries individually
         for query in queries:
@@ -404,7 +417,7 @@ class AssignmentResolver:
                     continue
                 assigned[qid] = best[0]
                 assigned_confidence[qid] = top_score
-                assigned_reason[qid] = f"highest confidence for {best[0]}"
+                assigned_reason[qid] = f"highest confidence for {display_engine(best[0])}"
             else:
                 # Step 7: Fallback to aurora engine from triage
                 fallback_qids.append(qid)
@@ -550,7 +563,7 @@ class AssignmentResolver:
                 assigned_confidence[qid] = 100
                 assigned_reason[qid] = (
                     "utility/metadata statement — kept on source-compatible "
-                    f"relational engine ({utility_engine})"
+                    f"relational engine ({display_engine(utility_engine)})"
                 )
                 assigned_signal.pop(qid, None)
 
@@ -573,12 +586,9 @@ class AssignmentResolver:
                 ladder: dict[str, object] = {}
                 for engine, analysis in analysis_outputs.items():
                     gate = None
-                    for note in notes:
-                        if f"Excluded from {engine}:" in note:
-                            gate = "hard_exclusion"
-                            break
-                        if note.startswith(f"[capability] {engine} "):
-                            gate = "capability"
+                    for excl_note in notes:
+                        if excl_note["engine"] == engine:
+                            gate = excl_note["gate"]
                             break
                     if gate:
                         ladder[engine] = {"gate": gate}
@@ -643,11 +653,13 @@ class AssignmentResolver:
             qid = query["query_id"]
             engine = assigned[qid]
             confidence = assigned_confidence.get(qid, 0)
-            reason = assigned_reason.get(qid, f"highest confidence for {engine}")
+            reason = assigned_reason.get(qid, f"highest confidence for {display_engine(engine)}")
 
             # Append exclusion notes to the reason if this query was excluded from other engines
             if qid in exclusion_notes:
-                reason = reason + " | " + "; ".join(exclusion_notes[qid])
+                reason = (
+                    reason + " | " + "; ".join(n["customer_text"] for n in exclusion_notes[qid])
+                )
 
             query_assignments.append(
                 QueryAssignment(
@@ -1168,8 +1180,9 @@ def derive_table_assignments(
 
         multi_engine_reason = None
         if len(engines) >= 2:
+            engine_names = ", ".join(display_engine(e) for e in engines)
             multi_engine_reason = (
-                f"Table {table_id} has queries assigned to multiple engines: {', '.join(engines)}"
+                f"Table {table_id} has queries assigned to multiple engines: {engine_names}"
             )
 
         result.append(

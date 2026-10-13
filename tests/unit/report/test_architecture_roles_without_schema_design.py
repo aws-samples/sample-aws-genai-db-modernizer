@@ -134,7 +134,7 @@ def test_no_schema_design_lists_workload_engines_as_targets() -> None:
     assert [d["service"] for d in arch["databases"]] == ["elasticache", "dynamodb", "opensearch"]
     assert all(d["table_count"] == 0 for d in arch["databases"])
     assert arch["rationale"] == (
-        "Hybrid architecture: dynamodb for primary data storage and elasticache for "
+        "Hybrid architecture: DynamoDB for primary data storage and ElastiCache for "
         "caching hot data. Schema design was not run, so no tables are allocated yet."
     )
     assert _roles(report) == {
@@ -256,7 +256,7 @@ def test_rationale_names_the_retained_engine_in_the_aurora_plus_cache_shape() ->
     assert [d["service"] for d in arch["databases"]] == ["elasticache"]
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora PostgreSQL retained as the relational core "
-        "(85% of queries) and elasticache for caching hot data. Schema design "
+        "(85% of queries) and ElastiCache for caching hot data. Schema design "
         "was not run, so no tables are allocated yet."
     )
     assert _roles(report) == {
@@ -287,7 +287,7 @@ def test_rationale_names_the_other_engine_by_function_when_retained_leads() -> N
     arch = report["recommended_architecture"]
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora PostgreSQL retained as the relational core "
-        "(77% of queries); dynamodb for key-value access; elasticache for caching "
+        "(77% of queries); DynamoDB for key-value access; ElastiCache for caching "
         "hot data. Schema design was not run, so no tables are allocated yet."
     )
     assert _roles(report) == {
@@ -318,7 +318,7 @@ def test_rationale_keeps_primary_data_storage_when_retained_engine_is_the_minori
     arch = report["recommended_architecture"]
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(10% of queries) and dynamodb for primary data storage and elasticache "
+        "(10% of queries) and DynamoDB for primary data storage and ElastiCache "
         "for caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )

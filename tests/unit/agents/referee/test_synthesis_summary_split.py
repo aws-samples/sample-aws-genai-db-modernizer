@@ -102,9 +102,9 @@ def test_schema_totals_cover_every_engine_with_workload() -> None:
     text = _summary()
     assert (
         "Schema design produced 39 target objects: 97 queries in 3 query groups; "
-        "65 in-scope access patterns on non-relational engines (dynamodb: 20 target "
-        "tables, 52 in-scope access patterns; elasticache: 10 key designs, 13 "
-        "in-scope access patterns; aurora_mysql: 9 target tables)."
+        "65 in-scope access patterns on non-relational engines (DynamoDB: 20 target "
+        "tables, 52 in-scope access patterns; ElastiCache: 10 key designs, 13 "
+        "in-scope access patterns; Aurora MySQL: 9 target tables)."
     ) in text
     assert "10 target tables with 13 access patterns" not in text
 
@@ -138,7 +138,7 @@ def test_aurora_access_patterns_drop_the_non_relational_wording() -> None:
 
     assert "on non-relational engines" not in text
     assert "75 in-scope access patterns" in text
-    assert "aurora_mysql: 9 target tables, 10 in-scope access patterns" in text
+    assert "Aurora MySQL: 9 target tables, 10 in-scope access patterns" in text
 
 
 def test_only_in_scope_access_patterns_are_counted() -> None:
@@ -154,7 +154,7 @@ def test_only_in_scope_access_patterns_are_counted() -> None:
         "97 queries in 3 query groups; 60 in-scope access patterns (plus 5 out of scope) on" in text
     )
     assert (
-        "(dynamodb: 20 target tables, 47 in-scope access patterns; elasticache: 10 key designs"
+        "(DynamoDB: 20 target tables, 47 in-scope access patterns; ElastiCache: 10 key designs"
     ) in text
 
 
@@ -181,8 +181,8 @@ def test_risk_sentence_singular_and_plural() -> None:
 def test_workload_split_is_ordered_by_assigned_queries() -> None:
     text = _summary()
     assert (
-        "Workload split: dynamodb handles 63 queries (58.9%), elasticache handles 34 "
-        "queries (31.8%), aurora_mysql handles 10 queries (9.3%)."
+        "Workload split: DynamoDB handles 63 queries (58.9%), ElastiCache handles 34 "
+        "queries (31.8%), Aurora MySQL handles 10 queries (9.3%)."
     ) in text
 
 
@@ -194,8 +194,8 @@ def test_eliminated_and_empty_engines_are_the_other_targets() -> None:
     ranking = RANKING + [_rank("documentdb", 0.3, 0, 0.0, 0, 0, 0)]
     text = _summary(ranking, {"opensearch": "aurora_mysql", "neptune": None})
     assert text.endswith(
-        "Other targets evaluated: documentdb (no queries assigned), opensearch "
-        "(consolidated into aurora_mysql by the reality check), neptune (eliminated by "
+        "Other targets evaluated: DocumentDB (no queries assigned), OpenSearch "
+        "(consolidated into Aurora MySQL by the reality check), Neptune (eliminated by "
         "the reality check)."
     )
 
@@ -208,8 +208,8 @@ def test_reality_check_settled_defaults_to_every_eliminated_engine() -> None:
     text = _summary(
         ranking, {"opensearch": "aurora_mysql", "neptune": None}, reality_check_settled=None
     )
-    assert "opensearch (consolidated into aurora_mysql by the reality check)" in text
-    assert "neptune (eliminated by the reality check)" in text
+    assert "OpenSearch (consolidated into Aurora MySQL by the reality check)" in text
+    assert "Neptune (eliminated by the reality check)" in text
 
 
 def test_an_engine_eliminated_only_by_a_later_customer_edit_gets_neutral_wording() -> None:
@@ -223,8 +223,8 @@ def test_an_engine_eliminated_only_by_a_later_customer_edit_gets_neutral_wording
         reality_check_settled=set(),
     )
     assert text.endswith(
-        "Other targets evaluated: documentdb (no queries assigned), opensearch "
-        "(consolidated into aurora_mysql), neptune (removed from the assignment)."
+        "Other targets evaluated: DocumentDB (no queries assigned), OpenSearch "
+        "(consolidated into Aurora MySQL), Neptune (removed from the assignment)."
     )
     assert "by the reality check" not in text
 
@@ -232,7 +232,7 @@ def test_an_engine_eliminated_only_by_a_later_customer_edit_gets_neutral_wording
 def test_source_table_mapping_is_stated_once() -> None:
     text = _summary()
     assert text.count("source tables mapped") == 1
-    assert "22 source tables mapped to aurora_mysql, dynamodb, elasticache." in text
+    assert "22 source tables mapped to Aurora MySQL, DynamoDB, ElastiCache." in text
 
 
 def test_without_assignment_the_top_engine_summary_is_kept() -> None:
@@ -241,9 +241,9 @@ def test_without_assignment_the_top_engine_summary_is_kept() -> None:
         for r in RANKING
     ]
     text = _summary(ranking)
-    assert "Top recommendation: elasticache with 50% average confidence." in text
+    assert "Top recommendation: ElastiCache with 50% average confidence." in text
     assert "Schema design produced 10 target tables with 13 in-scope access patterns" in text
-    assert "Other targets evaluated: dynamodb (50%), aurora_mysql (50%)." in text
+    assert "Other targets evaluated: DynamoDB (50%), Aurora MySQL (50%)." in text
     assert text.count("source tables mapped") == 1
 
 

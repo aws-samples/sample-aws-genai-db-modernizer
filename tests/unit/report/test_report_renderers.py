@@ -111,7 +111,7 @@ class TestEngineeringReport:
     def test_tradeoffs_by_engine(self, report: dict) -> None:
         m = renderers.render_engineering_report_md(report)
         assert "## Migration trade-offs (44)" in m
-        assert "### documentdb" in m
+        assert "### DocumentDB" in m
 
     def test_has_mermaid_fences(self, report: dict) -> None:
         m = renderers.render_engineering_report_md(report)

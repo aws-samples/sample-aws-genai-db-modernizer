@@ -2189,6 +2189,60 @@ class TestHardCapabilityGateAtInitialAssignment:
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert q1.assigned_engine == "aurora_mysql"
 
+    def test_capability_note_uses_a_label_not_the_raw_capability_id(self):
+        """#572 review suggestion 7: the capability note shows a label
+        (``src.shared.capability_labels.capability_label``), not the raw
+        snake_case id -- a different leak class than the engine id this PR
+        already fixes, since the guard's snake_case detector needs a trailing
+        colon and none follows a capability name here."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        triage["query_capabilities"] = {"q1": ["complex_joins"]}
+        collector = _make_collector(["q1"])
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=50),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+        assert "DynamoDB lacks required capability: multi-table joins" in q1.assignment_reason
+        assert "complex_joins" not in q1.assignment_reason
+
+
+class TestExclusionNoteWording:
+    """#572 review items 6/8: the hard-exclusion note names the engine with
+    ``display_engine`` and quotes the exclusion's customer-facing
+    ``customer_message`` -- never the raw id, the internal ``[rule_id]`` tag, or
+    ``description``, the technical, log-only reason (``engine_exclusions.py``'s
+    own docstring). Only ``test_mandatory_engine_cost_share_floor.py`` and the
+    hand-built fixtures elsewhere exercised the OLD format; this is the first
+    test to drive the real resolver through a hard exclusion end to end."""
+
+    def test_excluded_from_names_the_engine_and_quotes_the_customer_message(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["elasticache", "aurora_mysql"])
+        collector = _make_collector(["q1"])
+        collector["queries"]["query_patterns"][0][
+            "query_text"
+        ] = "SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id"
+        analysis = {
+            "elasticache": _make_analysis("elasticache", ["db.users"], confidence=90),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=70),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_mysql"
+        assert (
+            "excluded from ElastiCache: it joins more than one table, and a "
+            "key-value store can't serve joins" in q1.assignment_reason
+        )
+        assert "elasticache" not in q1.assignment_reason
+        assert "[ec-no-complex-join]" not in q1.assignment_reason
+        assert "key-value/data structure store" not in q1.assignment_reason  # description, log-only
+
 
 class TestRoutingTraceAdjustment:
     """#497 review: a gap between the score resolve() used and a fresh base/penalty

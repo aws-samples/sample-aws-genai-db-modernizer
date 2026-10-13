@@ -151,7 +151,7 @@ class TestRealityCheckRefresh:
         result = _rc_result(_qas(dynamodb=5, elasticache=2, aurora_mysql=3))
         refresh_patterns_and_recommendations(result)
         assert "opensearch" not in _engines_in(result["architectural_patterns"])
-        assert result["recommendations"][0].startswith("Consolidated 3 queries from opensearch")
+        assert result["recommendations"][0].startswith("Consolidated 3 queries from OpenSearch")
 
     def test_llm_corrections_recompute_patterns(self) -> None:
         result = _rc_result(_qas(dynamodb=5, elasticache=2, aurora_mysql=3))

@@ -832,7 +832,9 @@ def architecture_svg(report: dict[str, Any]) -> str:
             if e.get("cost") is not None:
                 sub_bits.append(f"{_fmt_usd(e['cost'])}/mo")
         sub = "  \u00b7  ".join(sub_bits)
-        p.append(box(right_x, y, box_w, box_h, str(e["engine"]), sub, stroke, dashed=dashed))
+        p.append(
+            box(right_x, y, box_w, box_h, display_engine(e["engine"]), sub, stroke, dashed=dashed)
+        )
         dash_line = ' stroke-dasharray="5 4"' if dashed else ""
         marker = "" if dashed else ' marker-end="url(#arr)"'
         p.append(
@@ -919,7 +921,10 @@ _ENGINE_BADGE = {
 
 def _engine_badge(engine: str) -> str:
     color = _ENGINE_BADGE.get(engine, "#6b7280")
-    return f'<span class=badge style="background:{color}">' f"{escaping.html_text(engine)}</span>"
+    return (
+        f'<span class=badge style="background:{color}">'
+        f"{escaping.html_text(display_engine(engine))}</span>"
+    )
 
 
 def _risk_tile_class(level: str) -> str:
@@ -1386,7 +1391,7 @@ def _cache_note(engines: list[dict[str, Any]], report: dict[str, Any]) -> str:
     """
     esc = escaping.html_text
     caches = [e for e in engines if e["role"] == "Cache layer"]
-    names = ", ".join(esc(e["engine"]) for e in caches)
+    names = ", ".join(esc(display_engine(e["engine"])) for e in caches)
     counted = [e for e in caches if e.get("cached_queries") is not None]
     cache_wave = next(
         (
@@ -1885,8 +1890,21 @@ _SUGGESTED_PATH_NOTE = (
 # elimination -- the "no in-scope ... remains" clause is reconcile_consolidations'
 # own marker for it (reality_check.py's "full" action), so it is matched
 # directly rather than re-deriving "eliminated" from the assignment here.
-_FULLY_ELIMINATED_RE = re.compile(r"no in-scope (\w+) query remains")
-_CONSOLIDATED_FROM_TO_RE = re.compile(r"^Consolidated \d+ quer(?:y|ies) from (\w+) → (\w+)")
+# Reason text names engines by display name ("Aurora MySQL") or, in reports
+# written before #572, by raw id ("aurora_mysql"); both map back to the id.
+_ENGINE_BY_NAME = {
+    **{v: k for k, v in ENGINE_DISPLAY_NAMES.items()},
+    **{k: k for k in ENGINE_DISPLAY_NAMES},
+}
+_ENGINE_NAME_ALT = "|".join(re.escape(n) for n in sorted(_ENGINE_BY_NAME, key=len, reverse=True))
+_FULLY_ELIMINATED_RE = re.compile(rf"no in-scope ({_ENGINE_NAME_ALT}) query remains")
+_CONSOLIDATED_FROM_TO_RE = re.compile(
+    rf"^Consolidated \d+ quer(?:y|ies) from ({_ENGINE_NAME_ALT}) → ({_ENGINE_NAME_ALT})"
+)
+
+
+def _engine_from_reason(name: str) -> str:
+    return _ENGINE_BY_NAME.get(name, name)
 
 
 def _tied_queries_html(report: dict[str, Any]) -> list[str]:
@@ -1939,7 +1957,7 @@ def _dropped_engines(report: dict[str, Any]) -> list[str]:
         desc = str((t or {}).get("description") or "")
         elim = _FULLY_ELIMINATED_RE.search(desc)
         m = _CONSOLIDATED_FROM_TO_RE.match(desc)
-        candidates += [x.group(1) for x in (elim, m) if x]
+        candidates += [_engine_from_reason(x.group(1)) for x in (elim, m) if x]
     candidates += [
         str(c.get("from_engine") or "")
         for c in rc.get("consolidations") or []
@@ -1953,7 +1971,7 @@ def _dropped_engines(report: dict[str, Any]) -> list[str]:
     ]
     candidates += eliminated
     marked = set(eliminated) | {
-        m.group(1)
+        _engine_from_reason(m.group(1))
         for t in report.get("trade_offs") or []
         if (m := _FULLY_ELIMINATED_RE.search(str((t or {}).get("description") or "")))
     }
@@ -1994,11 +2012,13 @@ def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
             desc = str((t or {}).get("description") or "")
             m = _CONSOLIDATED_FROM_TO_RE.match(desc)
             elim = _FULLY_ELIMINATED_RE.search(desc)
-            if (m and m.group(1) == engine) or (elim and elim.group(1) == engine):
+            if (m and _engine_from_reason(m.group(1)) == engine) or (
+                elim and _engine_from_reason(elim.group(1)) == engine
+            ):
                 if desc not in lines:
                     lines.append(desc)
-                if m and m.group(2) not in targets:
-                    targets.append(m.group(2))
+                if m and _engine_from_reason(m.group(2)) not in targets:
+                    targets.append(_engine_from_reason(m.group(2)))
         for c in rc.get("consolidations") or []:
             if isinstance(c, dict) and c.get("from_engine") == engine:
                 to = str(c.get("to_engine") or "")
@@ -2341,7 +2361,9 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     out = [f"## Cache layer ({escaping.md_text(name)})" if name else "## Cache layer", ""]
     if n:
         owners = overlay.get("owners") or {}
-        owned = ", ".join(f"{escaping.md_text(e)} {c}" for e, c in sorted(owners.items()) if e)
+        owned = ", ".join(
+            f"{escaping.md_text(display_engine(e))} {c}" for e, c in sorted(owners.items()) if e
+        )
         patterns = overlay.get("patterns") or {}
         shapes = ", ".join(
             f"{escaping.md_text(str(p).replace('_', ' '))} {c}"
@@ -2434,7 +2456,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 )
             )
             out.append(
-                f"| {escaping.md_cell(e['engine'])} | {escaping.md_cell(e['role'])} "
+                f"| {escaping.md_cell(display_engine(e['engine']))} | {escaping.md_cell(e['role'])} "
                 f"| {escaping.md_cell(share)} | {escaping.md_cell(e['rationale'] or '-')} |"
             )
         out.append("")
@@ -2474,7 +2496,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             target = escaping.md_cell(f"`{escaping.md_code(m.get('target_table', '-'))}`")
             out.append(
                 f"| {source} "
-                f"| {escaping.md_cell(m.get('recommended_database', '?'))} "
+                f"| {escaping.md_cell(display_engine(m.get('recommended_database', '?')))} "
                 f"| {target} "
                 f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
                 f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
@@ -2516,11 +2538,10 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                     else ""
                 )
                 unit_text = f"{n_aps} access {plural_noun(n_aps, 'pattern')}{split}"
-                eng_heading = (
-                    escaping.md_text(display_engine(eng))
-                    if eng in _RELATIONAL_ENGINES
-                    else escaping.md_text(eng)
-                )
+                # #572: display_engine for every engine, not just the relational
+                # ones the branch above already covers -- a non-relational engine
+                # (dynamodb, elasticache, ...) was still showing its raw id here.
+                eng_heading = escaping.md_text(display_engine(eng))
             out += [
                 f"### {eng_heading} ({len(tables)} target "
                 f"{plural_noun(len(tables), 'object')}, "
@@ -2665,7 +2686,12 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             by_eng.setdefault(eng, []).append(r)
         out += [f"## Risk register ({len(risks)})", ""]
         for eng, items in by_eng.items():
-            out += [f"### {escaping.md_text(eng)}", ""]
+            # #572: eng is the raw [engine] tag _risk_engine_and_body parsed off the
+            # description (or "(general)") -- display_engine leaves "(general)" as is
+            # (not a known engine id, falls back to its own title-cased fallback,
+            # which already reads fine unchanged).
+            heading = eng if eng == "(general)" else display_engine(eng)
+            out += [f"### {escaping.md_text(heading)}", ""]
             for r in items:
                 _, body = _risk_engine_and_body(r.get("description"))
                 sev = r.get("severity", "-")
@@ -2707,7 +2733,11 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
             by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
         out += [f"## Migration trade-offs ({len(tradeoffs)})", ""]
         for eng, items in by_engine.items():
-            out += [f"### {escaping.md_text(eng)}", ""]
+            # #572: eng is a raw engine id (or "(general)"/"reality-check", neither a
+            # known engine -- display_engine's title-case fallback would read oddly
+            # for the hyphenated "reality-check", so both are left unchanged).
+            heading = eng if eng in ("(general)", "reality-check") else display_engine(eng)
+            out += [f"### {escaping.md_text(heading)}", ""]
             for t in items:
                 desc = str(t.get("description", "")).strip()
                 impact = str(t.get("impact", "")).strip()

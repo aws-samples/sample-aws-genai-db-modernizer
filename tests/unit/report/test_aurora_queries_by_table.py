@@ -105,9 +105,11 @@ class TestTargetSchemasHeading:
         assert "### Aurora MySQL (2 target objects, 4 queries)" in md
         assert "aurora\\_mysql" not in md
 
-    def test_non_relational_engine_heading_is_unchanged(self) -> None:
+    def test_non_relational_engine_heading_also_uses_the_display_name(self) -> None:
+        """#572: a non-relational engine's heading used to show its raw id
+        here even though every other heading in this report used display_engine."""
         md = renderers.render_engineering_report_md(_report())
-        assert "### elasticache (1 target object, 1 access pattern)" in md
+        assert "### ElastiCache (1 target object, 1 access pattern)" in md
 
 
 class TestQueriesOnAuroraByTable:

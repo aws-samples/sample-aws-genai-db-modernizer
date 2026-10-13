@@ -38,6 +38,25 @@ from src.shared.engine_names import display_engine
 
 logger = logging.getLogger(__name__)
 
+# The sanity sweep's own ``SweepDecision.blocking_rule`` values (#589), named
+# here once so a caller that needs the full set
+# (``src.tools.validation.customer_text_guard``'s snake_case-reason-code
+# detector, #587 round 4) imports it instead of retyping the strings -- a new
+# blocking rule added below is then picked up automatically, with no second
+# edit anywhere else. ``BLOCKING_RULE_MIXED`` is reported in place of two or
+# more DIFFERENT rules blocking the same engine (see the sweep below); it
+# never comes from a single query/group's own gate.
+BLOCKING_RULE_SIGNAL_OVERRIDE = "signal_override"
+BLOCKING_RULE_NO_SERVICEABLE_ENGINE = "no_serviceable_engine"
+BLOCKING_RULE_INELIGIBLE_DESTINATION = "ineligible_destination"
+BLOCKING_RULE_MIXED = "mixed"
+BLOCKING_RULES: tuple[str, ...] = (
+    BLOCKING_RULE_SIGNAL_OVERRIDE,
+    BLOCKING_RULE_NO_SERVICEABLE_ENGINE,
+    BLOCKING_RULE_INELIGIBLE_DESTINATION,
+    BLOCKING_RULE_MIXED,
+)
+
 # Engine-specific context for the LLM to understand architectural constraints
 ENGINE_CONTEXT: dict[str, str] = {
     "dynamodb": (
@@ -305,8 +324,11 @@ def apply_corrections(
             target = _target(corr)
             qa["assigned_engine"] = target
             if target != corr["original_engine"]:
+                # target is redirect_engine here (see _target above): never
+                # original_engine, so never falsy/None -- display_engine(target),
+                # not display_engine(redirect_engine), keeps mypy's str narrowing.
                 qa["assignment_reason"] = (
-                    f"reality check: redirected to {redirect_engine} "
+                    f"reality check: redirected to {display_engine(target)} "
                     f"(unserviceable on consolidation target: {corr['reason']})"
                 )
             else:
@@ -339,22 +361,33 @@ def apply_corrections(
 
         # Partial — update the consolidation record. ``query_count`` is the number
         # this consolidation proposed to move, reversed queries included (#218).
+        # #572 review item 6: every customer-facing fragment below names the
+        # engine with display_engine (from_engine/to_engine/redirect_engine stay
+        # raw everywhere else in this function -- dict keys, comparisons, lookups).
         original_total = c["query_count"]
         redirected = sum(1 for corr in reversed_corrections if _target(corr) != from_engine)
         stayed = len(reversed_ids) - redirected
+        from_name = display_engine(from_engine)
+        to_name = display_engine(to_engine)
+        # redirect_engine is str | None (pick_aurora_engine's return type), but
+        # redirected > 0 only when it was truthy (see _target above) -- computed
+        # once, with a never-used "" fallback, so mypy keeps this a plain str.
+        redirect_name = display_engine(redirect_engine) if redirect_engine else ""
         parts = []
         if stayed:
-            parts.append(f"{stayed} {'stays' if stayed == 1 else 'stay'} on {from_engine}")
+            parts.append(f"{stayed} {'stays' if stayed == 1 else 'stay'} on {from_name}")
         if redirected:
-            parts.append(f"{redirected} redirected to {redirect_engine}")
-        reason_suffix = " and ".join(parts) + f" (unserviceable on {to_engine})"
+            parts.append(f"{redirected} redirected to {redirect_name}")
+        reason_suffix = " and ".join(parts) + f" (unserviceable on {to_name})"
         if redirected:
             retention_reason = (
-                f"Redirected to {redirect_engine} "
-                f"(relational patterns unserviceable on {to_engine})"
+                f"Redirected to {redirect_name} "
+                f"(relational patterns unserviceable on {to_name})"
             )
         else:
-            retention_reason = f"LLM validation flagged these as unserviceable on {to_engine}"
+            # #572 review item 6: no mention of which validation path flagged
+            # these (an implementation detail); the customer only needs why.
+            retention_reason = f"Flagged as unserviceable on {to_name} during validation"
 
         updated_consolidations.append(
             {
@@ -364,7 +397,7 @@ def apply_corrections(
                 "saved_cost_estimate": 0,
                 "reason": (  # nosemgrep: string-concat-in-list
                     f"Partial consolidation: {remaining_moved} of {original_total} "
-                    f"{from_engine} queries moved to {c['to_engine']}; "
+                    f"{from_name} queries moved to {to_name}; "
                     f"{reason_suffix}"
                 ),
                 "action": "partial",
@@ -723,7 +756,7 @@ def sanity_sweep(
                     "decision": "kept",
                     "reason": "no other committed engine exists to serve these queries",
                     "blocking_query_ids": sorted(engine_qids),
-                    "blocking_rule": "no_serviceable_engine",
+                    "blocking_rule": BLOCKING_RULE_NO_SERVICEABLE_ENGINE,
                 }
             )
             continue  # nothing else exists to serve these queries
@@ -759,7 +792,7 @@ def sanity_sweep(
             override_reason = _signal_override_block(members, by_id)
             if override_reason is not None:
                 blocked_notes.append(override_reason)
-                blocked_units.append({"members": members, "rule": "signal_override"})
+                blocked_units.append({"members": members, "rule": BLOCKING_RULE_SIGNAL_OVERRIDE})
                 continue
 
             original_tied = next(
@@ -781,7 +814,9 @@ def sanity_sweep(
 
             if not scores:
                 blocked_notes.append(f"{label} ({'; '.join(reasons)})")
-                blocked_units.append({"members": members, "rule": "no_serviceable_engine"})
+                blocked_units.append(
+                    {"members": members, "rule": BLOCKING_RULE_NO_SERVICEABLE_ENGINE}
+                )
                 continue
 
             eligible = _eligible_destinations(
@@ -804,7 +839,9 @@ def sanity_sweep(
                     "placement rule -- the write/specialist-absorb gate or the "
                     "join-onto-DynamoDB block)"
                 )
-                blocked_units.append({"members": members, "rule": "ineligible_destination"})
+                blocked_units.append(
+                    {"members": members, "rule": BLOCKING_RULE_INELIGIBLE_DESTINATION}
+                )
                 continue
             scores = {e: s for e, s in scores.items() if e in eligible}
 
@@ -858,7 +895,9 @@ def sanity_sweep(
                         f"{'; '.join(blocked_notes)}"
                     ),
                     "blocking_query_ids": sorted({m for u in blocked_units for m in u["members"]}),
-                    "blocking_rule": distinct_rules[0] if len(distinct_rules) == 1 else "mixed",
+                    "blocking_rule": (
+                        distinct_rules[0] if len(distinct_rules) == 1 else BLOCKING_RULE_MIXED
+                    ),
                 }
             )
             continue

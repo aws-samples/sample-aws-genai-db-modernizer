@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.optimization_labels import OPTIMIZATION_DISPLAY_NAMES
 from src.storage.parallel import map_parallel
 
 from . import escaping, renderers
@@ -54,6 +55,13 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 # tests/unit/report/test_report_template_sync.py pins ``ENGINE_LABELS`` here
 # against the hand-kept mirror in src/ui/src/utils/ExportReport.js.
 ENGINE_LABELS: dict[str, str] = ENGINE_DISPLAY_NAMES
+
+# Aurora Optimization.category display names (#587 round 3), injected as a JS
+# const the same way ENGINE_LABELS is -- ExportReport.js's own copy is a real
+# import (src/ui/src/utils/optimizationLabels.js), pinned to
+# src.shared.optimization_labels by tests/unit/report/test_optimization_labels_js_sync.py,
+# so this constant and that JS module can never disagree on a category's label.
+OPTIMIZATION_LABELS: dict[str, str] = OPTIMIZATION_DISPLAY_NAMES
 
 # Default cap on how many query journeys are embedded verbatim. Journeys are the
 # largest part of the payload (~1.3 KB each after projection) and the browser has to
@@ -990,6 +998,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "  <script>\n"
         f"    const DATA = {_json(data_payload)};\n"
         f"    const ENGINE_LABELS = {_json(ENGINE_LABELS, compact=True)};\n"
+        f"    const OPTIMIZATION_LABELS = {_json(OPTIMIZATION_LABELS, compact=True)};\n"
         + _read_template("analysis_report.js")
         + "\n  </script>\n"
     )

@@ -27,6 +27,7 @@ import {
 import { costBaselineStats } from './tcoAnalysis';
 import { summaryFallbackInfo } from './summaryFallback';
 import { fallbackWithheldReason } from './fallbackWithheldReason';
+import { OPTIMIZATION_LABELS } from './optimizationLabels';
 
 // #358: this file is English-only (i18n-exempt, see header), so this is the
 // one literal copy of the suffix cacheLayer.js's formatCacheLayerLine uses by
@@ -233,6 +234,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '  <script>\n';
   script += '    const DATA = ' + jsonForScript({ results, schemaDesigns, collector, jobId, queryJourneys }, 2) + ';\n';
   script += '    const ENGINE_LABELS = ' + jsonForScript(ENGINE_LABELS) + ';\n';
+  script += '    const OPTIMIZATION_LABELS = ' + jsonForScript(OPTIMIZATION_LABELS) + ';\n';
   script += '\n';
   script += '    // The palette lives only in the CSS :root block. Charts and SVG need real\n';
   script += '    // colour values, so read the custom properties back at runtime -- the\n';
@@ -1054,7 +1056,8 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '          html += \'<details style="margin-top: 12px;" open><summary style="cursor: pointer; font-weight: 600;">\' + optimizations.length + \' optimization\' + (optimizations.length === 1 ? \'\' : \'s\') + \'</summary>\';\n';
   script += '          optimizations.forEach(function(opt) {\n';
   script += '            html += \'<div class="item-card">\';\n';
-  script += '            html += \'<div style="font-size: 13px; font-weight: 700;">\' + escapeHtml(opt.category || \'\') + (opt.target ? \': \' + escapeHtml(opt.target) : \'\') + \'</div>\';\n';
+  script += '            const optLabel = OPTIMIZATION_LABELS[opt.category] || opt.category || \'\';\n';
+  script += '            html += \'<div style="font-size: 13px; font-weight: 700;">\' + escapeHtml(optLabel) + (opt.target ? \': \' + escapeHtml(opt.target) : \'\') + \'</div>\';\n';
   script += '            html += \'<div style="font-size: 13px; margin-top: 4px;">\' + escapeHtml(opt.recommendation || \'\') + \'</div>\';\n';
   script += '            if (opt.rationale) html += \'<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">\' + escapeHtml(opt.rationale) + \'</div>\';\n';
   script += '            html += \'</div>\';\n';

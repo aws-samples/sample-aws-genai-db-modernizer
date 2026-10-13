@@ -7,6 +7,7 @@ import re
 from pypdf import PdfReader
 from pypdf.generic import ArrayObject, IndirectObject
 
+from src.tools.validation.customer_text_guard import scan_text
 from tests.e2e.pipeline import PipelineResult
 
 SLIDE_TITLES = [
@@ -43,6 +44,17 @@ def test_every_slide_title_present_in_order(run: PipelineResult) -> None:
     texts = [_normalize(p.extract_text() or "") for p in _reader(run).pages]
     for i, title in enumerate(SLIDE_TITLES, start=1):
         assert title in texts[i], f"page {i + 1} lacks {title!r}: {texts[i][:200]!r}"
+
+
+def test_no_internal_wording(run: PipelineResult) -> None:
+    """#572 review item 3: the PDF is drawn from the same shapes
+    ``customer_text_guard.scan_pptx_text`` already covers, but the guard scans
+    the ``.pptx`` only -- scan the rendered PDF text too, so a leak that
+    somehow differs between the two (or a future PDF-only addition) is still
+    caught."""
+    text = "\n".join(p.extract_text() or "" for p in _reader(run).pages)
+    findings = scan_text(text, "summary-executive-report.pdf")
+    assert findings == [], [(f.kind, f.text, f.excerpt) for f in findings]
 
 
 def test_no_placeholder_text(run: PipelineResult) -> None:

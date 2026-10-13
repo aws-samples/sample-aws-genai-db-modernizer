@@ -129,9 +129,9 @@ class TestApplyCorrections:
         ddb = next(
             c for c in records if c["to_engine"] == "dynamodb" and c["from_engine"] != "documentdb"
         )
-        assert "12 of 18 aurora_mysql queries moved to dynamodb" in ddb["reason"]
-        assert "6 stay on aurora_mysql" in ddb["reason"]
-        assert "redirected to aurora_mysql" not in ddb["reason"]
+        assert "12 of 18 Aurora MySQL queries moved to DynamoDB" in ddb["reason"]
+        assert "6 stay on Aurora MySQL" in ddb["reason"]
+        assert "redirected to Aurora MySQL" not in ddb["reason"]
         assert "redirected" not in (ddb["retention_reason"] or "")
         assert ddb["action"] == "partial"
         assert ddb["saved_cost_estimate"] == 0
@@ -140,7 +140,7 @@ class TestApplyCorrections:
         assignments, _ = self._run()
         q = next(qa for qa in assignments if qa["query_id"] == "am-0")
         assert q["assigned_engine"] == "aurora_mysql"
-        assert "redirected to aurora_mysql" not in q["assignment_reason"]
+        assert "redirected to Aurora MySQL" not in q["assignment_reason"]
 
     def test_redirect_to_a_different_engine_is_described_as_a_redirect(self) -> None:
         revised = [
@@ -153,8 +153,8 @@ class TestApplyCorrections:
             [_record("documentdb", "dynamodb", 2, saved=500)],
             all_original_engines={"documentdb", "dynamodb", "aurora_postgresql"},
         )
-        assert "1 of 2 documentdb queries moved to dynamodb" in records[0]["reason"]
-        assert "1 redirected to aurora_postgresql" in records[0]["reason"]
+        assert "1 of 2 DocumentDB queries moved to DynamoDB" in records[0]["reason"]
+        assert "1 redirected to Aurora PostgreSQL" in records[0]["reason"]
 
     def test_a_single_reversal_reads_singular(self) -> None:
         revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
@@ -163,7 +163,42 @@ class TestApplyCorrections:
             revised,
             [_record("documentdb", "dynamodb", 3, saved=500)],
         )
-        assert "1 stays on documentdb" in records[0]["reason"]
+        assert "1 stays on DocumentDB" in records[0]["reason"]
+
+    def test_retention_reason_names_no_internal_validation_mechanism(self) -> None:
+        """#572 review item 6: this path only runs under ``bedrock``/``external``
+        llm_mode (an LLM or an outside validator flags a consolidation), which the
+        deterministic e2e guard never reaches -- covered here with no model."""
+        revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
+        _, records = apply_corrections(
+            [{"query_id": "d0", "original_engine": "documentdb", "reason": "joins"}],
+            revised,
+            [_record("documentdb", "dynamodb", 3, saved=500)],
+        )
+        assert (
+            records[0]["retention_reason"]
+            == "Flagged as unserviceable on DynamoDB during validation"
+        )
+        assert "LLM" not in records[0]["retention_reason"]
+
+    def test_redirect_assignment_reason_uses_the_two_word_display_name(self) -> None:
+        """#572 review item 6/8: ``redirect_engine`` can be a two-word display
+        name (``Aurora PostgreSQL``) -- the redirected query's own
+        ``assignment_reason`` (not just the consolidation record) must use it too."""
+        revised = [
+            _moved("doc-0", "documentdb", "dynamodb"),
+            _moved("doc-1", "documentdb", "dynamodb"),
+        ]
+        assignments, _ = apply_corrections(
+            [{"query_id": "doc-0", "original_engine": "documentdb", "reason": "joins"}],
+            revised,
+            [_record("documentdb", "dynamodb", 2, saved=500)],
+            all_original_engines={"documentdb", "dynamodb", "aurora_postgresql"},
+        )
+        q = next(qa for qa in assignments if qa["query_id"] == "doc-0")
+        assert q["assigned_engine"] == "aurora_postgresql"
+        assert "redirected to Aurora PostgreSQL" in q["assignment_reason"]
+        assert "aurora_postgresql" not in q["assignment_reason"]
 
 
 class TestReconcile:
@@ -257,8 +292,8 @@ class TestReconcile:
         ddb = next(c for c in final if c["to_engine"] == "dynamodb")
         assert ddb["queries_retained"] == ["c"]
         assert "2 stay on" not in ddb["reason"]
-        assert "1 aurora_mysql query moved to dynamodb" in ddb["reason"]
-        assert "aurora_mysql stays for 2 queries" in ddb["reason"]
+        assert "1 Aurora MySQL query moved to DynamoDB" in ddb["reason"]
+        assert "Aurora MySQL stays for 2 queries" in ddb["reason"]
 
     def test_cost_justification_survives_the_reconciler(self) -> None:
         """Review finding 5: the justification-floor reason (#326, #167) must survive
@@ -395,7 +430,7 @@ class TestReconcile:
         text = " ".join(c["reason"] for c in final) + " ".join(
             _build_recommendations([], final, [], {})
         )
-        assert "1 documentdb query moved" in text
+        assert "1 DocumentDB query moved" in text
         assert "stays for 1 query" in text
         assert "Consolidated 1 query from" in text
         assert "1 queries" not in text
@@ -426,9 +461,9 @@ class TestRecommendations:
         rec = _build_recommendations(
             [], [_record("aurora_mysql", "dynamodb", 12, saved=0, action="partial")], [], {}
         )[0]
-        assert "avoiding a dedicated aurora_mysql cluster" not in rec
+        assert "avoiding a dedicated Aurora MySQL cluster" not in rec
         assert "Saves" not in rec
-        assert "does not remove aurora_mysql" in rec
+        assert "does not remove Aurora MySQL" in rec
 
     def test_full_consolidation_with_no_real_cost_estimate_stays_qualitative(self) -> None:
         """Review of #375: with no analysed cost estimate for the removed engine,
@@ -439,7 +474,7 @@ class TestRecommendations:
         ]
         assert "Saves" not in rec
         assert "$" not in rec
-        assert "Avoids running a dedicated documentdb cluster" in rec
+        assert "Avoids running a dedicated DocumentDB cluster" in rec
 
     def test_full_consolidation_grounds_its_cost_in_the_real_analysed_estimate(self) -> None:
         """Review of #375: when the removed engine's own analysed cost estimate

@@ -57,7 +57,20 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-TieKind = str  # "source_compatible" | "stability" | "tie_unresolved"
+TieKind = str  # one of TIE_KINDS, below
+
+# The three literal values ``break_tie`` returns as ``tie_kind``, named here
+# once so a caller that needs the full set (today, only
+# ``src.tools.validation.customer_text_guard``'s snake_case-reason-code
+# detector, #587 round 4: a known INTERNAL code is never confused with a
+# column name that happens to precede a colon in model-written prose, e.g.
+# "ordered by meta_id: one Query per comment_id") imports it instead of
+# retyping the three strings -- a new tie_kind added to ``break_tie`` below is
+# then picked up automatically, with no second edit anywhere else.
+TIE_KIND_SOURCE_COMPATIBLE = "source_compatible"
+TIE_KIND_STABILITY = "stability"
+TIE_KIND_UNRESOLVED = "tie_unresolved"
+TIE_KINDS: tuple[str, ...] = (TIE_KIND_SOURCE_COMPATIBLE, TIE_KIND_STABILITY, TIE_KIND_UNRESOLVED)
 
 
 def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:
@@ -175,9 +188,9 @@ def break_tie(
     before calling this function -- it always resolves one.
     """
     if source_compatible_engine and source_compatible_engine in tied:
-        return source_compatible_engine, "source_compatible"
+        return source_compatible_engine, TIE_KIND_SOURCE_COMPATIBLE
     staying = sorted(set(tied) & current_engines)
     if len(staying) == 1:
-        return staying[0], "stability"
+        return staying[0], TIE_KIND_STABILITY
     winner, _ = pick_unresolved_tie_placeholder(tied, settled_counts or {}, query_id)
-    return winner, "tie_unresolved"
+    return winner, TIE_KIND_UNRESOLVED

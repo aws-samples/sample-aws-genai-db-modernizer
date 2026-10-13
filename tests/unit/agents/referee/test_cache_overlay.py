@@ -31,6 +31,7 @@ from src.agents.referee.cache_overlay import (
     cache_eligibility,
     cache_pattern,
     can_own,
+    dropped_reason,
     fallback_owner,
     is_locking_read,
     is_write_query,
@@ -47,6 +48,7 @@ from src.contracts.assignment_models import (
     AssignmentStatus,
     QueryAssignment,
 )
+from src.tools.validation.customer_text_guard import scan_text
 
 
 def _q(
@@ -963,3 +965,20 @@ class TestValidator:
             self._assignment("opensearch"), _collector([_q("q")]), {"opensearch": {}}
         )
         assert result.valid
+
+
+class TestDroppedReason:
+    """#572 review item 6: ``dropped_reason`` used to interpolate the raw engine
+    id (``cache_reason`` is a customer-facing field) -- checked here with the
+    guard itself, not just a hand-picked substring, so a future regression in
+    either the wording or the guard's own detectors is caught."""
+
+    def test_uses_the_display_name(self) -> None:
+        assert dropped_reason("elasticache") == (
+            "cache overlay dropped after schema design: no in-scope ElastiCache "
+            "access pattern serves it (owner unchanged)"
+        )
+
+    def test_has_no_internal_wording(self) -> None:
+        for engine in ("elasticache", "dynamodb", "documentdb", "opensearch"):
+            assert scan_text(dropped_reason(engine)) == []

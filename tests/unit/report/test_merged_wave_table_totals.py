@@ -93,13 +93,14 @@ def test_decision_report_and_deck_agree_on_the_split(report: dict[str, Any]) -> 
     HTML, must match the deck's own per-engine figures -- the
     "deliverables agree" invariant, specifically for the merged wave."""
     html = renderers.render_decision_report_html(report)
+    # #572: the badge now shows the display name, not the raw engine id.
     dynamo_row = re.search(
-        r"<span class=badge[^>]*>dynamodb</span></td><td class=role>Migration target</td>"
+        r"<span class=badge[^>]*>DynamoDB</span></td><td class=role>Migration target</td>"
         r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )
     doc_row = re.search(
-        r"<span class=badge[^>]*>documentdb</span></td><td class=role>Migration target</td>"
+        r"<span class=badge[^>]*>DocumentDB</span></td><td class=role>Migration target</td>"
         r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )

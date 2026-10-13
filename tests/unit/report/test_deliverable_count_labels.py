@@ -65,12 +65,12 @@ class TestAccessPatternScope:
     def test_engineering_heading_splits_out_of_scope_patterns(self) -> None:
         md = renderers.render_engineering_report_md(_design_report())
         assert (
-            "### dynamodb (1 target object, 51 access patterns: 47 in scope, 4 out of scope)" in md
+            "### DynamoDB (1 target object, 51 access patterns: 47 in scope, 4 out of scope)" in md
         )
 
     def test_engineering_heading_unchanged_when_all_patterns_are_in_scope(self) -> None:
         md = renderers.render_engineering_report_md(_design_report())
-        assert "### elasticache (1 target object, 13 access patterns)" in md
+        assert "### ElastiCache (1 target object, 13 access patterns)" in md
 
     def test_summary_labels_per_engine_counts_as_in_scope(self) -> None:
         out = renderers.label_in_scope_access_patterns(RUN5_SUMMARY, _design_report())
@@ -623,8 +623,8 @@ class TestLabelsWrittenAtSource:
     ``report.json`` must not label them a second time."""
 
     LABELS = (
-        "dynamodb: 15 target tables, 47 in-scope access patterns",
-        "elasticache: 12 key designs, 13 in-scope access patterns",
+        "DynamoDB: 15 target tables, 47 in-scope access patterns",
+        "ElastiCache: 12 key designs, 13 in-scope access patterns",
         "60 in-scope access patterns (plus 4 out of scope)",
         "8 open migration risks (overall: LOW); 4 more were resolved by the assignment.",
     )

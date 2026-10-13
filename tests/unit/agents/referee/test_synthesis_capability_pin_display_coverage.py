@@ -89,3 +89,37 @@ class TestCapabilityPinReasonMergesAllFragments:
         )
         text = _capability_pin_reason([reason])
         assert text == "multi-table joins"
+
+
+class TestCapabilityPinReasonReadsTheNewFormat:
+    """#572 review suggestion 8: every test above feeds the OLD format
+    (``[capability] <raw id> lacks required capability: ...``,
+    ``[rule_id] Excluded from <raw id>: ...``) that assignment_resolver.py no
+    longer writes. ``_CAPABILITY_PIN_RE`` matches on the phrase alone (#572),
+    so it must also read the NEW format: ``display_engine``, no bracket tag,
+    and an engine name that can itself be two words."""
+
+    def test_reads_a_two_word_display_name_with_no_bracket_tag(self) -> None:
+        reason = (
+            "co-dependency group → Aurora PostgreSQL | "
+            "DynamoDB lacks required capability: aggregation, complex_joins"
+        )
+        text = _capability_pin_reason([reason])
+        assert text == "aggregation and multi-table joins"
+
+    def test_merges_new_format_fragments_from_different_engines(self) -> None:
+        reason = (
+            "highest confidence for Aurora MySQL | "
+            "OpenSearch lacks required capability: complex_joins; "
+            "DynamoDB lacks required capability: aggregation, complex_joins"
+        )
+        text = _capability_pin_reason([reason])
+        assert text == "aggregation and multi-table joins"
+
+    def test_utility_pin_still_reads_in_the_new_format(self) -> None:
+        reason = (
+            "utility/metadata statement — kept on source-compatible relational "
+            "engine (Aurora PostgreSQL)"
+        )
+        text = _capability_pin_reason([reason])
+        assert text == "a utility or DDL statement"

@@ -7,6 +7,7 @@ import re
 import pytest
 from playwright.sync_api import Page
 
+from src.tools.validation.customer_text_guard import scan_text
 from tests.e2e.pipeline import PipelineResult
 
 # "undefined"/"NaN"/"null" are checked as whole WORDS (\b-bounded): matched as
@@ -83,6 +84,13 @@ def test_report_renders_cleanly_offline(page: Page, run: PipelineResult, kind: s
         assert h in text, f"missing {h!r} in {kind} report"
     leaked = _leaked_forbidden_text(text)
     assert leaked == [], f"{kind} report shows {leaked}"
+    # #572 review item 3: the analysis report is rendered by JavaScript, so
+    # customer_text_guard.scan_html's <script>-stripping regex sees almost none
+    # of its text (only ~2.6k of 522k characters, per review) -- the
+    # Playwright-rendered text this test already has is what a customer
+    # actually sees, in both reports, so the guard runs on it here instead.
+    findings = scan_text(text, f"{kind}-report:body")
+    assert findings == [], [(f.kind, f.text, f.excerpt) for f in findings]
 
 
 @pytest.mark.parametrize("width", [1280, 1920])
@@ -117,7 +125,7 @@ LANDMARK_AND_HEADING_RULES = ("landmark-one-main", "region", "heading-order")
 def _axe_violations(page: Page) -> list[dict]:
     from axe_playwright_python.sync_playwright import Axe
 
-    return Axe().run(page).response["violations"]
+    return Axe().run(page).response["violations"]  # type: ignore[no-any-return]
 
 
 @pytest.mark.parametrize("kind", list(REPORTS))

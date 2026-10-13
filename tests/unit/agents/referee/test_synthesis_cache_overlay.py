@@ -217,7 +217,7 @@ class TestSynthesisReport:
         }
 
         summary = result["summary"]
-        assert "Cache layer: elasticache fronts 2 hot reads (80.0% of calls)" in summary
+        assert "Cache layer: ElastiCache fronts 2 hot reads (80.0% of calls)" in summary
         assert "elasticache handles" not in summary
         assert "elasticache (no queries assigned)" not in summary
 

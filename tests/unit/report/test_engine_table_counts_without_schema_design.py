@@ -83,7 +83,7 @@ def test_decision_report_scope_tile_and_roadmap_agree(report: dict[str, Any]) ->
     html = renderers.render_decision_report_html(report)
     tile_n = int(re.search(r"<p>Tables migrate</p><p class=val>(\d+)</p>", html).group(1))
     row = re.search(
-        r"<span class=badge[^>]*>dynamodb</span></td><td class=role>Migration target</td>"
+        r"<span class=badge[^>]*>DynamoDB</span></td><td class=role>Migration target</td>"
         r"<td data-figure=workload>[\d.]+%</td><td data-figure=scope>(\d+) source tables?</td>",
         html,
     )

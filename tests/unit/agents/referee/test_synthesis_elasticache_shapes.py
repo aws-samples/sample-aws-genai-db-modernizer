@@ -166,8 +166,8 @@ class TestArchitectureWithZeroAssignedQueries:
 
         rationale = build_architecture_recommendation(data, ranking, mappings)["rationale"]
 
-        assert "elasticache" in rationale
-        assert "dynamodb" in rationale
+        assert "ElastiCache" in rationale
+        assert "DynamoDB" in rationale
 
 
 class TestArchitectureWithAssignedQueries:

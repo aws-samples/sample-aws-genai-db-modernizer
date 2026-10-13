@@ -1,0 +1,27 @@
+ElastiCache (cache layer) (15)
+Pattern ID	Operation	Engine	Source Tables	Destination	Description
+EC-AP-1	HGET	ElastiCache (cache layer)	wp_options	wp_options:{option_name} · TTL 3600s	Read an option value by option_name
+EC-AP-2	HGET	ElastiCache (cache layer)	wp_options	wp_options:{option_name} · TTL 3600s	Read the autoload flag of an option
+EC-AP-3	HGETALL	ElastiCache (cache layer)	wp_posts	wp_posts:{ID} · TTL 900s	Read a post by ID
+EC-AP-4	HGETALL	ElastiCache (cache layer)	wp_postmeta	wp_postmeta:{post_id}:meta · TTL 900s	Batch-load post meta for many posts
+EC-AP-5	HGETALL	ElastiCache (cache layer)	wp_postmeta	wp_postmeta:{post_id}:meta · TTL 900s	Load all meta of one post
+EC-AP-6	HEXISTS	ElastiCache (cache layer)	wp_postmeta	wp_postmeta:{post_id}:meta · TTL 900s	Check whether a post has a given meta_key
+EC-AP-7	HGETALL	ElastiCache (cache layer)	wp_woocommerce_order_itemmeta	wp_woocommerce_order_itemmeta:{order_item_id}:meta · TTL 900s	Batch-load order item meta for many order items
+EC-AP-8	HGETALL	ElastiCache (cache layer)	wp_woocommerce_order_itemmeta	wp_woocommerce_order_itemmeta:{order_item_id}:meta · TTL 900s	Load all meta of one order item
+EC-AP-9	HEXISTS	ElastiCache (cache layer)	wp_woocommerce_order_itemmeta	wp_woocommerce_order_itemmeta:{order_item_id}:meta · TTL 900s	Check whether an order item has a given meta_key
+EC-AP-10	HGETALL	ElastiCache (cache layer)	wp_woocommerce_order_items	wp_woocommerce_order_items:{order_id}:items · TTL 900s	List the items of an order
+EC-AP-11	HGETALL	ElastiCache (cache layer)	wp_actionscheduler_actions, wp_actionscheduler_groups	wp_actionscheduler_actions:{action_id} · TTL 60s	Read an Action Scheduler action with its group slug
+EC-AP-12	GET	ElastiCache (cache layer)	wp_wc_tax_rate_classes	wp_wc_tax_rate_classes:all · TTL 86400s	Read all WooCommerce tax rate classes
+EC-AP-13	LRANGE	ElastiCache (cache layer)	wp_terms, wp_term_taxonomy, wp_term_relationships	wp_term_relationships:{object_id}:{taxonomy_hash}:term_ids · TTL 600s	Term IDs attached to objects for a taxonomy set, ordered by term name
+EC-AP-14	LRANGE	ElastiCache (cache layer)	wp_terms, wp_termmeta, wp_term_taxonomy, wp_term_relationships	wp_term_relationships:{object_id}:{taxonomy_hash}:term_ids · TTL 600s	Term IDs attached to objects ordered by term meta order then name
+EC-AP-15	HGETALL	ElastiCache (cache layer)	wp_terms, wp_term_taxonomy	wp_terms:{term_id} · TTL 3600s	Load terms with their taxonomy rows for a set of term IDs
+
+Aurora Design
+3 optimizations
+Index: wp_posts
+Reorder the index
+because
+Read replica: Aurora cluster
+Route read-only traffic to replicas.
+I/O-Optimized storage: Aurora MySQL cluster
+Switch to I/O-Optimized.

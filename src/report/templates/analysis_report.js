@@ -676,7 +676,8 @@
           html += '<details style="margin-top: 12px;" open><summary style="cursor: pointer; font-weight: 600;">' + optimizations.length + ' optimization' + (optimizations.length === 1 ? '' : 's') + '</summary>';
           optimizations.forEach(function(opt) {
             html += '<div class="item-card">';
-            html += '<div style="font-size: 13px; font-weight: 700;">' + escapeHtml(opt.category || '') + (opt.target ? ': ' + escapeHtml(opt.target) : '') + '</div>';
+            const optLabel = OPTIMIZATION_LABELS[opt.category] || opt.category || '';
+            html += '<div style="font-size: 13px; font-weight: 700;">' + escapeHtml(optLabel) + (opt.target ? ': ' + escapeHtml(opt.target) : '') + '</div>';
             html += '<div style="font-size: 13px; margin-top: 4px;">' + escapeHtml(opt.recommendation || '') + '</div>';
             if (opt.rationale) html += '<div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 4px;">' + escapeHtml(opt.rationale) + '</div>';
             html += '</div>';

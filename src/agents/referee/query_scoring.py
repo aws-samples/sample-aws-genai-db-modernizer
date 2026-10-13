@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.shared.capability_labels import capability_label
 from src.shared.engine_capabilities import (
     ACID_TRANSACTION_ENGINES,
     FUZZY_SEARCH_ENGINES,
@@ -444,6 +445,16 @@ class ScoringContext:
         )
 
 
+GATE_KIND_HARD_EXCLUSION = "hard_exclusion"
+GATE_KIND_CAPABILITY = "capability"
+# The two literal values ``EngineScore.gate_kind`` ever carries, named here
+# once so a caller that needs the full set (``src.tools.validation.
+# customer_text_guard``'s snake_case-reason-code detector, #587 round 4)
+# imports it instead of retyping the strings -- a new gate kind added below
+# is then picked up automatically, with no second edit anywhere else.
+GATE_KINDS: tuple[str, ...] = (GATE_KIND_HARD_EXCLUSION, GATE_KIND_CAPABILITY)
+
+
 @dataclass(frozen=True)
 class EngineScore:
     """The result of scoring one ``(query, engine)`` pair (#549 round 2).
@@ -456,10 +467,11 @@ class EngineScore:
     lowest bid.
 
     ``gate_reason`` is the human-readable reason text ONLY when ``score`` is
-    ``None`` -- the exact wording ``AssignmentResolver.resolve()``'s
-    ``exclusion_notes`` has always used (``"[rule_id] Excluded from
-    {engine}: {description}"`` or ``"[capability] {engine} lacks required
-    capability: {caps}"``) -- so a caller never has to re-run
+    ``None`` -- customer-facing prose (``display_engine``, the exclusion's own
+    customer-facing ``customer_message``, a capability label, never the raw
+    engine id, an internal ``[rule_id]``/``[capability]`` tag or
+    ``description``, the exclusion's technical, log-only reason -- #572) --
+    so a caller never has to re-run
     ``check_exclusions``/``can_engine_serve_capability`` a second time just
     to find out WHY, the way ``resolve()`` itself did before this (#549
     round-2 review, Suggestion 1).
@@ -499,17 +511,20 @@ def score_query_for_engine(query: Mapping, engine: str, ctx: ScoringContext) -> 
     if exclusion:
         return EngineScore(
             score=None,
-            gate_reason=f"[{exclusion.rule_id}] Excluded from {engine}: {exclusion.description}",
-            gate_kind="hard_exclusion",
+            gate_reason=(
+                f"excluded from {display_engine(engine)}: it {exclusion.customer_message}"
+            ),
+            gate_kind=GATE_KIND_HARD_EXCLUSION,
         )
     required_caps = ctx.query_capabilities.get(query_id, [])
     if required_caps and not can_engine_serve_capability(engine, required_caps):
         return EngineScore(
             score=None,
             gate_reason=(
-                f"[capability] {engine} lacks required capability: {', '.join(required_caps)}"
+                f"{display_engine(engine)} lacks required capability: "
+                f"{', '.join(capability_label(c) for c in required_caps)}"
             ),
-            gate_kind="capability",
+            gate_kind=GATE_KIND_CAPABILITY,
         )
     analysis = ctx.analysis_outputs.get(engine) or {}
     base = compute_query_confidence(query_id, query, engine, analysis)

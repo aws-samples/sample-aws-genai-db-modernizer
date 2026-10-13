@@ -627,8 +627,13 @@ const AssignmentGatePage = memo(() => {
 
       if (token.propertyKey === 'assignment_reason') {
         const reason = q.assignment_reason?.toLowerCase() || '';
-        if (op === ':') return reason.includes(val);
-        if (op === '!:') return !reason.includes(val);
+        // #572 review suggestion 9: assignment_reason now names engines with
+        // their display name ("Aurora MySQL"), not the raw id
+        // ("aurora_mysql") -- a filter typed as the raw id must still match.
+        const displayVal = ENGINE_COLORS[val]?.label?.toLowerCase();
+        const hit = reason.includes(val) || (!!displayVal && reason.includes(displayVal));
+        if (op === ':') return hit;
+        if (op === '!:') return !hit;
       }
 
       if (token.propertyKey === 'confidence') {

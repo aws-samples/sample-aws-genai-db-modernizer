@@ -26,6 +26,10 @@ const AURORA_CONTENT = {
   ],
   optimizations: [
     { category: 'index', target: 'wp_posts', recommendation: 'Reorder the index', rationale: 'because' },
+    // #587 round 3: a real-model run printed these raw category codes directly
+    // ("read_replica: Aurora cluster", "io_optimized: Aurora MySQL cluster").
+    { category: 'read_replica', target: 'Aurora cluster', recommendation: 'Route read-only traffic to replicas.' },
+    { category: 'io_optimized', target: 'Aurora MySQL cluster', recommendation: 'Switch to I/O-Optimized.' },
   ],
 };
 
@@ -113,6 +117,14 @@ describe('buildAuroraDesign (#478)', () => {
   it('shows the optimization', () => {
     const container = doc.getElementById('aurora-design-container');
     expect(container.textContent).toContain('Reorder the index');
+  });
+
+  it('shows a readable label for each optimization category, never the raw code (#587 round 3)', () => {
+    const container = doc.getElementById('aurora-design-container');
+    expect(container.textContent).toContain('Read replica: Aurora cluster');
+    expect(container.textContent).toContain('I/O-Optimized storage: Aurora MySQL cluster');
+    expect(container.textContent).not.toContain('read_replica');
+    expect(container.textContent).not.toContain('io_optimized');
   });
 
   it('shows the query routed to Aurora, grouped by source table', () => {

@@ -114,3 +114,21 @@ def test_report_without_distributions_still_uses_the_marker() -> None:
     section = _section(render_decision_report_html(report))
     assert section is not None
     assert re.findall(r'<li data-engine="([^"]+)">', section) == ["opensearch"]
+
+
+def test_display_name_reasons_map_back_to_engine_ids():
+    """Reasons name engines by display name since #572; the section still lists each engine once, by id."""
+    from src.report.renderers import _dropped_engines
+
+    report = {
+        "reality_check": {
+            "before_distribution": {"documentdb": 8, "aurora_mysql": 60},
+            "after_distribution": {"aurora_mysql": 68},
+        },
+        "trade_offs": [
+            {
+                "description": "Consolidated 8 queries from DocumentDB → Aurora MySQL: no in-scope DocumentDB query remains."
+            }
+        ],
+    }
+    assert _dropped_engines(report) == ["documentdb"]

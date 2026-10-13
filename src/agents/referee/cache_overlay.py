@@ -532,10 +532,12 @@ def normalize_cache_owners(
         owner, tied, fallback_reason = fallback_owner(
             q, engines, source_engine, counts, triage=triage, collector=collector, ctx=ctx
         )
-        owner_clause = fallback_reason or f"owned by {owner}"
+        # #572: owned by {display_engine(owner)}, never the raw id -- fallback_reason
+        # (the no-serviceable-candidate sentence) already names its engine this way.
+        owner_clause = fallback_reason or f"owned by {display_engine(owner)}"
         qa["assignment_reason"] = (
-            f"cache overlay migration: {qa['assigned_engine']} owned this query in an "
-            f"assignment written before the cache overlay; {owner_clause} "
+            f"cache overlay migration: {display_engine(qa['assigned_engine'])} owned this "
+            f"query in an assignment written before the cache overlay; {owner_clause} "
             f"(was: {qa.get('assignment_reason', '')})"
         )
         qa["assigned_engine"] = owner
@@ -550,9 +552,10 @@ def normalize_cache_owners(
         elif not qa.get("cache_customer_override"):
             _clear(qa)
     note = (
-        f"{len(legacy)} {'query' if len(legacy) == 1 else 'queries'} owned by {cache} in an "
-        "assignment written before the cache overlay moved to a system-of-record engine ("
-        + ", ".join(f"{e} {n}" for e, n in sorted(moved.items()))
+        f"{len(legacy)} {'query' if len(legacy) == 1 else 'queries'} owned by "
+        f"{display_engine(cache)} in an assignment written before the cache overlay moved to "
+        "a system-of-record engine ("
+        + ", ".join(f"{display_engine(e)} {n}" for e, n in sorted(moved.items()))
         + f"); {kept} stay cached as hot reads, the rest are no longer cached."
     )
     notes = assignment.setdefault("cache_notes", [])
@@ -603,8 +606,8 @@ def refresh_cache_overlay(
 def dropped_reason(engine: str) -> str:
     """``cache_reason`` of a query the safety net dropped."""
     return (
-        f"cache overlay dropped after schema design: no in-scope {engine} access pattern "
-        "serves it (owner unchanged)"
+        f"cache overlay dropped after schema design: no in-scope {display_engine(engine)} "
+        "access pattern serves it (owner unchanged)"
     )
 
 

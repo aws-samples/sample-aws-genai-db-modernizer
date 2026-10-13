@@ -30,6 +30,7 @@ from src.agents.schema_design.handler import filter_collector_for_assignment
 from src.agents.schema_design.scope import assess_schema_scope
 from src.contracts.assignment_models import Assignment
 from src.storage.local_store import LocalArtifactStore
+from src.tools.validation.customer_text_guard import scan_text
 
 FIXTURE = Path(__file__).parents[3] / "fixtures" / "issue_296_main_wordpress.json.gz"
 DB, JOB = "wordpress", "main-shape"
@@ -83,11 +84,22 @@ class TestLegacy:
         ]
         assert len(moved) == 34
         assert {qa["assigned_engine"] for qa in moved} == {"aurora_mysql"}
-        assert "34 queries owned by elasticache" in raw["cache_notes"][0]
+        assert "34 queries owned by ElastiCache" in raw["cache_notes"][0]
         assert raw["cache_overlay"]["query_count"] > 0
         assert not any(t["primary_engine"] == "elasticache" for t in raw["table_assignments"])
         assignment = Assignment.model_validate(raw)
         assert AssignmentValidator().validate(assignment, collector, analysis).valid
+        # #572 review item 6: the engineering report reads cache_notes (unlike
+        # every other deliverable, which reads cache_safety_net_notes instead) --
+        # customer-facing, checked with the guard. The moved queries' own
+        # assignment_reason also reaches the ADR-028 assignment review doc, but
+        # here it carries forward this legacy fixture's own pre-existing
+        # "was: signal override: leaderboard_pattern -> elasticache" tail
+        # verbatim -- #584, not this fix -- so only the new prefix is checked.
+        assert scan_text(raw["cache_notes"][0]) == []
+        for qa in moved:
+            prefix = qa["assignment_reason"].split(" (was:", 1)[0]
+            assert scan_text(prefix) == []
 
     def test_legacy_assignment_is_editable(self, legacy_store, main_wordpress):
         qid = main_wordpress["assignment_v2"]["query_assignments"][0]["query_id"]
@@ -288,7 +300,7 @@ def test_safety_net_drop_is_persisted(tmp_path):
     b = next(qa for qa in raw["query_assignments"] if qa["query_id"] == "b")
     assert b["cache_engine"] is None and b["cache_dropped"] is True
     assert b["assigned_engine"] == "dynamodb"
-    assert "no in-scope elasticache access pattern" in b["cache_reason"]
+    assert "no in-scope ElastiCache access pattern" in b["cache_reason"]
     assert raw["cache_notes"] and raw["cache_overlay"]["query_count"] == 1
     Assignment.model_validate(raw)
 

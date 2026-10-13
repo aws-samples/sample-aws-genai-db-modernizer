@@ -39,6 +39,7 @@ from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
+from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
 from src.shared.engine_names import display_source_database
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.ranking import (
@@ -95,10 +96,11 @@ def _dedupe_reason_clauses(reason: str) -> str:
 
     A query's own ``assignment_reason`` can state the same base reason twice
     -- once alone, once again as the prefix of a fuller clause (seen on the
-    real wordpress sample: "highest confidence for aurora_mysql; highest
-    confidence for aurora_mysql | [ec-no-complex-join] Excluded from
-    elasticache: ..."), from how the assignment resolver accumulates reasons
-    across co-dependency propagation. Split on "; " (how the resolver joins
+    real wordpress sample: "highest confidence for Aurora MySQL; highest
+    confidence for Aurora MySQL | excluded from ElastiCache: it joins more
+    than one table, and a key-value store can't serve joins"), from how the
+    assignment resolver accumulates reasons across co-dependency
+    propagation. Split on "; " (how the resolver joins
     separate reasons); drop a clause that exactly repeats an earlier one, or
     that is only a strict prefix of a later, fuller one -- keeping the
     fuller clause, not the redundant short one. Order preserved.
@@ -1941,30 +1943,21 @@ _DYNAMODB_ALTERNATIVE_ANTI_PATTERNS = frozenset(
 
 # The capability gate (assignment_resolver.py, reality_check.py) and the
 # utility pin (#327) already explain themselves in a query's own
-# assignment_reason text ("[capability] dynamodb lacks required capability:
-# aggregation, complex_joins", "utility/metadata statement -- kept on
-# source-compatible relational engine") -- reused here rather than
-# re-deriving the same decision from the query text a second time.
-_CAPABILITY_PIN_RE = re.compile(r"\[capability\]\s+\S+\s+lacks required capability:\s*([^;]+)")
+# assignment_reason text ("DynamoDB lacks required capability: aggregation,
+# complex_joins", "utility/metadata statement -- kept on source-compatible
+# relational engine") -- reused here rather than re-deriving the same decision
+# from the query text a second time. #572: matches on the phrase alone, not a
+# leading engine name/tag, since assignment_reason now names the engine with
+# display_engine (a display name can be two words, e.g. "Aurora PostgreSQL"),
+# never the raw id or an internal "[capability]"/rule_id tag.
+_CAPABILITY_PIN_RE = re.compile(r"lacks required capability:\s*([^;]+)")
 _UTILITY_PIN_RE = re.compile(r"utility/metadata statement")
-# Every capability name ``capability_registry.detect_required_capabilities`` can put in
-# a "lacks required capability" reason (#393 review: ``inverted_index`` and
-# ``scan_engine`` had no entry here, so a query pinned by either leaked the raw id into
-# customer text instead of reading as prose). ``multi_doc_acid`` is in
-# ``ENGINE_CAPABILITIES`` but ``detect_required_capabilities`` never emits it today (its
-# own ``CAPABILITY_DETECTORS`` entry is an empty, structural-only placeholder); kept here
-# anyway so this never silently regresses if that changes.
-# ``test_synthesis_capability_pin_display_coverage.py`` asserts this dict covers every
-# capability name the registry can produce.
-_CAPABILITY_PIN_DISPLAY = {
-    "aggregation": "aggregation",
-    "complex_joins": "multi-table joins",
-    "computed_join": "a join on a computed expression",
-    "sql_admin": "a utility or DDL statement",
-    "inverted_index": "full-text or pattern search",
-    "scan_engine": "window or recursive queries",
-    "multi_doc_acid": "multi-document transactions",
-}
+# Display strings for every capability the "lacks required capability: ..." reason
+# can name -- shared with assignment_resolver.py (#572 review suggestion 7), which
+# builds that reason text, so the two can never show a different name for the same
+# capability. See src.shared.capability_labels's own docstring for the coverage
+# story (#393) that keeps this in sync with capability_registry.
+_CAPABILITY_PIN_DISPLAY = CAPABILITY_DISPLAY_NAMES
 
 
 def _capability_pin_reason(reasons: Iterable[str]) -> str | None:
@@ -1972,7 +1965,7 @@ def _capability_pin_reason(reasons: Iterable[str]) -> str | None:
     query sharing ``reasons``' table is pinned to its engine by a hard
     capability, or ``None`` when none of ``reasons`` names one.
 
-    Reads every "[capability] <engine> lacks required capability: ..." fragment in each
+    Reads every "<engine> lacks required capability: ..." fragment in each
     reason with ``finditer``, not just the first (#393 review): different excluded
     engines can lack different, non-identical subsets of the required capabilities (an
     engine that already has aggregation but not joins lists only "complex_joins", while
@@ -2616,8 +2609,8 @@ def _architecture_rationale(
     if arch_type == "SINGLE_DATABASE":
         if databases:
             return (
-                f"Workload analysis indicates {databases[0]['service']} as the primary "
-                f"target with {engine_confidence(databases[0]):.0f}% confidence."
+                f"Workload analysis indicates {display_name(databases[0]['service'])} as the "
+                f"primary target with {engine_confidence(databases[0]):.0f}% confidence."
             )
         if retained_engine:
             return f"{retained_clause}, with no data migration."
@@ -2634,29 +2627,31 @@ def _architecture_rationale(
         if retained_leads:
             parts = [
                 retained_clause,
-                f"{primary[0]['service']} for {_engine_function_phrase(primary[0]['service'])}",
+                f"{display_name(primary[0]['service'])} for "
+                f"{_engine_function_phrase(primary[0]['service'])}",
             ]
             if cache:
-                parts.append(f"{cache[0]['service']} for caching hot data")
+                parts.append(f"{display_name(cache[0]['service'])} for caching hot data")
             return f"Hybrid architecture: {'; '.join(parts)}."
         parts = []
         if retained_engine:
             parts.append(retained_clause)
         if primary:
-            parts.append(f"{primary[0]['service']} for primary data storage")
+            parts.append(f"{display_name(primary[0]['service'])} for primary data storage")
         if cache:
-            parts.append(f"{cache[0]['service']} for caching hot data")
+            parts.append(f"{display_name(cache[0]['service'])} for caching hot data")
         return f"Hybrid architecture: {' and '.join(parts)}."
     else:
         services = [d["service"] for d in databases[:3]]
         if retained_engine:
-            labeled = [f"{s} for {_engine_function_phrase(s)}" for s in services]
+            labeled = [f"{display_name(s)} for {_engine_function_phrase(s)}" for s in services]
             return (
                 f"Multi-database architecture: {retained_clause}, with "
                 f"{', '.join(labeled)} based on workload pattern analysis."
             )
         return (
-            f"Multi-database architecture using {', '.join(services)} based on "
+            f"Multi-database architecture using "
+            f"{', '.join(display_name(s) for s in services)} based on "
             "workload pattern analysis."
         )
 
@@ -2875,7 +2870,7 @@ def build_summary(
         # Workload split view, largest share first
         if with_workload:
             engine_parts = [
-                f"{r['target']} handles {r['assigned_queries']} queries "
+                f"{display_name(r['target'])} handles {r['assigned_queries']} queries "
                 f"({r.get('workload_percent', 0)}%)"
                 for r in with_workload
             ]
@@ -2884,7 +2879,7 @@ def build_summary(
         for r in cache:
             n = r["cache_overlay_queries"]
             parts.append(
-                f"Cache layer: {r['target']} fronts {n} hot "
+                f"Cache layer: {display_name(r['target'])} fronts {n} hot "
                 f"{'read' if n == 1 else 'reads'} ({r.get('cache_call_share_percent', 0)}% of "
                 "calls) cache-aside and owns no queries."
             )
@@ -2915,7 +2910,8 @@ def build_summary(
                         query_ids.update(ap.get("query_ids") or [])
             scope = {r["target"]: _access_pattern_scope(data, r) for r in designed}
             per_engine = "; ".join(
-                f"{r['target']}: {_count(r.get('target_tables', 0), *_object_noun(r['target']))}"
+                f"{display_name(r['target'])}: "
+                f"{_count(r.get('target_tables', 0), *_object_noun(r['target']))}"
                 + (
                     f", {_count(scope[r['target']][0], 'in-scope access pattern', 'in-scope access patterns')}"
                     if scope[r["target"]][0]
@@ -2951,8 +2947,8 @@ def build_summary(
             )
     else:
         parts.append(
-            f"Top recommendation: {top['target']} with {top['confidence_score']}% "
-            f"average confidence."
+            f"Top recommendation: {display_name(top['target'])} with "
+            f"{top['confidence_score']}% average confidence."
         )
         # Schema design summary
         if top.get("schema_design_available"):
@@ -2964,7 +2960,7 @@ def build_summary(
 
     # Table mapping summary
     if table_mappings:
-        engines_used = sorted({m["recommended_database"] for m in table_mappings})
+        engines_used = sorted({display_name(m["recommended_database"]) for m in table_mappings})
         parts.append(f"{len(table_mappings)} source tables mapped to {', '.join(engines_used)}.")
 
     # Cost
@@ -3005,7 +3001,7 @@ def build_summary(
     # Other engines: evaluated but carrying no workload in the target
     if has_assignment:
         others = [
-            f"{r['target']} (no queries assigned)"
+            f"{display_name(r['target'])} (no queries assigned)"
             for r in ranking
             if r.get("assigned_queries", 0) == 0 and not is_cache_layer(r)
         ]
@@ -3014,22 +3010,26 @@ def build_summary(
             if engine in listed:
                 continue
             settled = reality_check_settled is None or engine in reality_check_settled
+            engine_name = display_name(engine)
             if absorber:
+                absorber_name = display_name(absorber)
                 others.append(
-                    f"{engine} (consolidated into {absorber} by the reality check)"
+                    f"{engine_name} (consolidated into {absorber_name} by the reality check)"
                     if settled
-                    else f"{engine} (consolidated into {absorber})"
+                    else f"{engine_name} (consolidated into {absorber_name})"
                 )
             else:
                 others.append(
-                    f"{engine} (eliminated by the reality check)"
+                    f"{engine_name} (eliminated by the reality check)"
                     if settled
-                    else f"{engine} (removed from the assignment)"
+                    else f"{engine_name} (removed from the assignment)"
                 )
         if others:
             parts.append(f"Other targets evaluated: {', '.join(others)}.")
     elif len(ranking) > 1:
-        others_txt = ", ".join(f"{r['target']} ({r['confidence_score']}%)" for r in ranking[1:])
+        others_txt = ", ".join(
+            f"{display_name(r['target'])} ({r['confidence_score']}%)" for r in ranking[1:]
+        )
         parts.append(f"Other targets evaluated: {others_txt}.")
 
     return " ".join(parts)

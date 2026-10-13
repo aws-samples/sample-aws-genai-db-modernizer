@@ -1473,8 +1473,8 @@ def _place_settled_queries(
                 "to_engine": to,
                 "query_count": len(qids),
                 "reason": (
-                    f"{frm} provides no unique capabilities — {len(qids)} queries can be "
-                    f"served by {to}"
+                    f"{display_engine(frm)} provides no unique capabilities — {len(qids)} "
+                    f"queries can be served by {display_engine(to)}"
                     + (f" ({len(retained_qids)} retained)" if retained_qids else "")
                     + (
                         f" ({n_tie_unresolved} of them tied on score, with no routing rule "
@@ -2556,14 +2556,21 @@ def reconcile_consolidations(
             or retained != prior_retained
             or not record.get("reason")
         ):
-            moved = f"{_queries(count, src)} moved to {dst}"
+            # #572: every customer-facing fragment below names the engine with
+            # display_engine, never the raw id -- src/dst stay raw only as dict
+            # keys (had_in_scope, remaining, moved_qids) above and below.
+            src_name = display_engine(src)
+            moved = f"{_queries(count, src_name)} moved to {display_engine(dst)}"
             if full:
-                record["reason"] = f"{moved}; no in-scope {src} query remains"
+                record["reason"] = f"{moved}; no in-scope {src_name} query remains"
             elif src not in had_in_scope:
-                record["reason"] = f"Partial consolidation: {moved}; {src} had no in-scope query"
+                record["reason"] = (
+                    f"Partial consolidation: {moved}; {src_name} had no in-scope query"
+                )
             else:
                 record["reason"] = (
-                    f"Partial consolidation: {moved}; {src} stays for {_queries(remaining[src])}"
+                    f"Partial consolidation: {moved}; {src_name} stays for "
+                    f"{_queries(remaining[src])}"
                 )
             engine_assessment = (unique_value_assessment or {}).get(src, {})
             justification = engine_assessment.get("cost_justification")
@@ -2627,17 +2634,18 @@ def format_pattern_recommendation(p: dict) -> str:
     """
     applies = p.get("applies_to", {})
     if "write_engine" in applies:
+        read_names = ", ".join(display_engine(e) for e in applies.get("read_engines", []))
         return (
             f"Recommended pattern: {p['name']}. "
-            f"Use {applies['write_engine']} for all write operations and "
-            f"{', '.join(applies.get('read_engines', []))} for specialized reads. "
+            f"Use {display_engine(applies['write_engine'])} for all write operations and "
+            f"{read_names} for specialized reads. "
             f"{p['description']}"
         )
     if "source_engine" in applies and "view_engine" in applies:
         return (
             f"Recommended pattern: {p['name']}. "
-            f"{applies['source_engine']} is the source of truth; "
-            f"{applies['view_engine']} maintains a search-optimized projection. "
+            f"{display_engine(applies['source_engine'])} is the source of truth; "
+            f"{display_engine(applies['view_engine'])} maintains a search-optimized projection. "
             f"{p['description']}"
         )
     return f"Recommended pattern: {p['name']}. {p['description']}"
@@ -2712,10 +2720,13 @@ def _build_recommendations(
     for c in consolidations:
         saved = c.get("saved_cost_estimate", 0)
         source = c["from_engine"]
+        # #572: engine_infra_cost (below) stays keyed on the raw id; every
+        # customer-facing sentence below names the engine with display_engine.
+        source_name = display_engine(source)
         if c.get("action") == "partial":
             # The source engine stays, so no cluster is avoided (#218).
             outcome = (
-                f"No operational savings are claimed: this move does not remove {source} "
+                f"No operational savings are claimed: this move does not remove {source_name} "
                 "from the architecture."
             )
         elif c.get("workload_justified") is False:
@@ -2725,7 +2736,7 @@ def _build_recommendations(
             # workload, so removing it now is not an infrastructure saving to
             # claim, even though a real cost estimate exists for it.
             outcome = (
-                f"No saving is claimed: {source} was never justified by the workload "
+                f"No saving is claimed: {source_name} was never justified by the workload "
                 "-- none of its first-assignment queries clear the real-search-depth "
                 "plus traffic-or-result-size floor a standing deployment needs, so no "
                 "infrastructure cost was ever justified for it."
@@ -2739,23 +2750,24 @@ def _build_recommendations(
                 # ``build_tco_analysis`` carries into ``eliminated_engine_costs``
                 # for this engine) is the only thing a customer needs here.
                 outcome = (
-                    f"Removes ${real_cost:,.2f}/mo of infrastructure cost ({source}'s own "
+                    f"Removes ${real_cost:,.2f}/mo of infrastructure cost ({source_name}'s own "
                     "analysed estimate before removal), plus a qualitative reduction in "
                     "operational overhead -- one fewer engine's worth of team expertise, "
                     f"monitoring, backups and failover to maintain -- by avoiding a dedicated "
-                    f"{source} cluster."
+                    f"{source_name} cluster."
                 )
             else:
                 outcome = (
-                    f"Avoids running a dedicated {source} cluster: one fewer engine's worth of "
-                    "team expertise, monitoring, backups and failover to maintain. No specific "
-                    f"infrastructure-cost figure is available for {source} to show here."
+                    f"Avoids running a dedicated {source_name} cluster: one fewer engine's "
+                    "worth of team expertise, monitoring, backups and failover to maintain. "
+                    f"No specific infrastructure-cost figure is available for {source_name} "
+                    "to show here."
                 )
         else:
-            outcome = f"{source} leaves the architecture."
+            outcome = f"{source_name} leaves the architecture."
         recs.append(
-            f"Consolidated {_queries(c['query_count'])} from {source} → "
-            f"{c['to_engine']}: {c['reason']}. {outcome}"
+            f"Consolidated {_queries(c['query_count'])} from {source_name} → "
+            f"{display_engine(c['to_engine'])}: {c['reason']}. {outcome}"
         )
 
     # Pattern recommendations

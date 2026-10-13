@@ -162,11 +162,12 @@ def extract_css(lines: list[str]) -> str:
 def extract_script_body(lines: list[str]) -> str:
     """Return the static body of generateReportScript.
 
-    Skips the opening ``<script>`` tag and the two ``const`` declarations
-    (DATA, ENGINE_LABELS) -- those are the dynamic part and the HTML template
-    emits them -- and stops before the closing ``</script>`` tag for the same
-    reason. Colours are deliberately absent: they live in the CSS palette and the
-    script reads them back with ``paletteColor()``.
+    Skips the opening ``<script>`` tag and the three ``const`` declarations
+    (DATA, ENGINE_LABELS, OPTIMIZATION_LABELS) -- those are the dynamic part
+    and the HTML template emits them -- and stops before the closing
+    ``</script>`` tag for the same reason. Colours are deliberately absent:
+    they live in the CSS palette and the script reads them back with
+    ``paletteColor()``.
     """
     start = next(i for i, ln in enumerate(lines) if ln.startswith("const generateReportScript ="))
     end = next(i for i, ln in enumerate(lines[start:], start) if ln.rstrip() == "  return script;")
@@ -176,6 +177,7 @@ def extract_script_body(lines: list[str]) -> str:
         "  <script>",
         "    const DATA = ",
         "    const ENGINE_LABELS = ",
+        "    const OPTIMIZATION_LABELS = ",
     )
 
     out: list[str] = []

@@ -146,7 +146,8 @@ class TestEngineeringReport:
         # #459 round 3: display_engine, not the raw engine id.
         assert "## Cache layer (ElastiCache)" in md
         assert "ElastiCache fronts 20 hot reads (83.4% of calls, 185.1 calls/s) cache-aside" in md
-        assert "- Owner engines: dynamodb 20" in md
+        # #572: display_engine here too, same as the heading and fronts line above.
+        assert "- Owner engines: DynamoDB 20" in md
         assert "≥ 1 calls/s" in md and "≤ 100 rows" in md
         assert "owner unchanged" in md
 
