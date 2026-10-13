@@ -861,6 +861,8 @@ def _removal_tiebreak_key(
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
+    source_compatible_engine: str | None = None,
+    settled_counts: Mapping[str, int] | None = None,
 ) -> tuple[int, float]:
     """Data-driven tiebreaker between two candidates tied on burden-per-unique-
     query (#502 review round 5, finding N1; round 6 corrected the second
@@ -879,6 +881,18 @@ def _removal_tiebreak_key(
     Two candidates that still tie on BOTH measures are genuinely
     indistinguishable by any data this review has identified; the caller
     reports that rather than picking one.
+
+    Finding a query's destination among ``alts`` used to be a bare
+    ``max(alts, key=score)`` over ``alts`` -- a list built from the
+    ``survivors`` *set*, so when two or more alternates scored this query
+    identically, which one "won" depended on Python's set iteration order:
+    ``PYTHONHASHSEED`` and input order, neither an ADR-031 rule (#569).
+    Scores are now collected into a ``dict`` and the top scorers read back
+    through ``_top_scorers`` (sorted -- a stable key), and an actual tie
+    among them is resolved the same ADR-031 Decision 2 way every other
+    routing tie is: ``tie_break.break_tie``, fed this call's own
+    ``source_compatible_engine``/``settled_counts`` and the query id, never
+    by whichever alternate a set happened to produce first.
     """
     destinations: set[str] = set()
     total_fit_lost = 0.0
@@ -900,8 +914,14 @@ def _removal_tiebreak_key(
         if not alts:
             continue
         own_score = _resolver_score(trace_by_query, qid, engine) or 0
-        best_alt = max(alts, key=lambda a: _resolver_score(trace_by_query, qid, a) or 0)
-        best_score = _resolver_score(trace_by_query, qid, best_alt) or 0
+        alt_scores = {alt: _resolver_score(trace_by_query, qid, alt) or 0 for alt in alts}
+        top_alts = _top_scorers(alt_scores)
+        best_alt = (
+            top_alts[0]
+            if len(top_alts) == 1
+            else break_tie(top_alts, set(), source_compatible_engine, settled_counts, qid)[0]
+        )
+        best_score = alt_scores[best_alt]
         destinations.add(best_alt)
         total_fit_lost += own_score - best_score
     return len(destinations), total_fit_lost
@@ -918,6 +938,8 @@ def _settle_committed_engines(
     query_capabilities: dict[str, list[str]] | None,
     max_rounds: int,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
+    source_compatible_engine: str | None = None,
+    settled_counts: Mapping[str, int] | None = None,
 ) -> tuple[set[str], dict[str, dict]]:
     """Phase 1 (#502 review): settle which engines earn a place, independent
     of the order they happen to be evaluated in.
@@ -949,6 +971,14 @@ def _settle_committed_engines(
     removes neither of them this round -- both stay committed, flagged
     ``tie_unresolved`` in the assessment, and a different, non-tied,
     lower-ranked candidate (if any) is tried instead.
+
+    ``source_compatible_engine``/``settled_counts`` are forwarded to
+    ``_removal_tiebreak_key`` (#569) so that when ITS OWN simulation finds a
+    query with two or more equally-scored destination engines, that
+    destination tie goes through the same shared ``tie_break.break_tie``
+    every other routing tie does, instead of ``max()`` over whatever order
+    the eligible-engines set happens to iterate in -- which depended on
+    ``PYTHONHASHSEED`` and input order, not on anything ADR-031 recognizes.
     """
     committed = {e for e in engine_queries if engine_queries.get(e)}
     assessment: dict[str, dict] = {}
@@ -1023,6 +1053,8 @@ def _settle_committed_engines(
                         query_map,
                         query_capabilities,
                         tied_engines_by_qid,
+                        source_compatible_engine,
+                        settled_counts,
                     )
                     for c in tied
                 }
@@ -1659,6 +1691,12 @@ def run_reality_check(
     # ``_evaluate_engine_removal`` itself.
     # -------------------------------------------------------------------
     max_rounds = len(engine_queries) + 2
+    # Computed here, before Phase 1, so Phase 1's own destination tie-break
+    # (``_removal_tiebreak_key``, #569) resolves a tie the same ADR-031
+    # Decision 2 way Phase 2 and the absorber already do -- source-compatible
+    # engine first, never left to pick whichever alternate a Python set
+    # happened to iterate first.
+    source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
     committed_engines, unique_value_assessment = _settle_committed_engines(
         engine_queries,
         mandatory_query_ids,
@@ -1670,6 +1708,8 @@ def run_reality_check(
         query_capabilities,
         max_rounds,
         tied_engines_by_qid,
+        source_compatible_engine,
+        settled_counts,
     )
 
     # -------------------------------------------------------------------
@@ -1680,7 +1720,6 @@ def run_reality_check(
     # fresh, against the final set, not incrementally against a list that
     # can go stale.
     # -------------------------------------------------------------------
-    source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
     revised, consolidations = _place_settled_queries(
         query_assignments,
         committed_engines,

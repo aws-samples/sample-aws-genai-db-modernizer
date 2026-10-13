@@ -291,6 +291,16 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     ),
     (
         "reality_check.py",
+        "_removal_tiebreak_key",
+        RULE_SORTED_INDEX0,
+    ): (
+        "#569 fix: top_alts=_top_scorers(alt_scores); top_alts[0] runs only "
+        "after 'len(top_alts) == 1' -- the no-tie-at-all case for this "
+        "query's destination; a real tie among top_alts defers to "
+        "break_tie on the same line, same as _pick_winner above."
+    ),
+    (
+        "reality_check.py",
         "run_reality_check",
         RULE_SORTED_INDEX0,
     ): (
@@ -355,16 +365,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "fallback_owner",
         RULE_SORTED_INDEX0,
     ): "singleton guard: tied[0] runs only when len(tied) == 1; real ties go through break_tie (#549).",
-    (
-        "reality_check.py",
-        "_removal_tiebreak_key",
-        RULE_SET_ORDER,
-    ): (
-        "#569: tracked, open -- best_alt=max(alts, key=...) over alts, which "
-        "this scanner traces back to the 'survivors: set[str]' parameter via "
-        "_group_eligible_engines; a tie's destination depends on set "
-        "iteration order."
-    ),
     (
         "aurora_choice.py",
         "choose_heterogeneous_engine",

@@ -12,6 +12,7 @@ rather than rewritten against a function that no longer exists.
 """
 
 import itertools
+import random
 
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
@@ -2744,6 +2745,111 @@ class TestSettledEngineSetIsOrderIndependent:
 
         assert reversed_engine_of == baseline_engine_of
         assert "documentdb" not in set(reversed_engine_of.values())
+
+    def test_randomized_scenarios_with_destination_ties_settle_the_same_regardless_of_order(
+        self,
+    ):
+        """#569: ``_removal_tiebreak_key``'s per-query destination used to be
+        ``max(alts, key=score)`` over a list built from the ``survivors``
+        *set* -- a tie between two or more equally-scoring destinations
+        depended on that set's iteration order, which Python does not
+        guarantee is the same across runs. The companion subprocess test
+        (``tests/e2e/test_hashseed_determinism.py::
+        test_removal_tiebreak_destination_ignores_hash_seed``) pins one
+        hand-built scenario and proves the fix across ``PYTHONHASHSEED``
+        values, which is the axis the issue's own 4,000-case comparison
+        actually caught. This test covers the OTHER axis named in the issue
+        -- input order, within a single process/hash seed -- across many
+        randomly generated scenarios, each deliberately built with
+        redundant engines and tied destination scores (so Phase 1 removal
+        and ``_removal_tiebreak_key``'s own destination pick are both
+        exercised), run many times each with ``engine_queries``' engine
+        order and every engine's query-list order shuffled. The settled
+        engine set must be identical across every shuffle of the same
+        logical scenario.
+        """
+        engines_pool = [
+            "aurora_mysql",
+            "aurora_postgresql",
+            "dynamodb",
+            "documentdb",
+            "opensearch",
+            "elasticache",
+        ]
+        master_rng = random.Random(20261013)
+        for scenario_idx in range(40):
+            scenario_rng = random.Random(master_rng.randint(0, 2**32 - 1))
+            n_engines = scenario_rng.randint(3, len(engines_pool))
+            engines = scenario_rng.sample(engines_pool, n_engines)
+
+            engine_queries: dict[str, list[dict]] = {}
+            trace_by_query: dict[str, dict] = {}
+            current_engine_by_qid: dict[str, str] = {}
+            qid_counter = 0
+            for engine in engines:
+                qas = []
+                for _ in range(scenario_rng.randint(1, 3)):
+                    qid = f"q{qid_counter}"
+                    qid_counter += 1
+                    qas.append(
+                        {"query_id": qid, "assigned_engine": engine, "assignment_reason": "test"}
+                    )
+                    current_engine_by_qid[qid] = engine
+                    others = [e for e in engines if e != engine]
+                    scenario_rng.shuffle(others)
+                    tied_alts = others[: scenario_rng.randint(2, min(3, len(others)))]
+                    native_score = scenario_rng.choice([60, 65, 70])
+                    # Delta against the tied alternatives stays below
+                    # UNIQUE_DELTA_THRESHOLD (15), so this query is always
+                    # "redundant" (removable), never "unique" -- the removal
+                    # decision itself is not what is under test here, only
+                    # the destination picked once removal is simulated.
+                    tie_score = native_score + scenario_rng.choice([5, 8, 10, 12])
+                    scores = {engine: native_score}
+                    scores.update({alt: tie_score for alt in tied_alts})
+                    scores.update(
+                        {alt: scenario_rng.choice([30, 40]) for alt in others if alt not in scores}
+                    )
+                    trace_by_query[qid] = {"engines": scores}
+                engine_queries[engine] = qas
+
+            baseline, _ = _settle_committed_engines(
+                engine_queries=dict(engine_queries),
+                mandatory_query_ids=set(),
+                mandatory_committed_engines=set(),
+                trace_by_query=dict(trace_by_query),
+                current_engine_by_qid=dict(current_engine_by_qid),
+                query_signals={},
+                query_map={},
+                query_capabilities=None,
+                max_rounds=10,
+            )
+
+            for perm_idx in range(15):
+                items = list(engine_queries.items())
+                scenario_rng.shuffle(items)
+                shuffled_engine_queries = {}
+                for engine, qas in items:
+                    qas_copy = list(qas)
+                    scenario_rng.shuffle(qas_copy)
+                    shuffled_engine_queries[engine] = qas_copy
+
+                result, _ = _settle_committed_engines(
+                    engine_queries=shuffled_engine_queries,
+                    mandatory_query_ids=set(),
+                    mandatory_committed_engines=set(),
+                    trace_by_query=dict(trace_by_query),
+                    current_engine_by_qid=dict(current_engine_by_qid),
+                    query_signals={},
+                    query_map={},
+                    query_capabilities=None,
+                    max_rounds=10,
+                )
+                assert result == baseline, (
+                    f"scenario {scenario_idx} permutation {perm_idx}: settled engines "
+                    f"changed from {sorted(baseline)} to {sorted(result)} just from "
+                    "input order"
+                )
 
 
 class TestRealityCheckAcceptsALowerScoreWhenConsolidating:
