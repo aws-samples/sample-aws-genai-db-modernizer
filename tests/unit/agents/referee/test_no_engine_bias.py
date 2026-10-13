@@ -232,12 +232,13 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "retained_engine_for",
         RULE_SORTED_INDEX0,
     ): (
-        "chosen=sorted(AURORA_ENGINES.intersection(used)); chosen[0] -- the "
-        "function's own docstring states the invariant that makes this safe: "
-        "by the time an assignment exists, choose_heterogeneous_engine "
-        "already dropped the losing Aurora engine from scoring, so at most "
-        "one of aurora_mysql/aurora_postgresql ever appears as an "
-        "assigned_engine; chosen has at most one element by construction."
+        "tied=sorted(AURORA_ENGINES.intersection(used)); tied[0] runs only "
+        "after 'if len(tied) <= 1' is checked (#583/#586 review) -- the "
+        "common case where at most one of aurora_mysql/aurora_postgresql "
+        "ever appears as an assigned_engine, same as every other singleton "
+        "guard in this allowlist. A real two-engine tie defers to "
+        "break_tie/settled_counts a few lines down, same as every other "
+        "caller, instead of falling through to this index."
     ),
     (
         "aurora_choice.py",
@@ -381,17 +382,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#445: tracked, open -- Aurora PostgreSQL is the one-sided default "
         "on an exact tie and the undecided-features branch, pending "
         "dialect-aware scoring; belongs to the heterogeneous-source owner."
-    ),
-    (
-        "migration_waves.py",
-        "build_migration_waves",
-        RULE_SORTED_INDEX0,
-    ): (
-        "#583: tracked, open -- chosen=sorted(AURORA_ENGINES & "
-        "set(by_engine)); chosen[0] is a fallback-only path (no recorded "
-        "aurora_engine_choice) that the surrounding comment already admits "
-        "'is really alphabetical order' and would pick aurora_mysql over "
-        "aurora_postgresql regardless of which one actually won."
     ),
 }
 

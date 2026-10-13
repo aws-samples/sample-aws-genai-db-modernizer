@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
@@ -1730,12 +1731,30 @@ def _source_compatible_aurora_engine(data: SynthesisData) -> str:
     mitigation: Aurora always runs the source SQL as-is, regardless of what any
     other engine's assignment or schema design says).
 
-    Prefers whichever Aurora engine is already part of this architecture
-    (``data.engines``); otherwise maps the collector's source database engine
+    Delegates to ``assignment_resolver.retained_engine_for`` (#583/#586 review):
+    the source's own dialect when it has one; else the resolver's recorded
+    ``aurora_engine_choice``; else whichever Aurora engine ``query_assignments``
+    shows actually in use, breaking a genuine tie through the shared ADR-031
+    Decision 2/12 placeholder rather than an alphabetical pick -- the same
+    helper ``migration_waves.build_migration_waves`` uses for wave 1, so this
+    "Why" cell and risk note cannot name a different engine than wave 1 does
+    for the same assignment.
+
+    Falls back to whichever Aurora engine is already part of this architecture
+    (``data.engines``) only when ``retained_engine_for`` has nothing to go on
+    (no assignment yet); then to mapping the collector's source database engine
     (mysql/mariadb -> aurora_mysql, postgresql/postgres -> aurora_postgresql),
     defaulting to aurora_mysql when even that is unknown -- never wrong about
     there being an Aurora safety net, only about which flavour's name to print.
     """
+    assignment = data.assignment or {}
+    engine = retained_engine_for(
+        data.collector,
+        assignment.get("query_assignments"),
+        assignment.get("aurora_engine_choice"),
+    )
+    if engine:
+        return engine
     for engine in sorted(AURORA_ENGINES):
         if engine in data.engines:
             return engine

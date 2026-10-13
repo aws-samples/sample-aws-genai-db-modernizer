@@ -987,6 +987,22 @@ def retained_engine_for(
     ever appears as an ``assigned_engine`` -- unless a later customer override
     changed that, which is exactly why ``aurora_engine_choice`` is preferred
     when available.
+
+    When ``query_assignments`` itself shows BOTH Aurora engines genuinely in
+    use (a legacy assignment written before the #381 choice existed, or a
+    later customer override) with no recorded choice to break it, that is a
+    real, unresolved tie -- never a default -- resolved through the one
+    shared ADR-031 Decision 2/12 placeholder (:func:`~src.agents.referee.
+    tie_break.break_tie` with :func:`~src.agents.referee.tie_break.
+    settled_counts`), not by sorting the two engine names (#583/#586 review).
+
+    This is the single place "which Aurora engine is retained" is decided
+    for a heterogeneous source with no Aurora dialect of its own --
+    ``migration_waves.build_migration_waves`` and ``synthesis_report.
+    _source_compatible_aurora_engine`` both call this instead of
+    re-deriving their own answer, so wave 1, the architecture section and
+    the cache-layer "Why" cell cannot name different engines for the same
+    assignment.
     """
     native = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
     if native:
@@ -1003,12 +1019,34 @@ def retained_engine_for(
             return engine
     if not query_assignments:
         return None
+    query_assignments = list(query_assignments)
     used = {
         (qa.get("assigned_engine") if isinstance(qa, Mapping) else qa.assigned_engine)
         for qa in query_assignments
     }
-    chosen = sorted(AURORA_ENGINES.intersection(used))
-    return chosen[0] if chosen else None
+    tied = sorted(AURORA_ENGINES.intersection(used))
+    if len(tied) <= 1:
+        return tied[0] if tied else None
+    # A stable tie key: every query id that actually contributed to ``used``
+    # (sorted, joined), the same "sorted member ids" pattern ADR-031
+    # Decision 12 already uses for a co-dependency group -- deterministic
+    # for this input, so the same ambiguous data always resolves the same
+    # way, without forcing every different ambiguous run to the same answer.
+    contributing_ids = sorted(
+        str(qa.get("query_id") if isinstance(qa, Mapping) else qa.query_id)
+        for qa in query_assignments
+        if (qa.get("assigned_engine") if isinstance(qa, Mapping) else qa.assigned_engine) in tied
+        and (qa.get("query_id") if isinstance(qa, Mapping) else qa.query_id)
+    )
+    query_key = ",".join(contributing_ids) or "retained_engine_for:no_query_ids"
+    winner, _tie_kind = break_tie(
+        tied,
+        set(),
+        None,
+        settled_counts=settled_workload_counts(query_assignments),
+        query_id=query_key,
+    )
+    return winner
 
 
 def derive_table_assignments(

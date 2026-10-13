@@ -490,6 +490,77 @@ class TestAuroraWave:
         assert aurora["homogeneity"] == "cross_engine"
         assert aurora["engines"] == ["aurora_mysql"]
 
+    def test_no_choice_both_aurora_ranked_derives_from_query_assignments(self):
+        # #583: triage analyzes both Aurora engines for a heterogeneous source, so
+        # ``ranking`` (``by_engine``) carries an entry for each regardless of which
+        # one actually won -- with no recorded ``aurora_engine_choice`` (a legacy
+        # assignment, or a caller that did not thread it through), the pre-fix
+        # fallback (``sorted(AURORA_ENGINES & set(by_engine))``) always picked
+        # aurora_mysql, alphabetically, even though every actual query assignment
+        # below is on aurora_postgresql. The fix must derive the retained engine
+        # from ``query_assignments`` instead.
+        ranking = [
+            {"target": "aurora_mysql", "assigned_queries": 1, "workload_percent": 1.0},
+            {"target": "aurora_postgresql", "assigned_queries": 1, "workload_percent": 1.0},
+        ]
+        query_assignments = [
+            {
+                "query_id": "q1",
+                "assigned_engine": "aurora_postgresql",
+                "source_tables": ["wp_options"],
+            },
+        ]
+        waves = _build(
+            ranking=ranking,
+            query_assignments=query_assignments,
+            source_engine="sqlserver",
+            known_tables=KNOWN_TABLES,
+        )
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["engines"] == ["aurora_postgresql"]
+
+    def test_no_choice_genuine_tie_goes_through_tie_break_not_alphabetical(self):
+        # #583: when ``query_assignments`` itself shows BOTH Aurora engines in use
+        # (a legacy assignment written before the resolver's #381 choice collapsed
+        # the loser, or a later customer override) with no recorded
+        # ``aurora_engine_choice``, that is a genuine, unresolved tie -- resolved by
+        # the shared ADR-031 Decision 2/12 placeholder (settled workload share),
+        # never by sorting the two engine names. aurora_postgresql has the larger
+        # settled share here (3 queries vs. 1), so it must win even though
+        # "aurora_mysql" sorts first alphabetically.
+        ranking = [
+            {"target": "aurora_mysql", "assigned_queries": 1, "workload_percent": 1.0},
+            {"target": "aurora_postgresql", "assigned_queries": 3, "workload_percent": 3.0},
+        ]
+        query_assignments = [
+            {"query_id": "q1", "assigned_engine": "aurora_mysql", "source_tables": ["wp_options"]},
+            {
+                "query_id": "q2",
+                "assigned_engine": "aurora_postgresql",
+                "source_tables": ["wp_options"],
+            },
+            {
+                "query_id": "q3",
+                "assigned_engine": "aurora_postgresql",
+                "source_tables": ["wp_options"],
+            },
+            {
+                "query_id": "q4",
+                "assigned_engine": "aurora_postgresql",
+                "source_tables": ["wp_options"],
+            },
+        ]
+        waves = _build(
+            ranking=ranking,
+            query_assignments=query_assignments,
+            source_engine="sqlserver",
+            known_tables=KNOWN_TABLES,
+        )
+        aurora = waves[0]
+        assert aurora["homogeneity"] == "cross_engine"
+        assert aurora["engines"] == ["aurora_postgresql"]
+
     def test_heterogeneous_source_with_no_aurora_choice_has_no_engine_and_flags_a_risk(self):
         waves = _build(
             source_engine="sqlserver",

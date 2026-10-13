@@ -126,6 +126,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import AURORA_ENGINES, describe_features
 from src.agents.referee.table_resolution import (
     PSEUDO_TABLES,
@@ -1196,21 +1197,30 @@ def build_migration_waves(
     # never claims "no data model changes" for one of these sources.
     cross_engine = False
     if retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
-        # #381 review round 2: trust the resolver's own recorded decision
-        # (``aurora_engine_choice.engine``) over re-deriving it from set order, which
-        # is really alphabetical order (``AURORA_ENGINES & set(by_engine)`` sorted) and
-        # would silently pick aurora_mysql over aurora_postgresql whenever both appear
-        # in ``by_engine`` regardless of which one actually won. Falls back to the set
-        # intersection only when there is no recorded choice, or it names an engine with
-        # no ranking entry at all (nothing to build wave 1 from).
-        choice_engine = aurora_engine_choice.get("engine") if aurora_engine_choice else None
-        if choice_engine in AURORA_ENGINES and choice_engine in by_engine:
-            retained_engine = choice_engine
+        # #583/#586 review: ``retained_engine_for`` is the one shared helper for
+        # "which Aurora engine is retained" (``aurora_engine_choice`` first, then
+        # ``query_assignments``' own ``assigned_engine``, then the shared
+        # ADR-031 Decision 2/12 tie-break for a genuine, unresolved tie) --
+        # ``synthesis_report._source_compatible_aurora_engine`` calls it too, so
+        # wave 1 and the architecture/cache-layer narrative cannot name different
+        # engines for the same assignment. A fake ``collector_output`` carries
+        # just enough for ``retained_engine_for`` to see this is a heterogeneous
+        # source with no Aurora dialect of its own -- ``source_engine`` already
+        # confirmed that above.
+        fake_collector = {"metadata": {"source_database": {"engine": source_engine}}}
+        candidate = retained_engine_for(fake_collector, query_assignments, aurora_engine_choice)
+        if candidate in AURORA_ENGINES and candidate in by_engine:
+            retained_engine = candidate
             cross_engine = True
-        else:
-            chosen = sorted(AURORA_ENGINES & set(by_engine))
-            if chosen:
-                retained_engine = chosen[0]
+        elif candidate in AURORA_ENGINES:
+            # ``candidate`` names a real engine (from the choice or from
+            # ``query_assignments``) with no ``by_engine``/``ranking`` entry --
+            # nothing to build wave 1's query count and share from. Re-derive
+            # from ``query_assignments`` alone (dropping the ranking-less
+            # choice), through the same shared helper, rather than giving up.
+            fallback = retained_engine_for(fake_collector, query_assignments, None)
+            if fallback in AURORA_ENGINES and fallback in by_engine:
+                retained_engine = fallback
                 cross_engine = True
 
     known: set[str] | None = (
