@@ -57,6 +57,11 @@ dependencies = [
 
     # OpenSearch load test driver
     "opensearch-py>=2.4.0",
+
+    # SQL parser behind the src.tools.sql facade (#557). Exact pin: sqlglot
+    # releases, patch ones included, can change parse results, so a bump is its
+    # own PR that regenerates tests/unit/tools/sql/baselines/table_refs_snapshot.json.
+    "sqlglot==30.22.0",
 ]
 
 [project.optional-dependencies]

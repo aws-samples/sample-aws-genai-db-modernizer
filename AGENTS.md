@@ -162,7 +162,7 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
 Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 `./artifacts`):
 
-- `collector/output.json`, `referee-triage/triage.json`
+- `collector/output.json`, `collector/sql_shadow.json` (sqlglot facade vs regex table references, shadow mode, #557), `referee-triage/triage.json`
 - `analysis-<engine>/analysis.json` (+ `decision-trace.json`)
 - `assignment/v<N>/assignment.json`: versioned; reality check and customer
   edits write a new version, never overwrite one

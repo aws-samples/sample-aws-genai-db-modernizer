@@ -13,12 +13,12 @@ placeholders, which already parse cleanly.
 This module is the one shared step every SQL-parsing call site should run
 digest text through first, so the digest syntax is handled once instead of
 being re-learned by each caller (today's regex detectors, and the sqlglot
-facade planned for #557). It is a pure function with no I/O and no new
-dependency, and nothing calls it yet -- it does not change any existing
-detector's behavior on its own. For the facade: sqlglot's own dialect names
-mostly, but not always, match ``DatabaseEngine`` below (``postgresql`` is
-``postgres`` and ``sqlserver`` is ``tsql`` in sqlglot) -- that mapping lives
-with the facade, not here.
+facade, :mod:`src.tools.sql.facade`, #557). It is a pure function with no
+I/O and no new dependency; the facade is its only caller, so it does not
+change any regex detector's behavior. sqlglot's own dialect names mostly, but
+not always, match ``DatabaseEngine`` below (``postgresql`` is ``postgres`` and
+``sqlserver`` is ``tsql`` in sqlglot) -- that mapping lives with the facade,
+not here.
 
 Rules applied for MySQL-family dialects (``mysql``, ``mariadb``):
 
@@ -255,6 +255,13 @@ def _scan(text: str, dialect: str) -> _Scan:
     )
 
 
+def quoted_mask(text: str, dialect: str) -> list[bool]:
+    """Per character of ``text``: True inside a string literal, a quoted
+    identifier or a comment (the same scan the rules below use), so a caller
+    can rewrite SQL syntax without touching quoted content."""
+    return _scan(text, dialect).mask
+
+
 # ---------------------------------------------------------------------------
 # Truncation detection
 # ---------------------------------------------------------------------------
@@ -312,7 +319,24 @@ _DANGLING_KEYWORDS = frozenset(
 # "RETURNING *" both end a complete statement on it.
 _DANGLING_TRAILING_CHARS = frozenset(",=<>!+-/%:(")
 
-_TRAILING_WORD_RE = re.compile(r"([A-Za-z_]+)\s*\Z")
+_WORD_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_")
+
+
+def _trailing_word(text: str) -> tuple[str, int] | None:
+    r"""The run of ASCII letters/underscores that ends ``text`` (trailing
+    whitespace allowed), and where it starts; None if there is none.
+
+    Same answer as ``re.search(r"([A-Za-z_]+)\s*\Z", text)`` but a backward
+    scan, so it is linear: that regex is quadratic on a long run of letters
+    that doesn't end the text (a 1 MB string literal hung it, #557 review).
+    """
+    end = len(text)
+    while end > 0 and text[end - 1].isspace():
+        end -= 1
+    start = end
+    while start > 0 and text[start - 1] in _WORD_CHARS:
+        start -= 1
+    return (text[start:end], start) if start < end else None
 
 
 def _strip_comments(text: str, comment_mask: list[bool]) -> str:
@@ -352,18 +376,18 @@ def _is_truncated(text: str, scan: _Scan) -> bool:
     if last_char == "." and not stripped.endswith(".."):
         return True
 
-    match = _TRAILING_WORD_RE.search(stripped)
+    match = _trailing_word(stripped)
     if match is None:
         return False
-    word = match.group(1).upper()
+    word = match[0].upper()
 
     if word == "UPDATE":
-        before = stripped[: match.start()].rstrip()
-        prev = _TRAILING_WORD_RE.search(before)
+        before = stripped[: match[1]].rstrip()
+        prev = _trailing_word(before)
         # "... FOR UPDATE" is a complete locking clause; a bare "UPDATE"
         # with nothing in front of it was cut off right after its own
         # keyword.
-        return prev is None or prev.group(1).upper() != "FOR"
+        return prev is None or prev[0].upper() != "FOR"
 
     return word in _DANGLING_KEYWORDS
 

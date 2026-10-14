@@ -6,15 +6,21 @@ same raw data structures that MySQLRemoteCollector produces, so the
 existing _build_tables, _build_queries, etc. work unchanged.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import boto3
 
 from src.tools.database.collection_text import extract_json_object
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
+
+if TYPE_CHECKING:
+    from src.tools.sql.shadow import TableShadow
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +63,14 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     return result
 
 
-def parse_offline_collection(data: dict) -> dict:
+def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> dict:
     """
     Transform the flat offline JSON into the nested structure expected
     by mysql_collector's builder functions.
+
+    ``shadow``, when given, also reads every query's table references with the
+    sqlglot facade and records where it disagrees with the regex (#557). It only
+    observes: the returned structure is the same with or without it.
 
     Returns dict with keys: metadata, tables (list of table dicts with
     nested columns/indexes/fks/pk), views, procedures, triggers,
@@ -168,7 +178,16 @@ def parse_offline_collection(data: dict) -> dict:
         "procedures": data.get("procedures", []),
         "triggers": data.get("triggers", []),
         "queries": _transform_queries(
-            data.get("queries") or [], db_name, known_table_names, table_schemas=table_schemas
+            data.get("queries") or [],
+            db_name,
+            known_table_names,
+            table_schemas=table_schemas,
+            shadow=shadow,
+            source_engine=(
+                detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
+                if shadow is not None
+                else ""
+            ),
         ),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
@@ -324,17 +343,73 @@ def _resolve_qualified_table(
     return written
 
 
-# Leading ``--`` line and ``/* */`` block comments before a statement's verb.
-_LEADING_COMMENTS_RE = re.compile(r"^(?:\s*(?:--[^\n]*(?:\n|$)|/\*.*?\*/))+", re.DOTALL)
+def _resolve_table_ids(
+    refs: list[tuple[list[str], str]],
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]],
+) -> list[str]:
+    """Resolve ``(qualifiers, table)`` references to collection table ids.
+
+    System catalogs (``sys``, ``information_schema``) are skipped, a qualified
+    reference goes through ``_resolve_qualified_table`` (#653), a bare name the
+    collection knows becomes ``<database>.<table>``, and anything else is kept as
+    written. A qualified and a bare reference to one table resolve to the same id,
+    so duplicates collapse in first-seen order; no reference at all is
+    ``["unknown"]``.
+    """
+    tables_accessed: list[str] = []
+    for qualifiers, table in refs:
+        # Skip system catalogs / RDS-internal references
+        if qualifiers and qualifiers[-1].lower() in ("sys", "information_schema"):
+            continue
+        if table.lower() in ("sys", "information_schema"):
+            continue
+        if qualifiers:
+            tables_accessed.append(
+                _resolve_qualified_table(
+                    qualifiers, table, db_name, known_table_names, table_schemas
+                )
+            )
+        # Prefix with db_name if the bare-name table is known
+        elif table in known_table_names:
+            tables_accessed.append(f"{db_name}.{table}")
+        else:
+            tables_accessed.append(table)
+    tables_accessed = list(dict.fromkeys(tables_accessed))
+    return tables_accessed or ["unknown"]
 
 
-def _is_merge_statement(query_text: str) -> bool:
-    """Whether ``query_text`` is a MERGE (#663): its first verb, after any leading
-    comments, is MERGE, or it is a ``WITH ... AS (...) MERGE`` (a CTE feeding it)."""
-    text = _LEADING_COMMENTS_RE.sub("", query_text).lstrip()
-    if re.match(r"MERGE\b", text, re.I):
-        return True
-    return bool(re.match(r"WITH\b", text, re.I) and re.search(r"\)\s*MERGE\b", text, re.I))
+def _shadow_table_refs(
+    shadow: TableShadow,
+    query_id: str,
+    query_text: str,
+    tables_accessed: list[str],
+    source_engine: str,
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]],
+) -> None:
+    """Record the facade's table ids next to the regex's for one query (#557).
+
+    The facade's references go through the same resolver as the regex's, so the
+    comparison is id for id. Shadow mode must never break a collection: any
+    error here is logged and the query is skipped.
+    """
+    from src.tools.sql.facade import table_references
+
+    shadow.source_engine = source_engine
+    try:
+        refs = table_references(query_text, source_engine)
+        facade_ids = _resolve_table_ids(
+            [(ref.qualifiers, ref.name) for ref in refs.tables],
+            db_name,
+            known_table_names,
+            table_schemas,
+        )
+        shadow.record(query_id, query_text, list(tables_accessed), facade_ids, refs)
+    except Exception:  # noqa: BLE001 -- shadow mode only observes
+        logger.warning("offline_parser: sql shadow skipped query %s", query_id, exc_info=True)
 
 
 def _transform_queries(
@@ -342,6 +417,8 @@ def _transform_queries(
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]] | None = None,
+    shadow: TableShadow | None = None,
+    source_engine: str = "",
 ) -> list[dict]:
     """Transform raw MySQL performance_schema rows into the format _build_queries expects.
 
@@ -356,11 +433,15 @@ def _transform_queries(
     ``_merge_query_variants``), as a safety net against collections where
     one query shape produced multiple rows (e.g. SQL Server literal
     variants, #386).
+
+    ``shadow`` (with the collection's ``source_engine`` for the dialect) gets
+    the regex and the sqlglot facade's table ids for every query; see
+    ``_shadow_table_refs``. The regex answer is the one returned.
     """
     import hashlib
     import re
 
-    from src.tools.database.sql_cte import drop_cte_references
+    from src.tools.sql.regex_tables import regex_table_refs
 
     patterns = []
     for r in _merge_query_variants(raw):
@@ -371,74 +452,11 @@ def _transform_queries(
         total_rows_affected = r.get("total_rows_affected") or 0
         total_time_ms = float(r.get("total_time_ms") or 0)
 
-        # Extract tables from query text and resolve to table_id format.
-        # Handles three quote styles + optional schema-qualified names:
-        #   FROM table         (MySQL bare)
-        #   FROM `table`       (MySQL backtick)
-        #   FROM "table"       (PostgreSQL/Oracle double quote)
-        #   FROM [table]       (SQL Server bracket)
-        #   FROM schema.table, FROM [schema].[table], FROM `schema`.`table`
-        #   FROM database.schema.table (T-SQL three-part name)
-        #   REFRESH MATERIALIZED VIEW [CONCURRENTLY] <name> (PostgreSQL)
-        #   MERGE [INTO] <target> USING <source> (SQL Server, Oracle, PostgreSQL
-        #   15+; #663). USING names a table only in a MERGE: elsewhere it is
-        #   JOIN ... USING (col) or CREATE INDEX ... USING gin.
-        # The named groups capture up to two qualifiers and the table. A keyword
-        # must start a word and not be a parameter or variable name: T-SQL's
-        # ``@From`` or a column such as ``valid_from`` followed by ``AND`` is not a
-        # FROM clause (#663).
-        is_merge = _is_merge_statement(query_text)
-        using = r"|USING" if is_merge else ""
-        table_re = re.compile(
-            r"(?<![\w@$#])"
-            r"(?:FROM|JOIN|INTO|UPDATE|MERGE(?:\s+INTO)?"
-            r"|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?" + using + r")\s+"
-            r'(?:[`"\[]?(?P<qual1>\w+)[`"\]]?\s*\.\s*)?'
-            r'(?:[`"\[]?(?P<qual2>\w+)[`"\]]?\s*\.\s*)?'
-            r'[`"\[]?(?P<table>\w+)[`"\]]?',
-            re.I,
+        # Table references come from the regex extractor
+        # (src/tools/sql/regex_tables.py), resolved to collection table ids.
+        tables_accessed = _resolve_table_ids(
+            regex_table_refs(query_text), db_name, known_table_names, table_schemas or {}
         )
-        # Upsert clauses use UPDATE for a column assignment, not a table reference:
-        # MySQL's ON DUPLICATE KEY UPDATE, PostgreSQL's DO UPDATE, and, in a MERGE
-        # only, WHEN MATCHED THEN UPDATE SET (#663). Outside a MERGE, a procedural
-        # ``IF ... THEN UPDATE orders SET ...`` is a real update of ``orders``.
-        upsert_update = r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b"
-        if is_merge:
-            upsert_update += r"|\bTHEN\s+UPDATE\b"
-        scanned_query = re.sub(
-            upsert_update,
-            " ",
-            query_text,
-            flags=re.I,
-        )
-        scanned_query = drop_cte_references(scanned_query)  # query-local names (#682)
-        tables_accessed: list[str] = []
-        for m_raw in table_re.finditer(scanned_query):
-            # Up to two qualifiers: schema.table, or T-SQL's database.schema.table.
-            qualifiers = [q for q in (m_raw.group("qual1"), m_raw.group("qual2")) if q]
-            table = m_raw.group("table")
-            if not table:
-                continue
-            # Skip system catalogs / RDS-internal references
-            if qualifiers and qualifiers[-1].lower() in ("sys", "information_schema"):
-                continue
-            if table.lower() in ("sys", "information_schema"):
-                continue
-            if qualifiers:
-                tables_accessed.append(
-                    _resolve_qualified_table(
-                        qualifiers, table, db_name, known_table_names, table_schemas or {}
-                    )
-                )
-            # Prefix with db_name if the bare-name table is known
-            elif table in known_table_names:
-                tables_accessed.append(f"{db_name}.{table}")
-            else:
-                tables_accessed.append(table)
-        # A qualified and a bare reference to one table resolve to the same id.
-        tables_accessed = list(dict.fromkeys(tables_accessed))
-        if not tables_accessed:
-            tables_accessed = ["unknown"]
 
         # Extract query type
         type_re = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
@@ -446,6 +464,18 @@ def _transform_queries(
         query_type = m.group(1).upper() if m else "OTHER"
 
         digest = r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16]
+
+        if shadow is not None:
+            _shadow_table_refs(
+                shadow,
+                str(digest),
+                query_text,
+                tables_accessed,
+                source_engine,
+                db_name,
+                known_table_names,
+                table_schemas or {},
+            )
 
         patterns.append(
             {

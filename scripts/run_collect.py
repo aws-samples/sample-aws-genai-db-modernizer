@@ -190,11 +190,16 @@ def main() -> None:
             offline_version_label,
             parse_offline_collection,
         )
+        from src.tools.sql.shadow import TableShadow, write_shadow_artifact
 
         try:
-            parsed = parse_offline_collection(input_data)
+            # Shadow mode (#557): the sqlglot facade reads every query's tables
+            # next to the regex and records disagreements; output is unchanged.
+            sql_shadow = TableShadow()
+            parsed = parse_offline_collection(input_data, shadow=sql_shadow)
         except IngestionLimitError as exc:
             _error(str(exc))
+        write_shadow_artifact(store, db_name, job_id, sql_shadow)
 
         # Build collector contract output
         from src.agents.collector.mysql_collector import (
