@@ -882,3 +882,44 @@ class TestMergeSchemaGroupsSkipsWhenEveryQueryIsPseudoOnly:
 
         with pytest.raises(ValueError, match="No group drafts found"):
             merge_schema_groups("job-001", "discourse", "dynamodb", store)
+
+
+class TestConsolidatedTraceTokenUsage:
+    """The consolidated design_trace.json carries a run total of the per-group token_usage (#676)."""
+
+    def _write(self, tmp_path, traces: dict[int, dict]):
+        store = LocalArtifactStore(str(tmp_path))
+        base = "wordpress/job-001/schema-dynamodb/v1"
+        for idx, trace in traces.items():
+            store.write_json(f"{base}/design_trace_group_{idx}.json", trace)
+        return store, base
+
+    def test_sums_group_usage_into_a_run_total(self, tmp_path):
+        from src.agents.schema_design.group_merger import _consolidate_design_traces
+
+        store, base = self._write(
+            tmp_path,
+            {
+                1: {"token_usage": {"calls": 2, "inputTokens": 100, "cacheReadInputTokens": 40}},
+                2: {"token_usage": {"calls": 3, "inputTokens": 50, "outputTokens": 7}},
+                3: {"decision": "no usage recorded"},
+            },
+        )
+        _consolidate_design_traces(store, base, {})
+        combined = store.read_json(f"{base}/design_trace.json")
+        assert combined["total_groups"] == 3
+        assert combined["token_usage"] == {
+            "calls": 5,
+            "inputTokens": 150,
+            "cacheReadInputTokens": 40,
+            "outputTokens": 7,
+        }
+        # Group traces keep their own usage.
+        assert combined["groups"][0]["token_usage"]["calls"] == 2
+
+    def test_no_token_usage_key_when_no_group_recorded_any(self, tmp_path):
+        from src.agents.schema_design.group_merger import _consolidate_design_traces
+
+        store, base = self._write(tmp_path, {1: {"decision": "x"}, 2: {"decision": "y"}})
+        _consolidate_design_traces(store, base, {})
+        assert "token_usage" not in store.read_json(f"{base}/design_trace.json")

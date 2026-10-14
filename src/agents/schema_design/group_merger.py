@@ -183,6 +183,20 @@ def merge_group_drafts(
 _TRACE_GROUP_RE = re.compile(r"design_trace_group_(\d+)\.json$")
 
 
+def _sum_token_usage(group_traces: list[dict]) -> dict[str, int] | None:
+    """Run total of the per-group ``token_usage`` (#626), or None when no group
+    recorded any (a deterministic or headless run)."""
+    usages = [t["token_usage"] for t in group_traces if isinstance(t.get("token_usage"), dict)]
+    if not usages:
+        return None
+    total: dict[str, int] = {}
+    for usage in usages:
+        for key, value in usage.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                total[key] = total.get(key, 0) + int(value)
+    return total
+
+
 def _consolidate_design_traces(
     store: ArtifactStore, base_key: str, pattern_maps: dict[int, dict[str, str]]
 ) -> None:
@@ -207,10 +221,12 @@ def _consolidate_design_traces(
             continue
         group_traces.append(rewrite_pattern_ids(trace, pattern_maps.get(idx, {})))
     if group_traces:
-        store.write_json(
-            f"{base_key}/design_trace.json",
-            {"total_groups": len(group_traces), "groups": group_traces},
-        )
+        combined: dict = {"total_groups": len(group_traces), "groups": group_traces}
+        total = _sum_token_usage(group_traces)
+        if total is not None:
+            combined["token_usage"] = total
+            logger.info("schema-merge usage over %d groups | %s", len(group_traces), total)
+        store.write_json(f"{base_key}/design_trace.json", combined)
 
 
 def merge_schema_groups(

@@ -260,7 +260,8 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
     if not started_ui:
         return False, f"{mode} mode never ran scripts/start_local_ui.py to start the local API/UI"
     ready = any(
-        kind == "tool_result" and _contains_status_ready(text) for kind, _name, text in events[start_idx + 1 :]  # type: ignore[operator]
+        kind == "tool_result" and _contains_status_ready(text)
+        for kind, _name, text in events[start_idx + 1 :]  # type: ignore[operator]
     )
     if not ready:
         return False, (
@@ -888,6 +889,15 @@ def _wall_duration_s(claude_exit_path: Path | None) -> float | None:
     return float(match.group(1)) if match else None
 
 
+def _load_token_usage(path: Path | None) -> dict[str, Any] | None:
+    """``{total, phases}`` from ci/llm/token_usage.py's output, or None."""
+    payload = _load_json(path) if path is not None else None
+    if not isinstance(payload, dict) or not isinstance(payload.get("total"), dict):
+        return None
+    phases = payload.get("phases")
+    return {"total": payload["total"], "phases": phases if isinstance(phases, dict) else {}}
+
+
 def build_results_row(
     *,
     mode: str,
@@ -897,6 +907,7 @@ def build_results_row(
     judge_path: Path,
     git_sha: str | None = None,
     claude_exit_path: Path | None = None,
+    token_usage_path: Path | None = None,
 ) -> dict[str, Any]:
     checks: dict[str, bool | None] = {
         "transcript": None,
@@ -1009,6 +1020,7 @@ def build_results_row(
         "denials": denials,
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
+        "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
         "pass": overall_pass,
     }
@@ -1042,6 +1054,7 @@ def cmd_results(args: argparse.Namespace) -> None:
         judge_path=Path(args.judge),
         git_sha=args.git_sha,
         claude_exit_path=Path(args.claude_exit) if args.claude_exit else None,
+        token_usage_path=Path(args.token_usage) if args.token_usage else None,
     )
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1156,6 +1169,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--claude-exit",
         default=None,
         help="Path to claude-exit.txt for a wall-clock wall_duration_s (optional)",
+    )
+    p2.add_argument(
+        "--token-usage",
+        default=None,
+        help="Path to the token_usage.json from ci/llm/token_usage.py (optional)",
     )
     p2.set_defaults(func=cmd_results)
 

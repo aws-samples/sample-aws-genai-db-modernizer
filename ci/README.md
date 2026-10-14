@@ -206,6 +206,7 @@ deterministic job.
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
 - `judge.json` -- `ci/llm/judge.py`'s rubric scores.
+- `token_usage` in `results.json` (and `job-logs/token_usage.json`) -- `ci/llm/token_usage.py` sums the session's per-turn input-side usage (input, cache-read, cache-write tokens, calls; subagent turns included) per pipeline phase, attributed from the `scripts/run_<phase>.py` calls and design/reality-check/synthesize skills each agent made, in the same key names as the Bedrock `token_usage` in `design_trace.json`. Per-phase `outputTokens` is `null`: the transcript's assistant records only carry the first-chunk output count (about 100x too low), so `total.outputTokens` is the session total from the final result records' `modelUsage`, and `session_model_usage` shows the session figures to compare against (the per-phase sums come out 0.2-3.3% short on cache-read). Grouped runs also carry a `token_usage` run total in the consolidated `design_trace.json`.
 - `job-logs/` -- the run's own logs, copied by the EXIT trap (`ci/llm/run.py
   collect-logs`) because only this directory is uploaded: `run_assessment.log`
   from `artifacts/<db>/<job>/_logs/` and the local UI's `local-ui-api.log` /

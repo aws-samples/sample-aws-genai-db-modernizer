@@ -311,6 +311,18 @@ PYEOF
   read -r DB JOB <<<"$DB_JOB"
 fi
 
+# --- per-phase token usage (#676) --------------------------------------------
+
+TOKEN_USAGE_ARGS=()
+if [ -n "$DB" ] && [ -n "$JOB" ]; then
+  run_token_usage() {
+    uv run python ci/llm/token_usage.py "$OUT/transcript.jsonl" \
+      --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB"
+  }
+  step token-usage run_token_usage
+  TOKEN_USAGE_ARGS=(--token-usage "$ARTIFACT_ROOT/$DB/$JOB/_logs/token_usage.json")
+fi
+
 # --- deliverable checks + judge, only if we have a job to point them at -----
 
 if [ -n "$DB" ] && [ -n "$JOB" ]; then
@@ -369,7 +381,8 @@ run_results() {
     --pytest-junit "${JUNIT_ARGS[@]}" \
     --judge "$OUT/judge.json" \
     --mode "$MODE" --fixture "$FIXTURE" \
-    --claude-exit "$OUT/claude-exit.txt"
+    --claude-exit "$OUT/claude-exit.txt" \
+    "${TOKEN_USAGE_ARGS[@]+"${TOKEN_USAGE_ARGS[@]}"}"
 }
 step results run_results
 
