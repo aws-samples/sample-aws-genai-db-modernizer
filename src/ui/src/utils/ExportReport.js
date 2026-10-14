@@ -706,7 +706,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const risks = bySeverity[sev] || [];\n';
   script += '        const cls = sevClass(sev);\n';
   script += '        html += \'<div style="margin-top: 16px;">\';\n';
-  script += '        html += \'<div style="font-weight: 700; font-size: 14px; color: \' + sevText[cls] + \';">\' + escapeHtml(sev) + \' (\' + risks.length + \')</div>\';\n';
+  script += '        html += \'<div style="font-weight: 700; font-size: 14px; color: \' + sevText[cls] + \';">\' + escapeHtml(sev) + \' (\' + openRiskCountAt(sev, risks) + \')</div>\';\n';
   script += '        if (risks.length === 0) {\n';
   script += '          html += \'<p style="color: var(--color-text-secondary); font-size: 13px;">No open risks at this severity.</p>\';\n';
   script += '        }\n';
@@ -729,7 +729,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'</div>\';\n';
   script += '      });\n';
   script += '      if (resolvedRisks.length > 0) {\n';
-  script += '        html += \'<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">\' + resolvedRisks.length + \' resolved by the assignment</summary>\';\n';
+  script += '        html += \'<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">\' + resolvedRiskCount(resolvedRisks) + \' resolved by the assignment</summary>\';\n';
   script += '        resolvedRisks.forEach(function(r) {\n';
   script += '          const parts = splitDesc(r.description);\n';
   script += '          const cls = sevClass(r.severity);\n';
@@ -1159,6 +1159,19 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    function waveFacts(wave) {\n';
   script += '      const rows = DATA.results?.synthesis?.facts?.waves || [];\n';
   script += '      return rows.find(r => r.wave === wave.wave) || null;\n';
+  script += '    }\n';
+  script += '\n';
+  // #748: the open-risk count per severity and the resolved-risk count are
+  // facts too (open_risks_by_severity, resolved_risk_count); the lists are only
+  // what the tab shows, and the answer for a hand-built report with no facts.
+  script += '    function openRiskCountAt(sev, shown) {\n';
+  script += '      const bySeverity = DATA.results?.synthesis?.facts?.open_risks_by_severity;\n';
+  script += '      return bySeverity && typeof bySeverity === \'object\' ? (bySeverity[sev] || 0) : shown.length;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function resolvedRiskCount(shown) {\n';
+  script += '      const n = DATA.results?.synthesis?.facts?.resolved_risk_count;\n';
+  script += '      return typeof n === \'number\' ? n : shown.length;\n';
   script += '    }\n';
   script += '\n';
   script += '    function waveTableStats(wave) {\n';
@@ -1689,12 +1702,15 @@ export const generateHTMLReport = (data) => {
   const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   // #358: the headline total is the report's own tco_analysis.projected_monthly_cost
   // -- one source of truth, matching the decision report and chat -- never a sum
-  // recomputed from a filtered subset. Falls back to summing the kept cards
-  // (owners + cache layer) only when that field is missing (older artifacts).
+  // recomputed from a filtered subset. When that field is missing (older
+  // artifacts) the total is facts.projected_monthly_cost_usd, which the facts
+  // layer computes over the same kept engines (#748).
   const { total: projectedCostValue } = resolveCostBreakdown(
-    results?.synthesis?.tco_analysis, afterDist, cacheOverlay
+    results?.synthesis?.tco_analysis, afterDist, cacheOverlay, results?.synthesis?.facts
   );
-  const projectedCost = escapeHtml(finite(projectedCostValue).toFixed(2));
+  // A hand-built artifact with neither projected_monthly_cost nor facts has no
+  // total: say so rather than print a made-up $0.00.
+  const projectedCostStat = projectedCostValue === null ? 'n/a' : `$${escapeHtml(finite(projectedCostValue).toFixed(2))}/mo`;
   // #334: a report with no current-cost baseline left current_monthly_cost/
   // savings_percent at a bare 0 -- indistinguishable from a real zero-savings
   // outcome. Mirrors utils/tcoAnalysis.js's costBaselineStats (also used by
@@ -1792,7 +1808,7 @@ export const generateHTMLReport = (data) => {
       <div class="grid grid-4">
         <div class="stat-card"><div class="stat-label">Database</div><div class="stat-value">${safeDatabaseNameStat}</div></div>
         <div class="stat-card"><div class="stat-label">Target Engines</div><div class="stat-value">${engineBadges}</div></div>
-        <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">$${projectedCost}/mo</div></div>
+        <div class="stat-card"><div class="stat-label">Projected Cost</div><div class="stat-value">${projectedCostStat}</div></div>
         <div class="stat-card"><div class="stat-label">Current Monthly Cost</div><div class="stat-value">${currentCostStat}</div></div>
         <div class="stat-card"><div class="stat-label">Savings</div><div class="stat-value">${savingsStat}</div></div>
         <div class="stat-card"><div class="stat-label">Access Patterns</div><div class="stat-value">${totalPatterns}</div>${cachePatternsNote}</div>

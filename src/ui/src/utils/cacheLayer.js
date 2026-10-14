@@ -154,21 +154,19 @@ export function isKeptCostEngine(database, afterDist, cacheEngine) {
  * any), and always reports the artifact's own `projected_monthly_cost` as the
  * total -- never a sum recomputed from a filtered subset -- so the figure
  * matches the decision report and chat (one source of truth in report.json).
- * Falls back to summing the kept items only when `projected_monthly_cost` is
- * missing (older artifacts predating that field) -- summing only finite
- * numbers, so a non-numeric `monthly_cost_usd` (a string, NaN, hostile text)
- * can't turn the fallback sum into string concatenation (PR #244's shell
- * guard, applied here too since this helper now owns the sum).
+ * Falls back to `facts.projected_monthly_cost_usd` when
+ * `projected_monthly_cost` is missing (older artifacts predating that field):
+ * the facts layer sums the same kept engines once (ADR-032, #748), so this
+ * helper keeps no sum of its own. A hand-built artifact with neither field has
+ * no total (`null`): callers show "n/a" or "—", never a made-up 0.
  */
-export function resolveCostBreakdown(tcoAnalysis, afterDist, cacheOverlay) {
+export function resolveCostBreakdown(tcoAnalysis, afterDist, cacheOverlay, facts) {
   const all = tcoAnalysis?.cost_breakdown || [];
   const cacheEngine = cacheOverlay?.engine;
   const items = all.filter((cb) => isKeptCostEngine(cb.database, afterDist, cacheEngine));
   const reported = tcoAnalysis?.projected_monthly_cost;
-  const finiteCost = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const total = typeof reported === 'number' && Number.isFinite(reported)
-    ? reported
-    : items.reduce((sum, cb) => sum + finiteCost(cb.monthly_cost_usd), 0);
+  const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const total = finite(reported) ?? finite(facts?.projected_monthly_cost_usd);
   return { items, total };
 }
 

@@ -1027,7 +1027,7 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
         "__SUMMARY__": escaping.html_text(_summary_text(synthesis)),
         "__SUMMARY_FALLBACK_NOTE__": _summary_fallback_note(synthesis),
         "__ENGINE_BADGES__": _engine_badges(after, cache_overlay),
-        "__PROJECTED_COST__": f"{projected:,.2f}",
+        "__PROJECTED_COST__": f"${projected:,.2f}/mo",
         "__CURRENT_COST_STAT__": escaping.html_text(current_cost_stat),
         "__SAVINGS_STAT__": escaping.html_text(savings_stat),
         "__TOTAL_PATTERNS__": str(total_patterns),

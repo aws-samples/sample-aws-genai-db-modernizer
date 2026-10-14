@@ -5,7 +5,11 @@
  */
 import {
   currentTradeOffs,
+  mappedTableCountOf,
+  openRiskCountAt,
   openRiskCountOf,
+  resolvedRiskCountOf,
+  tradeOffCountOf,
   realityCheckDecisions,
   tradeOffsByTab,
   tradeOffTabLabel,
@@ -125,5 +129,30 @@ describe('results page Reality check tab (ADR-032 Decision 7)', () => {
   test('adds no tab when the reality check decided nothing', () => {
     expect(Object.keys(tradeOffsByTab(designs, { facts: { reality_check_decisions: [] } }))).toEqual(['dynamodb']);
     expect(Object.keys(tradeOffsByTab(designs, undefined))).toEqual(['dynamodb']);
+  });
+});
+
+describe('the counts the deliverables print are facts (#748)', () => {
+  const facts = {
+    open_risks_by_severity: { CRITICAL: 1, MEDIUM: 4 },
+    resolved_risk_count: 6,
+    trade_off_count: 12,
+    table_basis: { mapped_tables: 22 },
+  };
+
+  test('read the stored fact, not the length of the list on screen', () => {
+    expect(openRiskCountAt({ facts }, 'CRITICAL', [])).toBe(1);
+    expect(openRiskCountAt({ facts }, 'HIGH', [{}, {}])).toBe(0);
+    expect(resolvedRiskCountOf({ facts }, [{}])).toBe(6);
+    expect(tradeOffCountOf({ facts }, [{}])).toBe(12);
+    expect(mappedTableCountOf({ facts }, [{}])).toBe(22);
+  });
+
+  test('a hand-built report with no facts block shows the list it has', () => {
+    expect(openRiskCountAt({}, 'HIGH', [{}, {}])).toBe(2);
+    expect(openRiskCountAt({ facts: {} }, 'HIGH', [{}])).toBe(1);
+    expect(resolvedRiskCountOf({}, [{}, {}, {}])).toBe(3);
+    expect(tradeOffCountOf(undefined, [{}])).toBe(1);
+    expect(mappedTableCountOf({ facts: {} }, [{}, {}])).toBe(2);
   });
 });

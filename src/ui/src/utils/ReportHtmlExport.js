@@ -17,7 +17,9 @@ import { analysisConfidence, confidenceText, hasRoutedConfidence } from './ranki
 import { displayEngine } from './engineNames';
 import { WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL } from './workloadFitLabels';
 import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
-import { currentTradeOffs, openRiskCountOf, waveTableStats } from './reportFacts';
+import {
+  currentTradeOffs, mappedTableCountOf, openRiskCountOf, resolvedRiskCountOf, tradeOffCountOf, waveTableStats,
+} from './reportFacts';
 
 // A wave with more tables than this shows "+N more" rather than every name
 // inline (#225 -- discourse wave 4 lists 226 tables).
@@ -109,6 +111,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   const ranking = ownerRanking;
   const cacheLayerLine = formatCacheLayerLine(cacheLayer, { t, withLabel: false });
   const tableMappings = asArray(synthesis.table_mappings);
+  const tableMappingCount = mappedTableCountOf(synthesis, tableMappings);
   const riskAssessment = synthesis.risk_assessment || {};
   const risks = asArray(riskAssessment.risks).filter(risk => riskHasContent(risk.description));
   // #615: the open-risk count is a fact (the same list's count, computed once).
@@ -125,6 +128,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
     }));
   // #546: a reality-check line a later assignment edit reversed is not listed.
   const tradeoffs = asArray(currentTradeOffs(synthesis));
+  const tradeOffCount = tradeOffCountOf(synthesis, tradeoffs);
   const tcoAnalysis = synthesis.tco_analysis || {};
   const queryGroups = asArray(synthesis.query_groups);
   // #478: neither "blame" label (a utility/session statement,
@@ -258,7 +262,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
 
   <div class="section-separator">
-    <h2>Table Mappings (${tableMappings.length})</h2>
+    <h2>Table Mappings (${tableMappingCount})</h2>
     <div class="desc">Recommended mapping of source tables to target databases with design patterns and fit scores</div>
   </div>
 
@@ -285,7 +289,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         `)}
       </tbody>
     </table>
-    ${tableMappings.length > 50 ? html`<p style="margin-top: 15px; color: #666; font-size: 14px;">Showing first 50 of ${tableMappings.length} table mappings</p>` : ''}
+    ${tableMappingCount > 50 ? html`<p style="margin-top: 15px; color: #666; font-size: 14px;">Showing first 50 of ${tableMappingCount} table mappings</p>` : ''}
   </div>
 
   <div class="section-separator">
@@ -325,7 +329,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
 
   <div class="section-separator">
-    <h2>${t('report-results.risk-assessment.resolved-tab', { count: resolvedRisks.length })}</h2>
+    <h2>${t('report-results.risk-assessment.resolved-tab', { count: resolvedRiskCountOf(synthesis, resolvedRisks) })}</h2>
     <div class="desc">${t('report-results.risk-assessment.resolved-export-description')}</div>
   </div>
 
@@ -355,7 +359,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
 
   <div class="section-separator">
-    <h2>Trade-offs (${tradeoffs.length})</h2>
+    <h2>Trade-offs (${tradeOffCount})</h2>
     <div class="desc">Key architectural and operational trade-offs to consider when migrating to each target database</div>
   </div>
 
@@ -370,7 +374,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
         ${sourceTables.length > 0 || targetTables.length > 0 ? html`<div style="margin-top: 4px; color: #888; font-size: 12px;">${sourceTables.join(', ')}${sourceTables.length > 0 && targetTables.length > 0 ? ' → ' : ''}${targetTables.join(', ')}</div>` : ''}
       </div>`;
     })}
-    ${tradeoffs.length > 30 ? html`<p style="margin-top: 15px; color: #666; font-size: 14px;">Showing first 30 of ${tradeoffs.length} trade-offs</p>` : ''}
+    ${tradeOffCount > 30 ? html`<p style="margin-top: 15px; color: #666; font-size: 14px;">Showing first 30 of ${tradeOffCount} trade-offs</p>` : ''}
   </div>
 
   ${tcoAnalysis.projected_monthly_cost ? html`

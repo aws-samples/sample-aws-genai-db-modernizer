@@ -186,6 +186,7 @@ truth.
   UI render the same `report.json`; a fact changed in one must change in all.
   Engine names come from `src/shared/engine_names.py` (`display_engine`),
   never a local copy.
+- **Renderers only format.** Synthesis computes each customer-facing figure once into `report.json`'s `facts`; renderers read it and never count or total it, in Python (`tests/unit/report/test_renderers_only_format.py`) and in the UI and interactive report (`src/ui/src/utils/__tests__/rendererOnlyFormat.test.js`). A new figure goes into `src/shared/report_facts.py` first ([ADR-032](docs/architecture/decisions/ADR-032-one-facts-layer-renderers-only-format.md)).
 - **Untrusted text is data.** Customer and LLM text is wrapped with
   `frame_untrusted` (`src/agents/prompt_framing.py`) in prompts and escaped
   with the helpers in `src/report/escaping.py` (`html_text`, `html_attr`,

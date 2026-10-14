@@ -650,3 +650,24 @@ def test_a_helper_handed_the_facts_block_is_guarded(tmp_path: Path) -> None:
     sample.write_text(source.replace(needle, needle + '    n_engines = len(facts["engines"])\n', 1))
     found = _violations(sample)
     assert len(found) == 1 and "len(facts['engines'])" in found[0], found
+
+
+JS_GUARD = REPO / "src" / "ui" / "src" / "utils" / "__tests__" / "rendererOnlyFormat.test.js"
+
+
+def _js_set(name: str) -> set[str]:
+    """The string members of ``const <name> = new Set([...])`` in the jest guard."""
+    m = re.search(rf"const {name} = new Set\(\[(.*?)\]\);", JS_GUARD.read_text(), re.S)
+    assert m, f"{name} not found in {JS_GUARD.relative_to(REPO)}"
+    return set(re.findall(r"'([^']+)'", m.group(1)))
+
+
+def test_the_javascript_guard_owns_what_the_python_guard_owns() -> None:
+    """The UI side has its own guard (#748, jest: Python cannot parse JavaScript).
+    Its input keys are this guard's, and its excepted names are this guard's plus
+    ``index`` (a list position, which a JS ``.index`` read would otherwise own);
+    its owned fact keys come from the contract snapshot, so they follow
+    ``ReportFacts`` the same way ``FACT_KEYS`` does."""
+    assert _js_set("INPUT_KEYS") == set(INPUT_KEYS)
+    assert _js_set("NOT_A_FIGURE") == set(NOT_A_FIGURE) | {"index"}
+    assert "../../../../.." in JS_GUARD.read_text()  # reads tests/contract/schema_snapshot.json

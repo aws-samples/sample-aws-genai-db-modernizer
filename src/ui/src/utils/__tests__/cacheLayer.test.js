@@ -417,34 +417,29 @@ describe('resolveCostBreakdown (#358 Results page "Cost breakdown" + "Projected 
     expect(items.map(cb => cb.database)).toEqual(['dynamodb']);
   });
 
-  test('falls back to summing the kept items when projected_monthly_cost is missing (legacy artifact)', () => {
+  test('falls back to facts.projected_monthly_cost_usd when projected_monthly_cost is missing (legacy artifact, #748)', () => {
+    // The facts layer sums the kept engines once; this helper keeps no sum.
     const tco = {
       cost_breakdown: [
         { database: 'dynamodb', monthly_cost_usd: 60 },
         { database: 'aurora_mysql', monthly_cost_usd: 40 },
       ],
     };
-    const { total } = resolveCostBreakdown(tco, { dynamodb: 10, aurora_mysql: 5 }, null);
+    const facts = { projected_monthly_cost_usd: 100 };
+    const { total } = resolveCostBreakdown(tco, { dynamodb: 10, aurora_mysql: 5 }, null, facts);
     expect(total).toBe(100);
   });
 
-  test('the fallback sum only counts finite numbers (PR #244 review): a string/NaN cost never turns it into string concatenation', () => {
-    const tco = {
-      cost_breakdown: [
-        { database: 'dynamodb', monthly_cost_usd: 2.5 },
-        { database: 'x', monthly_cost_usd: '5' },
-        { database: 'y', monthly_cost_usd: '<img src=x onerror=alert(1)>' },
-        { database: 'z', monthly_cost_usd: Number.NaN },
-        { database: 'w', monthly_cost_usd: 1.25 },
-      ],
-    };
-    const afterDist = { dynamodb: 1, x: 1, y: 1, z: 1, w: 1 };
-    const { total } = resolveCostBreakdown(tco, afterDist, null);
-    expect(total).toBe(3.75);
+  test('the report\'s own total wins over the facts one, and a missing or non-numeric one is no total (null)', () => {
+    const facts = { projected_monthly_cost_usd: 5 };
+    expect(resolveCostBreakdown({ projected_monthly_cost: 9, cost_breakdown: [] }, {}, null, facts).total).toBe(9);
+    expect(resolveCostBreakdown({ cost_breakdown: [] }, {}, null).total).toBeNull();
+    expect(resolveCostBreakdown({ cost_breakdown: [] }, {}, null, { projected_monthly_cost_usd: '5' }).total).toBeNull();
+    expect(resolveCostBreakdown({ cost_breakdown: [] }, {}, null, { projected_monthly_cost_usd: Number.NaN }).total).toBeNull();
   });
 
   test('handles a missing/undefined tco_analysis', () => {
-    expect(resolveCostBreakdown(undefined, {}, null)).toEqual({ items: [], total: 0 });
+    expect(resolveCostBreakdown(undefined, {}, null)).toEqual({ items: [], total: null });
   });
 });
 

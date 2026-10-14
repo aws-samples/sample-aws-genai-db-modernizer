@@ -35,6 +35,39 @@ export function openRiskCountOf(synthesis, shownRisks) {
   return typeof n === 'number' ? n : (shownRisks || []).length;
 }
 
+// #748: the other counts the deliverables print. Each reads the stored fact;
+// the shown list is only the answer for a hand-built report with no `facts`
+// block (the /results API and the exporters fill one in for a real report).
+function factsOf(synthesis) {
+  return (synthesis && synthesis.facts) || null;
+}
+
+// "CRITICAL (3)": the open risks at one severity (facts.open_risks_by_severity
+// omits a severity with none).
+export function openRiskCountAt(synthesis, severity, shownAtSeverity) {
+  const bySeverity = factsOf(synthesis) && factsOf(synthesis).open_risks_by_severity;
+  if (bySeverity && typeof bySeverity === 'object') return bySeverity[severity] || 0;
+  return (shownAtSeverity || []).length;
+}
+
+// "3 resolved by the assignment" (facts.resolved_risk_count).
+export function resolvedRiskCountOf(synthesis, shownRisks) {
+  const n = factsOf(synthesis) && factsOf(synthesis).resolved_risk_count;
+  return typeof n === 'number' ? n : (shownRisks || []).length;
+}
+
+// "Trade-offs (12)": the trade-offs that still apply (facts.trade_off_count).
+export function tradeOffCountOf(synthesis, shownTradeOffs) {
+  const n = factsOf(synthesis) && factsOf(synthesis).trade_off_count;
+  return typeof n === 'number' ? n : (shownTradeOffs || []).length;
+}
+
+// "Table Mappings (22)" (facts.table_basis.mapped_tables).
+export function mappedTableCountOf(synthesis, shownMappings) {
+  const basis = factsOf(synthesis) && factsOf(synthesis).table_basis;
+  return basis && typeof basis.mapped_tables === 'number' ? basis.mapped_tables : (shownMappings || []).length;
+}
+
 // #595: the reality-check trade-offs that still apply, shaped like a schema
 // design's trade-off ({description, impact, query_ids}) so the trade-offs tab
 // lists them next to the engines' own. A report synthesized before

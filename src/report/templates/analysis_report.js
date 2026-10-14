@@ -387,7 +387,7 @@
         const risks = bySeverity[sev] || [];
         const cls = sevClass(sev);
         html += '<div style="margin-top: 16px;">';
-        html += '<div style="font-weight: 700; font-size: 14px; color: ' + sevText[cls] + ';">' + escapeHtml(sev) + ' (' + risks.length + ')</div>';
+        html += '<div style="font-weight: 700; font-size: 14px; color: ' + sevText[cls] + ';">' + escapeHtml(sev) + ' (' + openRiskCountAt(sev, risks) + ')</div>';
         if (risks.length === 0) {
           html += '<p style="color: var(--color-text-secondary); font-size: 13px;">No open risks at this severity.</p>';
         }
@@ -410,7 +410,7 @@
         html += '</div>';
       });
       if (resolvedRisks.length > 0) {
-        html += '<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">' + resolvedRisks.length + ' resolved by the assignment</summary>';
+        html += '<details style="margin-top: 20px;"><summary style="cursor: pointer; font-weight: 600;">' + resolvedRiskCount(resolvedRisks) + ' resolved by the assignment</summary>';
         resolvedRisks.forEach(function(r) {
           const parts = splitDesc(r.description);
           const cls = sevClass(r.severity);
@@ -763,6 +763,16 @@
     function waveFacts(wave) {
       const rows = DATA.results?.synthesis?.facts?.waves || [];
       return rows.find(r => r.wave === wave.wave) || null;
+    }
+
+    function openRiskCountAt(sev, shown) {
+      const bySeverity = DATA.results?.synthesis?.facts?.open_risks_by_severity;
+      return bySeverity && typeof bySeverity === 'object' ? (bySeverity[sev] || 0) : shown.length;
+    }
+
+    function resolvedRiskCount(shown) {
+      const n = DATA.results?.synthesis?.facts?.resolved_risk_count;
+      return typeof n === 'number' ? n : shown.length;
     }
 
     function waveTableStats(wave) {

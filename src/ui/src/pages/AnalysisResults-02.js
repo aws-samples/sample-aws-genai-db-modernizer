@@ -52,7 +52,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
-import { tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { openRiskCountAt, resolvedRiskCountOf, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -340,7 +340,7 @@ const AnalysisResultsPage = memo(() => {
   // tco_analysis.projected_monthly_cost -- not a sum recomputed from a
   // filtered subset -- so it matches the decision report and chat.
   const { items: costBreakdown, total: projectedCost } = useMemo(
-    () => resolveCostBreakdown(synthesis?.tco_analysis, afterDist, cacheOverlay),
+    () => resolveCostBreakdown(synthesis?.tco_analysis, afterDist, cacheOverlay, synthesis?.facts),
     [synthesis, afterDist, cacheOverlay]
   );
 
@@ -2361,10 +2361,11 @@ const AnalysisResultsPage = memo(() => {
                       ...((risksBySeverity[UNRATED] || []).length > 0 ? [UNRATED] : []),
                     ].map((severity) => {
                       const risksAtSeverity = risksBySeverity[severity] || [];
+                      const severityCount = openRiskCountAt(synthesis, severity, risksAtSeverity);
                       const status = riskSeverityStatus(severity);
                       return {
                         id: severity,
-                        label: t('analysis-results-v2.risk-assessment.tab-label', { severity, count: risksAtSeverity.length }),
+                        label: t('analysis-results-v2.risk-assessment.tab-label', { severity, count: severityCount }),
                         content: risksAtSeverity.length === 0 ? (
                           <Box color="text-body-secondary" padding="s">
                             {t('analysis-results-v2.risk-assessment.no-risks-at-severity')}
@@ -2415,7 +2416,7 @@ const AnalysisResultsPage = memo(() => {
                     })}
                   />
                   {resolvedRisksList.length > 0 && (
-                    <ExpandableSection headerText={t('analysis-results-v2.risk-assessment.resolved-count', { count: resolvedRisksList.length })}>
+                    <ExpandableSection headerText={t('analysis-results-v2.risk-assessment.resolved-count', { count: resolvedRiskCountOf(synthesis, resolvedRisksList) })}>
                       <SpaceBetween size="s">
                         {resolvedRisksList.map((risk, idx) => {
                           const { body } = splitRiskDescription(risk.description);

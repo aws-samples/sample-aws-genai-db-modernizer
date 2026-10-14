@@ -401,6 +401,15 @@ describe('generateHTMLReport (interactive export)', () => {
     expect(doc.querySelector('.meta-pair-value').textContent).toBe(BREAKOUT);
   });
 
+  it('a hand-built artifact with neither projected_monthly_cost nor facts says n/a, not $0.00 (#748)', () => {
+    const data = hostileExportData();
+    delete data.results.synthesis.tco_analysis.projected_monthly_cost;
+    delete data.results.synthesis.facts;
+    const doc = new DOMParser().parseFromString(generateHTMLReport(data), 'text/html');
+    const stats = [...doc.querySelectorAll('.stat-card')].map(c => c.querySelector('.stat-value').textContent);
+    expect(stats[2]).toBe('n/a');
+  });
+
   it('counts and sums only real numbers in the shell (PR #244 review)', () => {
     const data = hostileExportData();
     data.schemaDesigns[0].content.access_patterns = { length: IMG };
@@ -411,11 +420,12 @@ describe('generateHTMLReport (interactive export)', () => {
       { database: 'z', monthly_cost_usd: Number.NaN },
       { database: 'w', monthly_cost_usd: 1.25 },
     ];
-    // #358: with no tco_analysis.projected_monthly_cost, the shell falls back
-    // to summing only the "kept" cards (owners + cache layer) -- so every
-    // database above must be an owner here, or this test would stop
-    // exercising the finite-number coercion it's actually about.
+    // #358/#748: with no tco_analysis.projected_monthly_cost, the shell shows
+    // facts.projected_monthly_cost_usd (the facts layer sums the kept cards once,
+    // finite numbers only); it keeps no sum of its own, and a non-numeric fact
+    // is shown as $0.00 rather than concatenated into the markup.
     data.results.synthesis.reality_check.after_distribution = { dynamodb: 1, x: 1, y: 1, z: 1, w: 1 };
+    data.results.synthesis.facts = { projected_monthly_cost_usd: 3.75 };
     let markup;
     expect(() => { markup = generateHTMLReport(data); }).not.toThrow();
     const doc = new DOMParser().parseFromString(markup, 'text/html');
