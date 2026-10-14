@@ -143,6 +143,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 12. A still-unresolved tie gets a placeholder | `tests/unit/agents/referee/test_tie_break.py::TestPickUnresolvedTiePlaceholder`<br>`tests/unit/agents/referee/test_tie_break.py::TestSettledCounts` |
 | 13. The source-compatible engine is not removed on cost for a no-better engine | `tests/unit/agents/referee/test_source_compatible_tie_survival.py`<br>`tests/unit/agents/referee/test_tie_break.py::TestCheaperEngineDisplacesSourceCompatible` |
 | 14. A whole-workload anti-pattern's table-level rule only complements the per-query check | `tests/unit/tools/analysis/test_aurora_anti_patterns.py::TestNoRelationalNeedRequiresSingleTableCrud`<br>`tests/unit/agents/referee/test_query_shape.py::TestIsSingleTableCrud`<br>`tests/unit/agents/referee/test_query_shape.py::TestPrimaryKeyFirstRowRead` |
+| Amendment 2026-10-14 (Decision 6, #656): Aurora PostgreSQL wins only as the final exact-tie break | `tests/unit/agents/referee/test_aurora_choice.py::TestExactTiePrefersPostgresqlByMaintainerRule`<br>`tests/unit/agents/referee/test_cache_overlay.py::TestFallbackOwner::test_a_non_source_compatible_aurora_engine_does_not_win_either` |
 
 ## What this ADR supersedes
 

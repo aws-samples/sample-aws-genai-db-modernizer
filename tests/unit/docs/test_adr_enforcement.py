@@ -18,7 +18,12 @@ names that must exist in that file. A decision with no guard says
 weak test; it is never left blank. A decision a later ADR replaced says
 ``superseded by ADR-NNN Decision N``: that ADR must exist and number that decision, and the
 superseding decision carries the guard (its own Enforcement row). When no later ADR covers
-it, ``superseded -- #N (reason)`` or ``superseded -- <what changed and the code path>`` says so (the decision text stays). Sections of ADRs that predate this rule are
+it, ``superseded -- #N (reason)`` or ``superseded -- <what changed and the code path>`` says so (the decision text stays). An amendment that adds no lettered or numbered decision (a prose ``## Amendment 2 (date)``
+section, or a dated ``**Amendment (date, ...)**`` paragraph inside a decision) is a unit
+of its own: it needs a row labelled ``Amendment 2``, ``Amendment 2026-10-14`` or
+``Amendment #273`` (the number, else the date, else the issue in its heading) naming a guard
+test, ``none yet -- #N``, or ``no rule -- <reason>`` when it is prose only and states no
+rule. ``no rule`` is valid on amendment rows only; a decision always has a rule. Sections of ADRs that predate this rule are
 listed in ``PENDING_ADOPTION`` (#641) and leave that list when their table is
 added.
 """
@@ -58,6 +63,14 @@ SUPERSEDED_NOTE = re.compile(
 SUPERSEDED = re.compile(
     r"^superseded by ADR-(\d{3}) Decision (\d+|[A-Z])(?:\s+\(.*\))?$", re.IGNORECASE
 )
+NO_RULE = re.compile(r"^no rule\s+(?:--|—)\s+\S.*$", re.IGNORECASE)
+# An amendment row label: ``Amendment 1``, ``Amendment 2026-10-02`` or ``Amendment #273``,
+# optionally followed by free text before the ``|``.
+AMENDMENT_KEY = r"Amendment\s+(?:\d{4}-\d{2}-\d{2}|\d+(?![\d-])|#\d+)"
+AMENDMENT_ROW = re.compile(rf"^\|\s*({AMENDMENT_KEY})[^|]*\|(.*)\|\s*$")
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# A dated amendment note inside a decision: ``**Amendment (2026-10-14, ...)**`` or ``*Amended ...*``.
+INLINE_AMENDMENT = re.compile(r"^\*{1,2}Amend(?:ment|ed)\b[^\n]*", re.MULTILINE)
 TEST_ENTRY = re.compile(r"^`(tests/[\w./-]+\.py)((?:::\w+)*)`$")
 
 
@@ -96,16 +109,102 @@ def unrecognised_decision_headings(text: str) -> list[str]:
     ]
 
 
+def _amendment_key(heading: str) -> str | None:
+    """``Amendment 1`` / ``Amendment 2026-10-02`` / ``Amendment #273`` for a section heading."""
+    num = re.match(r"Amendment\s+(\d+)(?![\d-])", heading)
+    if num:
+        return f"Amendment {num.group(1)}"
+    date = DATE.search(heading)
+    if date:
+        return f"Amendment {date.group(0)}"
+    issue = re.search(r"#\d+", heading)
+    return f"Amendment {issue.group(0)}" if issue else None
+
+
+def _amendment_units(text: str) -> list[tuple[str, str]]:
+    """``(key, own text)`` of each amendment that adds no decision heading of its own."""
+    units: list[tuple[str, str]] = []
+    for title, body in _sections(text):
+        if title.startswith("Amendment"):
+            if not DECISION_HEADING.search(body):
+                units.append((_amendment_key(title) or f"Amendment ?{title}", body))
+        elif title.startswith("Decision"):
+            for m in INLINE_AMENDMENT.finditer(body):
+                note = body[m.start() :].split("\n\n", 1)[0]
+                date = DATE.search(m.group(0))
+                units.append(
+                    (f"Amendment {date.group(0)}" if date else f"Amendment ?{note[:40]}", note)
+                )
+    return units
+
+
+def amendment_keys(text: str) -> list[str]:
+    """Row keys of the amendments that add no decision heading of their own.
+
+    Two shapes: a ``## Amendment ...`` section with no ``### A.``/``### 1.`` decision inside
+    (its decisions, when it has them, are checked as decisions), and a dated
+    ``**Amendment (date ...)**`` paragraph inside a decision. A heading the key cannot be read
+    from (no number, date or issue) gives ``Amendment ?<heading>`` so the check reports it.
+    """
+    return [k for k, _ in _amendment_units(text)]
+
+
+AMENDMENT_MENTION = re.compile(r"^\s*(?:#{1,6}\s+|[>\-*]+\s*)+(?:Amend(?:ment|ed)|Addendum)\b")
+NO_RULE_NOTE = re.compile(r"^\*No enforceable rule\b", re.MULTILINE)
+
+
+def unrecognised_amendments(text: str) -> list[str]:
+    """Lines that open an amendment (or addendum) in a shape that produced no key.
+
+    A line starting with ``Amendment``/``Amended``/``Addendum`` after a ``#``, ``>``, ``-`` or
+    ``*`` marker counts (plain wrapped prose that begins with the word does not). Read shapes are ``## Amendment ...`` sections and a
+    ``**Amendment ...**`` paragraph at the start of a line inside a ``## Decision`` section;
+    anything else (``### Amendment`` under a decision, a ``> **Amendment`` quote, a note under
+    ``## Consequences``, ``## Amended`` or ``## Addendum``) would be skipped silently, so it is
+    reported, as ``unrecognised_decision_headings`` does.
+    """
+    out: list[str] = []
+    for title, body in _sections(text):
+        if title.startswith("Amendment"):
+            continue  # the heading is read; a line inside is its own prose
+        if AMENDMENT_MENTION.match(f"## {title}"):
+            out.append(f"## {title}")
+        read = title.startswith("Decision")
+        for line in body.splitlines():
+            if AMENDMENT_MENTION.match(line) and not (read and INLINE_AMENDMENT.match(line)):
+                out.append(line.strip())
+    return out
+
+
+def no_rule_problems(text: str, key: str, cell: str) -> list[str]:
+    """``no rule`` needs the amendment's own italic ``*No enforceable rule: ...*`` note.
+
+    Without it, one edit to a row could silence an amendment that states a rule.
+    """
+    if not any(NO_RULE.match(e.strip()) for e in cell.split("<br>")):
+        return []
+    own = next((body for k, body in _amendment_units(text) if k == key), "")
+    if NO_RULE_NOTE.search(own):
+        return []
+    return ["the amendment has no italic `*No enforceable rule: ...*` note in its own text"]
+
+
 def enforcement_rows(text: str) -> dict[str, str]:
-    """Decision number -> raw ``Enforced by`` cell, from the Enforcement table."""
+    """Decision number or amendment key -> raw ``Enforced by`` cell, from the Enforcement table."""
     body = "\n".join(b for title, b in _sections(text) if title == "Enforcement")
     rows: dict[str, str] = {}
     for line in body.splitlines():
-        m = ROW.match(line.strip())
+        line = line.strip()
+        m = ROW.match(line)
         if m:
-            number = m.group(1)
-            assert number not in rows, f"decision {number} has two Enforcement rows"
-            rows[number] = m.group(2).strip()
+            key, cell = m.group(1), m.group(2)
+        else:
+            m = AMENDMENT_ROW.match(line)
+            if not m:
+                continue
+            key, cell = re.sub(r"\s+", " ", m.group(1)), m.group(2)
+        assert key not in rows, f"{key} has two Enforcement rows"
+        rows[key] = cell.strip()
     return rows
 
 
@@ -181,9 +280,14 @@ def superseded_context_problems(text: str, label: str, cell: str) -> list[str]:
     return problems
 
 
-def entry_problems(entry: str, current: str | None = None) -> list[str]:
-    """Why one cell entry is not a valid guard reference (empty when valid)."""
+def entry_problems(entry: str, current: str | None = None, *, amendment: bool = False) -> list[str]:
+    """Why one cell entry is not a valid guard reference (empty when valid).
+
+    ``amendment`` allows ``no rule -- <reason>``, which only a prose-only amendment may say.
+    """
     if NONE_YET.match(entry):
+        return []
+    if amendment and NO_RULE.match(entry):
         return []
     if SUPERSEDED_NOTE.match(entry):
         return []
@@ -227,11 +331,13 @@ def entry_problems(entry: str, current: str | None = None) -> list[str]:
     return []
 
 
-def cell_problems(cell: str, current: str | None = None) -> list[str]:
+def cell_problems(cell: str, current: str | None = None, *, amendment: bool = False) -> list[str]:
     entries = [e.strip() for e in cell.split("<br>") if e.strip()]
     if not entries:
         return ["the Enforced by cell is empty"]
-    return [p for e in entries for p in entry_problems(e, current)]
+    if amendment and len(entries) > 1 and any(NO_RULE.match(e) for e in entries):
+        return ["`no rule` cannot be mixed with other entries: it says the amendment has no rule"]
+    return [p for e in entries for p in entry_problems(e, current, amendment=amendment)]
 
 
 def _adrs() -> list[Path]:
@@ -244,13 +350,17 @@ def _in_force(text: str) -> bool:
     return not status or status.group(1) not in {"Superseded", "Rejected"}
 
 
+def _has_checkable_units(text: str) -> bool:
+    return bool(decision_numbers(text) or amendment_keys(text))
+
+
 def _checked_adrs() -> list[Path]:
     """ADRs whose numbered decisions must each have a guard (not pending)."""
     return [
         p
         for p in _adrs()
         if p.name not in PENDING_ADOPTION
-        and decision_numbers(p.read_text())
+        and _has_checkable_units(p.read_text())
         and _in_force(p.read_text())
     ]
 
@@ -261,7 +371,7 @@ def unparsed_decisions(text: str) -> bool:
     That is how a renamed ``## Decision`` or a ``### Part A.`` heading would drop an ADR out
     of the check unnoticed.
     """
-    return bool(enforcement_rows(text)) and not decision_numbers(text)
+    return bool(enforcement_rows(text)) and not _has_checkable_units(text)
 
 
 @pytest.mark.parametrize("adr", _adrs(), ids=lambda p: p.name)
@@ -290,16 +400,35 @@ def test_adr_031_is_checked() -> None:
 def test_every_numbered_decision_names_an_existing_guard(adr: Path) -> None:
     text = adr.read_text()
     numbers = decision_numbers(text)
+    amendments = amendment_keys(text)
     rows = enforcement_rows(text)
     problems = [
         f"decision {n} has no row in the Enforcement table" for n in numbers if n not in rows
     ]
     problems += [
-        f"Enforcement row {n} matches no numbered decision" for n in rows if n not in numbers
+        f"{a} has no row in the Enforcement table (a guard test, `none yet -- #N` or "
+        "`no rule -- <reason>`)"
+        for a in amendments
+        if a not in rows
+    ]
+    problems += [
+        f"{a} appears twice; give each amendment its own number"
+        for a in set(amendments)
+        if amendments.count(a) > 1
+    ]
+    problems += [
+        f"Enforcement row {n} matches no numbered decision or amendment"
+        for n in rows
+        if n not in numbers and n not in amendments
     ]
     for n, cell in rows.items():
-        problems += [f"decision {n}: {p}" for p in cell_problems(cell, adr.name)]
-        problems += [f"decision {n}: {p}" for p in superseded_context_problems(text, n, cell)]
+        is_amendment = n.startswith("Amendment")
+        label = n if is_amendment else f"decision {n}"
+        problems += [f"{label}: {p}" for p in cell_problems(cell, adr.name, amendment=is_amendment)]
+        if not is_amendment:
+            problems += [f"{label}: {p}" for p in superseded_context_problems(text, n, cell)]
+        else:
+            problems += [f"{label}: {p}" for p in no_rule_problems(text, n, cell)]
     assert not problems, f"{adr.name}:\n" + "\n".join(problems)
 
 
@@ -311,8 +440,8 @@ def test_pending_list_only_holds_adrs_that_still_need_a_table() -> None:
             stale.append(f"{name} does not exist")
             continue
         text = by_name[name].read_text()
-        if not decision_numbers(text):
-            stale.append(f"{name} has no numbered decisions")
+        if not _has_checkable_units(text):
+            stale.append(f"{name} has no numbered decisions or amendments")
         elif enforcement_rows(text):
             stale.append(f"{name} has an Enforcement table: remove it from PENDING_ADOPTION")
     assert not stale, "\n".join(stale)
@@ -323,7 +452,7 @@ def test_every_adr_with_numbered_decisions_is_checked_or_pending() -> None:
     unchecked = [
         p.name
         for p in _adrs()
-        if decision_numbers(p.read_text())
+        if _has_checkable_units(p.read_text())
         and _in_force(p.read_text())
         and not enforcement_rows(p.read_text())
         and p.name not in PENDING_ADOPTION
@@ -482,3 +611,133 @@ def test_checker_reports_a_decision_heading_in_an_unreadable_style() -> None:
 @pytest.mark.parametrize("adr", _adrs(), ids=lambda p: p.name)
 def test_no_decision_heading_goes_unchecked(adr: Path) -> None:
     assert unrecognised_decision_headings(adr.read_text()) == []
+
+
+# --- amendments that add no decision heading (#749) --------------------------
+
+_PROSE_ADR = (
+    "# A\n\n**Status:** Accepted\n\n## Decision\n\n### 1. One\n\nbody\n\n"
+    "**Amendment (2026-10-14, maintainer decision, #9): inline note.** text\n\n"
+    "## Amendment 1 (2026-09-17): first\n\nprose\n\n"
+    "## Amendment (2026-10-02): second (issue #189)\n\nprose\n\n"
+    "## Amendment: third (issue #273)\n\nprose\n\n"
+    "## Amendment (2026-08-27): has decisions\n\n### D. Two-step\n\nx\n"
+)
+
+
+def test_checker_sees_every_amendment_that_adds_no_decision() -> None:
+    assert amendment_keys(_PROSE_ADR) == [
+        "Amendment 2026-10-14",  # the dated note inside Decision 1
+        "Amendment 1",
+        "Amendment 2026-10-02",
+        "Amendment #273",
+    ]
+    assert decision_numbers(_PROSE_ADR) == [
+        "1",
+        "D",
+    ]  # the decision-bearing amendment is not a unit
+
+
+def test_checker_reports_an_amendment_heading_it_cannot_key() -> None:
+    assert amendment_keys("## Amendment: no number\n\nprose\n") == [
+        "Amendment ?Amendment: no number"
+    ]
+    assert amendment_keys("## Decision\n\n**Amendment: undated.** text\n")[0].startswith(
+        "Amendment ?"
+    )
+
+
+def test_checker_ignores_an_amendment_heading_inside_a_code_fence() -> None:
+    assert amendment_keys("## Decision\n\n```md\n## Amendment 1 (2026-01-01): x\n```\n") == []
+
+
+def test_checker_reads_amendment_rows() -> None:
+    table = (
+        "## Enforcement\n\n"
+        "| Amendment 1 (2026-09-17): first | none yet -- #1 |\n"
+        "| Amendment 2026-10-02 | no rule -- prose only |\n"
+        "| Amendment #273 | `tests/unit/docs/test_adr_enforcement.py` |\n"
+        "| 1. One | none yet -- #2 |\n"
+    )
+    assert set(enforcement_rows(table)) == {
+        "Amendment 1",
+        "Amendment 2026-10-02",
+        "Amendment #273",
+        "1",
+    }
+    with pytest.raises(AssertionError):
+        enforcement_rows(
+            "## Enforcement\n\n| Amendment 1 | none yet -- #1 |\n| Amendment  1 | none yet -- #1 |\n"
+        )
+
+
+def test_no_rule_marker_is_for_amendments_only_and_needs_a_reason() -> None:
+    assert cell_problems("no rule -- the amendment only records why", amendment=True) == []
+    assert cell_problems("No rule — prose only", amendment=True) == []
+    assert cell_problems("no rule -- prose only")  # a decision always has a rule
+    assert cell_problems("no rule", amendment=True)
+    assert cell_problems("no rule --", amendment=True)
+    assert cell_problems("no rule -- prose<br>none yet -- #1", amendment=True)
+
+
+def test_an_adr_with_only_amendments_is_checked() -> None:
+    prose = (
+        "# A\n\n**Status:** Accepted\n\n## Decision\n\nprose\n\n## Amendment 1 (2026-01-01): x\n"
+    )
+    assert _has_checkable_units(prose)
+    assert not unparsed_decisions(prose + "\n## Enforcement\n\n| Amendment 1 | no rule -- p |\n")
+    assert unparsed_decisions(
+        "# A\n\n## Decision\n\nprose\n\n## Enforcement\n\n| Amendment 1 | no rule -- p |\n"
+    )
+
+
+def test_checker_reports_amendment_shapes_it_does_not_read() -> None:
+    shapes = {
+        "### Amendment (2026-10-15): x": "## Decision\n\n### 1. One\n\n### Amendment (2026-10-15): x\n",
+        "> **Amendment (2026-10-15): x**": "## Decision\n\n### 1. One\n\n> **Amendment (2026-10-15): x**\n",
+        "- **Amendment (2026-10-15): x**": "## Decision\n\n### 1. One\n\n- **Amendment (2026-10-15): x**\n",
+        "**Amendment (2026-10-15): x**": "## Consequences\n\n**Amendment (2026-10-15): x**\n",
+        "## Amended 2026-10-15": "## Amended 2026-10-15\n\nprose\n",
+        "## Addendum": "## Addendum\n\nprose\n",
+    }
+    for expected, text in shapes.items():
+        found = unrecognised_amendments(text)
+        assert any(expected in f for f in found), (expected, found)
+
+
+def test_checker_does_not_report_the_amendment_shapes_it_reads() -> None:
+    assert unrecognised_amendments(_PROSE_ADR) == []
+    # prose that merely mentions an amendment is not an amendment
+    assert unrecognised_amendments("## Decision\n\nSee the Decision 6 amendment.\n") == []
+    assert unrecognised_amendments("## Decision\n\nthe text\namendment to ADR-027.\n") == []
+    assert unrecognised_amendments("## Enforcement\n\n| Amendment 1 | none yet -- #1 |\n") == []
+
+
+@pytest.mark.parametrize("adr", _adrs(), ids=lambda p: p.name)
+def test_no_amendment_goes_unrecognised(adr: Path) -> None:
+    assert unrecognised_amendments(adr.read_text()) == []
+
+
+def test_no_rule_needs_the_amendments_own_italic_note() -> None:
+    base = "# A\n\n**Status:** Accepted\n\n## Decision\n\nx\n\n## Amendment 1 (2026-01-01): p\n\nprose\n"
+    cell = "no rule -- prose only"
+    assert no_rule_problems(base, "Amendment 1", cell)
+    noted = base + "\n*No enforceable rule: prose only.*\n"
+    assert no_rule_problems(noted, "Amendment 1", cell) == []
+    assert no_rule_problems(noted, "Amendment 2", cell)  # the note belongs to amendment 1
+    assert no_rule_problems(base, "Amendment 1", "none yet -- #1") == []
+    inline = "## Decision\n\n### 1. A\n\n*Amendment (2026-01-01): x*\n\n*No enforceable rule: x.*\n"
+    assert no_rule_problems(
+        inline, "Amendment 2026-01-01", cell
+    )  # a later paragraph is not its own
+
+
+def test_no_rule_cannot_replace_a_row_for_an_amendment_that_states_a_rule() -> None:
+    adr = next(p for p in _adrs() if p.name.startswith("ADR-029"))
+    text = adr.read_text()
+    row = re.search(r"^\| Amendment 2 [^\n]*$", text, re.MULTILINE)
+    assert row
+    edited = text.replace(
+        row.group(0), "| Amendment 2 (2026-09-18): advisory | no rule -- prose only |"
+    )
+    assert no_rule_problems(edited, "Amendment 2", enforcement_rows(edited)["Amendment 2"])

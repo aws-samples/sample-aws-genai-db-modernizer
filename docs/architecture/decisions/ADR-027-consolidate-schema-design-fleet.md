@@ -252,3 +252,11 @@ quality gain.
 - This is a drift correction, so the durable artifact contract
   (`schema-<engine>/v<N>/schema_output.json`) is unchanged; synthesis and fixtures
   see the same shape.
+
+## Enforcement
+
+Each amendment names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when an amendment has no row here, or when a row names a test file, class or function that does not exist. An amendment with no guard yet says `none yet` and the issue that will add one; one that is prose only and states no rule says `no rule` and why; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| Amendment 2026-08-27: restore per-engine query grouping on the deployed path + co-dependency-aware clustering | `tests/unit/atx_orchestrator/test_schema_design_core.py::TestGroupingWiring`<br>`tests/unit/test_group_splitter.py::TestCoDependencyClustering`<br>`tests/unit/test_group_merger.py::TestMergeGroupDrafts`<br>`tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting` |

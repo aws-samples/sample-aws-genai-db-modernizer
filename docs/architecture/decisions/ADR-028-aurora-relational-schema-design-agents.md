@@ -99,6 +99,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 3. `_SAME_FAMILY` override | `tests/unit/tools/schema/aurora_common/test_source_family.py::test_migration_strategy`<br>`tests/unit/atx_orchestrator/test_aurora_pg_wiring.py::test_aurora_pg_is_implemented_designer`<br>`tests/unit/atx_orchestrator/test_aurora_mysql_wiring.py::test_aurora_mysql_is_implemented_designer` |
 | 4. Single-pass (no split→merge) | `tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting::test_aurora_always_single_pass_even_when_large` |
 | 5. Phasing | `tests/unit/atx_orchestrator/test_aurora_pg_wiring.py`<br>`tests/unit/atx_orchestrator/test_aurora_mysql_wiring.py` |
+| Amendment #273: the LLM writes a delta, not the full contract | `tests/unit/tools/schema/aurora_common/test_delta_merge.py`<br>`tests/unit/contracts/test_aurora_design_delta.py`<br>`tests/unit/scripts/test_run_schema_design_aurora_delta.py` |
 
 ## Consequences
 

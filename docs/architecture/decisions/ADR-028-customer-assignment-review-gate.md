@@ -154,6 +154,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | D. Two-step gate | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_present_offers_choice_without_approving`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs`<br>`tests/unit/test_assignment_review.py::TestSummary` |
 | E. HITL editable `TableComponent` transport (raise-and-resume) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewHitl`<br>`tests/unit/atx_orchestrator/test_hitl.py`<br>`tests/unit/test_assignment_review.py::TestStructuredTable` |
 | F. Chat fallback retained | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewChatFallback` |
+| Amendment 2026-10-02: Reality Check input/output versions | `tests/unit/test_assignment_versioning.py::TestIsRealityCheckProduced`<br>`tests/unit/test_assignment_versioning.py::TestResolveRealityCheckInputVersion`<br>`tests/unit/test_assignment_versioning.py::TestRealityCheckRunForLineage` |
 
 ## Implementation surface
 
