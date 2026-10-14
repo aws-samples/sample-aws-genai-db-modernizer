@@ -111,7 +111,7 @@ def _is_single_row_pk_lookup(query: dict) -> bool:
 
 
 # --------------------------------------------------------------------------
-# aurora-anti-05 helpers (#690)
+# Admin statements: skipped by the scan, anti-05 and anti-06 (#690, #733, #734)
 # --------------------------------------------------------------------------
 
 
@@ -125,7 +125,7 @@ def _is_admin_statement(query: Mapping) -> bool:
     -- so an ``OTHER`` query is admin only when ``is_utility_statement`` says
     so (``BEGIN``, ``COMMIT``, ``SET``, ``CREATE``, ...)."""
     query_type = str(query.get("query_type") or "").upper()
-    return (query_type in SKIP_QUERY_TYPES and query_type != "OTHER") or is_utility_statement(
+    return query_type in SKIP_QUERY_TYPES or is_utility_statement(
         query.get("query_text"), query.get("tables_accessed")
     )
 
@@ -219,8 +219,11 @@ def analyze_aurora_common_use_cases(
         cps = float(q.get("calls_per_second") or 0.0)
         has_joins = bool(q.get("has_joins", False))
 
-        # Skip admin/metadata queries (SHOW, DESCRIBE, EXPLAIN, SET)
-        if qt in SKIP_QUERY_TYPES:
+        # Skip admin statements only (#734): SHOW/DESCRIBE/EXPLAIN/SET, or a
+        # utility statement. An OTHER-typed query (WITH ..., REFRESH, EXEC,
+        # one that opens with a comment or "(") is application access, the
+        # same rule the anti-05 and anti-06 loops below use (#733).
+        if _is_admin_statement(q):
             continue
         join_count = int(q.get("join_count") or 0)
         rows_avg = float(q.get("rows_returned_avg") or 0.0)
@@ -491,11 +494,12 @@ def analyze_aurora_common_use_cases(
     #    covers the CRUD and the ordered 1:M queries -- neither has a
     #    relational need -- and never overrides a per-query result.
     # Admin statements are not application access: they neither block the
-    # table nor take the penalty. That is the scan above's ``SKIP_QUERY_TYPES``
-    # skip (except OTHER, which counts as admin only when it is a utility
-    # statement: a WITH-led, REFRESH or EXEC query is application access)
-    # plus ``is_utility_statement`` (a metadata read typed SELECT, a
-    # transaction control statement, ...), which the scan above does not skip.
+    # table nor take the penalty. That is ``_is_admin_statement``, the same
+    # skip the scan above uses: SHOW/DESCRIBE/EXPLAIN/SET, or
+    # ``is_utility_statement`` (a metadata read typed SELECT, a transaction
+    # control statement, ...). OTHER counts as admin only when it is a
+    # utility statement: a WITH-led, REFRESH or EXEC query is application
+    # access.
     anti05_query_ids: list[str] = []
     anti05_table_ids: list[str] = []
     tables_with_joins: set[str] = set()

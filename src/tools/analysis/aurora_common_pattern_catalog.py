@@ -331,8 +331,11 @@ IN_LIST_KEYWORDS: tuple[str, ...] = (
 
 TRANSACTION_WRITE_TYPES: frozenset[str] = frozenset({"INSERT", "UPDATE", "DELETE"})
 
-# Query types to skip during analysis (admin/metadata commands, not application queries)
-SKIP_QUERY_TYPES: frozenset[str] = frozenset({"OTHER", "SHOW", "DESCRIBE", "EXPLAIN", "SET"})
+# Query types to skip during analysis (admin/metadata commands, not application queries).
+# OTHER is not one of them (#733, #734): the collector types OTHER any statement
+# whose first word is not a DML keyword, application queries included, so an
+# OTHER query is skipped only when ``is_utility_statement`` says so.
+SKIP_QUERY_TYPES: frozenset[str] = frozenset({"SHOW", "DESCRIBE", "EXPLAIN", "SET"})
 
 # Minimum CPS threshold for standard-crud pattern (avoids noise from rarely-used queries)
 STANDARD_CRUD_MIN_CPS: float = 0.5
