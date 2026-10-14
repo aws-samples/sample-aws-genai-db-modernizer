@@ -1,6 +1,6 @@
 # ADR-004: RDS Tools and AWS Integration
 
-**Status:** Accepted
+**Status:** Partially superseded: Decisions 1 and 3 name tools that differ from the code (`get_rds_instance_config` and `get_performance_insights`); the decisions themselves hold
 **Date:** 2026-02-01
 **Deciders:** Architecture Team
 **Related Issues:** Architecture Review Point #5
@@ -78,6 +78,8 @@ We will implement **granular RDS tools with unified credential management** that
 4. `get_performance_insights` - Performance Insights (top queries)
 5. `collect_schema` - Direct database (schema metadata)
 
+*Superseded (#702): the tool names `get_rds_instance_config` and `get_performance_insights` are `get_rds_instance_metadata` and `get_performance_insights_queries` in `src/tools/aws/rds_tools.py`, which also has `get_pi_counter_metrics`, `get_enhanced_monitoring_cpu` and `get_database_insights`. Collection from the database itself runs through the collectors in `src/agents/collector/`, not tools named `connect_mysql` and `collect_schema`. One tool per data source still holds.*
+
 **Rationale:**
 
 - ✅ Agent chooses what to collect (flexibility)
@@ -113,6 +115,8 @@ We will implement **granular RDS tools with unified credential management** that
 - `get_rds_instance_config` - Returns `{"available": false}` on failure
 - `get_cloudwatch_metrics` - Returns `{"available": false}` on failure
 - `get_performance_insights` - Returns `{"available": false}` on failure
+
+*Superseded (#702): the optional tools are `get_rds_instance_metadata`, `get_cloudwatch_metrics` and `get_performance_insights_queries` (plus three more in `src/tools/aws/rds_tools.py`); the critical database tools are the collectors in `src/agents/collector/`. Optional tools return `{"available": false}` and critical ones fail fast, as decided.*
 
 **Rationale:**
 
@@ -1118,11 +1122,11 @@ Each decision names the guard test that fails when the code stops following it. 
 
 | Decision | Enforced by |
 |---|---|
-| 1. Tool Organization: Granular Tools | none yet -- #702 |
-| 2. Credential Management: Unified Approach | none yet -- #702 |
-| 3. Error Handling: Graceful Degradation | none yet -- #702 |
-| 4. Data Volume: Pre-Aggregated Summaries | none yet -- #702 |
-| 5. Authentication: IAM Roles (No Passwords) | none yet -- #702 |
+| 1. Tool Organization: Granular Tools | `tests/unit/tools/aws/test_rds_tools.py::TestGranularTools`<br>superseded -- #702 (the tool names differ from the code, `src/tools/aws/rds_tools.py`) |
+| 2. Credential Management: Unified Approach | `tests/unit/tools/aws/test_credentials.py::TestSameAccount`<br>`tests/unit/tools/aws/test_credentials.py::TestCrossAccount` |
+| 3. Error Handling: Graceful Degradation | `tests/unit/tools/aws/test_rds_tools.py::TestGracefulDegradation`<br>superseded -- #702 (the tool names differ from the code, `src/tools/aws/rds_tools.py`) |
+| 4. Data Volume: Pre-Aggregated Summaries | `tests/unit/tools/aws/test_rds_tools.py::TestPreAggregatedSummaries` |
+| 5. Authentication: IAM Roles (No Passwords) | `tests/unit/tools/aws/test_no_passwords.py::TestDatabaseCredentialsComeFromSecretsManager`<br>`tests/unit/tools/aws/test_no_passwords.py::TestTheCollectorInputCarriesNoPassword`<br>`tests/unit/tools/aws/test_no_passwords.py::TestTheAutomationCommandCarriesNoPassword`<br>none yet -- #723 (the assessments API accepts a connection password) |
 
 ## Consequences
 
