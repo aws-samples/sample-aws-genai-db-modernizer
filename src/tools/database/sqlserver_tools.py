@@ -15,6 +15,7 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.sql_cte import drop_cte_references
 
 logger = logging.getLogger(__name__)
 
@@ -546,7 +547,7 @@ def _extract_tables(sql: str) -> list[str]:
     for match in re.finditer(
         # (?<![\w@]): a keyword, not the end of a parameter name like @From (#663).
         r"(?<![\w@])(?:FROM|JOIN)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?",
-        sql,
+        drop_cte_references(sql),
         re.IGNORECASE,
     ):
         schema, table = match.group(1), match.group(2)

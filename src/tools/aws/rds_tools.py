@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.tools.aws.credentials import AWSCredentialManager
+from src.tools.database.sql_cte import drop_cte_references
 
 logger = logging.getLogger(__name__)
 
@@ -550,6 +551,7 @@ def _extract_tables(sql: str) -> list[str]:
         sql,
         flags=re.I,
     )
+    scanned = drop_cte_references(scanned)
     tables = list(dict.fromkeys(_TABLE_RE.findall(scanned)))
     return tables if tables else ["unknown"]
 

@@ -10,6 +10,7 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.sql_cte import drop_cte_references
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +388,7 @@ def _extract_tables(sql: str) -> list[str]:
         sql,
         flags=re.I,
     )
+    scanned = drop_cte_references(scanned)
     return list(dict.fromkeys(_TABLE_RE.findall(scanned))) or ["unknown"]
 
 

@@ -360,6 +360,8 @@ def _transform_queries(
     import hashlib
     import re
 
+    from src.tools.database.sql_cte import drop_cte_references
+
     patterns = []
     for r in _merge_query_variants(raw):
         query_text = str(r.get("query_text") or "")
@@ -409,6 +411,7 @@ def _transform_queries(
             query_text,
             flags=re.I,
         )
+        scanned_query = drop_cte_references(scanned_query)  # query-local names (#682)
         tables_accessed: list[str] = []
         for m_raw in table_re.finditer(scanned_query):
             # Up to two qualifiers: schema.table, or T-SQL's database.schema.table.

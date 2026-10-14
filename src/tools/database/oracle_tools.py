@@ -14,6 +14,7 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
+from src.tools.database.sql_cte import drop_cte_references
 
 logger = logging.getLogger(__name__)
 
@@ -522,6 +523,7 @@ def _extract_query_type(sql: str) -> str:
 def _extract_tables(sql: str) -> list[str]:
     """Extract table names from FROM/JOIN clauses."""
     tables: list[str] = []
+    sql = drop_cte_references(sql)
     # Match FROM table, JOIN table (handles schema.table and "quoted")
     for m in re.finditer(r"(?:from|join)\s+\"?(\w+)\"?(?:\.\"?(\w+)\"?)?", sql, re.I):
         if m.group(2):
