@@ -37,6 +37,18 @@ ENGINE_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
+# ADR-031 Decision 9: engines that exist in the catalog only as future placeholders. They are
+# named so contracts, the UI and reports can talk about them, but they are never a routing
+# candidate: not ownable, not scored, not a reality-check absorber, whatever an analysis
+# output says. Every routing entry point drops them via ``without_placeholder_engines``.
+PLACEHOLDER_ENGINES: frozenset[str] = frozenset({"neptune", "keyspaces"})
+
+
+def without_placeholder_engines(analysis_outputs: dict[str, dict]) -> dict[str, dict]:
+    """Copy of ``analysis_outputs`` without placeholder engines (ADR-031 Decision 9)."""
+    return {e: a for e, a in analysis_outputs.items() if e not in PLACEHOLDER_ENGINES}
+
+
 def display_engine(engine: str) -> str:
     """Display name for ``engine``, or a title-cased fallback if it is not known.
 

@@ -4,6 +4,7 @@ Assignment Validator — Validates assignments for co-dependency conflicts.
 Pure function, no side effects. Detects:
 - Co-dependent queries split across engines → WARNING per split
 - Queries assigned to engine that did not analyze them → hard ERROR
+- Queries owned by a future placeholder engine (ADR-031 Decision 9) → hard ERROR
 - Queries owned by an engine that may not own them (a cache layer, or a write on
   an engine that is not a system of record, #296) → hard ERROR
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 from src.agents.referee.assignment_resolver import build_co_dependency_groups
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, can_own
 from src.contracts.assignment_models import Assignment, ValidationResult
+from src.shared.engine_names import PLACEHOLDER_ENGINES
 
 
 class AssignmentValidator:
@@ -38,10 +40,20 @@ class AssignmentValidator:
         warnings: list[str] = []
         errors: list[str] = []
 
+        # --- Hard ERROR: a placeholder engine owns a query (ADR-031 Decision 9) ---
+        for qa in assignment.query_assignments:
+            if qa.assigned_engine in PLACEHOLDER_ENGINES:
+                errors.append(
+                    f"ERROR: Query {qa.query_id} is assigned to '{qa.assigned_engine}', a future "
+                    "placeholder engine that cannot own a query."
+                )
+
         # --- Hard ERROR: query assigned to engine that did not analyze it ---
         analyzed_engines = set(analysis_outputs.keys())
         for qa in assignment.query_assignments:
-            if qa.assigned_engine not in analyzed_engines:
+            if qa.assigned_engine not in analyzed_engines and (
+                qa.assigned_engine not in PLACEHOLDER_ENGINES
+            ):
                 errors.append(
                     f"ERROR: Query {qa.query_id} assigned to engine "
                     f"'{qa.assigned_engine}' which did not analyze it. "

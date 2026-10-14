@@ -85,6 +85,7 @@ from src.agents.referee.reality_check_settle import (
     _settle_committed_engines,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.shared.engine_names import without_placeholder_engines
 
 # Names callers and tests import from this module; they live in the step modules.
 __all__ = [
@@ -240,6 +241,8 @@ def run_reality_check(
     from src.agents.referee.assignment_resolver import AssignmentResolver, RoutingTrace
     from src.agents.referee.query_scoring import ScoringContext
 
+    # ADR-031 Decision 9: a placeholder engine is never a candidate, absorber or owner.
+    analysis_outputs = without_placeholder_engines(analysis_outputs)
     _trace = RoutingTrace()
     AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
     trace_by_query = _trace.by_query

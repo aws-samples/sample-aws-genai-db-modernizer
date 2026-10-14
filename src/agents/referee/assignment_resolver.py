@@ -66,7 +66,7 @@ from src.contracts.assignment_models import (
     CacheOverlaySummary,
     QueryAssignment,
 )
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
 
 # Callers import these from here; they live in the modules imported above.
 __all__ = [
@@ -128,13 +128,15 @@ class AssignmentResolver:
         # when it collapses two competing Aurora engines to one, and the caller's own
         # dict is also handed to ``AssignmentValidator`` afterwards -- it must see every
         # engine it originally analyzed, not this method's internal decision.
-        analysis_outputs = dict(analysis_outputs)
+        analysis_outputs = without_placeholder_engines(analysis_outputs)
 
         queries = collector_output.get("queries", {}).get("query_patterns", [])
         tables = collector_output.get("database_schema", {}).get("tables", [])
         # selected_agents can be a list of strings or dicts with agent_type
         raw_selected = triage.get("selected_agents", [])
-        selected_engines = {a["agent_type"] if isinstance(a, dict) else a for a in raw_selected}
+        selected_engines = {
+            a["agent_type"] if isinstance(a, dict) else a for a in raw_selected
+        } - PLACEHOLDER_ENGINES  # ADR-031 Decision 9: never a candidate
         # Computed early (moved up from Step 4b below, #475) so Step 1 can gate
         # a justification-gated signal override by the same source engine the
         # #326 justification floor itself keys off.

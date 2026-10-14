@@ -40,6 +40,7 @@ from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.shared.engine_elimination import eliminated_engines as settled_eliminated_engines
+from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
@@ -94,6 +95,8 @@ def run_reality_check_deterministic(
     selected_engines = [a["agent_type"] for a in triage.get("selected_agents", [])]
     analysis_outputs: dict[str, dict] = {}
     for engine in selected_engines:
+        if engine in PLACEHOLDER_ENGINES:  # ADR-031 Decision 9
+            continue
         analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
         if store.exists(analysis_key):
             analysis_outputs[engine] = store.read_json(analysis_key)
