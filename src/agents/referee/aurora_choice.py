@@ -34,6 +34,7 @@ from typing import Any
 
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.utility_statements import has_sequence_reference
 
 AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
 
@@ -103,7 +104,6 @@ def describe_features(features: Iterable[str]) -> str:
 # collation today, and no query-text signal substitutes for it. Left out rather than
 # inferred from nothing (#381 follow-up: extend the SQL Server collector's metadata).
 
-_SEQUENCE_RE = re.compile(r"\bnext\s+value\s+for\b|\.\s*nextval\b|\.\s*currval\b", re.IGNORECASE)
 # Requires MERGE to be followed by an optional TOP(n) clause, then (optionally "INTO"
 # then) the start of a target identifier -- the shape an actual MERGE statement takes
 # -- not just the bare keyword "merge" (e.g. a column or variable literally named
@@ -307,7 +307,7 @@ def detect_heterogeneous_features(
         for c in (t.get("columns") or [])
     )
     return {
-        "sequences": any(_SEQUENCE_RE.search(t) for t in texts),
+        "sequences": any(has_sequence_reference(t) for t in texts),  # shared, #654
         "recursive_ctes": any(_has_recursive_cte(t) for t in texts),
         "merge_statements": any(_MERGE_RE.search(t) for t in texts),
         "json_usage": json_columns or any(_JSON_FUNCTION_RE.search(t) for t in texts),

@@ -427,6 +427,32 @@ class TestUtilityStatementsExcludedFromRouting:
         assert q1.assigned_engine == "aurora_postgresql"
         assert "utility/metadata statement" in q1.assignment_reason
 
+    def test_sql_server_sequence_fetch_pinned_to_the_chosen_aurora_engine(self):
+        """#654: SELECT NEXT VALUE FOR names no table and would otherwise score
+        highest for DynamoDB, which has no sequences; it stays on the relational
+        engine the source moves to, and the cache never fronts it."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "elasticache", "aurora_postgresql"])
+        collector = self._collector_with_metadata(
+            {"q1": "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq] AS [NextOrderNumber]"},
+            "sqlserver",
+        )
+        for q in collector["queries"]["query_patterns"]:
+            q["tables_accessed"] = ["unknown"]
+            q["calls_per_second"] = 1.0
+            q["rows_returned_avg"] = 1.0
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "elasticache": _make_analysis("elasticache", ["db.users"], confidence=90),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert "utility/metadata statement" in q1.assignment_reason
+        assert q1.cache_engine is None
+
     def test_no_aurora_engine_leaves_scored_assignment(self):
         """With no Aurora candidate, the scored assignment is left in place."""
         resolver = AssignmentResolver()

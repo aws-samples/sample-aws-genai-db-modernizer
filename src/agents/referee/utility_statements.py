@@ -18,7 +18,9 @@ A tableless catalog call is the same kind of statement with no leading verb at
 all: ``SELECT obj_description($1::regclass::oid, $2)``,
 ``SELECT pg_get_serial_sequence($1, $2)``, ``SELECT setval($1, $2, $3)`` and
 ``SELECT $1::regtype::oid`` are Postgres catalog introspection and sequence
-housekeeping, not an application read or write -- the collector itself can't
+housekeeping, not an application read or write, and so are SQL Server's
+``SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq]`` and Oracle's
+``SELECT order_seq.NEXTVAL FROM DUAL`` (#654) -- the collector itself can't
 even name a source table for them (``tables_accessed`` comes back
 ``["unknown"]``, :data:`src.agents.referee.table_resolution.PSEUDO_TABLES`).
 A catalog function or ``::reg*`` cast only counts as utility when there is no
@@ -67,13 +69,73 @@ _CATALOG_RE = re.compile(r"\b(information_schema|pg_catalog)\b", re.IGNORECASE)
 
 # Postgres catalog/introspection functions and sequence housekeeping calls
 # (ActiveRecord/Rails schema dumping uses these heavily). Only treated as a
-# utility statement when the query has no real source table (see below).
+# utility statement when the query has no real source table (see below). Not
+# preceded by a dot: ``dbo.NextVal(@k)`` is a schema-qualified user function,
+# not Postgres's ``nextval`` (#654 review).
 _CATALOG_FUNCTION_RE = re.compile(
-    r"\b(obj_description|pg_get_serial_sequence|pg_get_expr|pg_get_indexdef|"
+    r"(?<![\w.])(obj_description|pg_get_serial_sequence|pg_get_expr|pg_get_indexdef|"
     r"pg_get_constraintdef|format_type|generate_subscripts|pg_typeof|"
-    r"setval|nextval|currval)\s*\(",
+    r"setval|nextval|currval|lastval)\s*\(",
     re.IGNORECASE,
 )
+
+# A single-quoted string literal (``''`` escapes a quote inside one). Sequence
+# and catalog-function checks run with literals blanked out, so the words
+# ``'next value for'`` in a label or a WHERE value never count (#654 review).
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+
+# SQL Server/DB2: ``NEXT VALUE FOR`` followed by the sequence's name.
+_NEXT_VALUE_FOR_RE = re.compile(r"\bnext\s+value\s+for\s+[\[\"`]?[#\w]", re.IGNORECASE)
+# Oracle: ``[schema.]seq.NEXTVAL`` / ``.CURRVAL``, never a function call
+# (``dbo.NextVal(...)``).
+_DOT_NEXTVAL_RE = re.compile(
+    r"[\w\]\"`]\s*\.\s*(?:nextval|currval)\b(?!\s*[\(\]\"`])", re.IGNORECASE
+)
+# Where an Oracle pseudocolumn reads a sequence: a statement with no FROM, a
+# ``FROM DUAL``, or an INSERT's VALUES list. ``SELECT c.nextval FROM Counter c``
+# is a column named nextval behind an alias.
+_SEQUENCE_CONTEXT_RE = re.compile(r"\bfrom\s+[\"`]?dual\b|\bvalues\b", re.IGNORECASE)
+_FROM_RE = re.compile(r"\bfrom\b", re.IGNORECASE)
+
+# PostgreSQL's sequence functions, called by name (not schema-qualified UDFs).
+_SEQUENCE_FUNCTION_RE = re.compile(
+    r"(?<![\w.])(nextval|currval|setval|lastval)\s*\(", re.IGNORECASE
+)
+
+
+def _blank_string_literals(text: str) -> str:
+    return _STRING_LITERAL_RE.sub("''", text)
+
+
+def has_sequence_reference(query_text: str | None) -> bool:
+    """Whether ``query_text`` reads a sequence in SQL Server/DB2 or Oracle spelling.
+
+    ``NEXT VALUE FOR <sequence>``, or ``[schema.]seq.NEXTVAL``/``.CURRVAL`` where
+    Oracle reads a sequence (no FROM, ``FROM DUAL`` or an INSERT's VALUES). String
+    literals are ignored, and so are a column named ``nextval`` behind an alias
+    and a user function named ``NextVal(...)``. The single detector for both this
+    module's tableless sequence fetch (#654) and ``aurora_choice``'s ``sequences``
+    workload feature, so the two never disagree on what one is.
+    """
+    text = _blank_string_literals(query_text or "")
+    if _NEXT_VALUE_FOR_RE.search(text):
+        return True
+    if not _DOT_NEXTVAL_RE.search(text):
+        return False
+    return not _FROM_RE.search(text) or bool(_SEQUENCE_CONTEXT_RE.search(text))
+
+
+def is_sequence_fetch(query_text: str | None) -> bool:
+    """Whether ``query_text`` reads or advances a sequence value (#654).
+
+    :func:`has_sequence_reference` (SQL Server, DB2, Oracle) or PostgreSQL's
+    ``nextval(...)``/``currval(...)``/``setval(...)``/``lastval()``. Every call
+    can return a different value, so a statement like this is never cacheable,
+    whatever its shape.
+    """
+    text = _blank_string_literals(query_text or "")
+    return has_sequence_reference(text) or bool(_SEQUENCE_FUNCTION_RE.search(text))
+
 
 # A cast to a Postgres object-identifier type (regclass, regtype, regproc, ...)
 # -- resolving a catalog OID, not application data.
@@ -93,8 +155,11 @@ def _strip_leading_comments(text: str) -> str:
 
 def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
     """True when every table ``tables_accessed`` names is a pseudo table (or there are none)."""
+    # Case-insensitive: the offline parser keeps the statement's own case, so
+    # Oracle's dummy table comes back as ``dual`` as often as ``DUAL`` (#654 review).
+    pseudo = {p.upper() for p in PSEUDO_TABLES}
     tables = list(tables_accessed or [])
-    return all(t in PSEUDO_TABLES for t in tables)
+    return all(str(t).upper() in pseudo for t in tables)
 
 
 def _all_tables_are_system_catalog(tables_accessed: Iterable[str] | None) -> bool:
@@ -115,7 +180,8 @@ def is_utility_statement(
     statements (a leading comment is stripped first), for any statement that
     reads ``information_schema`` or ``pg_catalog`` regardless of its leading
     verb, for a query whose ``tables_accessed`` are all system catalog tables,
-    and for a catalog function call or ``::reg*`` cast when ``tables_accessed``
+    and for a catalog function call, ``::reg*`` cast or sequence fetch
+    (``NEXT VALUE FOR seq``, ``seq.NEXTVAL``, #654) when ``tables_accessed``
     names no real application table.
     """
     text = _strip_leading_comments(query_text or "")
@@ -123,6 +189,11 @@ def is_utility_statement(
         return True
     if _all_tables_are_system_catalog(tables_accessed):
         return True
-    if _CATALOG_FUNCTION_RE.search(text) or _CATALOG_CAST_RE.search(text):
+    unquoted = _blank_string_literals(text)
+    if (
+        _CATALOG_FUNCTION_RE.search(unquoted)
+        or _CATALOG_CAST_RE.search(text)
+        or has_sequence_reference(unquoted)
+    ):
         return _has_no_real_source_table(tables_accessed)
     return False

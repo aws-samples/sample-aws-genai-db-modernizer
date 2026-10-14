@@ -24,7 +24,8 @@ A query qualifies (:func:`cache_eligibility`) when every rule holds:
 - it returns at most :data:`CACHE_MAX_ROWS_AVG` rows on average (a bounded value);
 - it has a cacheable shape (:func:`cache_pattern`): a keyed point lookup, a top-N
   (``ORDER BY ... LIMIT``), a session/token lookup, or a full read of a small
-  reference table. Aggregations, text search and locking reads do not qualify;
+  reference table. Aggregations, text search, locking reads and sequence fetches
+  (``NEXT VALUE FOR``, ``seq.NEXTVAL``, ``nextval(...)``) do not qualify;
 - none of its tables is write-heavy: writes are less than
   :data:`WRITE_HEAVY_TABLE_MIN_WRITE_SHARE` of the table's calls, so entries are
   not invalidated faster than they are read.
@@ -41,6 +42,7 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 from src.agents.referee.tie_break import break_tie, settled_counts
+from src.agents.referee.utility_statements import is_sequence_fetch
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
 
@@ -195,6 +197,9 @@ def cache_pattern(query: Mapping) -> str | None:
     """
     text = str(query.get("query_text") or "")
     if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or _LOCKING_RE.search(text):
+        return None
+    # A sequence fetch returns a new value on every call: a cached answer is wrong (#654).
+    if is_sequence_fetch(text):
         return None
     if query.get("has_text_search") or query.get("has_aggregations"):
         return None

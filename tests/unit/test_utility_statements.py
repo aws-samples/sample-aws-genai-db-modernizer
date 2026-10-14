@@ -1,5 +1,7 @@
 """Unit tests for utility/metadata statement detection (#327)."""
 
+import pytest
+
 from src.agents.referee.utility_statements import is_utility_statement
 
 
@@ -188,3 +190,125 @@ class TestLeadingComments:
 
     def test_leading_comment_before_ordinary_select_is_still_not_utility(self):
         assert is_utility_statement("/* app query */ SELECT * FROM wp_posts WHERE id = ?") is False
+
+
+class TestSequenceFetch:
+    """A tableless sequence fetch is sequence housekeeping, not an application
+    read (#654): SQL Server's ``NEXT VALUE FOR``, Oracle's ``seq.NEXTVAL`` from
+    ``DUAL``, alongside PostgreSQL's ``nextval(...)``."""
+
+    def test_sql_server_next_value_for_is_utility(self):
+        sql = "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq] AS [NextOrderNumber]"
+        assert is_utility_statement(sql, tables_accessed=["unknown"]) is True
+
+    def test_lowercase_next_value_for_is_utility(self):
+        assert is_utility_statement("select next value for order_seq", ["unknown"]) is True
+
+    def test_oracle_nextval_from_dual_is_utility(self):
+        sql = "SELECT order_seq.NEXTVAL FROM DUAL"
+        assert is_utility_statement(sql, tables_accessed=["DUAL"]) is True
+
+    def test_oracle_currval_from_dual_is_utility(self):
+        sql = "SELECT app.order_seq.CURRVAL FROM DUAL"
+        assert is_utility_statement(sql, tables_accessed=["DUAL"]) is True
+
+    def test_postgres_nextval_is_still_utility(self):
+        assert is_utility_statement("SELECT nextval($1)", tables_accessed=["unknown"]) is True
+
+    def test_sequence_used_in_a_real_insert_is_not_utility(self):
+        sql = (
+            "INSERT INTO [SalesOrder] ([OrderNumber], [CustomerID]) "
+            "VALUES (NEXT VALUE FOR [dbo].[OrderNumberSeq], @CustomerID)"
+        )
+        assert is_utility_statement(sql, tables_accessed=["trailgear.SalesOrder"]) is False
+
+    def test_column_named_next_value_is_not_utility(self):
+        sql = "SELECT [NextValue] FROM [Counter] WHERE [Name] = @Name"
+        assert is_utility_statement(sql, tables_accessed=["trailgear.Counter"]) is False
+
+
+class TestSequenceFetchThroughTheParser:
+    """#654 review: the offline parser keeps the statement's own case, so the
+    pseudo table can come back as ``dual`` -- test the parser's real output."""
+
+    @staticmethod
+    def _parsed(sql: str) -> tuple[str, list[str]]:
+        from src.tools.database.offline_parser import _transform_queries
+
+        q = _transform_queries([{"query_text": sql}], "shop", {"orders"})[0]
+        return q["query_text"], q["tables_accessed"]
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select order_seq.nextval from dual",
+            "SELECT order_seq.NEXTVAL FROM DUAL",
+            "SELECT app.order_seq.CURRVAL FROM Dual",
+            "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq] AS [NextOrderNumber]",
+        ],
+    )
+    def test_tableless_sequence_fetch_is_utility(self, sql):
+        text, tables = self._parsed(sql)
+        assert is_utility_statement(text, tables) is True
+
+
+class TestSequenceLookalikes:
+    """#654 review: text that only looks like a sequence reference."""
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # a scalar UDF named NextVal, schema-qualified
+            "SELECT dbo.NextVal(@k)",
+            "SELECT [dbo].[NextVal](@k) AS [Next]",
+            # the words inside a string literal
+            "SELECT 'next value for' AS label",
+            "SELECT 'order_seq.nextval' AS label FROM DUAL",
+        ],
+    )
+    def test_tableless_lookalike_is_not_utility(self, sql):
+        assert is_utility_statement(sql, ["unknown"]) is False
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT c.nextval FROM Counter c WHERE c.ID = @ID",
+            "SELECT [Body] FROM [Article] WHERE [Body] = 'next value for'",
+            "SELECT dbo.NextVal(@k) FROM [Counter] WHERE [ID] = @ID",
+            "SELECT [NextValue] FROM [Counter] WHERE [Name] = @Name",
+        ],
+    )
+    def test_lookalike_is_not_a_sequence_fetch(self, sql):
+        from src.agents.referee.utility_statements import is_sequence_fetch
+
+        assert is_sequence_fetch(sql) is False
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq]",
+            "select next value for order_seq",
+            "SELECT order_seq.NEXTVAL FROM DUAL",
+            "SELECT app.order_seq.CURRVAL FROM dual",
+            "INSERT INTO orders (id) VALUES (order_seq.NEXTVAL)",
+            "SELECT nextval('orders_id_seq')",
+            "SELECT lastval()",
+        ],
+    )
+    def test_real_sequence_reference_is_a_sequence_fetch(self, sql):
+        from src.agents.referee.utility_statements import is_sequence_fetch
+
+        assert is_sequence_fetch(sql) is True
+
+    def test_tableless_lastval_is_utility(self):
+        assert is_utility_statement("SELECT lastval()", ["unknown"]) is True
+
+
+class TestSequencePatternIsShared:
+    """aurora_choice's ``sequences`` workload feature and the utility rule read
+    one detector, so they can never disagree on what a sequence reference is."""
+
+    def test_aurora_choice_uses_the_shared_detector(self):
+        from src.agents.referee import aurora_choice, utility_statements
+
+        assert aurora_choice.has_sequence_reference is utility_statements.has_sequence_reference

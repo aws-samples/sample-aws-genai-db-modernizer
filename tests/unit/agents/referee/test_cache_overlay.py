@@ -149,6 +149,32 @@ class TestEligibility:
     def test_non_lookup_shapes_do_not_qualify(self, text):
         assert cache_eligibility(_q("q", text), set()) is None
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq] AS [NextOrderNumber]",
+            "SELECT order_seq.NEXTVAL FROM DUAL",
+            "SELECT nextval('orders_id_seq')",
+        ],
+    )
+    def test_sequence_fetch_is_never_cached(self, text):
+        # Every call returns a new value, so a cached answer is wrong (#654).
+        q = _q("q", text, cps=50.0, rows=1.0, tables=["unknown"])
+        assert cache_pattern(q) is None
+        assert cache_eligibility(q, set()) is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT c.nextval FROM Counter c WHERE c.ID = @ID",
+            "SELECT [Body] FROM [Article] WHERE [Title] = 'next value for'",
+        ],
+    )
+    def test_sequence_lookalike_is_still_a_point_lookup(self, text):
+        # #654 review: a column named nextval behind an alias, or the words in a
+        # string literal, are not a sequence fetch.
+        assert cache_pattern(_q("q", text)) == "point_lookup"
+
     def test_shapes(self):
         assert cache_pattern(_q("q", "SELECT * FROM t ORDER BY score DESC LIMIT 10", rows=10)) == (
             "top_n"
