@@ -245,6 +245,15 @@ Version History:
   ``kind``, ``engine``, ``title`` and ``detail``, so the decision report, the
   deck and the UI show them the way the engineering report always did.
   Backward compatible: defaults to empty.
+- 1.18 (2026-10-14, #762): Added optional ``summary_input_budget``
+  (``SummaryInputBudget``): set only when the executive-summary request was
+  over its token budget and its long lists were cut to fit (the same
+  ``input_budget`` status the request itself carries, in both LLM modes):
+  the budget, the estimated tokens before and after, the request's line count
+  (as headless reads it), the per-list limit, and
+  each cut list path with its full and kept item counts. None when nothing
+  was cut, for ``--llm-mode none`` (no request is built), and for a report
+  synthesized before this field existed. Backward compatible.
 """
 
 from datetime import datetime
@@ -848,6 +857,36 @@ class ReportFacts(BaseModel):
     )
 
 
+class CappedList(BaseModel):
+    """One list path the executive-summary request's token budget cut (#762)."""
+
+    path: str = Field(
+        ..., description="Payload path, e.g. query_groups or migration_waves[].tables"
+    )
+    lists: int = Field(..., ge=1, description="How many lists at this path were cut")
+    items_total: int = Field(..., ge=0, description="Their items before the cut")
+    items_kept: int = Field(..., ge=0, description="Their items after the cut")
+    omitted_query_count: int | None = Field(
+        None,
+        ge=0,
+        description="query_groups only: the queries the dropped groups carry (sum of query_count)",
+    )
+
+
+class SummaryInputBudget(BaseModel):
+    """The executive-summary request's token budget, when it had to cut (#762)."""
+
+    budget_tokens: int = Field(..., ge=0, description="The request's token budget")
+    estimated_tokens_uncapped: int = Field(
+        ..., ge=0, description="Estimated tokens of the request before any cut"
+    )
+    estimated_tokens: int = Field(..., ge=0, description="Estimated tokens after the cut")
+    lines: int = Field(..., ge=0, description="Lines of the cut request as headless reads it")
+    list_limit: int = Field(..., ge=0, description="Items kept per cut list")
+    within_budget: bool = Field(..., description="Whether the cut request fits the budget")
+    capped_lists: list[CappedList] = Field(default_factory=list)
+
+
 class SynthesisOutputContract(BaseModel):
     """Output contract for the synthesis agent.
 
@@ -860,7 +899,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.17",
+        default="1.18",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -968,6 +1007,13 @@ class SynthesisOutputContract(BaseModel):
             "Queries the post-schema router moved after the customer approved the "
             "assignment (#629), copied from Assignment.post_schema_reroutes. Empty "
             "list when none; None for a report synthesized before this field existed."
+        ),
+    )
+    summary_input_budget: SummaryInputBudget | None = Field(
+        None,
+        description=(
+            "Set only when the executive-summary request was over its token budget and "
+            "its long lists were cut to fit (#762); None otherwise."
         ),
     )
 

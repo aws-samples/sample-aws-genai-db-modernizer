@@ -115,6 +115,7 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
     from src.agents.referee.synthesis_handler import (
         _write_synthesis_report,
         apply_synthesis_llm_output,
+        prepare_synthesis_llm_input,
         run_synthesis_deterministic,
     )
     from src.contracts.executive_summary_response import parse_executive_summary_response
@@ -137,6 +138,16 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
             f"{llm_response_path} does not match ExecutiveSummaryResponse "
             f"({validation_error_note(exc)})"
         )
+    # #762: the request the model read says whether its lists were cut to the
+    # token budget; the report records it, exactly as the Bedrock path does.
+    # Read from that request itself; rebuilt only when it is gone.
+    llm_input_path = _synthesis_key(db, job_id, assignment_version, "llm_input.json")
+    llm_input = (
+        store.read_json(llm_input_path)
+        if store.exists(llm_input_path)
+        else prepare_synthesis_llm_input(result)
+    )
+    result["summary_input_budget"] = llm_input.get("input_budget")
     # Post-checks the summary against the effective assignment; on a mis-attributed
     # table the report keeps the deterministic summary (#205).
     result = apply_synthesis_llm_output(result, llm_response)

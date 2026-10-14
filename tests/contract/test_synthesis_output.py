@@ -386,8 +386,34 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        # #615 step 3: the reality-check decisions added to the facts block
-        assert output.contract_version == "1.17"
+        # #762: summary_input_budget added
+        assert output.contract_version == "1.18"
+
+    def test_summary_input_budget_is_optional(self, valid_synthesis_data):
+        assert (
+            SynthesisOutputContract.model_validate(valid_synthesis_data).summary_input_budget
+            is None
+        )
+        valid_synthesis_data["summary_input_budget"] = {
+            "budget_tokens": 24000,
+            "estimated_tokens_uncapped": 54588,
+            "estimated_tokens": 23082,
+            "lines": 1771,
+            "list_limit": 50,
+            "within_budget": True,
+            "capped_lists": [
+                {
+                    "path": "query_groups",
+                    "lists": 1,
+                    "items_total": 261,
+                    "items_kept": 50,
+                    "omitted_query_count": 309,
+                }
+            ],
+        }
+        output = SynthesisOutputContract.model_validate(valid_synthesis_data)
+        assert output.summary_input_budget is not None
+        assert output.summary_input_budget.capped_lists[0].items_kept == 50
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

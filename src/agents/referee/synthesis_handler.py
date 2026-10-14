@@ -19,6 +19,10 @@ from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.migration_waves import build_migration_waves
+from src.agents.referee.summary_input_budget import (
+    apply_summary_input_budget,
+    table_query_weights,
+)
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -479,9 +483,17 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     got one exactly the way the Bedrock prompt used to (#132). Its ``case``
     names the ``Schema Design Status`` case of ``src/skills/executive-summary.md``
     that applies, the same one the Bedrock prompt uses (#628).
+
+    The payload stays within a fixed token budget for any workload size
+    (#762, ``summary_input_budget``): over it, the growing lists are cut
+    deterministically, every cut list keeps its full length as
+    ``<field>_total``, and the payload gains ``input_budget`` saying what was
+    cut (absent when nothing was). Applied here, to the one payload both modes
+    read, so payload parity holds; scalars, ranking, costs and every risk entry
+    are never cut.
     """
     designed, not_designed = designed_and_not_designed_engines(deterministic_result["ranking"])
-    return {
+    payload = {
         "effective_architecture": deterministic_result["effective_architecture"],
         "deterministic_summary": deterministic_result["summary"],
         "ranking": deterministic_result["ranking"],
@@ -498,6 +510,12 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
             "not_designed": not_designed,
         },
     }
+    # Tables are ranked by the in-scope queries touching them across every
+    # engine's assignment, not only the request's (relational) query groups.
+    data = deterministic_result.get("data")
+    assignment = getattr(data, "assignment", None)
+    weights = table_query_weights(assignment.get("query_assignments") or []) if assignment else None
+    return apply_summary_input_budget(payload, table_weights=weights)
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +670,8 @@ def _write_synthesis_report(
             for r in (data.assignment or {}).get("post_schema_reroutes") or []
             if _engine_of(data.assignment).get(r.get("query_id")) == r.get("to_engine")
         ],
+        # #762: the summary request's budget status, only when it cut a list.
+        "summary_input_budget": result.get("summary_input_budget"),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
@@ -785,13 +805,18 @@ def run_synthesis(
         # Payload parity (#628): Bedrock reasons over exactly the request the
         # external (Claude Code) path writes to llm_input.json, and its answer
         # goes through the same contract and the same post-checks.
-        response = generate_executive_summary(prepare_synthesis_llm_input(result))
+        llm_input = prepare_synthesis_llm_input(result)
+        # #762: recorded whatever the model answers, so a capped request is in
+        # the report even when the summary falls back to the deterministic one.
+        result["summary_input_budget"] = llm_input.get("input_budget")
+        response = generate_executive_summary(llm_input)
         # None: no usable answer, so the deterministic summary stays.
         if response is not None:
             result = apply_synthesis_llm_output(result, response)
 
     elif llm_mode == "external":
         llm_input = prepare_synthesis_llm_input(result)
+        result["summary_input_budget"] = llm_input.get("input_budget")
         llm_input_key = (
             f"{database_name}/{job_id}/synthesis/llm_input.json"
             if assignment_version == 0

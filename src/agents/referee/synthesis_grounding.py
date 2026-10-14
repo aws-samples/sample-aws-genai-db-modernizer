@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from src.agents.referee.summary_input_budget import TOTAL_FIELD_NAMES
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import display_engine
@@ -927,6 +928,9 @@ _INTERNAL_FIELD_NAMES = (
     "migration_waves",
     "assignment_summary",
     "effective_architecture",
+    "input_budget",
+    # The ``<field>_total`` keys a budget cut adds next to a cut list (#762).
+    *TOTAL_FIELD_NAMES,
 )
 _INTERNAL_FIELD_RE = re.compile(
     r"\b(" + "|".join(re.escape(name) for name in _INTERNAL_FIELD_NAMES) + r")\b",

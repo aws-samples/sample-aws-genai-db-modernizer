@@ -14037,6 +14037,129 @@
           "type": "string"
         }
       },
+      "summary_input_budget": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "budget_tokens": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "capped_lists": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "items_kept": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "items_total": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "lists": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "omitted_query_count": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "path": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "estimated_tokens": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "estimated_tokens_uncapped": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "lines": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "list_limit": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "within_budget": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "summary_llm": {
         "required": false,
         "schema": {
@@ -14391,8 +14514,8 @@
         }
       }
     },
-    "schema_hash": "0de5fc360d5b89d9dd49b245f093577812504eab4a859b5e6c7c5b2997a40a0e",
-    "version": "1.17"
+    "schema_hash": "cd3fd5d84d3a0f7237b3688c428957684ef2939c3329ca68ac844f64ac28a18d",
+    "version": "1.18"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

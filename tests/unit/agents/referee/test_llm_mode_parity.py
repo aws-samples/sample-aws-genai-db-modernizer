@@ -29,6 +29,7 @@ from src.agents.referee.synthesis_handler import apply_synthesis_llm_output, run
 from src.contracts.executive_summary_response import ExecutiveSummaryResponse
 from src.contracts.model_flag import ResponseContractError
 from src.contracts.reality_check_model_response import RealityCheckModelResponse
+from src.contracts.synthesis_output import SummaryInputBudget
 from src.shared.skill_sections import skill_sections
 from src.storage.assignment_versioning import assignment_artifact_path
 from src.storage.local_store import LocalArtifactStore
@@ -420,6 +421,75 @@ class TestExecutiveSummarySameAnswerSameResult:
         assert bedrock_report == headless_report
         assert bedrock_report["summary_source"] == source
         assert bedrock_report["summary_llm"] == summary
+
+
+class TestExecutiveSummaryBudgetParity:
+    """#762: the token budget cuts the one shared request, so a capped request
+    is still the same in both modes, and both reports record the cut."""
+
+    def _uncapped_estimate(self, synthesis_store) -> int:
+        from src.agents.referee.summary_input_budget import estimate_tokens
+        from src.agents.referee.synthesis_handler import (
+            prepare_synthesis_llm_input,
+            run_synthesis_deterministic,
+        )
+
+        det = run_synthesis_deterministic(SYN_JOB, SYN_DB, synthesis_store("probe"), 2)
+        payload = prepare_synthesis_llm_input(det)
+        assert "input_budget" not in payload
+        return estimate_tokens(payload)
+
+    def test_a_capped_request_is_identical_in_both_modes(self, synthesis_store, monkeypatch):
+        from src.agents.referee import summary_input_budget
+
+        # Below the fixture's own size, so the request is cut.
+        budget = self._uncapped_estimate(synthesis_store) - 10
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_TOKEN_BUDGET", budget)
+        bedrock_report, headless_report, bedrock_payload, headless_request = (
+            TestExecutiveSummarySameAnswerSameResult()._run_both(synthesis_store, SUMMARY)
+        )
+        assert bedrock_payload == headless_request
+        status = headless_request["input_budget"]
+        assert status["budget_tokens"] == budget
+        assert status["capped_lists"]
+        assert bedrock_report == headless_report
+        assert bedrock_report["summary_input_budget"] == SummaryInputBudget.model_validate(
+            status
+        ).model_dump(mode="json")
+
+    def test_finalize_records_the_status_of_the_request_the_model_read(
+        self, synthesis_store, monkeypatch
+    ):
+        """Read from ``llm_input.json``, not rebuilt: the artifacts may have
+        moved on since the model read it."""
+        from scripts import run_synthesis as script
+        from src.agents.referee import summary_input_budget
+
+        budget = self._uncapped_estimate(synthesis_store) - 10
+        store = synthesis_store("read")
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_TOKEN_BUDGET", budget)
+        run_synthesis(SYN_JOB, SYN_DB, store, assignment_version=2, llm_mode="external")
+        key = f"{SYN_DB}/{SYN_JOB}/synthesis/v2/llm_input.json"
+        request = store.read_json(key)
+        request["input_budget"]["list_limit"] = 7  # what this model was shown
+        store.write_json(key, request)
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_TOKEN_BUDGET", 10**9)
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_LINE_BUDGET", 10**9)
+        store.write_json(
+            f"{SYN_DB}/{SYN_JOB}/synthesis/v2/llm_response.json", {"executive_summary": SUMMARY}
+        )
+        with patch.object(script, "_output", lambda payload: None):
+            script.run_finalize(store, SYN_JOB, SYN_DB, 2)
+        report = store.read_json(f"{SYN_DB}/{SYN_JOB}/synthesis/v2/report.json")
+        assert report["summary_input_budget"]["list_limit"] == 7
+
+    def test_an_uncapped_request_records_no_status(self, synthesis_store):
+        bedrock_report, headless_report, _, headless_request = (
+            TestExecutiveSummarySameAnswerSameResult()._run_both(synthesis_store, SUMMARY)
+        )
+        assert "input_budget" not in headless_request
+        assert bedrock_report["summary_input_budget"] is None
+        assert headless_report["summary_input_budget"] is None
 
 
 class TestExecutiveSummaryResponseContract:
