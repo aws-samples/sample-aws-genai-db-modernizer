@@ -131,10 +131,8 @@ def _amendment_units(text: str) -> list[tuple[str, str]]:
         elif title.startswith("Decision"):
             for m in INLINE_AMENDMENT.finditer(body):
                 note = body[m.start() :].split("\n\n", 1)[0]
-                date = DATE.search(m.group(0))
-                units.append(
-                    (f"Amendment {date.group(0)}" if date else f"Amendment ?{note[:40]}", note)
-                )
+                key = _amendment_key(m.group(0).lstrip("*"))
+                units.append((key or f"Amendment ?{note[:40]}", note))
     return units
 
 
@@ -741,3 +739,12 @@ def test_no_rule_cannot_replace_a_row_for_an_amendment_that_states_a_rule() -> N
         row.group(0), "| Amendment 2 (2026-09-18): advisory | no rule -- prose only |"
     )
     assert no_rule_problems(edited, "Amendment 2", enforcement_rows(edited)["Amendment 2"])
+
+
+def test_numbered_inline_amendments_on_the_same_date_get_their_own_keys() -> None:
+    """Two inline amendments dated the same day are told apart by their number."""
+    text = (
+        "## Decision\n\n### 1. A\n\n**Amendment 1 (2026-10-14, #1): first.** x\n\n"
+        "### 2. B\n\n**Amendment 2 (2026-10-14, #2): second.** y\n"
+    )
+    assert amendment_keys(text) == ["Amendment 1", "Amendment 2"]
