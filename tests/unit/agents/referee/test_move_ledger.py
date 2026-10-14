@@ -396,11 +396,12 @@ class TestFirstAssignmentMoves:
         assert result.query_assignments[0].assigned_engine == "aurora_mysql"
 
     @pytest.mark.parametrize("source", [None, "sqlserver"])
-    def test_a_pin_after_an_unresolved_tie_clears_the_tie(self, source):
-        # DynamoDB and DocumentDB are capability-gated for SHOW and enter the
-        # tie at 0 with Aurora PostgreSQL, so the tie is unresolved; the pin
-        # then settles the query, so no customer choice is left open and the
-        # assignment replays from its Moves.
+    def test_a_gated_engine_never_puts_a_pinned_query_in_a_tie(self, source):
+        # DynamoDB and DocumentDB fail the capability gate for SHOW, so they
+        # are not candidates (ADR-031 Decision 2 step 2, #766) and never tie
+        # with Aurora PostgreSQL at 0: the query is scored onto Aurora
+        # PostgreSQL outright, the pin settles it, and no tie is recorded
+        # anywhere. Before #766 the gated engines entered an unresolved tie.
         result = AssignmentResolver().resolve(
             _triage(["dynamodb", "documentdb", "aurora_postgresql"]),
             {
@@ -414,8 +415,9 @@ class TestFirstAssignmentMoves:
                 source=source,
             ),
         )
-        tie, pinned = _moves_for(result, "q1")
-        assert tie.pass_ == MovePass.TIE and tie.tied_engines
+        scored, pinned = _moves_for(result, "q1")
+        assert (scored.pass_, scored.to_engine) == (MovePass.SCORE, "aurora_postgresql")
+        assert scored.tied_engines == []
         assert pinned.pass_ == MovePass.UTILITY_PIN and pinned.tied_engines == []
         (qa,) = result.query_assignments
         assert (qa.assigned_engine, qa.tied_engines) == ("aurora_postgresql", [])

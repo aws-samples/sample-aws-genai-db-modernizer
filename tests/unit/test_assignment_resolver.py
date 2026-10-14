@@ -15,6 +15,7 @@ from src.agents.referee.query_scoring import (
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import QueryAssignment
+from src.contracts.move_ledger import MovePass
 from src.shared.engine_capabilities import FUZZY_SEARCH_ENGINES, TEXT_SEARCH_ENGINES
 
 
@@ -130,7 +131,11 @@ class TestSignalOverrides:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine == "dynamodb"
+        assert q1.assigned_engine != "opensearch"
+        # DynamoDB fails the text-search capability gate the signal implies, so
+        # it is not a candidate either (#766): with no Aurora engine selected,
+        # the query takes the generic Aurora fallback.
+        assert q1.assigned_engine == "aurora"
 
     def test_multiple_signal_overrides(self):
         """Different signals can override different queries to different engines."""
@@ -209,7 +214,10 @@ class TestOpenSearchNeverOwnsAWrite:
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert q1.assigned_engine != "opensearch"
-        assert q1.assigned_engine == "dynamodb"
+        # DynamoDB fails the text-search capability gate the signal implies, so
+        # it is not a candidate either (#766): with no Aurora engine selected,
+        # the query takes the generic Aurora fallback.
+        assert q1.assigned_engine == "aurora"
 
     def test_write_does_not_win_opensearch_on_table_confidence_alone(self):
         """A plain write with no signal must not win opensearch via table-average scoring."""
@@ -453,8 +461,13 @@ class TestUtilityStatementsExcludedFromRouting:
         assert "utility/metadata statement" in q1.assignment_reason
         assert q1.cache_engine is None
 
-    def test_no_aurora_engine_leaves_scored_assignment(self):
-        """With no Aurora candidate, the scored assignment is left in place."""
+    def test_no_aurora_engine_falls_back_rather_than_unset(self):
+        """With no Aurora candidate, the pin never leaves the query unset.
+
+        DynamoDB fails the SQL-administration capability gate for SHOW, so it
+        is not a candidate (#766): the scored assignment is the generic Aurora
+        fallback, and the pin (which needs an analyzed Aurora engine) leaves
+        it as it is rather than unset."""
         resolver = AssignmentResolver()
         triage = _make_triage(["dynamodb"])
         collector = self._collector_with_metadata({"q1": "SHOW TABLES"}, "mysql")
@@ -464,7 +477,8 @@ class TestUtilityStatementsExcludedFromRouting:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine == "dynamodb"
+        assert q1.assigned_engine == "aurora"
+        assert [m.pass_ for m in result.moves if m.query_id == "q1"] == [MovePass.AURORA_FALLBACK]
 
 
 class TestAntiPatternPenalties:

@@ -386,10 +386,17 @@ class AssignmentResolver:
         tied: list[tuple[list[str], list[str], int, str, dict[str, float]]] = []
 
         for group in co_dep_groups:
+            # ADR-031 Decision 2 steps 2-3 (#766): an engine is a candidate for
+            # the group only if it may own every member AND no hard gate
+            # excluded it for any member -- the group moves as one unit
+            # (Decision 4), so an engine that cannot run one member cannot host
+            # the group, and never joins its tie at a gated score of 0.
             candidates = [
                 e
                 for e in analysis_outputs
-                if all(can_own(e, query_by_id.get(qid)) for qid in group)
+                if all(
+                    can_own(e, query_by_id.get(qid)) and _score(qid, e) is not None for qid in group
+                )
             ]
             if not candidates:
                 for qid in group:
@@ -433,8 +440,16 @@ class AssignmentResolver:
             if qid in handled or qid in ledger.engines:
                 continue
 
-            # Check signal override first
-            if qid in signal_overrides and can_own(signal_overrides[qid]["engine"], query):
+            # Check signal override first. A listed override skips ADR-031
+            # Decision 2 steps 3-5, never step 2 (#766): an override onto an
+            # engine the hard gate excluded is not applied, and the query is
+            # scored below like any other.
+            override_engine = signal_overrides.get(qid, {}).get("engine")
+            if (
+                override_engine
+                and can_own(override_engine, query)
+                and _score(qid, override_engine) is not None
+            ):
                 engine = signal_overrides[qid]["engine"]
                 signal = signal_overrides[qid]["signal"]
                 apply(
@@ -456,8 +471,16 @@ class AssignmentResolver:
                 assigned_signal[qid] = signal
                 continue
 
-            # Otherwise pick highest adjusted score among the engines that may own it
-            query_scores = {e: s for e, s in scores.get(qid, {}).items() if can_own(e, query)}
+            # Otherwise pick the highest adjusted score among the engines that may
+            # own it and passed the hard gates. A gated engine is not a candidate
+            # (ADR-031 Decision 2 step 2, #766): its recorded 0 must never join an
+            # exact tie and win it through ``break_tie``. When no engine passes,
+            # the query takes the Aurora fallback below.
+            query_scores = {
+                e: s
+                for e, s in scores.get(qid, {}).items()
+                if can_own(e, query) and _score(qid, e) is not None
+            }
             if query_scores:
                 top_score = max(query_scores.values())
                 best = [e for e in query_scores if query_scores[e] == top_score]
@@ -617,7 +640,9 @@ class AssignmentResolver:
         # the source-compatible relational engine, overriding whatever the
         # confidence-scoring path above picked, so every other artifact still
         # accounts for every collected query. If no Aurora engine is in play,
-        # the scored assignment is left as-is rather than left unset.
+        # the earlier assignment is left as-is rather than left unset; since
+        # only Aurora passes the sql_admin gate (#766), that is the Aurora
+        # fallback.
         utility_qids = [
             query["query_id"]
             for query in queries
