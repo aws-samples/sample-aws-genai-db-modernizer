@@ -116,10 +116,16 @@ def _is_single_row_pk_lookup(query: dict) -> bool:
 
 
 def _is_admin_statement(query: Mapping) -> bool:
-    """SHOW/DESCRIBE/SET/... (``SKIP_QUERY_TYPES``) or a utility statement
-    (``utility_statements.is_utility_statement``): not application data access."""
+    """SHOW/DESCRIBE/EXPLAIN/SET (``SKIP_QUERY_TYPES``) or a utility statement
+    (``utility_statements.is_utility_statement``): not application data access.
+
+    ``OTHER`` is not admin by type alone (#733): the collector types any
+    statement whose first word is not a DML keyword ``OTHER`` -- a ``WITH ...``
+    CTE query, ``REFRESH``, ``EXEC``, one that starts with a comment or ``(``
+    -- so an ``OTHER`` query is admin only when ``is_utility_statement`` says
+    so (``BEGIN``, ``COMMIT``, ``SET``, ``CREATE``, ...)."""
     query_type = str(query.get("query_type") or "").upper()
-    return query_type in SKIP_QUERY_TYPES or is_utility_statement(
+    return (query_type in SKIP_QUERY_TYPES and query_type != "OTHER") or is_utility_statement(
         query.get("query_text"), query.get("tables_accessed")
     )
 
@@ -502,7 +508,9 @@ def analyze_aurora_common_use_cases(
     #    relational need -- and never overrides a per-query result.
     # Admin statements are not application access: they neither block the
     # table nor take the penalty. That is the scan above's ``SKIP_QUERY_TYPES``
-    # skip plus ``is_utility_statement`` (a metadata read typed SELECT, a
+    # skip (except OTHER, which counts as admin only when it is a utility
+    # statement: a WITH-led, REFRESH or EXEC query is application access)
+    # plus ``is_utility_statement`` (a metadata read typed SELECT, a
     # transaction control statement, ...), which the scan above does not skip.
     anti05_query_ids: list[str] = []
     anti05_table_ids: list[str] = []

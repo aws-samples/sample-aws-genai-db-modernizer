@@ -312,6 +312,37 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         assert ap is not None
         assert ap.query_ids == ["point"]
 
+    def test_a_with_query_typed_other_is_application_access_and_clears_the_table(self):
+        """#733: the collector types a WITH-led query OTHER; it is not an admin statement.
+
+        The discourse ``screened_ip_addresses`` shape: a CTE with inet functions,
+        then GROUP BY ... HAVING. It is relational, so the table has a relational
+        need and none of its queries is penalised.
+        """
+        queries = [
+            _q("point", 'SELECT * FROM "t1" WHERE "t1"."id" = $1 LIMIT $2'),
+            _q(
+                "subnets",
+                "WITH ips_and_subnets AS ( SELECT ip_address, "
+                "network(inet(host(ip_address) || $1 || $2))::text subnet FROM t1 "
+                "WHERE family(ip_address) = $3 AND masklen(ip_address) IN ($4) "
+                "AND action_type = $5 ) SELECT subnet FROM ips_and_subnets "
+                "GROUP BY subnet HAVING COUNT(*) >= $6",
+                query_type="OTHER",
+            ),
+        ]
+        assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
+
+    @pytest.mark.parametrize("sql", ["BEGIN", "COMMIT", "SET statement_timeout = 0"])
+    def test_a_utility_statement_typed_other_is_still_skipped(self, sql):
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("utility", sql, query_type="OTHER"),
+        ]
+        ap = _anti05(queries)
+        assert ap is not None
+        assert ap.query_ids == ["point"]
+
     def test_a_table_with_only_admin_statements_is_not_flagged(self):
         assert _anti05([_q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER")]) is None
 
