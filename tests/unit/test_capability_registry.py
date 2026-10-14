@@ -1,5 +1,7 @@
 """Unit tests for the capability registry."""
 
+import pytest
+
 from src.agents.referee.capability_registry import (
     ENGINE_CAPABILITIES,
     LIGHTWEIGHT_ALTERNATIVES,
@@ -414,6 +416,28 @@ class TestUtilityStatementRequiresSqlAdmin:
     def test_catalog_only_table_access_requires_sql_admin(self):
         caps = detect_required_capabilities("SELECT 1", ["aggregations"], ["pg_class"])
         assert "sql_admin" in caps
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "VACUUM ANALYZE orders",
+            "GRANT SELECT ON orders TO reporting",
+            "LOCK TABLE orders",
+            "START TRANSACTION",
+            "DBCC CHECKDB",
+        ],
+    )
+    def test_admin_command_on_a_real_table_requires_sql_admin(self, sql):
+        """#737: the utility pin covers admin commands even when the table resolves."""
+        caps = detect_required_capabilities(sql, [], ["public.orders"])
+        assert "sql_admin" in caps
+        assert can_engine_serve_capability("dynamodb", caps) is False
+
+    def test_select_reading_a_grant_column_does_not_require_sql_admin(self):
+        caps = detect_required_capabilities(
+            'SELECT "grant" FROM awards WHERE id = $1', [], ["awards"]
+        )
+        assert "sql_admin" not in caps
 
 
 class TestComputedJoinCapability:

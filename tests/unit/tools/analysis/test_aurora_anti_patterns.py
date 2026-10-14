@@ -333,7 +333,21 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         ]
         assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
 
-    @pytest.mark.parametrize("sql", ["BEGIN", "COMMIT", "SET statement_timeout = 0"])
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "BEGIN",
+            "COMMIT",
+            "SET statement_timeout = 0",
+            # #737: admin commands beyond the original verb list.
+            "VACUUM ANALYZE t1",
+            "ANALYZE t1",
+            "LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE",
+            "GRANT SELECT ON t1 TO reporting",
+            "REINDEX TABLE t1",
+            "START TRANSACTION",
+        ],
+    )
     def test_a_utility_statement_typed_other_is_still_skipped(self, sql):
         queries = [
             _q("point", "SELECT * FROM t1 WHERE id = $1"),
@@ -342,6 +356,22 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         ap = _anti05(queries)
         assert ap is not None
         assert ap.query_ids == ["point"]
+
+    def test_an_aggregate_copy_export_is_application_access_and_clears_the_table(self):
+        """``COPY (SELECT ... GROUP BY ...) TO STDOUT`` is a relational read, not admin (#737 review).
+
+        The collector attributes it to ``t1``, so it must reach the per-query
+        check and keep the table out of anti-05, like the #733 ``WITH`` query.
+        """
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q(
+                "export",
+                "COPY (SELECT status, count(*) FROM t1 GROUP BY status) TO STDOUT WITH CSV",
+                query_type="OTHER",
+            ),
+        ]
+        assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
 
     def test_a_table_with_only_admin_statements_is_not_flagged(self):
         assert _anti05([_q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER")]) is None

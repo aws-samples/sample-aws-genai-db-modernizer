@@ -2,7 +2,10 @@
 
 ``SHOW``, ``SET``, ``DESCRIBE``/``DESC``, ``EXPLAIN``, DDL (``CREATE``/``ALTER``/
 ``DROP`` — including ``CREATE EXTENSION``), transaction control (``BEGIN``/
-``COMMIT``/``ROLLBACK``/``SAVEPOINT``/``RELEASE``), ``TRUNCATE``, and catalog
+``START TRANSACTION``/``COMMIT``/``END``/``ROLLBACK``/``ABORT``/``SAVEPOINT``/
+``RELEASE``), ``TRUNCATE``, maintenance (``VACUUM``, ``ANALYZE``, ``OPTIMIZE``,
+``REINDEX``, ``CLUSTER``, ``DBCC``, ...), ``LOCK``, ``GRANT``/``REVOKE``,
+session resets (``RESET``/``DISCARD``/``USE``) (#737), and catalog
 lookups (``information_schema``, Postgres ``pg_catalog``) are
 database-administration traffic, not an application access pattern a target
 engine needs to serve. A purpose-built engine like DynamoDB has no concept of
@@ -56,10 +59,37 @@ _LEADING_COMMENT_RE = re.compile(r"^(?:\s*(?:/\*.*?\*/|--[^\n]*\n))+", re.DOTALL
 # session/administration traffic rather than application read/write workload.
 # Anchored to the start of the (comment-stripped) statement so this never
 # matches, say, a column named "show".
+#
+# #737 added the admin families the first list missed, each on its leading verb
+# alone so the rule names no engine and reads no table:
+# - maintenance and statistics: VACUUM, ANALYZE/ANALYSE, OPTIMIZE, REINDEX,
+#   CLUSTER, CHECKPOINT, FLUSH, DBCC, CHECK/REPAIR TABLE (MySQL; ``CHECK`` and
+#   ``REPAIR`` only with TABLE);
+# - locking: LOCK, UNLOCK;
+# - privileges: GRANT, REVOKE;
+# - transaction control: START TRANSACTION (``START`` only with TRANSACTION),
+#   END, ABORT;
+# - session state: RESET, DISCARD, DEALLOCATE, USE;
+# - object comments: COMMENT ON.
+# ``COPY`` (and MySQL's ``LOAD DATA``) is deliberately not here: it is application
+# bulk I/O, and ``COPY (SELECT ... GROUP BY ...) TO STDOUT`` is a relational read
+# of a real table that aurora-anti-05 must see (#733, #737 review).
 _UTILITY_VERB_RE = re.compile(
-    r"^\s*(SHOW|SET|DESCRIBE|DESC|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE|"
-    r"BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b",
+    r"^\s*(?:SHOW|SET|DESCRIBE|DESC|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE|"
+    r"BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|"
+    r"VACUUM|ANALYZE|ANALYSE|OPTIMIZE|REINDEX|CLUSTER|CHECKPOINT|FLUSH|DBCC|"
+    r"(?:CHECK|REPAIR)\s+TABLES?|"
+    r"LOCK|UNLOCK|GRANT|REVOKE|"
+    r"START\s+TRANSACTION|END|ABORT|"
+    r"RESET|DISCARD|DEALLOCATE|USE|COMMENT\s+ON)\b",
     re.IGNORECASE,
+)
+
+# SQL Server's ``UPDATE STATISTICS <table>`` refreshes optimizer statistics. A
+# DML ``UPDATE`` on a table that happens to be called ``statistics`` always has
+# a ``SET`` clause; UPDATE STATISTICS never does.
+_UPDATE_STATISTICS_RE = re.compile(
+    r"^\s*UPDATE\s+STATISTICS\b(?!.*\bSET\b)", re.IGNORECASE | re.DOTALL
 )
 
 # Catalog/metadata lookups anywhere in the statement — information_schema and
@@ -177,7 +207,10 @@ def is_utility_statement(
 
     True for ``SHOW``/``SET``/``DESCRIBE``/``EXPLAIN``/``CREATE``/``ALTER``/``DROP``/
     ``TRUNCATE``/``BEGIN``/``COMMIT``/``ROLLBACK``/``SAVEPOINT``/``RELEASE``
-    statements (a leading comment is stripped first), for any statement that
+    statements and the admin families in ``_UTILITY_VERB_RE`` (maintenance such
+    as ``VACUUM``/``ANALYZE``/``REINDEX``/``DBCC``, ``LOCK``, ``GRANT``/``REVOKE``,
+    ``START TRANSACTION``/``END``, session ``RESET``/``USE``, #737),
+    whatever table they name (a leading comment is stripped first), for any statement that
     reads ``information_schema`` or ``pg_catalog`` regardless of its leading
     verb, for a query whose ``tables_accessed`` are all system catalog tables,
     and for a catalog function call, ``::reg*`` cast or sequence fetch
@@ -185,7 +218,11 @@ def is_utility_statement(
     names no real application table.
     """
     text = _strip_leading_comments(query_text or "")
-    if _UTILITY_VERB_RE.search(text) or _CATALOG_RE.search(text):
+    if (
+        _UTILITY_VERB_RE.search(text)
+        or _UPDATE_STATISTICS_RE.search(text)
+        or _CATALOG_RE.search(text)
+    ):
         return True
     if _all_tables_are_system_catalog(tables_accessed):
         return True

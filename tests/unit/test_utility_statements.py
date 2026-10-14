@@ -312,3 +312,109 @@ class TestSequencePatternIsShared:
         from src.agents.referee import aurora_choice, utility_statements
 
         assert aurora_choice.has_sequence_reference is utility_statements.has_sequence_reference
+
+
+class TestAdminCommandFamilies:
+    """Maintenance, locking, privilege, bulk-copy and extra transaction/session
+    commands are database administration, not application access (#737).
+
+    Each is recognised by its leading verb only (comments stripped first), the
+    same engine-neutral rule as SHOW/SET/CREATE, whatever the statement names
+    as its table.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # Maintenance and statistics
+            "VACUUM",
+            "VACUUM ANALYZE some_table",
+            "VACUUM (VERBOSE, ANALYZE) public.orders",
+            "ANALYZE some_table",
+            "ANALYSE some_table",
+            "ANALYZE TABLE wp_posts",
+            "OPTIMIZE TABLE wp_options",
+            "REINDEX TABLE orders",
+            "REINDEX INDEX CONCURRENTLY orders_pkey",
+            "CLUSTER orders USING orders_pkey",
+            "CHECKPOINT",
+            "CHECK TABLE wp_posts",
+            "REPAIR TABLE wp_posts",
+            "FLUSH TABLES",
+            "DBCC CHECKDB",
+            "DBCC SHOW_STATISTICS ('dbo.Orders', IX_Orders)",
+            "UPDATE STATISTICS dbo.Orders",
+            # Locking
+            "LOCK TABLE orders IN ACCESS EXCLUSIVE MODE",
+            "LOCK TABLES wp_posts WRITE",
+            "UNLOCK TABLES",
+            # Privileges
+            "GRANT SELECT ON orders TO reporting",
+            "REVOKE ALL ON orders FROM public",
+            # Transaction control
+            "START TRANSACTION",
+            "START TRANSACTION READ ONLY",
+            "END",
+            "END TRANSACTION",
+            "ABORT",
+            # Session state
+            "RESET ALL",
+            "DISCARD ALL",
+            "DEALLOCATE PREPARE stmt1",
+            "USE wordpress",
+            # Object comments
+            "COMMENT ON TABLE orders IS 'customer orders'",
+        ],
+    )
+    def test_admin_command_is_utility(self, sql):
+        assert is_utility_statement(sql) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        ["vacuum analyze some_table", "grant select on orders to app", "start transaction"],
+    )
+    def test_admin_command_is_case_insensitive(self, sql):
+        assert is_utility_statement(sql) is True
+
+    def test_admin_command_resolving_to_a_real_table_is_still_utility(self):
+        """The issue's repro: a VACUUM ANALYZE on a resolved table is not application access."""
+        assert is_utility_statement("VACUUM ANALYZE some_table", ["public.some_table"]) is True
+        assert is_utility_statement("GRANT SELECT ON orders TO app", ["public.orders"]) is True
+
+    def test_leading_comment_before_admin_command_is_utility(self):
+        assert is_utility_statement("/* nightly */ VACUUM ANALYZE orders") is True
+        assert is_utility_statement("-- maintenance\nREINDEX TABLE orders") is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # The admin word appears, but not as the leading verb.
+            "SELECT * FROM reports WHERE status = 'analyze'",
+            "SELECT analyze_id, vacuum_count FROM job_stats WHERE id = ?",
+            'SELECT "grant", amount FROM awards WHERE id = $1',
+            "SELECT `grant` FROM awards WHERE id = ?",
+            "UPDATE awards SET grant = ? WHERE id = ?",
+            "INSERT INTO permissions (grant, revoke) VALUES (?, ?)",
+            "DELETE FROM locks WHERE lock_id = ?",
+            "SELECT * FROM copy_jobs WHERE id = ?",
+            "SELECT * FROM t WHERE id = ? FOR UPDATE",
+            "SELECT * FROM orders WHERE status = ? LOCK IN SHARE MODE",
+            # A leading word that only starts with an admin verb.
+            "ANALYZED_ROWS",
+            "VACUUMING",
+            "GRANTS",
+            "ENDPOINT",
+            "USER_LOOKUP",
+            # START/UPDATE only count in their admin phrases.
+            "START REPLICA_LIKE",
+            "UPDATE statistics SET hits = hits + 1 WHERE id = ?",
+            "UPDATE statistics_daily SET hits = ? WHERE id = ?",
+            # COPY is application bulk I/O, never utility (#737 review).
+            "COPY orders FROM STDIN WITH (FORMAT csv)",
+            "COPY (SELECT status, count(*) FROM orders GROUP BY status) TO STDOUT WITH CSV",
+            # A comment that mentions an admin verb, then application access.
+            "/* run VACUUM later */ SELECT * FROM orders WHERE id = ?",
+        ],
+    )
+    def test_admin_word_outside_the_leading_verb_is_not_utility(self, sql):
+        assert is_utility_statement(sql, ["public.orders"]) is False
