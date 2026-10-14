@@ -4,16 +4,12 @@ Tests the interaction between capability detection and consolidation logic:
 - Gate blocks absorption when capability missing
 - Gate allows absorption when capability present
 - Partial consolidation: some queries move, some stay
-- Lightweight alternative suggested when <= 10% and shared capability
+- Lightweight alternative recommended in the reality check output
 - Full end-to-end: text_search queries block DynamoDB absorption
 """
 
 from src.agents.referee.query_scoring import ScoringContext
-from src.agents.referee.reality_check import (
-    _find_best_absorber_for_query,
-    _suggest_lightweight_for_orphans,
-    run_reality_check,
-)
+from src.agents.referee.reality_check import _find_best_absorber_for_query, run_reality_check
 
 
 def _make_query_assignment(query_id: str, engine: str, reason: str = "test") -> dict:
@@ -200,53 +196,6 @@ class TestPartialConsolidation:
 
 class TestLightweightRecommendations:
     """Test lightweight alternative suggestions."""
-
-    def test_suggest_when_small_uniform_orphan_set(self):
-        """Lightweight recommended when <= 10% queries share single capability."""
-        unserviceable = [{"query_id": "q-1"}]
-        total_movable = 20  # 1/20 = 5% < 10%
-        query_capabilities = {"q-1": ["inverted_index"]}
-
-        result = _suggest_lightweight_for_orphans(
-            unserviceable, total_movable, query_capabilities, "opensearch"
-        )
-
-        assert result is not None
-        assert result["capability"] == "inverted_index"
-        assert "OpenSearch Serverless" in result["service"]
-        assert result["query_ids"] == ["q-1"]
-        assert result["replaces_engine"] == "opensearch"
-
-    def test_no_suggest_when_over_10_percent(self):
-        """No lightweight if orphan set is > 10% of total."""
-        unserviceable = [{"query_id": f"q-{i}"} for i in range(5)]
-        total_movable = 20  # 5/20 = 25% > 10%
-        query_capabilities = {f"q-{i}": ["inverted_index"] for i in range(5)}
-
-        result = _suggest_lightweight_for_orphans(
-            unserviceable, total_movable, query_capabilities, "opensearch"
-        )
-
-        assert result is None
-
-    def test_no_suggest_when_mixed_capabilities(self):
-        """No lightweight if orphans need different capabilities."""
-        unserviceable = [{"query_id": "q-1"}, {"query_id": "q-2"}]
-        total_movable = 50  # 2/50 = 4% < 10%
-        query_capabilities = {
-            "q-1": ["inverted_index"],
-            "q-2": ["scan_engine"],
-        }
-
-        result = _suggest_lightweight_for_orphans(
-            unserviceable, total_movable, query_capabilities, "opensearch"
-        )
-
-        assert result is None
-
-    def test_no_suggest_when_empty_orphans(self):
-        result = _suggest_lightweight_for_orphans([], 10, {}, "opensearch")
-        assert result is None
 
     def test_lightweight_in_full_run(self):
         """End-to-end: lightweight recommendations appear in reality check output."""

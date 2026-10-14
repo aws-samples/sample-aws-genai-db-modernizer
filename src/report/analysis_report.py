@@ -42,8 +42,8 @@ from src.storage.parallel import map_parallel
 
 from . import escaping, renderers
 from .facts import report_facts
-from .formatting import label_other_targets
-from .renderers import _cost_baseline_text, resolve_migration_waves
+from .formatting import _cost_baseline_text, label_other_targets
+from .renderers import resolve_migration_waves
 
 logger = logging.getLogger(__name__)
 
@@ -467,7 +467,7 @@ def _without_llm_original_text(value: Any) -> Any:
     text, kept server-side for audit when a grounding check rejects it and
     replaces it with the deterministic fallback. The notice built from these
     fields names the *reason* the text was rejected
-    (``renderers.fallback_withheld_reason``); the rejected text itself must not
+    (``formatting.fallback_withheld_reason``); the rejected text itself must not
     be recoverable from a customer-facing export, not just left out of the
     rendered notice. Walks the whole value rather than naming the two known
     fields' paths, mirroring ``utils/ExportReport.js``'s
@@ -605,7 +605,7 @@ def build_export_data(
     # ``executive_summary_llm``, ...) -- the original AI-written text kept for
     # audit when a grounding check rejects it and replaces it with the
     # deterministic fallback. The notice built from these fields names the
-    # *reason* the text was rejected (``renderers.fallback_withheld_reason``);
+    # *reason* the text was rejected (``formatting.fallback_withheld_reason``);
     # the rejected text itself must not be recoverable from this
     # customer-facing DATA blob, not just left out of the rendered notice --
     # same fix applied to the standalone HTML export's own DATA
@@ -777,7 +777,7 @@ def _summary_fallback_note(synthesis: dict) -> str:
     """Notice when the executive summary is the deterministic fallback (#269).
 
     Mirrors ``summaryFallbackNoteHtml`` in ExportReport.js, and the Decision
-    Report's own note on the same field (``renderers.render_decision_report_html``'s
+    Report's own note on the same field (``decision_report.render_decision_report_html``'s
     ``summary_source == "deterministic_fallback"`` branch) -- same wording, so the
     interactive report agrees with it. ``fallback_withheld_reason`` is the one
     place that reads ``summary_validation_warnings`` into a short reason clause,
@@ -889,7 +889,7 @@ def _interactive_cost_baseline_stats(tco: dict[str, Any]) -> tuple[str, str]:
     """(current cost, savings) stat text for the interactive report's Executive
     Summary tiles (#334).
 
-    Delegates to ``renderers._cost_baseline_text`` -- the same function the
+    Delegates to ``formatting._cost_baseline_text`` -- the same function the
     decision/engineering reports call -- so this tile can never disagree with
     them on the same report (#334 review: a report with no ``current_cost_known``
     field and a literal ``0`` ``current_monthly_cost`` must read "source cost

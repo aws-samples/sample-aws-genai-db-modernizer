@@ -7,7 +7,7 @@ used by both ``src.agents.referee.synthesis_report.build_risk_assessment``
 (#210: it read only ``pattern_type``/``recommendation``, so
 DocumentDB/ElastiCache entries -- which carry ``reason``/``workaround``
 instead -- became risks with no text) and
-``src.report.renderers._unsupported_pattern_md`` (#204).
+``src.report.engineering_report._unsupported_pattern_md`` (#204).
 """
 
 from __future__ import annotations

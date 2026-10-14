@@ -787,7 +787,7 @@ LOOKUPS: list[Q] = [
 
 # Order reads. The three-table joins here and in REPORTING are significant
 # JOINs on dbo.SalesOrder / dbo.SalesOrderLine, so union-find
-# (``assignment_resolver.build_co_dependency_groups``) puts them in one
+# (``co_dependency.build_co_dependency_groups``) puts them in one
 # co-dependency group that only Aurora PostgreSQL can serve in full: a group
 # with no tie, for contrast with CATEGORY_GROUP.
 ORDER_GROUP: list[Q] = [

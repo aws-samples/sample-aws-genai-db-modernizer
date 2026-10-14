@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.report import renderers
+from src.report import engineering_report, renderers
 
 
 def _ap(engine: str, pattern_id: str, query_ids: list[str], **extra: Any) -> dict[str, Any]:
@@ -143,8 +143,8 @@ class TestQueriesOnAuroraByTable:
         ``reasons[reasonIndex] || ''`` -- a ``None`` entry (shouldn't happen,
         but never worth shipping) resolves to an empty string."""
         group = {"reasons": [None, "a real reason"]}
-        assert renderers._reason_text_for(group, {"reason_index": 0}) == ""
-        assert renderers._reason_text_for(group, {"reason_index": 1}) == "a real reason"
+        assert engineering_report._reason_text_for(group, {"reason_index": 0}) == ""
+        assert engineering_report._reason_text_for(group, {"reason_index": 1}) == "a real reason"
 
     def test_long_joined_reasons_are_cut_on_a_word_boundary(self) -> None:
         """#478: the joined "Reason" cell used to hard-cut at

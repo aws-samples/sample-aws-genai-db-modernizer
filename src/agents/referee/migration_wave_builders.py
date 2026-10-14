@@ -18,7 +18,11 @@ from src.agents.referee.migration_wave_tables import (
     _table_ids,
     _table_owners_for_served,
 )
-from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.engine_names import (
+    SOURCE_ENGINE_DISPLAY_NAMES,
+    display_engine,
+    heterogeneous_source_clause,
+)
 from src.shared.migration_wave_engines import (
     CACHE_ENGINES,
     RELATIONAL_ENGINES,
@@ -97,7 +101,7 @@ def _aurora_wave(
     schema). It never narrows ``tables`` -- wave 1 still carries every
     collected base table and view, because that is what "the whole source
     database moves 1:1" actually means, and every other deliverable
-    (``renderers.py``, ``pptx_report.py``) keeps this wave's ``table_count``
+    (``roadmap.py``, ``pptx_report.py``) keeps this wave's ``table_count``
     as the whole collected schema. It is used only to add one explanatory
     sentence to the rationale, reconciling this wave's full count against the
     migration map's smaller "N tables mapped to a target engine" total (the
@@ -121,6 +125,7 @@ def _aurora_wave(
         version_number = version[len(source_name) :].strip()
         source_desc = version if version_number else source_name
     else:
+        version_number = version or ""
         source_desc = source_name + (f" {version}" if version else "")
 
     # #380 review: wave 1 carries the whole collected schema -- every base
@@ -195,8 +200,7 @@ def _aurora_wave(
             if decision:
                 decision += "."
         rationale = (
-            f"The source database ({source_desc}) has no Aurora engine of its own dialect: "
-            f"Aurora MySQL and Aurora PostgreSQL both competed on the collected workload, "
+            f"{heterogeneous_source_clause(source_engine, version_number)}, "
             # #381 review: never "earned the move" -- that reads as a decisive win even
             # when the actual decision was a tie-break or an unneeded default (an exact
             # tie, or a close call with no deciding feature). "Selected" is accurate

@@ -552,7 +552,7 @@ def test_embeds_the_literal_workload_fit_definition_not_the_build_call(rendered)
 
 def test_risk_assessment_script_carries_the_no_open_risks_caveat(rendered):
     """#434 round-1 review: the client script's no-open-risk state must carry the
-    same caveat the deck and the Decision Report do (``renderers.NO_OPEN_RISKS_CAVEAT``
+    same caveat the deck and the Decision Report do (``risks.NO_OPEN_RISKS_CAVEAT``
     -- this copy lives in ``src/ui/src/utils/ExportReport.js``, kept in sync with
     ``src/report/templates/analysis_report.js`` by ``scripts/sync_report_template.py``,
     so it is embedded verbatim regardless of this fixture's own risk data)."""
@@ -587,7 +587,7 @@ def test_no_fallback_note_when_summary_source_is_missing():
 
 
 def test_fallback_note_names_the_check_specific_reason():
-    """The note's reason clause matches ``renderers.fallback_withheld_reason`` --
+    """The note's reason clause matches ``formatting.fallback_withheld_reason`` --
     one shared function, so the Decision Report and this report never disagree."""
     html = _rendered_with_report(
         summary_source="deterministic_fallback",
@@ -883,7 +883,7 @@ def test_cost_baseline_stat_treats_an_older_zero_cost_report_as_unknown():
     is a literal 0 is overwhelmingly the "no RDS instance metadata" placeholder, not
     a genuine zero-cost database -- so this tile must not read "$0.00/mo"/"0%"
     (the real wordpress sample evidence shape). This is the same rule
-    renderers._cost_baseline_text applies for the decision/engineering reports
+    formatting._cost_baseline_text applies for the decision/engineering reports
     (test_cost_baseline_rendering.py) -- _interactive_cost_baseline_stats
     delegates to it, so this tile can never disagree with them."""
     objects = _objects()
@@ -1183,10 +1183,7 @@ def test_provenance_carries_identity_and_filename():
 
 
 def test_decision_report_and_engineering_report_carry_provenance():
-    from src.report.renderers import (
-        render_decision_report_html,
-        render_engineering_report_md,
-    )
+    from src.report.renderers import render_decision_report_html, render_engineering_report_md
 
     report = _report()
     html_prov = provenance(report, "decision-report", "html", job_id=JOB)
@@ -1208,10 +1205,7 @@ def test_decision_report_and_engineering_report_carry_provenance():
 
 def test_renderers_still_work_without_provenance():
     """Provenance is additive; the existing call shape must keep working."""
-    from src.report.renderers import (
-        render_decision_report_html,
-        render_engineering_report_md,
-    )
+    from src.report.renderers import render_decision_report_html, render_engineering_report_md
 
     report = _report()
     assert "<title>Decision Report" in render_decision_report_html(report)

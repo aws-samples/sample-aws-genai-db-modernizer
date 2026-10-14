@@ -45,7 +45,6 @@ from src.agents.referee.reality_check_floors import (
     OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND,
     _apply_justification_floors,
     _find_best_absorber_for_query,
-    _suggest_lightweight_for_orphans,
     _workload_ever_justified,
     opensearch_justification,
 )
@@ -118,7 +117,6 @@ __all__ = [
     "_resolver_score",
     "_round_evaluation_order",
     "_settle_committed_engines",
-    "_suggest_lightweight_for_orphans",
     "_top_scorers",
     "_workload_ever_justified",
     "format_pattern_recommendation",

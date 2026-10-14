@@ -15,7 +15,7 @@ touches ``<site-dir>/sample/index.html`` (#364); it only adds files
 alongside the one MkDocs already rendered there.
 
 Deliverables are copied under stable names (``decision-report.html``, not the
-per-job, date-stamped filename ``renderers.provenance`` gives each run), so a
+per-job, date-stamped filename ``formatting.provenance`` gives each run), so a
 link to the sample report survives a rebuild. The engineering report, the one
 deliverable rendered as Markdown rather than HTML, is also rendered to
 ``engineering-report.html`` for in-browser reading; the ``.md`` source stays
@@ -52,7 +52,7 @@ from tests.e2e.pipeline import run_pipeline  # noqa: E402
 
 # (filename substring to match against each rendered path, stable name to copy it
 # to). "decision-report"/"engineering-report"/"analysis-report" come from the
-# per-job filename stem (renderers.provenance), which changes every run; the
+# per-job filename stem (formatting.provenance), which changes every run; the
 # executive summary has a fixed name (pdf_report.FILENAME) shared across every
 # job. The editable .pptx deck (pptx_report.FILENAME, stage-only, not published
 # per render_deliverables) is deliberately not in this list -- it is not

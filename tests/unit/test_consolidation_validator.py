@@ -560,7 +560,7 @@ class TestSanitySweepEligibility:
     are not the only ones Phase 2 applies. The sweep must also respect
     the write/ownership gate, the specialist-absorb restriction
     (``may_absorb``/``can_own``), and the join-off-a-non-Aurora-engine-
-    never-onto-DynamoDB block (``reality_check._query_eligible_engines``)
+    never-onto-DynamoDB block (``reality_check_rules._query_eligible_engines``)
     -- or it can place a query somewhere Phase 2 itself would refuse to.
     """
 

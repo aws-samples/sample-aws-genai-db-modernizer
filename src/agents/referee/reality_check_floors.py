@@ -14,7 +14,6 @@ from collections import defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from src.agents.referee.capability_registry import suggest_lightweight_alternative
 from src.agents.referee.reality_check_records import _queries
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
@@ -779,49 +778,4 @@ def _find_best_absorber_for_query(
         **winner,
         "reason": f"{winner['reason']}{tie_note}",
         "tied_engines": sorted(tied_engine_names) if tie_kind == "tie_unresolved" else [],
-    }
-
-
-def _suggest_lightweight_for_orphans(
-    unserviceable_qas: list[dict],
-    total_movable: int,
-    query_capabilities: dict[str, list[str]],
-    source_engine: str,
-) -> dict | None:
-    """Suggest a lightweight alternative if orphan set is small and uniform.
-
-    Returns a dict suitable for LightweightRecommendation if:
-    - Orphan count is <= 10% of total movable queries
-    - All orphans share a single common capability requirement
-    Otherwise returns None (keep the full engine).
-    """
-    if not unserviceable_qas or total_movable == 0:
-        return None
-
-    orphan_ratio = len(unserviceable_qas) / total_movable
-    if orphan_ratio > 0.10:
-        return None
-
-    # Check if all orphans share a single capability
-    all_caps: set[str] = set()
-    for qa in unserviceable_qas:
-        caps = query_capabilities.get(qa["query_id"], [])
-        all_caps.update(caps)
-
-    if len(all_caps) != 1:
-        return None
-
-    shared_cap = next(iter(all_caps))
-    alt = suggest_lightweight_alternative(shared_cap)
-    if not alt:
-        return None
-
-    return {
-        "capability": shared_cap,
-        "service": alt["service"],
-        "query_ids": [qa["query_id"] for qa in unserviceable_qas],
-        "pattern": alt["pattern"],
-        "cost_profile": alt["cost_profile"],
-        "replaces_engine": source_engine,
-        "limitations": alt["limitations"],
     }

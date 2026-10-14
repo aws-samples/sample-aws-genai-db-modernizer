@@ -2,7 +2,7 @@
 
 #270's round-1 review: the decision report's risk posture line and the
 deck's Risk Profile subtitle count the same ``risk_assessment.risks`` list
-through two independent code paths (``renderers._severity_counts_text`` vs.
+through two independent code paths (``risks._severity_counts_text`` vs.
 ``pptx_report.derive``'s ``sev`` dict). A future change to either one, in
 isolation, must not let them disagree -- this test renders one report and
 checks both deliverables' counts match, term for term, including an unrated

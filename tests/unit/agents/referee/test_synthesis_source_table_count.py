@@ -1,5 +1,5 @@
 """#530 review (round 2): ``SynthesisOutputContract.source_table_count`` gives
-``src.report.renderers._n_tables_mapped`` a structured figure to read instead
+``src.report.architecture._n_tables_mapped`` a structured figure to read instead
 of parsing it back out of ``build_summary``'s "Analyzed N source tables ..."
 opening sentence.
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from src.agents.referee.synthesis_data import SynthesisData
 from src.agents.referee.synthesis_report import build_summary, source_table_count
-from src.report.renderers import _ANALYZED_SOURCE_TABLES
+from src.shared.report_facts import ANALYZED_SOURCE_TABLES as _ANALYZED_SOURCE_TABLES
 
 RANKING = [
     {

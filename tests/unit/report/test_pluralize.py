@@ -1,10 +1,10 @@
 """Pluralisation helper (issue #206).
 
 The executive summary deck printed "1 session store queries": every count+noun
-string in ``pptx_report.py`` and ``renderers.py`` built its noun with a fixed
+string in ``pptx_report.py`` and the report renderers built its noun with a fixed
 plural (or a one-off ``"" if n == 1 else "s"`` at a couple of call sites),
 disagreeing on the rule and getting at least one of them wrong. One helper,
-``renderers.plural_noun``, now carries the English count-agreement rule; every
+``formatting.plural_noun``, now carries the English count-agreement rule; every
 count+noun call site composes ``f"{n} {plural_noun(n, 'noun')}"``.
 """
 

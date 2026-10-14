@@ -118,7 +118,7 @@ def test_report_without_distributions_still_uses_the_marker() -> None:
 
 def test_display_name_reasons_map_back_to_engine_ids():
     """Reasons name engines by display name since #572; the section still lists each engine once, by id."""
-    from src.report.renderers import _dropped_engines
+    from src.report.engine_choices import _dropped_engines
 
     report = {
         "reality_check": {

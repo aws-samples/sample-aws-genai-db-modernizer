@@ -4,7 +4,7 @@ migrate" tile (and the migration roadmap) already said 8 tables migrate --
 both read from the same ``report.json``, on the same deck.
 
 The bullet read ``len(report["table_mappings"])``, which only a completed
-schema design ever populates. ``renderers._n_tables_mapped`` now prefers
+schema design ever populates. ``architecture._n_tables_mapped`` now prefers
 ``source_table_count`` (``SynthesisOutputContract``, #530 review round 3):
 the collected schema's own tables-only total, as a structured field, when no
 design has completed. A report synthesized before that field existed falls
@@ -56,8 +56,9 @@ from typing import Any
 import pytest
 
 from src.report import pptx_report
+from src.report.architecture import _n_tables_mapped
 from src.report.pptx_report import _estimated_text_height_in
-from src.report.renderers import _n_tables_mapped, clip
+from src.report.renderers import clip
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_no_schema_design_report.json"
 DESIGNED_FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"

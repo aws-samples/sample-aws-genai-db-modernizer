@@ -24,8 +24,7 @@ from src.contracts.assignment_models import (
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES
 
-# Moved out of assignment_resolver (#617); its warnings keep that logger name.
-logger = logging.getLogger("src.agents.referee.assignment_resolver")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

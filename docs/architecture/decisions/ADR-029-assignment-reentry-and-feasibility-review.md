@@ -46,8 +46,8 @@ feedback:
 The data needed to close gap 2 already exists: `QueryPattern.query_type`
 (`SELECT` / `INSERT` / `UPDATE` / `DELETE` / `MERGE` / `OTHER`) classifies each
 query as read or write, `tables_accessed` lists the tables it touches, and
-`ENGINE_CAPABILITIES` (in `reality_check.py`) records that only `aurora_*` serve
-`complex_joins`. `reality_check.py` also already defines an
+`ENGINE_CAPABILITIES` (in `capability_registry.py`) records that only `aurora_*` serve
+`complex_joins`. `reality_check_patterns.py` also already defines an
 `ARCHITECTURAL_PATTERNS` catalog (CQRS, materialized view, event-driven sync)
 with DynamoDB->OpenSearch zero-ETL examples we can quote back to the customer.
 

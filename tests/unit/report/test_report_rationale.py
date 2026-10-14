@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.report import renderers
+from src.report import architecture, renderers
+from src.shared import report_facts
 
 DDB = "90% mean fit across 98 queries (22 rated tables), led by key-value lookups (36 of 98)."
 AURORA = "87% mean fit across 5 queries (7 rated tables)."
@@ -64,6 +65,6 @@ def test_legacy_list_rationale_reads_as_text() -> None:
     rep = _report()
     del rep["ranking"][1]["rationale"]
     rep["ranking"][1]["assignment_reason_summary"] = ["highest confidence"]
-    rows = {e["engine"]: e for e in renderers._architecture_engines(rep)}
+    rows = {e["engine"]: e for e in architecture._architecture_engines(rep)}
     assert rows["aurora_mysql"]["rationale"] == ""
-    assert renderers._rationale_text(["a", "b"]) == "a; b"
+    assert report_facts.rationale_text(["a", "b"]) == "a; b"

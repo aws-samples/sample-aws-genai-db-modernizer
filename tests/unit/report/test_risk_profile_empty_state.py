@@ -9,9 +9,9 @@ only a fixed "No open risks remain." sentence at the bottom carried any content.
 The fix mirrors the empty-state the interactive Analysis Report already uses
 (``src/report/templates/analysis_report.js``: an "N resolved by the assignment"
 disclosure listing each resolved risk with its reason) and the Engineering Report's
-"Resolved by the assignment" section (``src/report/renderers.py``): list what the
+"Resolved by the assignment" section (``src/report/engineering_report.py``): list what the
 assignment resolved, by engine, with its reason, and carry
-``renderers.NO_OPEN_RISKS_CAVEAT`` -- the same reminder every deliverable's
+``risks.NO_OPEN_RISKS_CAVEAT`` -- the same reminder every deliverable's
 no-open-risk state carries -- that an empty register is not the same as "no
 migration risk" (the analysis never modeled traffic bursts, peak load or
 compliance).

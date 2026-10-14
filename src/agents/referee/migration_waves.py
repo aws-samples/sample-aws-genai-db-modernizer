@@ -118,7 +118,7 @@ For the merged DynamoDB/DocumentDB wave only, ``table_count`` is the union
 of both engines' served tables and cannot be split back into each engine's
 own share; ``table_counts_by_engine`` and ``owned_counts_by_engine`` (#568
 review) give each engine's own served and owned counts, so a consumer
-(``src.report.renderers._architecture_engines``) never credits the whole
+(``src.report.architecture._architecture_engines``) never credits the whole
 union to both engines at once.
 """
 

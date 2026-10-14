@@ -13,8 +13,8 @@ from typing import Any
 from ci.llm import judge_facts
 from src.agents.referee.cache_overlay import safety_net_note
 from src.report import pptx_report
+from src.report.architecture import _architecture_engines
 from src.report.renderers import (
-    _architecture_engines,
     architecture_svg,
     render_decision_report_html,
     render_engineering_report_md,

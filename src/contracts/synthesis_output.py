@@ -135,7 +135,7 @@ Version History:
   onto every access pattern, cut that report's size by roughly 5%.
   ``reason_text_for(group, access_pattern)`` (``synthesis_report.py``, and
   duplicated as ``_reason_text_for``/``reasonTextFor`` in
-  ``src/report/renderers.py`` and ``src/ui/src/utils/auroraDesign.js`` --
+  ``src/report/engineering_report.py`` and ``src/ui/src/utils/auroraDesign.js`` --
   neither package imports the other, same as the two group-name constants
   below) resolves it, has the collector's ``"unknown"`` table placeholder
   replaced by a readable phrase (#483: some of those statements do have a
@@ -178,7 +178,7 @@ Version History:
   in prose, the only place it existed; a renderer that needed it without a
   completed schema design (``table_mappings`` stays empty then, #530) had to
   parse it back out of that sentence with a regex
-  (``src.report.renderers._n_tables_mapped``'s ``_ANALYZED_SOURCE_TABLES``).
+  (``src.report.architecture._n_tables_mapped``'s ``_ANALYZED_SOURCE_TABLES``).
   It is now also this structured field, computed the same way
   (``synthesis_report.source_table_count``, which ``build_summary`` itself
   now calls) so the two can never disagree; the renderer reads this field
@@ -203,7 +203,7 @@ Version History:
   DocumentDB wave only, each engine's own served and durably-owned table counts.
   ``table_count`` on that wave is the union of both engines' served tables and
   cannot be split back into each engine's own share; a consumer that credited
-  the whole union to every engine (``src.report.renderers._architecture_engines``,
+  the whole union to every engine (``src.report.architecture._architecture_engines``,
   before this fix) double counted. Both default to ``None`` for a single-engine
   wave (derive the owned count there as ``table_count - len(table_owners or [])``)
   and for a wave written before this version. Backward compatible.

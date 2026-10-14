@@ -281,7 +281,7 @@ class TestScanJson:
     def test_risk_description_s_leading_engine_tag_is_not_a_leak(self) -> None:
         """``Risk.description`` has no separate engine field -- the engine is a
         leading ``[engine]`` tag every renderer parses off before display
-        (``src.report.renderers._risk_engine_and_body``). Stripped before
+        (``src.shared.report_facts.risk_engine_and_body``). Stripped before
         scanning, not excluded outright, so a leak in the body is still caught."""
         report = {"risks": [{"description": "[aurora_mysql] Table accessed by 2 patterns."}]}
         assert scan_json(report) == []

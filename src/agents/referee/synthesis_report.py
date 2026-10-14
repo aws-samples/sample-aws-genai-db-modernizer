@@ -42,7 +42,7 @@ from src.contracts.executive_summary_response import (
 )
 from src.contracts.model_flag import validation_error_note
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
-from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_source_database
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_source_clause
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
@@ -2575,7 +2575,7 @@ def build_architecture_recommendation(
     # never named "retained" for work it no longer does. Excluded from
     # ``databases`` the same way the mixed-run case below already excludes an
     # undesigned retained engine, letting it fall through to the "Retained"
-    # status check in ``renderers._engine_role`` instead of reading as a
+    # status check in ``report_facts.engine_role`` instead of reading as a
     # migration target.
     retained_engine: str | None = None
     if no_schema_design:
@@ -2988,7 +2988,7 @@ def source_table_count(data: SynthesisData) -> int:
 
     ``build_summary``'s "Analyzed N source tables ..." opening line was the
     only place this number existed, forcing a renderer that needed it
-    (``src.report.renderers._n_tables_mapped``, when no schema design has
+    (``src.report.architecture._n_tables_mapped``, when no schema design has
     run) to parse it back out of that prose with a regex. Giving it its own
     contract field (``SynthesisOutputContract.source_table_count``) makes it
     a first-class, structured figure instead; this helper is the one place
@@ -3046,22 +3046,14 @@ def build_summary(
     # migration roadmap.
     aurora_choice = (data.assignment or {}).get("aurora_engine_choice")
     source_engine = (aurora_choice or {}).get("source_engine")
-    # #381 review round 2: display_source_database (the same helper every other
-    # caller uses for a wave's "moves_from" source name) instead of a hand-rolled
-    # SOURCE_ENGINE_DISPLAY_NAMES lookup -- that fallback defaulted to the raw,
-    # un-prettified source_engine string (or "" when it was missing entirely)
-    # instead of title-casing an unmapped engine the way display_engine does.
-    # source_engine is required to say anything at all; without it the sentence is
-    # skipped, same as with no recorded choice.
+    # #381 review round 2, #743: the opening clause comes from
+    # heterogeneous_source_clause (shared with the wave rationale), which names the
+    # source with display_source_database. source_engine is required to say anything
+    # at all; without it the sentence is skipped, same as with no recorded choice.
     if aurora_choice and aurora_choice.get("engine") and source_engine:
-        source_name = display_source_database(source_engine)
-        # display_source_database is mid-sentence phrasing ("the source ...
-        # database"); this sentence starts with it (#663).
-        source_name = source_name[:1].upper() + source_name[1:]
         chosen_name = display_name(aurora_choice["engine"])
         parts.append(
-            f"{source_name} has no Aurora engine of its own dialect: Aurora MySQL and "
-            f"Aurora PostgreSQL both competed on the collected workload, and "
+            f"{heterogeneous_source_clause(source_engine)}, and "
             f"{chosen_name} was selected to serve it (a cross-engine, dialect-and-schema "
             "conversion, not a 1:1 carry-over)."
         )

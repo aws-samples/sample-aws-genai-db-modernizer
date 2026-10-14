@@ -12,8 +12,8 @@
 - **Referee-Triage** (`src/agents/referee/triage.py`) — reads collector output,
   detects workload signals, and selects which analysis agents run. Pure
   Python, deterministic, no LLM.
-- **Referee-Reality-Check** (`src/agents/referee/reality_check.py` +
-  `reality_check_handler.py`) — a deterministic CTO-level consolidation pass
+- **Referee-Reality-Check** (`src/agents/referee/reality_check.py`, its
+  `reality_check_*.py` step modules and `reality_check_handler.py`) — a deterministic CTO-level consolidation pass
   over the initial query-to-engine assignment, with an LLM validation step
   (`--llm-mode bedrock`/`external`) that can be skipped (`--llm-mode none`).
 - **Referee-Synthesis** (`src/agents/referee/synthesis_handler.py`) — reads
@@ -114,7 +114,7 @@ adds its target engines deterministically.
 Run after the initial assignment, before schema design. Default posture: at
 most 2 committed engines; a third must provide a genuinely unique capability
 no other committed engine can serve. Deterministic steps
-(`src/agents/referee/reality_check.py`), all reading the resolver's own
+(`src/agents/referee/reality_check.py` and the `reality_check_*.py` step modules), all reading the resolver's own
 per-query scores (ADR-031 Decision 7):
 
 1. **Settle (unique value assessment)** — per engine, which assigned queries

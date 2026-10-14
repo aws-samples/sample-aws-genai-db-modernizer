@@ -92,7 +92,7 @@ def test_engine_labels_match_the_python_renderer(sync):
 
 def test_no_open_risks_caveat_matches_the_python_constant(sync):
     """#434: the client script's no-open-risk reminder is a hand-kept copy of
-    ``renderers.NO_OPEN_RISKS_CAVEAT`` (JavaScript cannot import a Python
+    ``risks.NO_OPEN_RISKS_CAVEAT`` (JavaScript cannot import a Python
     constant) -- pin the two together the same way ``ENGINE_LABELS`` is, so a
     wording change on one side fails loudly instead of silently drifting from
     the deck and the Decision Report.

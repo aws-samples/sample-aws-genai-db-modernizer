@@ -51,3 +51,16 @@ def test_display_engine_falls_back_to_a_titlecased_id() -> None:
 
 def test_display_engine_passes_through_empty_and_falsy() -> None:
     assert display_engine("") == ""
+
+
+def test_heterogeneous_source_clause_is_one_wording_for_wave_and_summary() -> None:
+    from src.shared.engine_names import heterogeneous_source_clause
+
+    clause = heterogeneous_source_clause("sqlserver")
+    assert clause == (
+        "The source SQL Server database has no Aurora engine of its own dialect: "
+        "Aurora MySQL and Aurora PostgreSQL both competed on the collected workload"
+    )
+    assert heterogeneous_source_clause("oracle", "19.3").startswith(
+        "The source Oracle database (19.3) has no Aurora engine"
+    )

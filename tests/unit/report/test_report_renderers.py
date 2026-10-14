@@ -21,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from src.report import renderers
+from src.report import architecture, decision_report, engine_roles, engineering_report, renderers
+from src.shared import report_facts
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
@@ -61,7 +62,7 @@ class TestDecisionReport:
         assert "92" in h
 
     def test_architecture_engines_all_five_with_roles(self, report: dict) -> None:
-        engines = renderers._architecture_engines(report)
+        engines = architecture._architecture_engines(report)
         assert len(engines) == 5
         total_workload = sum(e.get("workload", 0) for e in engines)
         assert 99.0 <= total_workload <= 101.0
@@ -141,7 +142,7 @@ class TestEngineeringReport:
             "pattern_type": "aggregation",
             "recommendation": "COUNT(*) on wp_postmeta: run a Query with Select=COUNT.",
         }
-        line = renderers._unsupported_pattern_md(dynamodb_style)
+        line = engineering_report._unsupported_pattern_md(dynamodb_style)
         assert "{" not in line and "[" not in line and "'" not in line
         assert "aggregation" in line
         assert "254f282c" in line
@@ -154,7 +155,7 @@ class TestEngineeringReport:
             "reason": "LEFT JOIN with multiple LIKE predicates cannot be a key lookup.",
             "workaround": "Maintain a secondary index set.",
         }
-        line = renderers._unsupported_pattern_md(elasticache_style)
+        line = engineering_report._unsupported_pattern_md(elasticache_style)
         assert "{" not in line and "[" not in line and "'" not in line
         assert "LEFT JOIN" in line
         assert "Maintain a secondary index set" in line
@@ -165,14 +166,14 @@ class TestEngineeringReport:
             "reason": "full text search",
             "recommendation": "use match query",
         }
-        line = renderers._unsupported_pattern_md(opensearch_style)
+        line = engineering_report._unsupported_pattern_md(opensearch_style)
         assert "{" not in line and "[" not in line and "'" not in line
         assert "full text search" in line
         assert "use match query" in line
 
     def test_unsupported_pattern_md_many_ids_truncated(self) -> None:
         many = {"query_ids": [f"id{i}" * 4 for i in range(10)], "reason": "too many to list"}
-        line = renderers._unsupported_pattern_md(many)
+        line = engineering_report._unsupported_pattern_md(many)
         assert "+7 more" in line
 
     def test_unsupported_pattern_md_documentdb_shape(self) -> None:
@@ -182,7 +183,7 @@ class TestEngineeringReport:
             "reason": "CTE queries with window functions are not supported.",
             "workaround": None,
         }
-        line = renderers._unsupported_pattern_md(documentdb_style)
+        line = engineering_report._unsupported_pattern_md(documentdb_style)
         assert "{" not in line and "[" not in line and "'" not in line
         assert "CTE queries with window functions" in line
         assert "unsupported pattern" in line  # no pattern_type -> generic label
@@ -190,20 +191,22 @@ class TestEngineeringReport:
     def test_unsupported_pattern_md_string_query_ids_is_one_id(self) -> None:
         """A bare string under query_ids is one malformed id, not a list to
         explode into characters (minor #204 follow-up)."""
-        line = renderers._unsupported_pattern_md({"query_ids": "abc12345", "reason": "x"})
+        line = engineering_report._unsupported_pattern_md({"query_ids": "abc12345", "reason": "x"})
         assert "`abc12345`" in line
         # exploding into characters would produce many single-char code spans
         assert "`a`" not in line
 
     def test_unsupported_pattern_md_drops_falsy_ids(self) -> None:
-        line = renderers._unsupported_pattern_md(
+        line = engineering_report._unsupported_pattern_md(
             {"query_ids": ["real-id", "", None], "reason": "x"}
         )
         assert "`real-id`" in line
         assert line.count("`") == 2
 
     def test_unsupported_pattern_md_strips_asterisks_from_pattern_type(self) -> None:
-        line = renderers._unsupported_pattern_md({"pattern_type": "*aggregation*", "reason": "x"})
+        line = engineering_report._unsupported_pattern_md(
+            {"pattern_type": "*aggregation*", "reason": "x"}
+        )
         # Exactly the Markdown-bold wrapper around the stripped label -- not the
         # original value's own asterisks plus the wrapper's.
         assert line.count("*") == 4
@@ -229,7 +232,7 @@ class TestEngineeringReport:
             "source_table": "discourse.categories",
             "application_logic_required": "Implement a Change Stream listener.",
         }
-        line = renderers._migration_note_md(note)
+        line = engineering_report._migration_note_md(note)
         assert "{" not in line and "'" not in line
         assert "trigger" in line
         # Underscores are backslash-escaped by md_text (#211).
@@ -237,9 +240,9 @@ class TestEngineeringReport:
         assert "Implement a Change Stream listener" in line
 
     def test_migration_note_md_tolerant_of_missing_keys(self) -> None:
-        line = renderers._migration_note_md({})
+        line = engineering_report._migration_note_md({})
         assert "{" not in line and "'" not in line
-        line = renderers._migration_note_md({"object_name": "x"})
+        line = engineering_report._migration_note_md({"object_name": "x"})
         assert "{" not in line and "'" not in line
         assert "x" in line
 
@@ -263,19 +266,19 @@ class TestEngineeringReport:
 class TestRiskFilter:
     def test_filters_six_empty_risks(self, report: dict) -> None:
         risks = report["risk_assessment"]["risks"]
-        kept = [r for r in risks if renderers._risk_has_content(r.get("description"))]
+        kept = [r for r in risks if report_facts.risk_has_content(r.get("description"))]
         assert len(risks) == 28
         assert len(kept) == 22
 
     def test_engine_and_body_parse(self) -> None:
-        eng, body = renderers._risk_engine_and_body("[documentdb] Queries joining 3+ tables")
+        eng, body = report_facts.risk_engine_and_body("[documentdb] Queries joining 3+ tables")
         assert eng == "documentdb"
         assert body == "Queries joining 3+ tables"
 
     def test_has_content_predicate(self) -> None:
-        assert renderers._risk_has_content("[elasticache] unknown: ") is False
-        assert renderers._risk_has_content("[documentdb] a real risk") is True
-        assert renderers._risk_has_content("") is False
+        assert report_facts.risk_has_content("[elasticache] unknown: ") is False
+        assert report_facts.risk_has_content("[documentdb] a real risk") is True
+        assert report_facts.risk_has_content("") is False
 
 
 # =============================================================================
@@ -310,25 +313,27 @@ class TestEngineRole:
     def test_zero_workload_is_evaluated_not_retained(self) -> None:
         """The defect: a skipped design used to imply "Retained" regardless of workload."""
         assert (
-            renderers._engine_role("documentdb", set(), {"documentdb": {"status": "skipped"}}, 0.0)
+            report_facts.engine_role(
+                "documentdb", set(), {"documentdb": {"status": "skipped"}}, 0.0
+            )
             == "Evaluated"
         )
-        assert renderers._engine_role("documentdb", set(), {}, None) == "Evaluated"
+        assert report_facts.engine_role("documentdb", set(), {}, None) == "Evaluated"
 
     def test_workload_carrying_engine_with_no_design_is_still_retained(self) -> None:
         """Guards against over-correcting: the source relational core keeps Retained."""
-        role = renderers._engine_role(
+        role = report_facts.engine_role(
             "aurora_postgresql", set(), {"aurora_postgresql": {"status": "not_available"}}, 49.3
         )
         assert role == "Retained"
 
     def test_cache_and_migration_target_keep_their_role_at_zero_workload(self) -> None:
         """Branch-order guard: the workload test must not outrank these two."""
-        assert renderers._engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
-        assert renderers._engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
+        assert report_facts.engine_role("elasticache", set(), {}, 0.0) == "Cache layer"
+        assert report_facts.engine_role("dynamodb", {"dynamodb"}, {}, 0.0) == "Migration target"
 
     def test_scope_reads_no_queries_assigned(self, zero_workload_report: dict) -> None:
-        rows = {e["engine"]: e for e in renderers._architecture_engines(zero_workload_report)}
+        rows = {e["engine"]: e for e in architecture._architecture_engines(zero_workload_report)}
         assert rows["documentdb"]["role"] == "Evaluated"
         assert rows["documentdb"]["scope"] == "no queries assigned"
         # the engines that do the work are unaffected
@@ -339,7 +344,7 @@ class TestEngineRole:
         self, zero_workload_report: dict
     ) -> None:
         """The HTML claimed DocumentDB was "retained as the relational core"."""
-        engines = renderers._architecture_engines(zero_workload_report)
+        engines = architecture._architecture_engines(zero_workload_report)
         assert [e["engine"] for e in engines if e["role"] == "Retained"] == ["aurora_postgresql"]
 
     def test_evaluated_engine_excluded_from_wave_one(self, zero_workload_report: dict) -> None:
@@ -352,14 +357,14 @@ class TestEngineRole:
         the Evaluated engine happens to be the sole minimum, and asserting it here would
         encode a coincidence of that one report.
         """
-        engines = renderers._architecture_engines(zero_workload_report)
+        engines = architecture._architecture_engines(zero_workload_report)
         no_move = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
         assert [e["engine"] for e in no_move] == ["aurora_postgresql", "elasticache"]
         assert "documentdb" not in {e["engine"] for e in no_move}
 
     def test_footer_names_and_percentage_agree(self, zero_workload_report: dict) -> None:
         """Tested positively on role, so an Evaluated engine is not named as "keeping" workload."""
-        engines = renderers._architecture_engines(zero_workload_report)
+        engines = architecture._architecture_engines(zero_workload_report)
         kept = [e for e in engines if e["role"] in ("Retained", "Cache layer")]
         assert [e["engine"] for e in kept] == ["aurora_postgresql", "elasticache"]
         assert abs(sum(e["workload"] for e in kept) - 78.7) < 0.05
@@ -368,7 +373,7 @@ class TestEngineRole:
         self, zero_workload_report: dict
     ) -> None:
         svg = renderers.architecture_svg(zero_workload_report)
-        assert renderers._ROLE_STROKE["Evaluated"] in svg
+        assert engine_roles._ROLE_STROKE["Evaluated"] in svg
         assert ">None<" not in svg
 
 
@@ -401,15 +406,15 @@ class TestEngineBadgeContrast:
     for normal-weight small text.
     """
 
-    @pytest.mark.parametrize("engine", sorted(renderers._ENGINE_BADGE))
+    @pytest.mark.parametrize("engine", sorted(decision_report._ENGINE_BADGE))
     def test_badge_background_meets_aa_contrast_with_white_text(self, engine: str) -> None:
-        color = renderers._ENGINE_BADGE[engine]
+        color = decision_report._ENGINE_BADGE[engine]
         ratio = _contrast_ratio("#ffffff", color)
         assert (
             ratio >= 4.5
         ), f"{engine} badge {color} only has {ratio:.2f}:1 contrast with white text"
 
     def test_fallback_badge_meets_aa_contrast_with_white_text(self) -> None:
-        html = renderers._engine_badge("some-unmapped-engine")
+        html = decision_report._engine_badge("some-unmapped-engine")
         fallback = re.search(r"background:(#[0-9a-fA-F]{6})", html).group(1)
         assert _contrast_ratio("#ffffff", fallback) >= 4.5

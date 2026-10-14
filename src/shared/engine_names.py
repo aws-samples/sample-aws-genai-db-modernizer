@@ -9,7 +9,7 @@ badges and, via JSON injection, the client script in
 ``src/ui/src/utils/ExportReport.js`` both said ``Elasticache``, ``AuroraPostgresql``
 and ``AuroraMySQL`` -- no space, wrong internal casing -- which then leaked into the
 "Resolved by the assignment" section of the engineering report (#221) once that
-section started naming engines (``src.report.renderers``).
+section started naming engines (``src.report.engineering_report``).
 
 ``src.report.pptx_report.ENGINE_LABEL`` had the correct names
 (``"Aurora MySQL"``, ``"ElastiCache"``, ...) all along, for the six engines it
@@ -86,3 +86,21 @@ def display_source_database(engine: str) -> str:
     """
     name = SOURCE_ENGINE_DISPLAY_NAMES.get(engine, display_engine(engine))
     return f"the source {name} database"
+
+
+def heterogeneous_source_clause(source_engine: str, version: str = "") -> str:
+    """The shared opening of the heterogeneous-source sentence (#381, #743).
+
+    A source with no Aurora engine of its own dialect (SQL Server, Oracle, Db2)
+    sends both Aurora engines to compete on the collected workload. The wave
+    rationale and the executive summary each finish the sentence with their own
+    tail (who selected the engine, and the trace), so they cannot word this part
+    differently. The wave rationale also passes the collected ``version``
+    ("The source SQL Server database (15.0.2000.5) has ..."); the summary has none.
+    """
+    source = display_source_database(source_engine)
+    detail = f" ({version})" if version else ""
+    return (
+        f"{source[:1].upper()}{source[1:]}{detail} has no Aurora engine of its own dialect: "
+        "Aurora MySQL and Aurora PostgreSQL both competed on the collected workload"
+    )

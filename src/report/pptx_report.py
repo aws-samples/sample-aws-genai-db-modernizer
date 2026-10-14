@@ -62,21 +62,19 @@ from src.shared.report_facts import wave_facts
 
 # SEVERITY_ORDER, UNRATED and _severity come from src.shared.risk_severity (#536
 # S1): a risk whose severity is none of SEVERITY_ORDER is shown, not dropped
-# (#249 review), the same shared counter renderers.py and the summary grounding
+# (#249 review), the same shared counter risks.py and the summary grounding
 # check use.
 from src.shared.risk_severity import SEVERITY_ORDER, UNRATED
 from src.shared.risk_severity import severity_of as _severity
 from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL, fit_phrase
 
+from .architecture import _architecture_engines, _mapping_split, _n_tables_mapped
 from .engine_choices import REROUTE_OVERRIDE_TEXT, reroute_summary
 from .facts import report_facts, wave_facts_for
 from .renderers import (
     NO_OPEN_RISKS_CAVEAT,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
-    _architecture_engines,
-    _mapping_split,
-    _n_tables_mapped,
     clip,
     filtered_risks,
     fmt_num,
@@ -1039,7 +1037,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # Analysis risks the effective assignment resolved (#434): with no open risks
     # the Risk Profile slide leads with these instead of an empty table and an
     # empty "BY TYPE" box. Same filter as the Engineering Report's "Resolved by
-    # the assignment" section (``renderers.resolved_risks``). Sorted by severity
+    # the assignment" section (``risks.resolved_risks``). Sorted by severity
     # only -- ``sorted`` is stable, so risks tied on severity keep the order
     # ``resolved_risks`` (and so the Engineering/Analysis reports) already list
     # them in, rather than a second, finer sort those reports don't apply.
@@ -1896,7 +1894,7 @@ def slide_reality_check(prs, f):
 
 # Resolved-risk rows past this count are named only by their total; the table
 # keeps the Risk Profile slide one page and the Engineering Report lists every
-# one of them (``renderers.render_engineering_report_md``'s "Resolved by the
+# one of them (``engineering_report.render_engineering_report_md``'s "Resolved by the
 # assignment" section).
 MAX_RESOLVED_ROWS = 6
 # Muted, not an accent colour (#434 review): a resolved row is not an open risk,
@@ -1915,7 +1913,7 @@ def _resolved_engine_label(risk: dict[str, Any]) -> str:
     """``aurora_mysql`` resolved onto ``dynamodb`` -> ``Aurora MySQL to DynamoDB``;
     resolved onto its own engine -> ``Aurora MySQL (kept)``.
 
-    Uses ``renderers.resolved_risk_label`` (``display_engine``, not the deck's own
+    Uses ``risks.resolved_risk_label`` (``display_engine``, not the deck's own
     six-engine ``ENGINE_LABEL``) so the deck and the Engineering Report's "Resolved
     by the assignment" section agree on every engine name and on the "(kept)"
     wording. Spells out "to" rather than an arrow glyph (#434 review, PDF): the
@@ -1942,7 +1940,7 @@ def _slide_risk_no_open_risks(s, f) -> None:
     the assignment resolved (the Engineering Report's "Resolved by the
     assignment" section, mirrored here with the same engine display names) and
     carries the same fixed reminder every deliverable's no-open-risk state
-    carries (``renderers.NO_OPEN_RISKS_CAVEAT``) that an empty register is not
+    carries (``risks.NO_OPEN_RISKS_CAVEAT``) that an empty register is not
     the same as "no migration risk".
     """
     resolved = f["resolved_risks"]

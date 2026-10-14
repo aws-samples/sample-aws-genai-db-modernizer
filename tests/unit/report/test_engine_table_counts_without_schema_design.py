@@ -11,7 +11,7 @@ per-engine Scope column read ``recommended_architecture.databases`` with no
 such fallback, so it kept showing 0 for the same engine the other two
 numbers, on the same page, already called 8.
 
-``_architecture_engines`` (``src/report/renderers.py``) now reads that same
+``_architecture_engines`` (``src/report/architecture.py``) now reads that same
 per-wave ``table_count`` (via ``resolve_migration_waves``) for a migration
 target with no completed schema design, so the Scope column, the tile and
 the roadmap all come from the one field. An engine with a completed schema
@@ -37,7 +37,7 @@ from typing import Any
 
 import pytest
 
-from src.report import pptx_report, renderers
+from src.report import architecture, pptx_report, renderers
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_no_schema_design_report.json"
 DESIGNED_FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
@@ -72,7 +72,7 @@ def test_fixture_reproduces_the_defect_shape(report: dict[str, Any]) -> None:
 def test_architecture_engines_falls_back_to_the_migration_wave_count(
     report: dict[str, Any],
 ) -> None:
-    rows = {e["engine"]: e for e in renderers._architecture_engines(report)}
+    rows = {e["engine"]: e for e in architecture._architecture_engines(report)}
     dynamodb = rows["dynamodb"]
     assert dynamodb["role"] == "Migration target"
     assert dynamodb["migrates"] == 8
@@ -134,7 +134,7 @@ def test_designed_engine_with_zero_mapped_tables_keeps_its_own_figure(
         }
     ]
 
-    rows = {e["engine"]: e for e in renderers._architecture_engines(rigged)}
+    rows = {e["engine"]: e for e in architecture._architecture_engines(rigged)}
     documentdb = rows["documentdb"]
     assert documentdb["role"] == "Migration target"
     # Its own figure (0, with the design's "incl. shared" count carried along),
@@ -146,7 +146,7 @@ def test_designed_engine_with_zero_mapped_tables_keeps_its_own_figure(
     # documentdb contributes 0, never the wave's 999 on top.
     migrated_total = sum(
         e["migrates"]
-        for e in renderers._architecture_engines(rigged)
+        for e in architecture._architecture_engines(rigged)
         if e["role"] == "Migration target"
     )
     assert migrated_total == 15

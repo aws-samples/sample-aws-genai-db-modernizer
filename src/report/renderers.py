@@ -9,71 +9,15 @@ re-exports their names so callers keep importing from ``renderers``.
 
 from __future__ import annotations
 
-from src.shared.report_facts import ANALYZED_SOURCE_TABLES as _ANALYZED_SOURCE_TABLES
 from src.shared.report_facts import cache_layer_counts
-from src.shared.report_facts import design_source_tables as _design_source_tables
-from src.shared.report_facts import engine_costs as _engine_costs
-from src.shared.report_facts import rationale_text as _rationale_text
 
-from .architecture import (
-    _ROLE_PHRASE,
-    SHARED_TABLES_LABEL,
-    SHARED_TABLES_NOTE,
-    _architecture_engines,
-    _mapping_split,
-    _n_tables_mapped,
-    architecture_svg,
-)
-from .cache_layer import _cache_layer_md, _cache_note, cache_layer_text, cache_wave_note
-from .decision_report import (
-    _DECISION_CSS,
-    _ENGINE_BADGE,
-    _engine_badge,
-    _meta_tags,
-    _provenance_footer_html,
-    _risk_tile_class,
-    _workload_cell,
-    render_decision_report_html,
-)
-from .engine_choices import (
-    _CONSOLIDATED_FROM_TO_RE,
-    _ENGINE_BY_NAME,
-    _ENGINE_NAME_ALT,
-    _FULLY_ELIMINATED_RE,
-    _dropped_engines,
-    _engine_from_reason,
-    _tied_queries_html,
-    _tied_queries_md,
-    _why_engines_were_dropped_html,
-)
-from .engine_roles import (
-    _CACHE_ENGINES,
-    _RELATIONAL_ENGINES,
-    _ROLE_STROKE,
-    _SEARCH_ENGINES,
-    SEARCH_READ_MODEL,
-    _engine_role,
-)
-from .engineering_report import (
-    _UNRESOLVED_TABLE_GROUP_LABEL,
-    _UTILITY_GROUP_LABEL,
-    _app_layer_notes_md,
-    _aurora_queries_by_table_md,
-    _mermaid_er,
-    _migration_note_md,
-    _reason_text_for,
-    _unsupported_pattern_md,
-    render_engineering_report_md,
-)
+from .architecture import SHARED_TABLES_LABEL, SHARED_TABLES_NOTE, architecture_svg
+from .cache_layer import cache_layer_text, cache_wave_note
+from .decision_report import render_decision_report_html
+from .engine_roles import SEARCH_READ_MODEL
+from .engineering_report import render_engineering_report_md
 from .formatting import (
-    _FALLBACK_REASONS,
-    _PER_ENGINE_APS,
-    _RESOLVED_RISKS,
     DASH,
-    _completed_designs,
-    _cost_baseline_text,
-    _eliminated_engine_costs_text,
-    _fmt_usd,
     access_pattern_scope,
     artifact_stem,
     clip,
@@ -86,28 +30,8 @@ from .formatting import (
     plural_verb,
     provenance,
 )
-from .risks import (
-    _RISK_POSTURE_SEVERITIES,
-    NO_OPEN_RISKS_CAVEAT,
-    _repeats,
-    _risk_engine_and_body,
-    _risk_has_content,
-    _severity_counts_text,
-    filtered_risks,
-    resolved_risk_label,
-    resolved_risks,
-)
-from .roadmap import (
-    _GROUP_KIND_LABELS,
-    _RELATIONAL_TO_SOURCE_ENGINE,
-    _SUGGESTED_PATH_NOTE,
-    _legacy_migration_waves,
-    _moves_from_label,
-    _roadmap_html,
-    _roadmap_md,
-    _wave_headline_stats,
-    resolve_migration_waves,
-)
+from .risks import NO_OPEN_RISKS_CAVEAT, filtered_risks, resolved_risk_label, resolved_risks
+from .roadmap import resolve_migration_waves
 
 __all__ = [
     "DASH",
@@ -115,65 +39,6 @@ __all__ = [
     "SEARCH_READ_MODEL",
     "SHARED_TABLES_LABEL",
     "SHARED_TABLES_NOTE",
-    "_ANALYZED_SOURCE_TABLES",
-    "_CACHE_ENGINES",
-    "_CONSOLIDATED_FROM_TO_RE",
-    "_DECISION_CSS",
-    "_ENGINE_BADGE",
-    "_ENGINE_BY_NAME",
-    "_ENGINE_NAME_ALT",
-    "_FALLBACK_REASONS",
-    "_FULLY_ELIMINATED_RE",
-    "_GROUP_KIND_LABELS",
-    "_PER_ENGINE_APS",
-    "_RELATIONAL_ENGINES",
-    "_RELATIONAL_TO_SOURCE_ENGINE",
-    "_RESOLVED_RISKS",
-    "_RISK_POSTURE_SEVERITIES",
-    "_ROLE_PHRASE",
-    "_ROLE_STROKE",
-    "_SEARCH_ENGINES",
-    "_SUGGESTED_PATH_NOTE",
-    "_UNRESOLVED_TABLE_GROUP_LABEL",
-    "_UTILITY_GROUP_LABEL",
-    "_app_layer_notes_md",
-    "_architecture_engines",
-    "_aurora_queries_by_table_md",
-    "_cache_layer_md",
-    "_cache_note",
-    "_completed_designs",
-    "_cost_baseline_text",
-    "_design_source_tables",
-    "_dropped_engines",
-    "_eliminated_engine_costs_text",
-    "_engine_badge",
-    "_engine_costs",
-    "_engine_from_reason",
-    "_engine_role",
-    "_fmt_usd",
-    "_legacy_migration_waves",
-    "_mapping_split",
-    "_mermaid_er",
-    "_meta_tags",
-    "_migration_note_md",
-    "_moves_from_label",
-    "_n_tables_mapped",
-    "_provenance_footer_html",
-    "_rationale_text",
-    "_reason_text_for",
-    "_repeats",
-    "_risk_engine_and_body",
-    "_risk_has_content",
-    "_risk_tile_class",
-    "_roadmap_html",
-    "_roadmap_md",
-    "_severity_counts_text",
-    "_tied_queries_html",
-    "_tied_queries_md",
-    "_unsupported_pattern_md",
-    "_wave_headline_stats",
-    "_why_engines_were_dropped_html",
-    "_workload_cell",
     "access_pattern_scope",
     "architecture_svg",
     "artifact_stem",

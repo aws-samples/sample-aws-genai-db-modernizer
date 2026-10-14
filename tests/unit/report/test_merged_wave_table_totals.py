@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from src.report import pptx_report, renderers
+from src.report import architecture, pptx_report, renderers
 
 FIXTURE = Path(__file__).parent / "fixtures" / "discourse_merged_wave_report.json"
 
@@ -51,7 +51,7 @@ def test_fixture_has_a_merged_wave_with_no_table_overlap(report: dict[str, Any])
 
 
 def test_architecture_engines_credits_each_engine_its_own_share(report: dict[str, Any]) -> None:
-    rows = {e["engine"]: e for e in renderers._architecture_engines(report)}
+    rows = {e["engine"]: e for e in architecture._architecture_engines(report)}
     # Scope shows each engine's own SERVED count -- never the union (200/200).
     assert rows["dynamodb"]["scope"] == "118 source tables"
     assert rows["documentdb"]["scope"] == "82 source tables"
@@ -67,7 +67,7 @@ def test_no_deliverable_total_exceeds_the_source_table_count(report: dict[str, A
     source_total = report["source_table_count"]
     assert source_total == 311
 
-    rows = renderers._architecture_engines(report)
+    rows = architecture._architecture_engines(report)
     migrated_total = sum(e["migrates"] for e in rows if e["role"] == "Migration target")
     assert migrated_total <= source_total
     assert migrated_total == 181  # 108 (dynamodb) + 73 (documentdb), the real owned split

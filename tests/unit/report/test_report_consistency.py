@@ -4,7 +4,7 @@ of those risks (issue #210).
 The decision report, the engineering report and the executive summary deck
 (PDF/PPTX) must all report the same risk totals for the same ``report.json``.
 Before #201, the decision/engineering reports filtered out risks with no body
-text (``renderers._risk_has_content``) before counting, while
+text (``report_facts.risk_has_content``) before counting, while
 ``pptx_report.derive`` counted every risk in ``risk_assessment.risks``
 unfiltered. On the wordpress evidence run that combination showed "9
 migration risks identified" in the decision report and 12 in the PDF.
@@ -37,6 +37,7 @@ import pytest
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import build_risk_assessment
 from src.report import pptx_report, renderers
+from src.shared import report_facts
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_report.json"
 
@@ -76,7 +77,7 @@ class TestFixedSynthesisProducesRealText:
         risks = report["risk_assessment"]["risks"]
         assert len(risks) == 12
         for risk in risks:
-            assert renderers._risk_has_content(risk.get("description")), risk
+            assert report_facts.risk_has_content(risk.get("description")), risk
 
 
 class TestEmptyRiskGuard:
@@ -84,10 +85,10 @@ class TestEmptyRiskGuard:
     genuinely contentless entry, independent of the #210 fix at the source."""
 
     def test_synthetic_empty_description_is_dropped(self) -> None:
-        assert renderers._risk_has_content("[elasticache] unknown: ") is False
-        assert renderers._risk_has_content("[elasticache] unknown:") is False
-        assert renderers._risk_has_content("") is False
-        assert renderers._risk_has_content(None) is False
+        assert report_facts.risk_has_content("[elasticache] unknown: ") is False
+        assert report_facts.risk_has_content("[elasticache] unknown:") is False
+        assert report_facts.risk_has_content("") is False
+        assert report_facts.risk_has_content(None) is False
 
     def test_filtered_risks_drops_a_synthetic_empty_entry(self, report: dict) -> None:
         rigged = json.loads(json.dumps(report))
@@ -110,7 +111,7 @@ class TestSharedRiskFilter:
     def test_filtered_risks_keeps_all_twelve(self, report: dict) -> None:
         kept = renderers.filtered_risks(report)
         assert len(kept) == 12
-        assert all(renderers._risk_has_content(r.get("description")) for r in kept)
+        assert all(report_facts.risk_has_content(r.get("description")) for r in kept)
 
     def test_decision_report_count_matches_filtered_risks(self, report: dict) -> None:
         n = len(renderers.filtered_risks(report))

@@ -3,7 +3,7 @@
 ``build_architecture_recommendation`` lists an engine with workload but no
 schema design in ``recommended_architecture.databases`` only when NO engine has
 a schema design (``llm_mode=none``). In a mixed run that engine is the retained
-one: it must stay out of ``databases`` so ``renderers._engine_role`` calls it
+one: it must stay out of ``databases`` so ``report_facts.engine_role`` calls it
 "Retained" and ``pptx_report.derive`` puts it in the no-migration Wave 1,
 rather than "Migration target" in a migration wave.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_handler import _build_schema_summaries
 from src.agents.referee.synthesis_report import build_architecture_recommendation
-from src.report import pptx_report, renderers
+from src.report import architecture, pptx_report
 
 
 def _rank(target: str, conf: int, aq: int, wp: float, designed: bool) -> dict:
@@ -53,7 +53,7 @@ def _report(
 
 
 def _roles(report: dict) -> dict[str, str]:
-    return {e["engine"]: e["role"] for e in renderers._architecture_engines(report)}
+    return {e["engine"]: e["role"] for e in architecture._architecture_engines(report)}
 
 
 def _wave_engines(report: dict) -> list[list[str]]:

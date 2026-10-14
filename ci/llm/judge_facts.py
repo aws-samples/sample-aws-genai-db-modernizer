@@ -189,7 +189,7 @@ def _access_pattern_totals(report: dict[str, Any], engines: set[str]) -> tuple[i
     """``(in_scope, out_of_scope)`` access patterns of ``engines`` across ``query_groups``.
 
     A pattern is one ``(engine, pattern_id)`` however many groups list it, and counts as
-    in scope when any listing says so (``renderers.access_pattern_scope``). ``None``
+    in scope when any listing says so (``formatting.access_pattern_scope``). ``None``
     when the report has no query groups, so the judge reads "unknown" rather than 0.
     """
     groups = report.get("query_groups")
@@ -208,7 +208,7 @@ def _access_pattern_totals(report: dict[str, Any], engines: set[str]) -> tuple[i
 
 
 def _has_content(description: Any) -> bool:
-    """A risk with text after its ``[engine]`` tag (``renderers._risk_has_content``);
+    """A risk with text after its ``[engine]`` tag (``report_facts.risk_has_content``);
     the deliverables count only these."""
     text = str(description or "").strip()
     if text.startswith("[") and "]" in text:

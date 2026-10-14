@@ -158,7 +158,7 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     services = {d["service"] for d in arch["databases"]}
     assert services == {"dynamodb", "elasticache"}
     assert all(d["table_count"] == 0 for d in arch["databases"])
-    from src.report.renderers import _architecture_engines
+    from src.report.architecture import _architecture_engines
 
     roles = {e["engine"]: e["role"] for e in _architecture_engines(report)}
     assert roles["aurora_mysql"] == "Retained"

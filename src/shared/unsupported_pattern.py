@@ -20,7 +20,7 @@ same way, or they drift:
   ``pattern_type``/``recommendation``, so DocumentDB and ElastiCache entries
   (neither of which has those fields) became risks with the literal text
   ``"[elasticache] unknown: "`` and no mitigation (#210).
-- ``src.report.renderers._unsupported_pattern_md`` renders the same entries
+- ``src.report.engineering_report._unsupported_pattern_md`` renders the same entries
   as Markdown for the engineering report (#204).
 
 Putting this in ``src.report`` would make the referee agent depend on the

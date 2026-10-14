@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.report import pptx_report, renderers
+from src.report import architecture, pptx_report, renderers
 
 
 def _ap(pid: str, engine: str, in_scope: bool = True) -> dict[str, Any]:
@@ -215,12 +215,12 @@ class TestSharedSourceTables:
     vs the 21 source tables the DynamoDB design serves."""
 
     def test_scope_names_the_tables_the_design_also_serves(self) -> None:
-        rows = {e["engine"]: e for e in renderers._architecture_engines(_shared_tables_report())}
+        rows = {e["engine"]: e for e in architecture._architecture_engines(_shared_tables_report())}
         assert rows["dynamodb"]["scope"] == "19 source tables (21 incl. shared)"
         assert rows["dynamodb"]["migrates"] == 19
 
     def test_scope_unchanged_when_the_design_serves_only_mapped_tables(self) -> None:
-        rows = {e["engine"]: e for e in renderers._architecture_engines(_shared_tables_report())}
+        rows = {e["engine"]: e for e in architecture._architecture_engines(_shared_tables_report())}
         assert rows["aurora_mysql"]["scope"] == "2 source tables"
         assert rows["elasticache"]["scope"] == "2 key designs"
 

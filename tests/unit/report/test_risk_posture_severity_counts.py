@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 from src.report import renderers
+from src.report.risks import _severity_counts_text
 from src.shared.report_facts import risk_facts
 
 
@@ -101,19 +102,19 @@ def _counted(risks: list[dict]) -> dict[str, int]:
 
 def test_lowercase_severities_are_matched_case_insensitively() -> None:
     risks = [_risk("RISK-001", "critical"), _risk("RISK-002", "low")]
-    assert renderers._severity_counts_text(_counted(risks)) == "1 critical, 1 low"
+    assert _severity_counts_text(_counted(risks)) == "1 critical, 1 low"
 
 
 def test_an_unknown_severity_is_named_unrated_not_folded_into_low() -> None:
     risks = [_risk("RISK-001", "MEDIUM"), _risk("RISK-002", "SOMETHING_ELSE")]
-    text = renderers._severity_counts_text(_counted(risks))
+    text = _severity_counts_text(_counted(risks))
     assert text == "1 medium, 1 unrated"
     assert "low" not in text
 
 
 def test_only_unknown_severities_still_sums_to_the_total() -> None:
     risks = [_risk("RISK-001", ""), _risk("RISK-002", "NOT_A_SEVERITY")]
-    text = renderers._severity_counts_text(_counted(risks))
+    text = _severity_counts_text(_counted(risks))
     assert text == "2 unrated"
 
 

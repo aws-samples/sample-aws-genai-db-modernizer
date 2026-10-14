@@ -387,10 +387,10 @@ def scan_json(obj: Any, path: str = "$") -> list[Finding]:
     return findings
 
 
-# ``Risk.description`` has no separate engine field (``src.report.renderers.
-# _risk_engine_and_body``'s own docstring: "Risks carry no explicit engine field; the
+# ``Risk.description`` has no separate engine field (``src.shared.report_facts.
+# risk_engine_and_body``'s own docstring: "Risks carry no explicit engine field; the
 # engine is encoded as a leading [documentdb]/[elasticache] tag in the description").
-# Every renderer parses this tag off before display (_risk_engine_and_body,
+# Every renderer parses this tag off before display (risk_engine_and_body,
 # synthesis_grounding._ENGINE_TAG, pptx_report.risk_engine) -- it is the same kind of
 # id-holding prefix ID_FIELDS excludes for a whole field, just embedded in one that
 # also carries a real prose body. Stripped before scanning so a genuine leak in that

@@ -1,6 +1,6 @@
 """Shared risk-severity counting (#536 round-1 review suggestion).
 
-``src.report.renderers`` (the posture line), ``src.report.pptx_report`` (the Risk
+``src.report.risks`` (the posture line), ``src.report.pptx_report`` (the Risk
 Profile slide) and ``src.agents.referee.synthesis_grounding`` (the summary grounding
 check) each counted ``risk_assessment`` risks by severity with their own small loop.
 One counter here, imported by all three, so the #506 rule -- an unrecognised severity

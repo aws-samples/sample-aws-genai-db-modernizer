@@ -27,7 +27,7 @@ from src.agents.referee.synthesis_handler import run_synthesis
 from src.agents.referee.triage_handler import run_triage
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report import deliverables as dl
-from src.report.renderers import _architecture_engines
+from src.report.architecture import _architecture_engines
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
 
@@ -97,6 +97,10 @@ class TestAdventureWorksSynthesisContract:
         assert "SQL Server SQL Server" not in wave1["rationale"]
         assert "Microsoft" not in wave1["rationale"]
         assert "15.0.2000.5" in wave1["rationale"]
+        # #743: the same opening clause as the executive summary (one shared helper).
+        assert wave1["rationale"].startswith(
+            "The source SQL Server database (15.0.2000.5) has no Aurora engine of its own dialect"
+        )
 
     def test_assignment_summary_carries_the_aurora_engine_choice(self, pipeline_report) -> None:
         _, report, _ = pipeline_report

@@ -191,16 +191,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "message, not an engine -- display text only."
     ),
     (
-        "reality_check_floors.py",
-        "_suggest_lightweight_for_orphans",
-        RULE_SET_ORDER,
-    ): (
-        "shared_cap=next(iter(all_caps)) runs only after 'if len(all_caps) != "
-        "1: return None' above, so all_caps always has exactly one member "
-        "here; it is a capability name, not an engine, and order cannot "
-        "matter with one element."
-    ),
-    (
         "synthesis_report.py",
         "build_ranking",
         RULE_MINMAX_COUNT_OR_NAME,
@@ -1376,7 +1366,7 @@ def test_regression_pre_503_break_owner_tie_is_caught() -> None:
 
 
 def test_regression_pre_503_pick_winner_is_caught() -> None:
-    """Same commit, same bug, reality_check.py's copy: ``tied =
+    """Same commit, same bug, reality_check_rules.py's copy: ``tied =
     sorted(...)``/``staying = sorted(...)`` each indexed at [0] (twice for
     ``tied``, once for ``staying``) once no ADR-031 rule actually resolves
     the tie."""

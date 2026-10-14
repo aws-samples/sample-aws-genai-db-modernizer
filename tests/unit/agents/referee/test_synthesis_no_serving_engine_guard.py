@@ -7,7 +7,7 @@ is itself incapable of serving it (e.g. DynamoDB, which has no server-side
 multi-table join or aggregation support either). The root cause is a routing
 gap -- ``src/agents/referee/capability_registry.py``'s hard-capability check
 has no "complex_joins"/"aggregation" detector, so the reality check's
-serviceability gate (``src/agents/referee/reality_check.py``) never sees that
+serviceability gate (``src/agents/referee/reality_check_rules.py``) never sees that
 requirement and lets the move through silently. #338
 (``feat/engines-earn-their-place``) fixes that at the source; this module does
 not decide routing, so what remains here is a narrow invariant guard, not the
