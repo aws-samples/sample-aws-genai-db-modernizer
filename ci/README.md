@@ -278,6 +278,8 @@ docstring for the confirmed stream-json shapes (aggregation across all
 `tests/unit/ci/fixtures/real-chat-wordpress-failed.jsonl` for a trimmed copy
 of that transcript.
 
+**Denials**: `check-transcript` splits each denied Bash command on pipes, `&&`, `||`, `;` and subshells. A denial of one of the pipeline's own allowlisted commands on its own means the allowlist is broken and fails the run. A compound command that contains an allowlisted part but was denied for the rest (for example `search_artifacts.py ... | uv run python -c ...`) is a tool-use rule violation by the model: it also fails the run, because the commands forbid chaining and post-processing, but it is reported as `rule_violations` (count and commands) in `summary.json` and `results.json` and the error names the violation, not the allowlist. Any other denial is the model's own exploratory tool use and only warns (`denials`).
+
 ### `ci/llm/aggregate_notes.py`
 
 Finds the judge notes that keep coming back. The judge's scores are noisy

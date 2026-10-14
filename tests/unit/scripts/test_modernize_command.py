@@ -47,6 +47,10 @@ TOOL_USE_RULE = (
     "`ls`, `cd` chains, heredocs or `grep`."
 )
 
+# Said right after the tool-use rule wherever it appears: a chained search is denied as
+# a whole and fails the run (#681).
+SEARCH_AS_IS = " Use a search's output as is: never pipe, chain or post-process it."
+
 COMMANDS_WITH_TOOL_USE_RULE = [
     "modernize.md",
     "collect.md",
@@ -256,6 +260,7 @@ def test_commands_followed_by_subagents_or_orchestrator_state_the_tool_use_rule(
         assert path.exists(), f"missing command file: {filename}"
         text = path.read_text()
         assert TOOL_USE_RULE in text, f"{filename}: missing the tool-use rule verbatim"
+        assert text.count(TOOL_USE_RULE + SEARCH_AS_IS) == text.count(TOOL_USE_RULE), filename
 
 
 def test_no_command_or_skill_relies_on_grep_or_glob_tools() -> None:

@@ -73,14 +73,29 @@ def test_pipeline_command_denial_fails() -> None:
         run.check_transcript(FIXTURES / "synthetic-pipeline-denial.jsonl", "chat")
 
 
-def test_compound_exploratory_command_is_other_denial_not_a_failure(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A denial of a compound/chained command that merely invokes an
-    allowlisted script partway through (``cd ... && uv run python
-    scripts/run_report.py ...``) does not *start with* the allowlisted
-    prefix -- it's the model's own exploratory chaining, not a denial of
-    the documented command itself, so it must warn, not fail."""
+def test_pipe_into_denied_command_is_a_rule_violation_not_a_broken_allowlist() -> None:
+    """The shape seen in a real run: an allowlisted ``search_artifacts.py``
+    piped into ``uv run python -c``. The pipe is denied because of its second
+    half; the allowlist is fine. It still fails the run (the commands forbid
+    it) but is named a tool-use rule violation and carried in
+    ``rule_violations``, not ``denials``."""
+    with pytest.raises(run.TranscriptError) as exc_info:
+        run.check_transcript(FIXTURES / "synthetic-pipe-violation.jsonl", "chat")
+    message = str(exc_info.value)
+    assert "tool-use rule violation" in message
+    assert "allowlist in .claude/settings.ci.json is broken" not in message
+    partial = exc_info.value.partial
+    assert partial["rule_violations"]["count"] == 1
+    assert partial["rule_violations"]["commands"][0].startswith(
+        "uv run python scripts/search_artifacts.py"
+    )
+    assert "denials" not in partial
+
+
+def test_cd_chain_into_allowlisted_command_is_a_rule_violation(tmp_path: Path) -> None:
+    """``cd ... && uv run python scripts/run_report.py ...`` contains an
+    allowlisted command but is a forbidden ``cd`` chain: a rule violation
+    (fails, named as such), never a broken allowlist."""
     path = _transcript(
         tmp_path,
         [
@@ -101,10 +116,75 @@ def test_compound_exploratory_command_is_other_denial_not_a_failure(
             )
         ],
     )
+    with pytest.raises(run.TranscriptError, match="tool-use rule violation"):
+        run.check_transcript(path, "chat")
+
+
+def test_compound_without_allowlisted_part_is_other_denial(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A compound command with no allowlisted part is just the model's own
+    exploratory tool use: warn, do not fail."""
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=cmp00002 db=wordpress mode=chat",
+                permission_denials=[
+                    {
+                        "tool_name": "Bash",
+                        "tool_use_id": "tu-1",
+                        "tool_input": {"command": "cat artifacts/x.json | jq ."},
+                    }
+                ],
+            )
+        ],
+    )
     summary = run.check_transcript(path, "chat")
-    assert summary["job_id"] == "cmp00001"
     assert summary["denials"]["count"] == 1
+    assert "rule_violations" not in summary
     assert "exploratory" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("a | b", ["a", "b"]),
+        ("a && b || c; d", ["a", "b", "c", "d"]),
+        ("a\nb", ["a", "b"]),
+        ("(a; b)", ["a", "b"]),
+        ("a $(b) `c`", ["a", "b", "c"]),
+        ("a 'x | y; z' \"p && q\" r", ["a 'x | y; z' \"p && q\" r"]),
+        ("a \\| b", ["a \\| b"]),
+        ("a 2>&1 | b", ["a 2>&1", "b"]),
+        ("a &> out; b", ["a &> out", "b"]),
+        ("", []),
+    ],
+)
+def test_split_compound_command(command: str, expected: list[str]) -> None:
+    assert run._split_compound_command(command) == expected
+
+
+def test_classify_denial_kinds() -> None:
+    prefixes = ["uv run python scripts/search_artifacts.py"]
+    classify = run._classify_denial
+    assert classify("uv run python scripts/search_artifacts.py x y", prefixes) == "allowlist"
+    assert classify("uv run python scripts/search_artifacts.py 'a|b' y", prefixes) == "allowlist"
+    assert classify("uv run python scripts/search_artifacts.py x | head", prefixes) == (
+        "rule_violation"
+    )
+    assert classify("echo hi; uv run python scripts/search_artifacts.py x", prefixes) == (
+        "rule_violation"
+    )
+    assert classify(
+        "uv run python scripts/search_artifacts.py a p && uv run python scripts/search_artifacts.py b p",
+        prefixes,
+    ) == ("allowlist")
+    assert classify("cat <<EOF\nuv run python scripts/search_artifacts.py x\nEOF", prefixes) == (
+        "rule_violation"
+    )
+    assert classify("echo 'uv run python scripts/search_artifacts.py x'", prefixes) == "other"
+    assert classify("rm -rf /tmp/whatever", prefixes) == "other"
 
 
 def test_exact_pipeline_command_denied_fails(tmp_path: Path) -> None:
@@ -854,6 +934,25 @@ def test_results_carries_denials_summary_from_transcript_summary(tmp_path: Path)
         git_sha="abc",
     )
     assert row["denials"] == {"count": 1, "commands": ["rm -rf /tmp/whatever"]}
+
+
+def test_results_carries_rule_violations_from_transcript_summary(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    violations = {"count": 1, "commands": ["uv run python scripts/search_artifacts.py x | head"]}
+    _write_summary(
+        summary, error="1 tool-use rule violation(s) by the model", rule_violations=violations
+    )
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["rule_violations"] == violations
+    assert row["transcript_error"] == "1 tool-use rule violation(s) by the model"
+    assert row["pass"] is False
 
 
 def test_results_wall_duration_s_parsed_from_claude_exit_file(tmp_path: Path) -> None:

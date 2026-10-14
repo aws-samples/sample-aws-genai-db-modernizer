@@ -11,7 +11,7 @@ Dispatches schema design to all selected engines in parallel using subagents.
 2. **Launch parallel subagents**
    Launch one subagent per selected engine other than DynamoDB in a SINGLE message:
    - Each subagent invokes `/design-schema-{engine}`, with every `_` in the engine id replaced by `-` (`aurora_mysql` → `/design-schema-aurora-mysql`, `aurora_postgresql` → `/design-schema-aurora-postgresql`)
-   - Every task text ends with: "Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`."
+   - Every task text ends with: "Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it."
 
    CRITICAL: All launches MUST be in a single message for true parallelism.
 

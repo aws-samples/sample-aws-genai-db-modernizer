@@ -65,10 +65,17 @@ check-transcript's fixed failure conditions (anything else is tolerated as
 * any ``result`` line's ``is_error`` is truthy -- fail.
 * a denial (from any ``result`` line's aggregated ``permission_denials``,
   or -- if none of those were populated -- a ``tool_result`` denial text)
-  whose command starts with one of the pipeline's own allowlisted ``Bash``
-  prefixes (read from ``.claude/settings.ci.json``'s ``permissions.allow``
-  rules) -- fail, because that means the allowlist meant to let the pipeline
-  run its own documented commands is broken. Any *other* denial (the
+  that is itself one of the pipeline's own allowlisted ``Bash`` commands
+  (a single simple command whose prefix is in ``.claude/settings.ci.json``'s
+  ``permissions.allow`` rules) -- fail, because that means the allowlist
+  meant to let the pipeline run its own documented commands is broken.
+  A compound command (pipe, ``&&``, ``;``, ``||``, subshell) that contains
+  an allowlisted command but was denied for the rest of it (when every part is
+  allowlisted it counts as a broken allowlist instead) is a
+  **tool-use rule violation by the model** -- also a failure (the commands
+  forbid it), but reported under that name, with the commands in
+  ``rule_violations: {count, commands}`` in summary.json and results.json,
+  never as a broken allowlist. Any *other* denial (the
   model's own exploratory ``cat``/``jq``/``sed``/``python3 -c`` etc.) is
   **not** a failure: it is recorded in ``results.json`` as
   ``denials: {count, commands}`` (each command's first 120 characters, at
@@ -398,6 +405,73 @@ def _allowlisted_bash_prefixes(settings_path: Path) -> list[str]:
     return prefixes
 
 
+def _split_compound_command(command: str) -> list[str]:
+    """Split a shell command line into its simple commands.
+
+    Splits on ``|``, ``||``, ``&``, ``&&``, ``;``, newlines, subshell
+    parentheses, ``$(`` and backticks, outside single- and double-quoted
+    text (a quoted ``|`` or ``;`` is data, not an operator). It is a
+    classifier for denied commands, not a shell parser: unbalanced quotes
+    just run to the end of the line. Empty segments are dropped."""
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote is not None:
+            current.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(command):
+                current.append(command[i + 1])
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+        elif ch == "\\" and i + 1 < len(command):
+            current.append(ch)
+            current.append(command[i + 1])
+            i += 1
+        elif ch == "&" and (command[i - 1 : i] in (">", "<") or command[i + 1 : i + 2] == ">"):
+            current.append(ch)  # a redirection (2>&1, &>file), not an operator
+        elif ch in "|&;\n()`":
+            if ch == "(" and current and current[-1] == "$":
+                current.pop()
+            segments.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    segments.append("".join(current).strip())
+    return [seg for seg in segments if seg]
+
+
+def _classify_denial(command: str, allow_prefixes: list[str]) -> str:
+    """Classify one denied Bash command.
+
+    * ``"allowlist"``: the command *is* one of the pipeline's own allowlisted
+      commands (a single simple command with an allowlisted prefix) -- the
+      allowlist in ``.claude/settings.ci.json`` is broken.
+    * ``"rule_violation"``: a compound command (pipe, ``&&``, ``;``, ``||``,
+      subshell) that contains an allowlisted command but was denied because
+      of the rest of it. The allowlisted part is fine; the model broke the
+      tool-use rule the commands carry. A compound command whose parts are
+      *all* allowlisted is ``"allowlist"`` too.
+    * Heredocs are not parsed: the body is split line by line like any other
+      text, so a heredoc that quotes an allowlisted command reads as a rule
+      violation, never as ``"allowlist"`` (heredocs are forbidden anyway).
+    * ``"other"``: anything else (the model's own exploratory tool use)."""
+    segments = _split_compound_command(command)
+    allowed = [seg for seg in segments if any(seg.startswith(p) for p in allow_prefixes)]
+    if not allowed:
+        return "other"
+    # Claude Code checks each part of a compound command against the rules, so when
+    # every part is allowlisted and the command was still denied, the allowlist is
+    # the likelier culprit.
+    return "allowlist" if len(allowed) == len(segments) else "rule_violation"
+
+
 def _truncate(text: str, limit: int = 120) -> str:
     return text[:limit] + "…" if len(text) > limit else text
 
@@ -514,12 +588,11 @@ def check_transcript(
     allow_prefixes = _allowlisted_bash_prefixes(
         settings_file or REPO_ROOT / ".claude" / "settings.ci.json"
     )
-    pipeline_denials = [
-        cmd for cmd in denial_commands if cmd and any(cmd.startswith(p) for p in allow_prefixes)
-    ]
-    other_denials = [cmd for cmd in denial_commands if cmd not in pipeline_denials]
+    classified = [(cmd, _classify_denial(cmd, allow_prefixes)) for cmd in denial_commands]
+    pipeline_denials = [cmd for cmd, kind in classified if kind == "allowlist"]
+    rule_violations = [cmd for cmd, kind in classified if kind == "rule_violation"]
+    other_denials = [cmd for cmd, kind in classified if kind == "other"]
 
-    denials_summary: dict[str, Any] | None = None
     if other_denials:
         denials_summary = {
             "count": len(other_denials),
@@ -532,11 +605,26 @@ def check_transcript(
         )
         fields = {**fields, "denials": denials_summary}
 
+    if rule_violations:
+        violations_summary = {
+            "count": len(rule_violations),
+            "commands": [_truncate(cmd) for cmd in rule_violations[:20]],
+        }
+        fields = {**fields, "rule_violations": violations_summary}
+
     if pipeline_denials:
         raise fail(
             f"{len(pipeline_denials)} denial(s) of the pipeline's own allowlisted command(s) -- "
             f"the allowlist in .claude/settings.ci.json is broken: "
             f"{[_truncate(cmd) for cmd in pipeline_denials[:5]]!r}"
+        )
+
+    if rule_violations:
+        raise fail(
+            f"{len(rule_violations)} tool-use rule violation(s) by the model: a compound command "
+            f"(pipe, &&, ;, ||, subshell) that chains an allowlisted command with a denied one "
+            f"(the allowlist itself is fine; the commands forbid post-processing or chaining): "
+            f"{[_truncate(cmd) for cmd in rule_violations[:5]]!r}"
         )
 
     matches = _iter_modernize_result_matches(records)
@@ -668,6 +756,7 @@ def build_results_row(
     job_id = db = model = cost_usd = num_turns = tokens_in = tokens_out = duration_s = None
     transcript_error: str | None = None
     denials: dict[str, Any] | None = None
+    rule_violations: dict[str, Any] | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -694,6 +783,8 @@ def build_results_row(
             duration_s = duration_ms / 1000
         denials_raw = summary.get("denials")
         denials = denials_raw if isinstance(denials_raw, dict) else None
+        violations_raw = summary.get("rule_violations")
+        rule_violations = violations_raw if isinstance(violations_raw, dict) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -758,6 +849,7 @@ def build_results_row(
         "checks": checks,
         "transcript_error": transcript_error,
         "denials": denials,
+        "rule_violations": rule_violations,
         "judge": judge_section,
         "pass": overall_pass,
     }
