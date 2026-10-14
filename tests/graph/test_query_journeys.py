@@ -123,3 +123,62 @@ class TestQueryJourneysFromGraph:
     def test_single_query_journey_unknown_returns_none(self, graph_store):
         populate_from_collector(_rich_collector(), graph_store)
         assert query_journey(graph_store, "does-not-exist") is None
+
+
+def _design(engine: str, prefix: str) -> dict:
+    return {
+        "trade_offs": [],
+        "access_patterns": [
+            {
+                "pattern_id": f"{prefix}-AP-1",
+                "pattern_group": "g",
+                "query_ids": ["q1"],
+                "description": "d",
+                "operation": "op",
+                "table_name": "t",
+                "design_rps": 1.0,
+                "in_scope": True,
+            }
+        ],
+    }
+
+
+def _assign(engine: str) -> dict:
+    return {
+        "query_assignments": [
+            {
+                "query_id": "q1",
+                "assigned_engine": engine,
+                "confidence": 0.9,
+                "source_tables": ["orders"],
+                "assignment_reason": "r",
+                "in_scope": True,
+            }
+        ],
+        "table_assignments": [],
+        "co_dependency_groups": [],
+    }
+
+
+class TestDesignEngineFollowsAssignment:
+    """#669: a query designed on several engines reports the engine that owns it."""
+
+    def _build(self, store, assigned: str) -> dict:
+        populate_from_collector(_rich_collector(), store)
+        populate_from_assignment(_assign(assigned), store)
+        # dynamodb is inserted first on purpose (the old [1] picked it every time).
+        populate_from_schema_design(_design("dynamodb", "DDB"), "dynamodb", 1, store)
+        populate_from_schema_design(_design("opensearch", "OS"), "opensearch", 1, store)
+        return query_journey(store, "q1")
+
+    def test_assigned_engine_wins_over_insertion_order(self, graph_store):
+        assert self._build(graph_store, "opensearch")["design"]["engine"] == "opensearch"
+
+    def test_assigned_dynamodb_still_reported(self, graph_store):
+        assert self._build(graph_store, "dynamodb")["design"]["engine"] == "dynamodb"
+
+    def test_unassigned_design_falls_back_to_name_order(self, graph_store):
+        populate_from_collector(_rich_collector(), graph_store)
+        populate_from_schema_design(_design("opensearch", "OS"), "opensearch", 1, graph_store)
+        populate_from_schema_design(_design("dynamodb", "DDB"), "dynamodb", 1, graph_store)
+        assert query_journey(graph_store, "q1")["design"]["engine"] == "dynamodb"

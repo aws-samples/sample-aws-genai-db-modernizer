@@ -34,6 +34,11 @@ def _nest_latency(row: dict, prefix: str) -> LatencyPercentilesModel:
     )
 
 
+def _sorted_ids(values: list | None) -> list:
+    """Drop nulls and sort: COLLECT(DISTINCT ...) has no defined order (#669)."""
+    return sorted(x for x in (values or []) if x is not None)
+
+
 def table_impact(store: GraphStore, table_id: str) -> TableImpactResponse:
     """Queries that read the table, with destinations, patterns, anti-patterns."""
     rows = store.query(
@@ -45,16 +50,16 @@ def table_impact(store: GraphStore, table_id: str) -> TableImpactResponse:
         "  COLLECT(DISTINCT d.id) AS destinations, "
         "  COLLECT(DISTINCT ap.id) AS access_patterns, "
         "  COLLECT(DISTINCT a.anti_pattern_type) AS anti_patterns "
-        "ORDER BY cps DESC",
+        "ORDER BY cps DESC, query_id",
         {"tid": table_id},
     )
     affected = [
         AffectedQuery(
             query_id=r["query_id"],
             calls_per_second=r.get("cps") or 0.0,
-            destinations=[x for x in (r.get("destinations") or []) if x is not None],
-            access_patterns=[x for x in (r.get("access_patterns") or []) if x is not None],
-            anti_patterns=[x for x in (r.get("anti_patterns") or []) if x is not None],
+            destinations=_sorted_ids(r.get("destinations")),
+            access_patterns=_sorted_ids(r.get("access_patterns")),
+            anti_patterns=_sorted_ids(r.get("anti_patterns")),
         )
         for r in rows
     ]
@@ -73,7 +78,7 @@ def query_provenance(store: GraphStore, query_id: str) -> QueryProvenanceRespons
     signals = [
         r["sig"]
         for r in store.query(
-            "MATCH (q:Query {id: $qid})-[:EMITS_SIGNAL]->(s:Signal) RETURN s.id AS sig",
+            "MATCH (q:Query {id: $qid})-[:EMITS_SIGNAL]->(s:Signal) RETURN s.id AS sig ORDER BY sig",
             {"qid": query_id},
         )
     ]
@@ -81,7 +86,8 @@ def query_provenance(store: GraphStore, query_id: str) -> QueryProvenanceRespons
         "MATCH (dec:Decision)-[:INFORMED_BY]->(q:Query {id: $qid}) "
         "OPTIONAL MATCH (dec)-[:PRODUCED_BY]->(a:Agent) "
         "RETURN dec.id AS decision_id, dec.category AS category, "
-        "  dec.description AS description, a.id AS agent_id, a.phase AS phase",
+        "  dec.description AS description, a.id AS agent_id, a.phase AS phase "
+        "ORDER BY decision_id, agent_id",
         {"qid": query_id},
     )
     decisions = [
@@ -115,14 +121,14 @@ def engine_detail(store: GraphStore, engine: str) -> EngineDetailResponse:
         "  COLLECT(DISTINCT st.id) AS source_tables, "
         "  COLLECT(DISTINCT ap.id) AS access_patterns, "
         "  COUNT(DISTINCT q) AS query_count "
-        "ORDER BY query_count DESC",
+        "ORDER BY query_count DESC, destination_id",
         {"engine": engine},
     )
     dests = [
         EngineDestination(
             destination_id=r["destination_id"],
-            source_tables=[x for x in (r.get("source_tables") or []) if x is not None],
-            access_patterns=[x for x in (r.get("access_patterns") or []) if x is not None],
+            source_tables=_sorted_ids(r.get("source_tables")),
+            access_patterns=_sorted_ids(r.get("access_patterns")),
             query_count=r.get("query_count") or 0,
         )
         for r in rows
@@ -140,7 +146,7 @@ def risk_hotspots(store: GraphStore) -> RiskHotspotsResponse:
         "  COUNT(DISTINCT r) AS risks, COUNT(DISTINCT a) AS anti_patterns "
         "WHERE risks > 0 OR anti_patterns > 0 "
         "RETURN st.id AS table_id, total_cps, risks, anti_patterns "
-        "ORDER BY total_cps DESC",
+        "ORDER BY total_cps DESC, table_id",
     )
     hotspots = [
         RiskHotspot(
@@ -201,7 +207,7 @@ def load_test_results(
         "    target_p999: lt.target_p999, target_min: lt.target_min, "
         "    target_max: lt.target_max"
         "  }) AS queries "
-        "ORDER BY pattern_id",
+        "ORDER BY pattern_id, schema_version, engine",
         params,
     )
 
@@ -222,7 +228,7 @@ def load_test_results(
                     throughput_rps=q.get("throughput_rps"),
                     error_rate_pct=q.get("error_rate_pct"),
                 )
-                for q in (row.get("queries") or [])
+                for q in sorted(row.get("queries") or [], key=lambda x: x["query_id"])
             ],
         )
         for row in rows
@@ -287,7 +293,11 @@ def _journey_from_row(row: dict) -> dict:
     # target engine. Presence == the design completed for that engine (the journey
     # JSON's design section was {engine, status}; status was "completed" whenever a
     # design existed for the query).
-    design_engine = row.get("design_engine")
+    # A query can be designed on several engines. Report the engine that owns the
+    # query in the assignment when it has a design there; otherwise the first design
+    # engine by name, so the result never depends on insertion order (#669).
+    design_engines = sorted(e for e in (row.get("design_engines") or []) if e)
+    design_engine = engine if engine in design_engines else (design_engines or [None])[0]
     design = {"engine": design_engine, "status": "completed"} if design_engine else None
 
     return {
@@ -310,7 +320,7 @@ _JOURNEY_MATCH = (
     "  q.characteristics_json AS characteristics_json, "
     "  COLLECT(DISTINCT st.id) AS tables_accessed, "
     "  d.engine AS assigned_engine, m.confidence AS confidence, "
-    "  COLLECT(DISTINCT ap.engine)[1] AS design_engine"
+    "  COLLECT(DISTINCT ap.engine) AS design_engines"
 )
 
 
@@ -321,14 +331,15 @@ def query_journeys(store: GraphStore) -> list[dict]:
     JSON artifacts, so the report's flow aggregate and per-query drill-down render
     identically. One graph query instead of N artifact reads.
     """
-    rows = store.query(_JOURNEY_MATCH + " ORDER BY query_id")
+    rows = store.query(_JOURNEY_MATCH + " ORDER BY query_id, assigned_engine")
     return [_journey_from_row(r) for r in rows]
 
 
 def query_journey(store: GraphStore, query_id: str) -> dict | None:
     """Return one query's journey read-model, or None if the query is unknown."""
     rows = store.query(
-        _JOURNEY_MATCH.replace("MATCH (q:Query) ", "MATCH (q:Query {id: $qid}) ") + " LIMIT 1",
+        _JOURNEY_MATCH.replace("MATCH (q:Query) ", "MATCH (q:Query {id: $qid}) ")
+        + " ORDER BY assigned_engine LIMIT 1",
         {"qid": query_id},
     )
     return _journey_from_row(rows[0]) if rows else None
