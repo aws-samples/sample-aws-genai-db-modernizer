@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from src.agents.referee.move_ledger import apply_to_assignment, ledger_for
 from src.agents.referee.reality_check_handler import (
     apply_reality_check_llm_output,
     finalize_reality_check,
@@ -28,6 +29,7 @@ from src.agents.referee.reality_check_handler import (
 from src.agents.referee.synthesis_handler import apply_synthesis_llm_output, run_synthesis
 from src.contracts.executive_summary_response import ExecutiveSummaryResponse
 from src.contracts.model_flag import ResponseContractError
+from src.contracts.move_ledger import MovePass, ReasonCode
 from src.contracts.reality_check_model_response import RealityCheckModelResponse
 from src.contracts.synthesis_output import SummaryInputBudget
 from src.shared.skill_sections import skill_sections
@@ -115,11 +117,18 @@ def _partial_opensearch_consolidation(
     assignment, triage, analysis, collector, caps, source_engine=None
 ):
     """One move, OS-0 from OpenSearch to DynamoDB (OS-1 stays)."""
-    revised = []
-    for qa in assignment["query_assignments"]:
+    # Through the move ledger (#616), as the real check's moves are.
+    ledger = ledger_for(assignment["query_assignments"])
+    revised = [dict(qa) for qa in assignment["query_assignments"]]
+    for qa in revised:
         if qa["query_id"] == "OS-0":
-            qa = {**qa, "assigned_engine": "dynamodb"}
-        revised.append(qa)
+            apply_to_assignment(
+                ledger,
+                qa,
+                "dynamodb",
+                pass_=MovePass.SETTLE,
+                reason_code=ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE,
+            )
     return {
         "consolidations": [
             {
@@ -138,6 +147,7 @@ def _partial_opensearch_consolidation(
         "unique_value_assessment": {},
         "revised_assignments": revised,
         "lightweight_recommendations": [],
+        "move_ledger": ledger,
     }
 
 
@@ -241,6 +251,22 @@ class TestRealityCheckSameAnswerSameResult:
         # The flag really changed the result, so the comparison is not vacuous.
         (decision,) = bedrock_output["flag_decisions"]
         assert (decision["outcome"], decision["destination_engine"]) == ("moved", "documentdb")
+        # #616: both modes write the flag's re-route as a model_flag Move on
+        # the reality check's version, with the decision's own scores.
+        flag_moves = [m for m in bedrock_assignment["moves"] if m["pass"] == "model_flag"]
+        assert [
+            (m["query_id"], m["from_engine"], m["to_engine"], m["score_before"], m["score_after"])
+            for m in flag_moves
+        ] == [
+            (
+                qid,
+                decision["flagged_engine"],
+                "documentdb",
+                decision["score_before"],
+                decision["score_after"],
+            )
+            for qid in decision["query_ids"] + decision["moved_with_group"]
+        ]
         assert bedrock_output["executive_summary"] == RC_SUMMARY
         assert (
             bedrock_output["executive_summary_source"]

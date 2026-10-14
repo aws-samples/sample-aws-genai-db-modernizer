@@ -12,8 +12,15 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    best_other,
+    ledger_for,
+)
 from src.agents.referee.reality_check_records import _queries
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
@@ -24,9 +31,12 @@ from src.agents.referee.reality_check_rules import (
     _query_has_join,
     _resolver_score,
     _tie_unresolved_note,
+    _trace_ladder,
     may_absorb,
+    tie_reason_code,
 )
 from src.agents.referee.tie_break import break_tie
+from src.contracts.move_ledger import EngineScore, MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 
 if TYPE_CHECKING:
@@ -290,6 +300,19 @@ def _workload_ever_justified(
     return any(justified for justified, _ in verdicts.values())
 
 
+@dataclass(frozen=True)
+class _FloorMove:
+    """What one query's floor move records in the ledger (#616)."""
+
+    tied: list[str]
+    score_before: float | None
+    score_after: float | None
+    runner_up: EngineScore | None
+    group_scores: Mapping[str, float] = field(default_factory=dict)
+    group_key: str | None = None
+    tie_rule: ReasonCode | None = None
+
+
 def _apply_justification_floors(
     *,
     revised: list[dict],
@@ -311,12 +334,19 @@ def _apply_justification_floors(
     settled_counts: Mapping[str, int],
     scoring_ctx: ScoringContext,
     workload_justified: dict[str, bool | None],
+    ledger: MoveLedger | None = None,
 ) -> None:
     """Run the justification floors on ``revised`` after Phase 2.
 
     Mutates ``revised``, ``consolidations``, ``unique_value_assessment``,
-    ``committed_engines`` and ``engine_queries`` in place.
+    ``committed_engines`` and ``engine_queries`` in place. Every query a floor
+    moves goes through ``move_ledger.apply_to_assignment`` on ``ledger`` (#616;
+    a fresh one from ``revised`` when ``None``): pass ``floor``, rule
+    ``floor.opensearch`` or ``floor.cost_share``, with the same before and
+    after scores the query's reason reports.
     """
+    if ledger is None:
+        ledger = ledger_for(revised)
     # -------------------------------------------------------------------
     # Mandatory-engine justification floor (#326, #167)
     #
@@ -385,6 +415,8 @@ def _apply_justification_floors(
         # (query assignment, fit reason, whether the reason already carries the
         # before and after scores -- true for a group move, false for an individual one)
         floor_placement: dict[str, list[tuple[dict, str, bool]]] = defaultdict(list)
+        # The Move each placed query records (#616): its tie, scores and runner-up.
+        floor_moves: dict[str, _FloorMove] = {}
         floor_unplaced: list[dict] = []
         to_move_by_id = {qa["query_id"]: qa for qa in to_move_qas}
         handled_floor_groups: set[str] = set()
@@ -468,10 +500,27 @@ def _apply_justification_floors(
                     f"{tie_note}"
                 )
                 # #503: a tie this floor pass resolves (or decides for real)
-                # is recorded, same as Phase 2.
+                # is recorded, same as Phase 2 (set with the Move, below).
+                group_move = _FloorMove(
+                    tied=tied_group if tie_kind == "tie_unresolved" else [],
+                    score_before=before,
+                    score_after=group_scores[winner],
+                    # The group's winner is the top group score, so the runner-up
+                    # is the next one by the same ranking.
+                    runner_up=best_other(group_scores, winner),
+                    group_scores=group_scores,
+                    group_key=group_key,
+                    tie_rule=(
+                        tie_reason_code(
+                            tie_kind, tied_group, settled_counts, ",".join(sorted(members))
+                        )
+                        if tie_kind is not None
+                        else None
+                    ),
+                )
                 for member_qa in member_qas:
-                    member_qa["tied_engines"] = tied_group if tie_kind == "tie_unresolved" else []
                     floor_placement[winner].append((member_qa, reason, True))
+                    floor_moves[member_qa["query_id"]] = group_move
                 continue
 
             absorber = _find_best_absorber_for_query(
@@ -491,8 +540,15 @@ def _apply_justification_floors(
             if absorber is None:
                 floor_unplaced.append(qa)
                 continue
-            qa["tied_engines"] = absorber.get("tied_engines", [])
-            floor_placement[absorber["target_engine"]].append((qa, absorber["reason"], False))
+            target = absorber["target_engine"]
+            floor_moves[qid] = _FloorMove(
+                tied=absorber.get("tied_engines", []),
+                score_before=_resolver_score(trace_by_query, qid, engine),
+                score_after=_resolver_score(trace_by_query, qid, target),
+                runner_up=absorber.get("runner_up"),
+                tie_rule=absorber.get("tie_rule"),
+            )
+            floor_placement[target].append((qa, absorber["reason"], False))
 
         moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _, _ in placed}
         if not moved_ids:
@@ -530,7 +586,28 @@ def _apply_justification_floors(
                     fit_reason = f"{fit_reason}; {scores_text}"
                 for rqa in revised:
                     if rqa["query_id"] == qa["query_id"]:
-                        rqa["assigned_engine"] = target_engine
+                        floor_move = floor_moves[qa["query_id"]]
+                        apply_to_assignment(
+                            ledger,
+                            rqa,
+                            target_engine,
+                            pass_=MovePass.FLOOR,
+                            reason_code=(
+                                ReasonCode.FLOOR_OPENSEARCH
+                                if engine == "opensearch"
+                                else ReasonCode.FLOOR_COST_SHARE
+                            ),
+                            score_before=floor_move.score_before,
+                            score_after=floor_move.score_after,
+                            runner_up=floor_move.runner_up,
+                            evidence=MoveEvidence(
+                                candidates=_trace_ladder(trace_by_query, qa["query_id"]),
+                                group_scores=dict(floor_move.group_scores),
+                                tie_rule=floor_move.tie_rule,
+                            ),
+                            group_key=floor_move.group_key,
+                            tied_engines=floor_move.tied,
+                        )
                         rqa["assignment_reason"] = (
                             f"reality check: consolidated from {display_engine(engine)} → "
                             f"{display_engine(target_engine)} (justification floor "
@@ -661,6 +738,20 @@ def _find_best_absorber_for_query(
     query = query_map.get(qid, qa)
     query_tables = query_map.get(qid, {}).get("tables_accessed", [])
     candidates: list[dict] = []
+    # Every candidate's shared-scorer score, for the Move's runner-up (#616).
+    candidate_scores: dict[str, float] = {}
+
+    def _runner_up(winner_engine: str) -> EngineScore | None:
+        """The best candidate other than the winner, by the winner's own ranking
+        (rounded fit, then mandatory-secondary). A record only: among candidates
+        of equal rank, the first by engine id is named so the record is stable."""
+        others = [c for c in candidates if c["target_engine"] != winner_engine]
+        if not others:
+            return None
+        best = min(others, key=lambda c: (_rank(c), c["target_engine"]))
+        return EngineScore(
+            engine=best["target_engine"], score=candidate_scores[best["target_engine"]]
+        )
 
     for target_engine in sorted(committed_engines):
         if target_engine == source_engine:
@@ -737,6 +828,7 @@ def _find_best_absorber_for_query(
             else f"fit={fit}, {target_engine} can serve this pattern"
         )
 
+        candidate_scores[target_engine] = result.score
         candidates.append(
             {
                 "target_engine": target_engine,
@@ -760,7 +852,12 @@ def _find_best_absorber_for_query(
     best_rank = min(_rank(c) for c in candidates)
     tied = [c for c in candidates if _rank(c) == best_rank]
     if len(tied) == 1:
-        return {**tied[0], "tied_engines": []}
+        return {
+            **tied[0],
+            "tied_engines": [],
+            "runner_up": _runner_up(tied[0]["target_engine"]),
+            "tie_rule": None,
+        }
 
     tied_engine_names = [c["target_engine"] for c in tied]
     winner_engine, tie_kind = break_tie(
@@ -778,4 +875,6 @@ def _find_best_absorber_for_query(
         **winner,
         "reason": f"{winner['reason']}{tie_note}",
         "tied_engines": sorted(tied_engine_names) if tie_kind == "tie_unresolved" else [],
+        "runner_up": _runner_up(winner_engine),
+        "tie_rule": tie_reason_code(tie_kind, tied_engine_names, settled_counts, qid),
     }

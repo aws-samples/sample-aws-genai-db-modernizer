@@ -23,7 +23,8 @@ from src.agents.referee.consolidation_validator import (
     validate_consolidations,
 )
 from src.agents.referee.model_flags import apply_consolidation_flags, parse_model_flags
-from src.agents.referee.query_scoring import ScoringContext
+from src.agents.referee.move_ledger import MoveLedger, apply_to_assignment, ledger_for, replay
+from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
     _build_query_signals,
@@ -41,6 +42,7 @@ from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.model_flag import ResponseContractError, validation_error_note
+from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
 from src.contracts.reality_check_model_response import (
     RealityCheckModelResponse,
     parse_reality_check_response,
@@ -123,7 +125,10 @@ def run_reality_check_deterministic(
 
     # An assignment written before the cache overlay (#296) has ElastiCache owners:
     # move them to their system-of-record engine first, so the revision carries
-    # no cache owner (recorded in cache_notes).
+    # no cache owner (recorded in cache_notes). This is the one engine change of
+    # this run that is not a Move yet (Track L PR3 records it as
+    # cache_owner_normalize): the move ledger below starts from the normalized
+    # assignment, so the revision replays from its input as read here.
     normalize_cache_owners(
         assignment,
         collector_output.get("queries", {}).get("query_patterns", []),
@@ -163,6 +168,18 @@ def run_reality_check_deterministic(
             revised_by_id.get(qa["query_id"]) or deepcopy(qa) for qa in all_qas
         ]
 
+    # The move ledger (#616): every engine change this check makes, from Phase 2
+    # to the customer-override restore, is one Move on this ledger (the cache
+    # owner normalization above is the exception, Track L PR3). It holds the
+    # Moves ``run_reality_check`` recorded, and its engines are where every query
+    # (customer picks included) is now. The revised version holds exactly these
+    # Moves (moves are per-version).
+    check_ledger = result.get("move_ledger")
+    ledger = MoveLedger(
+        {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]},
+        check_ledger.moves if isinstance(check_ledger, MoveLedger) else [],
+    )
+
     # Count queries per engine after reality check
     after_distribution: dict[str, int] = defaultdict(int)
     for qa in result["revised_assignments"]:
@@ -184,6 +201,8 @@ def run_reality_check_deterministic(
         # Keep revised_assignments and lightweight_recommendations for the write step
         "revised_assignments": result["revised_assignments"],
         "lightweight_recommendations": result.get("lightweight_recommendations", []),
+        # This check's Moves so far (#616); the later steps add theirs.
+        "move_ledger": ledger,
     }
 
 
@@ -491,6 +510,9 @@ def write_reality_check_result(
             print("[reality-check] No consolidations — assignment unchanged")
         return None
 
+    moves = _ledger(result).moves
+    _check_replay(result, moves)
+
     revised_assignment = {
         **result["assignment"],
         "version": new_version,
@@ -506,10 +528,9 @@ def write_reality_check_result(
         # cumulative audit trail) is still carried forward by the spread
         # above, unchanged.
         "cache_safety_net_notes": [],
-        # #616: moves are per-version -- this version holds only the Moves that
-        # produced it, never the earlier version's. The reality check does not
-        # record its own Moves yet (a later #616 change), so it starts empty.
-        "moves": [],
+        # #616: moves are per-version -- this version holds exactly the Moves
+        # that produced it (this check's), never the earlier version's.
+        "moves": [m.model_dump(mode="json") for m in moves],
     }
     # ADR-029 Layers B+E: recompute derived views against the consolidated
     # routing, refresh validation warnings, and drop per-query warnings that
@@ -640,6 +661,7 @@ def _apply_model_flags(result: dict, flags: list) -> None:
         source_engine=source_engine,
         settled=settled_counts(result["revised_assignments"]),
         co_dependency_groups=result.get("assignment", {}).get("co_dependency_groups", []),
+        ledger=_ledger(result),
     )
     result["flag_decisions"] = result.get("flag_decisions", []) + decisions
     merged_gaps = {k: set(v) for k, v in (result.get("model_flag_gaps") or {}).items()}
@@ -654,6 +676,47 @@ def _apply_model_flags(result: dict, flags: list) -> None:
     for qa in result["revised_assignments"]:
         after_distribution[qa["assigned_engine"]] += 1
     result["after_distribution"] = dict(after_distribution)
+
+
+def _check_replay(result: dict, moves: list) -> None:
+    """Fail loudly when the revision does not replay from its input plus its Moves (#616).
+
+    The input is the assignment as this check read it: after
+    ``normalize_cache_owners`` (the one engine change that is not a Move yet,
+    Track L PR3), so an assignment written before #296 with ElastiCache owners
+    replays from its normalized form. Any other engine or tie set without a
+    Move (a stray write that bypassed ``move_ledger.apply``) raises here
+    instead of reaching a version that cannot be explained.
+    """
+    start = {
+        qa["query_id"]: (qa["assigned_engine"], list(qa.get("tied_engines") or []))
+        for qa in result["assignment"].get("query_assignments", [])
+    }
+    expected = {
+        qa["query_id"]: (qa["assigned_engine"], list(qa.get("tied_engines") or []))
+        for qa in result["revised_assignments"]
+    }
+    replayed = replay(moves, start=start)
+    bad = sorted(q for q in expected if replayed.get(q) != expected[q])
+    if bad:
+        raise RuntimeError(
+            f"reality check: {len(bad)} queries changed engine or tie without a Move "
+            f"(the revision does not replay from its input plus its moves): {bad[:5]}"
+        )
+
+
+def _ledger(result: dict) -> MoveLedger:
+    """The move ledger of this reality check's run (#616).
+
+    ``run_reality_check_deterministic`` puts it on the result; a result built
+    without one (an older caller) gets one starting from its current engines,
+    so its later steps still record their Moves.
+    """
+    ledger = result.get("move_ledger")
+    if not isinstance(ledger, MoveLedger):
+        ledger = ledger_for(result.get("revised_assignments", []))
+        result["move_ledger"] = ledger
+    return ledger
 
 
 def _skipped(previous_run) -> dict:
@@ -704,6 +767,7 @@ def _run_sanity_sweep(det: dict) -> None:
         # specialty signals this query matched (#579 round 3,
         # ``may_absorb``'s specialist-absorb restriction).
         query_signals=_build_query_signals(det.get("triage", {}).get("signals", [])),
+        ledger=_ledger(det),
     )
     # Recompute after_distribution post-sweep
     sweep_distribution: dict[str, int] = defaultdict(int)
@@ -737,6 +801,8 @@ def _restore_customer_overrides(result: dict) -> None:
     :func:`run_reality_check_deterministic`: the LLM corrections and the sanity
     sweep operate on the full revised list and could still move one. Mutates
     ``result`` and recomputes ``after_distribution`` when anything was restored.
+    Each restore is a Move (#616; pass and rule ``customer_pick``, actor
+    ``customer``) with the shared scorer's scores on both engines.
     """
     chosen = {
         qa["query_id"]: qa
@@ -747,10 +813,30 @@ def _restore_customer_overrides(result: dict) -> None:
         return
     restored = 0
     revised: list[dict] = []
+    scoring: tuple[dict, ScoringContext] | None = None
     for qa in result["revised_assignments"]:
         original = chosen.get(qa.get("query_id"))
         if original is not None and qa.get("assigned_engine") != original["assigned_engine"]:
-            qa = {**qa, "assigned_engine": original["assigned_engine"]}
+            if scoring is None:
+                scoring = _scoring_inputs(result)
+            query_map, scoring_context = scoring
+            query = query_map.get(qa["query_id"]) or {"query_id": qa["query_id"]}
+            ledger = _ledger(result)
+            # The engine the Move leaves is the ledger's (``apply`` records it).
+            left = ledger.engine_of(qa["query_id"]) or qa["assigned_engine"]
+            qa = dict(qa)
+            apply_to_assignment(
+                ledger,
+                qa,
+                original["assigned_engine"],
+                pass_=MovePass.CUSTOMER_PICK,
+                reason_code=ReasonCode.CUSTOMER_PICK,
+                score_before=score_query_for_engine(query, left, scoring_context).score,
+                score_after=score_query_for_engine(
+                    query, original["assigned_engine"], scoring_context
+                ).score,
+                actor=MoveActor.CUSTOMER,
+            )
             restored += 1
         revised.append(qa)
     if not restored:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 DB, JOB = "mydb", "job-1"
 STALE_WARNING = "WARNING [HIGH]: a split that belonged to the previous version"
@@ -47,6 +48,7 @@ def _result(*, revised: list[dict], collector_queries: list[dict]) -> dict:
     ]
     return {
         "revised_assignments": revised,
+        "move_ledger": recorded_ledger(original, revised),
         "consolidations": [_consolidation()],
         "architectural_patterns": [],
         "recommendations": [],

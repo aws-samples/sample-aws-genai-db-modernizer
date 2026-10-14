@@ -7,6 +7,12 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import Any
 
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    best_other,
+    ledger_for,
+)
 from src.agents.referee.reality_check_rules import (
     ENGINE_BASE_COST,
     EXTRA_ENGINE_BURDEN_MONTHLY,
@@ -16,7 +22,10 @@ from src.agents.referee.reality_check_rules import (
     _resolver_score,
     _tie_unresolved_note,
     _top_scorers,
+    _trace_ladder,
+    tie_reason_code,
 )
+from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import display_engine
 
 
@@ -90,6 +99,7 @@ def _place_settled_queries(
     settled_counts: Mapping[str, int] | None = None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     held_query_ids: set[str] | None = None,
+    ledger: MoveLedger | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
     engine within the settled committed set, using the SAME per-query
@@ -139,18 +149,83 @@ def _place_settled_queries(
     ``held_query_ids`` (#588) are already part of ``mandatory_query_ids``
     here (they never move either); this set only names them correctly in a
     partial consolidation's ``retention_reason``.
+
+    Every engine change goes through ``move_ledger.apply_to_assignment`` on
+    ``ledger`` (#616; a fresh one from ``query_assignments`` when ``None``):
+    pass ``settle`` when Phase 1 removed the query's engine, ``place`` when
+    another kept engine scores it higher, with the before and after scores and
+    the runner-up from the same scores this phase compared. A tie this phase
+    clears or opens while the engine stays is a Move too (``from_engine ==
+    to_engine``), so replaying the Moves rebuilds ``tied_engines`` as well.
     """
     tie_unresolved_qids = tie_unresolved_qids or set()
     tied_engines_by_qid = tied_engines_by_qid or {}
     held_query_ids = held_query_ids or set()
     revised = deepcopy(query_assignments)
+    if ledger is None:
+        ledger = ledger_for(revised)
     revised_by_id = {qa["query_id"]: qa for qa in revised}
     moves: dict[tuple[str, str], list[str]] = defaultdict(list)
     tie_unresolved_moves: dict[tuple[str, str], int] = defaultdict(int)
 
-    def _refresh_tied_engines(qa: dict, tie_kind: str | None, scores: dict) -> None:
-        """Set ``qa["tied_engines"]`` from the verdict just computed."""
-        qa["tied_engines"] = _top_scorers(scores) if tie_kind == "tie_unresolved" else []
+    def _record(
+        qa: dict,
+        winner: str,
+        scores: dict[str, float],
+        tie_kind: str | None,
+        tie_seed: str,
+        *,
+        tie_relevant: bool,
+        score_before: float | None,
+        group: dict | None = None,
+    ) -> None:
+        """Set ``qa``'s engine (and, when a tie is involved, its tie) through the ledger.
+
+        Records nothing when neither the engine nor the tie changes. A tie
+        that is not involved keeps the query's current ``tied_engines``.
+        """
+        current = qa["assigned_engine"]
+        new_tied = (
+            (_top_scorers(scores) if tie_kind == "tie_unresolved" else []) if tie_relevant else None
+        )
+        if winner == current and (
+            new_tied is None or new_tied == list(qa.get("tied_engines") or [])
+        ):
+            if new_tied is not None:
+                qa["tied_engines"] = new_tied
+            return
+        removed = current not in committed_engines
+        # One rule for every reality-check pass (move_ledger contract 1.1): an
+        # engine change is coded by why the query left, with a deciding tie in
+        # evidence; a tie-only change is coded by the tie's verdict.
+        tie_rule = (
+            tie_reason_code(tie_kind, _top_scorers(scores), settled_counts, tie_seed)
+            if tie_kind is not None
+            else None
+        )
+        if winner == current:
+            reason = tie_rule if new_tied and tie_rule is not None else ReasonCode.TIE_CLEARED
+        elif removed:
+            reason = ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE
+        else:
+            reason = ReasonCode.HIGHEST_SCORE
+        apply_to_assignment(
+            ledger,
+            qa,
+            winner,
+            pass_=MovePass.SETTLE if removed else MovePass.PLACE,
+            reason_code=reason,
+            score_before=score_before,
+            score_after=scores.get(winner),
+            runner_up=best_other(scores, winner),
+            evidence=MoveEvidence(
+                candidates=_trace_ladder(trace_by_query, qa["query_id"]),
+                group_scores=dict(scores) if group else {},
+                tie_rule=tie_rule,
+            ),
+            group_key=group["key"] if group else None,
+            tied_engines=new_tied,
+        )
 
     def _candidate_pool(original_tied: list[str] | None) -> set[str]:
         """The engines Phase 2 may place this query/group on: the
@@ -192,8 +267,15 @@ def _place_settled_queries(
             eligible_scores, stability_candidates, source_compatible_engine, settled_counts, qid
         )
         tie_relevant = bool(original_tied) or tie_kind == "tie_unresolved"
-        if tie_relevant:
-            _refresh_tied_engines(qa, tie_kind, eligible_scores)
+        _record(
+            qa,
+            winner,
+            eligible_scores,
+            tie_kind,
+            qid,
+            tie_relevant=tie_relevant,
+            score_before=_resolver_score(trace_by_query, qid, current_engine),
+        )
         if winner == current_engine:
             if tie_relevant:
                 qa["assignment_reason"] = _phase2_reason(
@@ -206,7 +288,6 @@ def _place_settled_queries(
                     original_tied=original_tied,
                 )
             return
-        qa["assigned_engine"] = winner
         qa["assignment_reason"] = _phase2_reason(
             current_engine,
             winner,
@@ -296,8 +377,16 @@ def _place_settled_queries(
             group_tie_relevant = bool(group_original_tied) or tie_kind == "tie_unresolved"
             for member_qid, member_engine in members:
                 member_qa = revised_by_id[member_qid]
-                if group_tie_relevant:
-                    _refresh_tied_engines(member_qa, tie_kind, eligible)
+                _record(
+                    member_qa,
+                    winner,
+                    eligible,
+                    tie_kind,
+                    group_seed,
+                    tie_relevant=group_tie_relevant,
+                    score_before=group_info["scores"].get(member_engine),
+                    group=group_info,
+                )
                 if member_engine == winner:
                     if group_tie_relevant:
                         member_qa["assignment_reason"] = _phase2_reason(
@@ -310,7 +399,6 @@ def _place_settled_queries(
                             original_tied=group_original_tied,
                         )
                     continue
-                member_qa["assigned_engine"] = winner
                 member_qa["assignment_reason"] = _phase2_reason(
                     member_engine,
                     winner,

@@ -19,9 +19,11 @@ synthetic snapshots and no pipeline run, live in
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
+from src.contracts.assignment_models import Assignment
 from tests.e2e.pipeline import PipelineResult
 from tests.e2e.routing_snapshot import BASELINE, compare, format_diff, measure
 
@@ -76,22 +78,107 @@ def test_v1_assignment_replays_from_its_moves(run: PipelineResult) -> None:
     assert all(m.evidence.candidates for m in v1.moves)
 
 
-@pytest.mark.deterministic
-def test_a_derived_version_does_not_inherit_v1_moves(run: PipelineResult) -> None:
-    """``Assignment.moves`` is per-version (#616, maintainer decision 2026-10-14).
-
-    A version derived from an earlier one (the reality check's, here) holds
-    only the Moves that produced it, never a copy of v1's. Its writer does not
-    record its own Moves yet (later #616 changes), so today the list is empty.
-    """
-    from src.contracts.assignment_models import Assignment
-
+def _versions(run: PipelineResult) -> dict[int, Assignment]:
     root = run.job_dir() / "assignment"
-    versions = sorted(int(p.name[1:]) for p in root.glob("v*") if p.name[1:].isdigit())
-    assert versions[0] == 1 and len(versions) > 1, versions
-    v1 = Assignment.model_validate_json((root / "v1" / "assignment.json").read_text())
-    assert v1.moves
-    for n in versions[1:]:
-        later = Assignment.model_validate_json((root / f"v{n}" / "assignment.json").read_text())
-        assert later.previous_version is not None
-        assert later.moves == [], f"v{n} carries {len(later.moves)} Moves it did not record"
+    return {
+        int(p.name[1:]): Assignment.model_validate_json((p / "assignment.json").read_text())
+        for p in root.glob("v*")
+        if p.name[1:].isdigit()
+    }
+
+
+def _state(assignment: Assignment) -> dict[str, tuple[str, list[str]]]:
+    return {
+        qa.query_id: (qa.assigned_engine, list(qa.tied_engines))
+        for qa in assignment.query_assignments
+    }
+
+
+def _reality_check_output(run: PipelineResult) -> dict[str, Any]:
+    output: dict[str, Any] = json.loads(
+        (run.job_dir() / "reality-check" / "output.json").read_text()
+    )
+    return output
+
+
+@pytest.mark.deterministic
+def test_the_reality_check_version_replays_from_v1_plus_its_own_moves(run: PipelineResult) -> None:
+    """Moves are per-version (#616): the reality check's version holds exactly
+    the check's own Moves, and v1 replayed plus those Moves rebuilds it --
+    every engine and every ``tied_engines``. Every other version derived from
+    v1 holds no Moves yet (the customer gate and the post-schema router record
+    theirs in later changes)."""
+    from src.agents.referee.move_ledger import replay
+
+    versions = _versions(run)
+    rc_version = _reality_check_output(run)["output_assignment_version"]
+    assert rc_version, "every sample's reality check consolidates something"
+    revised = versions[rc_version]
+    assert revised.previous_version == 1
+    assert revised.moves, "the reality check's version must carry its own Moves"
+    assert [m.seq for m in revised.moves] == list(range(1, len(revised.moves) + 1))
+    assert replay(revised.moves, start=replay(versions[1].moves)) == _state(revised)
+    # Only the check's own Moves: none is a first assignment.
+    assert all(m.from_engine is not None for m in revised.moves)
+    for n, later in versions.items():
+        if n not in (1, rc_version):
+            assert later.moves == [], f"v{n} carries {len(later.moves)} Moves it did not record"
+
+
+@pytest.mark.deterministic
+def test_the_reality_check_records_agree_with_its_moves(run: PipelineResult) -> None:
+    """``consolidations``, ``sweep_decisions`` and ``flag_decisions`` keep their
+    own format (#616) and must say the same thing as the ledger: each
+    consolidation record's (from, to, count) is the ledger's net move for that
+    pair, an engine the sweep removed is exactly where its sweep Moves came
+    from, and each moved flag is one model-flag Move per query."""
+    from collections import Counter
+
+    from src.agents.referee.move_ledger import replay
+
+    versions = _versions(run)
+    output = _reality_check_output(run)
+    revised = versions[output["output_assignment_version"]]
+    assert revised.previous_version is not None
+    start = _state(versions[revised.previous_version])
+    final = replay(revised.moves, start=start)
+    net = Counter(
+        (start[qid][0], engine) for qid, (engine, _) in final.items() if start[qid][0] != engine
+    )
+    records: Counter[tuple[str, str]] = Counter()
+    for c in output["consolidations"]:
+        records[(c["from_engine"], c["to_engine"])] += c["query_count"]
+    assert records == net
+
+    sweep_from = {m.from_engine for m in revised.moves if m.pass_.value == "sweep"}
+    removed = {d["engine"] for d in output["sweep_decisions"] if d["decision"] == "removed"}
+    assert sweep_from == removed
+
+    flag_moves = sorted(
+        (m.query_id, m.from_engine, m.to_engine)
+        for m in revised.moves
+        if m.pass_.value == "model_flag"
+    )
+    flagged = sorted(
+        (qid, d["flagged_engine"], d["destination_engine"])
+        for d in output["flag_decisions"]
+        if d["outcome"] == "moved"
+        for qid in d["query_ids"] + d["moved_with_group"]
+    )
+    assert flag_moves == flagged
+
+
+@pytest.mark.deterministic
+def test_every_reality_check_move_states_its_scores(run: PipelineResult) -> None:
+    """ADR-031 Decision 7: a moved query reports its before and after scores.
+    A Move's score is ``None`` only when that engine was gated (named in the
+    Move's candidate ladder)."""
+    versions = _versions(run)
+    revised = versions[_reality_check_output(run)["output_assignment_version"]]
+    for move in revised.moves:
+        gates = {c.engine: c.gate for c in move.evidence.candidates}
+        assert move.evidence.candidates, move
+        if move.score_before is None:
+            assert move.from_engine is not None and gates.get(move.from_engine), move
+        if move.score_after is None:
+            assert gates.get(move.to_engine), move

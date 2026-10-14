@@ -34,14 +34,26 @@ from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.consolidation_validator import (
     _eligible_destinations,
     _group_serviceable_scores,
+    _ignoring_flags,
+    _scorer_ladder,
     _serviceable_scores,
     _tied_candidate_pool,
+    _unit_score,
 )
-from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    best_other,
+    group_key,
+    ledger_for,
+)
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check_request import moved_queries
+from src.agents.referee.reality_check_rules import tie_reason_code
 from src.agents.referee.tie_break import TIE_KIND_UNRESOLVED, break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.model_flag import FlagReason, ModelFlag, parse_model_flags
+from src.contracts.move_ledger import EngineScore, MoveActor, MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import display_engine
 from src.shared.flag_reasons import FLAG_REASON_TEXT
 
@@ -70,24 +82,11 @@ class UnitRouting:
     tie_kind: str | None = None
     tied: tuple[str, ...] = ()
     blocked_reason: str | None = None
-
-
-def _unit_score(
-    members: list[str],
-    engine: str,
-    query_map: Mapping[str, Mapping],
-    scoring_context: ScoringContext,
-) -> float | None:
-    """The unit's score on ``engine`` (the mean over members), ``None`` if any is gated."""
-    scores: list[float] = []
-    for mqid in members:
-        result = score_query_for_engine(
-            query_map.get(mqid) or {"query_id": mqid}, engine, scoring_context
-        )
-        if result.score is None:
-            return None
-        scores.append(result.score)
-    return sum(scores) / len(scores) if scores else None
+    # The best remaining engine not picked, and every eligible score compared
+    # (a co-dependency group's are member means), for the Move (#616).
+    runner_up: EngineScore | None = None
+    scores: tuple[tuple[str, float], ...] = ()
+    tie_rule: ReasonCode | None = None
 
 
 def route_flagged_unit(
@@ -112,13 +111,7 @@ def route_flagged_unit(
     best one wins; an exact tie goes through ``break_tie``. ``score_before`` is
     the flagged engine's own score ignoring the flag.
     """
-    before_context = ScoringContext(
-        analysis_outputs=scoring_context.analysis_outputs,
-        anti_pattern_map=scoring_context.anti_pattern_map,
-        anti_pattern_notes=scoring_context.anti_pattern_notes,
-        query_capabilities=scoring_context.query_capabilities,
-    )
-    score_before = _unit_score(members, flagged_engine, query_map, before_context)
+    score_before = _unit_score(members, flagged_engine, query_map, _ignoring_flags(scoring_context))
     remaining = sorted(
         {e for e in candidates if e != flagged_engine and e not in CACHE_OVERLAY_ENGINES}
     )
@@ -167,6 +160,13 @@ def route_flagged_unit(
         scores[winner],
         tie_kind=tie_kind,
         tied=tuple(tied) if tie_kind == TIE_KIND_UNRESOLVED else (),
+        tie_rule=(
+            tie_reason_code(tie_kind, tied, settled, ",".join(members))
+            if tie_kind is not None
+            else None
+        ),
+        runner_up=best_other(scores, winner),
+        scores=tuple(sorted(scores.items())),
     )
 
 
@@ -234,6 +234,7 @@ def apply_consolidation_flags(
     source_engine: str = "",
     settled: Mapping[str, int] | None = None,
     co_dependency_groups: list[list[str]] | None = None,
+    ledger: MoveLedger | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], dict[str, set[str]]]:
     """Apply reality-check flags on consolidated queries (both LLM modes).
 
@@ -250,7 +251,15 @@ def apply_consolidation_flags(
     holds one :meth:`FlagOutcome.as_dict` per flagged unit; ``gaps`` maps every
     accepted flagged query to its flagged engine, for later steps (the sanity
     sweep) to keep honoring.
+
+    Each moved query is recorded on ``ledger`` (#616;
+    ``move_ledger.apply_to_assignment``, pass ``model_flag``, rule
+    ``flag.capability_gap``, actor ``model_flag``) with the same before and
+    after scores as its ``flag_decisions`` record. A fresh one from
+    ``revised_assignments`` when ``None``.
     """
+    if ledger is None:
+        ledger = ledger_for(revised_assignments)
     candidates = sorted(set(candidate_engines))
     by_id = {qa["query_id"]: qa for qa in revised_assignments}
     original_engine = {qa["query_id"]: qa["assigned_engine"] for qa in (original_assignments or [])}
@@ -346,9 +355,28 @@ def apply_consolidation_flags(
             outcome.destination_engine = routing.destination
             outcome.score_after = routing.score_after
             outcome.reason = _moved_reason(engine, label, routing, len(members) > 1)
+            grouped = len(members) > 1
             for m in members:
-                by_id[m]["assigned_engine"] = routing.destination
-                by_id[m]["tied_engines"] = list(routing.tied)
+                apply_to_assignment(
+                    ledger,
+                    by_id[m],
+                    routing.destination,
+                    pass_=MovePass.MODEL_FLAG,
+                    reason_code=ReasonCode.FLAG_CAPABILITY_GAP,
+                    score_before=routing.score_before,
+                    score_after=routing.score_after,
+                    runner_up=routing.runner_up,
+                    evidence=MoveEvidence(
+                        candidates=_scorer_ladder(
+                            query_map.get(m) or {"query_id": m}, flagged_context
+                        ),
+                        group_scores=dict(routing.scores) if grouped else {},
+                        tie_rule=routing.tie_rule,
+                    ),
+                    group_key=group_key(group_of[m]) if grouped else None,
+                    tied_engines=list(routing.tied),
+                    actor=MoveActor.MODEL_FLAG,
+                )
                 by_id[m]["assignment_reason"] = outcome.reason
             decisions.append(outcome.as_dict())
 

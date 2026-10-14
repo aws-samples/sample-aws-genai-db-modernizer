@@ -18,6 +18,7 @@ from src.agents.referee.assignment_overrides import apply_assignment_overrides
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.agents.referee.synthesis_handler import run_synthesis
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 DB = "shop"
 JOB = "job-safety-net-reset"
@@ -184,6 +185,7 @@ def test_reality_check_resets_safety_net_notes(tmp_path):
     ]
     result = {
         "revised_assignments": revised,
+        "move_ledger": recorded_ledger(original, revised),
         "consolidations": [
             {
                 "from_engine": "opensearch",

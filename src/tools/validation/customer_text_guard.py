@@ -227,6 +227,8 @@ ID_FIELD_PATHS = frozenset(
         ("candidates", "gate"),  # CandidateScore.gate (gate kind code)
         ("evidence", "signal"),  # MoveEvidence.signal (triage signal name)
         ("evidence", "replaced_engine"),  # MoveEvidence.replaced_engine
+        ("evidence", "tie_rule"),  # MoveEvidence.tie_rule (ReasonCode rule id)
+        ("evidence", "previous_tied_engines"),  # MoveEvidence.previous_tied_engines (engine ids)
     }
 )
 

@@ -14,7 +14,13 @@ from collections.abc import Iterable, Mapping
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import can_engine_serve_capability
-from src.agents.referee.tie_break import break_tie
+from src.agents.referee.tie_break import (
+    TIE_KIND_SOURCE_COMPATIBLE,
+    TIE_KIND_STABILITY,
+    break_tie,
+    pick_unresolved_tie_placeholder,
+)
+from src.contracts.move_ledger import CandidateScore, ReasonCode
 from src.shared.engine_names import display_engine
 
 # Target engine count — the reality check tries to stay at or below this.
@@ -115,14 +121,67 @@ def _resolver_score(trace_by_query: dict[str, dict], qid: str, engine: str) -> f
     return None
 
 
+def _trace_ladder(trace_by_query: dict[str, dict], qid: str) -> list[CandidateScore]:
+    """``qid``'s candidate ladder from the resolver's trace, for a Move's evidence (#616).
+
+    Every analyzed engine, sorted: its score (``_resolver_score``), or the
+    resolver's hard gate with no score; an engine that may not own the query
+    keeps its score with ``gate="write_gate"``, as the first assignment's
+    ladder does (``move_ledger.candidate_ladder``). Reads the trace only.
+    """
+    ladder: list[CandidateScore] = []
+    for engine, value in sorted((trace_by_query.get(qid) or {}).get("engines", {}).items()):
+        if isinstance(value, dict) and value.get("gate"):
+            used = value.get("used") if value["gate"] == "write_gate" else None
+            ladder.append(
+                CandidateScore(
+                    engine=engine,
+                    score=float(used) if isinstance(used, (int, float)) else None,
+                    gate=value["gate"],
+                )
+            )
+            continue
+        ladder.append(
+            CandidateScore(engine=engine, score=_resolver_score(trace_by_query, qid, engine))
+        )
+    return ladder
+
+
+def tie_reason_code(
+    tie_kind: str,
+    tied: list[str],
+    settled_counts: Mapping[str, int] | None,
+    seed: str,
+) -> ReasonCode:
+    """The ledger rule (#616) that decided a tie ``break_tie`` resolved.
+
+    For an unresolved tie, which of Decision 12's two placeholder rules picked
+    the engine: ``pick_unresolved_tie_placeholder`` is pure, so called with the
+    arguments ``break_tie`` passed it, it reports the rule that decided.
+    A record only: it never changes the engine ``break_tie`` returned.
+    """
+    if tie_kind == TIE_KIND_SOURCE_COMPATIBLE:
+        return ReasonCode.TIE_SOURCE_COMPATIBLE
+    if tie_kind == TIE_KIND_STABILITY:
+        return ReasonCode.TIE_STABILITY
+    _, by_workload_share = pick_unresolved_tie_placeholder(tied, settled_counts or {}, seed)
+    return (
+        ReasonCode.TIE_PLACEHOLDER_SETTLED_WORKLOAD
+        if by_workload_share
+        else ReasonCode.TIE_PLACEHOLDER_HASH
+    )
+
+
 def _move_scores_text(
     from_engine: str, before: float | None, to_engine: str, after: float | None
 ) -> str:
     """``"<from> scores N, <to> scores M"``: the before and after scores a moved
-    query reports (ADR-031 Decision 7, #698). Both come from the resolver's own
-    first-assignment scores (``_resolver_score`` or the group's recorded group
-    score), never a recompute; ``n/a`` only when the resolver's own gate ruled
-    the engine out for the query, so it had no score to report."""
+    query reports (ADR-031 Decision 7, #698, #755). The caller passes the scores
+    its pass compared: Phase 2 and the floors read the resolver's trace
+    (``_resolver_score`` or the group's recorded group score), the sanity sweep
+    calls the shared scorer directly (``score_query_for_engine``, the same
+    numbers). ``n/a`` only when a gate ruled the engine out for the query, so
+    there was no score to report."""
 
     def _fmt(value: float | None) -> str:
         return "n/a" if value is None else str(float(value))

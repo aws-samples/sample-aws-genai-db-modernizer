@@ -280,3 +280,33 @@ def test_compare_flags_a_moves_by_pass_change():
     diff = compare(base, moved)
     assert set(diff) == {"moves_by_pass"}
     assert "moves by pass changed" in format_diff("wordpress", diff)
+
+
+def test_compare_flags_a_reality_check_move_change():
+    base = _sample({"q1": {**_query(), "rmv": ["settle:consolidate.no_unique_value"]}})
+    moved = _sample({"q1": {**_query(), "rmv": ["sweep:sweep.orphan"]}})
+    diff = compare(base, moved)
+    assert set(diff) == {"rc_moves"}
+    assert diff["rc_moves"]["q1"] == {
+        "before": ["settle:consolidate.no_unique_value"],
+        "after": ["sweep:sweep.orphan"],
+    }
+    assert "reality-check moves (pass:reason_code)" in format_diff("wordpress", diff)
+
+
+def test_a_query_the_reality_check_did_not_move_has_no_rc_moves_entry():
+    # ``rmv`` is written only for a query the check moved; absent equals empty.
+    base = _sample({"q1": _query()})
+    moved = _sample({"q1": {**_query(), "rmv": []}})
+    assert compare(base, moved) == {}
+
+
+def test_compare_flags_a_reality_check_moves_by_pass_change():
+    base = {
+        **_sample({"q1": _query()}),
+        "rc_moves_by_pass": {"settle": {"consolidate.no_unique_value": 2}},
+    }
+    moved = {**_sample({"q1": _query()}), "rc_moves_by_pass": {}}
+    diff = compare(base, moved)
+    assert set(diff) == {"rc_moves_by_pass"}
+    assert "reality-check moves by pass changed" in format_diff("wordpress", diff)

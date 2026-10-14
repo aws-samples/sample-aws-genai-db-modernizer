@@ -21,6 +21,7 @@ from src.agents.referee.reality_check import reconcile_consolidations
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 DB = "shop"
 JOB = "job-elim-agree"
@@ -79,6 +80,7 @@ def _run_reality_check(store: LocalArtifactStore) -> dict:
     ]
     result = {
         "revised_assignments": revised,
+        "move_ledger": recorded_ledger(before, revised),
         "consolidations": reconcile_consolidations(before, revised, []),
         "architectural_patterns": [],
         "recommendations": [],

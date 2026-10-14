@@ -17,7 +17,9 @@ from unittest.mock import patch
 
 import pytest
 
+from src.agents.referee.move_ledger import apply_to_assignment, ledger_for
 from src.agents.referee.reality_check_handler import run_reality_check_handler
+from src.contracts.move_ledger import MovePass, ReasonCode
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
     resolve_downstream_assignment_version,
@@ -54,10 +56,19 @@ def _assignment(version: int, doc_engine: str = "documentdb", **extra: object) -
 def _fake_reality_check(assignment, triage, analysis, collector, caps, source_engine=None) -> dict:
     """Consolidate documentdb into dynamodb; no-op when no documentdb query remains."""
     moved = [qa for qa in assignment["query_assignments"] if qa["assigned_engine"] == "documentdb"]
-    revised = [
-        {**qa, "assigned_engine": "dynamodb"} if qa["assigned_engine"] == "documentdb" else qa
-        for qa in assignment["query_assignments"]
-    ]
+    # Every engine change goes through the move ledger (#616), as the real check's
+    # do: the handler refuses to write a revision that does not replay.
+    ledger = ledger_for(assignment["query_assignments"])
+    revised = [dict(qa) for qa in assignment["query_assignments"]]
+    for qa in revised:
+        if qa["assigned_engine"] == "documentdb":
+            apply_to_assignment(
+                ledger,
+                qa,
+                "dynamodb",
+                pass_=MovePass.SETTLE,
+                reason_code=ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE,
+            )
     consolidations = (
         [
             {
@@ -81,6 +92,7 @@ def _fake_reality_check(assignment, triage, analysis, collector, caps, source_en
         "unique_value_assessment": {},
         "revised_assignments": revised,
         "lightweight_recommendations": [],
+        "move_ledger": ledger,
     }
 
 
@@ -252,6 +264,7 @@ class TestHandlerVersions:
             *,
             co_dependency_groups,
             query_signals,
+            ledger=None,
         ):
             moved = [{**qa, "assigned_engine": "dynamodb"} for qa in revised]
             return (
@@ -298,6 +311,7 @@ class TestHandlerVersions:
             *,
             co_dependency_groups,
             query_signals,
+            ledger=None,
         ):
             for qa in revised:
                 qa["assigned_engine"] = "dynamodb"

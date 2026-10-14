@@ -21,6 +21,7 @@ from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.contracts.assignment_models import Assignment
 from src.orchestrator.local_orchestrator import LocalOrchestrator
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 from tests.unit.tools.schema import test_pe_routing_flags as pe_routing
 
 
@@ -47,6 +48,7 @@ def test_the_reality_check_version_does_not_inherit_v1_moves(tmp_path) -> None:
     ]
     result = {
         "revised_assignments": revised,
+        "move_ledger": recorded_ledger(original, revised),
         "consolidations": [
             {
                 "from_engine": "opensearch",
@@ -78,7 +80,10 @@ def test_the_reality_check_version_does_not_inherit_v1_moves(tmp_path) -> None:
 
     assert new_version == 2
     v2 = store.read_json(f"mydb/job-1/assignment/v{new_version}/assignment.json")
-    assert v2["moves"] == []
+    # Only the check's own Move (q1 off OpenSearch), never v1's two.
+    assert [(m["seq"], m["query_id"], m["from_engine"], m["to_engine"]) for m in v2["moves"]] == [
+        (1, "q1", "opensearch", "aurora_mysql")
+    ]
 
 
 V1 = {

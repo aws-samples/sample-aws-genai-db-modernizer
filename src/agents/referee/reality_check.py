@@ -20,6 +20,15 @@ Steps, each in its own module:
      records describe the net per-query moves
   5. Architectural patterns and recommendations (``reality_check_patterns``)
 
+Every engine change these steps make (and the handler's model flags, sanity
+sweep and customer-override restore) goes through the move ledger
+(``move_ledger.apply_to_assignment``, #616), so the reality check's version
+holds exactly the Moves that produced it. One exception, closed by Track L
+PR3: before the check runs, the handler's ``normalize_cache_owners`` moves the
+ElastiCache owners of an assignment written before #296 to their
+system-of-record engine without a Move. Such a version replays from its input
+as the check read it (normalized), not from the stored one.
+
 The eligibility gate, engine costs and tie-break all passes share live in
 ``reality_check_rules``. This module runs the steps in order and re-exports
 their names, so callers keep importing from ``reality_check``.
@@ -38,6 +47,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 
 from src.agents.referee.aurora_choice import source_database_engine
+from src.agents.referee.move_ledger import MoveLedger, ledger_for
 from src.agents.referee.reality_check_floors import (
     NATIVE_TEXT_SEARCH_SOURCE_ENGINES,
     OPENSEARCH_MIN_CALLS_PER_SECOND,
@@ -138,6 +148,7 @@ def run_reality_check(
     query_capabilities: dict[str, list[str]] | None = None,
     source_engine: str | None = None,
     held_query_ids: Iterable[str] = (),
+    ledger: MoveLedger | None = None,
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
 
@@ -151,6 +162,11 @@ def run_reality_check(
     ``resettle_after_corrections`` for the queries a validation correction
     placed.
 
+    ``ledger`` (#616) is the move ledger every engine change of this check is
+    recorded on (Phase 1/2 and the justification floors, through
+    ``move_ledger.apply_to_assignment``); a fresh one starting from
+    ``assignment``'s engines when ``None``. Returned as ``move_ledger``.
+
     Thinks like a pragmatic CTO: "Every additional database is operational
     burden. Does this engine EARN its place, or can another engine already
     in the stack handle these queries?"
@@ -161,8 +177,11 @@ def run_reality_check(
       - architectural_patterns: list of recommended patterns
       - recommendations: list of human-readable recommendations
       - unique_value_assessment: per-engine analysis of unique vs redundant queries
+      - move_ledger: the ledger holding this check's Moves (#616)
     """
     query_assignments = assignment.get("query_assignments", [])
+    if ledger is None:
+        ledger = ledger_for(query_assignments)
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_map = {q["query_id"]: q for q in queries}
     signals = triage.get("signals", [])
@@ -330,6 +349,7 @@ def run_reality_check(
         settled_counts,
         tied_engines_by_qid,
         held_query_ids=held,
+        ledger=ledger,
     )
     lightweight_recommendations: list[dict] = []
 
@@ -354,6 +374,7 @@ def run_reality_check(
         settled_counts=settled_counts,
         scoring_ctx=scoring_ctx,
         workload_justified=workload_justified,
+        ledger=ledger,
     )
 
     # Reconcile before Pass 3/4 (#475 review follow-up): this floor now runs
@@ -414,6 +435,7 @@ def run_reality_check(
         "recommendations": recommendations,
         "unique_value_assessment": unique_value_assessment,
         "lightweight_recommendations": lightweight_recommendations,
+        "move_ledger": ledger,
         "aurora_absorption": {
             "aurora_engine": aurora_engine_name,
             "engines_eliminated": sorted(set(engine_queries) - committed_engines),

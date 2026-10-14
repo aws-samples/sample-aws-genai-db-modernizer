@@ -22,6 +22,7 @@ from src.agents.referee.reality_check_handler import (
     run_reality_check_handler,
 )
 from src.storage.artifact_store import ArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -656,6 +657,10 @@ class TestRunRealityCheckHandlerBackwardCompatible:
                 ],
                 "lightweight_recommendations": [],
             }
+            det = mock_det.return_value
+            det["move_ledger"] = recorded_ledger(
+                det["assignment"]["query_assignments"], det["revised_assignments"]
+            )
             run_reality_check_handler("job-1", "mydb", store, llm_mode="none")
 
         written_keys = list(store._written.keys())

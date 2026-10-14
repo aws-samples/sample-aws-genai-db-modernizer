@@ -19,6 +19,7 @@ import json
 import logging
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from functools import cache
 
 from pydantic import ValidationError
@@ -26,6 +27,14 @@ from pydantic import ValidationError
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.agents.referee.assignment_resolver import RoutingTrace
 from src.agents.referee.aurora_choice import AURORA_ENGINES
+from src.agents.referee.cache_overlay import can_own
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    best_other,
+    group_key,
+    ledger_for,
+)
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import (
     _current_for_eligibility,
@@ -34,9 +43,11 @@ from src.agents.referee.reality_check import (
     _query_eligible_engines,
 )
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
+from src.agents.referee.reality_check_rules import _move_scores_text, tie_reason_code
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.model_flag import ModelFlag, parse_model_flags
+from src.contracts.move_ledger import CandidateScore, MoveEvidence, MovePass, ReasonCode
 from src.contracts.reality_check_model_response import (
     RealityCheckModelResponse,
     parse_reality_check_response,
@@ -305,6 +316,51 @@ def _serviceable_scores(
     return scores, reasons
 
 
+def _unit_score(
+    members: list[str],
+    engine: str,
+    query_map: Mapping[str, Mapping],
+    scoring_context: ScoringContext,
+) -> float | None:
+    """The unit's score on ``engine`` (the mean over members), ``None`` if any is gated."""
+    scores: list[float] = []
+    for mqid in members:
+        result = score_query_for_engine(
+            query_map.get(mqid) or {"query_id": mqid}, engine, scoring_context
+        )
+        if result.score is None:
+            return None
+        scores.append(result.score)
+    return sum(scores) / len(scores) if scores else None
+
+
+def _ignoring_flags(scoring_context: ScoringContext) -> ScoringContext:
+    """``scoring_context`` without its model-flag gaps: an engine's own score for a
+    query the model flagged there (a moved query's before score, #647, #755)."""
+    return replace(scoring_context, flag_gaps={})
+
+
+def _scorer_ladder(query: Mapping, scoring_context: ScoringContext) -> list[CandidateScore]:
+    """``query``'s candidate ladder by the shared scorer, for a Move's evidence (#616).
+
+    Every analyzed engine, sorted: its score, or the scorer's gate kind with no
+    score; an engine that may not own the query keeps its score with
+    ``gate="write_gate"``, as the first assignment's ladder does.
+    """
+    ladder: list[CandidateScore] = []
+    for engine in sorted(scoring_context.analysis_outputs):
+        result = score_query_for_engine(query, engine, scoring_context)
+        if result.score is None:
+            ladder.append(
+                CandidateScore(engine=engine, score=None, gate=result.gate_kind or "gate")
+            )
+        elif not can_own(engine, query):
+            ladder.append(CandidateScore(engine=engine, score=result.score, gate="write_gate"))
+        else:
+            ladder.append(CandidateScore(engine=engine, score=result.score))
+    return ladder
+
+
 def _group_serviceable_scores(
     member_qids: list[str],
     candidates: Iterable[str],
@@ -452,6 +508,7 @@ def sanity_sweep(
     co_dependency_groups: list[list[str]] | None = None,
     routing_trace: RoutingTrace | None = None,
     query_signals: Mapping[str, list[str]] | None = None,
+    ledger: MoveLedger | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Final pass: remove a tiny orphan engine the other committed engines
     can serve (ADR-031 Decision 7: "when an engine serves only a few
@@ -540,6 +597,12 @@ def sanity_sweep(
             (``may_absorb``) -- missing or empty means no engine is
             treated as having a matching specialty, the more conservative
             direction (fewer, not more, destinations judged eligible).
+        ledger: the move ledger (#616) each moved query is recorded on
+            (``move_ledger.apply_to_assignment``, pass ``sweep``, rule
+            ``sweep.orphan``), with the query's score on the orphan engine
+            (ignoring any model flag) and on its destination, both from the
+            shared scorer and both in its reason (#755). A fresh one from
+            ``revised_assignments`` when ``None``.
 
     Returns:
         (updated_assignments, updated_consolidations, sweep_decisions) —
@@ -551,6 +614,8 @@ def sanity_sweep(
         kept; ``None`` when removed) -- the same explanation that otherwise
         only ever reached a ``[reality-check]`` log line.
     """
+    if ledger is None:
+        ledger = ledger_for(revised_assignments)
     engine_counts = Counter(qa["assigned_engine"] for qa in revised_assignments)
     source_compatible_engine = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
     workload = settled_counts(revised_assignments)
@@ -630,7 +695,7 @@ def sanity_sweep(
         # engine's sweep_decision can name exactly which queries/groups
         # blocked it and under which rule, not just the printed sentence.
         blocked_units: list[dict] = []
-        resolved: list[tuple[list[str], str, str | None, list[str]]] = []
+        resolved: list[tuple[list[str], str, str | None, list[str], dict[str, float]]] = []
         for members in units:
             is_group = len(members) > 1
 
@@ -705,7 +770,7 @@ def sanity_sweep(
             else:
                 (winner,) = tied
                 tie_kind = None
-            resolved.append((members, winner, tie_kind, tied))
+            resolved.append((members, winner, tie_kind, tied, scores))
 
         if blocked_notes:
             # At least one query (or co-dependency group) has nowhere else
@@ -751,7 +816,7 @@ def sanity_sweep(
         # somewhere to go: remove the engine, each unit to its own
         # best-scoring serviceable committed engine.
         moved_counts: Counter[str] = Counter()
-        for members, winner, tie_kind, tied in resolved:
+        for members, winner, tie_kind, tied, unit_scores in resolved:
             is_group = len(members) > 1
             new_tied = sorted(tied) if tie_kind == "tie_unresolved" else []
             basis = (
@@ -759,16 +824,49 @@ def sanity_sweep(
                 if is_group
                 else "best-scoring serviceable committed engine"
             )
+            # ADR-031 Decision 7 (#755): the before and after scores, from the
+            # shared scorer -- the unit's own score on the orphan engine
+            # (ignoring a model flag there) and the score it won with.
+            # Rounded to 2 places (a group's mean can run long): the same number
+            # in the Move and in the reason.
+            raw_before = _unit_score(members, engine, query_map, _ignoring_flags(scoring_context))
+            score_before = None if raw_before is None else round(raw_before, 2)
+            score_after = round(unit_scores[winner], 2)
+            scores_text = _move_scores_text(engine, score_before, winner, score_after)
+            tie_rule = (
+                tie_reason_code(tie_kind, tied, workload, ",".join(members))
+                if tie_kind is not None
+                else None
+            )
+            unit_group_key = group_key(group_by_qid[members[0]]) if is_group else None
             for mqid in members:
                 qa = by_id[mqid]
-                qa["assigned_engine"] = winner
                 # Always the FRESH verdict (round 2 review Important 1b):
                 # never left reading a stale tie that names the engine this
                 # sweep just removed.
-                qa["tied_engines"] = new_tied
+                apply_to_assignment(
+                    ledger,
+                    qa,
+                    winner,
+                    pass_=MovePass.SWEEP,
+                    reason_code=ReasonCode.SWEEP_ORPHAN,
+                    score_before=score_before,
+                    score_after=score_after,
+                    runner_up=best_other(unit_scores, winner),
+                    evidence=MoveEvidence(
+                        candidates=_scorer_ladder(
+                            query_map.get(mqid) or {"query_id": mqid}, scoring_context
+                        ),
+                        group_scores=dict(unit_scores) if is_group else {},
+                        tie_rule=tie_rule,
+                    ),
+                    group_key=unit_group_key,
+                    tied_engines=new_tied,
+                )
                 qa["assignment_reason"] = (
                     f"sanity sweep: redirected from {display_engine(engine)} to "
-                    f"{display_engine(winner)} (orphan engine with {count} queries; {basis})"
+                    f"{display_engine(winner)} (orphan engine with {count} queries; {basis}; "
+                    f"{scores_text})"
                 )
                 moved_counts[winner] += 1
                 if tie_kind == "tie_unresolved" and routing_trace is not None:

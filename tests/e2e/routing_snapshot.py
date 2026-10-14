@@ -33,14 +33,21 @@ whether that is the point of the PR or a sign something moved by accident:
   nothing a later version recorded): each query's Moves as ``pass:reason_code`` in ``seq``
   order (``mv``), and per sample the count of Moves by pass and reason code
   (``moves_by_pass``);
+- the reality check's own Moves, read from the version it wrote (its
+  ``assignment/v<N>``, holding only that check's Moves): per query
+  ``pass:reason_code`` in ``seq`` order (``rmv``, only for a query the check
+  moved or re-tied), and per sample the count by pass and reason code
+  (``rc_moves_by_pass``);
 - the consolidation records from ``reality-check/output.json``, including
   ``queries_retained`` and ``retention_reason`` for a partial consolidation.
 
 ``measure()`` also asserts the snapshot's first-assignment engine matches the
 pipeline's own ``assignment/v1`` for every query -- a cheap, early guard that
 the trace is actually describing the real run, not a resolver re-run that
-has quietly diverged from it -- and that ``assignment/v1``'s Moves replay to
-its own ``assigned_engine`` and ``tied_engines`` exactly (#616).
+has quietly diverged from it -- that ``assignment/v1``'s Moves replay to
+its own ``assigned_engine`` and ``tied_engines`` exactly (#616), and that the
+reality check's version replays exactly from its input version plus its own
+Moves.
 
 ``tests/e2e/test_routing_snapshot.py`` compares a run against
 ``tests/e2e/baselines/routing_snapshot.json`` and reports every per-query
@@ -213,6 +220,7 @@ def measure(job_dir: Path) -> dict[str, Any]:
         )
         by_reason = moves_by_pass.setdefault(move.pass_.value, {})
         by_reason[move.reason_code.value] = by_reason.get(move.reason_code.value, 0) + 1
+    rc_moves_by_query, rc_moves_by_pass = _reality_check_moves(job_dir)
     for qid, payload in trace.by_query.items():
         v1_engine = v1_by_id.get(qid)
         if v1_engine != payload["assigned_engine"]:
@@ -275,6 +283,8 @@ def measure(job_dir: Path) -> dict[str, Any]:
             "f": first,
             "mv": moves_by_query.get(qid, []),
         }
+        if qid in rc_moves_by_query:
+            query_entry["rmv"] = rc_moves_by_query[qid]
         if final_engine != first["e"] or final_cat != first["c"]:
             final: dict[str, Any] = {"e": final_engine, "c": final_cat}
             fit = parse_fit(final_reason)
@@ -291,7 +301,60 @@ def measure(job_dir: Path) -> dict[str, Any]:
         "queries": queries,
         "consolidations": consolidations,
         "moves_by_pass": moves_by_pass,
+        "rc_moves_by_pass": rc_moves_by_pass,
     }
+
+
+def _version_state(assignment: Any) -> dict[str, tuple[str, list[str]]]:
+    return {
+        qa.query_id: (qa.assigned_engine, list(qa.tied_engines))
+        for qa in assignment.query_assignments
+    }
+
+
+def _reality_check_moves(
+    job_dir: Path,
+) -> tuple[dict[str, list[str]], dict[str, dict[str, int]]]:
+    """The reality check's own Moves (#616), by query and by pass and reason code.
+
+    Read from the assignment version the check wrote (``output_assignment_version``
+    in ``reality-check/output.json``; none when it consolidated nothing). Fails
+    loudly when that version does not replay from its input version plus its own
+    Moves.
+    """
+    from src.agents.referee.move_ledger import replay
+    from src.contracts.assignment_models import Assignment
+
+    rc_path = job_dir / "reality-check" / "output.json"
+    version = (
+        json.loads(rc_path.read_text()).get("output_assignment_version")
+        if rc_path.exists()
+        else None
+    )
+    if not version:
+        return {}, {}
+    root = job_dir / "assignment"
+    revised = Assignment.model_validate_json((root / f"v{version}" / "assignment.json").read_text())
+    source = Assignment.model_validate_json(
+        (root / f"v{revised.previous_version}" / "assignment.json").read_text()
+    )
+    expected = _version_state(revised)
+    replayed = replay(revised.moves, start=_version_state(source))
+    if replayed != expected:
+        bad = sorted(q for q in set(replayed) | set(expected) if replayed.get(q) != expected.get(q))
+        raise AssertionError(
+            f"routing_snapshot.measure(): assignment/v{version} (the reality check's) does not "
+            f"replay from v{revised.previous_version} plus its own moves for {len(bad)} "
+            f"queries, e.g. {bad[:5]}"
+        )
+    by_query: dict[str, list[str]] = {}
+    by_pass: dict[str, dict[str, int]] = {}
+    for move in sorted(revised.moves, key=lambda m: m.seq):
+        code = f"{move.pass_.value}:{move.reason_code.value}"
+        by_query.setdefault(move.query_id, []).append(code)
+        by_reason = by_pass.setdefault(move.pass_.value, {})
+        by_reason[move.reason_code.value] = by_reason.get(move.reason_code.value, 0) + 1
+    return by_query, by_pass
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +376,7 @@ def _consolidation_key(c: dict[str, Any]) -> tuple[str, str, str]:
 def compare(baseline: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
     """Differences between two ``measure()`` results for one sample; ``{}`` if none.
 
-    Up to seven keys, each present only when non-empty:
+    Up to nine keys, each present only when non-empty:
     ``scores`` (the per-engine score ladder changed for a query_id),
     ``first_assignment`` (the resolver's own pick, category, co-dependency
     group, signal or tie-break rule changed), ``final_assignment`` (the
@@ -322,7 +385,8 @@ def compare(baseline: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
     (the cache overlay engine changed), ``moves`` (the query's first-assignment
     Moves, ``pass:reason_code`` in order, changed), ``moves_by_pass`` (the
     sample's Move counts by pass and reason code changed, ``{"before": ...,
-    "after": ...}``), and ``consolidations`` (a record, keyed by
+    "after": ...}``), ``rc_moves`` / ``rc_moves_by_pass`` (the same two for the
+    reality check's own Moves), and ``consolidations`` (a record, keyed by
     ``_consolidation_key``, whose fields -- query_count, cost, retained
     queries, retention_reason -- changed).
     """
@@ -350,10 +414,18 @@ def compare(baseline: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
         a_moves = a.get("mv") if a else None
         if b_moves != a_moves:
             diff.setdefault("moves", {})[qid] = {"before": b_moves, "after": a_moves}
+        b_rc_moves = (b.get("rmv") if b else None) or []
+        a_rc_moves = (a.get("rmv") if a else None) or []
+        if b_rc_moves != a_rc_moves:
+            diff.setdefault("rc_moves", {})[qid] = {"before": b_rc_moves, "after": a_rc_moves}
     b_by_pass = baseline.get("moves_by_pass")
     a_by_pass = actual.get("moves_by_pass")
     if b_by_pass != a_by_pass:
         diff["moves_by_pass"] = {"before": b_by_pass, "after": a_by_pass}
+    b_rc_by_pass = baseline.get("rc_moves_by_pass") or {}
+    a_rc_by_pass = actual.get("rc_moves_by_pass") or {}
+    if b_rc_by_pass != a_rc_by_pass:
+        diff["rc_moves_by_pass"] = {"before": b_rc_by_pass, "after": a_rc_by_pass}
     b_cons = {_consolidation_key(c): c for c in baseline.get("consolidations", [])}
     a_cons = {_consolidation_key(c): c for c in actual.get("consolidations", [])}
     for key in sorted(set(b_cons) | set(a_cons)):
@@ -410,6 +482,7 @@ _STEP_LABELS = (
     ("final_assignment", "final assignment (reality check)"),
     ("cache_engine", "cache overlay engine"),
     ("moves", "first-assignment moves (pass:reason_code)"),
+    ("rc_moves", "reality-check moves (pass:reason_code)"),
 )
 
 
@@ -433,7 +506,7 @@ def format_diff(sample: str, diff: dict[str, Any], query_text: dict[str, str] | 
             d = changed[qid]
             if step == "scores":
                 detail = _engine_diff_text(d["before"], d["after"])
-            elif step in ("cache_engine", "moves"):
+            elif step in ("cache_engine", "moves", "rc_moves"):
                 detail = f"{d['before']!r} -> {d['after']!r}"
             else:
                 detail = f"{_assignment_text(d['before'])} -> {_assignment_text(d['after'])}"
@@ -443,11 +516,15 @@ def format_diff(sample: str, diff: dict[str, Any], query_text: dict[str, str] | 
                 lines.append(f"    text: {excerpt!r}")
         if len(changed) > MAX_QUERIES_SHOWN:
             lines.append(f"  ... and {len(changed) - MAX_QUERIES_SHOWN} more")
-    by_pass = diff.get("moves_by_pass")
-    if by_pass:
-        lines.append("\nmoves by pass changed:")
-        lines.append(f"  before: {json.dumps(by_pass['before'], sort_keys=True)}")
-        lines.append(f"  after:  {json.dumps(by_pass['after'], sort_keys=True)}")
+    for key, label in (
+        ("moves_by_pass", "moves by pass"),
+        ("rc_moves_by_pass", "reality-check moves by pass"),
+    ):
+        by_pass = diff.get(key)
+        if by_pass:
+            lines.append(f"\n{label} changed:")
+            lines.append(f"  before: {json.dumps(by_pass['before'], sort_keys=True)}")
+            lines.append(f"  after:  {json.dumps(by_pass['after'], sort_keys=True)}")
     cons = diff.get("consolidations")
     if cons:
         plural = "" if len(cons) == 1 else "s"

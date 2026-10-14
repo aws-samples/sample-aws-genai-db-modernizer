@@ -1,6 +1,7 @@
 """Move Ledger Contract
 
-One record per engine change of one query (#616, ADR-031). Every pass that can
+One record per change of one query's engine or of its unresolved tie
+(``tied_engines``) (#616, ADR-031). Every pass that can
 set or change a query's engine records a ``Move`` through one function
 (``src.agents.referee.move_ledger.apply``) instead of keeping its own record
 format. The first assignment writes at least one Move per query (``from_engine``
@@ -23,6 +24,25 @@ Version History:
 - 1.0 (2026-10-14, #616): Initial version. Only the first assignment
   (``AssignmentResolver.resolve``) writes Moves; the reality check, customer
   overrides and the post-schema router follow in later changes.
+- 1.1 (2026-10-14, #616, #755): The reality check writes Moves too:
+  ``settle`` (Phase 1 removed the query's engine), ``place`` (another kept
+  engine scores it higher, or only its tie changed), ``floor``, ``model_flag``
+  (actor ``model_flag``), ``sweep`` and ``customer_pick`` (the
+  customer-override restore, actor ``customer``). Their scores are the ones
+  each pass compared and its reason states; a co-dependency group's are the
+  group's mean scores (``evidence.group_scores``), and a floor Move's runner-up
+  is ranked the way its winner was. ``evidence.candidates`` may also carry the
+  scorer's ``model_flag`` gate. One reason-code rule for every reality-check
+  pass: an engine change's ``reason_code`` is the pass's own rule (why the
+  query left), and when an exact tie picked the destination the tie rule is in
+  ``evidence.tie_rule``; a Move that changes only the tie (``from_engine ==
+  to_engine``) has the tie's rule as its code (``tie.cleared`` when the tie
+  cleared) and the earlier tie in ``evidence.previous_tied_engines``. Added
+  ``ReasonCode.TIE_CLEARED`` and the two ``MoveEvidence`` fields (optional,
+  so 1.0 records still load). One engine change is not a Move yet: the
+  handler's ``normalize_cache_owners`` (an assignment written before #296
+  with ElastiCache owners); Track L PR3 records it as ``cache_owner_normalize``.
+  The customer gate and the post-schema router follow in later changes.
 """
 
 from __future__ import annotations
@@ -68,6 +88,8 @@ class ReasonCode(str, Enum):
     # Decision 12's placeholder, split by which of its two rules decided it.
     TIE_PLACEHOLDER_SETTLED_WORKLOAD = "tie.placeholder.settled_workload"
     TIE_PLACEHOLDER_HASH = "tie.placeholder.hash"
+    # A Move that only clears a query's unresolved tie (the engine stays).
+    TIE_CLEARED = "tie.cleared"
     GROUP_MEAN = "group.mean"
     OVERRIDE_TEXT_SEARCH = "override.text_search"
     OVERRIDE_UTILITY = "override.utility"
@@ -145,6 +167,20 @@ class MoveEvidence(BaseModel):
         description=(
             "For an override that replaces an engine this same pass set earlier "
             "(the utility pin over a scored pick): the engine it replaced"
+        ),
+    )
+    tie_rule: ReasonCode | None = Field(
+        None,
+        description=(
+            "For a reality-check engine change whose destination an exact tie "
+            "decided: the tie rule (tie.*). None when no tie was involved"
+        ),
+    )
+    previous_tied_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "For a Move that changes the query's tie: its tied_engines before the "
+            "Move (sorted). Empty otherwise"
         ),
     )
 

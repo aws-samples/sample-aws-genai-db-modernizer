@@ -78,6 +78,14 @@ Version History:
   router (and its rollback) start their version with an empty list until
   they record their own (later #616 changes). Defaults to an empty list, so
   artifacts written before 1.10 still load.
+- 1.11 (2026-10-14, #616): No schema change. The reality check's version
+  now holds that check's own Moves (``source = reality_check``): replaying
+  its input version plus its moves rebuilds it, and the handler refuses to
+  write one that does not. Exception (Track L PR3): an input written before
+  #296 with ElastiCache owners is normalized first without a Move, so that
+  version replays from the normalized input. The customer gate and the
+  post-schema router (and its rollback) still start their version with an
+  empty list until they record their own.
 """
 
 from datetime import datetime
@@ -442,10 +450,9 @@ class Assignment(BaseModel):
             "that produced this version, in seq order, never a copy of an earlier "
             "version's. Replaying v1's moves rebuilds v1's assigned_engine and "
             "tied_engines; v1 plus each later version's own moves rebuilds that version. "
-            "Only the first assignment records Moves today: the reality check, customer "
-            "gate and post-schema router (and its rollback) write an empty list until "
-            "they record their own (later #616 changes). Empty for artifacts written "
-            "before 1.10."
+            "The first assignment and the reality check record Moves: the customer gate "
+            "and post-schema router (and its rollback) write an empty list until they "
+            "record their own (later #616 changes). Empty for artifacts written before 1.10."
         ),
     )
 
