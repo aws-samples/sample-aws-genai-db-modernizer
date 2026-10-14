@@ -19,8 +19,9 @@ from .formatting import _completed_designs, fmt_num, plural_noun
 
 # The wave-specific engine buckets come from src/shared/migration_wave_engines.py
 # (#225), the same ones src.agents.referee.migration_waves
-# uses -- not the broader _CACHE_ENGINES/_RELATIONAL_ENGINES in engine_roles (which also
-# recognize memorydb and generic aurora for whole-report role classification):
+# uses. The cache bucket is the same shared set engine_roles uses for role labels;
+# the relational bucket is narrower than _RELATIONAL_ENGINES in engine_roles (which
+# also recognizes generic aurora for whole-report role classification):
 # src/report never imports src/agents (clean layering), so both modules import
 # the shared bucket set instead of each hand-mirroring the other's copy.
 

@@ -295,7 +295,7 @@ class TestOwnership:
         """#303 review round 1: built from the shared cache/search buckets, not
 
         its own copy, so it stays correct however ``CACHE_OVERLAY_ENGINES``
-        itself is defined (#430 redefines it from ``src.shared.cache_policy``).
+        itself is defined (#398 re-exports it from ``src.shared.cache_engines``).
         """
         from src.shared.migration_wave_engines import SEARCH_ENGINES
 

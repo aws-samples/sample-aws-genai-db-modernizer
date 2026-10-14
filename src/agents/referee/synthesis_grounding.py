@@ -30,6 +30,7 @@ import re
 from collections.abc import Iterable
 
 from src.agents.referee.table_resolution import TableNameResolver
+from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import display_engine
 from src.shared.risk_severity import count_by_severity
 
@@ -1136,7 +1137,7 @@ def check_summary_wave_order(summary: str, migration_waves: list[dict] | None) -
             wave_of.setdefault(engine, n)
     if len(wave_of) < 2:
         return []
-    has_cache_wave = "elasticache" in wave_of
+    has_cache_wave = bool(CACHE_ENGINES & wave_of.keys())
 
     def ordered_pair_is_wrong(earlier: str, later: str) -> bool:
         return (

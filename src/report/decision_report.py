@@ -98,7 +98,6 @@ _ENGINE_BADGE = {
     "aurora_postgresql": "#9c5700",
     "aurora_mysql": "#9c5700",
     "elasticache": "#c62f25",
-    "memorydb": "#c62f25",
     "opensearch": "#0e7c86",
     "neptune": "#7048e8",
     "keyspaces": "#8250df",

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.utility_statements import is_sequence_fetch
+from src.shared.cache_engines import CACHE_ENGINES, HOT_READ_MIN_CALLS_PER_SECOND
 from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
@@ -51,24 +52,19 @@ from src.shared.migration_wave_engines import SEARCH_ENGINES
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
 
-# Engines that can only be a cache layer: they never own a query.
-CACHE_OVERLAY_ENGINES = frozenset({"elasticache"})
+# Engines that can only be a cache layer: they never own a query. Declared once
+# in ``src.shared.cache_engines`` (#398) and re-exported here for routing.
+CACHE_OVERLAY_ENGINES = CACHE_ENGINES
 
 # Engines that are not a system of record for a table, so they never own a write
 # (or a locking read, see ``is_locking_read``). Built from the shared cache and
 # search buckets (``CACHE_OVERLAY_ENGINES``, ``migration_wave_engines.
-# SEARCH_ENGINES``) rather than its own copy, so a change to either bucket --
-# including #430, which redefines ``CACHE_OVERLAY_ENGINES`` from
-# ``src.shared.cache_policy`` -- composes here instead of silently dropping
-# OpenSearch's write gate again. OpenSearch is a read model (#303, epic #340
-# decision 2026-10-04): it indexes a durable owner's data and may own reads,
-# but it is never the system of record for a write, the same write gate
-# ElastiCache already has (#296).
+# SEARCH_ENGINES``) rather than its own copy, so a change to either bucket
+# composes here instead of silently dropping OpenSearch's write gate again.
+# OpenSearch is a read model (#303, epic #340 decision 2026-10-04): it indexes a
+# durable owner's data and may own reads, but it is never the system of record
+# for a write, the same write gate ElastiCache already has (#296).
 NON_SYSTEM_OF_RECORD_ENGINES = CACHE_OVERLAY_ENGINES | SEARCH_ENGINES
-
-# Hot-read floor (calls/s). Starting value from #296; tune with data. On the two
-# reference samples every overlay candidate is either >= 1.26 calls/s or <= 0.95.
-HOT_READ_MIN_CALLS_PER_SECOND = 1.0
 
 # Largest average result size (rows) a cached query may return.
 CACHE_MAX_ROWS_AVG = 100.0

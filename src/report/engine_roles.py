@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-_CACHE_ENGINES = {"elasticache", "memorydb"}
+from src.shared.cache_engines import CACHE_ENGINES as _CACHE_ENGINES
+
 # Search engines are read models (#303): their data is synced from the engine
 # that owns each table, so they never hold system-of-record data, never need a
 # "data migration", and come after their owners in the wave plan.

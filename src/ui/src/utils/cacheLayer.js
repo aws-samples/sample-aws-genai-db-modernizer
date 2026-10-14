@@ -22,6 +22,8 @@
  * shape is in play.
  */
 
+// Mirrors src/shared/cache_engines.py (#398); tests/unit/shared/test_cache_engines.py
+// keeps the two in step.
 export const CACHE_ENGINES = new Set(['elasticache']);
 
 export const isCacheEngine = (engine) => CACHE_ENGINES.has(engine);
