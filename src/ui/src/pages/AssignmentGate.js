@@ -43,6 +43,7 @@ import {
 } from "../utils/assignmentSummary";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
+import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -442,6 +443,12 @@ const AssignmentGatePage = memo(() => {
   const queryAssignments = useMemo(() => {
     return assignmentData?.assignment?.query_assignments || [];
   }, [assignmentData]);
+
+  // #629: queries the post-schema router moved after approval.
+  const reroutedIds = useMemo(
+    () => reroutedQueryIds(assignmentData?.assignment),
+    [assignmentData],
+  );
 
   // #503: queries an exact score tie left unresolved -- no ADR-031 rule
   // decided between the tied engines, so the customer sees a count here and
@@ -1051,7 +1058,10 @@ const AssignmentGatePage = memo(() => {
               const currentEngine = overrides[item.query_id] || item.assigned_engine;
               const isOverridden = !!overrides[item.query_id] || item.query_id in cacheOverrides;
               const isCached = item.query_id in cacheOverrides ? cacheOverrides[item.query_id] : !!item.cache_engine;
-              const isMoved = item.assignment_reason?.includes('reality check');
+              // #629: a row the post-schema router moved after approval gets its
+              // own marker, distinct from a reality-check move.
+              const moveKind = rowMoveKind(item, reroutedIds);
+              const isMoved = moveKind !== null;
               // #503: mark the row the top banner's count is actually
               // about, driven by the structured
               // field, not the free-text reason.
@@ -1079,7 +1089,10 @@ const AssignmentGatePage = memo(() => {
                     <div className="query-list-col query-list-col--query">
                       <span className="query-row-arrow">{isExpanded ? '\u25BC' : '\u25B6'}</span>
                       <span className="query-list-id">{item.query_id?.slice(0, 12)}...</span>
-                      {isMoved && <span className="diff-badge">{t('assignment-gate.states.moved')}</span>}
+                      {moveKind === 'moved' && <span className="diff-badge">{t('assignment-gate.states.moved')}</span>}
+                      {moveKind === 'rerouted' && (
+                        <span className="diff-badge">{t('assignment-gate.states.moved-after-approval')}</span>
+                      )}
                       {isOverridden && <span className="override-indicator">{t('assignment-gate.states.changed')}</span>}
                       {isTied && !isOverridden && (
                         <Badge color="grey">{t('assignment-gate.states.tied', { defaultValue: 'Tied' })}</Badge>

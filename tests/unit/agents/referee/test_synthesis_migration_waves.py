@@ -176,7 +176,7 @@ class TestMigrationWaves:
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
         # #568 review round 2: table_counts_by_engine/owned_counts_by_engine added
-        assert report["contract_version"] == "1.13"
+        assert report["contract_version"] == "1.14"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
 

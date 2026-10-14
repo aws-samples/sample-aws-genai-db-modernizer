@@ -72,6 +72,7 @@ from src.shared.workload_fit_labels import (
     fit_phrase,
 )
 
+from .engine_choices import REROUTE_OVERRIDE_TEXT, reroute_summary
 from .renderers import (
     NO_OPEN_RISKS_CAVEAT,
     SHARED_TABLES_LABEL,
@@ -1214,6 +1215,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    # #629: the same post-approval reroutes the decision and engineering
+    # reports list ("Moved after your approval"), with the same override path.
+    reroutes = [r for r in (rep.get("post_schema_reroutes") or []) if isinstance(r, dict)]
+    if reroutes:
+        decisions.append(
+            {
+                "question": "Keep the queries moved after approval?",
+                "badge": f"{len(reroutes)} {plural_noun(len(reroutes), 'query', 'queries')}",
+                "accent": ORANGE,
+                "against": reroute_summary(rep) or "",
+                "action": REROUTE_OVERRIDE_TEXT,
+            }
+        )
+
     # ---- waves ----------------------------------------------------------------
     # Synthesis writes the incremental roadmap deterministically from the
     # assignment (#225) -- one sequencing rule: cache, then key-value/point
@@ -1692,6 +1707,22 @@ def _root_cause_sentence(n_crit_high: int, high_type: str) -> str:
     )
 
 
+# Up to four decision cards keep the original 1.30" step; five or more (the
+# #629 "moved after approval" card is the fifth) shrink the step so the last
+# card still ends above the slide's bottom margin (#713 review round 3).
+DECISION_CARDS_AT_FULL_SIZE = 4
+SLIDE_BOTTOM = 7.50
+DECISION_BOTTOM_MARGIN = 0.30
+
+
+def decision_card_layout(n: int) -> list[tuple[float, float]]:
+    """``(top, height)`` in inches for ``n`` decision cards on the decisions slide."""
+    if n <= DECISION_CARDS_AT_FULL_SIZE:
+        return [(BODY_TOP + i * 1.30, 1.18) for i in range(n)]
+    step = (SLIDE_BOTTOM - DECISION_BOTTOM_MARGIN - BODY_TOP) / n
+    return [(BODY_TOP + i * step, step - 0.10) for i in range(n)]
+
+
 def slide_decisions(prs, f):
     s = add_slide(prs, LAYOUT_CONTENT)
     d = f["decisions"]
@@ -1748,21 +1779,22 @@ def slide_decisions(prs, f):
         emphasis=emph,
     )
 
-    for i, dec in enumerate(d):
-        y = BODY_TOP + i * 1.30
+    layout = decision_card_layout(len(d))
+    shrink = len(d) > DECISION_CARDS_AT_FULL_SIZE
+    for dec, (y, card_h) in zip(d, layout, strict=True):
         accent = dec["accent"]
-        card(s, 6.45, y, 5.65, 1.18, accent)
-        tf = textbox(s, 6.68, y + 0.08, 5.25, 1.05)
+        card(s, 6.45, y, 5.65, card_h, accent)
+        tf = textbox(s, 6.68, y + 0.06, 5.25, card_h - 0.10)
         p = tf.paragraphs[0]
-        p.space_after = Pt(2)
+        p.space_after = Pt(1 if shrink else 2)
         r1 = p.add_run()
         r1.text = dec["question"] + "   "
-        _style(r1, 12.0, bold=True, color=WHITE)
+        _style(r1, 11.0 if shrink else 12.0, bold=True, color=WHITE)
         r2 = p.add_run()
         r2.text = dec["badge"]
-        _style(r2, 12.0, bold=True, color=accent)
-        para(tf, dec["against"], size=9.0, color=MUTED, space_after=2)
-        para(tf, dec["action"], size=10.0, bold=True, color=accent)
+        _style(r2, 11.0 if shrink else 12.0, bold=True, color=accent)
+        para(tf, dec["against"], size=8.0 if shrink else 9.0, color=MUTED, space_after=1)
+        para(tf, dec["action"], size=9.0 if shrink else 10.0, bold=True, color=accent)
 
     tf = textbox(s, 0.67, 4.05, 5.55, 2.00)
     para(

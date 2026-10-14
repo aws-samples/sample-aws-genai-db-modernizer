@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.flag_reasons import flag_reason_text
 
 from . import escaping
 from .formatting import plural_noun
@@ -199,4 +200,91 @@ def _tied_queries_md(report: dict[str, Any]) -> list[str]:
             f"| {escaping.md_cell(display_engine(t.get('assigned_engine', '')))} |"
         )
     out.append("")
+    return out
+
+
+# How a customer keeps a rerouted query where they approved it (#629). One
+# sentence, shared by the decision report, the engineering report and the deck.
+REROUTE_OVERRIDE_TEXT = (
+    "To keep any of these on the engine you approved, change its engine in the "
+    "assignment review; that writes a new assignment version and redesigns only "
+    "the engines it touches."
+)
+
+
+def _reroutes(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [r for r in (report.get("post_schema_reroutes") or []) if isinstance(r, dict)]
+    return sorted(rows, key=lambda r: str(r.get("query_id", "")))
+
+
+def _fmt_score(value: Any) -> str:
+    return "n/a" if not isinstance(value, (int, float)) else f"{value:g}"
+
+
+def reroute_summary(report: dict[str, Any]) -> str | None:
+    """One sentence stating how many queries moved after approval, or None."""
+    rows = _reroutes(report)
+    if not rows:
+        return None
+    approved = rows[0].get("approved_version")
+    version = f" (version {approved})" if approved else ""
+    return (
+        f"After you approved the assignment{version}, schema design review found that "
+        f"{len(rows)} {plural_noun(len(rows), 'query', 'queries')} cannot run on the "
+        f"approved engine, so each moved to the best-scoring engine you kept."
+    )
+
+
+def _reroutes_html(report: dict[str, Any]) -> list[str]:
+    """Decision Report "Moved after your approval" section (#629)."""
+    esc = escaping.html_text
+    rows = _reroutes(report)
+    if not rows:
+        return []
+    items = [
+        f"<li><code>{esc(str(r.get('query_id', '?')))}</code>: "
+        f"{esc(display_engine(str(r.get('from_engine', ''))))} to "
+        f"<b>{esc(display_engine(str(r.get('to_engine', ''))))}</b> "
+        f"({esc(flag_reason_text(r.get('reason_category')))}; score "
+        f"{esc(_fmt_score(r.get('score_after')))} against "
+        f"{esc(_fmt_score(r.get('score_before')))})</li>"
+        for r in rows
+    ]
+    return [
+        "<section data-figure=post-schema-reroutes>",
+        f"<h2 class=section-title>Moved after your approval "
+        f"({len(rows)} {esc(plural_noun(len(rows), 'query', 'queries'))})</h2>",
+        "<div class=card><div class=card-b>",
+        f"<p>{esc(reroute_summary(report) or '')}</p>",
+        "<ul>",
+        *items,
+        "</ul>",
+        f"<p>{esc(REROUTE_OVERRIDE_TEXT)}</p>",
+        "</div></div>",
+        "</section>",
+    ]
+
+
+def _reroutes_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report section for queries moved after approval (#629)."""
+    rows = _reroutes(report)
+    if not rows:
+        return []
+    out = [
+        f"## Moved after approval ({len(rows)} {plural_noun(len(rows), 'query', 'queries')})",
+        "",
+        reroute_summary(report) or "",
+        "",
+        "| Query | Approved on | Moved to | Why | Score after / before |",
+        "|---|---|---|---|---|",
+    ]
+    for r in rows:
+        out.append(
+            f"| `{escaping.md_code(str(r.get('query_id', '?')))}` "
+            f"| {escaping.md_cell(display_engine(str(r.get('from_engine', ''))))} "
+            f"| {escaping.md_cell(display_engine(str(r.get('to_engine', ''))))} "
+            f"| {escaping.md_cell(flag_reason_text(r.get('reason_category')))} "
+            f"| {_fmt_score(r.get('score_after'))} / {_fmt_score(r.get('score_before'))} |"
+        )
+    out += ["", REROUTE_OVERRIDE_TEXT, ""]
     return out

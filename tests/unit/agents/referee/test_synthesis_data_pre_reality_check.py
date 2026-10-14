@@ -93,3 +93,37 @@ def test_unversioned_load_leaves_it_none(store) -> None:
     _seed_triage_and_collector(store)
     data = load_synthesis_data(store, JOB, DB, assignment_version=0)
     assert data.pre_reality_check_assignment is None
+
+
+def test_a_post_schema_reroute_still_finds_the_reality_checks_input(store) -> None:
+    """#713 review round 2: after a post-schema reroute (v3, ``source:
+    post_schema_routing``, an edit of v2), the highest non-Reality-Check
+    version is v3 itself; the base the risk check needs is still v1, the
+    version Reality Check started from."""
+    _seed_triage_and_collector(store)
+    qas = [{"query_id": "q1", "assigned_engine": "opensearch", "in_scope": True}]
+    store.write_json(
+        f"{DB}/{JOB}/assignment/v1/assignment.json", {"version": 1, "query_assignments": qas}
+    )
+    moved = [{"query_id": "q1", "assigned_engine": "dynamodb", "in_scope": True}]
+    store.write_json(
+        f"{DB}/{JOB}/assignment/v2/assignment.json",
+        {
+            "version": 2,
+            "previous_version": 1,
+            "source": "reality_check",
+            "query_assignments": moved,
+        },
+    )
+    store.write_json(
+        f"{DB}/{JOB}/assignment/v3/assignment.json",
+        {
+            "version": 3,
+            "previous_version": 2,
+            "source": "post_schema_routing",
+            "query_assignments": [{**moved[0], "assigned_engine": "aurora_mysql"}],
+        },
+    )
+    data = load_synthesis_data(store, JOB, DB, assignment_version=3)
+    assert data.pre_reality_check_assignment is not None
+    assert data.pre_reality_check_assignment["version"] == 1

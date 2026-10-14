@@ -103,6 +103,10 @@ def next_assignment_version(store: _Lister, database_name: str, job_id: str) -> 
 
 _REALITY_CHECK_SOURCE = "reality_check"
 _CUSTOMER_GATE_SOURCE = "customer_gate"
+# A post-schema reroute (#629) edits the approved version it descends from, the
+# same way a customer edit does: Reality Check already ran for that lineage.
+_POST_SCHEMA_ROUTING_SOURCE = "post_schema_routing"
+_EDIT_SOURCES = frozenset({_CUSTOMER_GATE_SOURCE, _POST_SCHEMA_ROUTING_SOURCE})
 
 
 def is_reality_check_produced(assignment: dict) -> bool:
@@ -131,14 +135,15 @@ def _is_override_edit(assignment: dict) -> bool:
     """Return True when an assignment version is an edit of an earlier version.
 
     Override writers (the customer gate, REST and ATX) stamp
-    ``source = customer_gate`` and always set ``previous_version`` to the version
-    they edited. Legacy artifacts without ``source`` are recognised by that int
+    ``source = customer_gate``, and the post-schema router stamps
+    ``source = post_schema_routing`` (#629); both always set
+    ``previous_version`` to the version they edited. Legacy artifacts without ``source`` are recognised by that int
     ``previous_version``. A fresh assignment resolution is never an edit: it
     starts a new lineage.
     """
     source = assignment.get("source")
     if source is not None:
-        return bool(source == _CUSTOMER_GATE_SOURCE)
+        return source in _EDIT_SOURCES
     return isinstance(assignment.get("previous_version"), int)
 
 

@@ -429,15 +429,24 @@ class LocalOrchestrator(Orchestrator):
         """Run the deterministic post-schema router and cascade schema design.
 
         After all engines complete schema design, reads unsupported patterns and
-        PE routing notes, routes orphan queries to the next-best engine, then
-        re-runs schema design for target engines with injected queries.
+        the PE reviewers' routing flags (design traces), routes each flagged
+        query (with its co-dependency group) to its best remaining engine by the
+        shared scorer (#629), writes the moves as a new assignment version, and
+        re-runs schema design for the target engines on that version.
 
-        Bounded by max_depth=2 to prevent infinite cascades.
+        Maintainer decisions (2026-10-14): the reality check consolidates first;
+        PE review and the router route only among the engines the approved
+        assignment keeps (never an engine the reality check removed); a reroute
+        writes a new assignment version, so schema design and the assignment
+        agree. Bounded by max_depth=2 to prevent infinite cascades.
         """
         from collections import Counter
 
-        from src.agents.referee.post_schema_router import route_unsupported_queries
-        from src.agents.schema_design.handler import run_schema_design_with_injected
+        from src.agents.referee.post_schema_router import (
+            route_unsupported_queries,
+            routing_flags_from_trace,
+        )
+        from src.agents.referee.tie_break import settled_counts
 
         selected_engines = self._get_selected_engines(job_id, database_name)
         assignment_version = self._get_assignment_version(job_id, database_name)
@@ -449,24 +458,36 @@ class LocalOrchestrator(Orchestrator):
         selected_engines = self._drop_losing_aurora_engine(
             job_id, database_name, selected_engines, assignment_version
         )
+        # The candidates: the engines the approved assignment keeps. An engine
+        # the reality check removed is never a destination.
+        # The engines the approved assignment keeps; re-read every pass, so an
+        # engine an earlier pass left with no query is never a destination.
+        kept = self._get_engines_with_in_scope_queries(job_id, database_name, assignment_version)
 
-        # Load query texts for exclusion checking
-        collector_key = f"{database_name}/{job_id}/collector/output.json"
-        collector = self.store.read_json(collector_key)
-        query_texts = {
-            q["query_id"]: q.get("query_text", "")
-            for q in collector.get("queries", {}).get("query_patterns", [])
-        }
+        # The shared scorer's inputs (#629): the router re-routes a flagged
+        # query to its best remaining engine by the same per-query score the
+        # assignment used, never by an engine list or a name in the flag.
+        scoring = self._router_scoring_inputs(
+            job_id, database_name, selected_engines, assignment_version
+        )
 
         already_routed: set[str] = set()
+        all_routings: list = []
+        all_terminal: list[str] = []
         max_depth = 2
 
         for depth in range(max_depth + 1):
             print(f"\n[router] === Routing pass {depth} ===")
+            assignment = self._read_assignment(job_id, database_name, assignment_version)
+            kept &= self._get_engines_with_in_scope_queries(
+                job_id, database_name, assignment_version
+            )
+            active_engines = [e for e in selected_engines if e in kept]
+            scoring["settled"] = settled_counts(assignment.get("query_assignments", []))
 
             # Load schema outputs
             schema_outputs: dict[str, dict] = {}
-            pe_notes_by_engine: dict[str, list[str]] = {}
+            flags_by_engine: dict[str, list] = {}
             for engine in selected_engines:
                 # Try versioned path first, then legacy
                 for key_template in [
@@ -478,14 +499,16 @@ class LocalOrchestrator(Orchestrator):
                         schema_outputs[engine] = self.store.read_json(key_template)
                         break
 
-                # Load PE notes if available
-                for pe_key in [
-                    f"{database_name}/{job_id}/schema-{engine}/v{assignment_version}/pe_review.json",
-                    f"{database_name}/{job_id}/schema-{engine}/v1/pe_review.json",
+                # The PE reviewer's routing flags, recorded in the design trace
+                for trace_key in [
+                    f"{database_name}/{job_id}/schema-{engine}/v{assignment_version}/design_trace.json",
+                    f"{database_name}/{job_id}/schema-{engine}/v1/design_trace.json",
+                    f"{database_name}/{job_id}/schema-{engine}/design_trace.json",
                 ]:
-                    if self.store.exists(pe_key):
-                        review = self.store.read_json(pe_key)
-                        pe_notes_by_engine[engine] = review.get("pe_notes", [])
+                    if self.store.exists(trace_key):
+                        flags_by_engine[engine] = routing_flags_from_trace(
+                            self.store.read_json(trace_key)
+                        )
                         break
 
             if not schema_outputs:
@@ -495,18 +518,42 @@ class LocalOrchestrator(Orchestrator):
             # Run router
             router_output = route_unsupported_queries(
                 schema_outputs=schema_outputs,
-                active_engines=selected_engines,
-                pe_notes_by_engine=pe_notes_by_engine,
-                query_texts=query_texts,
+                active_engines=active_engines,
+                routing_flags_by_engine=flags_by_engine,
                 cascade_depth=depth,
                 max_depth=max_depth,
                 already_routed=already_routed,
+                assigned_engines={
+                    qa["query_id"]: qa["assigned_engine"]
+                    for qa in assignment.get("query_assignments", [])
+                },
+                # The customer's own re-routes are never moved (#713 review r3).
+                customer_pinned={
+                    qa["query_id"]
+                    for qa in assignment.get("query_assignments", [])
+                    if qa.get("customer_override")
+                },
+                co_dependency_groups=assignment.get("co_dependency_groups", []),
+                **scoring,
             )
             router_output.job_id = job_id
 
-            # Write router output
-            router_key = f"{database_name}/{job_id}/post-schema-router/router_output.json"
-            self.store.write_json(router_key, router_output.model_dump(mode="json"))
+            # Every pass is kept (#713 review): router_output.json accumulates
+            # every pass's routings and terminal queries, and each pass is also
+            # written on its own, so no pass's scores are lost.
+            all_routings.extend(router_output.routings)
+            all_terminal.extend(q for q in router_output.terminal_queries if q not in all_terminal)
+            prefix_router = f"{database_name}/{job_id}/post-schema-router"
+            self.store.write_json(
+                f"{prefix_router}/pass-{depth}/router_output.json",
+                router_output.model_dump(mode="json"),
+            )
+            cumulative = router_output.model_copy(
+                update={"routings": list(all_routings), "terminal_queries": list(all_terminal)}
+            )
+            self.store.write_json(
+                f"{prefix_router}/router_output.json", cumulative.model_dump(mode="json")
+            )
 
             if not router_output.routings:
                 if router_output.terminal_queries:
@@ -526,32 +573,257 @@ class LocalOrchestrator(Orchestrator):
                 print(f"[router]   {count} → {engine} ({', '.join(reasons)})")
             if router_output.terminal_queries:
                 print(f"[router]   {len(router_output.terminal_queries)} → application-layer")
+            already_routed.update(r.query_id for r in router_output.routings if r.to_engine)
 
-            # Group routings by target engine and run cascade schema design
-            by_engine: dict[str, set[str]] = {}
-            for r in router_output.routings:
-                if r.to_engine:
-                    by_engine.setdefault(r.to_engine, set()).add(r.query_id)
-                    already_routed.add(r.query_id)
-
-            for engine, injected_ids in by_engine.items():
-                print(
-                    f"[router] Running cascade schema design for {engine} "
-                    f"({len(injected_ids)} injected queries)"
-                )
-                run_schema_design_with_injected(
-                    job_id=job_id,
-                    database_name=database_name,
-                    target_type=engine,
-                    store=self.store,
-                    injected_query_ids=injected_ids,
-                    assignment_version=assignment_version,
-                    llm_mode=self.llm_mode,
-                )
+            # The moves become a new assignment version, and every engine the
+            # moves touch (the one a query left and the one it joined) is
+            # designed again on it (maintainer decision, 2026-10-14), so the
+            # design and the assignment agree.
+            assignment_version = self._reroute_and_redesign(
+                job_id, database_name, assignment, assignment_version, router_output.routings
+            )
 
             print(f"[router] Cascade pass {depth} complete — checking for new unsupported...")
 
         print(f"[router] Max cascade depth ({max_depth}) reached — stopping")
+
+    def _read_assignment(self, job_id: str, database_name: str, version: int) -> dict:
+        """The assignment artifact at ``version`` (``{}`` when there is none)."""
+        from src.storage.assignment_versioning import assignment_artifact_path
+
+        if not version:
+            return {}
+        path = assignment_artifact_path(database_name, job_id, version)
+        return self.store.read_json(path) if self.store.exists(path) else {}
+
+    def _rerouted_assignment(
+        self,
+        job_id: str,
+        database_name: str,
+        assignment: dict,
+        version: int,
+        new_version: int,
+        routings: list,
+    ) -> dict:
+        """The assignment ``version`` with the router's moves applied (#629).
+
+        Status ``rerouted_after_approval`` (never the customer approval it
+        edits: the customer did not see these moves), ``source =
+        post_schema_routing``, ``previous_version``, and one
+        ``post_schema_reroutes`` entry per moved query (cumulative), so every
+        deliverable can say which queries moved after approval and why.
+        """
+        from copy import deepcopy
+        from datetime import UTC, datetime
+
+        from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+        from src.contracts.assignment_models import AssignmentSource, AssignmentStatus
+
+        assignment = deepcopy(assignment)  # the refresh below edits records in place
+        prior = list(assignment.get("post_schema_reroutes") or [])
+        approved_version = next(
+            (r["approved_version"] for r in prior if r.get("approved_version")), version
+        )
+        moved = {r.query_id: r for r in routings if r.to_engine}
+        query_assignments = []
+        for qa in assignment.get("query_assignments", []):
+            routing = moved.get(qa.get("query_id"))
+            if routing is not None:
+                qa = {
+                    **qa,
+                    "assigned_engine": routing.to_engine,
+                    "assignment_reason": f"post-schema routing: {routing.reason}",
+                    "tied_engines": [],
+                }
+            query_assignments.append(qa)
+        reroutes = prior + [
+            {
+                "query_id": r.query_id,
+                "from_engine": r.from_engine,
+                "to_engine": r.to_engine,
+                "reason": r.reason,
+                "reason_category": r.reason_category,
+                "score_before": r.score_before,
+                "score_after": r.score_after,
+                "approved_version": approved_version,
+            }
+            for r in moved.values()
+        ]
+        revised = {
+            **assignment,
+            "version": new_version,
+            "previous_version": version,
+            "status": AssignmentStatus.REROUTED_AFTER_APPROVAL.value,
+            "source": AssignmentSource.POST_SCHEMA_ROUTING.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "query_assignments": query_assignments,
+            "post_schema_reroutes": reroutes,
+            "rolled_back_version": None,
+        }
+        prefix = f"{database_name}/{job_id}"
+        # The derived views (table mappings, warnings) follow the moved queries,
+        # the same refresh the reality check's revision gets (ADR-029).
+        before = {
+            qa["assigned_engine"]
+            for qa in assignment.get("query_assignments", [])
+            if qa.get("in_scope", True)
+        }
+        after = {qa["assigned_engine"] for qa in query_assignments if qa.get("in_scope", True)}
+        collector_key = f"{prefix}/collector/output.json"
+        collector = self.store.read_json(collector_key) if self.store.exists(collector_key) else {}
+        analysis_outputs = {
+            e: self.store.read_json(f"{prefix}/analysis-{e}/analysis.json")
+            for e in before | after
+            if self.store.exists(f"{prefix}/analysis-{e}/analysis.json")
+        }
+        return refresh_consolidated_assignment(
+            revised, collector, analysis_outputs, dead_engines=before - after
+        )
+
+    def _copy_schema_artifacts(
+        self, job_id: str, database_name: str, engine: str, src: int, dst: int
+    ) -> None:
+        """Copy ``schema-<engine>/v<src>/*`` to ``v<dst>`` (an engine the moves left alone)."""
+        old_prefix = f"{database_name}/{job_id}/schema-{engine}/v{src}/"
+        for key in self.store.list_prefix(old_prefix):
+            new_key = f"{database_name}/{job_id}/schema-{engine}/v{dst}/" + key[len(old_prefix) :]
+            self.store.write_json(new_key, self.store.read_json(key))
+
+    def _schema_engines(self, job_id: str, database_name: str, version: int) -> set[str]:
+        """Engines with a ``schema-<engine>/v<version>/`` directory."""
+        prefix = f"{database_name}/{job_id}/"
+        engines: set[str] = set()
+        for key in self.store.list_prefix(prefix):
+            parts = str(key).replace(prefix, "").split("/")
+            if len(parts) >= 3 and parts[0].startswith("schema-") and parts[1] == f"v{version}":
+                engines.add(parts[0][len("schema-") :])
+        return engines
+
+    def _reroute_and_redesign(
+        self,
+        job_id: str,
+        database_name: str,
+        assignment: dict,
+        version: int,
+        routings: list,
+    ) -> int:
+        """Write the moves as version N+1 and redesign every engine they touch.
+
+        Uses the customer-edit staleness rule (``assignment_engine_diff``): an
+        engine whose in-scope queries changed -- the one a query left and the
+        one it joined -- is designed again on N+1 (its full design, so the
+        engine a query left no longer lists it, #713 review round 2); an engine
+        the moves left alone has its design copied forward. When a redesign
+        fails, a rollback version N+2 restates version N (with its designs)
+        and the error is raised, so the effective version never pairs the
+        moves with a pre-move design. Returns the new effective version.
+        """
+        from datetime import UTC, datetime
+
+        from src.agents.schema_design.handler import run_schema_design_auto
+        from src.contracts.assignment_models import AssignmentStatus
+        from src.storage.assignment_versioning import (
+            assignment_artifact_path,
+            assignment_engine_diff,
+            next_assignment_version,
+        )
+
+        new_version = max(next_assignment_version(self.store, database_name, job_id), version + 1)
+        revised = self._rerouted_assignment(
+            job_id, database_name, assignment, version, new_version, routings
+        )
+        self.store.write_json(assignment_artifact_path(database_name, job_id, new_version), revised)
+        diff = assignment_engine_diff(self.store, database_name, job_id, version, new_version)
+        designed = self._schema_engines(job_id, database_name, version)
+        print(
+            f"[router] Assignment v{version} -> v{new_version}: "
+            f"{len([r for r in routings if r.to_engine])} rerouted queries; "
+            f"redesigning {', '.join(diff['affected']) or 'nothing'}"
+        )
+        try:
+            for engine in diff["unaffected"]:
+                if engine in designed:
+                    self._copy_schema_artifacts(job_id, database_name, engine, version, new_version)
+            for engine in diff["affected"]:
+                run_schema_design_auto(
+                    job_id,
+                    database_name,
+                    engine,
+                    self.store,
+                    assignment_version=new_version,
+                    llm_mode=self.llm_mode,
+                )
+        except Exception:
+            rollback = new_version + 1
+            restated = {
+                **assignment,
+                "version": rollback,
+                "previous_version": new_version,
+                "source": revised["source"],
+                # Never the approval it restates, and dated now (#713 review r3).
+                "status": AssignmentStatus.REROUTE_ROLLED_BACK.value,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "rolled_back_version": new_version,
+            }
+            self.store.write_json(
+                assignment_artifact_path(database_name, job_id, rollback), restated
+            )
+            for engine in designed:
+                self._copy_schema_artifacts(job_id, database_name, engine, version, rollback)
+            logger.error(
+                "[router] Redesign on v%d failed; v%d restates v%d with its designs",
+                new_version,
+                rollback,
+                version,
+            )
+            raise
+        return new_version
+
+    def _router_scoring_inputs(
+        self,
+        job_id: str,
+        database_name: str,
+        engines: list[str],
+        assignment_version: int,
+    ) -> dict:
+        """The shared scorer's inputs for the post-schema router (#629).
+
+        ``ScoringContext.from_pipeline`` over the triage, the engines' analyses
+        and the collector, plus the query map, triage signals, source engine
+        and the assignment's settled workload (for the shared tie-break).
+        """
+        from src.agents.referee.aurora_choice import source_database_engine
+        from src.agents.referee.query_scoring import ScoringContext
+        from src.agents.referee.reality_check_rules import _build_query_signals
+        from src.agents.referee.tie_break import settled_counts
+        from src.storage.assignment_versioning import assignment_artifact_path
+
+        prefix = f"{database_name}/{job_id}"
+
+        def _read(key: str) -> dict:
+            return self.store.read_json(key) if self.store.exists(key) else {}
+
+        collector = _read(f"{prefix}/collector/output.json")
+        triage = _read(f"{prefix}/referee-triage/triage.json")
+        analysis_outputs = {
+            e: data for e in engines if (data := _read(f"{prefix}/analysis-{e}/analysis.json"))
+        }
+        assignment = (
+            _read(assignment_artifact_path(database_name, job_id, assignment_version))
+            if assignment_version
+            else {}
+        )
+        return {
+            "scoring_context": ScoringContext.from_pipeline(
+                analysis_outputs, triage or None, collector or None
+            ),
+            "query_map": {
+                q["query_id"]: q for q in collector.get("queries", {}).get("query_patterns", [])
+            },
+            "query_signals": _build_query_signals(triage.get("signals", [])),
+            "source_engine": source_database_engine(collector),
+            "settled": settled_counts(assignment.get("query_assignments", [])),
+        }
 
     def _run_synthesis(self, job_id: str, database_name: str) -> None:
         """Run the synthesis agent."""

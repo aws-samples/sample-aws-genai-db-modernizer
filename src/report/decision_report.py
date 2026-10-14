@@ -15,7 +15,7 @@ from .architecture import (
     architecture_svg,
 )
 from .cache_layer import _cache_note, cache_layer_text
-from .engine_choices import _tied_queries_html, _why_engines_were_dropped_html
+from .engine_choices import _reroutes_html, _tied_queries_html, _why_engines_were_dropped_html
 from .engine_roles import SEARCH_READ_MODEL
 from .formatting import (
     DASH,
@@ -341,6 +341,7 @@ def render_decision_report_html(
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
     out += _tied_queries_html(report)
+    out += _reroutes_html(report)
     out += _why_engines_were_dropped_html(report)
     out += _roadmap_html(report)
 

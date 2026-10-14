@@ -43,17 +43,16 @@ from src.agents.referee.tie_break import TIE_KIND_UNRESOLVED, break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.model_flag import FlagReason, ModelFlag, parse_model_flags
 from src.shared.engine_names import display_engine
+from src.shared.flag_reasons import FLAG_REASON_TEXT
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["apply_consolidation_flags", "parse_model_flags", "route_flagged_unit"]
 
-# Customer-facing wording for each reason category (never the raw enum value).
+# Customer-facing wording for each reason category (never the raw enum value),
+# shared with the deliverables (src.shared.flag_reasons).
 FLAG_REASON_LABELS: dict[FlagReason, str] = {
-    FlagReason.FULL_SCAN: "it would need a full scan",
-    FlagReason.CLIENT_SIDE_JOIN: "it would need a client-side join",
-    FlagReason.MISSING_FEATURE: "it needs a feature the engine lacks",
-    FlagReason.OTHER: "a capability gap",
+    reason: FLAG_REASON_TEXT[reason.value] for reason in FlagReason
 }
 
 OUTCOME_MOVED = "moved"

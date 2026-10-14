@@ -83,7 +83,10 @@ class TestPostSchemaRoutingExcludesTheLoser:
         )
         store.write_json(
             f"{DB}/{JOB}/assignment/v1/assignment.json",
-            {"aurora_engine_choice": {"engine": "aurora_postgresql"}},
+            {
+                "aurora_engine_choice": {"engine": "aurora_postgresql"},
+                "query_assignments": [{"query_id": "q1", "assigned_engine": "aurora_postgresql"}],
+            },
         )
         store.write_json(f"{DB}/{JOB}/collector/output.json", {"queries": {"query_patterns": []}})
         for engine in ("aurora_mysql", "aurora_postgresql"):

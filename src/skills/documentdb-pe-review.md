@@ -66,18 +66,20 @@ Judge compatibility against the target DocumentDB version and cluster type state
    - An operator the target version does not support (see section 5): for example graph traversal (`$graphLookup`) or ranking (`$setWindowFields`) when the target is not an 8.0 instance-based cluster
    - Full-text search that needs to exclude a term, index array (multi-key) fields, or a language other than English (DocumentDB text indexes support none of these; they score by term frequency with field weights, one per collection)
    - Complex OLAP with CUBE/ROLLUP
-   - If YES → **confirm as a routing recommendation** in `pe_notes`:
+   - If YES → **add a routing flag** to `routing_flags` (not `pe_notes`):
 
+     ```json
+     {"query_ids": ["q-42", "q-55"], "flagged_engine": "documentdb", "reason_category": "missing_feature", "explanation": "text search must exclude a term"}
      ```
-     [ROUTING] query_ids=[q-42,q-55] → opensearch | reason: full-text search excluding terms
-     ```
+
+     `flagged_engine` is always `documentdb`, the engine under review. `reason_category` is `full_scan`, `client_side_join`, `missing_feature` or `other`; `explanation` is at most 15 words. A flag never names another engine: the post-schema router scores the remaining engines and picks where the query goes.
 
 **Rules for scope challenge:**
 
 - Simple aggregations (COUNT, SUM, AVG) → ALWAYS challengeable via `$merge` or Change Streams
 - Multi-collection JOINs that are read-heavy → challengeable via denormalization or `$lookup`
-- Text search with LIKE → genuinely impossible, route to opensearch
-- Graph queries → servable with `$graphLookup` when the target version supports it (record the version as a trade-off); otherwise genuinely impossible, declare terminal
+- Text search with LIKE → genuinely impossible: flag it (`full_scan`)
+- Graph queries → servable with `$graphLookup` when the target version supports it (record the version as a trade-off); otherwise genuinely impossible: flag it (`missing_feature`)
 
 ## Verdict
 
@@ -95,4 +97,5 @@ For each change request, specify:
 Also provide:
 
 - **strengths**: what the design does well (at least 1)
-- **pe_notes**: observations for the migration team. Use `[ROUTING]` prefix for confirmed out-of-scope queries that should be handled by another engine.
+- **pe_notes**: observations for the migration team.
+- **routing_flags**: queries DocumentDB genuinely cannot serve (see Scope Challenge step 3). Never name a target engine: the post-schema router re-routes each query by score.

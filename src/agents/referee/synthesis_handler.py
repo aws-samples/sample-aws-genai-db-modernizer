@@ -564,6 +564,13 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
 # ---------------------------------------------------------------------------
 
 
+def _engine_of(assignment: dict | None) -> dict[str, str]:
+    return {
+        qa["query_id"]: qa["assigned_engine"]
+        for qa in (assignment or {}).get("query_assignments", [])
+    }
+
+
 def _write_synthesis_report(
     store: ArtifactStore,
     result: dict,
@@ -609,6 +616,15 @@ def _write_synthesis_report(
             }
             for qa in (data.assignment or {}).get("query_assignments", [])
             if qa.get("tied_engines")
+        ],
+        # #629: queries the post-schema router moved after approval, so every
+        # deliverable states them (and the override path) from one list.
+        # Only moves that still hold on this version (a customer edit that moved
+        # a query back undoes its reroute, #713 review round 3).
+        "post_schema_reroutes": [
+            r
+            for r in (data.assignment or {}).get("post_schema_reroutes") or []
+            if _engine_of(data.assignment).get(r.get("query_id")) == r.get("to_engine")
         ],
     }
     if result.get("reality_check_summary"):

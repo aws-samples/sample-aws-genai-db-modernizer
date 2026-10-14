@@ -7,6 +7,12 @@ agent uses this feedback to revise its output.
 
 Version History:
 - 1.0 (2026-03-24): Initial version
+- 1.1 (2026-10-14, #629): ``routing_flags``: queries the reviewer judges the
+  engine unable to serve, as :class:`~src.contracts.model_flag.ModelFlag`
+  (never a destination; the post-schema router's scorer decides). Replaces the
+  free-text ``[ROUTING] ... -> <engine>`` note in ``pe_notes``. Each entry
+  advertises the ``ModelFlag`` schema but is validated on its own by the router
+  (``parse_model_flags``), so one bad entry never fails the whole review.
 """
 
 from __future__ import annotations
@@ -14,6 +20,14 @@ from __future__ import annotations
 from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
+
+from .model_flag import RoutingFlagEntry
+
+ROUTING_FLAGS_DESCRIPTION = (
+    "Queries this engine genuinely cannot serve, each flag naming this engine as "
+    "flagged_engine, a reason_category and a short explanation. Never a destination: "
+    "the post-schema router's scorer decides where a flagged query goes."
+)
 
 
 class ReviewVerdict(str, Enum):
@@ -93,6 +107,9 @@ class PEReviewResult(BaseModel):
         default_factory=list,
         description="Advisory notes that don't block approval but should be "
         "documented as trade-offs or migration notes.",
+    )
+    routing_flags: list[RoutingFlagEntry] = Field(
+        default_factory=list, description=ROUTING_FLAGS_DESCRIPTION
     )
 
     @model_validator(mode="after")

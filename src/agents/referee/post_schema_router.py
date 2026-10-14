@@ -1,51 +1,50 @@
 """Post-Schema Router — Deterministic routing of unsupported queries.
 
-After schema design, some queries are flagged as unsupported by their assigned
-engine. This router reads PE-confirmed routing notes and remaining unsupported
-patterns, then maps each orphan query to the next-best engine.
+After schema design, some queries are reported as unsupported by their assigned
+engine, in one of two ways, both from a model:
+
+- a PE reviewer's routing flag (``PEReviewResult.routing_flags``, the
+  :class:`~src.contracts.model_flag.ModelFlag` contract), recorded in the
+  engine's design trace (``design_trace.json``);
+- a designer's ``unsupported_patterns`` entry in the schema output.
+
+Either one is evidence that the reporting engine cannot serve those queries,
+never a destination (ADR-031 Decision 11, as amended 2026-10-14, #629). The
+router gates the reporting engine for each query and lets the shared scorer
+pick the best remaining active engine (``model_flags.route_flagged_unit``:
+``score_query_for_engine``, the placement eligibility rule and
+``tie_break.break_tie``). There is no engine preference list.
 
 This is NOT an LLM agent — it's pure deterministic Python code.
 """
 
 from __future__ import annotations
 
-import re
+import logging
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
-from src.agents.referee.engine_exclusions import check_exclusions
+from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags, route_flagged_unit
+from src.agents.referee.query_scoring import ScoringContext
+from src.contracts.model_flag import FlagReason, ModelFlag
 from src.contracts.post_schema_router_output import QueryRouting, RouterOutput
+from src.shared.engine_names import display_engine
 
-# PE notes use this prefix for confirmed routing recommendations
-_ROUTING_PREFIX_RE = re.compile(
-    r"\[ROUTING\]\s*query_ids=\[([^\]]+)\]\s*→\s*(\w+)\s*\|\s*reason:\s*(.+)",
-    re.IGNORECASE,
-)
-
-# Engine priority for fallback routing (most general → most specialized)
-ENGINE_PRIORITY = ["documentdb", "opensearch", "dynamodb"]
+logger = logging.getLogger(__name__)
 
 
-def _parse_pe_routing_notes(pe_notes: list[str]) -> list[dict]:
-    """Parse structured [ROUTING] entries from PE notes.
+def routing_flags_from_trace(design_trace: Mapping) -> list[dict]:
+    """The PE reviewer's routing flags recorded in a ``design_trace.json``.
 
-    Expected format:
-        [ROUTING] query_ids=[q-42,q-55] → opensearch | reason: full-text LIKE search
+    A single design writes them at the top level; a grouped design (DynamoDB)
+    has one trace per group under ``groups``.
     """
-    routings = []
-    for note in pe_notes:
-        match = _ROUTING_PREFIX_RE.search(note)
-        if match:
-            query_ids_str, target_engine, reason = match.groups()
-            query_ids = [qid.strip() for qid in query_ids_str.split(",")]
-            routings.append(
-                {
-                    "query_ids": query_ids,
-                    "target_engine": target_engine.strip(),
-                    "reason": reason.strip(),
-                }
-            )
-    return routings
+    flags = list(design_trace.get("routing_flags") or [])
+    for group in design_trace.get("groups") or []:
+        if isinstance(group, Mapping):
+            flags.extend(group.get("routing_flags") or [])
+    return flags
 
 
 def _extract_unsupported_query_ids(schema_output: dict, engine: str) -> list[dict]:
@@ -66,156 +65,206 @@ def _extract_unsupported_query_ids(schema_output: dict, engine: str) -> list[dic
     return results
 
 
-def _select_target_engine(
-    query_id: str,
-    query_text: str,
-    from_engine: str,
-    active_engines: list[str],
-    already_failed: set[str],
-) -> str | None:
-    """Select the next-best engine for a query, respecting exclusions.
-
-    Returns None if no engine can serve it (application-layer).
-    """
-    candidates = [
-        e
-        for e in ENGINE_PRIORITY
-        if e != from_engine and e in active_engines and e not in already_failed
+def _unsupported_as_flags(schema_output: dict, engine: str) -> list[ModelFlag]:
+    """A designer's unsupported patterns, read as flags on ``engine``."""
+    return [
+        ModelFlag(
+            query_ids=[str(q) for q in entry["query_ids"]],
+            flagged_engine=engine,  # type: ignore[arg-type]  # checked by the caller
+            reason_category=FlagReason.MISSING_FEATURE,
+            explanation=str(entry["reason"])[:300] or "unsupported pattern",
+        )
+        for entry in _extract_unsupported_query_ids(schema_output, engine)
     ]
 
-    for candidate in candidates:
-        exclusion = check_exclusions(query_id, query_text, candidate)
-        if exclusion is None:
-            return candidate
 
-    return None
+def _engine_flags(engine: str, raw_flags: Iterable[object], schema_output: dict) -> list[ModelFlag]:
+    """Every valid flag on ``engine``: the PE reviewer's first, then the designer's."""
+    pe_flags, _rejected = parse_model_flags(raw_flags)
+    kept: list[ModelFlag] = []
+    for flag in pe_flags:
+        if flag.flagged_engine != engine:
+            logger.warning(
+                "Ignored a PE routing flag from %s on %r: a reviewer flags only its own engine",
+                engine,
+                flag.flagged_engine,
+            )
+            continue
+        kept.append(flag)
+    try:
+        kept.extend(_unsupported_as_flags(schema_output, engine))
+    except ValueError:  # an engine id outside the flag contract
+        logger.warning("Ignored unsupported patterns from unknown engine %r", engine)
+    return kept
+
+
+def _fmt(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:g}"
 
 
 def route_unsupported_queries(
     schema_outputs: dict[str, dict],
     active_engines: list[str],
-    pe_notes_by_engine: dict[str, list[str]] | None = None,
-    query_texts: dict[str, str] | None = None,
+    routing_flags_by_engine: dict[str, list] | None = None,
+    scoring_context: ScoringContext | None = None,
+    query_map: Mapping[str, Mapping] | None = None,
     cascade_depth: int = 0,
     max_depth: int = 2,
     already_routed: set[str] | None = None,
     lightweight_query_ids: set[str] | None = None,
+    *,
+    assigned_engines: Mapping[str, str],
+    customer_pinned: set[str] | None = None,
+    co_dependency_groups: list[list[str]] | None = None,
+    query_signals: Mapping[str, list[str]] | None = None,
+    source_engine: str = "",
+    settled: Mapping[str, int] | None = None,
 ) -> RouterOutput:
-    """Route unsupported queries to the next-best engine.
+    """Route unsupported queries to the best remaining engine by score.
 
     Args:
         schema_outputs: {engine: schema_output_dict} for each engine
-        active_engines: engines selected by triage
-        pe_notes_by_engine: {engine: list of pe_notes strings} — optional
-        query_texts: {query_id: SQL text} for exclusion checking
+        active_engines: the candidate engines: the engines the approved
+            assignment keeps (in-scope queries after the reality check). A
+            removed engine is never a destination (maintainer decision,
+            2026-10-14, #629)
+        routing_flags_by_engine: {engine: raw PE routing flags} from each
+            engine's design trace (``routing_flags_from_trace``); each must
+            match :class:`ModelFlag` and flag its own engine
+        scoring_context: the shared scorer's context
+            (``ScoringContext.from_pipeline``); an empty one scores every
+            engine 0, so ties decide
+        query_map: {query_id: collector query pattern}, for scoring and the
+            hard exclusion gate
         cascade_depth: current depth (0 = first pass)
         max_depth: maximum cascade depth before declaring terminal
         already_routed: query IDs already routed in prior passes
+        lightweight_query_ids: queries served by a lightweight service, never routed
+        assigned_engines: {query_id: engine} from the assignment schema design
+            worked on. A flag (or unsupported pattern) counts only for a query
+            on the reporting engine -- a reviewer judges only its own engine's
+            queries, the same rule the reality check applies (#712)
+        customer_pinned: query ids the customer re-routed at the review
+            (``customer_override``). Held out, the way the reality check holds
+            them out: a later flag never moves a customer's own choice (#713
+            review round 3)
+        co_dependency_groups: the assignment's groups; members on the same
+            engine as a flagged query move with it as one unit (Decision 4)
+        query_signals / source_engine / settled: the eligibility rule's triage
+            signals, the source database engine and the settled workload, for
+            the placement rule and the shared tie-break
 
     Returns:
         RouterOutput with routing decisions and terminal queries
     """
-    if already_routed is None:
-        already_routed = set()
-    if query_texts is None:
-        query_texts = {}
-    if pe_notes_by_engine is None:
-        pe_notes_by_engine = {}
-    if lightweight_query_ids is None:
-        lightweight_query_ids = set()
+    already_routed = already_routed or set()
+    lightweight_query_ids = lightweight_query_ids or set()
+    customer_pinned = customer_pinned or set()
+    routing_flags_by_engine = routing_flags_by_engine or {}
+    scoring_context = scoring_context or ScoringContext()
+    query_map = query_map or {}
 
     routings: list[QueryRouting] = []
     terminal: list[str] = []
-    seen_query_ids: set[str] = set()
+    candidates = [e for e in active_engines if e not in CACHE_OVERLAY_ENGINES]
 
-    # Track which engines have already failed each query
+    group_of: dict[str, list[str]] = {}
+    for group in co_dependency_groups or []:
+        if len(group) >= 2:
+            for member in group:
+                group_of[member] = sorted(group)
+
+    # Every (query, engine) a model flagged on the engine the query is on.
+    pending: list[tuple[str, str, ModelFlag]] = []
     failed_engines: dict[str, set[str]] = defaultdict(set)
-
     for engine, output in schema_outputs.items():
         # A cache engine owns none of its queries: one its design cannot serve is
         # still served by its owner, so it is not re-routed. The synthesis safety
         # net drops its cache overlay instead (#296).
         if engine in CACHE_OVERLAY_ENGINES:
             continue
-
-        # 1. Parse PE routing notes (highest priority — PE confirmed these)
-        pe_notes = pe_notes_by_engine.get(engine, [])
-        pe_routings = _parse_pe_routing_notes(pe_notes)
-        for routing in pe_routings:
-            for qid in routing["query_ids"]:
-                if qid in seen_query_ids or qid in already_routed:
+        for flag in _engine_flags(engine, routing_flags_by_engine.get(engine, []), output):
+            for qid in flag.query_ids:
+                if qid in already_routed or qid in lightweight_query_ids:
                     continue
-                if qid in lightweight_query_ids:
-                    continue
-                seen_query_ids.add(qid)
-                failed_engines[qid].add(engine)
-
-                target = routing["target_engine"]
-                # Validate target is active and not excluded
-                sql = query_texts.get(qid, "")
-                if target in active_engines:
-                    exclusion = check_exclusions(qid, sql, target) if sql else None
-                    if exclusion is None:
-                        routings.append(
-                            QueryRouting(
-                                query_id=qid,
-                                from_engine=engine,
-                                to_engine=target,
-                                reason=routing["reason"],
-                                cascade_depth=cascade_depth,
-                            )
-                        )
-                        continue
-
-                # PE-suggested target is invalid — fall back to priority
-                fallback = _select_target_engine(
-                    qid, sql, engine, active_engines, failed_engines[qid]
-                )
-                if fallback:
-                    routings.append(
-                        QueryRouting(
-                            query_id=qid,
-                            from_engine=engine,
-                            to_engine=fallback,
-                            reason=routing["reason"],
-                            cascade_depth=cascade_depth,
-                        )
+                if qid in customer_pinned:
+                    logger.info(
+                        "Held out a flag from %s on %r: the customer chose this engine",
+                        engine,
+                        str(qid)[:80],
                     )
-                else:
-                    terminal.append(qid)
-
-        # 2. Extract remaining unsupported patterns (not already handled by PE notes)
-        unsupported = _extract_unsupported_query_ids(output, engine)
-        for entry in unsupported:
-            for qid in entry["query_ids"]:
-                if qid in seen_query_ids or qid in already_routed:
                     continue
-                if qid in lightweight_query_ids:
-                    continue
-                seen_query_ids.add(qid)
-                failed_engines[qid].add(engine)
-
-                sql = query_texts.get(qid, "")
-
-                if cascade_depth >= max_depth:
-                    terminal.append(qid)
-                    continue
-
-                target = _select_target_engine(
-                    qid, sql, engine, active_engines, failed_engines[qid]
-                )
-                if target:
-                    routings.append(
-                        QueryRouting(
-                            query_id=qid,
-                            from_engine=engine,
-                            to_engine=target,
-                            reason=entry["reason"],
-                            cascade_depth=cascade_depth,
-                        )
+                if assigned_engines.get(qid) != engine:
+                    logger.warning(
+                        "Ignored a flag from %s on %r: the query is not on that engine",
+                        engine,
+                        str(qid)[:80],
                     )
-                else:
-                    terminal.append(qid)
+                    continue
+                failed_engines[qid].add(engine)
+                pending.append((qid, engine, flag))
+
+    gated = scoring_context.with_flag_gaps(failed_engines)
+    seen: set[str] = set()
+    for qid, engine, flag in pending:
+        if qid in seen:
+            continue
+        members = sorted(
+            {qid}
+            | {
+                m
+                for m in group_of.get(qid, [])
+                if assigned_engines.get(m) == engine
+                and m not in already_routed
+                and m not in lightweight_query_ids
+                and m not in customer_pinned
+            }
+        )
+        seen.update(members)
+        if cascade_depth >= max_depth:
+            terminal.extend(members)
+            continue
+        failed = set().union(*(failed_engines.get(m, set()) for m in members))
+        remaining = [e for e in candidates if e not in failed]
+        routing = route_flagged_unit(
+            members,
+            engine,
+            remaining,
+            gated,
+            query_map,
+            query_signals=query_signals,
+            source_engine=source_engine,
+            settled=settled,
+        )
+        if routing.destination is None:
+            terminal.extend(members)
+            continue
+        label = FLAG_REASON_LABELS[flag.reason_category]
+        basis = (
+            "with its co-dependency group, the group's best-scoring remaining engine"
+            if len(members) > 1
+            else "the best-scoring remaining engine"
+        )
+        reason = (
+            f"flagged on {display_engine(engine)} ({label}); moved to "
+            f"{display_engine(routing.destination)}, {basis} (score "
+            f"{_fmt(routing.score_after)} against {_fmt(routing.score_before)} on "
+            f"{display_engine(engine)})"
+        )
+        for member in members:
+            routings.append(
+                QueryRouting(
+                    query_id=member,
+                    from_engine=engine,
+                    to_engine=routing.destination,
+                    reason=reason,
+                    cascade_depth=cascade_depth,
+                    reason_category=flag.reason_category.value,
+                    explanation=flag.explanation,
+                    score_before=routing.score_before,
+                    score_after=routing.score_after,
+                )
+            )
 
     return RouterOutput(
         job_id="",  # Caller sets this

@@ -28,6 +28,8 @@ from src.agents.prompt_framing import (
 )
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
+from src.contracts.dynamodb_pe_review import ROUTING_FLAGS_DESCRIPTION
+from src.contracts.model_flag import RoutingFlagEntry
 from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.contracts.schema_design_output import TradeOff
@@ -96,6 +98,9 @@ class PEReviewResult(BaseModel):
     change_requests: list[ChangeRequest] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     pe_notes: list[str] = Field(default_factory=list)
+    routing_flags: list[RoutingFlagEntry] = Field(
+        default_factory=list, description=ROUTING_FLAGS_DESCRIPTION
+    )
     summary: str = ""
 
     model_config = ConfigDict(extra="ignore")
@@ -421,14 +426,17 @@ def run_opensearch_schema_agent(
     }
 
     # --- PE review loop ---
+    routing_flags: list[dict] = []  # the last PE review's, for the router (#629)
     for iteration in range(MAX_PE_ITERATIONS):
         print(f"[schema-design/opensearch] === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
 
+        routing_flags = []  # only a review of this design counts (#713 review)
         try:
             t0 = time.time()
             review = _invoke_pe_reviewer(model, design_output, input_summary, pe_skill_path)
             elapsed = time.time() - t0
             trace.log_pe_review(iteration, elapsed, review)
+            routing_flags = [dict(f) for f in review.routing_flags]
         except Exception as exc:
             # The PE reviewer's error can carry a pydantic ValidationError's
             # input_value fragments (the model's own generated output), so the
@@ -491,6 +499,8 @@ def run_opensearch_schema_agent(
         trace.log_designer(iteration + 1, elapsed, design_output)
 
     trace_dict = trace.to_dict()
+    if routing_flags:
+        trace_dict["routing_flags"] = routing_flags
     usage = getattr(model, "usage", None)
     if isinstance(usage, dict):  # token usage over every designer and PE call (#626)
         trace_dict["token_usage"] = dict(usage)

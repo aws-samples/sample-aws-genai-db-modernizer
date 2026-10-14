@@ -201,6 +201,10 @@ ID_FIELD_PATHS = frozenset(
         # decisions.py fails if a renderer under src/report or the UI ever reads
         # it, so this exemption is revisited before it reaches a customer.
         ("flag_decisions", "explanation"),
+        # Assignment / report.json post_schema_reroutes (PostSchemaReroute, #629):
+        # from_engine/to_engine are already ID_FIELDS; the reason-category code is
+        # structured too. Its ``reason`` (built with display_engine) is scanned.
+        ("post_schema_reroutes", "reason_category"),
     }
 )
 
