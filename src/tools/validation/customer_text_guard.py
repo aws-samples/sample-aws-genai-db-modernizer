@@ -209,6 +209,20 @@ ID_FIELD_PATHS = frozenset(
         # from_engine/to_engine are already ID_FIELDS; the reason-category code is
         # structured too. Its ``reason`` (built with display_engine) is scanned.
         ("post_schema_reroutes", "reason_category"),
+        # Assignment.moves, the move ledger (src/contracts/move_ledger.py, #616):
+        # a machine record with no prose. query_id, from_engine, to_engine and
+        # tied_engines are already ID_FIELDS; scores are numbers, never scanned.
+        # tests/unit/tools/validation/test_customer_text_guard_move_ledger.py
+        # fails if a Move model gains a string field not listed here.
+        ("moves", "pass"),  # Move.pass_ (MovePass code)
+        ("moves", "reason_code"),  # Move.reason_code (ReasonCode rule id)
+        ("moves", "group_key"),  # Move.group_key (12-hex hash)
+        ("moves", "actor"),  # Move.actor (MoveActor code)
+        ("runner_up", "engine"),  # Move.runner_up (EngineScore.engine)
+        ("candidates", "engine"),  # MoveEvidence.candidates[] (CandidateScore.engine)
+        ("candidates", "gate"),  # CandidateScore.gate (gate kind code)
+        ("evidence", "signal"),  # MoveEvidence.signal (triage signal name)
+        ("evidence", "replaced_engine"),  # MoveEvidence.replaced_engine
     }
 )
 

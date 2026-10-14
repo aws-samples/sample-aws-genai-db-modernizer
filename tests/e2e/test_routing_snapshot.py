@@ -49,3 +49,49 @@ def test_routing_snapshot_matches_the_baseline(run: PipelineResult) -> None:
         "change routing, regenerate it and paste this diff into the PR description: "
         'uv run python -m tests.e2e.routing_snapshot --write --reason "..."'
     )
+
+
+@pytest.mark.deterministic
+def test_v1_assignment_replays_from_its_moves(run: PipelineResult) -> None:
+    """The move ledger (#616) rebuilds the pipeline's own assignment/v1 exactly,
+    from v1's own Moves (moves are per-version).
+
+    Every query has exactly one first Move (no ``from_engine``) carrying its
+    candidate ladder, and replaying the Moves in ``seq`` order gives every
+    query's ``assigned_engine`` and ``tied_engines``.
+    """
+    from src.agents.referee.move_ledger import replay
+    from src.contracts.assignment_models import Assignment
+
+    v1 = Assignment.model_validate_json(
+        (run.job_dir() / "assignment" / "v1" / "assignment.json").read_text()
+    )
+    expected = {
+        qa.query_id: (qa.assigned_engine, list(qa.tied_engines)) for qa in v1.query_assignments
+    }
+    assert replay(v1.moves) == expected
+    firsts = [m.query_id for m in v1.moves if m.from_engine is None]
+    assert sorted(firsts) == sorted(expected)
+    assert [m.seq for m in v1.moves] == list(range(1, len(v1.moves) + 1))
+    assert all(m.evidence.candidates for m in v1.moves)
+
+
+@pytest.mark.deterministic
+def test_a_derived_version_does_not_inherit_v1_moves(run: PipelineResult) -> None:
+    """``Assignment.moves`` is per-version (#616, maintainer decision 2026-10-14).
+
+    A version derived from an earlier one (the reality check's, here) holds
+    only the Moves that produced it, never a copy of v1's. Its writer does not
+    record its own Moves yet (later #616 changes), so today the list is empty.
+    """
+    from src.contracts.assignment_models import Assignment
+
+    root = run.job_dir() / "assignment"
+    versions = sorted(int(p.name[1:]) for p in root.glob("v*") if p.name[1:].isdigit())
+    assert versions[0] == 1 and len(versions) > 1, versions
+    v1 = Assignment.model_validate_json((root / "v1" / "assignment.json").read_text())
+    assert v1.moves
+    for n in versions[1:]:
+        later = Assignment.model_validate_json((root / f"v{n}" / "assignment.json").read_text())
+        assert later.previous_version is not None
+        assert later.moves == [], f"v{n} carries {len(later.moves)} Moves it did not record"

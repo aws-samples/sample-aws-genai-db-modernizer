@@ -659,6 +659,10 @@ class LocalOrchestrator(Orchestrator):
             "query_assignments": query_assignments,
             "post_schema_reroutes": reroutes,
             "rolled_back_version": None,
+            # #616: moves are per-version (only the Moves that produced this
+            # version). The router does not record its own Moves yet (a later
+            # #616 change), so the new version starts empty.
+            "moves": [],
         }
         prefix = f"{database_name}/{job_id}"
         # The derived views (table mappings, warnings) follow the moved queries,
@@ -764,6 +768,8 @@ class LocalOrchestrator(Orchestrator):
                 "status": AssignmentStatus.REROUTE_ROLLED_BACK.value,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "rolled_back_version": new_version,
+                # #616: per-version moves; not the restated version's.
+                "moves": [],
             }
             self.store.write_json(
                 assignment_artifact_path(database_name, job_id, rollback), restated

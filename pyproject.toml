@@ -23,7 +23,7 @@ dependencies = [
     "pymssql>=2.3.0",
 
     # Data Validation & Serialization
-    "pydantic>=2.7.2",
+    "pydantic>=2.11",
     "jsonschema>=4.20.0",
 
     # Configuration & Logging

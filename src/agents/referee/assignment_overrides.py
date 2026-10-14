@@ -565,6 +565,10 @@ def apply_assignment_overrides(
             # again. The next synthesis run, if it drops anything from this
             # version's overlay, writes its own note here.
             "cache_safety_net_notes": [],
+            # #616: moves are per-version (only the Moves that produced this
+            # version). The customer gate does not record its own Moves yet
+            # (a later #616 change), so the new version starts empty.
+            "moves": [],
         }
     )
 

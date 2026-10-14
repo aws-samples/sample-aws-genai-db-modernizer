@@ -67,6 +67,17 @@ Version History:
   rerouted version never claims the customer approved it. And
   ``AssignmentStatus.REROUTE_ROLLED_BACK`` with ``Assignment.rolled_back_version``:
   the version that restates the routing when a reroute's redesign fails.
+- 1.10 (2026-10-14, #616): Added ``Assignment.moves``, the move ledger
+  (``src.contracts.move_ledger.Move``): one record per engine change of a
+  query, in order, with the scores, runner-up, rule and evidence. Per-version
+  (maintainer decision, 2026-10-14): a version holds only the Moves that
+  produced it, never a copy of an earlier version's. Replaying v1's moves
+  rebuilds v1's ``assigned_engine`` and ``tied_engines``; v1 plus each later
+  version's own moves rebuilds that version. Only the first assignment
+  writes Moves today; the reality check, customer gate and post-schema
+  router (and its rollback) start their version with an empty list until
+  they record their own (later #616 changes). Defaults to an empty list, so
+  artifacts written before 1.10 still load.
 """
 
 from datetime import datetime
@@ -75,6 +86,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from src.contracts.feasibility_models import FeasibilityFinding
+from src.contracts.move_ledger import Move
 
 
 class UnresolvedNames(BaseModel):
@@ -421,6 +433,19 @@ class Assignment(BaseModel):
             "How the resolver picked one Aurora engine when the source has no Aurora "
             "dialect of its own (#381). None for a homogeneous source and for "
             "artifacts written before 1.6."
+        ),
+    )
+    moves: list[Move] = Field(
+        default_factory=list,
+        description=(
+            "The move ledger (#616), per-version: only the engine changes of a query "
+            "that produced this version, in seq order, never a copy of an earlier "
+            "version's. Replaying v1's moves rebuilds v1's assigned_engine and "
+            "tied_engines; v1 plus each later version's own moves rebuilds that version. "
+            "Only the first assignment records Moves today: the reality check, customer "
+            "gate and post-schema router (and its rollback) write an empty list until "
+            "they record their own (later #616 changes). Empty for artifacts written "
+            "before 1.10."
         ),
     )
 

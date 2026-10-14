@@ -506,6 +506,10 @@ def write_reality_check_result(
         # cumulative audit trail) is still carried forward by the spread
         # above, unchanged.
         "cache_safety_net_notes": [],
+        # #616: moves are per-version -- this version holds only the Moves that
+        # produced it, never the earlier version's. The reality check does not
+        # record its own Moves yet (a later #616 change), so it starts empty.
+        "moves": [],
     }
     # ADR-029 Layers B+E: recompute derived views against the consolidated
     # routing, refresh validation warnings, and drop per-query warnings that

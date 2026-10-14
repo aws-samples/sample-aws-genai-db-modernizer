@@ -260,3 +260,23 @@ def test_format_diff_truncates_a_large_number_of_changed_queries():
     diff = compare(base, moved)
     message = format_diff("discourse", diff)
     assert "more" in message.lower()
+
+
+def test_compare_flags_a_first_assignment_move_change():
+    base = _sample({"q1": {**_query(), "mv": ["score:highest_score"]}})
+    moved = _sample({"q1": {**_query(), "mv": ["tie:tie.source_compatible"]}})
+    diff = compare(base, moved)
+    assert set(diff) == {"moves"}
+    assert diff["moves"]["q1"] == {
+        "before": ["score:highest_score"],
+        "after": ["tie:tie.source_compatible"],
+    }
+    assert "first-assignment moves" in format_diff("wordpress", diff)
+
+
+def test_compare_flags_a_moves_by_pass_change():
+    base = {**_sample({"q1": _query()}), "moves_by_pass": {"score": {"highest_score": 1}}}
+    moved = {**_sample({"q1": _query()}), "moves_by_pass": {"tie": {"tie.source_compatible": 1}}}
+    diff = compare(base, moved)
+    assert set(diff) == {"moves_by_pass"}
+    assert "moves by pass changed" in format_diff("wordpress", diff)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable, Mapping
+
+from src.agents.referee.move_ledger import group_key
 
 
 class RoutingTrace:
@@ -53,8 +54,11 @@ class RoutingTrace:
         group (the mean ``resolve()`` actually compared), not just the winner's.
         """
         members = sorted(group)
-        key = hashlib.sha256(",".join(members).encode()).hexdigest()[:12]
-        payload = {"key": key, "scores": {e: round(s, 2) for e, s in group_score.items()}}
+        # The same key the group's Moves carry (``Move.group_key``, #616).
+        payload = {
+            "key": group_key(members),
+            "scores": {e: round(s, 2) for e, s in group_score.items()},
+        }
         for qid in members:
             self.group_by_query[qid] = payload
 

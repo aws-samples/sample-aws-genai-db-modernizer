@@ -24,6 +24,12 @@ Triage signals like text_search→opensearch override table-level averages
 because the signal is about the query's workload pattern, not the table's
 general suitability.
 
+Every engine ``resolve()`` sets goes through ``move_ledger.apply`` (#616), which
+records a Move (pass, rule, score, runner-up, candidate ladder) on
+``Assignment.moves``; replaying them rebuilds the assignment exactly. A utility
+statement carries two Moves: its scored pick (which counts in the settled
+workload later ties read) and then the utility pin.
+
 ``resolve()`` accepts an optional ``routing_trace: RoutingTrace`` (#497), off by
 default, that records each query's full per-engine score ladder for
 ``tests/e2e/routing_snapshot.py``'s per-query regression snapshot. See
@@ -46,6 +52,13 @@ from src.agents.referee.aurora_choice import (
 )
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
 from src.agents.referee.co_dependency import build_co_dependency_groups, is_significant_join
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply,
+    best_other,
+    candidate_ladder,
+    group_key,
+)
 from src.agents.referee.query_scoring import (
     ScoringContext,
     compute_query_confidence,
@@ -55,7 +68,12 @@ from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.routing_trace import RoutingTrace
 from src.agents.referee.table_assignments import derive_table_assignments, retained_engine_for
 from src.agents.referee.table_resolution import TableNameResolver
-from src.agents.referee.tie_break import break_tie
+from src.agents.referee.tie_break import (
+    TIE_KIND_SOURCE_COMPATIBLE,
+    TIE_KIND_STABILITY,
+    break_tie,
+    pick_unresolved_tie_placeholder,
+)
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.assignment_models import (
@@ -66,6 +84,7 @@ from src.contracts.assignment_models import (
     CacheOverlaySummary,
     QueryAssignment,
 )
+from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
 
 # Callers import these from here; they live in the modules imported above.
@@ -101,6 +120,13 @@ SIGNAL_ENGINE_OVERRIDES: dict[str, str] = {
 # drift. Scoped by override engine, not by signal name, so a future signal
 # that also maps to opensearch gets the same gate for free.
 JUSTIFICATION_GATED_OVERRIDE_ENGINES: frozenset[str] = frozenset({"opensearch"})
+
+# The move-ledger rule each signal override records (#616). ``graph_traversal``
+# has none: its engine (neptune) is a placeholder, never selected (ADR-031
+# Decision 9), so that override cannot fire.
+SIGNAL_OVERRIDE_REASON_CODES: dict[str, ReasonCode] = {
+    "text_search": ReasonCode.OVERRIDE_TEXT_SEARCH,
+}
 
 
 class AssignmentResolver:
@@ -292,7 +318,55 @@ class AssignmentResolver:
         # every query of the group compete (cache engines never own; engines that
         # are not a system of record own no write, #296).
         query_by_id = {q["query_id"]: q for q in queries}
-        assigned: dict[str, str] = {}
+        # The move ledger (#616): every engine this method sets goes through
+        # ``move_ledger.apply``, which records a Move with the query's candidate
+        # ladder. ``ledger.engines`` is the query -> engine map; a query waiting
+        # for a tie-break or the Aurora fallback has no entry yet (``handled``).
+        ledger = MoveLedger()
+        handled: set[str] = set()
+        # The scorer's hard gate per (query, engine), read from the exclusion
+        # notes above (after the homogeneous-Aurora pruning), never re-run.
+        gates_by_query: dict[str, dict[str, str]] = {
+            qid: {n["engine"]: n["gate"] for n in notes} for qid, notes in exclusion_notes.items()
+        }
+
+        def _score(qid: str, engine: str) -> float | None:
+            """The score the passes compare, ``None`` when a hard gate excluded the engine."""
+            if gates_by_query.get(qid, {}).get(engine):
+                return None
+            return scores.get(qid, {}).get(engine)
+
+        def _ownable_scores(query: dict) -> dict[str, float]:
+            """Scores of the engines that may own ``query`` and were not gated."""
+            qid = query["query_id"]
+            return {
+                e: s
+                for e, s in scores.get(qid, {}).items()
+                if can_own(e, query) and _score(qid, e) is not None
+            }
+
+        def _evidence(
+            query: dict,
+            *,
+            group_scores: Mapping[str, float] | None = None,
+            signal: str | None = None,
+            replaced_engine: str | None = None,
+        ) -> MoveEvidence:
+            """The query's candidate ladder (every analyzed engine), plus what the pass saw."""
+            qid = query["query_id"]
+            ladder = candidate_ladder(
+                analysis_outputs,
+                scores.get(qid, {}),
+                gates_by_query.get(qid, {}),
+                [e for e in analysis_outputs if not can_own(e, query)],
+            )
+            return MoveEvidence(
+                candidates=ladder,
+                group_scores=dict(group_scores or {}),
+                signal=signal,
+                replaced_engine=replaced_engine,
+            )
+
         assigned_confidence: dict[str, int] = {}
         assigned_reason: dict[str, str] = {}
         assigned_signal: dict[str, str] = {}
@@ -301,9 +375,14 @@ class AssignmentResolver:
         # rest are assigned, since it can depend on how many queries each
         # Aurora engine already serves (#288).
         fallback_qids: list[str] = []
+        # The ledger rule (and co-dependency group key) of each fallback query.
+        fallback_reason: dict[str, ReasonCode] = {}
+        fallback_group: dict[str, str] = {}
         # Exact score ties, resolved once every untied query is placed:
         # source-compatible wins, otherwise reported as unresolved (#503).
-        tied: list[tuple[list[str], list[str], int, str]] = []
+        # The last item is what the tie was ranked on (the group's mean scores,
+        # or the query's own), kept for the Move's runner-up.
+        tied: list[tuple[list[str], list[str], int, str, dict[str, float]]] = []
 
         for group in co_dep_groups:
             candidates = [
@@ -314,7 +393,9 @@ class AssignmentResolver:
             if not candidates:
                 for qid in group:
                     fallback_qids.append(qid)
-                    assigned[qid] = ""
+                    fallback_reason[qid] = ReasonCode.FALLBACK_NO_OWNER
+                    fallback_group[qid] = group_key(group)
+                    handled.add(qid)
                     assigned_confidence[qid] = 0
                     assigned_reason[qid] = "no analysis available"
                 continue
@@ -327,26 +408,44 @@ class AssignmentResolver:
             top = max(group_score.values())
             best = [e for e in candidates if group_score[e] == top]
             if len(best) > 1:
-                tied.append((list(group), best, 0, "co-dependency group"))
-                for qid in group:
-                    assigned[qid] = ""
+                tied.append((list(group), best, 0, "co-dependency group", group_score))
+                handled.update(group)
                 continue
             for qid in group:
-                assigned[qid] = best[0]
+                apply(
+                    ledger,
+                    qid,
+                    best[0],
+                    pass_=MovePass.CO_DEPENDENCY,
+                    reason_code=ReasonCode.GROUP_MEAN,
+                    score_after=_score(qid, best[0]),
+                    runner_up=best_other(group_score, best[0]),
+                    evidence=_evidence(query_by_id[qid], group_scores=group_score),
+                    group_key=group_key(group),
+                )
                 assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
                 assigned_reason[qid] = f"co-dependency group → {display_engine(best[0])}"
 
         # Step 6: Assign remaining queries individually
         for query in queries:
             qid = query["query_id"]
-            if qid in assigned:
+            if qid in handled or qid in ledger.engines:
                 continue
 
             # Check signal override first
             if qid in signal_overrides and can_own(signal_overrides[qid]["engine"], query):
                 engine = signal_overrides[qid]["engine"]
                 signal = signal_overrides[qid]["signal"]
-                assigned[qid] = engine
+                apply(
+                    ledger,
+                    qid,
+                    engine,
+                    pass_=MovePass.SIGNAL_OVERRIDE,
+                    reason_code=SIGNAL_OVERRIDE_REASON_CODES[signal],
+                    score_after=_score(qid, engine),
+                    runner_up=best_other(_ownable_scores(query), engine),
+                    evidence=_evidence(query, signal=signal),
+                )
                 assigned_confidence[qid] = scores.get(qid, {}).get(engine, 0)
                 assigned_reason[qid] = f"signal override: {signal} → {engine}"
                 assigned_signal[qid] = signal
@@ -358,16 +457,26 @@ class AssignmentResolver:
                 top_score = max(query_scores.values())
                 best = [e for e in query_scores if query_scores[e] == top_score]
                 if len(best) > 1:
-                    tied.append(([qid], best, top_score, "individual"))
-                    assigned[qid] = ""
+                    tied.append(([qid], best, top_score, "individual", _ownable_scores(query)))
+                    handled.add(qid)
                     continue
-                assigned[qid] = best[0]
+                apply(
+                    ledger,
+                    qid,
+                    best[0],
+                    pass_=MovePass.SCORE,
+                    reason_code=ReasonCode.HIGHEST_SCORE,
+                    score_after=_score(qid, best[0]),
+                    runner_up=best_other(_ownable_scores(query), best[0]),
+                    evidence=_evidence(query),
+                )
                 assigned_confidence[qid] = top_score
                 assigned_reason[qid] = f"highest fit for {display_engine(best[0])}"
             else:
                 # Step 7: Fallback to aurora engine from triage
                 fallback_qids.append(qid)
-                assigned[qid] = ""
+                fallback_reason[qid] = ReasonCode.FALLBACK_NO_SCORE
+                handled.add(qid)
                 assigned_confidence[qid] = 0
                 assigned_reason[qid] = "no engine scored this query"
 
@@ -384,13 +493,13 @@ class AssignmentResolver:
         # pin and signal overrides have filled in more queries) -- so a tie that
         # is otherwise unchanged can never silently re-pick between the same two
         # engines just because the two stages measured "settled" differently.
-        settled_counts = Counter(e for e in assigned.values() if e)
+        settled_counts = Counter(ledger.engines.values())
         if routing_trace is not None:
             routing_trace.record_settled_counts(settled_counts)
         assigned_tied_engines: dict[str, list[str]] = {}
         if tied:
             source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
-            for qids, best, top_score, kind in tied:
+            for qids, best, top_score, kind, ranked in tied:
                 # Sorted member ids (#503): the hash fallback's seed must not
                 # depend on ``qids``'s own input order,
                 # which here comes from ``build_co_dependency_groups``'s (or the
@@ -399,11 +508,29 @@ class AssignmentResolver:
                 winner, why, tie_kind = break_owner_tie(
                     best, source_aurora, settled_counts=settled_counts, query_id=hash_seed
                 )
+                tie_reason = _tie_reason_code(tie_kind, best, settled_counts, hash_seed)
+                is_group = kind != "individual"
                 for qid in qids:
                     if routing_trace is not None:
                         routing_trace.record_tie(qid, tie_kind)
-                    assigned[qid] = winner
-                    if tie_kind == "tie_unresolved":
+                    unresolved = tie_kind == "tie_unresolved"
+                    apply(
+                        ledger,
+                        qid,
+                        winner,
+                        pass_=MovePass.TIE,
+                        reason_code=tie_reason,
+                        score_after=_score(qid, winner),
+                        runner_up=best_other(ranked, winner),
+                        evidence=(
+                            _evidence(query_by_id[qid], group_scores=ranked)
+                            if is_group
+                            else _evidence(query_by_id[qid])
+                        ),
+                        group_key=group_key(qids) if is_group else None,
+                        tied_engines=best if unresolved else (),
+                    )
+                    if unresolved:
                         assigned_tied_engines[qid] = sorted(best)
                     if kind == "individual":
                         assigned_confidence[qid] = top_score
@@ -447,7 +574,17 @@ class AssignmentResolver:
             )
             fallback_tied = sorted(AURORA_ENGINES & fallback_pool)
             for qid in fallback_qids:
-                assigned[qid] = aurora_fallback
+                apply(
+                    ledger,
+                    qid,
+                    aurora_fallback,
+                    pass_=MovePass.AURORA_FALLBACK,
+                    reason_code=fallback_reason[qid],
+                    score_after=_score(qid, aurora_fallback),
+                    evidence=_evidence(query_by_id[qid]),
+                    group_key=fallback_group.get(qid),
+                    tied_engines=fallback_tied if fallback_tie_kind == "tie_unresolved" else (),
+                )
                 if fallback_tie_kind == "tie_unresolved":
                     assigned_tied_engines[qid] = fallback_tied
                     if routing_trace is not None:
@@ -459,9 +596,9 @@ class AssignmentResolver:
         # that engine. Attaching it regardless of the winner (as an earlier
         # version of this fix did) would show up on, say, an Aurora win's
         # reason and misleadingly read as if Aurora were the one that needed
-        # the redesign; checking ``assigned[qid]`` here means the note only
+        # the redesign; checking the ledger's engine here means the note only
         # ever describes the engine the query actually landed on.
-        for qid, engine in assigned.items():
+        for qid, engine in ledger.engines.items():
             note = anti_pattern_notes.get((qid, engine))
             if note:
                 assigned_reason[qid] = f"{assigned_reason[qid]} | {note}"
@@ -503,13 +640,26 @@ class AssignmentResolver:
         )
         if utility_engine:
             for qid in utility_qids:
-                assigned[qid] = utility_engine
+                apply(
+                    ledger,
+                    qid,
+                    utility_engine,
+                    pass_=MovePass.UTILITY_PIN,
+                    reason_code=ReasonCode.OVERRIDE_UTILITY,
+                    score_after=_score(qid, utility_engine),
+                    runner_up=best_other(_ownable_scores(query_by_id[qid]), utility_engine),
+                    evidence=_evidence(query_by_id[qid], replaced_engine=ledger.engine_of(qid)),
+                )
                 assigned_confidence[qid] = 100
                 assigned_reason[qid] = (
                     "utility/metadata statement — kept on source-compatible "
                     f"relational engine ({display_engine(utility_engine)})"
                 )
                 assigned_signal.pop(qid, None)
+                # The pin settles the query, so an unresolved tie it went
+                # through earlier (Step 6b or the Aurora fallback) leaves no
+                # customer choice open; the pin's Move records no tie either.
+                assigned_tied_engines.pop(qid, None)
 
         # Step 7c: Populate the opt-in routing trace (#497), off by default
         # (``routing_trace is None``). Reads ``exclusion_notes``, ``anti_pattern_map``
@@ -559,7 +709,7 @@ class AssignmentResolver:
                         ladder[engine] = used
                 payload: dict[str, object] = {
                     "engines": ladder,
-                    "assigned_engine": assigned.get(qid, ""),
+                    "assigned_engine": ledger.engines.get(qid, ""),
                     "assigned_reason": assigned_reason.get(qid, ""),
                 }
                 group_info = routing_trace.group_by_query.get(qid)
@@ -577,7 +727,7 @@ class AssignmentResolver:
         # owner stays the engine assigned above.
         overlay_dicts = apply_cache_overlay(
             [
-                {"query_id": q["query_id"], "assigned_engine": assigned[q["query_id"]]}
+                {"query_id": q["query_id"], "assigned_engine": ledger.engines[q["query_id"]]}
                 for q in queries
             ],
             queries,
@@ -595,7 +745,7 @@ class AssignmentResolver:
         query_assignments: list[QueryAssignment] = []
         for query in queries:
             qid = query["query_id"]
-            engine = assigned[qid]
+            engine = ledger.engines[qid]
             confidence = assigned_confidence.get(qid, 0)
             reason = assigned_reason.get(qid, f"highest fit for {display_engine(engine)}")
 
@@ -649,6 +799,7 @@ class AssignmentResolver:
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
             unresolved_table_names=unresolved_table_names,
             aurora_engine_choice=aurora_engine_choice,
+            moves=ledger.moves,
         )
 
     def _build_signal_overrides(
@@ -720,6 +871,31 @@ class AssignmentResolver:
 
 def _overlay_model(summary: dict | None) -> CacheOverlaySummary | None:
     return CacheOverlaySummary(**summary) if summary else None
+
+
+def _tie_reason_code(
+    tie_kind: str,
+    tied: list[str],
+    settled_counts: Mapping[str, int],
+    hash_seed: str,
+) -> ReasonCode:
+    """The ledger rule that decided a first-assignment tie (#616).
+
+    For an unresolved tie, which of Decision 12's two placeholder rules
+    decided it: ``pick_unresolved_tie_placeholder`` is pure and is called with
+    exactly the arguments ``break_owner_tie`` passed it, so it reports the
+    same rule that picked the winner.
+    """
+    if tie_kind == TIE_KIND_SOURCE_COMPATIBLE:
+        return ReasonCode.TIE_SOURCE_COMPATIBLE
+    if tie_kind == TIE_KIND_STABILITY:
+        return ReasonCode.TIE_STABILITY
+    _, by_workload_share = pick_unresolved_tie_placeholder(tied, settled_counts, hash_seed)
+    return (
+        ReasonCode.TIE_PLACEHOLDER_SETTLED_WORKLOAD
+        if by_workload_share
+        else ReasonCode.TIE_PLACEHOLDER_HASH
+    )
 
 
 def break_owner_tie(

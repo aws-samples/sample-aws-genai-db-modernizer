@@ -28,13 +28,19 @@ whether that is the point of the PR or a sign something moved by accident:
   the parsed ``fit=NN`` score -- omitted from the snapshot when it matches the
   first pick, which is the common case (most queries are not consolidated);
 - the cache overlay engine, if any;
+- the first assignment's move ledger (#616), read from the pipeline's own
+  ``assignment/v1`` (moves are per-version, so these are v1's own Moves and
+  nothing a later version recorded): each query's Moves as ``pass:reason_code`` in ``seq``
+  order (``mv``), and per sample the count of Moves by pass and reason code
+  (``moves_by_pass``);
 - the consolidation records from ``reality-check/output.json``, including
   ``queries_retained`` and ``retention_reason`` for a partial consolidation.
 
 ``measure()`` also asserts the snapshot's first-assignment engine matches the
 pipeline's own ``assignment/v1`` for every query -- a cheap, early guard that
 the trace is actually describing the real run, not a resolver re-run that
-has quietly diverged from it.
+has quietly diverged from it -- and that ``assignment/v1``'s Moves replay to
+its own ``assigned_engine`` and ``tied_engines`` exactly (#616).
 
 ``tests/e2e/test_routing_snapshot.py`` compares a run against
 ``tests/e2e/baselines/routing_snapshot.json`` and reports every per-query
@@ -180,10 +186,33 @@ def measure(job_dir: Path) -> dict[str, Any]:
     # this re-run ever diverges from the pipeline's own v1 (a resolver change
     # with a hidden side effect, an input read in a different order, ...),
     # fail loudly here rather than silently snapshot the wrong engine.
-    v1_assignments = json.loads(
+    from src.agents.referee.move_ledger import replay
+    from src.contracts.assignment_models import Assignment
+
+    v1 = Assignment.model_validate_json(
         (job_dir / "assignment" / "v1" / "assignment.json").read_text()
-    ).get("query_assignments", [])
-    v1_by_id = {qa["query_id"]: qa["assigned_engine"] for qa in v1_assignments}
+    )
+    v1_by_id = {qa.query_id: qa.assigned_engine for qa in v1.query_assignments}
+    # The move ledger (#616) must rebuild assignment/v1 exactly from v1's own
+    # Moves (per-version: no later version's Moves are involved).
+    replayed = replay(v1.moves)
+    expected = {
+        qa.query_id: (qa.assigned_engine, list(qa.tied_engines)) for qa in v1.query_assignments
+    }
+    if replayed != expected:
+        bad = sorted(q for q in set(replayed) | set(expected) if replayed.get(q) != expected.get(q))
+        raise AssertionError(
+            f"routing_snapshot.measure(): assignment/v1's moves do not replay to its own "
+            f"assignment for {len(bad)} queries, e.g. {bad[:5]}"
+        )
+    moves_by_query: dict[str, list[str]] = {}
+    moves_by_pass: dict[str, dict[str, int]] = {}
+    for move in sorted(v1.moves, key=lambda m: m.seq):
+        moves_by_query.setdefault(move.query_id, []).append(
+            f"{move.pass_.value}:{move.reason_code.value}"
+        )
+        by_reason = moves_by_pass.setdefault(move.pass_.value, {})
+        by_reason[move.reason_code.value] = by_reason.get(move.reason_code.value, 0) + 1
     for qid, payload in trace.by_query.items():
         v1_engine = v1_by_id.get(qid)
         if v1_engine != payload["assigned_engine"]:
@@ -241,7 +270,11 @@ def measure(job_dir: Path) -> dict[str, Any]:
         final_reason = fqa.get("assignment_reason", payload["assigned_reason"])
         final_cat = categorize(final_reason)
 
-        query_entry: dict[str, Any] = {"s": payload["engines"], "f": first}
+        query_entry: dict[str, Any] = {
+            "s": payload["engines"],
+            "f": first,
+            "mv": moves_by_query.get(qid, []),
+        }
         if final_engine != first["e"] or final_cat != first["c"]:
             final: dict[str, Any] = {"e": final_engine, "c": final_cat}
             fit = parse_fit(final_reason)
@@ -257,6 +290,7 @@ def measure(job_dir: Path) -> dict[str, Any]:
         "query_count": len(queries),
         "queries": queries,
         "consolidations": consolidations,
+        "moves_by_pass": moves_by_pass,
     }
 
 
@@ -279,15 +313,18 @@ def _consolidation_key(c: dict[str, Any]) -> tuple[str, str, str]:
 def compare(baseline: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
     """Differences between two ``measure()`` results for one sample; ``{}`` if none.
 
-    Up to five keys, each present only when non-empty:
+    Up to seven keys, each present only when non-empty:
     ``scores`` (the per-engine score ladder changed for a query_id),
     ``first_assignment`` (the resolver's own pick, category, co-dependency
     group, signal or tie-break rule changed), ``final_assignment`` (the
     reality check's final pick, category or parsed fit score changed -- a
     query with no override is compared by its first pick), ``cache_engine``
-    (the cache overlay engine changed), and ``consolidations`` (a record,
-    keyed by ``_consolidation_key``, whose fields -- query_count, cost,
-    retained queries, retention_reason -- changed).
+    (the cache overlay engine changed), ``moves`` (the query's first-assignment
+    Moves, ``pass:reason_code`` in order, changed), ``moves_by_pass`` (the
+    sample's Move counts by pass and reason code changed, ``{"before": ...,
+    "after": ...}``), and ``consolidations`` (a record, keyed by
+    ``_consolidation_key``, whose fields -- query_count, cost, retained
+    queries, retention_reason -- changed).
     """
     diff: dict[str, Any] = {}
     b_queries, a_queries = baseline.get("queries", {}), actual.get("queries", {})
@@ -309,6 +346,14 @@ def compare(baseline: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
         a_cache = a.get("cache") if a else None
         if b_cache != a_cache:
             diff.setdefault("cache_engine", {})[qid] = {"before": b_cache, "after": a_cache}
+        b_moves = b.get("mv") if b else None
+        a_moves = a.get("mv") if a else None
+        if b_moves != a_moves:
+            diff.setdefault("moves", {})[qid] = {"before": b_moves, "after": a_moves}
+    b_by_pass = baseline.get("moves_by_pass")
+    a_by_pass = actual.get("moves_by_pass")
+    if b_by_pass != a_by_pass:
+        diff["moves_by_pass"] = {"before": b_by_pass, "after": a_by_pass}
     b_cons = {_consolidation_key(c): c for c in baseline.get("consolidations", [])}
     a_cons = {_consolidation_key(c): c for c in actual.get("consolidations", [])}
     for key in sorted(set(b_cons) | set(a_cons)):
@@ -364,6 +409,7 @@ _STEP_LABELS = (
     ("first_assignment", "first assignment (resolver)"),
     ("final_assignment", "final assignment (reality check)"),
     ("cache_engine", "cache overlay engine"),
+    ("moves", "first-assignment moves (pass:reason_code)"),
 )
 
 
@@ -387,7 +433,7 @@ def format_diff(sample: str, diff: dict[str, Any], query_text: dict[str, str] | 
             d = changed[qid]
             if step == "scores":
                 detail = _engine_diff_text(d["before"], d["after"])
-            elif step == "cache_engine":
+            elif step in ("cache_engine", "moves"):
                 detail = f"{d['before']!r} -> {d['after']!r}"
             else:
                 detail = f"{_assignment_text(d['before'])} -> {_assignment_text(d['after'])}"
@@ -397,6 +443,11 @@ def format_diff(sample: str, diff: dict[str, Any], query_text: dict[str, str] | 
                 lines.append(f"    text: {excerpt!r}")
         if len(changed) > MAX_QUERIES_SHOWN:
             lines.append(f"  ... and {len(changed) - MAX_QUERIES_SHOWN} more")
+    by_pass = diff.get("moves_by_pass")
+    if by_pass:
+        lines.append("\nmoves by pass changed:")
+        lines.append(f"  before: {json.dumps(by_pass['before'], sort_keys=True)}")
+        lines.append(f"  after:  {json.dumps(by_pass['after'], sort_keys=True)}")
     cons = diff.get("consolidations")
     if cons:
         plural = "" if len(cons) == 1 else "s"

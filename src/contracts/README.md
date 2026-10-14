@@ -26,6 +26,7 @@ Pydantic model definitions for all agent contracts in the Database Modernizer As
 | `model_flag.py` | A model's flag: queries an engine cannot serve, never a destination (ADR-031 Decision 11, both LLM modes) |
 | `reality_check_model_response.py` | A model's answer to the consolidation review (flags plus the reality-check summary), one shape for both LLM modes |
 | `executive_summary_response.py` | A model's synthesis executive summary, one shape for both LLM modes |
+| `move_ledger.py` | The move ledger: one `Move` per engine change of a query (pass, rule, scores, runner-up, evidence), carried on `Assignment.moves` (#616) |
 | `schema_design_output.py` | Base class for schema design output (`SchemaDesignOutputBase`) |
 | `synthesis_output.py` | Final synthesis report with weighted rankings |
 | `referee_output.py` | Legacy referee output (pre-split into triage/synthesis) |
