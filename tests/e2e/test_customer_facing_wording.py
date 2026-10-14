@@ -38,8 +38,8 @@ from tests.e2e.pipeline import PipelineResult
 # artifact still fails the test. Empty today: every hit the #572 scan actually
 # found in the bundled wordpress/discourse samples was fixed at its source (see
 # the #572 PR description for the list); #584 (the signal-override reason's raw
-# signal name and engine id) is a confirmed, related leak, but neither sample
-# triggers a signal override, so it never reaches this allowlist as a real hit.
+# signal name and engine id) is fixed at its source too: the reason names the
+# signal and the engine by their readable forms.
 ALLOWLIST: set[tuple[str, str, str]] = set()
 
 

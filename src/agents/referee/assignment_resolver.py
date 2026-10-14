@@ -67,6 +67,7 @@ from src.contracts.assignment_models import (
     QueryAssignment,
 )
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
+from src.shared.signal_labels import signal_noun
 
 # Callers import these from here; they live in the modules imported above.
 __all__ = [
@@ -348,7 +349,11 @@ class AssignmentResolver:
                 signal = signal_overrides[qid]["signal"]
                 assigned[qid] = engine
                 assigned_confidence[qid] = scores.get(qid, {}).get(engine, 0)
-                assigned_reason[qid] = f"signal override: {signal} → {engine}"
+                # #584: readable signal and engine names; the raw signal
+                # travels as data in ``signal_override`` (assigned_signal).
+                assigned_reason[qid] = (
+                    f"signal override: {signal_noun(signal)} → {display_engine(engine)}"
+                )
                 assigned_signal[qid] = signal
                 continue
 

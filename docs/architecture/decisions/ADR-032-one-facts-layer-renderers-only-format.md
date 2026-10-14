@@ -37,6 +37,10 @@ The modules under `src/report/` read figures through `src.report.facts.report_fa
 
 `tests/e2e/test_deliverable_figures.py` keeps reading every deliverable's figures back and comparing them with `report.json`, and also checks that the stored `facts` are exactly what the layer computes from the report's own fields.
 
+### 6. Labels and reasons are facts too
+
+A deliverable never reads a decision back out of prose. The triage signals that overrode queries onto an engine are `facts.engines[].signal_overrides`, from the assignment's own `signal_override` fields; the reason text itself names the signal and the engine by their readable forms (#584). The engines the reality check removed are `facts.removed_engines`, judged against the final architecture of the effective assignment, so an engine a customer edit moved queries back onto is never listed; a reality-check consolidation line that edit reversed is `reversed` in `facts.reality_check_trade_offs` and no deliverable states it as current (#546). The reality check's own consolidation lines are parsed once, in the facts layer, never by a renderer.
+
 ## Enforcement
 
 | Decision | Enforced by |
@@ -46,14 +50,15 @@ The modules under `src/report/` read figures through `src.report.facts.report_fa
 | 3. Layering | `tests/unit/report/test_renderers_only_format.py::test_report_imports_nothing_from_agents`<br>`tests/unit/report/test_renderers_only_format.py::test_the_facts_layer_imports_neither_agents_nor_report` |
 | 4. One reader, one answer for an old report | `tests/unit/report/test_report_facts.py::test_a_report_without_facts_gets_the_same_block_synthesis_writes`<br>`tests/unit/api/test_results.py::TestGetResults::test_backfills_facts_for_a_report_written_before_615` |
 | 5. The consistency test stays underneath | `tests/e2e/test_deliverable_figures.py` |
+| 6. Labels and reasons are facts too | `tests/unit/report/test_report_facts.py::test_584_the_stored_fact_decides_not_the_reason_text`<br>`tests/unit/report/test_report_facts.py::test_546_no_deliverable_claims_the_removal_or_its_saving`<br>`tests/unit/test_assignment_resolver.py::TestAssignmentReasons::test_signal_override_reason` |
 
 ## Consequences
 
 - A deliverable can no longer disagree with another on a figure the facts layer owns: both print the same field. The renderers lose their own arithmetic (`architecture._architecture_engines` and the wave headline are formatters over facts now).
 - `report.json` grows by the facts block (a few kilobytes on the discourse sample).
 - A new deliverable, or a new figure in an existing one, starts by adding the figure to `compute_report_facts` and its contract model; the guard test fails if a renderer computes it instead.
-- Labels and reasons (engine and signal names in assignment reasons, the engineering report's reality-check text) and the reality-check trade-offs every deliverable shows follow in the next steps of #615.
+- The reality-check trade-offs every deliverable shows follow in the last step of #615.
 
 ## Related
 
-Issues #615 (this change), #533, #578, #581, #568, #573 and #235; ADR-031.
+Issues #615 (this change), #533, #578, #581, #584, #546, #568, #573 and #235; ADR-031.

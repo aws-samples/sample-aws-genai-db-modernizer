@@ -728,11 +728,6 @@ def _evidence_text(signal: dict[str, Any] | None, engine: str | None = None) -> 
     )
 
 
-# "signal override: leaderboard_pattern → elasticache" in a ranking entry's
-# assignment_reason_summary: the triage signal that routed queries to the engine.
-_SIGNAL_OVERRIDE = re.compile(r"signal override:\s*([A-Za-z0-9_]+)\s*(?:→|->)\s*([A-Za-z0-9_]+)")
-
-
 def _triage_family(engine: str) -> str:
     """Triage targets name the Aurora family (``aurora``); rankings name the
     flavour (``aurora_mysql``, ``aurora_postgresql``)."""
@@ -741,7 +736,7 @@ def _triage_family(engine: str) -> str:
 
 def _evidence_signal(
     engine: str,
-    ranking_row: dict[str, Any],
+    overrides: list[str],
     q_signals: list[dict[str, Any]],
     signals: list[dict[str, Any]],
     assigned: dict[str, str] | None = None,
@@ -752,24 +747,17 @@ def _evidence_signal(
     (from the query journeys). When present, each signal is scored by how many
     of its queries actually landed on ``engine`` (returned as ``served``); a
     signal whose queries all went elsewhere is not evidence for this engine,
-    whatever triage targeted. Preference: a signal the ranking names as a
-    "signal override" for the engine (traceable to ``report.json``), else the
-    one serving the most queries. Without journeys, triage targets stand in
+    whatever triage targeted. Preference: a signal that overrode queries onto
+    the engine (``overrides``: the facts layer's ``signal_overrides``, read
+    from the assignment's own ``signal_override`` fields, #584 -- never parsed
+    back out of reason text), else the one serving the most queries. Without journeys, triage targets stand in
     (Aurora flavours matched to the ``aurora`` family) and the largest
     targeting signal is used.
 
     Several signals usually point at one engine, so the *smallest* of them --
     what this used to pick (#220) -- is the one least likely to be the reason.
     """
-    reasons = ranking_row.get("assignment_reason_summary") or []
-    if isinstance(reasons, str):
-        reasons = [reasons]
-    cited = {
-        m.group(1)
-        for r in reasons
-        for m in _SIGNAL_OVERRIDE.finditer(str(r))
-        if m.group(2) == engine
-    }
+    cited = set(overrides)
     by_name = {str(x.get("signal")): x for x in signals}
     if assigned:
         candidates = []
@@ -1010,6 +998,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         ranking, key=lambda r: (-(r.get("workload_percent") or 0), str(r.get("target")))
     )
 
+    overrides_by_engine = {
+        e["engine"]: list(e.get("signal_overrides") or []) for e in facts.get("engines") or []
+    }
+
     # ---- risks --------------------------------------------------------------
     risks = sorted(filtered_risks(rep), key=lambda r: str(r.get("risk_id")))
     sev: dict[str, int] = dict(facts.get("open_risks_by_severity") or {})
@@ -1128,7 +1120,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             }
         )
         evidence = _evidence_text(
-            _evidence_signal(eng, weakest, q_signals, signals, assigned),
+            _evidence_signal(eng, overrides_by_engine.get(eng, []), q_signals, signals, assigned),
             eng if assigned else None,
         )
         lead = (
@@ -1335,7 +1327,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "mapping_split": _mapping_split(
             rep, [m for m in rep.get("table_mappings") or [] if isinstance(m, dict)]
         ),
-        "n_tradeoffs": len(rep.get("trade_offs") or []),
+        "n_tradeoffs": int(facts.get("trade_off_count") or 0),
         "assignment": assignment,
         "risks": risks,
         "sev": sev,

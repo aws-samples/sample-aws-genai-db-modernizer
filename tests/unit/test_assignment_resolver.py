@@ -1594,7 +1594,13 @@ class TestAssignmentReasons:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert "signal override: text_search" in q1.assignment_reason
+        # #584: readable signal and engine names, never the raw ids; the
+        # structured field keeps the raw signal for code to read.
+        assert q1.assignment_reason.startswith("signal override: full-text search → OpenSearch")
+        assert q1.signal_override == "text_search"
+        from src.tools.validation.customer_text_guard import scan_json
+
+        assert scan_json({"assignment_reason": q1.assignment_reason}) == []
 
     def test_signal_override_recorded_as_structured_field(self):
         """Mandatory status travels as data, not as reason text (#151)."""

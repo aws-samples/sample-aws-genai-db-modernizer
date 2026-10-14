@@ -367,3 +367,170 @@ def test_the_moved_after_approval_count_is_a_fact() -> None:
     # the interactive report's JS is pinned by ExportReport.postSchemaRerouteCount.test.js.
     summary = reroute_summary(report)
     assert summary is not None and "found that 7 queries cannot run" in summary
+
+
+# #584: the signal override is data, not reason text the deck parses
+# --------------------------------------------------------------------------
+
+
+def _override_report(reason: str) -> dict[str, Any]:
+    """A 48% cache layer whose queries a leaderboard signal overrode onto it."""
+    return {
+        "database_name": "wordpress",
+        "job_id": "job-584",
+        "ranking": [
+            {
+                "target": "elasticache",
+                "confidence_score": 48,
+                "workload_percent": 31.8,
+                "assignment_reason_summary": [reason],
+            },
+            {"target": "dynamodb", "confidence_score": 50, "workload_percent": 58.9},
+        ],
+        "recommended_architecture": {"databases": [{"service": "dynamodb", "table_count": 19}]},
+        "schema_designs": {"elasticache": {"tables": [{}, {}]}},
+    }
+
+
+_SIGNALS = {
+    "results": {
+        "triage_summary": {
+            "signals": [
+                {"signal": "key_value_lookups", "query_count": 37, "targets": ["elasticache"]},
+                {"signal": "leaderboard_pattern", "query_count": 15, "targets": ["elasticache"]},
+            ]
+        }
+    }
+}
+
+
+def _confirm_card(f: dict[str, Any]) -> str:
+    return next(str(d["against"]) for d in f["decisions"] if d["question"].startswith("Confirm"))
+
+
+def test_584_the_deck_cites_the_override_from_facts_with_readable_reason_text() -> None:
+    """The new readable reason ("top-N listings → ElastiCache") no longer has a
+    raw id for a regex to match; the deck reads the structured fact instead."""
+    report = _override_report("signal override: top-N listings → ElastiCache")
+    report["facts"] = compute_report_facts(
+        report, signal_overrides={"elasticache": ["leaderboard_pattern"]}
+    )
+    against = _confirm_card(pptx_report.derive(report, _SIGNALS))
+    assert "15 leaderboard / top-n queries in the whole workload" in against
+
+
+def test_584_the_stored_fact_decides_not_the_reason_text() -> None:
+    report = _override_report("signal override: top-N listings → ElastiCache")
+    report["facts"] = compute_report_facts(report, signal_overrides={})
+    # No override recorded: the largest targeting signal stands in.
+    assert _confirm_card(pptx_report.derive(report, _SIGNALS)).split(" · ")[1].startswith("37 ")
+
+
+def test_584_an_older_report_reads_either_reason_form() -> None:
+    for reason in (
+        "signal override: leaderboard_pattern → elasticache",
+        "signal override: top-N listings → ElastiCache | DynamoDB lacks required capability",
+    ):
+        facts = report_facts(_override_report(reason))
+        engines = {e["engine"]: e for e in facts["engines"]}
+        assert engines["elasticache"]["signal_overrides"] == ["leaderboard_pattern"], reason
+        assert engines["dynamodb"]["signal_overrides"] == []
+
+
+# --------------------------------------------------------------------------
+# #546: an engine a customer edit re-added is not described as removed
+# --------------------------------------------------------------------------
+
+
+def _readded_report() -> dict[str, Any]:
+    """The wordpress shape after the reality check removed DocumentDB and a
+    customer edit then moved two queries back onto it (assignment v3)."""
+    return {
+        "database_name": "wordpress",
+        "job_id": "job-546",
+        "ranking": [
+            {"target": "aurora_mysql", "assigned_queries": 62, "workload_percent": 57.9},
+            {"target": "dynamodb", "assigned_queries": 43, "workload_percent": 40.2},
+            {"target": "documentdb", "assigned_queries": 2, "workload_percent": 1.9},
+        ],
+        "recommended_architecture": {
+            "databases": [
+                {"service": "dynamodb", "table_count": 0},
+                {"service": "documentdb", "table_count": 0},
+            ]
+        },
+        "schema_designs": {"aurora_mysql": {"status": "skipped"}},
+        "tco_analysis": {
+            "projected_monthly_cost": 784.6,
+            "cost_breakdown": [
+                {"database": "aurora_mysql", "monthly_cost_usd": 318.8},
+                {"database": "dynamodb", "monthly_cost_usd": 98.41},
+                {"database": "documentdb", "monthly_cost_usd": 367.39},
+            ],
+        },
+        "trade_offs": [
+            {
+                "description": "Consolidated 3 queries from DocumentDB → Aurora MySQL: DocumentDB "
+                "provides no unique capabilities. Removes $367.39/mo of infrastructure cost.",
+                "impact": "same",
+                "engine": "reality-check",
+            },
+            {
+                "description": "Consolidated 5 queries from DocumentDB → DynamoDB: DocumentDB "
+                "provides no unique capabilities. DocumentDB leaves the architecture.",
+                "impact": "same",
+                "engine": "reality-check",
+            },
+            {
+                "description": "Recommended pattern: Event-Driven Sync.",
+                "impact": "same",
+                "engine": "reality-check",
+            },
+        ],
+        "reality_check": {
+            "consolidations": [
+                {"from_engine": "documentdb", "to_engine": "aurora_mysql", "action": "full"},
+                {"from_engine": "documentdb", "to_engine": "dynamodb", "action": "full"},
+            ],
+            "before_distribution": {"aurora_mysql": 60, "dynamodb": 39, "documentdb": 8},
+            "after_distribution": {"aurora_mysql": 63, "dynamodb": 44},
+        },
+        "risk_assessment": {"overall_risk_level": "LOW", "risks": []},
+    }
+
+
+def test_546_the_facts_mark_the_consolidation_reversed_and_list_no_removed_engine() -> None:
+    facts = _with_facts(_readded_report())["facts"]
+    assert facts["removed_engines"] == []
+    reversed_lines = [t for t in facts["reality_check_trade_offs"] if t["reversed"]]
+    assert [(t["from_engine"], t["to_engine"]) for t in reversed_lines] == [
+        ("documentdb", "aurora_mysql"),
+        ("documentdb", "dynamodb"),
+    ]
+    assert facts["trade_off_count"] == 1
+
+
+def test_546_no_deliverable_claims_the_removal_or_its_saving() -> None:
+    report = _with_facts(_readded_report())
+    md = render_engineering_report_md(report)
+    trade_offs = md.split("## Migration trade-offs", 1)[1]
+    assert "leaves the architecture" not in trade_offs
+    assert "Removes $" not in trade_offs
+    assert "## Migration trade-offs (1)" in md
+    assert "### Reversed by a later assignment edit" in md
+    assert "DocumentDB stays in the architecture" in md
+    html = render_decision_report_html(report)
+    assert "Engines not used" not in html
+    assert pptx_report.derive(report, {})["n_tradeoffs"] == report["facts"]["trade_off_count"]
+
+
+def test_546_a_removed_engine_still_lists_with_its_reasons() -> None:
+    """Without the customer edit, DocumentDB is still listed, with both lines."""
+    report = _readded_report()
+    report["ranking"] = report["ranking"][:2]
+    facts = _with_facts(report)["facts"]
+    assert [e["engine"] for e in facts["removed_engines"]] == ["documentdb"]
+    removed = facts["removed_engines"][0]
+    assert removed["moved_to"] == ["aurora_mysql", "dynamodb"]
+    assert len(removed["reasons"]) == 2
+    assert not any(t["reversed"] for t in facts["reality_check_trade_offs"])

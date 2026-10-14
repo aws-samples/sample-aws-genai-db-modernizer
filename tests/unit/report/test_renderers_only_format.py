@@ -88,6 +88,7 @@ INPUT_KEYS = frozenset(
         "table_mappings",
         "post_schema_reroutes",
         "ranking",
+        "trade_offs",
     }
 )
 # The architecture rows ``architecture._architecture_engines`` builds from facts.
@@ -634,3 +635,18 @@ def test_the_guard_flags_every_counting_shape(tmp_path: Path) -> None:
         line_of("n_ranked = len(ranking)"),
     }
     assert flagged == expected, sorted(flagged ^ expected)
+
+
+def test_a_helper_handed_the_facts_block_is_guarded(tmp_path: Path) -> None:
+    """``_trade_offs_md(report, facts)`` gets the facts block as a parameter:
+    reading its owned fields passes, counting one is flagged (round 3 of #735)."""
+    from src.report import engineering_report
+
+    source = Path(engineering_report.__file__).read_text()
+    assert _violations(Path(engineering_report.__file__)) == []
+    needle = '    out = [f"## Migration trade-offs ({facts.get(\'trade_off_count\', 0)})", ""]\n'
+    assert needle in source
+    sample = tmp_path / "engineering_report.py"
+    sample.write_text(source.replace(needle, needle + '    n_engines = len(facts["engines"])\n', 1))
+    found = _violations(sample)
+    assert len(found) == 1 and "len(facts['engines'])" in found[0], found

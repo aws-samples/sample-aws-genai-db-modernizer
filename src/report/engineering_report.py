@@ -280,6 +280,64 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
     return out
 
 
+def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
+    """Engineering Report "Migration trade-offs" section.
+
+    #546: a reality-check line a later assignment edit reversed (the facts
+    layer's ``reality_check_trade_offs[].reversed``: its engine is back in the
+    architecture) is not listed as a current trade-off -- it would still say
+    the engine "leaves the architecture" and what removing it saves. It is
+    named once under "Reversed by a later assignment edit" instead, so the
+    audit trail stays without claiming the removal.
+    """
+    all_trade_offs = report.get("trade_offs") or []
+    reversed_at = {
+        t["index"]: t for t in facts.get("reality_check_trade_offs") or [] if t.get("reversed")
+    }
+    current = [
+        t for i, t in enumerate(all_trade_offs) if isinstance(t, dict) and i not in reversed_at
+    ]
+    if not current and not reversed_at:
+        return []
+    out = [f"## Migration trade-offs ({facts.get('trade_off_count', 0)})", ""]
+    if current:
+        by_engine: dict[str, list] = {}
+        for t in current:
+            by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
+        for eng, items in by_engine.items():
+            # #572: eng is a raw engine id (or "(general)"/"reality-check", neither a
+            # known engine -- display_engine's title-case fallback would read oddly
+            # for the hyphenated "reality-check", so both are left unchanged).
+            heading = eng if eng in ("(general)", "reality-check") else display_engine(eng)
+            out += [f"### {escaping.md_text(heading)}", ""]
+            for t in items:
+                desc = str(t.get("description", "")).strip()
+                impact = str(t.get("impact", "")).strip()
+                line = f"- **{escaping.md_text(desc)}**"
+                if impact and impact != desc:  # reality-check items repeat their title
+                    line += f" \u2014 {escaping.md_text(impact)}"
+                out.append(line)
+                aff = list(t.get("source_tables") or [])
+                if aff:
+                    shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
+                    more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
+                    out.append(f"  - Affects: {shown}{more}")
+            out.append("")
+    if reversed_at:
+        out += ["### Reversed by a later assignment edit", ""]
+        for t in reversed_at.values():
+            src = display_engine(str(t.get("from_engine") or ""))
+            dst = t.get("to_engine")
+            moved = f" to {display_engine(str(dst))}" if dst else ""
+            out.append(
+                f"- The reality check moved {escaping.md_text(src)}'s queries{escaping.md_text(moved)}; "
+                f"an assignment edit moved queries back, so {escaping.md_text(src)} stays in "
+                "the architecture and this consolidation no longer applies."
+            )
+        out.append("")
+    return out
+
+
 def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
     """Build-team-facing document: migration map, per-engine target schemas,
     query groups. Markdown with mermaid fences, which render in the tooling
@@ -609,31 +667,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 out.append(f"  - Resolved because {escaping.md_text(r['reason'])}.")
         out.append("")
 
-    tradeoffs = [t for t in (report.get("trade_offs") or []) if isinstance(t, dict)]
-    if tradeoffs:
-        by_engine: dict[str, list] = {}
-        for t in tradeoffs:
-            by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
-        out += [f"## Migration trade-offs ({len(tradeoffs)})", ""]
-        for eng, items in by_engine.items():
-            # #572: eng is a raw engine id (or "(general)"/"reality-check", neither a
-            # known engine -- display_engine's title-case fallback would read oddly
-            # for the hyphenated "reality-check", so both are left unchanged).
-            heading = eng if eng in ("(general)", "reality-check") else display_engine(eng)
-            out += [f"### {escaping.md_text(heading)}", ""]
-            for t in items:
-                desc = str(t.get("description", "")).strip()
-                impact = str(t.get("impact", "")).strip()
-                line = f"- **{escaping.md_text(desc)}**"
-                if impact and impact != desc:  # reality-check items repeat their title
-                    line += f" \u2014 {escaping.md_text(impact)}"
-                out.append(line)
-                aff = list(t.get("source_tables") or [])
-                if aff:
-                    shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
-                    more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
-                    out.append(f"  - Affects: {shown}{more}")
-            out.append("")
+    out += _trade_offs_md(report, facts)
 
     out += [
         "---",

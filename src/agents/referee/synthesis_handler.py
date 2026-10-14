@@ -666,7 +666,14 @@ def _write_synthesis_report(
         for v in schema.get("views") or []
         if isinstance(v, dict) and v.get("view_id")
     }
-    output_data["facts"] = compute_report_facts(output_data, view_ids=view_ids)
+    # #584: the signals that overrode queries onto each engine, as data.
+    signal_overrides: dict[str, set[str]] = {}
+    for qa in (data.assignment or {}).get("query_assignments", []):
+        if qa.get("signal_override") and qa.get("assigned_engine"):
+            signal_overrides.setdefault(qa["assigned_engine"], set()).add(qa["signal_override"])
+    output_data["facts"] = compute_report_facts(
+        output_data, view_ids=view_ids, signal_overrides=signal_overrides
+    )
 
     output = SynthesisOutputContract.model_validate(output_data)
     job_id = result["job_id"]

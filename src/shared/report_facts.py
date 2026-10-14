@@ -31,11 +31,13 @@ an old report gets one answer per figure.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
+from src.shared.signal_labels import SIGNAL_NOUNS
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -547,6 +549,187 @@ def risk_facts(report: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Labels and reasons (#584, #546)
+# ---------------------------------------------------------------------------
+
+# Reason and trade-off text names engines by display name ("Aurora MySQL") or,
+# in reports written before #572, by raw id ("aurora_mysql"); both map back to
+# the id. Text is read here, once, for the reality check's own consolidation
+# lines and for an older report's override reasons -- never by a renderer.
+ENGINE_BY_NAME = {
+    **{v: k for k, v in ENGINE_DISPLAY_NAMES.items()},
+    **{k: k for k in ENGINE_DISPLAY_NAMES},
+}
+_ENGINE_NAME_ALT = "|".join(re.escape(n) for n in sorted(ENGINE_BY_NAME, key=len, reverse=True))
+# A "Consolidated N queries from <engine> -> <absorber>: ... no in-scope
+# <engine> query remains ..." trade-off line (reality_check_patterns.
+# _build_recommendations / reality_check_records.reconcile_consolidations): the
+# "no in-scope ... remains" clause is reconcile_consolidations' own marker for a
+# full elimination.
+FULLY_ELIMINATED_RE = re.compile(rf"no in-scope ({_ENGINE_NAME_ALT}) query remains")
+CONSOLIDATED_FROM_TO_RE = re.compile(
+    rf"^Consolidated \d+ quer(?:y|ies) from ({_ENGINE_NAME_ALT}) → ({_ENGINE_NAME_ALT})"
+)
+_SIGNAL_BY_NAME = {**{v: k for k, v in SIGNAL_NOUNS.items()}}
+# "signal override: <signal> → <engine>", the signal and the engine either raw
+# ids (before #584) or readable names.
+_SIGNAL_OVERRIDE_RE = re.compile(
+    rf"signal override:\s*([^→|]+?)\s*(?:→|->)\s*({_ENGINE_NAME_ALT})(?![\w])"
+)
+
+
+def engine_id_from_name(name: str) -> str:
+    """``Aurora MySQL`` or ``aurora_mysql`` -> ``aurora_mysql``."""
+    return ENGINE_BY_NAME.get(name, name)
+
+
+def _signal_id(name: str) -> str:
+    name = name.strip()
+    return _SIGNAL_BY_NAME.get(name, name.replace(" ", "_"))
+
+
+def signal_overrides_from_reasons(report: dict[str, Any]) -> dict[str, list[str]]:
+    """engine -> the triage signals that overrode queries onto it, read from the
+    ranking's reason summaries: only for a report written before
+    ``facts.engines[].signal_overrides`` existed. Synthesis passes the
+    assignment's own ``signal_override`` fields instead (#584)."""
+    out: dict[str, set[str]] = {}
+    for r in report.get("ranking") or []:
+        if not isinstance(r, dict):
+            continue
+        reasons = r.get("assignment_reason_summary") or []
+        if isinstance(reasons, str):
+            reasons = [reasons]
+        for reason in reasons:
+            for m in _SIGNAL_OVERRIDE_RE.finditer(str(reason)):
+                engine = engine_id_from_name(m.group(2))
+                out.setdefault(engine, set()).add(_signal_id(m.group(1)))
+    return {e: sorted(v) for e, v in out.items()}
+
+
+def final_engines(engines: list[dict[str, Any]]) -> set[str]:
+    """Engines in the final architecture: every engine the effective assignment
+    gives work (owners) plus the cache layer. An ``Evaluated`` engine won
+    nothing."""
+    return {e["engine"] for e in engines if e["role"] != EVALUATED}
+
+
+def _trade_off_engines(desc: str) -> tuple[str | None, str | None, bool]:
+    """(from engine, to engine, fully eliminated) a reality-check line names."""
+    m = CONSOLIDATED_FROM_TO_RE.match(desc)
+    elim = FULLY_ELIMINATED_RE.search(desc)
+    src = engine_id_from_name(m.group(1)) if m else None
+    dst = engine_id_from_name(m.group(2)) if m else None
+    if elim and not src:
+        src = engine_id_from_name(elim.group(1))
+    return src, dst, bool(elim)
+
+
+def reality_check_trade_off_facts(report: dict[str, Any], final: set[str]) -> list[dict[str, Any]]:
+    """Every reality-check trade-off, with the engines it names and whether a
+    later assignment edit reversed it (#546).
+
+    The reality check writes its consolidation lines once, against the
+    assignment it settled. A customer edit can then move queries back onto
+    an engine it removed; the line still says that engine "leaves the
+    architecture" and what removing it saves. ``reversed`` is true for a
+    consolidation line whose source engine is back in the final architecture:
+    no deliverable states it as a current decision.
+    """
+    out: list[dict[str, Any]] = []
+    for i, t in enumerate(report.get("trade_offs") or []):
+        if not isinstance(t, dict):
+            continue
+        desc = str(t.get("description") or "")
+        src, dst, _ = _trade_off_engines(desc)
+        # A report written before trade-offs carried an engine still has the
+        # reality check's consolidation lines: recognised by their own shape.
+        if t.get("engine") != "reality-check" and not (t.get("engine") is None and src):
+            continue
+        out.append(
+            {
+                "index": i,
+                "from_engine": src,
+                "to_engine": dst,
+                "reversed": bool(src and src in final),
+            }
+        )
+    return out
+
+
+def removed_engine_facts(
+    report: dict[str, Any], final: set[str], trade_offs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Engines the reality check removed, each with where its queries went and why.
+
+    #547: an engine counts as removed when it owned queries before the reality
+    check (``before_distribution``), a full consolidation moved it out, or the
+    TCO lists its cost as already removed -- and it is not in the final
+    architecture. #546: the final architecture is the effective assignment's
+    (the ranking), not the reality check's own ``after_distribution``, so an
+    engine a customer edit moved queries back onto is never listed. A trade-off
+    line carrying the "no in-scope X query remains" marker also counts, for
+    reports written before the distributions were recorded. A partial
+    consolidation leaves its engine in the architecture, so it is never listed.
+    """
+    rc = report.get("reality_check") or {}
+    after = rc.get("after_distribution") or {}
+    cache = (report.get("cache_overlay") or {}).get("engine")
+    rc_lines = [
+        (str((report.get("trade_offs") or [])[t["index"]].get("description") or ""), t)
+        for t in trade_offs
+    ]
+    candidates: list[str] = []
+    marked: set[str] = set()
+    for desc, _t in rc_lines:
+        src, _, elim = _trade_off_engines(desc)
+        if src:
+            candidates.append(src)
+        if elim and src:
+            marked.add(src)
+    consolidations = [c for c in rc.get("consolidations") or [] if isinstance(c, dict)]
+    candidates += [
+        str(c.get("from_engine") or "") for c in consolidations if c.get("action") == "full"
+    ]
+    candidates += sorted(e for e, n in (rc.get("before_distribution") or {}).items() if n)
+    eliminated = [
+        str(row.get("database") or "")
+        for row in (report.get("tco_analysis") or {}).get("eliminated_engine_costs") or []
+        if isinstance(row, dict)
+    ]
+    candidates += eliminated
+    marked |= set(eliminated)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for e in candidates:
+        if not e or e in seen or e == cache or e in final or after.get(e):
+            continue
+        if not after and e not in marked:
+            # No distributions recorded (an older report): only the marker or
+            # an eliminated cost says an engine left; a bare line does not.
+            continue
+        seen.add(e)
+        reasons: list[str] = []
+        moved_to: list[str] = []
+        for desc, t in rc_lines:
+            if t["from_engine"] != e:
+                continue
+            if desc not in reasons:
+                reasons.append(desc)
+            if t["to_engine"] and t["to_engine"] not in moved_to:
+                moved_to.append(t["to_engine"])
+        for c in consolidations:
+            if c.get("from_engine") == e:
+                to = str(c.get("to_engine") or "")
+                if to and to not in moved_to:
+                    moved_to.append(to)
+                if not reasons and c.get("reason"):
+                    reasons.append(str(c["reason"]))
+        out.append({"engine": e, "moved_to": moved_to, "reasons": reasons})
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The whole facts block
 # ---------------------------------------------------------------------------
 
@@ -582,6 +765,7 @@ def compute_report_facts(
     report: dict[str, Any],
     waves: list[dict[str, Any]] | None = None,
     view_ids: Iterable[str] | None = None,
+    signal_overrides: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -589,12 +773,25 @@ def compute_report_facts(
     resolved (legacy-fallback) waves for a report written before that field.
     ``view_ids``, the collected view ids, lets wave 1 state its tables and
     views separately (#578); without it (an older report) the view count is
-    what wave 1 carries beyond ``source_table_count``.
+    what wave 1 carries beyond ``source_table_count``. ``signal_overrides``
+    (engine -> the triage signals the assignment's ``signal_override`` fields
+    name) is what synthesis passes; an older report reads them from the
+    ranking's reason text instead (#584).
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
     views = set(view_ids) if view_ids is not None else None
     engines = engine_facts(report, waves)
+    overrides = (
+        {e: sorted(set(v)) for e, v in signal_overrides.items()}
+        if signal_overrides is not None
+        else signal_overrides_from_reasons(report)
+    )
+    for e in engines:
+        e["signal_overrides"] = list(overrides.get(e["engine"], []))
+    final = final_engines(engines)
+    rc_trade_offs = reality_check_trade_off_facts(report, final)
+    n_trade_offs = sum(1 for t in report.get("trade_offs") or [] if isinstance(t, dict))
     wave_rows = [wave_facts(w, views) for w in waves]
     tables_analyzed = report.get("source_table_count")
     if not isinstance(tables_analyzed, int) or isinstance(tables_analyzed, bool):
@@ -640,6 +837,9 @@ def compute_report_facts(
         "table_basis": table_basis(report, engines, waves),
         "waves": wave_rows,
         "no_migration": no_migration,
+        "removed_engines": removed_engine_facts(report, final, rc_trade_offs),
+        "reality_check_trade_offs": rc_trade_offs,
+        "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
         **risks,
         "tied_query_count": len(tied),
         # #629: queries the post-schema router moved after the customer approved.

@@ -229,6 +229,16 @@ Version History:
   migration-wave count. Renderers read these fields and only format them. Backward
   compatible -- ``None`` for a report synthesized before this field existed;
   ``src.report.facts.report_facts`` computes the same block for one.
+- 1.16 (2026-10-14, #615 step 2, #584, #546): ``facts`` adds labels and
+  reasons: each engine's ``signal_overrides`` (the triage signals that
+  overrode queries onto it, from the assignment's ``signal_override`` fields,
+  so the deck no longer parses reason text, #584); ``removed_engines`` (each
+  engine the reality check removed that is not in the final architecture,
+  with where its queries went and why -- an engine a customer edit moved
+  queries back onto is never listed, #546); ``reality_check_trade_offs`` (each
+  reality-check trade-off's engines and whether a later assignment edit
+  ``reversed`` it, #546); ``trade_off_count`` (the trade-offs that still
+  apply). Backward compatible: every new field defaults to empty.
 """
 
 from datetime import datetime
@@ -651,6 +661,10 @@ class EngineFacts(BaseModel):
     )
     monthly_cost_usd: float | None = Field(None, ge=0)
     rationale: str = Field("", description="Why the engine is in the target (#152)")
+    signal_overrides: list[str] = Field(
+        default_factory=list,
+        description="Triage signals that overrode queries onto this engine (raw ids, #584)",
+    )
 
 
 class WaveFacts(BaseModel):
@@ -720,6 +734,29 @@ class NoMigrationFacts(BaseModel):
     critical_high_risks: int = Field(0, ge=0)
 
 
+class RemovedEngine(BaseModel):
+    """An engine the reality check removed that is not in the final architecture (#547, #546)."""
+
+    engine: str = Field(...)
+    moved_to: list[str] = Field(default_factory=list, description="Where its queries went")
+    reasons: list[str] = Field(default_factory=list, description="The reality check's own lines")
+
+
+class RealityCheckTradeOff(BaseModel):
+    """One reality-check entry of ``trade_offs`` and whether it still applies (#546)."""
+
+    index: int = Field(..., ge=0, description="Its position in the report's trade_offs")
+    from_engine: str | None = Field(None, description="The engine a consolidation moved from")
+    to_engine: str | None = Field(None, description="The engine it moved to")
+    reversed: bool = Field(
+        False,
+        description=(
+            "A later assignment edit moved queries back onto from_engine: the line no "
+            "longer describes the architecture and no deliverable states it as current"
+        ),
+    )
+
+
 class TableBasis(BaseModel):
     """The figure behind "N tables mapped to a named target" (#530, #533)."""
 
@@ -767,6 +804,11 @@ class ReportFacts(BaseModel):
     table_basis: TableBasis
     waves: list[WaveFacts] = Field(default_factory=list)
     no_migration: NoMigrationFacts = Field(default_factory=NoMigrationFacts)
+    removed_engines: list[RemovedEngine] = Field(default_factory=list)
+    reality_check_trade_offs: list[RealityCheckTradeOff] = Field(default_factory=list)
+    trade_off_count: int = Field(
+        0, ge=0, description="Trade-offs that still apply (reversed reality-check lines excluded)"
+    )
     open_risk_count: int = Field(0, ge=0)
     open_risks_by_severity: dict[str, int] = Field(default_factory=dict)
     critical_high_risk_count: int = Field(0, ge=0)
@@ -797,7 +839,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.15",
+        default="1.16",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
