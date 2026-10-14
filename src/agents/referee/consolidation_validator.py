@@ -697,7 +697,7 @@ def sanity_sweep(
             and so never appears in its own trace; that group sits on
             Aurora and never reaches this sweep either way.
         routing_trace: an optional, live
-            :class:`~src.agents.referee.assignment_resolver.RoutingTrace`
+            :class:`~src.agents.referee.routing_trace.RoutingTrace`
             to record an unresolved tie onto, when a caller has one; the
             production handler does not build one for this phase, so this
             is ``None`` there and recording is simply skipped.

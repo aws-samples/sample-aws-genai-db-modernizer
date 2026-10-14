@@ -155,7 +155,7 @@ def settled_counts(query_assignments: Iterable[Any]) -> dict[str, int]:
     "settled" at all).
 
     Each entry in ``query_assignments`` may be a ``QueryAssignment`` or a
-    plain dict (the same dual shape ``assignment_resolver.retained_engine_for``
+    plain dict (the same dual shape ``table_assignments.retained_engine_for``
     already accepts), so this works on raw collector-shaped assignments and
     on validated contracts alike.
     """

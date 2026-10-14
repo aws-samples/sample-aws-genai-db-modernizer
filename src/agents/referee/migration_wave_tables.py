@@ -56,7 +56,7 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
     never the non-owner engine itself.
 
     Follow-up considered after #317 fixed this at the source
-    (``assignment_resolver.derive_table_assignments`` now never picks a
+    (``table_assignments.derive_table_assignments`` now never picks a
     read-model or cache engine as ``primary_engine``): reducing this function
     to just ``return str(table.get("primary_engine") or retained_engine or
     "unresolved")`` would be simpler, but ``table_assignments`` here is a
@@ -83,7 +83,7 @@ def _served_tables(engine: str, table_assignments: list[dict[str, Any]]) -> list
 
     This is every owner wave's table scope (#562): ``table_assignments``'
     own ``engines`` list already names every engine with an assigned query
-    referencing the table (``assignment_resolver.derive_table_assignments``),
+    referencing the table (``table_assignments.derive_table_assignments``),
     so this is query-scoped, not a re-derivation from ``primary_engine``
     alone. A table-level plurality winner (``primary_engine``) is a summary
     label (ADR-031 Decision 1), not the set of tables the engine's own

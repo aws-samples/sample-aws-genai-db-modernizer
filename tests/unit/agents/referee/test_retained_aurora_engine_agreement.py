@@ -9,7 +9,7 @@ resolver's own ``aurora_engine_choice`` is missing and ``query_assignments``
 genuinely has both Aurora engines in use (a legacy assignment written before
 that choice existed, or a later customer override), that is a real,
 unresolved tie: both callers must now go through the same shared helper,
-``assignment_resolver.retained_engine_for``, so they cannot name different
+``table_assignments.retained_engine_for``, so they cannot name different
 engines for the same assignment the way two independent alphabetical sorts
 could.
 """

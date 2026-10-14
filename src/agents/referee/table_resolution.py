@@ -16,7 +16,7 @@ Matching by exact string equality against ``table_id`` drops every real
 table under any of those conditions. :class:`TableNameResolver` is the single
 place that resolves a parsed name to the canonical ``table_id``/``view_id``
 the collector actually assigned, so assignment resolution
-(``assignment_resolver.derive_table_assignments``, #316), the migration-waves
+(``table_assignments.derive_table_assignments``, #316), the migration-waves
 filter and synthesis's own ``known_tables`` check (both #225) agree on what a
 "known table" is.
 """

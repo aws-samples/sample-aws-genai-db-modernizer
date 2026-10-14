@@ -1032,7 +1032,7 @@ class TestPseudoAndUnknownTables:
 def _derive_table_assignments(
     query_assignments: list[dict], retained_engine: str | None = None
 ) -> list[dict]:
-    """A tiny, test-only stand-in for ``assignment_resolver.derive_table_assignments``:
+    """A tiny, test-only stand-in for ``table_assignments.derive_table_assignments``:
     builds a self-consistent ``table_assignments`` straight from
     ``query_assignments`` (``engines`` is every engine with an assigned query
     touching the table; ``primary_engine`` is the plurality winner, ties

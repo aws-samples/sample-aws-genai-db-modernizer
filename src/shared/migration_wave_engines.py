@@ -42,7 +42,7 @@ NAMED_ENGINES: frozenset[str] = (
 # (``CACHE_ENGINES``) and a search/read-model engine indexes data synced from a
 # real owner (``SEARCH_ENGINES``, #303). A table's ``primary_engine`` must
 # always be a system-of-record owner. Single source of truth for the resolver
-# (``assignment_resolver.derive_table_assignments``) and the wave builder's own
+# (``table_assignments.derive_table_assignments``) and the wave builder's own
 # ``migration_wave_tables._durable_owner``.
 NON_OWNER_ENGINES: frozenset[str] = CACHE_ENGINES | SEARCH_ENGINES
 

@@ -93,7 +93,7 @@ keyword, a system catalog name) never reaches a wave or a deliverable.
 
 An owner wave's ``tables`` (#562) is every table its own engine *serves* --
 primary or secondary (``_served_tables``, built from
-``assignment_resolver.derive_table_assignments``'s own ``engines`` list,
+``table_assignments.derive_table_assignments``'s own ``engines`` list,
 which already names every engine with an assigned query referencing a
 table) -- never only the tables where it is the table-level ``primary_engine``
 plurality winner (``_owned_tables``). ADR-031 Decision 1: the query is the

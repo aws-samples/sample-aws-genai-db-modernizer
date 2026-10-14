@@ -1736,7 +1736,7 @@ def _source_compatible_aurora_engine(data: SynthesisData) -> str:
     mitigation: Aurora always runs the source SQL as-is, regardless of what any
     other engine's assignment or schema design says).
 
-    Delegates to ``assignment_resolver.retained_engine_for`` (#583/#586 review):
+    Delegates to ``table_assignments.retained_engine_for`` (#583/#586 review):
     the source's own dialect when it has one; else the resolver's recorded
     ``aurora_engine_choice``; else whichever Aurora engine ``query_assignments``
     shows actually in use, breaking a genuine tie through the shared ADR-031

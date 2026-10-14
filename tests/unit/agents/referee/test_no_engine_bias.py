@@ -137,7 +137,7 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     # --- Display-only ordering (ADR-031 Decision 1: table_mappings' single
     # primary_engine is a summary, never a per-query decision) ---
     (
-        "assignment_resolver.py",
+        "table_assignments.py",
         "derive_table_assignments",
         RULE_MINMAX_COUNT_OR_NAME,
     ): (
@@ -146,7 +146,7 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "engine was already decided by the resolver/tie_break before this runs."
     ),
     (
-        "assignment_resolver.py",
+        "table_assignments.py",
         "derive_table_assignments",
         RULE_LITERAL_PREFERENCE,
     ): (
@@ -229,7 +229,7 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "order cannot matter with one element."
     ),
     (
-        "assignment_resolver.py",
+        "table_assignments.py",
         "retained_engine_for",
         RULE_SORTED_INDEX0,
     ): (

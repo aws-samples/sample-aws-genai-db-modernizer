@@ -14,7 +14,7 @@ whether that is the point of the PR or a sign something moved by accident:
   resolver applies to it (base fit, the anti-pattern penalty, or the hard
   exclusion/capability/write gate that zeroed it instead) -- captured via
   ``AssignmentResolver.resolve(..., routing_trace=RoutingTrace())``, an
-  explicit, off-by-default hook (see ``assignment_resolver.RoutingTrace``)
+  explicit, off-by-default hook (see ``routing_trace.RoutingTrace``)
   that records the score ``resolve()`` actually used (``scores[qid][engine]``),
   never a recompute; ``base``/``penalty`` are kept alongside only as
   diagnostics, with any gap between them recorded as ``adj`` rather than
