@@ -61,6 +61,35 @@
       "Bash(nc *)"
     ]
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_commit_bypass.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforce_tool_use_rule.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_baseline_edit.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "env": {
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_TELEMETRY": "1",

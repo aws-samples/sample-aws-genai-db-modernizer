@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_commit_bypass.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_baseline_edit.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/remind_llm_run.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

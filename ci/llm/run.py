@@ -84,6 +84,11 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   is named the same way (``Skill: update-config``). If the tool or skill is
   on the allowlist the denial counts as a broken allowlist; otherwise it is
   recorded under ``unlisted_tool_denials`` and only warns.
+  A denial whose ``tool_result`` is one of this repo's PreToolUse hook refusals
+  (``PreToolUse:<Tool> hook error: Blocked ...``, see ``scripts/hooks/``) was
+  refused before it ran: it is ``prevented_by_hook`` (count and commands in
+  summary.json and results.json), warns, and never fails the run. A violation
+  that was not refused still fails as above.
 * the ``MODERNIZE_RESULT`` line's ``job_id``/``db`` aren't a single
   ``[A-Za-z0-9_.-]+`` path component -- fail (they become paths and argv
   downstream).
@@ -423,6 +428,42 @@ def _denial_command(denial: dict[str, Any]) -> str:
     return command if isinstance(command, str) else ""
 
 
+# Messages our PreToolUse hooks (scripts/hooks/) print on stderr when they refuse a call;
+# Claude Code shows them to the model as "PreToolUse:<Tool> hook error: <message>".
+_HOOK_BLOCK_MARKERS = ("Blocked by the tool-use rule:", "Blocked: ")
+
+
+def _tool_result_texts(records: list[dict[str, Any]]) -> dict[str, str]:
+    """``tool_use_id`` -> flattened ``tool_result`` text, for every result block that has an id."""
+    texts: dict[str, str] = {}
+    for rec in records:
+        content = (
+            rec.get("message", {}).get("content") if isinstance(rec.get("message"), dict) else None
+        )
+        if rec.get("type") != "user" or not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and isinstance(block.get("tool_use_id"), str)
+            ):
+                texts[block["tool_use_id"]] = _text_from_content(block.get("content"))
+    return texts
+
+
+def _refused_by_hook(denial: dict[str, Any], result_texts: dict[str, str]) -> bool:
+    """True when the call was refused by one of this repo's PreToolUse hooks (the model saw
+    ``PreToolUse:<Tool> hook error: Blocked ...``): refused before it ran, which is the point
+    of the hooks, so it is prevented, not a rule violation."""
+    text = result_texts.get(str(denial.get("tool_use_id")), "")
+    return (
+        "PreToolUse" in text
+        and "hook error" in text
+        and any(m in text for m in _HOOK_BLOCK_MARKERS)
+    )
+
+
 def _denial_label(tool: str, target: str) -> str:
     """``<Tool>: <target>``, or just the tool name when there is no target."""
     return f"{tool}: {target}" if target else tool
@@ -706,6 +747,7 @@ def check_transcript(
     allow_rules = _tool_rules(settings_path, "allow")
     deny_rules = _tool_rules(settings_path, "deny")
     cwd = _session_cwd(records)
+    result_texts = _tool_result_texts(records)
 
     # (label, kind) per denial. Labels read "<Tool>: <target>". Kinds:
     # "allowlist" (the denied call IS allowlisted: broken allowlist),
@@ -719,7 +761,9 @@ def check_transcript(
             tool_input = _denial_input(denial)
             target = _denial_target(tool, tool_input)
             label = _denial_label(tool, target)
-            if tool == "Bash":
+            if _refused_by_hook(denial, result_texts):
+                classified.append((label, "prevented_by_hook"))
+            elif tool == "Bash":
                 classified.append((label, _classify_denial(target, allow_prefixes)))
             elif _tool_is_allowlisted(tool, target, allow_rules, deny_rules, cwd):
                 classified.append((label, "allowlist"))
@@ -735,6 +779,19 @@ def check_transcript(
     rule_violations = [cmd for cmd, kind in classified if kind == "rule_violation"]
     other_denials = [cmd for cmd, kind in classified if kind == "other"]
     unlisted_tool_denials = [cmd for cmd, kind in classified if kind == "unlisted_tool"]
+    prevented = [cmd for cmd, kind in classified if kind == "prevented_by_hook"]
+
+    if prevented:
+        prevented_summary = {
+            "count": len(prevented),
+            "commands": [_truncate(cmd) for cmd in prevented[:20]],
+        }
+        print(
+            f"warning: {len(prevented)} call(s) refused by a PreToolUse hook before they ran "
+            f"(prevented, not a failure): {prevented_summary['commands']!r}",
+            file=sys.stderr,
+        )
+        fields = {**fields, "prevented_by_hook": prevented_summary}
 
     if other_denials:
         denials_summary = {
@@ -924,6 +981,7 @@ def build_results_row(
     denials: dict[str, Any] | None = None
     rule_violations: dict[str, Any] | None = None
     unlisted_tool_denials: dict[str, Any] | None = None
+    prevented_by_hook: dict[str, Any] | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -954,6 +1012,8 @@ def build_results_row(
         rule_violations = violations_raw if isinstance(violations_raw, dict) else None
         unlisted_raw = summary.get("unlisted_tool_denials")
         unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
+        prevented_raw = summary.get("prevented_by_hook")
+        prevented_by_hook = prevented_raw if isinstance(prevented_raw, dict) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -1020,6 +1080,7 @@ def build_results_row(
         "denials": denials,
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
+        "prevented_by_hook": prevented_by_hook,
         "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
         "pass": overall_pass,

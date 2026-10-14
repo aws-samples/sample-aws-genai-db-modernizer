@@ -314,6 +314,21 @@ uv run python ci/llm/aggregate_notes.py --json > recurring.json
 hedge or gap wording (could, soft, somewhat, repeats, ambiguous, generic, ...),
 so recurring praise does not drown them out. Run without it when in doubt.
 
+## `../scripts/hooks/` (Claude Code hooks, #731)
+
+Four small stdlib-only scripts that refuse a guardrail bypass at the tool call instead of after the fact. Each reads the hook event JSON on stdin and exits 0 (allow) or 2 (block, one-line reason on stderr shown to the model); an unreadable event allows. They run as `uv run --no-project python -I "$CLAUDE_PROJECT_DIR/scripts/hooks/<name>.py"`, so they load no repo code. Unit tests: `tests/unit/hooks/`.
+
+| Script | Event / matcher | Where | Rule |
+|---|---|---|---|
+| `block_commit_bypass.py` | PreToolUse `Bash` | `settings.json`, `settings.ci.json` | Blocks `git commit --no-verify` (and abbreviations), `-n` alone or in a cluster such as `-an` (not `-uno`), pre-commit's `SKIP=<hook-id>` (inline, via `env` or `export`), and `git -c core.hooksPath=... commit`, also when `git` is reached through `command`, `sudo`, `env`, `nice`, `nohup`, `time` or `exec`. Out of reach: a bypass hidden in `bash -c "..."` or built from variables, and the persistent `git config core.hooksPath` form; the commit-message hook and `ci/check_commits.sh` remain the backstops. |
+| `block_baseline_edit.py` | PreToolUse `Edit\|Write\|MultiEdit` | `settings.json`, `settings.ci.json` | Blocks hand edits of `tests/e2e/baselines/routing_snapshot.json`, `tests/e2e/baselines/routing_baseline.json` and `tests/contract/schema_snapshot.json`, naming the `--write` regeneration command. |
+| `remind_llm_run.py` | Stop | `settings.json` only | Prints what `ci/needs_llm_run.py` says about the files this branch changed since its merge-base with `origin/main` (committed, uncommitted and untracked) when `e2e-llm` or `bedrock-smoke` is required. Shown once per session and again only when the verdict changes. A reminder: never blocks, and is silent in headless runs (`MODERNIZER_CI_SANDBOX=1`). |
+| `enforce_tool_use_rule.py` | PreToolUse `Bash` | `settings.ci.json` only | Enforces the shared tool-use rule: a Bash call must be exactly one simple command covered by a `Bash(...)` allow rule in `settings.ci.json` (read at call time, so the allowlist stays the single source). Pipes, chains, subshells, `$(...)`, heredocs and `cat`/`jq`/`python3 -c`/`sed`/`ls`/`cd`/`grep` are refused with the rule's text. So is any redirection to or from a file: the scripts write their own artifacts and file writes go through Edit/Write, whose allow rules (`artifacts/**`) bound them, so a shell `> file` would sidestep them. Only fd duplication (`2>&1`) and `/dev/null` pass. |
+
+Headless runs load both files (`--setting-sources project` plus `--settings`), so hooks 1 and 2 are listed in each; the identical command runs once. `hook_common.split_compound_command` is a tested copy of `_split_compound_command` in `ci/llm/run.py` (that module imports third-party packages, which a hook must not); a test asserts the two agree.
+
+A call a hook refuses is shown to the model as `PreToolUse:<Tool> hook error: Blocked ...` and also lands in `permission_denials`. `check-transcript` matches that `tool_result` (by `tool_use_id`) to our hook messages and reports the call as `prevented_by_hook` (count and commands in `summary.json` and `results.json`): it warns and never fails the run, because the call was refused before it ran. A violation that was not refused keeps failing as described under Denials. Replaying 105 saved headless transcripts (2679 Bash calls) through `enforce_tool_use_rule.py` refuses 26 calls, all genuine violations (pipes into `head`/`tail`/`cut`/`grep`, `ls`, `find`, a `VAR=...;` chain, `echo`), and none of the documented pipeline commands. Changing `settings.ci.json` or the hooks needs an `e2e-llm` run.
+
 ## `../.claude/settings.ci.json`
 
 The permission allowlist for headless `claude -p "/modernize ..." --permission-mode

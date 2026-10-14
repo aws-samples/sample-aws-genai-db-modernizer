@@ -1468,3 +1468,96 @@ def test_results_carry_unlisted_tool_denials(tmp_path: Path) -> None:
         git_sha="abc",
     )
     assert row["unlisted_tool_denials"] == {"count": 1, "commands": ["Skill: x"]}
+
+
+# --- calls refused by our PreToolUse hooks (#731) ---------------------------
+
+_HOOK_REFUSAL = (
+    "PreToolUse:Bash hook error: [uv run --no-project python -I "
+    '"$CLAUDE_PROJECT_DIR/scripts/hooks/enforce_tool_use_rule.py"]: '
+    "Blocked by the tool-use rule: Use Bash only for the documented commands."
+)
+
+
+def _hook_refused_records(command: str, reason: str = _HOOK_REFUSAL) -> list[dict]:
+    """A hook-refused call shaped like the real record: the denial in the result line's
+    ``permission_denials`` plus the ``tool_result`` the model saw, joined by ``tool_use_id``."""
+    return [
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu-1",
+                        "is_error": True,
+                        "content": reason,
+                    }
+                ]
+            },
+        },
+        _result_line(
+            "MODERNIZE_RESULT: complete job_id=hook0001 db=wordpress mode=chat",
+            permission_denials=[
+                {"tool_name": "Bash", "tool_use_id": "tu-1", "tool_input": {"command": command}}
+            ],
+        ),
+    ]
+
+
+def test_hook_refused_pipe_is_prevented_not_a_violation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    command = "uv run python scripts/run_schema_design.py --job-id j --status | head -c 300"
+    summary = run.check_transcript(_transcript(tmp_path, _hook_refused_records(command)), "chat")
+    assert summary["prevented_by_hook"] == {"count": 1, "commands": [f"Bash: {command}"]}
+    assert "rule_violations" not in summary and "denials" not in summary
+    assert "prevented, not a failure" in capsys.readouterr().err
+
+
+def test_same_denial_without_a_hook_refusal_still_fails(tmp_path: Path) -> None:
+    command = "uv run python scripts/run_schema_design.py --job-id j --status | head -c 300"
+    plain = (
+        "Permission to use Bash has been denied because Claude Code is running in don't ask mode."
+    )
+    records = _hook_refused_records(command, reason=plain)
+    with pytest.raises(run.TranscriptError, match="tool-use rule violation"):
+        run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+def test_hook_refusal_of_another_call_does_not_excuse_a_violation(tmp_path: Path) -> None:
+    command = "uv run python scripts/run_schema_design.py --job-id j --status | head -c 300"
+    records = _hook_refused_records(command)
+    records[0]["message"]["content"][0]["tool_use_id"] = "tu-other"
+    with pytest.raises(run.TranscriptError, match="tool-use rule violation"):
+        run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+def test_hook_refused_edit_is_prevented(tmp_path: Path) -> None:
+    records = _hook_refused_records("x")
+    records[0]["message"]["content"][0][
+        "content"
+    ] = "PreToolUse:Edit hook error: Blocked: routing_snapshot.json is a generated baseline"
+    records[1]["permission_denials"] = [
+        {
+            "tool_name": "Edit",
+            "tool_use_id": "tu-1",
+            "tool_input": {"file_path": "/x/routing_snapshot.json"},
+        }
+    ]
+    summary = run.check_transcript(_transcript(tmp_path, records), "chat")
+    assert summary["prevented_by_hook"]["count"] == 1
+
+
+def test_results_carry_prevented_by_hook(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, prevented_by_hook={"count": 2, "commands": ["Bash: a", "Bash: b"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["prevented_by_hook"] == {"count": 2, "commands": ["Bash: a", "Bash: b"]}
