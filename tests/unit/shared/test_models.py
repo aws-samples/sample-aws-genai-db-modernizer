@@ -744,7 +744,12 @@ def test_summaries_and_validator_use_their_roles(monkeypatch):
     with patch("boto3.client") as client:
         client.return_value.converse.return_value = {
             "output": {
-                "message": {"content": [{"reasoningContent": {}}, {"text": '{"flags": []}'}]}
+                "message": {
+                    "content": [
+                        {"reasoningContent": {}},
+                        {"text": '{"consolidation_corrections": []}'},
+                    ]
+                }
             }
         }
         assert cv._try_boto3_validator("documentdb", "dynamodb", []) == []

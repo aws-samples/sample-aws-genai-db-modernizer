@@ -156,7 +156,12 @@ none`, reality check keeps its deterministic result and skips this
 validation pass entirely (no flags possible).
 
 In `external` mode Claude Code answers through `prepare_reality_check_llm_input`
-and `apply_reality_check_llm_output` instead. In every mode, the handler then runs
+and `apply_reality_check_llm_output` instead. Both modes read one review
+instruction, `src/skills/consolidation-review.md`, and give one answer shape,
+`RealityCheckModelResponse` (`src/contracts/reality_check_model_response.py`):
+the Bedrock validator asks for it as structured output, the headless response
+file is validated against it, and `apply_reality_check_llm_output` validates it
+again for either. In every mode, the handler then runs
 `sanity_sweep` (also from `consolidation_validator.py`) as a deterministic final
 step over the consolidations.
 
@@ -205,7 +210,13 @@ from the assignment; `src/agents/referee/synthesis_grounding.py` checks that
 any LLM-written summary text is actually grounded in those deterministic
 numbers before accepting it (falling back to a deterministic summary if
 not). With `--llm-mode none`, synthesis keeps the deterministic executive
-summary.
+summary. The executive summary is one decision in both LLM modes: Bedrock
+(`generate_executive_summary`) reasons over exactly the
+`prepare_synthesis_llm_input` payload that `/synthesize` hands Claude Code,
+both read the instruction in `src/skills/executive-summary.md`, and both
+answers are an `ExecutiveSummaryResponse`
+(`src/contracts/executive_summary_response.py`) that
+`apply_synthesis_llm_output` validates and post-checks the same way.
 
 The output carries a `needs_deeper_analysis` flag (left over from the
 retired Step Functions flow — the `synthesis_handler.py` module docstring

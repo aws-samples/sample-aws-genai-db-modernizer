@@ -22,6 +22,7 @@ from src.agents.referee.synthesis_handler import (
     run_synthesis_deterministic,
 )
 from src.agents.referee.synthesis_report import build_risk_assessment
+from src.contracts.executive_summary_response import ExecutiveSummaryResponse
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -448,11 +449,12 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
 
     def test_schema_design_status_has_designed_and_not_designed(self):
         status = prepare_synthesis_llm_input(self._det())["schema_design_status"]
-        assert set(status) == {"designed", "not_designed"}
+        assert set(status) == {"case", "designed", "not_designed"}
+        assert status["case"] in {"all_designed", "some_designed", "none_designed"}
 
-    def test_exactly_ten_keys(self):
+    def test_exactly_eleven_keys(self):
         payload = prepare_synthesis_llm_input(self._det())
-        assert len(payload) == 10
+        assert len(payload) == 11
 
     def test_deterministic_summary_matches_result(self):
         det = self._det()
@@ -587,12 +589,16 @@ class TestApplySynthesisLlmOutput:
     def test_other_keys_not_modified(self):
         det = self._det()
         original_ranking = det["ranking"]
-        apply_synthesis_llm_output(det, {"executive_summary": "New summary."})
+        apply_synthesis_llm_output(
+            det, {"executive_summary": "A new executive summary for the CTO."}
+        )
         assert det["ranking"] is original_ranking
 
     def test_mutates_and_returns_same_dict(self):
         det = self._det()
-        returned = apply_synthesis_llm_output(det, {"executive_summary": "x"})
+        returned = apply_synthesis_llm_output(
+            det, {"executive_summary": "An executive summary for the CTO."}
+        )
         assert returned is det
 
     def test_unknown_llm_output_keys_are_ignored(self):
@@ -694,7 +700,7 @@ class TestRunSynthesisBackwardCompatible:
         store = _mock_store()
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value="Mocked executive summary.",
+            return_value=ExecutiveSummaryResponse(executive_summary="Mocked executive summary."),
         ) as mock_gen:
             run_synthesis("job-1", "mydb", store, llm_mode="bedrock")
         mock_gen.assert_called_once()
@@ -704,7 +710,7 @@ class TestRunSynthesisBackwardCompatible:
         store = _mock_store()
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value="Summary from bedrock.",
+            return_value=ExecutiveSummaryResponse(executive_summary="Summary from bedrock."),
         ) as mock_gen:
             run_synthesis("job-1", "mydb", store)
         mock_gen.assert_called_once()
@@ -714,7 +720,7 @@ class TestRunSynthesisBackwardCompatible:
         store = _mock_store()
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value="CTO-ready summary from LLM.",
+            return_value=ExecutiveSummaryResponse(executive_summary="CTO-ready summary from LLM."),
         ):
             run_synthesis("job-1", "mydb", store, llm_mode="bedrock")
         output_key = next(k for k in store._written if "report.json" in k)

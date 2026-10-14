@@ -414,7 +414,7 @@ class TestUntrustedQueryData:
         assert SYSTEM_PROMPT_DATA_DIRECTIVE in cv.VALIDATOR_SYSTEM_PROMPT
         with patch("boto3.client") as client:
             client.return_value.converse.return_value = {
-                "output": {"message": {"content": [{"text": '{"flags": []}'}]}}
+                "output": {"message": {"content": [{"text": '{"consolidation_corrections": []}'}]}}
             }
             assert cv._try_boto3_validator("documentdb", "dynamodb", []) == []
         kwargs = client.return_value.converse.call_args.kwargs
@@ -519,7 +519,7 @@ class TestBedrockMatchesHeadlessOnInvalidEntries:
         original, revised, query_map, consolidations = _bedrock_case(3)
         good = _flag(["q1"]).model_dump(mode="json")
         bad = {**_flag(["q2"]).model_dump(mode="json"), "target_engine": "documentdb"}
-        text = json.dumps({"flags": [good, bad]})
+        text = json.dumps({"consolidation_corrections": [good, bad]})
         rejected: list[str] = []
         with (
             patch.object(cv, "_try_strands_validator", return_value=None),
@@ -578,6 +578,17 @@ class TestOnlyMovedQueriesCanBeCorrected:
         assert [c.query_ids for c in corrections] == [["q1"]]
         assert "'other'" in caplog.text
         assert "'documentdb', which is not the engine under review" in caplog.text
+
+    def test_a_flag_on_several_queries_stays_one_flag(self):
+        """#628: the validator keeps a multi-query flag whole, as headless does
+        (it used to split it into one flag per query)."""
+        original, revised, query_map, consolidations = _bedrock_case(3)
+        with patch(
+            "src.agents.referee.consolidation_validator._call_llm_validator",
+            return_value=[_flag(["q0", "q2"])],
+        ):
+            corrections = validate_consolidations(consolidations, revised, query_map, {}, original)
+        assert [c.query_ids for c in corrections] == [["q0", "q2"]]
 
     def test_external_response_ignores_flags_no_consolidation_moved(self):
         from src.agents.referee.model_flags import apply_consolidation_flags

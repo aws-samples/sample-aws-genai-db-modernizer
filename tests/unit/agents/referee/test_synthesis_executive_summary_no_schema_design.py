@@ -38,21 +38,27 @@ class _CapturingAgent:
 
 
 def _generate(ranking: list[dict], table_mappings: list[dict] | None = None) -> None:
+    """Run the Bedrock summary on a minimal request payload for ``ranking``
+    (the payload ``prepare_synthesis_llm_input`` builds, #628)."""
     _CapturingAgent.last_prompt = ""
     _CapturingAgent.last_system_prompt = ""
+    designed, not_designed = synthesis_report.designed_and_not_designed_engines(ranking)
+    llm_input = {
+        "deterministic_summary": "fallback",
+        "ranking": ranking,
+        "table_mappings": table_mappings or [],
+        "risk_assessment": {"overall_risk_level": "LOW", "risks": []},
+        "schema_design_status": {
+            "case": synthesis_report.schema_design_case(designed, not_designed),
+            "designed": designed,
+            "not_designed": not_designed,
+        },
+    }
     with (
         patch("strands.Agent", _CapturingAgent),
         patch("src.shared.role_bedrock_model.RoleBedrockModel", lambda *a, **k: object()),
     ):
-        synthesis_report.generate_executive_summary(
-            deterministic_summary="fallback",
-            ranking=ranking,
-            query_groups=[],
-            tco={},
-            risks={"overall_risk_level": "LOW", "risks": []},
-            table_mappings=table_mappings or [],
-            trade_offs=[],
-        )
+        synthesis_report.generate_executive_summary(llm_input)
 
 
 class TestNoEngineHasASchemaDesign:

@@ -565,7 +565,7 @@ class TestRunRealityCheckHandlerBackwardCompatible:
             ),
             patch(
                 "src.agents.referee.reality_check_handler._generate_executive_summary",
-                return_value="Mocked summary.",
+                return_value="A mocked reality-check summary for the CTO.",
             ) as mock_summary,
         ):
             run_reality_check_handler("job-1", "mydb", store, llm_mode="bedrock")

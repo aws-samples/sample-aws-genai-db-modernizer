@@ -131,13 +131,16 @@ def test_stale_fact_does_not_reappear(pattern: str, current_fact: str, source: s
     assert not hits, f"Stale fact (now: {current_fact}; see {source}):\n" + "\n".join(hits)
 
 
-def test_dynamodb_transaction_limit_is_stated_the_same_in_both_modes():
-    """The headless command and the Bedrock validator state the same limit."""
+def test_dynamodb_transaction_limit_is_stated_once_for_both_modes():
+    """The Bedrock validator reads the capability text from the skill that
+    /reality-check reads, so the limit is stated once (#628)."""
     from src.agents.referee.consolidation_validator import ENGINE_CONTEXT
 
+    skill = (REPO_ROOT / "src/skills/consolidation-review.md").read_text()
     command = (REPO_ROOT / ".claude/commands/reality-check.md").read_text()
     assert "100 actions or 4 MB" in ENGINE_CONTEXT["dynamodb"]
-    assert "100 actions or 4 MB" in command
+    assert "100 actions or 4 MB" in skill
+    assert "src/skills/consolidation-review.md" in command
 
 
 def test_a_claim_split_across_string_literals_is_still_caught(tmp_path):

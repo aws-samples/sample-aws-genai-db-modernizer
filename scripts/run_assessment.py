@@ -732,14 +732,19 @@ def phase_reality_check_finalize(
     ``next_assignment_version()`` (issue #189).
     """
     from src.agents.referee.reality_check_handler import finalize_reality_check
+    from src.contracts.model_flag import ResponseContractError
 
     llm_response_path = f"{db}/{job_id}/llm_responses/reality_check.json"
     if not store.exists(llm_response_path):
         _error("reality_check", f"LLM response not found at {llm_response_path}")
 
-    finalize_reality_check(
-        store, job_id, db, store.read_json(llm_response_path), assignment_version
-    )
+    try:
+        finalize_reality_check(
+            store, job_id, db, store.read_json(llm_response_path), assignment_version
+        )
+    except ResponseContractError as exc:
+        # The response is off its contract (RealityCheckModelResponse, #628).
+        _error("reality_check", f"{llm_response_path}: {exc}")
 
     _output(
         "reality_check",

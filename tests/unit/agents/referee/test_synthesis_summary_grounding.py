@@ -27,6 +27,7 @@ from src.agents.referee.synthesis_handler import (
     prepare_synthesis_llm_input,
     run_synthesis_deterministic,
 )
+from src.contracts.executive_summary_response import ExecutiveSummaryResponse
 from src.storage.local_store import LocalArtifactStore
 from tests.unit.agents.referee.test_synthesis_effective_risks import DB, JOB, _seed
 
@@ -335,7 +336,9 @@ class TestFinalize:
         store = det["_store"]
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value="Aurora MySQL serves the shop.orders table for every order lookup.",
+            return_value=ExecutiveSummaryResponse(
+                executive_summary="Aurora MySQL serves the shop.orders table for every order lookup."
+            ),
         ):
             run_synthesis(JOB, DB, store, assignment_version=2, llm_mode="bedrock")
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
@@ -370,9 +373,12 @@ class TestFinalize:
 
 
 def test_synthesize_command_requires_matching_the_effective_list() -> None:
-    text = (REPO / ".claude" / "commands" / "synthesize.md").read_text()
-    assert "effective_architecture" in text
-    assert "deterministic summary" in text.lower()
+    """The rule lives in the shared skill, which /synthesize reads (#628)."""
+    command = (REPO / ".claude" / "commands" / "synthesize.md").read_text()
+    skill = (REPO / "src" / "skills" / "executive-summary.md").read_text()
+    assert "src/skills/executive-summary.md" in command
+    assert "effective_architecture" in skill
+    assert "deterministic summary" in skill.lower()
 
 
 def test_bedrock_prompt_carries_the_effective_architecture(det) -> None:
@@ -389,16 +395,7 @@ def test_bedrock_prompt_carries_the_effective_architecture(det) -> None:
         patch("strands.Agent", side_effect=fake_agent),
         patch("src.shared.role_bedrock_model.RoleBedrockModel"),
     ):
-        synthesis_report.generate_executive_summary(
-            det["summary"],
-            det["ranking"],
-            det["query_groups"],
-            det["tco_analysis"],
-            det["risk_assessment"],
-            det["table_mappings"],
-            det["trade_offs"],
-            effective_architecture=det["effective_architecture"],
-        )
+        synthesis_report.generate_executive_summary(prepare_synthesis_llm_input(det))
     assert '"products"' in captured["prompt"]
     assert "must match" in captured["prompt"]
 

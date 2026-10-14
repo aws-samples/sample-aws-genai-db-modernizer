@@ -46,10 +46,16 @@ from src.agents.referee.synthesis_report import (
     build_wave_checks,
     designed_and_not_designed_engines,
     generate_executive_summary,
+    schema_design_case,
     schema_table_defs,
+    source_database_label,
     source_table_count,
 )
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.contracts.executive_summary_response import (
+    ExecutiveSummaryResponse,
+    parse_executive_summary_response,
+)
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.engine_names import display_engine
 from src.storage.artifact_store import ArtifactStore
@@ -358,6 +364,9 @@ def run_synthesis_deterministic(
     return {
         "job_id": job_id,
         "database_name": database_name,
+        # The job's own source engine, as the executive summary names it (#628):
+        # data, so the shared skill never carries a hardcoded engine list.
+        "source_database": source_database_label(source_database_engine(data.collector)),
         "timestamp": datetime.now(UTC).isoformat(),
         "needs_deeper_analysis": needs_deeper,
         "ranking": ranking,
@@ -450,7 +459,7 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     Keys returned:
         effective_architecture, deterministic_summary, ranking, query_groups,
         tco_analysis, risk_assessment, table_mappings, trade_offs, migration_waves,
-        schema_design_status
+        source_database, schema_design_status
 
     ``effective_architecture`` comes first: the compact per-engine table list, top
     query groups and capabilities, plus the eliminated engines, together with the
@@ -467,7 +476,9 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     same split ``generate_executive_summary`` uses for the Bedrock path): the
     external (Claude Code) path builds its own prompt from this payload, so it
     needs the same signal, or it narrates a design for an engine that never
-    got one exactly the way the Bedrock prompt used to (#132).
+    got one exactly the way the Bedrock prompt used to (#132). Its ``case``
+    names the ``Schema Design Status`` case of ``src/skills/executive-summary.md``
+    that applies, the same one the Bedrock prompt uses (#628).
     """
     designed, not_designed = designed_and_not_designed_engines(deterministic_result["ranking"])
     return {
@@ -480,7 +491,12 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
         "table_mappings": deterministic_result["table_mappings"],
         "trade_offs": deterministic_result["trade_offs"],
         "migration_waves": deterministic_result.get("migration_waves"),
-        "schema_design_status": {"designed": designed, "not_designed": not_designed},
+        "source_database": deterministic_result.get("source_database", ""),
+        "schema_design_status": {
+            "case": schema_design_case(designed, not_designed),
+            "designed": designed,
+            "not_designed": not_designed,
+        },
     }
 
 
@@ -489,8 +505,16 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> dict:
+def apply_synthesis_llm_output(
+    deterministic_result: dict, llm_output: dict | ExecutiveSummaryResponse
+) -> dict:
     """Merge the LLM-generated executive summary into the deterministic result.
+
+    ``llm_output`` is the model's answer in either LLM mode: the headless
+    ``llm_response.json`` or the Bedrock structured output, validated against
+    :class:`~src.contracts.executive_summary_response.ExecutiveSummaryResponse`
+    here, so both modes go through the same contract and the same checks (#628).
+    A dict without ``executive_summary`` changes nothing.
 
     If ``llm_output`` contains an ``executive_summary`` it is post-checked against the
     effective assignment (``check_summary_grounding``), against this codebase's own
@@ -508,9 +532,11 @@ def apply_synthesis_llm_output(deterministic_result: dict, llm_output: dict) -> 
 
     Returns the updated result dict (mutates and returns the same dict).
     """
-    if "executive_summary" not in llm_output:
+    if isinstance(llm_output, dict) and "executive_summary" not in llm_output:
         return deterministic_result
-    llm_summary = llm_output["executive_summary"]
+    # The one response contract both modes share (#628); raises
+    # pydantic.ValidationError when the answer is off it.
+    llm_summary = parse_executive_summary_response(llm_output).executive_summary
     engine_tables = deterministic_result.get("engine_tables")
     if engine_tables is None:
         engine_tables = engine_table_scope(
@@ -737,21 +763,13 @@ def run_synthesis(
         return
 
     if llm_mode == "bedrock":
-        trade_offs = result["trade_offs"]
-        executive_summary = generate_executive_summary(
-            result["summary"],
-            result["ranking"],
-            result["query_groups"],
-            result["tco_analysis"],
-            result["risk_assessment"],
-            result["table_mappings"],
-            trade_offs,
-            effective_architecture=result["effective_architecture"],
-        )
-        # generate_executive_summary returns the deterministic text when the LLM fails;
-        # only a real LLM narrative goes through the grounding post-check.
-        if executive_summary != result["summary"]:
-            result = apply_synthesis_llm_output(result, {"executive_summary": executive_summary})
+        # Payload parity (#628): Bedrock reasons over exactly the request the
+        # external (Claude Code) path writes to llm_input.json, and its answer
+        # goes through the same contract and the same post-checks.
+        response = generate_executive_summary(prepare_synthesis_llm_input(result))
+        # None: no usable answer, so the deterministic summary stays.
+        if response is not None:
+            result = apply_synthesis_llm_output(result, response)
 
     elif llm_mode == "external":
         llm_input = prepare_synthesis_llm_input(result)

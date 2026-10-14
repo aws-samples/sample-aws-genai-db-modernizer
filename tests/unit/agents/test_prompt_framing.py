@@ -152,27 +152,32 @@ def test_synthesis_prompt_frames_injected_query_group_name(ranking: list[dict]) 
         patch("strands.Agent", _CapturingAgent),
         patch("src.shared.role_bedrock_model.RoleBedrockModel", lambda *a, **k: object()),
     ):
+        designed, not_designed = synthesis_report.designed_and_not_designed_engines(ranking)
         synthesis_report.generate_executive_summary(
-            deterministic_summary="fallback",
-            ranking=ranking,
-            query_groups=[
-                {
-                    "group_name": f"grp {INJECT}",
-                    "total_design_rps": 1.0,
-                    "access_patterns": ["AP-1"],
-                }
-            ],
-            tco={},
-            risks={"overall_risk_level": "LOW", "risks": []},
-            table_mappings=[],
-            trade_offs=[],
+            {
+                "deterministic_summary": "fallback",
+                "ranking": ranking,
+                "query_groups": [
+                    {
+                        "group_name": f"grp {INJECT}",
+                        "engines": ["dynamodb"],
+                        "tables": [],
+                        "query_count": 1,
+                    }
+                ],
+                "schema_design_status": {
+                    "case": synthesis_report.schema_design_case(designed, not_designed),
+                    "designed": designed,
+                    "not_designed": not_designed,
+                },
+            }
         )
     prompt = _CapturingAgent.last_prompt
     assert prompt, "Agent was not invoked / prompt not captured"
     assert pf.is_framed(prompt, INJECT), "injected group name not framed as data"
 
 
-def test_reality_check_prompt_frames_injected_database_name() -> None:
+def test_reality_check_prompt_frames_injected_pattern_name() -> None:
     from src.agents.referee import reality_check_handler
 
     _CapturingAgent.last_prompt = ""
@@ -181,16 +186,21 @@ def test_reality_check_prompt_frames_injected_database_name() -> None:
         patch("src.shared.role_bedrock_model.RoleBedrockModel", lambda *a, **k: object()),
     ):
         reality_check_handler._generate_executive_summary(
-            database_name=f"db {INJECT}",
-            collector_output={"database_schema": {"tables": []}, "queries": {"query_patterns": []}},
-            before_distribution={"dynamodb": 10},
-            after_distribution={"dynamodb": 10},
-            consolidations=[],
-            unique_value_assessment={},
-            architectural_patterns=[],
-            recommendations=[],
-            analysis_outputs={},
+            {
+                "collector_output": {
+                    "database_schema": {"tables": []},
+                    "queries": {"query_patterns": []},
+                },
+                "assignment": {"query_assignments": []},
+                "revised_assignments": [],
+                "before_distribution": {"dynamodb": 10},
+                "after_distribution": {"dynamodb": 10},
+                "consolidations": [],
+                "unique_value_assessment": {},
+                "architectural_patterns": [{"name": f"pattern {INJECT}"}],
+                "recommendations": [],
+            }
         )
     prompt = _CapturingAgent.last_prompt
     assert prompt, "Agent was not invoked / prompt not captured"
-    assert pf.is_framed(prompt, INJECT), "injected database name not framed as data"
+    assert pf.is_framed(prompt, INJECT), "injected pattern name not framed as data"

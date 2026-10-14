@@ -50,19 +50,20 @@ def _flag(qid: str, engine: str = "dynamodb", **extra) -> dict:
 
 
 class TestParseResponse:
-    """_parse_llm_response() validates against the ModelFlag contract (#647)."""
+    """_parse_llm_response() validates against the ModelFlag contract (#647),
+    inside the response contract both modes share (RealityCheckModelResponse, #628)."""
 
     def test_parses_no_flags(self):
-        assert _parse_llm_response('{"flags": []}') == []
+        assert _parse_llm_response('{"consolidation_corrections": []}') == []
 
     def test_parses_flagged_queries(self):
-        response = json.dumps({"flags": [_flag("q-1"), _flag("q-2")]})
+        response = json.dumps({"consolidation_corrections": [_flag("q-1"), _flag("q-2")]})
         result = _parse_llm_response(response)
         assert [f.query_ids for f in result] == [["q-1"], ["q-2"]]
         assert result[0].reason_category.value == "full_scan"
 
     def test_handles_markdown_code_fences(self):
-        response = "```json\n" + json.dumps({"flags": [_flag("q-1")]}) + "\n```"
+        response = "```json\n" + json.dumps({"consolidation_corrections": [_flag("q-1")]}) + "\n```"
         assert [f.query_ids for f in _parse_llm_response(response)] == [["q-1"]]
 
     def test_handles_invalid_json(self):
@@ -73,14 +74,20 @@ class TestParseResponse:
         response = json.dumps([{"query_id": "q-1", "reason": "bad fit"}])
         assert _parse_flagged(response) is None
 
+    def test_the_old_bedrock_only_wrapper_is_not_the_contract(self):
+        """``{"flags": [...]}`` was Bedrock's own shape; both modes now share one."""
+        assert _parse_flagged(json.dumps({"flags": [_flag("q-1")]})) is None
+
     def test_a_bad_entry_is_dropped_and_the_valid_flags_kept(self):
         """#712 review: the same per-entry handling as the headless response."""
-        response = json.dumps({"flags": [_flag("q-1"), _flag("q-2", target_engine="documentdb")]})
+        response = json.dumps(
+            {"consolidation_corrections": [_flag("q-1"), _flag("q-2", target_engine="documentdb")]}
+        )
         assert len(_parse_flagged(response) or []) == 2  # raw, not yet validated
         assert [f.query_ids for f in _parse_llm_response(response)] == [["q-1"]]
 
     def test_handles_whitespace(self):
-        assert _parse_llm_response('  \n  {"flags": []}  \n  ') == []
+        assert _parse_llm_response('  \n  {"consolidation_corrections": []}  \n  ') == []
 
 
 class TestBuildPrompt:
@@ -127,9 +134,10 @@ class TestBuildPrompt:
         assert "users" in prompt
         assert "10.0 cps" in prompt
         assert "JSON" in prompt
-        # The format asks for the flag contract, and never for a destination.
-        assert '"flagged_engine" ("dynamodb")' in prompt
-        assert "never names another engine" in prompt
+        # The format asks for the shared contract on the engine under review;
+        # the system prompt (the skill) says a flag never names a destination.
+        assert '"flagged_engine" set to "dynamodb"' in prompt
+        assert '{"consolidation_corrections": []}' in prompt
 
 
 class TestSanitySweepOrphanRemoval:

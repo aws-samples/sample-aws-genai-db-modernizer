@@ -76,14 +76,19 @@ def run_standard(
 def run_finalize(store, job_id: str, db: str, assignment_version: int | None) -> None:
     """Merge external LLM response into deterministic result and write output."""
     from src.agents.referee.reality_check_handler import finalize_reality_check
+    from src.contracts.model_flag import ResponseContractError
 
     llm_response_path = f"{db}/{job_id}/llm_responses/reality_check.json"
     if not store.exists(llm_response_path):
         _error(f"LLM response not found at {llm_response_path}")
 
-    finalize_reality_check(
-        store, job_id, db, store.read_json(llm_response_path), assignment_version
-    )
+    try:
+        finalize_reality_check(
+            store, job_id, db, store.read_json(llm_response_path), assignment_version
+        )
+    except ResponseContractError as exc:
+        # The response is off its contract (RealityCheckModelResponse, #628).
+        _error(f"{llm_response_path}: {exc}")
     output_key = f"{db}/{job_id}/reality-check/output.json"
     output = store.read_json(output_key) if store.exists(output_key) else {}
     # deterministic_fallback: the LLM summary contradicted the final records (#236).

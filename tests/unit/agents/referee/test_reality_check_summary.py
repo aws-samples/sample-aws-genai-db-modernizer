@@ -552,10 +552,12 @@ class TestHandlerShipsFinalSummary:
             ) as gen,
         ):
             run_reality_check_handler("job-1", "mydb", store, assignment_version=1)
-        context = gen.call_args.kwargs
+        (det,) = gen.call_args.args
         # The model sees the settled records: the flag kept DOC-AP-1 on DynamoDB
         # (the only kept engine), and DocumentDB stays removed (#647).
-        assert context["after_distribution"] == {"dynamodb": 3}
+        from src.agents.referee.reality_check_handler import reality_check_summary_payload
+
+        assert reality_check_summary_payload(det)["after_distribution"] == {"dynamodb": 3}
         out = _rc_output(store)
         assert [d["outcome"] for d in out["flag_decisions"]] == ["kept"]
         assert out["executive_summary"] == summary

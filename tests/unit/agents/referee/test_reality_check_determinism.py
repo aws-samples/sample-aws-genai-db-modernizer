@@ -5,12 +5,13 @@ Python's per-process string hash seed (PYTHONHASHSEED).
 with ``list(set(eliminated_engines))``. Since ``set`` iteration order for
 strings depends on PYTHONHASHSEED, two runs over identical input could produce
 ``engines_eliminated`` in a different order, which propagates into reports and
-other downstream artifacts (see issue #186). The fix uses
-``sorted(set(eliminated_engines))`` instead.
+other downstream artifacts (see issue #186). Since #628 the prompt carries the
+external request's ``executive_summary`` block instead (one payload for both
+LLM modes), serialized with sorted keys.
 
 This test runs the function twice, in separate subprocesses with different
 PYTHONHASHSEED values, over a fixed input that eliminates three engines, and
-asserts the two runs produce byte-identical output.
+asserts the two runs build byte-identical prompts.
 """
 
 from __future__ import annotations
@@ -63,19 +64,19 @@ _CHILD_SCRIPT = textwrap.dedent("""
 
     from src.agents.referee import reality_check_handler as rch
 
-    # --- Spy on json.dumps to capture the `context` dict ----------------------
+    # --- Capture the prompt the agent is called with ---------------------------
     captured = {}
-    _real_dumps = rch.json.dumps
 
-    def _spy_dumps(obj, *a, **k):
-        if isinstance(obj, dict) and "engines_eliminated" in obj:
-            captured["context"] = obj
-        return _real_dumps(obj, *a, **k)
+    class _CapturingAgent(_FakeAgent):
+        def __call__(self, prompt):
+            captured["prompt"] = prompt
+            raise RuntimeError("no network access in test")
 
-    rch.json.dumps = _spy_dumps
+    fake_strands.Agent = _CapturingAgent
+    rch.build_bedrock_model = lambda *a, **k: object()
 
-    # --- Fixed input: three engines eliminated, one duplicated to exercise ---
-    # --- the dedupe path, plus a partial consolidation that must NOT count ---
+    # --- Fixed input: three engines eliminated, one duplicated, plus a --------
+    # --- partial consolidation that must NOT count -----------------------------
     consolidations = [
         {"from_engine": "redis", "to_engine": "dynamodb", "query_count": 4,
          "saved_cost_estimate": 10, "action": "full", "reason": "", "queries_retained": []},
@@ -88,27 +89,29 @@ _CHILD_SCRIPT = textwrap.dedent("""
         {"from_engine": "elasticache", "to_engine": "dynamodb", "query_count": 1,
          "saved_cost_estimate": 1, "action": "partial", "reason": "", "queries_retained": ["q1"]},
     ]
+    det = {
+        "collector_output": {"database_schema": {"tables": []}, "queries": {"query_patterns": []}},
+        "triage": {"signals": []},
+        "assignment": {"query_assignments": []},
+        "revised_assignments": [],
+        "before_distribution": {"dynamodb": 1, "redis": 2, "opensearch": 1, "documentdb": 1, "elasticache": 1},
+        "after_distribution": {"dynamodb": 6, "elasticache": 1},
+        "consolidations": consolidations,
+        "unique_value_assessment": {},
+        "architectural_patterns": [],
+        "recommendations": [],
+    }
 
-    result = rch._generate_executive_summary(
-        database_name="testdb",
-        collector_output={"database_schema": {"tables": []}, "queries": {"query_patterns": []}},
-        before_distribution={"dynamodb": 1, "redis": 2, "opensearch": 1, "documentdb": 1, "elasticache": 1},
-        after_distribution={"dynamodb": 6, "elasticache": 1},
-        consolidations=consolidations,
-        unique_value_assessment={},
-        architectural_patterns=[],
-        recommendations=[],
-        analysis_outputs={},
-    )
+    result = rch._generate_executive_summary(det)
 
     # The fake Agent always raises, so the function must have swallowed the
     # exception and returned None -- the interesting part is what got captured.
     assert result is None, result
-    print(json.dumps(captured["context"]["engines_eliminated"]))
+    print(json.dumps(captured["prompt"]))
     """)
 
 
-def _run_child(hashseed: str) -> list[str]:
+def _run_child(hashseed: str) -> str:
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = hashseed
     proc = subprocess.run(  # nosec B603 -- fixed interpreter plus a fixed, module-level -c script
@@ -124,23 +127,22 @@ def _run_child(hashseed: str) -> list[str]:
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
     last_line = proc.stdout.strip().splitlines()[-1]
-    result: list[str] = json.loads(last_line)
+    result: str = json.loads(last_line)
     return result
 
 
 class TestEliminatedEnginesOrderIsHashSeedIndependent:
-    """engines_eliminated must come back in the same order regardless of
+    """The summary prompt must come back byte-identical regardless of
     PYTHONHASHSEED (issue #186)."""
 
     def test_three_eliminated_engines_order_matches_across_hash_seeds(self):
-        result_seed_1 = _run_child("1")
-        result_seed_2 = _run_child("2")
+        prompt_seed_1 = _run_child("1")
+        prompt_seed_2 = _run_child("2")
 
-        assert result_seed_1 == result_seed_2
-        # Also pin the exact expected (sorted, deduped) order so a future
-        # regression to list(set(...)) is caught even if, by coincidence, both
-        # seeds happened to agree with each other but not with the sorted order.
-        assert result_seed_1 == ["documentdb", "opensearch", "redis"]
+        assert prompt_seed_1 == prompt_seed_2
+        # The block lists the consolidations as the records give them.
+        positions = [prompt_seed_1.index(f'"from_engine":"{e}"') for e in ("redis", "opensearch")]
+        assert positions == sorted(positions)
 
 
 # ---------------------------------------------------------------------------

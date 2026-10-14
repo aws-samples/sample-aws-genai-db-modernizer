@@ -19,13 +19,14 @@ import re
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, PATTERN_LABELS, overlay_summary
 from src.agents.referee.routed_confidence import routed_fits
 from src.agents.referee.synthesis_grounding import (
-    SUMMARY_GROUNDING_RULE,
     display_name,
     engine_mentions,
     ground_risks,
@@ -35,12 +36,18 @@ from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
+from src.contracts.executive_summary_response import (
+    ExecutiveSummaryResponse,
+    parse_executive_summary_response,
+)
+from src.contracts.model_flag import validation_error_note
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
-from src.shared.engine_names import display_source_database
+from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_source_database
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
 from src.shared.signal_labels import signal_noun
+from src.shared.skill_sections import skill_sections, skill_subsections
 from src.shared.unsupported_pattern import (
     is_dedup_only_group_by,
     unsupported_pattern_ids,
@@ -2490,6 +2497,32 @@ def designed_and_not_designed_engines(ranking: list[dict]) -> tuple[list[str], l
     return designed, not_designed
 
 
+def source_database_label(engine: str) -> str:
+    """The source engine as the executive summary names it (e.g. "MySQL").
+
+    An unknown or missing engine reads as "relational database" rather than
+    guessing one.
+    """
+    if not engine:
+        return "relational database"
+    return SOURCE_ENGINE_DISPLAY_NAMES.get(engine, engine)
+
+
+def schema_design_case(designed: list[str], not_designed: list[str]) -> str:
+    """Which ``Schema Design Status`` case of ``src/skills/executive-summary.md``
+    applies (#628): ``all_designed``, ``some_designed`` or ``none_designed``.
+
+    Both lists empty is ``none_designed`` (#370 recheck: an empty
+    ``not_designed`` is NOT by itself proof everything is designed). Both
+    summary modes take the case from here, so neither has to infer it.
+    """
+    if designed and not not_designed:
+        return "all_designed"
+    if designed:
+        return "some_designed"
+    return "none_designed"
+
+
 def build_architecture_recommendation(
     data: SynthesisData,
     ranking: list[dict],
@@ -3208,319 +3241,145 @@ def build_summary(
     return " ".join(parts)
 
 
+EXECUTIVE_SUMMARY_SKILL = "executive-summary.md"
+
+# The sections of the shared skill the Bedrock prompt is built from, in order.
+# ``/synthesize`` tells Claude Code to read the same file (#628).
+_SUMMARY_PROMPT_SECTIONS = (
+    "Task",
+    "Guardrails",
+    "Grounding",
+    "Structure",
+    "AWS Managed Integrations",
+    "Style",
+    "Response",
+)
+
+
 def _executive_summary_prompt_fragments(
     designed: list[str], not_designed: list[str]
 ) -> dict[str, str]:
-    """Prompt text for :func:`generate_executive_summary`, keyed by whether
-    every, some, or no in-scope engine has a schema design (#132 review,
-    370-1/370-3).
+    """The ``Schema Design Status`` case of ``src/skills/executive-summary.md``
+    that applies, with the engine names filled in (#132 review, 370-1/370-3,
+    #628).
 
-    All designed (``designed`` non-empty, ``not_designed`` empty): the
-    original, fully assertive text. Some designed, some not: the premise,
-    capability-gaps bullet and table/index-count instruction name only the
-    designed engines, and separately tell the model schema design has not
-    run for the rest -- never that it has. None designed (including the
-    degenerate case where both lists are empty, #370 recheck: an empty
-    ``not_designed`` is NOT by itself proof everything is designed): the
-    routing-only premise, with no table/index count or "built" framing at
-    all. ``tone_line`` and ``authority_claim`` (370-3) are conditional on the
-    same flag, so they never sit next to "schema design has not run" while
-    still claiming "here is what we built".
+    Returns ``premise``, ``rules`` and ``authority``. All designed: the fully
+    assertive text. Some designed: only the designed engines are narrated as
+    designed, and the rest are named as not designed yet. None designed
+    (including both lists empty): the routing-only text, with no table/index
+    count or "built" framing at all. The case text lives in the skill, so
+    ``/synthesize`` reads exactly the same words.
     """
-    if designed and not not_designed:
-        return {
-            "premise": (
-                "You just completed a full database modernization assessment. You "
-                "designed the target schemas, mapped every access pattern, and "
-                "validated everything. "
-            ),
-            "capability_gaps_bullet": (
-                "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
-                "recursive queries) are SOLVED by the schema design you produced. You "
-                "already designed the access patterns that replace them. Present the "
-                "solution, not the gap.\n"
-            ),
-            "sentence_1_2_detail": (
-                "- Which engines, how many target tables/indexes were designed, and "
-                "what role each engine plays in the workload.\n"
-            ),
-            "tone_line": (
-                "- Your tone is: 'We analyzed this, here is what we built, here is "
-                "how it works.' Not: 'There are concerns, risks, and unknowns.'\n\n"
-            ),
-            "authority_claim": (
-                "you have already done the work: analyzed every query, designed "
-                "every target schema, and mapped every access pattern. "
-            ),
-        }
-
-    not_designed_names = ", ".join(display_name(e) for e in not_designed)
-    not_designed_it = "it" if len(not_designed) == 1 else "them"
-
-    if designed:
-        designed_names = ", ".join(display_name(e) for e in designed)
-        premise = (
-            "You just completed a database modernization assessment. You designed "
-            f"the target schema for {designed_names} and mapped the access patterns "
-            f"it serves. Schema design has not run yet for {not_designed_names}: "
-            f"there is no target schema for {not_designed_it} to report. Say that "
-            f"plainly for {not_designed_it}; never describe a schema for "
-            f"{not_designed_it} that does not exist. "
-        )
-        capability_gaps_bullet = (
-            "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
-            f"recursive queries) are SOLVED by the schema design for {designed_names}. "
-            f"For {not_designed_names}, say schema design has not run and is what "
-            "will address them; never say it already has.\n"
-        )
-        sentence_1_2_detail = (
-            f"- Which engines the workload is routed to. Name a designed target "
-            f"table/index count only for {designed_names}. For {not_designed_names}, "
-            "say schema design is the next step: do not state a target table or "
-            "index count for it, and do not imply one exists.\n"
-        )
-        authority_claim = (
-            "you have already done the work: analyzed every query and routed it to "
-            f"the engine that fits it, and designed the target schema for "
-            f"{designed_names}. Schema design has not run yet for "
-            f"{not_designed_names}, and you say so plainly rather than describing a "
-            "designed schema for it that does not exist. "
-        )
-    else:
-        premise = (
-            "You just completed the routing phase of a database modernization "
-            "assessment: every query was analyzed and routed to the engine that "
-            "fits it. Schema design has not run yet, so there is no target schema, "
-            "table count, or access pattern to report. Say that plainly; never "
-            "describe design work that has not happened. "
-        )
-        capability_gaps_bullet = (
-            "- Capability gaps between source and target (e.g., JOINs, GROUP BY, "
-            "recursive queries) are resolved by the schema design still to come. "
-            "Say that schema design, which has not run yet, is what addresses "
-            "them; never say it already has.\n"
-        )
-        sentence_1_2_detail = (
-            "- Which engines the workload was routed to and what role each will "
-            "play. Schema design is the next step, since none has run: do not "
-            "state a target table or index count, and do not imply one exists.\n"
-        )
-        authority_claim = (
-            "you have already done the work: analyzed every query and routed it "
-            "to the engine that fits it. Schema design has not run yet, and you "
-            "say so plainly rather than describing designed schemas that do not "
-            "exist. "
-        )
-
+    case = schema_design_case(designed, not_designed)
+    fields = {
+        "designed": ", ".join(display_name(e) for e in designed),
+        "not_designed": ", ".join(display_name(e) for e in not_designed),
+        "it": "it" if len(not_designed) == 1 else "them",
+    }
+    parts = skill_subsections(EXECUTIVE_SUMMARY_SKILL, "Schema Design Status", case)
     return {
-        "premise": premise,
-        "capability_gaps_bullet": capability_gaps_bullet,
-        "sentence_1_2_detail": sentence_1_2_detail,
-        "tone_line": (
-            "- Your tone is: 'We analyzed this, here is how the workload is "
-            "routed, here is what happens next.' Not: 'There are concerns, risks, "
-            "and unknowns.'\n\n"
-        ),
-        "authority_claim": authority_claim,
+        "premise": parts["Premise"].format(**fields),
+        "rules": parts["Rules"].format(**fields),
+        "authority": parts["Authority"].format(**fields),
     }
 
 
-def generate_executive_summary(
-    deterministic_summary: str,
-    ranking: list[dict],
-    query_groups: list[dict],
-    tco: dict,
-    risks: dict,
-    table_mappings: list[dict],
-    trade_offs: list[dict | str],
-    effective_architecture: dict | None = None,
-) -> str:
-    """Generate a natural-language executive summary using an LLM.
+def executive_summary_system_prompt(designed: list[str], not_designed: list[str]) -> str:
+    """The Bedrock system prompt: the skill's Role plus the case's Authority."""
+    fragments = _executive_summary_prompt_fragments(designed, not_designed)
+    role = skill_sections(EXECUTIVE_SUMMARY_SKILL)["Role"]
+    return role + "\n\n" + fragments["authority"] + "\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
 
-    ``effective_architecture`` (per-engine tables, top query groups, eliminated engines)
-    is passed to the model as the authority for every engine and table claim; the
-    caller still post-checks the result (``check_summary_grounding``).
 
-    Falls back to the deterministic summary if the LLM call fails.
+def executive_summary_prompt(designed: list[str], not_designed: list[str], context: dict) -> str:
+    """The Bedrock user prompt: the shared skill's sections, then the request.
+
+    ``context`` is the ``prepare_synthesis_llm_input`` payload, the request
+    ``/synthesize`` hands Claude Code (#628). It carries customer-derived
+    strings (table and query-group names, risk/trade-off descriptions), so it
+    is framed as untrusted data (R1).
+    """
+    fragments = _executive_summary_prompt_fragments(designed, not_designed)
+    sections = skill_sections(EXECUTIVE_SUMMARY_SKILL)
+    body = "\n\n".join(
+        f"{heading.upper()}:\n{sections[heading]}" for heading in _SUMMARY_PROMPT_SECTIONS
+    )
+    return (
+        fragments["premise"]
+        + "\n\n"
+        + body
+        + "\n\nSCHEMA DESIGN STATUS:\n"
+        + fragments["rules"]
+        + "\n\n"
+        # Compact JSON: the payload grows with the workload (#628 review).
+        + frame_untrusted(
+            json.dumps(context, separators=(",", ":"), sort_keys=True),
+            label="assessment context",
+        )
+        + "\n\nWrite the briefing now."
+    )
+
+
+def generate_executive_summary(llm_input: dict) -> ExecutiveSummaryResponse | None:
+    """Generate the executive summary on Bedrock from the headless request payload.
+
+    ``llm_input`` is :func:`~src.agents.referee.synthesis_handler.prepare_synthesis_llm_input`'s
+    payload, the same request ``/synthesize`` hands Claude Code (payload parity,
+    #628): the model sees the same data in both modes, and the instruction comes
+    from the same skill (``src/skills/executive-summary.md``), with the
+    ``Schema Design Status`` case the payload's ``schema_design_status.case``
+    names. The answer is asked for as structured output against
+    :class:`~src.contracts.executive_summary_response.ExecutiveSummaryResponse`,
+    the contract the headless response is validated against too; a plain-text
+    answer is read as the summary text.
+
+    Returns the validated response, or ``None`` when no usable answer came back
+    (Strands missing, a call error, or an answer off the contract): the caller
+    keeps the deterministic summary. The caller post-checks the summary
+    (``apply_synthesis_llm_output``) exactly as it does a headless one.
     """
     try:
         from strands import Agent
     except ImportError:
         logger.warning("Strands not available — using deterministic summary")
-        return deterministic_summary
+        return None
 
-    # Which in-scope engines have a schema design and which don't (#116, #132,
-    # 370-1/370-2). An engine with a design is narrated as designed; one
-    # without must never be, even when some other engine in the same run was
-    # designed (the partial case the #132 review found still uncaught).
-    designed_engines, not_designed_engines = designed_and_not_designed_engines(ranking)
-    fragments = _executive_summary_prompt_fragments(designed_engines, not_designed_engines)
-
-    # Build focused context — only what a CTO needs to see
-    engine_workload = []
-    for r in ranking:
-        entry = {"engine": r["target"], "confidence": round(engine_confidence(r))}
-        if r.get("assigned_queries"):
-            entry["queries"] = r["assigned_queries"]
-            entry["workload_pct"] = r.get("workload_percent", 0)
-        if is_cache_layer(r):
-            entry["role"] = "cache layer (owns no queries)"
-            entry["cached_queries"] = r.get("cache_overlay_queries", 0)
-            entry["cached_call_share_pct"] = r.get("cache_call_share_percent", 0)
-        if r.get("schema_design_available"):
-            entry["target_tables"] = r.get("target_tables", 0)
-            # #157 landed real Aurora access patterns, derived 1:1 from the
-            # queries it owns, so "access_patterns: 53" next to "queries: 53"
-            # is now consistent for every engine with a design -- this key is
-            # no longer withheld from Aurora specifically.
-            entry["access_patterns"] = r.get("access_patterns", 0)
-        engine_workload.append(entry)
-
-    # #478: neither label is a real "busiest" group (a
-    # utility/session statement or a query the collector could not resolve a
-    # table for), excluded before taking the top 5, same as the
-    # deterministic summary and the grounding fallback. An Aurora engine's
-    # group only lacks real access patterns (and so counts as "queries"
-    # rather than "patterns") while its own schema design has not run yet
-    # (#157); once it has, its group entries are real derived patterns like
-    # any other designed engine's.
-    named_groups = [
-        g
-        for g in query_groups
-        if g.get("group_name") not in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL)
-    ]
-    top_groups_ctx = []
-    for g in named_groups[:5]:
-        group_ctx: dict = {"name": g["group_name"], "rps": round(g["total_design_rps"], 1)}
-        aurora_without_design = (set(g.get("engines") or []) & AURORA_ENGINES) - set(
-            designed_engines
-        )
-        if aurora_without_design:
-            group_ctx["queries"] = len(g["access_patterns"])
-        else:
-            group_ctx["patterns"] = len(g["access_patterns"])
-        top_groups_ctx.append(group_ctx)
-
-    high_risks = [
-        {"severity": r["severity"], "desc": r["description"][:120]}
-        for r in risks.get("risks", [])
-        if r["severity"] in ("HIGH", "CRITICAL")
-    ][:5]
-
-    context = {
-        "effective_architecture": effective_architecture or {},
-        "engines": engine_workload,
-        "table_mappings": len(table_mappings),
-        "top_query_groups": top_groups_ctx,
-        "risk_level": risks.get("overall_risk_level", "LOW"),
-        "high_risks": high_risks,
-        "key_trade_offs": [
-            (
-                {"description": t["description"], "impact": t["impact"]}
-                if isinstance(t, dict) and "description" in t
-                else str(t)
-            )
-            for t in trade_offs[:5]
-        ],
-    }
-
-    premise = fragments["premise"]
-    capability_gaps_bullet = fragments["capability_gaps_bullet"]
-    sentence_1_2_detail = fragments["sentence_1_2_detail"]
-    tone_line = fragments["tone_line"]
-
-    prompt = (
-        premise + "Now you are writing the final executive summary the CTO reads before "
-        "deciding to proceed.\n\n"
-        "Write 3-4 SHORT sentences. You are a trusted advisor having a conversation "
-        "with the CTO, not writing a report. Be warm but authoritative, like a "
-        "senior architect who has done this many times and genuinely wants the "
-        "team to succeed.\n\n"
-        "CRITICAL GUARDRAILS (violating any of these is a failure):\n"
-        "- You are ALWAYS presenting a migration path forward. Never recommend "
-        "stopping, going back, collecting more data, or deferring the decision.\n"
-        "- NEVER express lack of confidence, doubt, or uncertainty about the "
-        "migration. You completed the analysis, you have the answer.\n"
-        "- NEVER mention confidence scores, percentages, or statistical metrics. "
-        "The CTO does not need to see internal scoring.\n"
-        "- Complexity is EXPECTED in modernization. Do not frame complexity as a "
-        "blocker or a reason to pause. Frame it as 'here is the path and here is "
-        "what we handle along the way.'\n"
-        "- If multiple databases are needed, present that as a STRENGTH of the "
-        "architecture (purpose-built databases for each workload pattern), not as "
-        "a complication.\n"
-        + capability_gaps_bullet
-        + tone_line
-        + "GROUNDING (a summary that breaks this is rejected):\n"
-        f"- {SUMMARY_GROUNDING_RULE}\n\n"
-        "SENTENCE 1-2: The architecture.\n"
-        + sentence_1_2_detail
-        + "- If multiple engines are involved, explain how data flows between them "
-        "using the specific AWS managed service (see AWS INTEGRATIONS below). "
-        "This is what makes it a real architecture, not just a list of databases.\n\n"
-        "SENTENCE 3-4: What changes for them.\n"
-        "The source database is relational (MySQL, MariaDB, PostgreSQL, SQL Server or Oracle). The CTO's team "
-        "is used to strong consistency, JOINs, GROUP BY, and ad-hoc queries. "
-        "If the target architecture changes any of that, explain what is different "
-        "and what it means IN PRACTICE. For example:\n"
-        "- If search data flows through a pipeline, say that search results may "
-        "be a few seconds behind writes and explain this is normal for this pattern.\n"
-        "- If JOINs were replaced by denormalized tables, explain that adding a "
-        "new query dimension later means a schema change, not just a new SQL query.\n"
-        "- If eventual consistency applies, explain what that feels like to a user.\n"
-        "Frame these as 'here is what is different and why it is worth it', not as "
-        "'risks'. You are helping them understand the new world, not scaring them.\n"
-        "If the risk level is LOW and trade-offs are minor, keep it brief or skip.\n\n"
-        "AWS MANAGED INTEGRATIONS (use instead of generic pattern names):\n"
-        "- DynamoDB to OpenSearch: via OpenSearch Ingestion (fully managed, near "
-        "real-time replication via DynamoDB Streams)\n"
-        "- DocumentDB to OpenSearch: zero-ETL for full-text search over document collections\n"
-        "- DynamoDB to Redshift: analytics on transactional data without production impact\n"
-        "- Aurora MySQL/PostgreSQL to Redshift: near real-time analytics on relational data\n"
-        "Only mention one if it directly applies.\n\n"
-        "STRICT STYLE RULES:\n"
-        "- NEVER use em dashes (the long dash). Use commas, periods, or parentheses instead.\n"
-        "- NEVER use the word 'straightforward', 'robust', 'leverage', 'comprehensive', "
-        "'seamless', 'cutting-edge', 'holistic', 'synergy', 'paradigm', 'elevate', "
-        "'landscape', 'realm', 'foster', 'delve', 'moreover', 'furthermore', 'notably'\n"
-        "- Do NOT mention cost, pricing, savings, or dollar amounts. Cost is shown separately.\n"
-        "- No buzzwords or marketing language\n"
-        "- No markdown, bullet points, or headers\n"
-        "- Write like a human talking to another human, not a language model writing a document\n"
-        "- Keep it under 4 sentences total\n\n"
-        # R1: the context carries customer-derived strings (query-group names,
-        # risk/trade-off descriptions). Frame it as untrusted data, not instructions.
-        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
-        + "\n\nWrite the briefing now."
-    )
+    status = llm_input.get("schema_design_status") or {}
+    designed = list(status.get("designed") or [])
+    not_designed = list(status.get("not_designed") or [])
+    prompt = executive_summary_prompt(designed, not_designed, llm_input)
+    system_prompt = executive_summary_system_prompt(designed, not_designed)
 
     try:
         model = build_bedrock_model(Role.SUMMARY)
         agent = Agent(
             model=model,
-            system_prompt=(
-                "You are a senior database architect who just completed a thorough "
-                "modernization assessment. You speak with absolute authority because "
-                f"{fragments['authority_claim']}"
-                "You are presenting "
-                "the result, not deliberating. You NEVER express doubt, recommend "
-                "going back for more data, or suggest the team is not ready. "
-                "Complexity is your job and you have handled it. Short, direct, "
-                "confident, solution-oriented. No filler, no hedging.\n\n"
-                + SYSTEM_PROMPT_DATA_DIRECTIVE
-            ),
+            system_prompt=system_prompt,
             tools=[],
+            structured_output_model=ExecutiveSummaryResponse,
             callback_handler=None,
         )
 
         print("[synthesis] Generating executive summary with LLM...")
         result = agent(prompt)
-        narrative = str(result).strip()
+        structured = getattr(result, "structured_output", None)
+        raw: object = (
+            structured
+            if isinstance(structured, ExecutiveSummaryResponse)
+            else {"executive_summary": str(result).strip()}
+        )
+        response = parse_executive_summary_response(raw)
+        print(
+            "[synthesis] Executive summary generated " f"({len(response.executive_summary)} chars)"
+        )
+        return response
 
-        if len(narrative) > 20:
-            print(f"[synthesis] Executive summary generated ({len(narrative)} chars)")
-            return narrative
-
+    except ValidationError as exc:
+        logger.error(
+            "LLM executive summary is off the contract (%s) — using deterministic",
+            validation_error_note(exc),
+        )
+        print("[synthesis] ERROR: LLM summary did not match the response contract")
     except Exception as exc:
         model_id = resolve_model_id(Role.SUMMARY)
         # The underlying error from an LLM call can carry prompt/response
@@ -3541,4 +3400,4 @@ def generate_executive_summary(
             "[synthesis] Set SUMMARY_MODEL_ID env var to override. Falling back to deterministic summary."
         )
 
-    return deterministic_summary
+    return None

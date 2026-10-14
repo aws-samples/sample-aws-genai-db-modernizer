@@ -9,7 +9,9 @@ to the best remaining engine (``src.agents.referee.model_flags``).
 
 Both LLM modes validate against this one model: the headless
 ``llm_responses/reality_check.json`` ``consolidation_corrections`` entries and
-the Bedrock consolidation validator's structured output (``ModelFlagBatch``).
+the Bedrock consolidation validator's structured output, both inside one
+response contract
+(:class:`~src.contracts.reality_check_model_response.RealityCheckModelResponse`).
 ``extra="forbid"`` rejects any additional key, so a response that tries to name
 a target (``target_engine``, ``to_engine``, ``original_engine``) fails
 validation instead of being read.
@@ -20,6 +22,9 @@ both modes.
 
 Version History:
 - 1.0 (2026-10-14, #647, #667): Initial version.
+- 1.0 (2026-10-14, #628): unchanged; the Bedrock-only ``ModelFlagBatch``
+  wrapper is replaced by ``RealityCheckModelResponse``, the response contract
+  both modes share.
 """
 
 from __future__ import annotations
@@ -117,19 +122,26 @@ RoutingFlagEntry = Annotated[
 ]
 
 
-class ModelFlagBatch(BaseModel):
-    """The Bedrock validator's structured output.
+class ResponseContractError(ValueError):
+    """A model's whole response is off its contract (raised by finalize, #628)."""
 
-    Each entry advertises the :class:`ModelFlag` schema to the model, but is
-    received as a plain object and validated on its own by
-    :func:`parse_model_flags`, so one invalid entry is dropped and counted
-    instead of failing the whole batch (the same handling the headless
-    response gets).
+
+def validation_error_note(exc: ValidationError, default_loc: str = "response") -> str:
+    """``"<location>: <error type>"`` for the first error, never the input text.
+
+    Model output is untrusted and stays out of logs above DEBUG (#143), so a
+    rejection is described by where it failed and how, not by what it said.
+    For an unknown key (``extra_forbidden``) the location's last part is the
+    model's own key name, so it is replaced with ``<unknown key>``; the other
+    parts are list indexes and the contract's own field names.
     """
-
-    flags: list[RoutingFlagEntry] = Field(
-        default_factory=list, description="Flags; empty when every query is fine"
-    )
+    first = exc.errors()[0]
+    kind = str(first.get("type", "invalid"))
+    parts = [str(p) for p in first.get("loc", ())]
+    if kind == "extra_forbidden" and parts:
+        parts[-1] = "<unknown key>"
+    where = ".".join(parts) or default_loc
+    return f"{where}: {kind}"
 
 
 def parse_model_flags(raw: Iterable[object]) -> tuple[list[ModelFlag], list[str]]:
@@ -149,9 +161,7 @@ def parse_model_flags(raw: Iterable[object]) -> tuple[list[ModelFlag], list[str]
         try:
             flags.append(ModelFlag.model_validate(entry))
         except ValidationError as exc:
-            first = exc.errors()[0]
-            where = ".".join(str(p) for p in first.get("loc", ())) or "entry"
-            rejected.append(f"flag {index}: {where}: {first.get('type', 'invalid')}")
+            rejected.append(f"flag {index}: {validation_error_note(exc, 'entry')}")
     for note in rejected:
         logger.warning("Rejected a model flag that does not match the contract (%s)", note)
     return flags, rejected

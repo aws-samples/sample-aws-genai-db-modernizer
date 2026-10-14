@@ -9670,6 +9670,27 @@
     "schema_hash": "0e2b68a5e49e0951cec7fb172f9761bfe5cf10b9788672f97cfd54d266faf557",
     "version": "1.1"
   },
+  "executive_summary_response.ExecutiveSummaryResponse": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "const",
+          "value": "1.0"
+        }
+      },
+      "executive_summary": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 21,
+          "type": "string"
+        }
+      }
+    },
+    "schema_hash": "2df46f91ea0d5015bbb231a1141dadc55cebc5a898157816c1786a3432a0973d",
+    "version": "1.0"
+  },
   "opensearch_model_output.OpenSearchModelOutputContract": {
     "fields": {
       "access_patterns": {
@@ -10454,6 +10475,93 @@
       }
     },
     "schema_hash": "2f460c43abe4a65aee7128a45dbe6457ff256f068cc5c8a46d760af88946af18",
+    "version": "1.0"
+  },
+  "reality_check_model_response.RealityCheckModelResponse": {
+    "fields": {
+      "consolidation_corrections": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "explanation": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "maxLength": 300,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "flagged_engine": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "aurora_mysql",
+                    "aurora_postgresql",
+                    "documentdb",
+                    "dynamodb",
+                    "elasticache",
+                    "opensearch"
+                  ]
+                }
+              },
+              "query_ids": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array",
+                  "minItems": 1
+                }
+              },
+              "reason_category": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "client_side_join",
+                    "full_scan",
+                    "missing_feature",
+                    "other"
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "const",
+          "value": "1.0"
+        }
+      },
+      "executive_summary": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "minLength": 21,
+              "type": "string"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "schema_hash": "f0834a52f5d59f096e2a4efb9bd172c87ddaccc3ae8e6a461457907cb27dd672",
     "version": "1.0"
   },
   "reality_check_output.RealityCheckOutputContract": {

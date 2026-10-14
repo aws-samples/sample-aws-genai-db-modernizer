@@ -11,11 +11,14 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import normalize_cache_owners
 from src.agents.referee.consolidation_validator import (
+    CONSOLIDATION_REVIEW_SKILL,
     sanity_sweep,
     validate_consolidations,
 )
@@ -37,10 +40,16 @@ from src.agents.referee.reality_check_request import (
 from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import AssignmentSource
+from src.contracts.model_flag import ResponseContractError, validation_error_note
+from src.contracts.reality_check_model_response import (
+    RealityCheckModelResponse,
+    parse_reality_check_response,
+)
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.shared.engine_elimination import eliminated_engines as settled_eliminated_engines
 from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
+from src.shared.skill_sections import skill_sections
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
     next_assignment_version,
@@ -227,31 +236,40 @@ def absorption_candidates(
 # ---------------------------------------------------------------------------
 
 
-def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict) -> dict:
-    """Merge LLM output into the deterministic result dict.
+def apply_reality_check_llm_output(
+    deterministic_result: dict, llm_output: dict | RealityCheckModelResponse
+) -> dict:
+    """Merge a model's answer into the deterministic result dict.
 
-    Handles two optional LLM contributions:
+    ``llm_output`` is validated against
+    :class:`~src.contracts.reality_check_model_response.RealityCheckModelResponse`
+    first, the one response contract both LLM modes share (#628): the headless
+    ``llm_responses/reality_check.json`` and the Bedrock path (the validator's
+    flags, then its summary) go through this same function. A response off the
+    contract raises ``pydantic.ValidationError``. Its two optional parts:
+
     - consolidation_corrections: model flags (``ModelFlag``) on queries a
       consolidation moved; the shared scorer decides where a flagged query goes
-    - executive_summary: CTO-facing narrative string
+    - executive_summary: CTO-facing narrative string (``None``: not given)
 
     Returns an updated copy of deterministic_result (mutated in place).
     """
     result = deterministic_result
+    response = parse_reality_check_response(llm_output)
 
-    if "consolidation_corrections" in llm_output:
+    if response.consolidation_corrections:
         # Model flags (ADR-031 Decision 11 as amended 2026-10-14, #647): each
         # entry must match the ModelFlag contract, in both LLM modes. A flag is
         # evidence -- the flagged engine cannot serve those queries -- and the
         # shared scorer decides where they go (src.agents.referee.model_flags).
-        flags, rejected = parse_model_flags(llm_output["consolidation_corrections"] or [])
+        flags, rejected = parse_model_flags(response.consolidation_corrections)
         if rejected:
             result["model_flags_rejected"] = result.get("model_flags_rejected", 0) + len(rejected)
         if flags:
             _apply_model_flags(result, flags)
 
-    if "executive_summary" in llm_output:
-        result["executive_summary"] = llm_output["executive_summary"]
+    if response.executive_summary is not None:
+        result["executive_summary"] = response.executive_summary
         # A new summary is checked afresh at write time (finalize_executive_summary).
         result.pop("executive_summary_source", None)
         result.pop("executive_summary_llm", None)
@@ -540,8 +558,17 @@ def finalize_reality_check(
             return _skipped(previous_run)
         assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
 
+    # The response contract both modes share (#628): an answer off it fails
+    # here, before any work, with where it failed (never the model's text).
+    try:
+        response = parse_reality_check_response(llm_response)
+    except ValidationError as exc:
+        raise ResponseContractError(
+            "the LLM response does not match RealityCheckModelResponse "
+            f"({validation_error_note(exc)})"
+        ) from exc
     det = run_reality_check_deterministic(job_id, database_name, store, assignment_version)
-    result = apply_reality_check_llm_output(det, llm_response)
+    result = apply_reality_check_llm_output(det, response)
     # Same shared step the handler runs for every llm_mode, in the same
     # order -- the model's response is applied first, then the sweep (#601).
     # Before this, finalize wrote a result bedrock/none never would for the
@@ -770,42 +797,51 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
         # The same contract and the same path as the external response (#647).
         print(f"[reality-check] LLM flagged {len(corrections)} queries — re-routing by score")
         apply_reality_check_llm_output(
-            det, {"consolidation_corrections": [f.model_dump(mode="json") for f in corrections]}
+            det,
+            RealityCheckModelResponse(
+                consolidation_corrections=[f.model_dump(mode="json") for f in corrections]
+            ),
         )
 
 
 def _run_bedrock_summary(det: dict, database_name: str) -> None:
     """Generate the Bedrock executive summary from the settled records."""
-    executive_summary = _generate_executive_summary(
-        database_name=database_name,
-        collector_output=det["collector_output"],
-        before_distribution=det["before_distribution"],
-        after_distribution=det["after_distribution"],
-        consolidations=det["consolidations"],
-        unique_value_assessment=det["unique_value_assessment"],
-        architectural_patterns=det["architectural_patterns"],
-        recommendations=det["recommendations"],
-        analysis_outputs=det["analysis_outputs"],
-    )
+    executive_summary = _generate_executive_summary(det)
     if executive_summary is not None:
-        apply_reality_check_llm_output(det, {"executive_summary": executive_summary})
+        apply_reality_check_llm_output(
+            det, RealityCheckModelResponse(executive_summary=executive_summary)
+        )
 
 
-def _generate_executive_summary(
-    database_name: str,
-    collector_output: dict,
-    before_distribution: dict[str, int],
-    after_distribution: dict[str, int],
-    consolidations: list[dict],
-    unique_value_assessment: dict,
-    architectural_patterns: list[dict],
-    recommendations: list[str],
-    analysis_outputs: dict[str, dict],
-) -> str | None:
-    """Generate a CTO-facing executive summary using an LLM.
+# The reality check's own summary has one instruction for both LLM modes: the
+# "Executive Summary" section of the consolidation-review skill, which
+# ``/reality-check`` tells Claude Code to follow (#628).
+REALITY_CHECK_SUMMARY_SECTION = "Executive Summary"
 
-    Returns None if the LLM is unavailable — the UI will fall back
-    to building a deterministic summary from the structured data.
+
+def reality_check_summary_payload(det: dict) -> dict:
+    """The ``executive_summary`` block of the external request, for ``det``.
+
+    Bedrock writes its summary after the flags, the sweep and the record
+    settlement, so no engine's fate is still open: ``absorption_candidates``
+    is empty. Headless gets the same block from the preview, with the engines
+    its flags can still change listed there (#628).
+    """
+    summary_block: dict = build_reality_check_request(det, [])["executive_summary"]
+    return summary_block
+
+
+def _generate_executive_summary(det: dict) -> str | None:
+    """Generate the CTO-facing reality-check summary on Bedrock.
+
+    The prompt is the shared skill section plus the request's
+    ``executive_summary`` block (:func:`reality_check_summary_payload`), the
+    same instruction and data shape ``/reality-check`` gives Claude Code. The
+    answer is asked for as :class:`RealityCheckModelResponse`, the contract the
+    headless response uses; a plain-text answer is read as the summary.
+
+    Returns None if the LLM is unavailable or gives no usable answer: the
+    deterministic summary is built at write time instead.
     """
     try:
         from strands import Agent
@@ -813,112 +849,18 @@ def _generate_executive_summary(
         logger.warning("Strands not available — skipping executive summary")
         return None
 
-    # Gather context
-    tables = collector_output.get("database_schema", {}).get("tables", [])
-    queries = collector_output.get("queries", {}).get("query_patterns", [])
-    total_tables = len(tables)
-    total_queries = len(queries)
-
-    # Only full consolidations count as eliminations
-    eliminated_engines = [c["from_engine"] for c in consolidations if c.get("action") != "partial"]
-    surviving_engines = list(after_distribution.keys())
-
-    # Summarize what each engine analysis found
-    engine_summaries = {}
-    for engine, analysis in analysis_outputs.items():
-        summary = {"tables_analyzed": 0, "top_signals": []}
-        if "table_scores" in analysis:
-            summary["tables_analyzed"] = len(analysis["table_scores"])
-        if "signals" in analysis:
-            summary["top_signals"] = [
-                s.get("signal_name", s.get("name", "")) for s in analysis["signals"][:3]
-            ]
-        engine_summaries[engine] = summary
-
-    # Build the context block
-    context = {
-        "database": database_name,
-        "source_tables": total_tables,
-        "query_patterns": total_queries,
-        "engines_evaluated": list(before_distribution.keys()),
-        "engines_remaining": surviving_engines,
-        "before": before_distribution,
-        "after": after_distribution,
-        "engines_eliminated": sorted(set(eliminated_engines)),
-        "consolidations": [
-            {
-                "from": c["from_engine"],
-                "to": c["to_engine"],
-                "queries_moved": c["query_count"],
-                "queries_retained": len(c.get("queries_retained", [])),
-                "action": c.get("action", "full"),
-                "reason": c.get("reason", ""),
-            }
-            for c in consolidations
-        ],
-        "engine_analysis_summary": engine_summaries,
-        "architectural_patterns": [p["name"] for p in architectural_patterns],
-    }
-
+    section = skill_sections(CONSOLIDATION_REVIEW_SKILL)[REALITY_CHECK_SUMMARY_SECTION]
     prompt = (
-        "You just finished a deep analysis of a production database workload. "
-        "You evaluated every query pattern against multiple target engines, "
-        "and now you are briefing the CTO on what you found and what you recommend.\n\n"
-        "Write 2-3 SHORT sentences. Your tone is a confident senior architect "
-        "who owns this recommendation.\n\n"
-        "CRITICAL GUARDRAILS (violating any of these is a failure):\n"
-        "- NEVER use first person ('I analyzed', 'I found', 'I recommend'). "
-        "Use second person ('Your workload...', 'The analysis shows...') or "
-        "passive voice ('311 tables were analyzed...').\n"
-        "- NEVER express doubt, uncertainty, or recommend collecting more data. "
-        "You have the answer. Present it.\n"
-        "- NEVER mention confidence scores or internal metrics.\n"
-        "- If multiple engines are needed, present that as the RIGHT architecture "
-        "(purpose-built databases matched to workload patterns), not as a complication.\n"
-        "- Complexity is expected in modernization. Frame everything as 'here is the "
-        "path forward' not 'here are the concerns.'\n"
-        "- Your job is to give the CTO confidence that the migration is well-planned "
-        "and the architecture is solid.\n\n"
-        "What to convey:\n"
-        "- What was analyzed (scope: tables, queries, engines evaluated)\n"
-        "- The decision: which engines stay, which were dropped, and the "
-        "technical WHY (e.g. 'the document queries are simple key lookups that "
-        "DynamoDB handles natively', not 'to save money')\n"
-        "- If engines were consolidated, explain what makes the remaining engines "
-        "sufficient. Show you understand the workload.\n"
-        "- IMPORTANT: If a consolidation has action='partial', the engine was NOT "
-        "eliminated. Some queries moved but others stayed. Do NOT say the engine was "
-        "dropped or eliminated. Instead explain that it was reduced in scope.\n"
-        "- If no engines were eliminated, say why each one earns its place\n\n"
-        "AWS MANAGED INTEGRATIONS (use these instead of generic pattern names):\n"
-        "When the architecture involves data flowing between two engines, recommend "
-        "the specific AWS managed integration instead of naming abstract patterns. "
-        "For example, instead of saying 'CQRS pattern between DynamoDB and OpenSearch', "
-        "say 'DynamoDB zero-ETL integration with OpenSearch keeps search indexes "
-        "in sync automatically'. Here are the available zero-ETL integrations:\n"
-        "- DynamoDB to OpenSearch: via OpenSearch Ingestion (fully managed, near real-time replication via DynamoDB Streams)\n"
-        "- DocumentDB to OpenSearch: zero-ETL for full-text search over document collections\n"
-        "- DynamoDB to Redshift: for analytics on transactional data without impacting production\n"
-        "- Aurora MySQL/PostgreSQL to Redshift: near real-time analytics on relational data\n"
-        "- Aurora MySQL to SageMaker Lakehouse: near real-time ML workloads\n"
-        "- CloudWatch Logs to OpenSearch: direct log querying and visualization\n"
-        "- S3 to OpenSearch: query operational logs in data lakes\n"
-        "Only mention a zero-ETL integration if it directly applies to the engines "
-        "in the recommendation. Do not list integrations that are irrelevant.\n\n"
-        "STRICT STYLE RULES:\n"
-        "- NEVER use em dashes (the long dash). Use commas, periods, or parentheses instead.\n"
-        "- NEVER use the word 'straightforward', 'robust', 'leverage', 'comprehensive', "
-        "'seamless', 'cutting-edge', 'holistic', 'synergy', 'paradigm', 'elevate', "
-        "'landscape', 'realm', 'foster', 'delve', 'moreover', 'furthermore', 'notably'\n"
-        "- Do not lead with or focus on cost savings\n"
-        "- No buzzwords or marketing language\n"
-        "- No markdown, bullet points, or headers\n"
-        "- Write like a human engineer, not a language model\n"
-        "- Keep it under 3 sentences total\n\n"
-        # R1: the context carries customer-derived strings (database name,
-        # consolidation reasons). Frame it as untrusted data, not instructions.
-        + frame_untrusted(json.dumps(context, indent=2), label="assessment context")
-        + "\n\nWrite the briefing now."
+        "EXECUTIVE SUMMARY:\n"
+        + section
+        + "\n\n"
+        # The block carries customer-derived strings (consolidation reasons,
+        # pattern names): framed as untrusted data, not instructions (R1).
+        + frame_untrusted(
+            json.dumps(reality_check_summary_payload(det), separators=(",", ":"), sort_keys=True),
+            label="assessment context",
+        )
+        + "\n\nWrite the summary now."
     )
 
     try:
@@ -926,27 +868,29 @@ def _generate_executive_summary(
         agent = Agent(
             model=model,
             system_prompt=(
-                "You are a senior database architect presenting the results of a "
-                "completed modernization assessment. You speak with absolute authority "
-                "because you have already done the work. You NEVER use first person "
-                "('I analyzed', 'I found'). You address the reader's workload directly "
-                "('Your workload presents...', 'The analysis identified...'). You NEVER "
-                "express doubt or recommend going back for more data. Complexity is your "
-                "job and you have handled it. Short, direct, confident, solution-oriented. "
-                "No filler, no hedging.\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
+                "You are a senior database architect presenting the result of a completed "
+                "modernization assessment to a CTO.\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
             ),
             tools=[],
+            structured_output_model=RealityCheckModelResponse,
             callback_handler=None,
         )
 
         print("[reality-check] Generating executive summary with LLM...")
         result = agent(prompt)
-        narrative = str(result).strip()
-
+        structured = getattr(result, "structured_output", None)
+        raw: object = (
+            structured
+            if isinstance(structured, RealityCheckModelResponse)
+            else {"executive_summary": str(result).strip()}
+        )
+        narrative = (parse_reality_check_response(raw).executive_summary or "").strip()
         if len(narrative) > 20:
             print(f"[reality-check] Executive summary generated ({len(narrative)} chars)")
             return narrative
 
+    except ValidationError as exc:
+        logger.error("LLM executive summary is off the contract (%s)", validation_error_note(exc))
     except Exception as exc:
         model_id = resolve_model_id(Role.SUMMARY)
         # The underlying error from an LLM call can carry prompt/response

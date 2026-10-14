@@ -110,11 +110,15 @@ def run_standard(store, job_id: str, db: str, assignment_version: int, llm_mode:
 
 def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
     """Merge external LLM response into deterministic result and write synthesis report."""
+    from pydantic import ValidationError
+
     from src.agents.referee.synthesis_handler import (
         _write_synthesis_report,
         apply_synthesis_llm_output,
         run_synthesis_deterministic,
     )
+    from src.contracts.executive_summary_response import parse_executive_summary_response
+    from src.contracts.model_flag import validation_error_note
     from src.contracts.synthesis_output import SynthesisOutputContract  # noqa: F401
 
     result = run_synthesis_deterministic(job_id, db, store, assignment_version)
@@ -124,7 +128,15 @@ def run_finalize(store, job_id: str, db: str, assignment_version: int) -> None:
     if not store.exists(llm_response_path):
         _error(f"LLM response not found at {llm_response_path}")
 
-    llm_response = store.read_json(llm_response_path)
+    # The response contract both modes share (#628): an answer off it is an
+    # error naming where it failed, never the model's text.
+    try:
+        llm_response = parse_executive_summary_response(store.read_json(llm_response_path))
+    except ValidationError as exc:
+        _error(
+            f"{llm_response_path} does not match ExecutiveSummaryResponse "
+            f"({validation_error_note(exc)})"
+        )
     # Post-checks the summary against the effective assignment; on a mis-attributed
     # table the report keeps the deterministic summary (#205).
     result = apply_synthesis_llm_output(result, llm_response)
