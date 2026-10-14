@@ -51,6 +51,16 @@ E2E_LLM: tuple[str, ...] = (
     "src/agents/referee/consolidation_validator.py",  # corrections and sanity sweep
     "src/tools/schema/aurora_common/design_view.py",
     "src/tools/schema/aurora_common/delta_merge.py",
+    # Feed the designer input: analysis.json (and decision-trace.json) is read whole into
+    # llm_input, so the tools and pattern catalogs that build it change what the model is told.
+    "src/tools/analysis/*_analysis_tools.py",
+    "src/tools/analysis/*_pattern_catalog.py",
+    "src/tools/analysis/pattern_catalog_base.py",
+    "src/tools/analysis/scoring.py",
+    # Decide which queries and numbers the designer sees (prepare_schema_design_input).
+    "src/tools/schema/design_metrics.py",
+    "src/agents/referee/table_resolution.py",
+    "src/storage/assignment_versioning.py",
     "src/contracts/*_model_output.py",
     "src/contracts/aurora_design_delta.py",
     "scripts/run_analysis.py",

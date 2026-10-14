@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import functools
 import os
 import re
@@ -45,6 +46,15 @@ def _runs(*paths: str) -> dict[str, list[str]]:
         "src/agents/schema_design/group_input.py",
         "src/agents/referee/reality_check_request.py",
         "src/tools/schema/aurora_common/design_view.py",
+        "src/tools/analysis/documentdb_analysis_tools.py",
+        "src/tools/analysis/documentdb_pattern_catalog.py",
+        "src/tools/analysis/redis_analysis_tools.py",
+        "src/tools/analysis/aurora_common_pattern_catalog.py",
+        "src/tools/analysis/pattern_catalog_base.py",
+        "src/tools/analysis/scoring.py",
+        "src/tools/schema/design_metrics.py",
+        "src/agents/referee/table_resolution.py",
+        "src/storage/assignment_versioning.py",
     ],
 )
 def test_headless_paths_need_e2e_llm_only(path: str) -> None:
@@ -88,6 +98,7 @@ def test_shared_file_needs_both(p: str) -> None:
     "path",
     [
         "src/agents/referee/tie_break.py",
+        "src/agents/referee/cache_overlay.py",
         "src/agents/referee/query_scoring.py",
         "src/report/html.py",
         "tests/unit/test_reality_check.py",
@@ -327,6 +338,105 @@ def test_llm_input_builders_are_in_e2e_llm() -> None:
     assert len(hits) >= 8, f"HEADLESS_SITE found only {len(hits)} files; fix the regex"
     missing = [p for p in hits if not _in(p, E2E_LLM)]
     assert not missing, f"add to E2E_LLM in ci/needs_llm_run.py: {missing}"
+
+
+# Modules whose output goes into the designer input (llm_input) but that do not call a
+# model themselves, found from the imports of the builders below. Each one not listed in
+# MODEL_FACING needs a reason here; a new import that is neither listed nor reviewed fails.
+DESIGNER_INPUT_ROOTS = (
+    "src/agents/schema_design/handler.py",  # prepare_schema_design_input
+    "src/agents/analysis/*_analysis_agent.py",  # analysis.json is read whole into llm_input
+)
+REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
+    "src/storage/artifact_store.py": "file storage only",
+    "src/agents/referee/cache_overlay.py": (
+        "the designer-input builder imports one constant and one small helper; the rest of the "
+        "module is assignment/routing logic, so gating the whole file would pull routing-only "
+        "PRs into e2e-llm"
+    ),
+    "src/agents/interaction.py": "reads and writes question/answer files; no input content",
+    "src/tools/analysis/llm_advisor_base.py": "Bedrock-only advisor, in BEDROCK_SMOKE",
+}
+
+
+def _src_imports(path: str) -> set[str]:
+    """Repo paths of the ``src`` modules a file imports (any nesting level).
+
+    ``from src.pkg import name`` resolves to ``src/pkg/name.py`` when that is a module,
+    else to ``src/pkg.py``, else to ``src/pkg/__init__.py`` (a name re-exported by the
+    package, so a feeder hidden behind an ``__init__`` still shows up as the package).
+    Relative and dynamic imports are not followed; none of the scanned roots uses them."""
+    tree = ast.parse((REPO_ROOT / path).read_text())
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("src."):
+            base = node.module.replace(".", "/")
+            for alias in node.names:
+                sub = f"{base}/{alias.name}.py"
+                module = f"{base}.py"
+                out.add(
+                    sub
+                    if (REPO_ROOT / sub).exists()
+                    else module if (REPO_ROOT / module).exists() else f"{base}/__init__.py"
+                )
+        elif isinstance(node, ast.Import):
+            out.update(
+                a.name.replace(".", "/") + ".py" for a in node.names if a.name.startswith("src.")
+            )
+    return {m for m in out if (REPO_ROOT / m).exists()}
+
+
+def _designer_input_feeders() -> dict[str, list[str]]:
+    roots = [p for p, _ in _sources() if _in(p, DESIGNER_INPUT_ROOTS)]
+    feeders: dict[str, list[str]] = {}
+    # One level deep on purpose: the direct imports of the builders, plus the imports between
+    # analysis tools. A full transitive closure would pull in query_scoring, tie_break, triage
+    # and src/shared/*, and so send every routing-only PR to e2e-llm. Do not "fix" it into one.
+    queue = [(root, m) for root in roots for m in _src_imports(root)]
+    while queue:
+        root, mod = queue.pop()
+        if mod in feeders and root in feeders[mod]:
+            continue
+        feeders.setdefault(mod, []).append(root)
+        # Analysis tools import each other; follow those so a helper behind a tool is covered.
+        if mod.startswith("src/tools/analysis/"):
+            queue.extend(
+                (root, m) for m in _src_imports(mod) if m.startswith("src/tools/analysis/")
+            )
+    return {m: r for m, r in feeders.items() if not m.startswith("src/contracts/")}
+
+
+def test_modules_feeding_designer_input_are_listed_or_reviewed() -> None:
+    feeders = _designer_input_feeders()
+    assert len(feeders) >= 15, f"found only {len(feeders)} feeders; fix the import scan"
+    missing = [
+        m
+        for m in sorted(feeders)
+        if not _in(m, MODEL_FACING) and m not in REVIEWED_DETERMINISTIC_IMPORTS
+    ]
+    assert not missing, (
+        "these modules feed designer input: add them to E2E_LLM in ci/needs_llm_run.py, "
+        f"or to REVIEWED_DETERMINISTIC_IMPORTS with a reason: {missing}"
+    )
+
+
+def test_reviewed_deterministic_imports_are_still_feeders() -> None:
+    feeders = _designer_input_feeders()
+    stale = [m for m in REVIEWED_DETERMINISTIC_IMPORTS if m not in feeders]
+    assert not stale, f"no longer imported by a designer-input builder; remove: {stale}"
+
+
+@pytest.mark.parametrize(
+    "known",
+    [
+        "src/tools/analysis/documentdb_analysis_tools.py",
+        "src/tools/analysis/documentdb_pattern_catalog.py",
+        "src/tools/analysis/aurora_common_pattern_catalog.py",
+        "src/tools/schema/design_metrics.py",
+    ],
+)
+def test_feeder_scan_finds_known_modules(known: str) -> None:
+    assert known in _designer_input_feeders()
 
 
 @pytest.mark.parametrize(

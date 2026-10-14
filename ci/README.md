@@ -154,7 +154,7 @@ headless run never reaches). The lists are `E2E_LLM` and `BEDROCK_SMOKE` in
 `ci/needs_llm_run.py`; a file can be in both. Any git error (bad base, shallow
 clone, no merge base) exits 2 with a message and no verdict. A unit test scans
 `src/` and `scripts/` for model imports, model-id env reads and
-`llm_input`/request builders, and fails if a hit is not listed. No model call,
+`llm_input`/request builders, and fails if a hit is not listed. A second test follows the imports of the designer-input builders (`prepare_schema_design_input` and the analysis agents) and fails if a module feeding that input is neither listed nor reviewed in the test's `REVIEWED_DETERMINISTIC_IMPORTS`. No model call,
 no secrets, not wired into a workflow: a post-merge real-model run on main and
 a Bedrock smoke run need the internal validation pipeline.
 
