@@ -35,8 +35,8 @@ import.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, replace
 
 from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.agents.referee.engine_exclusions import check_exclusions
@@ -377,6 +377,19 @@ class ScoringContext:
     anti_pattern_map: Mapping[tuple[str, str], int] = field(default_factory=dict)
     anti_pattern_notes: Mapping[tuple[str, str], str] = field(default_factory=dict)
     query_capabilities: Mapping[str, list[str]] = field(default_factory=dict)
+    # ``query_id -> engines a model flagged as unable to serve it`` (ADR-031
+    # Decision 11, as amended 2026-10-14, #647): a capability gap for that one
+    # query only, applied as the third gate in :func:`score_query_for_engine`.
+    # Empty unless a model flag was accepted (``src.agents.referee.model_flags``),
+    # so a run without a model never sees it.
+    flag_gaps: Mapping[str, frozenset[str]] = field(default_factory=dict)
+
+    def with_flag_gaps(self, gaps: Mapping[str, Iterable[str]]) -> ScoringContext:
+        """A copy whose ``flag_gaps`` also carries ``gaps`` (merged per query)."""
+        merged: dict[str, frozenset[str]] = dict(self.flag_gaps)
+        for qid, engines in gaps.items():
+            merged[qid] = merged.get(qid, frozenset()) | frozenset(engines)
+        return replace(self, flag_gaps=merged)
 
     @classmethod
     def from_pipeline(
@@ -447,12 +460,13 @@ class ScoringContext:
 
 GATE_KIND_HARD_EXCLUSION = "hard_exclusion"
 GATE_KIND_CAPABILITY = "capability"
+GATE_KIND_MODEL_FLAG = "model_flag"
 # The two literal values ``EngineScore.gate_kind`` ever carries, named here
 # once so a caller that needs the full set (``src.tools.validation.
 # customer_text_guard``'s snake_case-reason-code detector, #587 round 4)
 # imports it instead of retyping the strings -- a new gate kind added below
 # is then picked up automatically, with no second edit anywhere else.
-GATE_KINDS: tuple[str, ...] = (GATE_KIND_HARD_EXCLUSION, GATE_KIND_CAPABILITY)
+GATE_KINDS: tuple[str, ...] = (GATE_KIND_HARD_EXCLUSION, GATE_KIND_CAPABILITY, GATE_KIND_MODEL_FLAG)
 
 
 @dataclass(frozen=True)
@@ -497,7 +511,9 @@ def score_query_for_engine(query: Mapping, engine: str, ctx: ScoringContext) -> 
     The hard exclusion gate (``check_exclusions``), then the hard capability
     gate (``ctx.query_capabilities``/``can_engine_serve_capability``) --
     either one gates ``.score`` to ``None`` with the reason text in
-    ``.gate_reason`` (ADR-031 Decision 2 steps 2-3). Past both: the base
+    ``.gate_reason`` (ADR-031 Decision 2 steps 2-3). Then a model flag
+    accepted for this query (``ctx.flag_gaps``, ADR-031 Decision 11 as amended
+    2026-10-14) gates the flagged engine the same way. Past all three: the base
     per-query confidence (:func:`compute_query_confidence`), minus
     ``ctx.anti_pattern_map``'s penalty for this ``(query_id, engine)`` pair,
     clamped at 0 (ADR-031 Decision 2 steps 4-5) -- exactly
@@ -525,6 +541,12 @@ def score_query_for_engine(query: Mapping, engine: str, ctx: ScoringContext) -> 
                 f"{', '.join(capability_label(c) for c in required_caps)}"
             ),
             gate_kind=GATE_KIND_CAPABILITY,
+        )
+    if engine in ctx.flag_gaps.get(query_id, frozenset()):
+        return EngineScore(
+            score=None,
+            gate_reason=f"{display_engine(engine)} was flagged as unable to serve this query",
+            gate_kind=GATE_KIND_MODEL_FLAG,
         )
     analysis = ctx.analysis_outputs.get(engine) or {}
     base = compute_query_confidence(query_id, query, engine, analysis)

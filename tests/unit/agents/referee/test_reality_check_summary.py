@@ -23,6 +23,7 @@ from src.agents.referee.reality_check_summary import (
     final_outcome,
     finalize_executive_summary,
 )
+from src.contracts.model_flag import ModelFlag
 
 # Final records of the run-ui-wordpress run (reality-check/output.json).
 BEFORE = {"dynamodb": 45, "aurora_mysql": 22, "elasticache": 31, "documentdb": 6, "opensearch": 3}
@@ -477,23 +478,29 @@ class TestHandlerShipsFinalSummary:
 
         store = _mock_store()
         run_reality_check_handler("job-1", "mydb", store, assignment_version=1, llm_mode="external")
-        # The LLM wrote its summary from the preview (DocumentDB eliminated), then
-        # reversed the only DocumentDB move: DocumentDB stays.
-        stale = "DynamoDB serves the workload and DocumentDB is retired."
+        # The LLM flagged the only DocumentDB move and wrote that DocumentDB stays;
+        # a flag never brings back a removed engine (#647), so it is eliminated.
+        stale = "DynamoDB serves key lookups and DocumentDB keeps the nested documents."
         finalize_reality_check(
             store,
             "job-1",
             "mydb",
             {
                 "consolidation_corrections": [
-                    {"query_id": "DOC-AP-1", "original_engine": "documentdb", "reason": "nested"}
+                    {
+                        "query_ids": ["DOC-AP-1"],
+                        "flagged_engine": "dynamodb",
+                        "reason_category": "missing_feature",
+                        "explanation": "nested",
+                    }
                 ],
                 "executive_summary": stale,
             },
             assignment_version=1,
         )
         out = _rc_output(store)
-        assert out["after_distribution"] == {"dynamodb": 2, "documentdb": 1}
+        assert out["after_distribution"] == {"dynamodb": 3}
+        assert [d["outcome"] for d in out["flag_decisions"]] == ["kept"]
         assert out["executive_summary_source"] == "deterministic_fallback"
         assert out["executive_summary_llm"] == stale
         assert "DocumentDB" in out["executive_summary_validation_warnings"][0]
@@ -523,8 +530,17 @@ class TestHandlerShipsFinalSummary:
         from tests.unit.agents.referee.test_reality_check_llm_seam import _mock_store
 
         store = _mock_store()
-        correction = [{"query_id": "DOC-AP-1", "original_engine": "documentdb", "reason": "x"}]
-        summary = "DynamoDB serves key lookups and DocumentDB keeps the nested documents."
+        correction = [
+            ModelFlag.model_validate(
+                {
+                    "query_ids": ["DOC-AP-1"],
+                    "flagged_engine": "dynamodb",
+                    "reason_category": "missing_feature",
+                    "explanation": "x",
+                }
+            )
+        ]
+        summary = "DynamoDB serves every query, and DocumentDB is consolidated into DynamoDB."
         with (
             patch(
                 "src.agents.referee.reality_check_handler.validate_consolidations",
@@ -537,10 +553,11 @@ class TestHandlerShipsFinalSummary:
         ):
             run_reality_check_handler("job-1", "mydb", store, assignment_version=1)
         context = gen.call_args.kwargs
-        # The model sees the outcome after the correction, not the preview.
-        assert context["after_distribution"] == {"dynamodb": 2, "documentdb": 1}
-        assert context["consolidations"] == []
+        # The model sees the settled records: the flag kept DOC-AP-1 on DynamoDB
+        # (the only kept engine), and DocumentDB stays removed (#647).
+        assert context["after_distribution"] == {"dynamodb": 3}
         out = _rc_output(store)
+        assert [d["outcome"] for d in out["flag_decisions"]] == ["kept"]
         assert out["executive_summary"] == summary
         assert out["executive_summary_source"] == "llm"
 
@@ -591,70 +608,46 @@ class TestHandlerShipsFinalSummary:
             det,
             {
                 "consolidation_corrections": [
-                    {"query_id": "DOC-AP-1", "original_engine": "documentdb", "reason": "x"}
+                    {
+                        "query_ids": ["DOC-AP-1"],
+                        "flagged_engine": "dynamodb",
+                        "reason_category": "missing_feature",
+                        "explanation": "x",
+                    }
                 ]
             },
         )
         keys = ("consolidations", "recommendations", "revised_assignments", "after_distribution")
         _settle_records(det)
         once = deepcopy({k: det[k] for k in keys})
-        assert once["after_distribution"] == {"dynamodb": 2, "documentdb": 1}
+        assert once["after_distribution"] == {"dynamodb": 3}
         _settle_records(det)
         assert {k: det[k] for k in keys} == once
 
 
 class TestAbsorptionCandidates:
-    """#588: finalize settles the engines again whenever a correction can bring
-    back an engine the preview removed, and that can remove any engine the
-    preview kept, whatever its size -- so every kept engine is flagged then,
-    and none is otherwise. There is no "small engine" cut-off any more."""
+    """#647: a flag re-routes only among the kept engines and never brings a
+    removed engine back, so the engines whose fate is still open are the kept
+    engines a consolidation moved queries onto (a flag can only take queries
+    off those)."""
 
-    def test_every_kept_engine_is_flagged_when_a_removed_aurora_can_come_back(self):
+    def test_only_kept_consolidation_targets_are_open(self):
         from src.agents.referee.reality_check_handler import absorption_candidates
 
-        # The run-ui-wordpress preview (reality-check/llm_input.json): Aurora MySQL fully
-        # moved away. A correction redirects to Aurora, so Aurora can come back.
         before = dict(BEFORE)
         preview_after = {"dynamodb": 69, "elasticache": 34, "opensearch": 4}
-        assert absorption_candidates(before, preview_after) == [
-            "dynamodb",
-            "elasticache",
-            "opensearch",
+        moves = [
+            {"from_engine": "aurora_mysql", "to_engine": "dynamodb", "query_count": 20},
+            {"from_engine": "aurora_mysql", "to_engine": "opensearch", "query_count": 1},
         ]
+        assert absorption_candidates(before, preview_after, moves) == ["dynamodb", "opensearch"]
 
-    def test_an_engine_the_preview_emptied_stays_out_while_aurora_can_come_back(self):
-        """A correction goes to Aurora when there is one, never back to the
-        emptied OpenSearch, so OpenSearch's fate is already known; DynamoDB's
-        is not, even at 54 queries."""
+    def test_a_removed_target_or_no_consolidation_leaves_nothing_open(self):
         from src.agents.referee.reality_check_handler import absorption_candidates
 
-        before = {"aurora_mysql": 20, "dynamodb": 30, "opensearch": 4}
-        assert absorption_candidates(before, {"dynamodb": 54}) == ["dynamodb"]
-        assert absorption_candidates({"aurora_mysql": 3, "dynamodb": 30}, {"dynamodb": 33}) == [
-            "dynamodb"
-        ]
-
-    def test_nothing_is_flagged_while_aurora_is_kept(self):
-        """Every correction lands on the kept Aurora, so nothing comes back."""
-        from src.agents.referee.reality_check_handler import absorption_candidates
-
-        before = {"aurora_mysql": 20, "dynamodb": 30, "documentdb": 4}
-        assert absorption_candidates(before, {"aurora_mysql": 24, "dynamodb": 30}) == []
-
-    def test_without_aurora_a_removed_engine_can_come_back(self):
-        """With no Aurora, a correction returns its query to its original
-        engine, which can bring DynamoDB back."""
-        from src.agents.referee.reality_check_handler import absorption_candidates
-
-        assert absorption_candidates({"dynamodb": 5, "opensearch": 2}, {"opensearch": 2}) == [
-            "opensearch"
-        ]
-        assert (
-            absorption_candidates(
-                {"dynamodb": 5, "opensearch": 2}, {"dynamodb": 5, "opensearch": 2}
-            )
-            == []
-        )
+        moves = [{"from_engine": "documentdb", "to_engine": "aurora_mysql", "query_count": 4}]
+        assert absorption_candidates({"aurora_mysql": 3}, {"dynamodb": 33}, moves) == []
+        assert absorption_candidates({"dynamodb": 5}, {"dynamodb": 5}, []) == []
 
     def test_llm_input_carries_the_flag(self):
         from src.agents.referee.reality_check_handler import (
@@ -665,7 +658,7 @@ class TestAbsorptionCandidates:
 
         det = run_reality_check_deterministic("job-1", "mydb", _mock_store(), 1)
         payload = prepare_reality_check_llm_input(det)
-        # The preview removes DocumentDB and there is no Aurora, so a
-        # correction can bring DocumentDB back and re-settle DynamoDB (#588).
+        # The preview moves DocumentDB's query onto DynamoDB; a flag can take it
+        # off again (onto a kept engine), so DynamoDB's fate is open (#647).
         assert det["after_distribution"] == {"dynamodb": 3}
         assert payload["executive_summary"]["absorption_candidates"] == ["dynamodb"]

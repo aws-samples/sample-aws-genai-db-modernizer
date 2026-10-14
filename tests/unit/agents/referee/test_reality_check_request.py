@@ -32,6 +32,7 @@ from src.agents.referee.reality_check_request import (
     with_read_pages,
 )
 from src.agents.schema_design.group_input import READ_PAGE_CHARS, READ_PAGE_LINES
+from src.contracts.model_flag import ModelFlag
 
 REPO = Path(__file__).resolve().parents[4]
 SCRIPT = REPO / "scripts" / "run_assessment.py"
@@ -195,9 +196,10 @@ class TestWordpressRequestCarriesWhatTheCommandUses:
                 {
                     "consolidation_corrections": [
                         {
-                            "query_id": query_id,
-                            "original_engine": consolidation["from_engine"],
-                            "reason": "test",
+                            "query_ids": [query_id],
+                            "flagged_engine": consolidation["to_engine"],
+                            "reason_category": "other",
+                            "explanation": "test",
                         }
                     ],
                     "executive_summary": "Your workload runs on purpose-built AWS databases.",
@@ -217,18 +219,89 @@ class TestWordpressRequestCarriesWhatTheCommandUses:
             wordpress["cwd"],
         )
         output = json.loads((job_dir / "reality-check" / "output.json").read_text())
-        version = output["output_assignment_version"]
+        # A flag that brings back the consolidation's source engine re-settles
+        # the engines (#588); when every move is undone, no version is written
+        # and the input version stands.
+        version = output["output_assignment_version"] or output["source_assignment_version"]
         final = json.loads((job_dir / "assignment" / f"v{version}" / "assignment.json").read_text())
         moved = next(qa for qa in final["query_assignments"] if qa["query_id"] == query_id)
-        # apply_corrections() always redirects a correction to a committed
-        # Aurora engine -- which can legitimately be the same engine the
-        # query already consolidated onto -- so what this test checks is
-        # that the reason text shows the correction took effect, not that
-        # the engine necessarily changed.
-        assert (
-            "redirected to" in moved["assignment_reason"]
-            or "consolidation reversed by validation" in moved["assignment_reason"]
+        # The flag gates its engine; the scorer picks the best remaining one
+        # (#647), or the query stays when no other engine can take it.
+        (decision,) = output["flag_decisions"]
+        assert decision["query_ids"] == [query_id]
+        if decision["outcome"] == "moved":
+            assert moved["assigned_engine"] == decision["destination_engine"]
+            assert moved["assigned_engine"] != consolidation["to_engine"]
+        else:
+            assert decision["outcome"] == "kept"
+            assert moved["assigned_engine"] == consolidation["to_engine"]
+
+
+class TestAFlagOnWordpressNeverBringsBackDocumentDB:
+    """#712 review repro, maintainer decision 2026-10-14: the wordpress reality
+    check removes DocumentDB and moves its 8 queries (3 to Aurora MySQL, 5 to
+    DynamoDB). One flag on a DynamoDB move re-routes that query among the KEPT
+    engines only: DocumentDB stays removed and the other 7 moves stand."""
+
+    FLAGGED = "d72966f8"
+
+    def test_one_flag_goes_to_the_best_kept_engine(self, tmp_path):
+        run = _external_run("wordpress", tmp_path)
+        request = json.loads(run["text"])
+        from_documentdb = [
+            c
+            for c in request["consolidation_validation"]["consolidations"]
+            if c["from_engine"] == "documentdb"
+        ]
+        moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
+        assert sorted(moved.values()).count("dynamodb") == 5
+        assert sorted(moved.values()).count("aurora_mysql") == 3
+        flagged = next(q for q in moved if q.startswith(self.FLAGGED))
+        assert moved[flagged] == "dynamodb"
+
+        job_dir = run["path"].parent.parent
+        response = job_dir / "llm_responses" / "reality_check.json"
+        response.parent.mkdir(parents=True, exist_ok=True)
+        response.write_text(
+            json.dumps(
+                {
+                    "consolidation_corrections": [
+                        {
+                            "query_ids": [flagged],
+                            "flagged_engine": "dynamodb",
+                            "reason_category": "client_side_join",
+                            "explanation": "needs a server-side join",
+                        }
+                    ]
+                }
+            )
         )
+        _run(
+            [
+                "--job-id",
+                job_dir.name,
+                "--db",
+                run["db"],
+                "--resume-reality-check",
+                "--artifact-root",
+                str(run["root"]),
+            ],
+            run["cwd"],
+        )
+
+        output = json.loads((job_dir / "reality-check" / "output.json").read_text())
+        version = output["output_assignment_version"]
+        final = json.loads((job_dir / "assignment" / f"v{version}" / "assignment.json").read_text())
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in final["query_assignments"]}
+        assert "documentdb" not in set(engine_of.values())
+        (decision,) = output["flag_decisions"]
+        assert decision["outcome"] == "moved"
+        assert decision["destination_engine"] == "aurora_mysql"
+        assert decision["score_after"] == 54
+        assert engine_of[flagged] == "aurora_mysql"
+        for qid, target in moved.items():
+            if qid != flagged:
+                assert engine_of[qid] == target, qid
 
 
 class TestSharedRecords:
@@ -301,6 +374,17 @@ def _bedrock_case(n: int) -> tuple[list[dict], list[dict], dict, list[dict]]:
     return original, revised, query_map, consolidations
 
 
+def _flag(qids: list[str], engine: str = "dynamodb") -> ModelFlag:
+    return ModelFlag.model_validate(
+        {
+            "query_ids": qids,
+            "flagged_engine": engine,
+            "reason_category": "other",
+            "explanation": "x",
+        }
+    )
+
+
 class TestUntrustedQueryData:
     def test_prompt_frames_the_moved_queries(self):
         from src.agents.prompt_framing import frame_untrusted
@@ -330,7 +414,7 @@ class TestUntrustedQueryData:
         assert SYSTEM_PROMPT_DATA_DIRECTIVE in cv.VALIDATOR_SYSTEM_PROMPT
         with patch("boto3.client") as client:
             client.return_value.converse.return_value = {
-                "output": {"message": {"content": [{"text": "[]"}]}}
+                "output": {"message": {"content": [{"text": '{"flags": []}'}]}}
             }
             assert cv._try_boto3_validator("documentdb", "dynamodb", []) == []
         kwargs = client.return_value.converse.call_args.kwargs
@@ -352,7 +436,7 @@ class TestFailedBatches:
         from src.agents.referee.consolidation_validator import ValidationFailed
 
         original, revised, query_map, consolidations = _bedrock_case(MAX_QUERIES_PER_CALL + 5)
-        calls = iter([ValidationFailed("throttled"), [{"query_id": "q31", "reason": "join"}]])
+        calls = iter([ValidationFailed("throttled"), [_flag(["q31"])]])
 
         def fake(**kwargs):
             outcome = next(calls)
@@ -367,7 +451,7 @@ class TestFailedBatches:
             corrections = validate_consolidations(
                 consolidations, revised, query_map, {}, original, incomplete
             )
-        assert [c["query_id"] for c in corrections] == ["q31"]
+        assert [c.query_ids for c in corrections] == [["q31"]]
         assert incomplete == [
             {
                 "from_engine": "documentdb",
@@ -425,38 +509,105 @@ class TestFailedBatches:
         ]
 
 
+class TestBedrockMatchesHeadlessOnInvalidEntries:
+    """#712 review: one entry off the contract is dropped and counted in both
+    modes; the valid flags in the same batch are kept."""
+
+    def test_the_validator_keeps_the_valid_flags_and_counts_the_bad_one(self):
+        from src.agents.referee import consolidation_validator as cv
+
+        original, revised, query_map, consolidations = _bedrock_case(3)
+        good = _flag(["q1"]).model_dump(mode="json")
+        bad = {**_flag(["q2"]).model_dump(mode="json"), "target_engine": "documentdb"}
+        text = json.dumps({"flags": [good, bad]})
+        rejected: list[str] = []
+        with (
+            patch.object(cv, "_try_strands_validator", return_value=None),
+            patch("boto3.client") as client,
+        ):
+            client.return_value.converse.return_value = {
+                "output": {"message": {"content": [{"text": text}]}}
+            }
+            flags = validate_consolidations(
+                consolidations, revised, query_map, {}, original, rejected=rejected
+            )
+        assert [f.query_ids for f in flags] == [["q1"]]
+        assert len(rejected) == 1
+
+    def test_the_headless_path_does_the_same(self):
+        from src.contracts.model_flag import parse_model_flags
+
+        good = _flag(["q1"]).model_dump(mode="json")
+        bad = {**_flag(["q2"]).model_dump(mode="json"), "target_engine": "documentdb"}
+        flags, rejected = parse_model_flags([good, bad])
+        assert [f.query_ids for f in flags] == [["q1"]]
+        assert len(rejected) == 1
+
+    def test_the_bedrock_handler_records_the_rejection_count(self):
+        from src.agents.referee.reality_check_handler import run_reality_check_handler
+        from tests.unit.agents.referee.test_reality_check_llm_seam import _mock_store
+
+        def fake(consolidations, revised_assignments, query_map, query_signals, **kw):
+            kw["rejected"].append("flag 1: target_engine: extra_forbidden")
+            return []
+
+        store = _mock_store()
+        with (
+            patch(
+                "src.agents.referee.reality_check_handler.validate_consolidations",
+                side_effect=fake,
+            ),
+            patch(
+                "src.agents.referee.reality_check_handler._generate_executive_summary",
+                return_value=None,
+            ),
+        ):
+            run_reality_check_handler("job-1", "mydb", store, llm_mode="bedrock")
+        output = next(v for k, v in store._written.items() if k.endswith("output.json"))
+        assert output["model_flags_rejected"] == 1
+
+
 class TestOnlyMovedQueriesCanBeCorrected:
     def test_validator_drops_ids_outside_the_batch(self, caplog):
         original, revised, query_map, consolidations = _bedrock_case(3)
         with patch(
             "src.agents.referee.consolidation_validator._call_llm_validator",
-            return_value=[{"query_id": "q1", "reason": "x"}, {"query_id": "other", "reason": "x"}],
+            return_value=[_flag(["q1", "other"]), _flag(["q2"], "documentdb")],
         ):
             corrections = validate_consolidations(consolidations, revised, query_map, {}, original)
-        assert [c["query_id"] for c in corrections] == ["q1"]
+        assert [c.query_ids for c in corrections] == [["q1"]]
         assert "'other'" in caplog.text
+        assert "'documentdb', which is not the engine under review" in caplog.text
 
-    def test_external_response_drops_ids_no_consolidation_moved(self, caplog):
-        from src.agents.referee.consolidation_validator import corrections_for_moved_queries
+    def test_external_response_ignores_flags_no_consolidation_moved(self):
+        from src.agents.referee.model_flags import apply_consolidation_flags
+        from src.agents.referee.query_scoring import ScoringContext
 
-        original, revised, _, consolidations = _bedrock_case(3)
+        original, revised, query_map, consolidations = _bedrock_case(3)
         original.append({"query_id": "stay", "assigned_engine": "dynamodb"})
         revised.append({"query_id": "stay", "assigned_engine": "dynamodb"})
-        corrections = [
-            {"query_id": "q2", "original_engine": "documentdb", "reason": "ok"},
-            {"query_id": "stay", "original_engine": "documentdb", "reason": "not moved"},
-            {"query_id": "q0", "original_engine": "opensearch", "reason": "wrong source"},
-            {"query_id": "nope", "original_engine": "documentdb", "reason": "unknown"},
-            {
-                "query_id": "q1",
-                "original_engine": "documentdb",
-                "failed_target": "opensearch",
-                "reason": "wrong target",
-            },
+        flags = [
+            _flag(["q2"]),
+            _flag(["stay"]),  # never moved
+            _flag(["q0"], "opensearch"),  # not the engine it is on
+            _flag(["nope"]),  # unknown id
         ]
-        kept = corrections_for_moved_queries(corrections, consolidations, revised, original)
-        assert [c["query_id"] for c in kept] == ["q2"]
-        assert caplog.text.count("Dropped a consolidation correction") == 4
+        _, _, decisions, gaps = apply_consolidation_flags(
+            flags,
+            revised,
+            consolidations,
+            original,
+            ScoringContext(),
+            {qid: {"query_id": qid, **q} for qid, q in query_map.items()},
+            {"documentdb", "dynamodb"},
+        )
+        assert [(d["query_ids"], d["outcome"]) for d in decisions] == [
+            (["stay"], "ignored"),
+            (["q0"], "ignored"),
+            (["nope"], "ignored"),
+            (["q2"], "moved"),
+        ]
+        assert gaps == {"q2": {"dynamodb"}}
 
     def test_apply_ignores_a_correction_for_an_unmoved_query(self):
         from src.agents.referee.reality_check_handler import (
@@ -475,12 +626,11 @@ class TestOnlyMovedQueriesCanBeCorrected:
         }
         unmoved = next(qa for qa in det["revised_assignments"] if qa["query_id"] not in moved_ids)
         before = [dict(qa) for qa in det["revised_assignments"]]
-        source = det["consolidations"][0]["from_engine"]
         result = apply_reality_check_llm_output(
             det,
             {
                 "consolidation_corrections": [
-                    {"query_id": unmoved["query_id"], "original_engine": source, "reason": "x"}
+                    _flag([unmoved["query_id"]], unmoved["assigned_engine"]).model_dump()
                 ]
             },
         )

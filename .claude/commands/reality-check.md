@@ -109,29 +109,29 @@ Do NOT flag:
    {
      "consolidation_corrections": [
        {
-         "query_id": "query_id_from_moved_queries",
-         "original_engine": "aurora_mysql",
-         "reason": "3-table JOIN with GROUP BY and HAVING clause requires relational engine"
+         "query_ids": ["query_id_from_moved_queries"],
+         "flagged_engine": "dynamodb",
+         "reason_category": "client_side_join",
+         "explanation": "3-table JOIN with GROUP BY needs a server-side join"
        }
      ],
      "executive_summary": "..."
    }
    ```
 
-   - Each correction: `query_id` (copied exactly from that consolidation's `moved_queries`; finalize drops any other id), `original_engine` (the consolidation's `from_engine`), `reason`
+   - Each entry is a flag (`src/contracts/model_flag.py`, the same contract the Bedrock validator uses): `query_ids` (copied exactly from that consolidation's `moved_queries`; finalize ignores any other id), `flagged_engine` (the consolidation's `to_engine`, the engine you judged), `reason_category` (`full_scan`, `client_side_join`, `missing_feature` or `other`) and `explanation` (at most 15 words). No other key: an entry that names a destination is rejected whole.
+   - A flag never says where a query goes. Finalize treats the flagged engine as unable to serve those queries and moves them to the best-scoring engine the reality check kept; a removed engine never comes back, and with no kept engine that can take them, they stay.
    - If ALL consolidations are genuinely valid (rare for Aurora consolidations), use `[]`
    - **Do not default to empty.** Actually read the SQL and think critically.
 
    **Executive summary rules:**
-   - Describe the outcome *after* your corrections: an engine you send queries back
-     to stays in the architecture. Finalize can still move queries (when your
-     corrections bring back an engine, the engines are settled again), so name an
-     engine as kept or eliminated only as the final records will show it.
+   - Describe the outcome *after* your flags: a flag never brings back an engine
+     the preview removed, so a removed engine stays removed. Name an engine as
+     kept or eliminated only as the final records will show it.
    - Do not state the final fate of any engine listed in
-     `executive_summary.absorption_candidates`: if your corrections bring back an
-     engine, finalize settles the engines again and can remove any of these, so
-     neither "stays" nor "is eliminated" is known yet. Describe the work it does,
-     not whether it stays.
+     `executive_summary.absorption_candidates`: your flags can move queries off
+     these engines, so neither "stays" nor "is eliminated" is known yet.
+     Describe the work it does, not whether it stays.
    - Finalize checks the summary against the final records. If it names a kept engine
      as eliminated, or an eliminated one as kept, the customer sees a summary built
      from the records instead (`executive_summary_source: deterministic_fallback`);

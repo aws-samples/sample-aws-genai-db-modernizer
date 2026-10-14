@@ -129,9 +129,6 @@ per-query scores (ADR-031 Decision 7):
 5. **Integration topology** — specific sync mechanisms between the
    surviving engines.
 
-When a validation correction brings back an engine these steps removed, the
-same steps run again with the corrected queries held in place.
-
 The deterministic pass writes a **new assignment version**
 (`src/storage/assignment_versioning.py` — reality check and customer edits
 always write a new version, never overwrite one) plus a
@@ -145,14 +142,18 @@ also runs `validate_consolidations` from
 over pass 2's consolidation decisions ("can the target engine actually
 serve these query patterns, or will this fail during schema design?",
 avoiding a flip-flop where schema design later fails on a query
-consolidation moved). This is not a pure rubber stamp: `apply_corrections`
-can redirect a query a consolidation moved to Aurora or back to its
-original engine when the model flags it as unserviceable —
-`corrections_for_moved_queries` restricts this to exactly the queries
-pass 2 touched, so the model can undo or redirect a consolidation's move
-but cannot make a fresh ownership decision outside of it. In `--llm-mode
+consolidation moved). The model's answer is a list of flags
+(`src/contracts/model_flag.py`): the queries, the engine they were moved onto,
+a reason category and a short explanation, never a destination (ADR-031
+Decision 11, amended 2026-10-14). `apply_consolidation_flags`
+(`src/agents/referee/model_flags.py`) only accepts a flag on a query a
+consolidation moved onto the flagged engine, marks that engine unable to serve
+it, and re-routes it with the shared scorer to the best engine the reality
+check kept, recording the before and after scores in `flag_decisions`. A flag
+never brings back a removed engine; with no kept engine to take it, the query
+stays. In `--llm-mode
 none`, reality check keeps its deterministic result and skips this
-validation pass entirely (no corrections possible).
+validation pass entirely (no flags possible).
 
 In `external` mode Claude Code answers through `prepare_reality_check_llm_input`
 and `apply_reality_check_llm_output` instead. In every mode, the handler then runs

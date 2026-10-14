@@ -215,12 +215,10 @@ class TestExternalFinalizeRunsTheSameSweep:
     def test_bedrock_style_apply_and_external_resume_agree_with_a_real_correction(
         self, tmp_path
     ) -> None:
-        """A non-empty correction that reverses part of a *different*
-        engine's consolidation must still leave both paths agreeing on the
-        sweep's own verdict for the untouched orphan (DocumentDB): the
-        correction and the sweep act on independent engines here, so the
-        only question is whether finalize's ordering (apply, then sweep)
-        matches the handler's."""
+        """A real model flag on part of OpenSearch's consolidation must leave
+        both paths agreeing: the flag re-routes OS-0 by score, the sweep then
+        honors the flag's gap, and the only question is whether finalize's
+        ordering (apply, then sweep) matches the handler's."""
 
         def _partial_opensearch_consolidation(
             assignment, triage, analysis, collector, caps, source_engine=None
@@ -258,9 +256,10 @@ class TestExternalFinalizeRunsTheSameSweep:
         correction = {
             "consolidation_corrections": [
                 {
-                    "query_id": "OS-0",
-                    "original_engine": "opensearch",
-                    "reason": "fixture: needs geo-spatial, not relational",
+                    "query_ids": ["OS-0"],
+                    "flagged_engine": "dynamodb",
+                    "reason_category": "missing_feature",
+                    "explanation": "fixture: needs geo-spatial, not key-value",
                 }
             ]
         }
@@ -324,7 +323,14 @@ class TestExternalFinalizeRunsTheSameSweep:
         assert _assignment_without_timestamp(store_a, version_a) == _assignment_without_timestamp(
             store_b, summary_b["output_version"]
         )
-        # OS-0 was corrected back to OpenSearch, then the sweep (now that
-        # OpenSearch is tiny too) moved both OpenSearch queries to DynamoDB,
-        # same as the DocumentDB orphan.
-        assert _engines_of(store_a, version_a) == {"dynamodb"}
+        # OS-0's flag gates DynamoDB for it (#647); the scorer sends it to its
+        # best remaining engine, DocumentDB. The sweep then moves OpenSearch's
+        # last query (OS-1) to DynamoDB, but keeps DocumentDB: OS-0 cannot go
+        # back to DynamoDB, the engine its flag named.
+        engines = _assignment_without_timestamp(store_a, version_a)["query_assignments"]
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in engines}
+        assert engine_of["OS-0"] == "documentdb"
+        assert engine_of["OS-1"] == "dynamodb"
+        assert _engines_of(store_a, version_a) == {"documentdb", "dynamodb"}
+        (decision,) = out_a["flag_decisions"]
+        assert (decision["outcome"], decision["destination_engine"]) == ("moved", "documentdb")

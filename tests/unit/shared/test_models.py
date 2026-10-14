@@ -743,7 +743,9 @@ def test_summaries_and_validator_use_their_roles(monkeypatch):
     monkeypatch.setenv("VALIDATOR_MODEL_ID", MODEL_IDS["sonnet-5.5"])
     with patch("boto3.client") as client:
         client.return_value.converse.return_value = {
-            "output": {"message": {"content": [{"reasoningContent": {}}, {"text": "[]"}]}}
+            "output": {
+                "message": {"content": [{"reasoningContent": {}}, {"text": '{"flags": []}'}]}
+            }
         }
         assert cv._try_boto3_validator("documentdb", "dynamodb", []) == []
     kwargs = client.return_value.converse.call_args.kwargs

@@ -22,7 +22,7 @@ from collections.abc import Iterable, Mapping
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.agents.referee.assignment_resolver import RoutingTrace
-from src.agents.referee.aurora_choice import AURORA_ENGINES, pick_aurora_engine
+from src.agents.referee.aurora_choice import AURORA_ENGINES
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import (
     _current_for_eligibility,
@@ -33,6 +33,7 @@ from src.agents.referee.reality_check import (
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.contracts.model_flag import ModelFlag, ModelFlagBatch, parse_model_flags
 from src.shared.engine_names import display_engine
 from src.shared.models import (
     ROLE_SPECS,
@@ -124,12 +125,16 @@ def validate_consolidations(
     query_signals: dict[str, list[str]],
     original_assignments: list[dict] | None = None,
     incomplete: list[dict] | None = None,
-) -> list[dict]:
+    rejected: list[str] | None = None,
+) -> list[ModelFlag]:
     """Validate consolidation decisions using an LLM.
 
     For each consolidation, asks the LLM whether the target engine can
-    actually serve the moved queries. Returns a list of corrections:
-    queries that should NOT have been moved.
+    actually serve the moved queries. Returns the model's flags
+    (:class:`~src.contracts.model_flag.ModelFlag`, the same contract the
+    external response uses): queries it judges the target unable to serve.
+    Where a flagged query goes is decided later, by the shared scorer
+    (``src.agents.referee.model_flags``).
 
     Args:
         consolidations: List of consolidation dicts from run_reality_check()
@@ -141,17 +146,19 @@ def validate_consolidations(
         incomplete: when given, one entry is appended per batch that got no
             verdict (``from_engine``, ``to_engine``, ``batch`` as "start-end"
             1-based of ``total``, ``error``); its queries keep the move
+        rejected: when given, one note is appended per response entry that
+            fails the ``ModelFlag`` contract; that entry is dropped and the
+            valid flags beside it are kept (the headless response's handling)
 
     Returns:
-        List of correction dicts: [{"query_id": str, "original_engine": str,
-        "failed_target": str, "reason": str}] — queries that should be moved back,
-        each one of the consolidation's moved queries. Empty list if all
-        consolidations are valid or LLM is unavailable.
+        One flag per flagged query, ``flagged_engine`` the consolidation's
+        target, each one of the consolidation's moved queries. Empty list if
+        all consolidations are valid or LLM is unavailable.
     """
     if not consolidations:
         return []
 
-    corrections: list[dict] = []
+    corrections: list[ModelFlag] = []
     reviewed: dict[tuple[str, str], set[str]] = {}
 
     for consolidation in consolidations:
@@ -175,7 +182,7 @@ def validate_consolidations(
             batch = query_details[start : start + MAX_QUERIES_PER_CALL]
             batch_range = f"{start + 1}-{start + len(batch)}"
             try:
-                flagged = _call_llm_validator(
+                raw_flags = _call_llm_validator(
                     from_engine=from_engine,
                     to_engine=to_engine,
                     queries=batch,
@@ -202,223 +209,33 @@ def validate_consolidations(
                         }
                     )
                 continue
+            flagged, bad = parse_model_flags(raw_flags)
+            if rejected is not None:
+                rejected.extend(bad)
             batch_ids = {q["query_id"] for q in batch}
-            for entry in flagged:
-                if entry["query_id"] not in batch_ids:
+            for flag in flagged:
+                if flag.flagged_engine != to_engine:
                     logger.warning(
-                        "Consolidation %s -> %s: dropped a correction for %r, "
-                        "which is not one of the queries under review",
+                        "Consolidation %s -> %s: dropped a flag on %r, which is not "
+                        "the engine under review",
                         from_engine,
                         to_engine,
-                        str(entry["query_id"])[:80],
+                        flag.flagged_engine,
                     )
                     continue
-                corrections.append(
-                    {
-                        "query_id": entry["query_id"],
-                        "original_engine": from_engine,
-                        "failed_target": to_engine,
-                        "reason": entry.get("reason", "LLM flagged as unserviceable"),
-                    }
-                )
+                for qid in flag.query_ids:
+                    if qid not in batch_ids:
+                        logger.warning(
+                            "Consolidation %s -> %s: dropped a flag for %r, "
+                            "which is not one of the queries under review",
+                            from_engine,
+                            to_engine,
+                            str(qid)[:80],
+                        )
+                        continue
+                    corrections.append(flag.model_copy(update={"query_ids": [qid]}))
 
     return corrections
-
-
-def corrections_for_moved_queries(
-    corrections: list[dict],
-    consolidations: list[dict],
-    revised_assignments: list[dict],
-    original_assignments: list[dict] | None,
-) -> list[dict]:
-    """Keep only corrections naming a query a consolidation moved; log the rest.
-
-    A correction matches when its ``query_id`` is among the moved queries of a
-    consolidation out of its ``original_engine`` (and into its ``failed_target``,
-    when it names one). Anything else (an unknown id, a query no consolidation
-    moved, the wrong source engine) would move a query the review never covered.
-    """
-    moved: dict[tuple[str, str], set[str]] = {}
-    for c in consolidations:
-        ids = {qa["query_id"] for qa in moved_queries(c, revised_assignments, original_assignments)}
-        moved.setdefault((c["from_engine"], c["to_engine"]), set()).update(ids)
-
-    kept: list[dict] = []
-    for corr in corrections:
-        qid = corr.get("query_id") if isinstance(corr, dict) else None
-        source = corr.get("original_engine") if isinstance(corr, dict) else None
-        target = corr.get("failed_target") if isinstance(corr, dict) else None
-        if any(
-            qid in ids and src == source and (not target or dst == target)
-            for (src, dst), ids in moved.items()
-        ):
-            kept.append(corr)
-        else:
-            logger.warning(
-                "Dropped a consolidation correction for %r from %r: not one of the "
-                "queries a consolidation moved",
-                str(qid)[:80],
-                str(source)[:40],
-            )
-    return kept
-
-
-def apply_corrections(
-    corrections: list[dict],
-    revised_assignments: list[dict],
-    consolidations: list[dict],
-    surviving_engines: set[str] | None = None,
-    all_original_engines: set[str] | None = None,
-    source_engine: str = "",
-) -> tuple[list[dict], list[dict]]:
-    """Apply LLM corrections back to the assignments and consolidations.
-
-    When a query can't be served by its consolidation target, redirects it to
-    a committed Aurora engine if one exists (these are relational patterns that
-    Aurora handles natively). Falls back to the original engine only if no
-    Aurora is available. With both Aurora engines available, the one matching
-    the source database's dialect wins, then the shared ADR-031 tie-break on
-    the recorded workload decides (``pick_aurora_engine``, #288, #550).
-
-    Args:
-        corrections: queries flagged as unserviceable on target
-        revised_assignments: current query assignments
-        consolidations: consolidation records
-        surviving_engines: engines committed in the architecture (used
-            to determine if Aurora is available for redirection)
-        all_original_engines: all engines from the pre-consolidation
-            distribution (used as a broader pool to find Aurora targets
-            even if Aurora was temporarily consolidated)
-        source_engine: the source database engine (e.g. ``"mysql"``)
-
-    Returns:
-        (updated_assignments, updated_consolidations)
-    """
-    if not corrections:
-        return revised_assignments, consolidations
-
-    # Determine redirect target: prefer Aurora over original engine.
-    # Check both surviving engines AND original engines — Aurora may have been
-    # temporarily consolidated but is still a valid relational safety net.
-    candidate_pool = (surviving_engines or set()) | (all_original_engines or set())
-    # #550 review (Critical 2): the SETTLED count (a query's own ``tied_engines``
-    # empty), never a raw recount of ``revised_assignments`` -- which, by the time
-    # this runs, already carries Reality Check's own placeholder ties and moves,
-    # exactly the order-dependence Decision 12 rules out. A tie key built from the
-    # corrections actually being redirected (Critical 1), so this does not repeat
-    # the constant-seed bug every workload hitting this exact tie would otherwise
-    # share.
-    redirect_engine = pick_aurora_engine(
-        candidate_pool,
-        source_engine,
-        settled_counts(revised_assignments),
-        tie_key=",".join(sorted(c["query_id"] for c in corrections)),
-    )
-
-    # Build correction lookup: query_id → original_engine. A correction without
-    # ``failed_target`` (the external validator's shape) failed on the engine its
-    # query sits on now; without this it matched every consolidation out of its
-    # original engine and deleted the smaller ones (#218).
-    current_engine = {qa["query_id"]: qa["assigned_engine"] for qa in revised_assignments}
-    corrections = [
-        {**c, "failed_target": c.get("failed_target") or current_engine.get(c["query_id"])}
-        for c in corrections
-    ]
-    correction_map = {c["query_id"]: c for c in corrections}
-
-    def _target(corr: dict) -> str:
-        return redirect_engine if redirect_engine else corr["original_engine"]
-
-    # Move queries to Aurora (or back to original if no Aurora available)
-    for qa in revised_assignments:
-        if qa["query_id"] in correction_map:
-            corr = correction_map[qa["query_id"]]
-            target = _target(corr)
-            qa["assigned_engine"] = target
-            if target != corr["original_engine"]:
-                # target is redirect_engine here (see _target above): never
-                # original_engine, so never falsy/None -- display_engine(target),
-                # not display_engine(redirect_engine), keeps mypy's str narrowing.
-                qa["assignment_reason"] = (
-                    f"reality check: redirected to {display_engine(target)} "
-                    f"(unserviceable on consolidation target: {corr['reason']})"
-                )
-            else:
-                qa["assignment_reason"] = (
-                    f"reality check: consolidation reversed by validation " f"({corr['reason']})"
-                )
-
-    # Update consolidation records
-    updated_consolidations = []
-    for c in consolidations:
-        from_engine = c["from_engine"]
-        to_engine = c["to_engine"]
-        # Count how many queries from this consolidation were reversed
-        # Match on both original_engine AND failed_target to avoid double-counting
-        reversed_corrections = [
-            corr
-            for corr in corrections
-            if corr["original_engine"] == from_engine and corr["failed_target"] == to_engine
-        ]
-        reversed_ids = [corr["query_id"] for corr in reversed_corrections]
-
-        if not reversed_ids:
-            updated_consolidations.append(c)
-            continue
-
-        remaining_moved = c["query_count"] - len(reversed_ids)
-        if remaining_moved <= 0:
-            # Full reversal — remove this consolidation entirely
-            continue
-
-        # Partial — update the consolidation record. ``query_count`` is the number
-        # this consolidation proposed to move, reversed queries included (#218).
-        # #572 review item 6: every customer-facing fragment below names the
-        # engine with display_engine (from_engine/to_engine/redirect_engine stay
-        # raw everywhere else in this function -- dict keys, comparisons, lookups).
-        original_total = c["query_count"]
-        redirected = sum(1 for corr in reversed_corrections if _target(corr) != from_engine)
-        stayed = len(reversed_ids) - redirected
-        from_name = display_engine(from_engine)
-        to_name = display_engine(to_engine)
-        # redirect_engine is str | None (pick_aurora_engine's return type), but
-        # redirected > 0 only when it was truthy (see _target above) -- computed
-        # once, with a never-used "" fallback, so mypy keeps this a plain str.
-        redirect_name = display_engine(redirect_engine) if redirect_engine else ""
-        parts = []
-        if stayed:
-            parts.append(f"{stayed} {'stays' if stayed == 1 else 'stay'} on {from_name}")
-        if redirected:
-            parts.append(f"{redirected} redirected to {redirect_name}")
-        reason_suffix = " and ".join(parts) + f" (unserviceable on {to_name})"
-        if redirected:
-            retention_reason = (
-                f"Redirected to {redirect_name} "
-                f"(relational patterns unserviceable on {to_name})"
-            )
-        else:
-            # #572 review item 6: no mention of which validation path flagged
-            # these (an implementation detail); the customer only needs why.
-            retention_reason = f"Flagged as unserviceable on {to_name} during validation"
-
-        updated_consolidations.append(
-            {
-                **c,
-                "query_count": remaining_moved,
-                # The source engine stays, so no cluster is avoided.
-                "saved_cost_estimate": 0,
-                "reason": (  # nosemgrep: string-concat-in-list
-                    f"Partial consolidation: {remaining_moved} of {original_total} "
-                    f"{from_name} queries moved to {to_name}; "
-                    f"{reason_suffix}"
-                ),
-                "action": "partial",
-                "queries_retained": reversed_ids,
-                "retention_reason": retention_reason,
-            }
-        )
-
-    return revised_assignments, updated_consolidations
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +261,8 @@ def _format_gate(engine: str, gate_kind: str | None, required_capabilities: Iter
         return f"{name} lacks {caps}"
     if gate_kind == "hard_exclusion":
         return f"{name} is hard-excluded for this query"
+    if gate_kind == "model_flag":
+        return f"{name} was flagged as unable to serve this query"
     return f"{name} cannot serve this query"
 
 
@@ -1000,10 +819,10 @@ def _call_llm_validator(
     to_engine: str,
     queries: list[dict],
     batch: tuple[str, int] | None = None,
-) -> list[dict]:
+) -> list:
     """Call the LLM to validate whether target engine can serve the queries.
 
-    Returns list of flagged queries: [{"query_id": str, "reason": str}]. Raises
+    Returns the model's raw flag entries (validated by the caller). Raises
     :class:`ValidationFailed` when no LLM gave a usable verdict (none available,
     a call error, or a response that is not the JSON array asked for).
     """
@@ -1063,24 +882,36 @@ def _build_validation_prompt(
         f"- Unacceptable performance (full table scans on key-value store)\n"
         f"- Architectural impossibility (full-text search on DynamoDB)\n"
         f"- Unreasonable complexity (5+ GSIs for a single query pattern)\n\n"
-        f"Respond with ONLY a compact JSON array of flagged queries (no indentation, "
-        f"a reason of at most 15 words). If all queries are fine, respond with an "
-        f"empty array [].\n"
-        f'Format: [{{"query_id": "...", "reason": "brief explanation"}}]\n\n'
+        f"A flag says only that {to_engine} cannot serve the query; it never names "
+        f"another engine. Where a flagged query goes is decided by the deterministic "
+        f"scorer.\n\n"
+        f"Respond with ONLY a compact JSON object (no indentation): "
+        f'{{"flags": [...]}}, one flag per flagged query, with "query_ids" (the '
+        f'query id copied exactly), "flagged_engine" ("{to_engine}"), '
+        f'"reason_category" (one of "full_scan", "client_side_join", '
+        f'"missing_feature", "other") and "explanation" (at most 15 words). '
+        f'If all queries are fine, respond with {{"flags": []}}.\n\n'
         f"JSON response:"
     )
 
 
-def _parse_llm_response(response_text: str) -> list[dict]:
-    """Parse the LLM's JSON response, handling common formatting issues.
+def _parse_llm_response(response_text: str) -> list[ModelFlag]:
+    """Parse the LLM's JSON response into valid flags (invalid entries dropped).
 
-    Returns [] for a response that is not a JSON array; see :func:`_parse_flagged`.
+    Returns [] for a response that is not a ``{"flags": [...]}`` object; see
+    :func:`_parse_flagged`.
     """
-    return _parse_flagged(response_text) or []
+    return parse_model_flags(_parse_flagged(response_text) or [])[0]
 
 
-def _parse_flagged(response_text: str) -> list[dict] | None:
-    """The flagged queries in a response, or None when it is not a JSON array."""
+def _parse_flagged(response_text: str) -> list[object] | None:
+    """The raw flag entries in a response, or None when it is not ``{"flags": [...]}``.
+
+    Entries are not validated here: :func:`validate_consolidations` validates
+    each one against ``ModelFlag`` (``parse_model_flags``), so one bad entry is
+    dropped and counted while the valid flags beside it are kept -- the same
+    handling the headless response gets.
+    """
     text = response_text.strip()
 
     # Strip markdown code fences if present
@@ -1097,31 +928,26 @@ def _parse_flagged(response_text: str) -> list[dict] | None:
         logger.debug("Failed to parse LLM validation response: %s", text[:200])
         logger.warning("Failed to parse LLM validation response (length=%d)", len(text))
         return None
-    if not isinstance(result, list):
-        logger.debug("LLM validation response is not a JSON array: %s", text[:200])
+    flags = result.get("flags") if isinstance(result, dict) else None
+    if not isinstance(flags, list):
+        logger.debug("LLM validation response has no flags list: %s", text[:200])
         logger.warning(
-            "LLM validation response is not a JSON array (type=%s)", type(result).__name__
+            'LLM validation response is not a {"flags": [...]} object (type=%s)',
+            type(result).__name__,
         )
         return None
-    # Validate each entry has required fields
-    return [
-        {"query_id": entry["query_id"], "reason": entry.get("reason", "flagged")}
-        for entry in result
-        if isinstance(entry, dict) and "query_id" in entry
-    ]
+    return list(flags)
 
 
-def _report(from_engine: str, to_engine: str, queries: list[dict], flagged: list[dict]) -> None:
+def _report(from_engine: str, to_engine: str, queries: list[dict], flagged: list) -> None:
     if flagged:
+        # Raw entries, not yet validated: the console narration stays to the
+        # entry count (the explanation is model text, DEBUG only, #143).
         print(
-            f"[reality-check] LLM flagged {len(flagged)}/{len(queries)} queries "
-            f"as unserviceable on {to_engine}"
+            f"[reality-check] LLM returned {len(flagged)} flag(s) on {len(queries)} queries "
+            f"moved to {to_engine}"
         )
-        for f in flagged:
-            # `reason` is LLM-generated free text; full detail at DEBUG only,
-            # the console narration stays to the query identifier (#143).
-            logger.debug("[reality-check] %s: %s", f["query_id"], f["reason"])
-            print(f"[reality-check]   {f['query_id']}")
+        logger.debug("[reality-check] flags on %s: %s", to_engine, flagged)
     else:
         print(f"[reality-check] LLM confirmed all {len(queries)} queries OK on {to_engine}")
 
@@ -1154,8 +980,11 @@ def _try_strands_validator(
     to_engine: str,
     queries: list[dict],
     batch: tuple[str, int] | None = None,
-) -> list[dict] | None:
+) -> list | None:
     """Validate using a Strands agent (production); None when Strands is not installed.
+
+    Asks for structured output against :class:`ModelFlagBatch` (each entry
+    advertises the ``ModelFlag`` schema; the caller validates entries one by one).
 
     Raises :class:`ValidationFailed` when the call fails or the response is unusable.
     """
@@ -1172,6 +1001,7 @@ def _try_strands_validator(
             model=model,
             system_prompt=VALIDATOR_SYSTEM_PROMPT,
             tools=[],
+            structured_output_model=ModelFlagBatch,
             callback_handler=None,
         )
 
@@ -1179,7 +1009,9 @@ def _try_strands_validator(
             f"[reality-check] Validating {len(queries)} queries "
             f"moved {from_engine} → {to_engine}..."
         )
-        response_text = str(agent(prompt)).strip()
+        result = agent(prompt)
+        structured = getattr(result, "structured_output", None)
+        response_text = "" if isinstance(structured, ModelFlagBatch) else str(result).strip()
     except Exception as exc:
         # The underlying error from an LLM call can carry prompt/response
         # fragments (#143): full text at DEBUG only. The ValidationFailed
@@ -1189,9 +1021,13 @@ def _try_strands_validator(
         logger.error("Strands validation failed (%s)", _error_label(exc))
         raise ValidationFailed(f"strands: {_error_label(exc)}") from exc
 
-    flagged = _parse_flagged(response_text)
+    flagged: list | None = (
+        list(structured.flags) if isinstance(structured, ModelFlagBatch) else None
+    )
     if flagged is None:
-        raise ValidationFailed("strands: response is not a JSON array (possibly truncated)")
+        flagged = _parse_flagged(response_text)
+    if flagged is None:
+        raise ValidationFailed("strands: response does not match the flag contract")
     _report(from_engine, to_engine, queries, flagged)
     return flagged
 
@@ -1201,7 +1037,7 @@ def _try_boto3_validator(
     to_engine: str,
     queries: list[dict],
     batch: tuple[str, int] | None = None,
-) -> list[dict] | None:
+) -> list | None:
     """Validate using boto3 Bedrock directly (local development); None without boto3.
 
     Raises :class:`ValidationFailed` when the call fails or the response is unusable.
@@ -1233,6 +1069,6 @@ def _try_boto3_validator(
     print(f"[reality-check] Validating {len(queries)} queries moved {from_engine} → {to_engine}...")
     flagged = _parse_flagged(response_text)
     if flagged is None:
-        raise ValidationFailed("boto3: response is not a JSON array (possibly truncated)")
+        raise ValidationFailed("boto3: response does not match the flag contract")
     _report(from_engine, to_engine, queries, flagged)
     return flagged

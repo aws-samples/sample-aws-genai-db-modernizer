@@ -51,9 +51,22 @@ Version History:
   committed destination) left no trace in the written artifact at all.
   Defaults to an empty list, so an artifact written before this version
   reads as having no sweep decisions.
+- 1.11 (2026-10-14, #647, #667): Added ``flag_decisions``: what each model flag
+  on a consolidated query did (ADR-031 Decision 11 as amended 2026-10-14: a
+  flag is evidence, the shared scorer decides). One entry per flagged query or
+  co-dependency group: the flagged engine, the reason category and
+  explanation, the outcome (``moved``, ``kept`` or ``ignored``), the
+  destination the scorer chose, and the before/after scores. Defaults to an
+  empty list, so an artifact written before this version, or a run with no
+  model, reads as having no flags. Also ``model_flags_rejected``: how many
+  model entries failed the ``ModelFlag`` contract and were dropped whole.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+from .model_flag import FlagReason
 
 
 class UniqueValueAssessment(BaseModel):
@@ -188,6 +201,42 @@ class SweepDecision(BaseModel):
     )
 
 
+class FlagDecision(BaseModel):
+    """What one model flag on a consolidated query did (#647).
+
+    Written by ``src.agents.referee.model_flags.apply_consolidation_flags``. The
+    destination is always the shared scorer's choice among the remaining
+    engines, never something the flag named.
+    """
+
+    query_ids: list[str] = Field(..., description="The flagged queries this entry covers")
+    flagged_engine: str = Field(..., description="The engine the model judged unable")
+    reason_category: FlagReason = Field(..., description="The flag's reason category")
+    explanation: str = Field(..., description="The flag's explanation (model text)")
+    outcome: Literal["moved", "kept", "ignored"] = Field(
+        ...,
+        description=(
+            "'moved': re-routed to destination_engine by score; 'kept': no other engine "
+            "can take it, so it stays; 'ignored': not a query a consolidation moved "
+            "onto flagged_engine"
+        ),
+    )
+    destination_engine: str | None = Field(
+        None, description="The scorer's best remaining engine; None unless moved"
+    )
+    score_before: float | None = Field(
+        None, description="The flagged engine's own score for the queries, ignoring the flag"
+    )
+    score_after: float | None = Field(
+        None, description="destination_engine's score for the queries; None unless moved"
+    )
+    reason: str = Field(..., description="Why, in customer-facing words")
+    moved_with_group: list[str] = Field(
+        default_factory=list,
+        description="Unflagged co-dependency group members that moved with the flagged queries",
+    )
+
+
 class LightweightRecommendation(BaseModel):
     """Recommendation to use a lightweight managed service instead of a full engine."""
 
@@ -219,7 +268,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.10", description="Contract version")
+    contract_version: str = Field(default="1.11", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )
@@ -306,5 +355,21 @@ class RealityCheckOutputContract(BaseModel):
             "The sanity sweep's own kept-or-removed verdict for every tiny orphan "
             "engine it evaluated (#589). Empty when the sweep evaluated no orphan "
             "engine, or for an artifact written before this field existed"
+        ),
+    )
+    flag_decisions: list[FlagDecision] = Field(
+        default_factory=list,
+        description=(
+            "What each model flag on a consolidated query did (#647): the scorer's "
+            "destination and the before/after scores. Empty with no model, or for an "
+            "artifact written before this field existed"
+        ),
+    )
+    model_flags_rejected: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "How many model flag entries failed the ModelFlag contract (for example by "
+            "naming a destination engine) and were dropped whole (#647)"
         ),
     )

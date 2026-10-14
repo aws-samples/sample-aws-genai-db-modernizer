@@ -17,13 +17,15 @@ from __future__ import annotations
 
 from collections import Counter
 
-from src.agents.referee.consolidation_validator import apply_corrections
+from src.agents.referee.model_flags import apply_consolidation_flags
+from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
     _build_recommendations,
     _engine_infra_cost,
     reconcile_consolidations,
 )
 from src.agents.referee.reality_check_handler import write_reality_check_result
+from src.contracts.model_flag import ModelFlag
 from src.report import renderers
 from src.storage.local_store import LocalArtifactStore
 
@@ -98,24 +100,86 @@ def _wordpress_pass2() -> tuple[list[dict], list[dict], list[dict]]:
     return before, revised, records
 
 
-def _external_corrections() -> list[dict]:
-    # The external validator's response shape: no failed_target.
-    ids = [f"am-{i}" for i in range(6)] + ["am-21"]
-    return [{"query_id": q, "original_engine": "aurora_mysql", "reason": "joins"} for q in ids]
+# Scores for the flag tests: every Aurora MySQL query scores best on Aurora MySQL
+# once its flagged engine is gated, so the scorer sends flagged queries back.
+_SCORES = {"aurora_mysql": 80, "dynamodb": 60, "opensearch": 40, "documentdb": 50}
 
 
-class TestApplyCorrections:
+def _context(qids: list[str], scores: dict[str, int] | None = None) -> ScoringContext:
+    analysis: dict[str, dict] = {}
+    for engine, score in (scores or _SCORES).items():
+        analysis[engine] = {
+            "table_recommendations": [
+                {"table_id": f"t_{q}", "confidence_score": score} for q in qids
+            ]
+        }
+    return ScoringContext(analysis_outputs=analysis)
+
+
+def _query_map(qids: list[str]) -> dict[str, dict]:
+    return {
+        q: {
+            "query_id": q,
+            "query_text": f"SELECT * FROM t_{q} WHERE id = ?",
+            "query_type": "SELECT",
+            "tables_accessed": [f"t_{q}"],
+        }
+        for q in qids
+    }
+
+
+def _flags(ids: list[str], engine: str) -> list[ModelFlag]:
+    return [
+        ModelFlag.model_validate(
+            {
+                "query_ids": [q],
+                "flagged_engine": engine,
+                "reason_category": "client_side_join",
+                "explanation": "joins",
+            }
+        )
+        for q in ids
+    ]
+
+
+def _external_flags() -> list[ModelFlag]:
+    # Six flags on the DynamoDB move, one on the OpenSearch move.
+    return _flags([f"am-{i}" for i in range(6)], "dynamodb") + _flags(["am-21"], "opensearch")
+
+
+def _apply(
+    flags: list[ModelFlag],
+    before: list[dict],
+    revised: list[dict],
+    records: list[dict],
+    candidates: set[str],
+    scores: dict[str, int] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    qids = [qa["query_id"] for qa in before]
+    updated, records, _, _ = apply_consolidation_flags(
+        flags,
+        revised,
+        records,
+        before,
+        _context(qids, scores),
+        _query_map(qids),
+        candidates,
+    )
+    return updated, records
+
+
+class TestApplyFlags:
     def _run(self) -> tuple[list[dict], list[dict]]:
-        _, revised, records = _wordpress_pass2()
-        return apply_corrections(
-            _external_corrections(),
+        before, revised, records = _wordpress_pass2()
+        return _apply(
+            _external_flags(),
+            before,
             revised,
             records,
-            surviving_engines={"dynamodb", "elasticache", "opensearch"},
-            all_original_engines={"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
+            {"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
         )
 
-    def test_a_correction_only_touches_the_consolidation_its_query_was_in(self) -> None:
+    def test_a_flag_only_touches_the_consolidation_its_query_was_in(self) -> None:
         _, records = self._run()
         pairs = {(c["from_engine"], c["to_engine"]): c["query_count"] for c in records}
         assert pairs == {
@@ -124,91 +188,76 @@ class TestApplyCorrections:
             ("documentdb", "dynamodb"): 6,
         }
 
-    def test_denominator_is_the_number_proposed_and_reversed_queries_stay(self) -> None:
+    def test_denominator_is_the_number_proposed_and_flagged_queries_go_back(self) -> None:
         _, records = self._run()
         ddb = next(
             c for c in records if c["to_engine"] == "dynamodb" and c["from_engine"] != "documentdb"
         )
         assert "12 of 18 Aurora MySQL queries moved to DynamoDB" in ddb["reason"]
-        assert "6 stay on Aurora MySQL" in ddb["reason"]
-        assert "redirected to Aurora MySQL" not in ddb["reason"]
-        assert "redirected" not in (ddb["retention_reason"] or "")
+        assert "6 flagged on DynamoDB re-routed by score" in ddb["reason"]
+        assert ddb["queries_retained"] == [f"am-{i}" for i in range(6)]
         assert ddb["action"] == "partial"
         assert ddb["saved_cost_estimate"] == 0
 
-    def test_reversed_query_reason_does_not_claim_a_redirect(self) -> None:
+    def test_a_flagged_query_names_where_the_scorer_sent_it(self) -> None:
         assignments, _ = self._run()
         q = next(qa for qa in assignments if qa["query_id"] == "am-0")
         assert q["assigned_engine"] == "aurora_mysql"
-        assert "redirected to Aurora MySQL" not in q["assignment_reason"]
+        assert "flagged on DynamoDB" in q["assignment_reason"]
+        assert "moved to Aurora MySQL" in q["assignment_reason"]
+        assert "score 80 against 60 on DynamoDB" in q["assignment_reason"]
 
-    def test_redirect_to_a_different_engine_is_described_as_a_redirect(self) -> None:
+    def test_a_move_to_a_third_engine_leaves_the_record_without_retaining_it(self) -> None:
+        before = [_qa("doc-0", "documentdb"), _qa("doc-1", "documentdb")]
         revised = [
             _moved("doc-0", "documentdb", "dynamodb"),
             _moved("doc-1", "documentdb", "dynamodb"),
         ]
-        _, records = apply_corrections(
-            [{"query_id": "doc-0", "original_engine": "documentdb", "reason": "joins"}],
+        assignments, records = _apply(
+            _flags(["doc-0"], "dynamodb"),
+            before,
             revised,
             [_record("documentdb", "dynamodb", 2, saved=500)],
-            all_original_engines={"documentdb", "dynamodb", "aurora_postgresql"},
+            {"documentdb", "dynamodb", "aurora_postgresql"},
+            scores={"aurora_postgresql": 90, "documentdb": 70, "dynamodb": 60},
         )
         assert "1 of 2 DocumentDB queries moved to DynamoDB" in records[0]["reason"]
-        assert "1 redirected to Aurora PostgreSQL" in records[0]["reason"]
-
-    def test_a_single_reversal_reads_singular(self) -> None:
-        revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
-        _, records = apply_corrections(
-            [{"query_id": "d0", "original_engine": "documentdb", "reason": "joins"}],
-            revised,
-            [_record("documentdb", "dynamodb", 3, saved=500)],
-        )
-        assert "1 stays on DocumentDB" in records[0]["reason"]
-
-    def test_retention_reason_names_no_internal_validation_mechanism(self) -> None:
-        """#572 review item 6: this path only runs under ``bedrock``/``external``
-        llm_mode (an LLM or an outside validator flags a consolidation), which the
-        deterministic e2e guard never reaches -- covered here with no model."""
-        revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
-        _, records = apply_corrections(
-            [{"query_id": "d0", "original_engine": "documentdb", "reason": "joins"}],
-            revised,
-            [_record("documentdb", "dynamodb", 3, saved=500)],
-        )
-        assert (
-            records[0]["retention_reason"]
-            == "Flagged as unserviceable on DynamoDB during validation"
-        )
-        assert "LLM" not in records[0]["retention_reason"]
-
-    def test_redirect_assignment_reason_uses_the_two_word_display_name(self) -> None:
-        """#572 review item 6/8: ``redirect_engine`` can be a two-word display
-        name (``Aurora PostgreSQL``) -- the redirected query's own
-        ``assignment_reason`` (not just the consolidation record) must use it too."""
-        revised = [
-            _moved("doc-0", "documentdb", "dynamodb"),
-            _moved("doc-1", "documentdb", "dynamodb"),
-        ]
-        assignments, _ = apply_corrections(
-            [{"query_id": "doc-0", "original_engine": "documentdb", "reason": "joins"}],
-            revised,
-            [_record("documentdb", "dynamodb", 2, saved=500)],
-            all_original_engines={"documentdb", "dynamodb", "aurora_postgresql"},
-        )
+        assert records[0]["queries_retained"] == []
         q = next(qa for qa in assignments if qa["query_id"] == "doc-0")
         assert q["assigned_engine"] == "aurora_postgresql"
-        assert "redirected to Aurora PostgreSQL" in q["assignment_reason"]
+        # #572: the two-word display name, never the raw id.
+        assert "moved to Aurora PostgreSQL" in q["assignment_reason"]
         assert "aurora_postgresql" not in q["assignment_reason"]
+
+    def test_retention_reason_names_no_internal_validation_mechanism(self) -> None:
+        """#572 review item 6: this path only runs with a model flag, which the
+        deterministic e2e guard never reaches -- covered here with no model."""
+        before = [_qa(q, "documentdb") for q in ("d0", "d1", "d2")]
+        revised = [_moved(q, "documentdb", "dynamodb") for q in ("d0", "d1", "d2")]
+        _, records = _apply(
+            _flags(["d0"], "dynamodb"),
+            before,
+            revised,
+            [_record("documentdb", "dynamodb", 3, saved=500)],
+            {"documentdb", "dynamodb"},
+        )
+        assert records[0]["retention_reason"] == (
+            "Flagged as unable to run on DynamoDB; DocumentDB scores best among the "
+            "remaining engines"
+        )
+        assert "LLM" not in records[0]["retention_reason"]
+        assert "validation" not in records[0]["retention_reason"]
 
 
 class TestReconcile:
     def test_records_reproduce_the_final_distribution(self) -> None:
         before, revised, records = _wordpress_pass2()
-        revised, records = apply_corrections(
-            _external_corrections(),
+        revised, records = _apply(
+            _external_flags(),
+            before,
             revised,
             records,
-            all_original_engines={"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
+            {"aurora_mysql", "dynamodb", "elasticache", "opensearch"},
         )
         # Re-run absorption moved OpenSearch's 3 queries into Aurora MySQL.
         for qa in revised:

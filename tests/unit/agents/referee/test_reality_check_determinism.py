@@ -351,8 +351,14 @@ class TestAuroraChoiceFollowsTheSource:
         ("source", "expected"),
         [("mysql", "aurora_mysql"), ("postgresql", "aurora_postgresql"), ("", "aurora_mysql")],
     )
-    def test_corrections_redirect_to_the_source_dialect(self, source, expected):
-        from src.agents.referee.consolidation_validator import apply_corrections
+    def test_flags_tie_to_the_source_dialect(self, source, expected):
+        # #647: a flagged query goes to its best remaining engine by score; an
+        # empty ScoringContext ties both Aurora engines at 0, so the shared
+        # break_tie decides -- the source-compatible engine, else the settled
+        # workload (MySQL, 2 vs 1).
+        from src.agents.referee.model_flags import route_flagged_unit
+        from src.agents.referee.query_scoring import ScoringContext
+        from src.agents.referee.tie_break import settled_counts
 
         revised = [
             {"query_id": "q1", "assigned_engine": "dynamodb"},
@@ -360,19 +366,16 @@ class TestAuroraChoiceFollowsTheSource:
             {"query_id": "m2", "assigned_engine": "aurora_mysql"},
             {"query_id": "p1", "assigned_engine": "aurora_postgresql"},
         ]
-        corrections = [
-            {
-                "query_id": "q1",
-                "original_engine": "documentdb",
-                "failed_target": "dynamodb",
-                "reason": "needs joins",
-            }
-        ]
-        updated, _ = apply_corrections(
-            corrections, revised, [], surviving_engines=self.BOTH, source_engine=source
+        routing = route_flagged_unit(
+            ["q1"],
+            "dynamodb",
+            self.BOTH | {"dynamodb"},
+            ScoringContext().with_flag_gaps({"q1": ["dynamodb"]}),
+            {"q1": {"query_id": "q1"}},
+            source_engine=source,
+            settled=settled_counts(revised),
         )
-        # Without a source the engine with more queries (MySQL, 2 vs 1) wins.
-        assert updated[0]["assigned_engine"] == expected
+        assert routing.destination == expected
 
     @pytest.mark.parametrize(
         ("source", "expected"),

@@ -16,18 +16,16 @@ from src.agents.referee.assignment_overrides import refresh_consolidated_assignm
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import normalize_cache_owners
 from src.agents.referee.consolidation_validator import (
-    apply_corrections,
-    corrections_for_moved_queries,
     sanity_sweep,
     validate_consolidations,
 )
+from src.agents.referee.model_flags import apply_consolidation_flags, parse_model_flags
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
     _build_query_signals,
     reconcile_consolidations,
     refresh_patterns_and_recommendations,
-    resettle_after_corrections,
     run_reality_check,
 )
 from src.agents.referee.reality_check_request import (
@@ -37,6 +35,7 @@ from src.agents.referee.reality_check_request import (
     with_read_pages,
 )
 from src.agents.referee.reality_check_summary import finalize_executive_summary
+from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.reality_check_output import RealityCheckOutputContract
 from src.shared.engine_elimination import eliminated_engines as settled_eliminated_engines
@@ -194,30 +193,33 @@ def prepare_reality_check_llm_input(deterministic_result: dict) -> dict:
     """
     det = deterministic_result
     request = build_reality_check_request(
-        det, absorption_candidates(det["before_distribution"], det["after_distribution"])
+        det,
+        absorption_candidates(
+            det["before_distribution"], det["after_distribution"], det.get("consolidations")
+        ),
     )
     return with_read_pages(request)
 
 
 def absorption_candidates(
-    before_distribution: dict[str, int], after_distribution: dict[str, int]
+    before_distribution: dict[str, int],
+    after_distribution: dict[str, int],
+    consolidations: list[dict] | None = None,
 ) -> list[str]:
-    """Engines whose fate can still change after the LLM's corrections (#236, #588).
+    """Kept engines whose fate can still change after the model's flags (#236, #647).
 
-    A correction moves its query to a committed-or-original Aurora engine when
-    there is one, else back to its original engine. When that brings back an
-    engine the preview removed, finalize settles the engines again
-    (``resettle_after_corrections``) with the same rule as the first run, which
-    can remove any engine the preview kept, whatever its size. So every engine
-    the preview kept is listed; none is when no correction can bring an engine
-    back. The external LLM writes its summary before that, so it must not
-    state these engines' final fate.
+    A flag re-routes its query only among the kept engines and never brings a
+    removed engine back (maintainer decision, 2026-10-14). So a removed engine
+    stays removed, and the only engines that can still lose queries -- and end
+    empty, or small enough for the sanity sweep to remove -- are kept engines a
+    consolidation moved queries onto (a flag only applies to such a query).
+    The external LLM writes its summary before finalize, so it must not state
+    these engines' final fate. ``before_distribution`` is kept for the
+    signature's callers; it no longer changes the answer.
     """
     kept = {engine for engine, count in after_distribution.items() if count > 0}
-    removed = {engine for engine, count in before_distribution.items() if count > 0} - kept
-    aurora_pool = AURORA_ENGINES & (kept | removed)
-    restorable = (aurora_pool - kept) if aurora_pool else removed
-    return sorted(kept) if restorable else []
+    targets = {c.get("to_engine") for c in consolidations or [] if c.get("query_count", 1)}
+    return sorted(kept & targets)
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +231,8 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
     """Merge LLM output into the deterministic result dict.
 
     Handles two optional LLM contributions:
-    - consolidation_corrections: queries the LLM says should NOT have been moved
+    - consolidation_corrections: model flags (``ModelFlag``) on queries a
+      consolidation moved; the shared scorer decides where a flagged query goes
     - executive_summary: CTO-facing narrative string
 
     Returns an updated copy of deterministic_result (mutated in place).
@@ -237,47 +240,15 @@ def apply_reality_check_llm_output(deterministic_result: dict, llm_output: dict)
     result = deterministic_result
 
     if "consolidation_corrections" in llm_output:
-        # Only queries a consolidation moved can be sent back (#285): an external
-        # response could name any id, or one the review never saw.
-        corrections = corrections_for_moved_queries(
-            llm_output["consolidation_corrections"] or [],
-            result["consolidations"],
-            result["revised_assignments"],
-            result.get("assignment", {}).get("query_assignments"),
-        )
-        if corrections:
-            surviving_engines = set(result["after_distribution"].keys())
-            all_original_engines = set(result["before_distribution"].keys())
-            result["revised_assignments"], result["consolidations"] = apply_corrections(
-                corrections,
-                result["revised_assignments"],
-                result["consolidations"],
-                surviving_engines=surviving_engines,
-                all_original_engines=all_original_engines,
-                source_engine=source_database_engine(result.get("collector_output", {})),
-            )
-            # A correction can bring back an engine the reality check removed;
-            # the engines were settled without it, so settle them again with
-            # the same rule (#166, #588). The corrected queries stay put; the
-            # customer's own picks are left out and put back, as in the first run.
-            corrected_engines = {qa["assigned_engine"] for qa in result["revised_assignments"]}
-            if corrected_engines - surviving_engines:
-                result["revised_assignments"], resettled = resettle_after_corrections(
-                    result["revised_assignments"],
-                    result.get("triage", {}),
-                    result.get("analysis_outputs", {}),
-                    result.get("collector_output", {}),
-                    source_engine=source_database_engine(result.get("collector_output", {})),
-                    held_query_ids={c["query_id"] for c in corrections},
-                )
-                result["consolidations"] = result["consolidations"] + resettled
-            # Patterns and recommendations must follow the corrected assignment
-            refresh_patterns_and_recommendations(result)
-            # Recompute after_distribution
-            after_distribution: dict[str, int] = defaultdict(int)
-            for qa in result["revised_assignments"]:
-                after_distribution[qa["assigned_engine"]] += 1
-            result["after_distribution"] = dict(after_distribution)
+        # Model flags (ADR-031 Decision 11 as amended 2026-10-14, #647): each
+        # entry must match the ModelFlag contract, in both LLM modes. A flag is
+        # evidence -- the flagged engine cannot serve those queries -- and the
+        # shared scorer decides where they go (src.agents.referee.model_flags).
+        flags, rejected = parse_model_flags(llm_output["consolidation_corrections"] or [])
+        if rejected:
+            result["model_flags_rejected"] = result.get("model_flags_rejected", 0) + len(rejected)
+        if flags:
+            _apply_model_flags(result, flags)
 
     if "executive_summary" in llm_output:
         result["executive_summary"] = llm_output["executive_summary"]
@@ -484,6 +455,9 @@ def write_reality_check_result(
             # tiny orphan engine it evaluated -- otherwise a KEPT engine left
             # no trace in this artifact at all.
             "sweep_decisions": result.get("sweep_decisions", []),
+            # #647: what each model flag did (destination, before/after scores).
+            "flag_decisions": result.get("flag_decisions", []),
+            "model_flags_rejected": result.get("model_flags_rejected", 0),
         }
     )
     output_key = f"{database_name}/{job_id}/reality-check/output.json"
@@ -589,6 +563,68 @@ def finalize_reality_check(
 # ---------------------------------------------------------------------------
 
 
+def _scoring_inputs(det: dict) -> tuple[dict, ScoringContext]:
+    """The collector's query map and the shared scorer's context for ``det``.
+
+    The context carries every model-flag gap accepted so far
+    (``det["model_flag_gaps"]``), so a later step never routes a flagged query
+    back onto the engine it was flagged on.
+    """
+    query_map = {
+        q["query_id"]: q
+        for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
+    }
+    scoring_context = ScoringContext.from_pipeline(
+        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
+    ).with_flag_gaps(det.get("model_flag_gaps") or {})
+    return query_map, scoring_context
+
+
+def _apply_model_flags(result: dict, flags: list) -> None:
+    """Apply validated model flags to ``result`` in place (#647, #667).
+
+    Maintainer decision (2026-10-14, #647): a flagged query is re-routed by the
+    shared scorer only among the engines this reality check KEPT. A flag never
+    brings back an engine the check removed and never re-settles any other
+    query; when no kept engine can serve the flagged query, it stays where it
+    is and its ``flag_decisions`` record says why.
+    """
+    kept_engines = {e for e, n in result["after_distribution"].items() if n}
+    query_map, scoring_context = _scoring_inputs(result)
+    source_engine = source_database_engine(result.get("collector_output", {}))
+    (
+        result["revised_assignments"],
+        result["consolidations"],
+        decisions,
+        gaps,
+    ) = apply_consolidation_flags(
+        flags,
+        result["revised_assignments"],
+        result["consolidations"],
+        result.get("assignment", {}).get("query_assignments"),
+        scoring_context,
+        query_map,
+        kept_engines,
+        query_signals=_build_query_signals(result.get("triage", {}).get("signals", [])),
+        source_engine=source_engine,
+        settled=settled_counts(result["revised_assignments"]),
+        co_dependency_groups=result.get("assignment", {}).get("co_dependency_groups", []),
+    )
+    result["flag_decisions"] = result.get("flag_decisions", []) + decisions
+    merged_gaps = {k: set(v) for k, v in (result.get("model_flag_gaps") or {}).items()}
+    for qid, engines in gaps.items():
+        merged_gaps.setdefault(qid, set()).update(engines)
+    result["model_flag_gaps"] = merged_gaps
+    if not any(d["outcome"] == "moved" for d in decisions):
+        return
+    # Patterns and recommendations must follow the corrected assignment
+    refresh_patterns_and_recommendations(result)
+    after_distribution: dict[str, int] = defaultdict(int)
+    for qa in result["revised_assignments"]:
+        after_distribution[qa["assigned_engine"]] += 1
+    result["after_distribution"] = dict(after_distribution)
+
+
 def _skipped(previous_run) -> dict:
     """Summary for a run skipped because Reality Check already ran for the lineage."""
     return {
@@ -613,13 +649,7 @@ def _run_sanity_sweep(det: dict) -> None:
     Mutates ``det`` in place: ``revised_assignments``, ``consolidations``,
     ``sweep_decisions`` and ``after_distribution``.
     """
-    query_map = {
-        q["query_id"]: q
-        for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
-    }
-    scoring_context = ScoringContext.from_pipeline(
-        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
-    )
+    query_map, scoring_context = _scoring_inputs(det)
     if "co_dependency_groups" not in det.get("assignment", {}):
         # Every version writes this key today (#579 round 3) -- only a
         # legacy artifact predating it would land here, so this is a guard
@@ -716,6 +746,7 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
     query_map = {q["query_id"]: q for q in queries}
 
     incomplete: list[dict] = []
+    rejected: list[str] = []
     corrections = validate_consolidations(
         consolidations=det["consolidations"],
         revised_assignments=det["revised_assignments"],
@@ -723,7 +754,11 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
         query_signals=query_signal_map(det.get("triage", {})),
         original_assignments=det["assignment"].get("query_assignments"),
         incomplete=incomplete,
+        rejected=rejected,
     )
+    if rejected:
+        # The same count the headless response gets for an entry off the contract.
+        det["model_flags_rejected"] = det.get("model_flags_rejected", 0) + len(rejected)
     if incomplete:
         # Batches with no verdict keep their moves; record them for audit
         det["validation_incomplete"] = incomplete
@@ -732,8 +767,11 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
             "verdict; their moves stand unreviewed"
         )
     if corrections:
-        print(f"[reality-check] LLM reversed {len(corrections)} queries — applying corrections")
-        apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
+        # The same contract and the same path as the external response (#647).
+        print(f"[reality-check] LLM flagged {len(corrections)} queries — re-routing by score")
+        apply_reality_check_llm_output(
+            det, {"consolidation_corrections": [f.model_dump(mode="json") for f in corrections]}
+        )
 
 
 def _run_bedrock_summary(det: dict, database_name: str) -> None:

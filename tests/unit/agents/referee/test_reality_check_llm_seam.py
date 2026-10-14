@@ -385,8 +385,9 @@ class TestApplyLlmOutputHandlesCorrectionsAndSummary:
         result = apply_reality_check_llm_output(det, {"consolidation_corrections": []})
         assert result["revised_assignments"] == original_assignments
 
-    def test_corrections_move_queries_back(self):
-        """A correction must move the specified query back to its original engine."""
+    def test_a_flag_never_brings_back_the_removed_engine(self):
+        """#647 maintainer decision: DocumentDB was removed, DynamoDB is the only
+        kept engine and it is gated for DOC-AP-1, so the query stays."""
         store = _mock_store()
         # Build a deterministic result where documentdb was consolidated into dynamodb
         det = run_reality_check_deterministic("job-1", "mydb", store)
@@ -415,19 +416,20 @@ class TestApplyLlmOutputHandlesCorrectionsAndSummary:
 
         corrections = [
             {
-                "query_id": "DOC-AP-1",
-                "original_engine": "documentdb",
-                "reason": "requires nested document aggregation",
+                "query_ids": ["DOC-AP-1"],
+                "flagged_engine": "dynamodb",
+                "reason_category": "missing_feature",
+                "explanation": "requires nested document aggregation",
             }
         ]
         result = apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
 
-        # DOC-AP-1 should have been moved back to documentdb
-        moved_back = next(
-            (qa for qa in result["revised_assignments"] if qa["query_id"] == "DOC-AP-1"), None
-        )
-        assert moved_back is not None
-        assert moved_back["assigned_engine"] == "documentdb"
+        stayed = next(qa for qa in result["revised_assignments"] if qa["query_id"] == "DOC-AP-1")
+        assert stayed["assigned_engine"] == "dynamodb"
+        (decision,) = result["flag_decisions"]
+        assert decision["outcome"] == "kept"
+        assert "stays on DynamoDB" in decision["reason"]
+        assert "documentdb" not in {qa["assigned_engine"] for qa in result["revised_assignments"]}
 
     def test_corrections_rebuilds_recommendations(self):
         """After applying corrections, recommendations must be rebuilt."""
@@ -456,9 +458,10 @@ class TestApplyLlmOutputHandlesCorrectionsAndSummary:
 
         corrections = [
             {
-                "query_id": "DOC-AP-1",
-                "original_engine": "documentdb",
-                "reason": "requires document aggregation",
+                "query_ids": ["DOC-AP-1"],
+                "flagged_engine": "dynamodb",
+                "reason_category": "missing_feature",
+                "explanation": "requires document aggregation",
             }
         ]
         result = apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
@@ -659,9 +662,11 @@ class TestRunRealityCheckHandlerBackwardCompatible:
         assert any("assignment/v2/assignment.json" in k for k in written_keys)
 
 
-class TestAbsorptionRerunAfterLlmRestoresAurora:
-    """When the LLM brings Aurora back, the engines are settled again (#166) by
-    the same rule as the first run, not an Aurora-only pass (#588)."""
+class TestAFlagNeverBringsBackARemovedEngine:
+    """Maintainer decision (2026-10-14, #647): a flagged query is re-routed only
+    among the engines the reality check kept. Aurora was removed here, so a flag
+    never restores it, never re-settles the other queries, and a flagged query
+    with no kept engine to take it stays."""
 
     @staticmethod
     def _det_with_aurora_consolidated() -> dict:
@@ -752,88 +757,43 @@ class TestAbsorptionRerunAfterLlmRestoresAurora:
         }
 
     @staticmethod
-    def _restore_aurora(det: dict) -> dict:
+    def _flag_the_joins(det: dict) -> dict:
         corrections = [
-            {"query_id": qid, "original_engine": "aurora_mysql", "reason": "multi-table join"}
+            {
+                "query_ids": [qid],
+                "flagged_engine": "dynamodb",
+                "reason_category": "client_side_join",
+                "explanation": "multi-table join",
+            }
             for qid in ("aq1", "aq2")
         ]
         return apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
 
-    def test_tiny_engine_absorbed_into_restored_aurora(self):
-        """The 3 OpenSearch queries are signal-pinned but fail OpenSearch's
-        justification floor (no search depth, no traffic); once Aurora is
-        back, it is the committed engine that can serve them."""
-        result = self._restore_aurora(self._det_with_aurora_consolidated())
+    def test_the_removed_aurora_stays_removed(self):
+        result = self._flag_the_joins(self._det_with_aurora_consolidated())
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert {engine_of[q] for q in ("os1", "os2", "os3")} == {"aurora_mysql"}
-        assert result["after_distribution"] == {"dynamodb": 10, "aurora_mysql": 5}
+        assert "aurora_mysql" not in engine_of.values()
+        assert not any(c["to_engine"] == "aurora_mysql" for c in result["consolidations"])
 
-    def test_rerun_absorption_is_recorded_as_consolidation(self):
-        result = self._restore_aurora(self._det_with_aurora_consolidated())
-
-        from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
-        assert len(from_os) == 1
-        assert from_os[0]["to_engine"] == "aurora_mysql"
-        assert from_os[0]["query_count"] == 3
-
-    def test_corrected_queries_stay_on_the_restored_aurora(self):
-        """The two corrected join queries are held: the re-settle does not
-        remove the restored Aurora again, nor move them back."""
-        result = self._restore_aurora(self._det_with_aurora_consolidated())
+    def test_with_no_kept_engine_to_take_them_the_flagged_queries_stay(self):
+        """DynamoDB is gated by the flags; OpenSearch (the other kept engine)
+        absorbs only search queries, so neither join query can move."""
+        result = self._flag_the_joins(self._det_with_aurora_consolidated())
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert engine_of["aq1"] == "aurora_mysql"
-        assert engine_of["aq2"] == "aurora_mysql"
+        assert engine_of["aq1"] == engine_of["aq2"] == "dynamodb"
+        assert [d["outcome"] for d in result["flag_decisions"]] == ["kept", "kept"]
 
-    def test_the_handler_holds_corrected_queries_even_when_they_score_higher_elsewhere(self):
-        """The corrected joins score 90 on DynamoDB and 50 on Aurora, so the
-        shared scores alone would move them straight back and remove Aurora
-        again; the handler holds them where the correction put them."""
+    def test_no_other_query_is_re_settled(self):
         det = self._det_with_aurora_consolidated()
-        for engine, score in (("aurora_mysql", 50), ("dynamodb", 90)):
-            for rec in det["analysis_outputs"][engine]["table_recommendations"]:
-                if rec["table_id"] == "db.posts":
-                    rec["confidence_score"] = score
+        before = {qa["query_id"]: qa["assigned_engine"] for qa in det["revised_assignments"]}
 
-        result = self._restore_aurora(det)
+        result = self._flag_the_joins(det)
 
-        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert engine_of["aq1"] == "aurora_mysql"
-        assert engine_of["aq2"] == "aurora_mysql"
-
-    def test_restoring_a_non_aurora_engine_also_resettles(self):
-        """With no Aurora at all, a correction sends its query back to its
-        original engine; that engine is back, so the engines are settled
-        again and the tiny, unjustified OpenSearch moves onto it (#588)."""
-        det = self._det_with_aurora_consolidated()
-        for qa in det["revised_assignments"]:
-            if qa["query_id"] in ("aq1", "aq2"):
-                qa["assignment_reason"] = "reality check: consolidated from documentdb → dynamodb"
-        det["consolidations"][0]["from_engine"] = "documentdb"
-        det["before_distribution"] = {"dynamodb": 10, "documentdb": 2, "opensearch": 3}
-        det["analysis_outputs"] = {
-            "documentdb": {
-                "table_recommendations": [
-                    {"table_id": "db.posts", "confidence_score": 80},
-                    {"table_id": "db.users", "confidence_score": 70},
-                    {"table_id": "db.options", "confidence_score": 50},
-                ]
-            },
-            "dynamodb": det["analysis_outputs"]["dynamodb"],
-            "opensearch": det["analysis_outputs"]["opensearch"],
-        }
-        corrections = [
-            {"query_id": qid, "original_engine": "documentdb", "reason": "nested documents"}
-            for qid in ("aq1", "aq2")
-        ]
-
-        result = apply_reality_check_llm_output(det, {"consolidation_corrections": corrections})
-
-        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
-        assert engine_of["aq1"] == "documentdb"
-        assert {engine_of[q] for q in ("os1", "os2", "os3")} == {"documentdb"}
-        assert {engine_of[f"dq{i}"] for i in range(10)} == {"dynamodb"}
+        after = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert after == before
+        assert result["after_distribution"] == {"dynamodb": 12, "opensearch": 3}
 
     def test_no_rerun_when_aurora_was_never_consolidated(self):
         det = self._det_with_aurora_consolidated()

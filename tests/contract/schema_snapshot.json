@@ -10688,6 +10688,129 @@
           "kind": "array"
         }
       },
+      "flag_decisions": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "destination_engine": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "explanation": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "flagged_engine": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "moved_with_group": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "outcome": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "ignored",
+                    "kept",
+                    "moved"
+                  ]
+                }
+              },
+              "query_ids": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "reason_category": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "client_side_join",
+                    "full_scan",
+                    "missing_feature",
+                    "other"
+                  ]
+                }
+              },
+              "score_after": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "score_before": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
       "lightweight_recommendations": {
         "required": false,
         "schema": {
@@ -10749,6 +10872,14 @@
             }
           },
           "kind": "array"
+        }
+      },
+      "model_flags_rejected": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "output_assignment_version": {
@@ -10996,8 +11127,8 @@
         }
       }
     },
-    "schema_hash": "bde96be1f7e84b777d10b500333b335d82639fa81e1c63c8129d59d617650821",
-    "version": "1.10"
+    "schema_hash": "50305ee505744935d927470b878ba1345c58d1b31fc43a5dc662053363682b21",
+    "version": "1.11"
   },
   "referee_input.RefereeInput": {
     "fields": {

@@ -23,6 +23,7 @@ Pydantic model definitions for all agent contracts in the Database Modernizer As
 | `triage_output.py` | Output from referee-triage (selected engines with reasons) |
 | `assignment_models.py` | Query-to-engine assignment output |
 | `reality_check_output.py` | Engine consolidation and validation output |
+| `model_flag.py` | A model's flag: queries an engine cannot serve, never a destination (ADR-031 Decision 11, both LLM modes) |
 | `schema_design_output.py` | Base class for schema design output (`SchemaDesignOutputBase`) |
 | `synthesis_output.py` | Final synthesis report with weighted rankings |
 | `referee_output.py` | Legacy referee output (pre-split into triage/synthesis) |

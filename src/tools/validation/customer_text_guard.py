@@ -187,6 +187,20 @@ ID_FIELD_PATHS = frozenset(
         ("optimizations", "target"),  # Aurora Optimization.target: table/column/cluster name(s)
         ("app_layer_notes", "feature"),  # Aurora AppLayerNote.feature: a short code, not prose
         ("migration_notes", "object_name"),  # MigrationNote.object_name: a stored-object name
+        # RealityCheckOutputContract.flag_decisions (FlagDecision, #647): the
+        # engine ids, the reason-category code and the co-dependency members
+        # moved with the flag are structured fields; its ``reason`` (built with
+        # display_engine) is still scanned.
+        ("flag_decisions", "flagged_engine"),
+        ("flag_decisions", "destination_engine"),
+        ("flag_decisions", "reason_category"),
+        ("flag_decisions", "moved_with_group"),
+        # The model's own ``explanation`` (maintainer decision, 2026-10-14): model
+        # evidence kept for audit, which no deliverable renders. Exempt only while
+        # that holds -- tests/unit/tools/validation/test_customer_text_guard_flag_
+        # decisions.py fails if a renderer under src/report or the UI ever reads
+        # it, so this exemption is revisited before it reaches a customer.
+        ("flag_decisions", "explanation"),
     }
 )
 
