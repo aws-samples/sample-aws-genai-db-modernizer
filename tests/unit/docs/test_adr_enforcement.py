@@ -10,7 +10,8 @@ carries an ``## Enforcement`` table with one row per decision:
     | 1. The query is the unit | `tests/unit/x/test_y.py::TestClass::test_name`<br>`tests/unit/z.py` |
     | 5. Cost is a dimension | none yet -- #638 |
 
-Lettered (``### A.``) and ``### Decision N:`` headings count too. Each ``Enforced by`` cell lists guard tests separated by ``<br>``. An entry is a
+Lettered (``### A.``), ``### Decision N:`` and ``### 1 - Title`` headings count too, and
+so do the decisions an ``## Amendment`` section adds (ADR-028's D, E, F). Each ``Enforced by`` cell lists guard tests separated by ``<br>``. An entry is a
 path under ``tests/``, optionally followed by ``::Class`` and ``::function``
 names that must exist in that file. A decision with no guard says
 ``none yet -- #N`` (the follow-up issue that adds one) instead of inventing a
@@ -31,55 +32,64 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TESTS_DIR = REPO_ROOT / "tests"
 ADR_DIR = REPO_ROOT / "docs" / "architecture" / "decisions"
 
-# ADRs with numbered decisions that have no Enforcement table yet (#641).
+# ADRs with numbered decisions that have no Enforcement table yet (#641 finished the first
+# batch; the set stays so a future ADR written before it has a table can be listed).
 # Remove an entry when its table lands; the test below fails if you forget.
-PENDING_ADOPTION = frozenset(
-    {
-        "ADR-004-rds-tools-and-aws-integration.md",
-        "ADR-013-core-infrastructure-cost-optimization.md",
-        "ADR-017-analysis-agent-scoring-framework.md",
-        "ADR-018-reality-check-and-human-gate.md",
-        "ADR-026-reality-check-in-assessment-core.md",
-        "ADR-028-aurora-relational-schema-design-agents.md",
-        "ADR-028-customer-assignment-review-gate.md",
-        "ADR-029-assignment-reentry-and-feasibility-review.md",
-    }
-)
+PENDING_ADOPTION: frozenset[str] = frozenset()
 
-DECISION_HEADING = re.compile(r"^### (?:Decision\s+)?(\d+|[A-Z])[.:]\s+\S", re.MULTILINE)
+# A label (``1``, ``A``) then ``.``, ``:``, ``)`` or a spaced dash: ``### 1. T``, ``### A: T``,
+# ``### Decision 2 — T``, ``### 1 - T``.
+LABEL = r"(?:Decision\s+)?(\d+|[A-Z])(?:[.:)]|\s+[-\u2013\u2014])"
+DECISION_HEADING = re.compile(rf"^### {LABEL}\s+\S", re.MULTILINE)
+# A heading that starts like a decision (``### 1 Title``, ``### Decision 3``) but is not in a
+# recognised style: reported rather than silently skipped.
+DECISION_LOOKALIKE = re.compile(r"^### (?:Decision\s+\d+|\d+\b|[A-Z]\b(?!\s+[a-z]))", re.MULTILINE)
 FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.MULTILINE | re.DOTALL)
+DECISION_SECTIONS = ("Decision", "Amendment")
 SECTION_HEADING = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
-ROW = re.compile(r"^\|\s*(?:Decision\s+)?(\d+|[A-Z])[.:][^|]*\|(.*)\|\s*$")
+ROW = re.compile(rf"^\|\s*{LABEL}[^|]*\|(.*)\|\s*$")
 NONE_YET = re.compile(r"^none yet\s+(?:--|—)\s+#\d+(?:\s+\(.*\))?$")
 TEST_ENTRY = re.compile(r"^`(tests/[\w./-]+\.py)((?:::\w+)*)`$")
 
 
-def _sections(text: str) -> dict[str, str]:
-    """Top-level (``##``) section bodies keyed by heading text.
+def _sections(text: str) -> list[tuple[str, str]]:
+    """Top-level (``##``) ``(heading, body)`` pairs, in document order.
 
-    Fenced code blocks are blanked first so a ``## `` line inside one does not
-    cut a section short.
+    A list, not a dict: an ADR may repeat a heading (two ``## Decision`` parts, several
+    ``## Amendment`` sections) and none of them may be dropped. Fenced code blocks are
+    blanked first so a ``## `` line inside one does not cut a section short.
     """
     text = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     matches = list(SECTION_HEADING.finditer(text))
-    out: dict[str, str] = {}
+    out: list[tuple[str, str]] = []
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        out[m.group(1)] = text[m.end() : end]
+        out.append((m.group(1), text[m.end() : end]))
     return out
 
 
+def _decision_body(text: str) -> str:
+    """Every section that can carry decisions: ``## Decision*`` and ``## Amendment*``."""
+    return "\n".join(b for title, b in _sections(text) if title.startswith(DECISION_SECTIONS))
+
+
 def decision_numbers(text: str) -> list[str]:
-    """Labels (``1``, ``A``) of the decision headings in every ``## Decision*`` section."""
-    body = "\n".join(b for title, b in _sections(text).items() if title.startswith("Decision"))
-    return DECISION_HEADING.findall(body)
+    """Labels (``1``, ``A``) of the decision headings in every decision or amendment section."""
+    return DECISION_HEADING.findall(_decision_body(text))
+
+
+def unrecognised_decision_headings(text: str) -> list[str]:
+    """Headings that look like decisions but are in a style the parser does not read."""
+    return [
+        line
+        for line in re.findall(r"^### .*$", _decision_body(text), re.MULTILINE)
+        if DECISION_LOOKALIKE.match(line) and not DECISION_HEADING.match(line)
+    ]
 
 
 def enforcement_rows(text: str) -> dict[str, str]:
     """Decision number -> raw ``Enforced by`` cell, from the Enforcement table."""
-    body = _sections(text).get("Enforcement")
-    if body is None:
-        return {}
+    body = "\n".join(b for title, b in _sections(text) if title == "Enforcement")
     rows: dict[str, str] = {}
     for line in body.splitlines():
         m = ROW.match(line.strip())
@@ -164,6 +174,30 @@ def _checked_adrs() -> list[Path]:
         and decision_numbers(p.read_text())
         and _in_force(p.read_text())
     ]
+
+
+def unparsed_decisions(text: str) -> bool:
+    """True when an ADR claims enforcement (a table) but the parser reads no decision.
+
+    That is how a renamed ``## Decision`` or a ``### Part A.`` heading would drop an ADR out
+    of the check unnoticed.
+    """
+    return bool(enforcement_rows(text)) and not decision_numbers(text)
+
+
+@pytest.mark.parametrize("adr", _adrs(), ids=lambda p: p.name)
+def test_an_adr_with_an_enforcement_table_has_decisions_the_parser_reads(adr: Path) -> None:
+    assert not unparsed_decisions(adr.read_text()), (
+        f"{adr.name} has an Enforcement table but no decision heading the parser reads "
+        "(a renamed `## Decision` section or an unsupported heading style?)"
+    )
+
+
+def test_checker_notices_a_renamed_decision_section_and_an_unsupported_heading() -> None:
+    table = "## Enforcement\n\n| 1. A | none yet -- #1 |\n"
+    assert not unparsed_decisions(f"## Decision\n\n### 1. A\n\n{table}")
+    assert unparsed_decisions(f"## What we decided\n\n### 1. A\n\n{table}")
+    assert unparsed_decisions(f"## Decision\n\n### Part A. First\n\n{table.replace('1.', 'A.')}")
 
 
 def test_adr_031_is_checked() -> None:
@@ -290,3 +324,38 @@ def test_checker_finds_decisions_in_other_heading_styles() -> None:
 def test_checker_ignores_a_heading_line_inside_a_code_fence() -> None:
     text = "## Decision\n\n### 1. One\n\n```text\n## not a heading\n```\n\n### 2. Two\n"
     assert decision_numbers(text) == ["1", "2"]
+
+
+def test_checker_reads_decisions_added_under_an_amendment_section() -> None:
+    text = (
+        "## Decision\n\n### A. First\n\n### B. Second\n\n"
+        "## Amendment (2026-08-27): new transport\n\n### D. Two-step\n\n### E. Table\n"
+    )
+    assert decision_numbers(text) == ["A", "B", "D", "E"]
+
+
+def test_checker_keeps_every_part_of_a_repeated_section_heading() -> None:
+    text = (
+        "## Decision\n\n### 1. One\n\n## Other\n\nx\n\n"
+        "## Decision\n\n### 2. Two\n\n"
+        "## Enforcement\n\n| 1. One | none yet -- #1 |\n\n## Notes\n\ny\n\n"
+        "## Enforcement\n\n| 2. Two | none yet -- #2 |\n"
+    )
+    assert decision_numbers(text) == ["1", "2"]
+    assert set(enforcement_rows(text)) == {"1", "2"}
+
+
+def test_checker_reads_dash_and_paren_heading_styles() -> None:
+    text = "## Decision\n\n### 1 - One\n\n### Decision 2 — Two\n\n### 3) Three\n\n### C: Four\n"
+    assert decision_numbers(text) == ["1", "2", "3", "C"]
+    assert set(enforcement_rows("## Enforcement\n\n| 1 - One | none yet -- #1 |\n")) == {"1"}
+
+
+def test_checker_reports_a_decision_heading_in_an_unreadable_style() -> None:
+    text = "## Decision\n\n### 1. Fine\n\n### 2 Missing the dot\n\n### Decision 3\n\n### Notes\n"
+    assert unrecognised_decision_headings(text) == ["### 2 Missing the dot", "### Decision 3"]
+
+
+@pytest.mark.parametrize("adr", _adrs(), ids=lambda p: p.name)
+def test_no_decision_heading_goes_unchecked(adr: Path) -> None:
+    assert unrecognised_decision_headings(adr.read_text()) == []

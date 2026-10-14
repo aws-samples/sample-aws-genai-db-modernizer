@@ -94,6 +94,18 @@ The analysis agent is the core product value — the component where specialist 
 
 **Rationale:** Simplest model that captures the customer's mental model. "Your session management workload (12 queries, 3 tables) maps to DynamoDB at 92% confidence" is actionable. If we need finer segmentation, the decision trace has the per-query data to support it.
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| 1. Queries are the atomic unit of analysis | `tests/unit/test_assignment_resolver.py::TestOpenSearchScoresTheQueryNotTheTable`<br>`tests/unit/test_assignment_resolver.py::TestComputeQueryConfidence::test_pattern_match_on_a_table_outside_the_querys_own_tables_has_no_effect` |
+| 2. Specialist-curated pattern catalogs drive scoring | none yet -- #703 |
+| 3. Decision trace is a required output | `tests/unit/agents/analysis/test_decision_trace_completeness_properties.py`<br>none yet -- #703 (every engine, and the trace as a separate artifact) |
+| 4. Score weights are per-target configurable | `tests/unit/agents/referee/test_cost_dimension.py::test_an_engine_may_weight_cost_differently_but_keeps_the_same_four_dimensions`<br>none yet -- #701 (the weights table is stale) |
+| 5. Workload segments are per-pattern groupings | none yet -- #703 |
+
 ## Consequences
 
 ### Positive

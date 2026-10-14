@@ -142,6 +142,19 @@ table**, keyed by `query_id` as a stable anchor, with a fixed column schema:
   "re-enter the assignment phase" flow safe: it appends a new highest version,
   and stale artifacts are re-dispatched, with no stage pinned to a fixed number.
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| A. The gate (hard interrupt) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign` |
+| B. The review document: free-form markdown with one embedded parseable table | `tests/unit/test_assignment_review.py::TestRoundTrip`<br>`tests/unit/test_assignment_review.py::TestStrictParsing`<br>`tests/unit/test_assignment_review.py::TestEdits` |
+| C. Versioning: one resolver + provenance + staleness detection | `tests/unit/test_assignment_versioning.py`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs::test_continue_approves_without_new_version` |
+| D. Two-step gate | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_present_offers_choice_without_approving`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs`<br>`tests/unit/test_assignment_review.py::TestSummary` |
+| E. HITL editable `TableComponent` transport (raise-and-resume) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewHitl`<br>`tests/unit/atx_orchestrator/test_hitl.py`<br>`tests/unit/test_assignment_review.py::TestStructuredTable` |
+| F. Chat fallback retained | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewChatFallback` |
+
 ## Implementation surface
 
 - **`src/contracts/assignment_models.py`** — add a `source` enum field to

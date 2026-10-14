@@ -52,6 +52,19 @@ ECR repository uses KMS encryption (via shared key) and immutable image tags ins
 
 All cfn-nag warnings must be resolved with real security implementations, not suppressions. The only pre-approved suppression is W28 (explicit resource naming) when following the project naming convention for cross-stack references.
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| 1. Single NAT Gateway for Dev Environment | none yet -- #700 (the stack was removed) |
+| 2. VPC Gateway Endpoints for S3 and DynamoDB | none yet -- #700 (the stack was removed) |
+| 3. Shared KMS Key for Core Infrastructure | none yet -- #700 (the stack was removed) |
+| 4. VPC Flow Logs with KMS Encryption | none yet -- #700 (the stack was removed) |
+| 5. ECR with KMS Encryption and Immutable Tags | none yet -- #700 (the stack was removed) |
+| 6. cfn-nag Warnings Treated as Failures | none yet -- #700 (current templates suppress more than W28) |
+
 ## Monthly Cost Summary (Dev Environment)
 
 | Resource | Monthly Cost |

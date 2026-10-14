@@ -1112,6 +1112,18 @@ Outputs:
 
 ---
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| 1. Tool Organization: Granular Tools | none yet -- #702 |
+| 2. Credential Management: Unified Approach | none yet -- #702 |
+| 3. Error Handling: Graceful Degradation | none yet -- #702 |
+| 4. Data Volume: Pre-Aggregated Summaries | none yet -- #702 |
+| 5. Authentication: IAM Roles (No Passwords) | none yet -- #702 |
+
 ## Consequences
 
 ### Positive

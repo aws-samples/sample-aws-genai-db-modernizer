@@ -94,6 +94,17 @@ mid-run human or LLM input, which the current A2A model (submit, poll, terminal;
 no streaming, no mid-run input) does not support. Both are deferred. Reality
 Check runs to completion without either.
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| 1. Fold Reality Check into the core agent | `tests/unit/atx_orchestrator/test_run_assessment_core.py::test_runs_all_phases_and_writes_same_artifacts` |
+| 2. Rename the agent to `assessment-core` | `tests/unit/atx_orchestrator/test_tools_a2a.py::TestRunDeterministicCoreViaA2AHappyPath::test_invokes_correct_agent_name` |
+| 3. Resolve the assignment version in Python, not the prompt | `tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestCoreResolvesAbsentVersion`<br>`tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestSubagentParams`<br>`tests/unit/atx_orchestrator/test_run_assessment_core.py::test_resolve_assignment_version` |
+| 4. Defer the human gate and the external LLM mode | none yet -- #701 (the gate has since been added by ADR-028) |
+
 ## Rationale
 
 - **Value.** Reality Check is the step that trims engine count before the most

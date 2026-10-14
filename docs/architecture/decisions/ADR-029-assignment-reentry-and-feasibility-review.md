@@ -244,6 +244,17 @@ it:
   ("target engines") in the executive deck is called out for adjustment in scope
   below; no other reporting changes are in this ADR.
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| A. Staleness-driven re-entry (mechanics) | `tests/unit/atx_orchestrator/test_reentry.py::TestReopen`<br>`tests/unit/atx_orchestrator/test_reentry.py::TestRedispatch`<br>`tests/unit/test_assignment_engine_diff.py`<br>`tests/unit/atx_orchestrator/test_get_synthesis_report.py::TestGetSynthesisReport` |
+| B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>none yet -- #704 (the reality check's revised write, and `finalize` returning the warnings) |
+| C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestFeasibilityGate` |
+| E. Prune dead-engine signals after consolidation | `tests/unit/test_assignment_overrides.py::TestRefreshConsolidatedAssignment`<br>`tests/unit/agents/referee/test_synthesis_dead_engine_filter.py`<br>`tests/unit/agents/referee/test_eliminated_engine_agreement.py` |
+
 ## Implementation surface
 
 - **`src/storage/assignment_versioning.py`** — `assignment_engine_diff(prev,

@@ -56,6 +56,17 @@ For large workloads (20+ tables per engine), split into groups before schema des
 - MAX_GROUP_SIZE = 20 tables (empirically determined — balances LLM context limits with design quality)
 - Groups processed in parallel, then merged into a unified schema per engine
 
+## Enforcement
+
+Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
+
+| Decision | Enforced by |
+|---|---|
+| 1. Reality Check Agent (CTO-Level Engine Consolidation) | `tests/contract/test_reality_check_output.py`<br>`tests/unit/agents/referee/test_reality_check_resettle.py`<br>`tests/unit/test_reality_check.py::TestAbsorptionAppliedToAssignments` |
+| 2. Human Approval Gate (Assignment Review Phase) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_schema_design_blocked_before_approval`<br>`tests/unit/api/test_local_execution_status.py::TestWaitingStatus::test_assignment_approval_gate_reports_waiting`<br>none yet -- #701 (the task-token mechanism no longer exists) |
+| 3. Signal-Driven Assignment Resolution | `tests/unit/test_assignment_resolver.py::TestSignalOverrides`<br>`tests/unit/test_assignment_resolver.py::TestAntiPatternPenalties` |
+| 4. Group Splitting for Schema Design | none yet -- #701 (the ADR says groups of 20 tables; the code caps groups at 20 queries) |
+
 ## Updated Pipeline Flow
 
 ```
