@@ -484,18 +484,24 @@ def test_raw_query_child_exits_when_its_parent_is_gone(monkeypatch):
     assert exits == [worker._ORPHAN_EXIT_CODE]
 
 
-def test_worker_memory_reads_current_rss_not_inherited_peak(monkeypatch):
+def test_worker_rss_is_current_process_rss_in_bytes(monkeypatch):
     """The watchdog uses current process RSS, in bytes, on every platform."""
     from types import SimpleNamespace
 
     from src.graph import raw_query_worker as worker
 
+    constructor_args = []
+
     class Process:
+        def __init__(self, *args, **kwargs):
+            constructor_args.append((args, kwargs))
+
         def memory_info(self):
             return SimpleNamespace(rss=123456789)
 
     monkeypatch.setattr(worker.psutil, "Process", Process)
     assert worker._rss_bytes() == 123456789
+    assert constructor_args == [((), {})]
 
 
 def test_raw_query_works_when_the_server_process_is_large(raw_client, monkeypatch):

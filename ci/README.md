@@ -62,6 +62,13 @@ anyone running this script with the `e2e` extra already installed. Plus
 credentials. Accepts extra pytest args, e.g. `./ci/test.sh --cov=src
 --cov-report=term --cov-fail-under=65` for the coverage gate CI runs with.
 
+The raw-query large-server memory regression runs without a platform skip on
+Linux, macOS and Windows wherever this test command is run. The GitHub CI
+workflow currently gates on Ubuntu only. The worker measures current RSS with
+psutil. On Windows, run `ci/test.sh` from Git Bash or WSL, or run
+`uv run pytest tests/ --ignore=tests/e2e -m "not integration and not e2e" --fail-on-skip`
+directly.
+
 ## `e2e.sh`
 
 The deterministic end-to-end suite (`tests/e2e/`): runs the full pipeline
@@ -317,5 +324,3 @@ obvious entries lives here instead:
   public env-var page as of this writing; to be confirmed on the first real
   run (a timeout shows up as a killed Bash call in the transcript).
 - `Bash(curl *)` joins `wget`/`nc` in `deny` for the same reason.
-
-The raw-query large-server memory regression gates on Linux, macOS and Windows. The worker measures current RSS with psutil; on Windows run the Bash CI script from Git Bash, or run the equivalent pytest command directly.

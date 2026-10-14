@@ -109,7 +109,8 @@ def _rss_bytes() -> int:
     """Current resident memory in bytes on Linux, macOS and Windows.
 
     Measuring current RSS avoids a forked child's inherited peak on Linux.
-    psutil also supports Windows, where the resource module is unavailable.
+    On Windows RSS is the working set, which the OS may trim; it is not
+    private commit charge. The resource module is unavailable there.
     """
     return int(psutil.Process().memory_info().rss)
 
