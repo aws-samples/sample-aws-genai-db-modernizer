@@ -10,7 +10,7 @@ The pipeline has already scoped it to this engine and, for large workloads, spli
 
 **`design_metrics` — numbers computed for you. Read them; never recompute them.** Validation rejects a design whose numbers disagree with these:
 
-- `queries[]`: per `query_id`, `design_rps` = (`calls_per_second` ?? `frequency_per_hour` / 3600) × `peak_to_avg_ratio` × `growth_multiplier` (both multipliers are at the top of `design_metrics`)
+- `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied)
 - `tables[]`: per `table_id`, `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute)
 - `coverage`: `in_scope_patterns`, `total_queries_analyzed` and `coverage_ratio`. Absent in a design group, which holds only its share of the queries: skip the coverage check then
 - `dynamodb_partition_limits`: the per-partition-key-value limits and the at-risk threshold
@@ -43,7 +43,7 @@ For each pattern:
 - **Scan anti-patterns**: flag any pattern where `full_table_scans > 0`. These must be eliminated in the design.
 - **Write errors**: flag any INSERT or UPDATE where `errors > 0`. High error counts on writes typically signal uniqueness constraint collisions.
 
-**Pre-computed signals from analysis-dynamodb.json** — start here, validate with your own reading:
+**Pre-computed signals from the analysis projection** — start here, validate with your own reading:
 
 - `aggregate_recommendations`: pre-identified co-access groups with `co_access_confidence` scores
 - `patterns_detected`: classified patterns with confidence and the `query_ids` and `table_ids` involved
@@ -52,22 +52,9 @@ For each pattern:
 
 **Write contention signals** — from `AgentQueryPattern`: `lock_time_pct > 10` on writes signals row-level contention; consider `TransactWriteItems` or conditional writes. `errors > 0` on INSERT/UPDATE signals uniqueness collisions. `db_load_contribution_percent` ranks which patterns to prioritize — highest values = highest design impact. If `design_metrics.coverage.coverage_ratio` is far below 1.0, flag it as incomplete coverage.
 
-## Phase 2: Clarify
+## Phase 2a: Table Design
 
-Start your response with an extraction summary:
-
-- Entities with row counts and avg item sizes
-- Top 5 access patterns by design RPS
-- Flagged patterns: scans, text search, aggregations, write errors
-- Aggregate groups from `aggregate_recommendations` with your assessment of whether the `co_access_confidence` scores are supported by the query data
-- Coverage check: `design_metrics.coverage.coverage_ratio` (when present) — flag if significantly below 1.0
-- Patterns with high `db_load_contribution_percent` that should be prioritized
-
-Then ask at most **3 questions** — only about things absent from all files that would materially change the design. Typical gaps: business rules invisible in queries (soft deletes, audit requirements, account lifecycle), latency SLO overrides, or an anti-pattern whose resolution depends on product intent.
-
-Never ask about schema, RPS, row counts, relationships, or anything already in the files.
-
-## Phase 3a: Table Design
+The run is unattended: nobody answers questions. Where a business rule the queries cannot show (soft deletes, audit requirements, a latency SLO) would change the design, make the conservative choice and record it in `trade_offs`.
 
 Work through these steps in order before writing any JSON. Show your reasoning for each decision.
 
@@ -98,8 +85,8 @@ For each pattern the base table key cannot serve:
 **Step 5 — Hot partition pre-check**
 Before finalising, estimate the RCU/s or WCU/s each partition key value receives at `design_rps` and run the cost check (see `hot_partition_analysis` below): it computes the utilization against `design_metrics.dynamodb_partition_limits` and flags every value above the at-risk threshold. Apply mitigation (shard suffix, time-bucket PK) where it flags one and update the key design.
 
-**Step 6 — Emit structural `table_definitions` (required before moving to 3b)**
-Output the `table_definitions` array conforming to `TableDefinition` in `dynamodb_model_output.py`. Populate the structural fields only — leave `attributes` and `entities` as empty arrays; Phase 3b fills those in.
+**Step 6 — Emit structural `table_definitions` (required before moving to 2b)**
+Output the `table_definitions` array conforming to `TableDefinition` in `dynamodb_model_output.py`. Populate the structural fields only — leave `attributes` and `entities` as empty arrays; Phase 2b fills those in.
 
 Required fields at this stage: `table_name`, `source_tables`, `aggregate_pattern`, `partition_key`, `sort_key`, `gsis`, `item_count`, `item_size_bytes`. For each GSI include `index_name`, `partition_key` (list of `KeyDefinition`), `sort_key`, and `projection`.
 
@@ -181,24 +168,24 @@ Detected by inspecting `query_text` (do not rely on `has_text_search` or `has_ag
 
 ---
 
-## Phase 3b: Output Construction
+## Phase 2b: Output Construction
 
-Translate the design summary from Phase 3a into `dynamodb_model_output.json`, which must validate against `DynamoDBModelOutputContract` (defined in `dynamodb_model_output.py`, contract v1.0). Every structural decision (table, key, GSI, aggregation pattern) should already be settled — this phase adds ETL lineage and fills the remaining contract fields.
+Translate the Phase 2a design into the output, which must validate against `DynamoDBModelOutputContract` (`src/contracts/dynamodb_model_output.py`). Every structural decision is already settled: this phase adds ETL lineage and fills the remaining contract fields.
 
 **Repeatability rules — apply these before writing any field to ensure identical output for identical inputs:**
 
 - **Attribute naming**: use the `source_column` value in snake_case. For denormalized cross-table attributes, prefix with the source table alias from the query (e.g. `u.username` → `user_username`). Never invent names.
 - **`key_condition` format**: always `PK=<attr_name>` (uppercase PK/SK), conditions joined by ` AND `, operators without spaces (`SK begins_with 'PREFIX#'`).
 - **`item_size_bytes`**: sum of `(len(attribute_name) + value_size_bytes)` per attribute, with value sizes `S` = max_length bytes (at most 1024: a TEXT column's declared maximum is not its stored size) or 50 if unknown; `N` = 8; `BOOL` = 1; `SS`/`NS`/`L` = avg_items × avg_element_size. For an item copied column for column from one source table this is that table's `schema_item_size_bytes` in `design_metrics.tables`; add only the attributes you denormalize or derive.
-- **Ordering**: sort `access_patterns` by `design_rps` descending. Sort `table_definitions` alphabetically by `table_name`. Sort `attributes` by `ordinal_position` from `collector.json`.
+- **Ordering**: sort `access_patterns` by `design_rps` descending. Sort `table_definitions` alphabetically by `table_name`. Sort `attributes` by the source column's `ordinal_position`.
 
 **Field construction rules:**
 
-`job_id` — copy from `collector.json` `job_id`.
+`job_id` — copy from the collector projection's `job_id`.
 
-`source_database` — copy from `collector.json` `source_database_name`.
+`source_database` — copy from the collector projection's `source_database_name`.
 
-`access_patterns` — one entry per in-scope query from `collector.json` (excluding `query_type=OTHER`). This is the primary output. Build these first:
+`access_patterns` — one entry per in-scope query in the collector projection (excluding `query_type=OTHER`). This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `DDB-`, e.g. `"DDB-AP-1"`, `"DDB-AP-2"`. Assign in order of `design_rps` descending.
 - `query_id`: copy from source
@@ -221,7 +208,7 @@ Translate the design summary from Phase 3a into `dynamodb_model_output.json`, wh
 - `item_size_bytes`: weighted average across item types
 - **Single-entity tables** (`aggregate_pattern != item_collection`): populate `attributes` — one `AttributeDefinition` per DynamoDB attribute. Each attribute carries its full ETL lineage: `source_table`, `source_column`, and exactly one of `join`, `calculation`, or plain copy. Add `transformation` when the value needs reformatting. Set `denormalized=true` + `justification` for any attribute copied from a different entity.
 - **Item collection tables** (`aggregate_pattern = item_collection`): populate `entities` instead — one `EntityDefinition` per entity type. Each entity has `pk_template` (e.g. `"DISCUSSION#{id}"`), `sk_template` (e.g. `"POST#{id}"`), and its own `attributes` list. Do not populate `attributes` at the table level.
-- **ETL lineage — join type decision tree** (determines how to populate each attribute from MySQL; follow top to bottom, use first match):
+- **ETL lineage — join type decision tree** (determines how to populate each attribute from the source database; follow top to bottom, use first match):
   1. Value lives in the same row → no join, direct `source_column`
   2. FK points to the same table → `self-join`
   3. Produces a boolean via `EXISTS`, `COUNT(*) > 0`, or left-join-null-check → `exists-check` (`BOOL`)
@@ -258,7 +245,7 @@ Translate the design summary from Phase 3a into `dynamodb_model_output.json`, wh
 
 Every trade-off must trace back to specific tables and queries. Common trade-offs: denormalization decisions, GSI fan-out replacing JOINs, composite sort key designs, eventual consistency on GSI reads, hot partition mitigations, patterns moved to unsupported.
 
-Write `description` and `impact` as plain, declarative facts, not hedged ("typically", "generally", "usually") or phrased as outside advice to the reader ("is recommended before migration", "it is suggested that", "should be considered"). State the consequence and, if there is one, the concrete action -- "re-read the base item with a strongly consistent GetItem if the window matters" reads as a fact about the system; "consistency is recommended before migration" reads as a hedge about nothing. The engineering report quotes this text verbatim in a customer deliverable, so a hedge here is a hedge the customer reads.
+Write `description` and `impact` as plain, declarative facts, not hedged ("typically", "generally", "usually") or phrased as outside advice to the reader ("is recommended before migration", "it is suggested that", "should be considered"). State the consequence and, if there is one, the concrete action ("re-read the base item with a strongly consistent GetItem if the window matters"). The engineering report quotes this text verbatim to the customer.
 
 `validation_passed` — `true` only if all of the following hold:
 

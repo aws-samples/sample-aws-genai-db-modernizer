@@ -8,7 +8,7 @@ script's work.
 
 ## Inputs (provided inline as JSON)
 
-- **design_view**: a compact view of the deterministic **draft** (issue #273):
+- **design_view**: a compact view of the deterministic **draft**:
   `tables` (per table: `row_count`, `read_qps`/`write_qps`, `primary_key`,
   `columns` as `name TYPE [NOT NULL] [AI] [DEFAULT x]` lines, residual columns
   marked `(residual; source <data_type>)` and changed types `(source <data_type>)`,

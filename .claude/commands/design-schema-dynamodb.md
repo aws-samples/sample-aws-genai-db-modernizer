@@ -87,7 +87,7 @@ For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job
    - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses; no whole-database `total_queries_analyzed`) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables), and `design_metrics` (the group's `design_rps`, row and item sizes and partition limits, computed for you: copy them, never recompute them). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
 2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
 3. Read the output contract: `src/contracts/dynamodb_model_output.py`
-4. Design the schema following Phase 3 from the skill
+4. Design the schema following Phases 1-2 from the skill
 5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`, the whole JSON in one Write tool call (fix it later with Edit). Do not generate it with a script.
 6. Run the cost / hot-partition check on that draft:
 
