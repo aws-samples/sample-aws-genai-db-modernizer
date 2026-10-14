@@ -29,6 +29,8 @@ from src.agents.prompt_framing import (
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
+from src.contracts.dynamodb_pe_review import ROUTING_FLAGS_DESCRIPTION
+from src.contracts.model_flag import RoutingFlagEntry
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.models import Role, build_bedrock_model
 from src.tools.analysis.documentdb_analysis_tools import (
@@ -100,6 +102,9 @@ class PEReviewResult(BaseModel):
     change_requests: list[ChangeRequest] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     pe_notes: list[str] = Field(default_factory=list)
+    routing_flags: list[RoutingFlagEntry] = Field(
+        default_factory=list, description=ROUTING_FLAGS_DESCRIPTION
+    )
     summary: str = ""
 
     model_config = ConfigDict(extra="ignore")

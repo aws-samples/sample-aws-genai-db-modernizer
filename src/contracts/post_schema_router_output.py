@@ -1,7 +1,9 @@
 """Post-Schema Router Output Contract.
 
-Defines the output of the deterministic post-schema router that reads
-PE-confirmed unsupported patterns and routes them to the next-best engine.
+Defines the output of the deterministic post-schema router: queries a model
+flagged as unsupported on their engine (a PE reviewer's routing flag or a
+designer's unsupported pattern), each re-routed by the shared scorer to the best
+remaining engine (#629). The destination is always the scorer's choice.
 """
 
 from __future__ import annotations
@@ -22,6 +24,16 @@ class QueryRouting(BaseModel):
     cascade_depth: int = Field(
         default=0, description="How many routing passes this query has been through"
     )
+    reason_category: str | None = Field(
+        None, description="The flag's reason category (ModelFlag.reason_category)"
+    )
+    explanation: str | None = Field(
+        None, description="The flag's explanation, in the model's words (untrusted text)"
+    )
+    score_before: float | None = Field(
+        None, description="from_engine's own score for the query, ignoring the flag"
+    )
+    score_after: float | None = Field(None, description="to_engine's score for the query")
 
 
 class RouterOutput(BaseModel):

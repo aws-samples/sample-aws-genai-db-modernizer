@@ -579,6 +579,7 @@
   "assignment-gate.breadcrumb.assignment-review": "Assignment Review",
   "assignment-gate.states.loading": "Loading assignment review...",
   "assignment-gate.states.moved": "moved",
+  "assignment-gate.states.moved-after-approval": "moved after approval",
   "assignment-gate.states.changed": "changed",
   "assignment-gate.states.tied": "Tied",
   "assignment-gate.header.title": "Assignment review",

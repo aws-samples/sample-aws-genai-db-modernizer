@@ -207,6 +207,12 @@ Version History:
   before this fix) double counted. Both default to ``None`` for a single-engine
   wave (derive the owned count there as ``table_count - len(table_owners or [])``)
   and for a wave written before this version. Backward compatible.
+- 1.14 (2026-10-14, #629): Added ``post_schema_reroutes``
+  (``list[PostSchemaReroute]``): the queries the post-schema router moved after
+  the customer approved the assignment, copied from the final assignment, so
+  the decision report, the engineering report and the deck can say which
+  queries moved after approval, why, and how to override them. None for a
+  report synthesized before this field existed.
 """
 
 from datetime import datetime
@@ -216,6 +222,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.contracts.assignment_models import (  # re-exported, see docstring below
     AuroraEngineChoice,
+    PostSchemaReroute,
     UnresolvedNames,
 )
 
@@ -597,7 +604,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.13",
+        default="1.14",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -688,6 +695,15 @@ class SynthesisOutputContract(BaseModel):
             "so the decision report and the engineering report can list the same "
             "queries the approval gate does. Empty list when none; None for a report "
             "synthesized before this field existed."
+        ),
+    )
+
+    post_schema_reroutes: list[PostSchemaReroute] | None = Field(
+        None,
+        description=(
+            "Queries the post-schema router moved after the customer approved the "
+            "assignment (#629), copied from Assignment.post_schema_reroutes. Empty "
+            "list when none; None for a report synthesized before this field existed."
         ),
     )
 

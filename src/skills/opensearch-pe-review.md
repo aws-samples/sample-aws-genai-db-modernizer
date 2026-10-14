@@ -69,18 +69,20 @@ You are a senior Principal Engineer reviewing an OpenSearch schema design produc
    - Strong consistency reads (read-after-write with guaranteed visibility)
    - Multi-document transactions
    - Referential integrity enforcement (foreign keys)
-   - If YES → **confirm as a routing recommendation** in `pe_notes`:
+   - If YES → **add a routing flag** to `routing_flags` (not `pe_notes`):
 
+     ```json
+     {"query_ids": ["q-42", "q-55"], "flagged_engine": "opensearch", "reason_category": "missing_feature", "explanation": "conditional write needs strong consistency"}
      ```
-     [ROUTING] query_ids=[q-42,q-55] → dynamodb | reason: transactional conditional write requiring strong consistency
-     ```
+
+     `flagged_engine` is always `opensearch`, the engine under review. `reason_category` is `full_scan`, `client_side_join`, `missing_feature` or `other`; `explanation` is at most 15 words. A flag never names another engine: the post-schema router scores the remaining engines and picks where the query goes.
 
 **Rules for scope challenge:**
 
 - Aggregations (COUNT, SUM, terms) → ALWAYS servable by OpenSearch, NEVER mark out of scope
 - Text search patterns → ALWAYS servable, this is OpenSearch's core strength
 - Conditional writes (INSERT ... SELECT, UPDATE ... WHERE EXISTS) → genuinely impossible
-- Strong consistency requirements → genuinely impossible, route to dynamodb or documentdb
+- Strong consistency requirements → genuinely impossible: flag it (`missing_feature`)
 
 ## Output
 
@@ -90,6 +92,7 @@ Return a `PEReviewResult` with:
 - **`change_requests`**: list of `ChangeRequest` objects — one per issue found
 - **`strengths`**: at least one strength observed in the design
 - **`pe_notes`**: operational observations for the migration team (capacity, cost, rollover schedule, etc.)
+- **`routing_flags`**: queries OpenSearch genuinely cannot serve (see Scope Challenge step 4). Never name a target engine: the post-schema router re-routes each query by score.
 - **`summary`**: 2–3 sentence plain-English summary of the review outcome
 
 ## Severity Guide

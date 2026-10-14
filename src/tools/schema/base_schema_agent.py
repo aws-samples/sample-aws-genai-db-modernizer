@@ -231,6 +231,7 @@ class SchemaDesignRunner:
       - verdict: enum with value "APPROVED" for approval
       - change_requests: list with items having category, target, severity, requested_change
       - pe_notes: list[str]
+      - routing_flags: list[ModelFlag] (optional; recorded in the trace, #629)
       - strengths: list[str]
       - summary: str
     """
@@ -256,6 +257,9 @@ class SchemaDesignRunner:
         #: Returns one message per number that disagrees with design_metrics (#626).
         self._output_check: Callable[[Any], list[str]] | None = output_check_fn
         self.trace = SchemaDesignTrace()
+        #: The last PE review's routing flags (#629), recorded in the trace for
+        #: the post-schema router; they reflect the design that was accepted.
+        self.routing_flags: list[dict] = []
 
     def run(self, designer_prompt: str, input_summary: dict | None = None) -> tuple[T, dict]:
         """Run the full designer + PE review loop. Returns (output, trace_dict)."""
@@ -281,6 +285,9 @@ class SchemaDesignRunner:
         for iteration in range(MAX_PE_ITERATIONS):
             print(f"{prefix} === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
 
+            # Only the flags of a review that saw THIS design count (#713 review):
+            # a later review that errors leaves none, never an earlier review's.
+            self.routing_flags = []
             try:
                 t0 = time.time()
                 review = self._invoke_pe_reviewer(
@@ -288,6 +295,10 @@ class SchemaDesignRunner:
                 )
                 elapsed = time.time() - t0
                 self.trace.log_pe_review(iteration, elapsed, review)
+                self.routing_flags = [
+                    f.model_dump(mode="json") if hasattr(f, "model_dump") else dict(f)
+                    for f in getattr(review, "routing_flags", None) or []
+                ]
                 print(f"{prefix} PE review {iteration + 1} complete in {elapsed:.0f}s")
             except Exception as exc:
                 # The PE reviewer's error can carry a pydantic ValidationError's
@@ -402,6 +413,8 @@ class SchemaDesignRunner:
         (#626): input, output, cache-read and cache-write tokens, and calls.
         """
         trace = self.trace.to_dict()
+        if self.routing_flags:
+            trace["routing_flags"] = list(self.routing_flags)
         usage = getattr(self.model, "usage", None)
         if isinstance(usage, dict):
             trace["token_usage"] = dict(usage)

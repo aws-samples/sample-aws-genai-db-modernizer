@@ -548,7 +548,14 @@ def apply_assignment_overrides(
             "source": source,
             "timestamp": datetime.now(UTC),
             "query_assignments": list(qa_map.values()),
+            # #713 review round 3: a post-schema reroute stays on record only
+            # while it still holds; one the customer undid (or re-routed
+            # elsewhere) is not carried into their edit.
+            "post_schema_reroutes": _reroutes_still_holding(
+                current.post_schema_reroutes, qa_map.values()
+            ),
             "previous_version": current_version,
+            "rolled_back_version": None,
             "cache_notes": [*current.cache_notes, *cache_notes],
             # #459 round 2: cache_safety_net_notes is this version's own
             # customer-facing explanation, not a cumulative log like
@@ -600,6 +607,12 @@ def apply_assignment_overrides(
         written_path=new_path,
         propagated_query_ids=propagated_query_ids,
     )
+
+
+def _reroutes_still_holding(reroutes: list, query_assignments) -> list:
+    """The post-schema reroutes whose query still sits on the engine they moved it to."""
+    engine_of = {qa.query_id: qa.assigned_engine for qa in query_assignments}
+    return [r for r in reroutes if engine_of.get(r.query_id) == r.to_engine]
 
 
 def mark_assignment_customer_approved(

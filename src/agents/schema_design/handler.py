@@ -1272,12 +1272,22 @@ def _merge_cascade_output(existing: dict, cascade: dict, engine: str) -> dict:
     """Merge cascade schema output into existing schema output.
 
     Concatenates list fields (access_patterns, unsupported_patterns, trade_offs)
-    and deduplicates by pattern_id/query_ids.
+    and deduplicates by pattern_id/query_ids. For an engine with no list fields
+    (Aurora), the cascade output is the whole design and replaces ``existing``.
     """
     from src.agents.schema_design.group_merger import ENGINE_LIST_FIELDS
 
+    if engine not in ENGINE_LIST_FIELDS:
+        # Aurora (and any engine with no list fields) is designed single-pass:
+        # its output is one generated DDL script that does not merge (ADR-027
+        # amendment). The cascade input is every query assigned to the engine
+        # plus the injected ones, so the cascade output is the engine's whole
+        # design and replaces the old one; merging would drop the routed queries
+        # (#713 review).
+        return cascade
+
     merged = dict(existing)
-    list_fields = ENGINE_LIST_FIELDS.get(engine, [])
+    list_fields = ENGINE_LIST_FIELDS[engine]
 
     for field in list_fields:
         existing_items = existing.get(field, [])

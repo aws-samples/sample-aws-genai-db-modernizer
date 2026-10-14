@@ -57,6 +57,8 @@ __BANNER__
       </div>
     </div>
 
+    <div id="post-schema-reroutes-container"></div>
+
     <div class="section">
       <div class="section-header">Migration Roadmap</div>
       <p class="section-desc">The incremental migration waves computed from this assessment. One suggested adoption path, not the only one — to modernize in one step instead, adopt the target architecture in Executive Summary above directly.</p>

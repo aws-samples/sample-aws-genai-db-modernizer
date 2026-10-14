@@ -720,6 +720,32 @@
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
+    // #629: queries the post-schema router moved after approval -- the same
+    // list, sentences and override path as the decision and engineering reports.
+    const FLAG_REASON_TEXT = {"full_scan": "it would need a full scan", "client_side_join": "it would need a client-side join", "missing_feature": "it needs a feature the engine lacks", "other": "a capability gap"};
+    const REROUTE_OVERRIDE_TEXT = "To keep any of these on the engine you approved, change its engine in the assignment review; that writes a new assignment version and redesigns only the engines it touches.";
+    function buildPostSchemaReroutes() {
+      const container = document.getElementById('post-schema-reroutes-container');
+      if (!container) return;
+      const rows = ((DATA.results && DATA.results.synthesis && DATA.results.synthesis.post_schema_reroutes) || []).filter(r => r && r.query_id).slice().sort((a, b) => String(a.query_id).localeCompare(String(b.query_id)));
+      if (rows.length === 0) { container.innerHTML = ''; return; }
+      const noun = rows.length === 1 ? 'query' : 'queries';
+      const approved = rows[0].approved_version ? ' (version ' + rows[0].approved_version + ')' : '';
+      const score = v => (typeof v === 'number' ? String(Number(v.toFixed(2))) : 'n/a');
+      let html = '<div class="section" data-figure="post-schema-reroutes">';
+      html += '<div class="section-header">Moved after your approval (' + rows.length + ' ' + noun + ')</div>';
+      html += '<p class="section-desc">' + escapeHtml('After you approved the assignment' + approved + ', schema design review found that ' + rows.length + ' ' + noun + ' cannot run on the approved engine, so each moved to the best-scoring engine you kept.') + '</p>';
+      html += '<ul>';
+      rows.forEach(r => {
+        const why = FLAG_REASON_TEXT[r.reason_category] || FLAG_REASON_TEXT.other;
+        html += '<li><code>' + escapeHtml(r.query_id) + '</code>: ' + escapeHtml(ENGINE_LABELS[r.from_engine] || r.from_engine) + ' to <b>' + escapeHtml(ENGINE_LABELS[r.to_engine] || r.to_engine) + '</b> (' + escapeHtml(why) + '; score ' + escapeHtml(score(r.score_after)) + ' against ' + escapeHtml(score(r.score_before)) + ')</li>';
+      });
+      html += '</ul>';
+      html += '<p class="section-desc">' + escapeHtml(REROUTE_OVERRIDE_TEXT) + '</p>';
+      html += '</div>';
+      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
     function buildMigrationRoadmap() {
       const container = document.getElementById('migration-roadmap-container');
       if (!container) return;
@@ -1068,6 +1094,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       allPatterns = extractPatterns();
+      buildPostSchemaReroutes();
       buildMigrationRoadmap();
       buildCostBreakdown();
       buildRiskAssessment();

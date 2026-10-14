@@ -20,7 +20,10 @@ from src.agents.referee.cache_overlay import (
     safety_net_note,
 )
 from src.storage.artifact_store import ArtifactStore
-from src.storage.assignment_versioning import resolve_reality_check_input_version
+from src.storage.assignment_versioning import (
+    reality_check_run_for_lineage,
+    resolve_reality_check_input_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,15 @@ def load_synthesis_data(
         # fails) rather than raising -- a risk check using this is reporting-only
         # and must never block synthesis.
         try:
-            input_version = resolve_reality_check_input_version(store, database_name, job_id)
+            # The run the effective version descends from (#713 review): after a
+            # customer edit or a post-schema reroute, the highest non-Reality-Check
+            # version is that edit itself, not Reality Check's input.
+            run = reality_check_run_for_lineage(store, database_name, job_id)
+            input_version = (
+                run.input_version
+                if run is not None
+                else resolve_reality_check_input_version(store, database_name, job_id)
+            )
         except Exception:
             logger.warning(
                 "Synthesis: could not resolve the pre-Reality-Check assignment version "

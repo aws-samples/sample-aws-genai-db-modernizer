@@ -108,6 +108,15 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema)  # type: ignore[no-any-return]
 
 
+# One flag entry inside another model's structured output: the model sees the
+# ModelFlag schema, the consumer receives a plain object and validates it on its
+# own with parse_model_flags (an invalid entry is dropped and counted; the rest
+# of the output is kept).
+RoutingFlagEntry = Annotated[
+    dict[str, Any], WithJsonSchema(_inline_refs(ModelFlag.model_json_schema()))
+]
+
+
 class ModelFlagBatch(BaseModel):
     """The Bedrock validator's structured output.
 
@@ -118,9 +127,9 @@ class ModelFlagBatch(BaseModel):
     response gets).
     """
 
-    flags: list[
-        Annotated[dict[str, Any], WithJsonSchema(_inline_refs(ModelFlag.model_json_schema()))]
-    ] = Field(default_factory=list, description="Flags; empty when every query is fine")
+    flags: list[RoutingFlagEntry] = Field(
+        default_factory=list, description="Flags; empty when every query is fine"
+    )
 
 
 def parse_model_flags(raw: Iterable[object]) -> tuple[list[ModelFlag], list[str]]:

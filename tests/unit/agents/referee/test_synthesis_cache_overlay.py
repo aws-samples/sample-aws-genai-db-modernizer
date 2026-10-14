@@ -139,6 +139,7 @@ class TestRouter:
                 }
             },
             ["dynamodb", "documentdb", "elasticache"],
+            assigned_engines={"hot1": "dynamodb"},
         )
         assert out.routings == [] and out.terminal_queries == []
 

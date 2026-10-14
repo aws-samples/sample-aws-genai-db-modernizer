@@ -58,6 +58,15 @@ Version History:
   (the common case: no tie, or a tie a real rule like source-compatible or
   stability decided) for every query, and for every artifact written before
   this version.
+- 1.9 (2026-10-14, #629): Added ``AssignmentSource.POST_SCHEMA_ROUTING``: the
+  version the post-schema router writes when PE review or a designer's
+  unsupported pattern moves a query to another kept engine (maintainer
+  decision, 2026-10-14), so schema design and the assignment agree. Also
+  ``AssignmentStatus.REROUTED_AFTER_APPROVAL`` and ``Assignment.post_schema_reroutes``
+  (which queries moved after approval, from where to where, and why), so a
+  rerouted version never claims the customer approved it. And
+  ``AssignmentStatus.REROUTE_ROLLED_BACK`` with ``Assignment.rolled_back_version``:
+  the version that restates the routing when a reroute's redesign fails.
 """
 
 from datetime import datetime
@@ -92,6 +101,15 @@ class AssignmentStatus(str, Enum):
     AUTO_GENERATED = "auto_generated"
     CUSTOMER_APPROVED = "customer_approved"
     CUSTOMER_MODIFIED = "customer_modified"
+    # Written by the post-schema router (#629): the deterministic scorer moved
+    # queries after the customer approved the version it edits. Never stamped
+    # as customer-approved, because the customer did not see these moves; the
+    # deliverables list them (``post_schema_reroutes``) with the override path.
+    REROUTED_AFTER_APPROVAL = "rerouted_after_approval"
+    # Restates the routing a failed post-schema reroute started from (#629):
+    # the redesign of ``rolled_back_version`` failed, so that version is
+    # abandoned and this one carries the earlier routing and its designs.
+    REROUTE_ROLLED_BACK = "reroute_rolled_back"
 
 
 class AssignmentSource(str, Enum):
@@ -106,6 +124,7 @@ class AssignmentSource(str, Enum):
     ASSIGNMENT_RESOLUTION = "assignment_resolution"
     REALITY_CHECK = "reality_check"
     CUSTOMER_GATE = "customer_gate"
+    POST_SCHEMA_ROUTING = "post_schema_routing"
 
 
 class QueryAssignment(BaseModel):
@@ -290,6 +309,24 @@ class AuroraEngineChoice(BaseModel):
     reason: str = Field(..., description="One-line explanation of the decision")
 
 
+class PostSchemaReroute(BaseModel):
+    """One query the post-schema router moved after approval (#629).
+
+    PE review (or a designer's unsupported pattern) flagged the query on
+    ``from_engine``; the shared scorer picked ``to_engine`` among the engines
+    the approved assignment keeps.
+    """
+
+    query_id: str = Field(..., description="The rerouted query")
+    from_engine: str = Field(..., description="The engine it was approved on")
+    to_engine: str = Field(..., description="The scorer's best remaining kept engine")
+    reason: str = Field(..., description="Why, in customer-facing words (deterministic)")
+    reason_category: str | None = Field(None, description="The flag's reason category")
+    score_before: float | None = Field(None, description="from_engine's score, ignoring the flag")
+    score_after: float | None = Field(None, description="to_engine's score")
+    approved_version: int = Field(..., ge=1, description="The version the customer approved")
+
+
 class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
@@ -342,6 +379,22 @@ class Assignment(BaseModel):
             "cache_notes: never a customer-edit note (full query hashes) or the "
             "legacy-migration note. Every deliverable except the engineering report "
             "reads this field, not cache_notes."
+        ),
+    )
+    rolled_back_version: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "For a ``reroute_rolled_back`` version: the abandoned post-schema reroute "
+            "version whose redesign failed (#629). None otherwise."
+        ),
+    )
+    post_schema_reroutes: list[PostSchemaReroute] = Field(
+        default_factory=list,
+        description=(
+            "Queries the post-schema router moved after the customer approved the "
+            "assignment (#629), cumulative across reroute versions. Empty for every "
+            "version the router did not write."
         ),
     )
     cache_overlay: CacheOverlaySummary | None = Field(
