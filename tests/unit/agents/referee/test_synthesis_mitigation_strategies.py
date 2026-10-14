@@ -17,6 +17,7 @@ from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import (
     _build_mitigation_strategies,
     build_risk_assessment,
+    build_wave_checks,
 )
 
 
@@ -125,10 +126,7 @@ def test_generic_lines_are_scoped_to_the_risks() -> None:
         "Use blue-green deployment with rollback for the tables behind the HIGH risks: "
         "wordpress.wp_posts, wordpress.wp_woocommerce_order_items."
     ) in strategies
-    assert strategies[-1] == (
-        "Monitor ElastiCache, DynamoDB and Aurora MySQL closely during the first 2 weeks "
-        "post-migration."
-    )
+    assert not any("closely" in s or "2 weeks" in s for s in strategies)
 
 
 def test_no_high_risk_no_blue_green_line() -> None:
@@ -189,3 +187,101 @@ def test_coverage_gap_gets_its_own_line_not_the_unsupported_one() -> None:
     ) in strategies
     unsupported = next(s for s in strategies if "unsupported" in s)
     assert "RISK-006" not in unsupported
+
+
+def test_no_open_risks_gives_no_strategies() -> None:
+    """#645: no generic "monitor closely" line, and no status sentence as a strategy."""
+    assert _build_mitigation_strategies([], EFFECTIVE) == []
+    data = SynthesisData(job_id="j", database_name="db", engines={})
+    assert build_risk_assessment(data)["mitigation_strategies"] == []
+
+
+def _group(queries: list[tuple[str, float, float]], patterns: list[dict]) -> dict:
+    return {
+        "source_queries": [
+            {"query_id": q, "execution_time_ms_avg": ms, "frequency_per_hour": f}
+            for q, ms, f in queries
+        ],
+        "access_patterns": patterns,
+    }
+
+
+WAVES = [
+    # wave 1 is a cutover: every in-scope query moves, whichever engine ends up owning it
+    {"wave": 1, "engines": ["aurora_mysql"], "query_count": 2, "cutover_query_count": 4},
+    {"wave": 2, "engines": ["elasticache"], "query_count": 2, "fronts": "aurora_mysql"},
+    {"wave": 3, "engines": ["dynamodb"], "query_count": 1, "fronts": None},
+]
+GROUPS = [
+    _group(
+        [("a", 10.0, 300.0), ("b", 20.0, 100.0), ("c", 5.0, 50.0), ("d", 0.0, 50.0)],
+        [
+            {
+                "engine": "aurora_mysql",
+                "pattern_id": "p1",
+                "design_rps": 2.0,
+                "query_ids": ["a", "b"],
+            },
+            # listed in two groups: counted once; out of scope never counts
+            {"engine": "dynamodb", "pattern_id": "p2", "design_rps": 4.0, "query_ids": ["c"]},
+            {
+                "engine": "dynamodb",
+                "pattern_id": "p3",
+                "design_rps": 9.0,
+                "in_scope": False,
+                "query_ids": ["c"],
+            },
+            # the cache layer owns no query: never part of a cutover rate
+            {"engine": "elasticache", "pattern_id": "e1", "design_rps": 50.0, "query_ids": ["a"]},
+        ],
+    ),
+    _group(
+        [("a", 10.0, 300.0)],
+        [{"engine": "dynamodb", "pattern_id": "p2", "design_rps": 4.0, "query_ids": ["c"]}],
+    ),
+]
+ASSIGNED: list[dict] = [
+    {"query_id": "a", "assigned_engine": "aurora_mysql"},
+    {"query_id": "b", "assigned_engine": "aurora_mysql"},
+    {"query_id": "c", "assigned_engine": "dynamodb"},
+    {"query_id": "d", "assigned_engine": "dynamodb", "in_scope": False},
+]
+OVERLAY = {"engine": "elasticache", "call_share_percent": 70.44, "calls_per_second": 185.07}
+
+
+def test_one_check_per_wave_from_report_facts() -> None:
+    checks = build_wave_checks(WAVES, GROUPS, ASSIGNED, OVERLAY)
+    assert checks == [
+        # 3 in-scope queries (a, b, c) share the cutover; baseline and rate cover those
+        "After wave 1 (Aurora MySQL): compare the latency of 4 queries with their source "
+        "baseline (weighted average 11.67 ms) and check the engine sustains the design rate "
+        "of 6 requests/s before starting wave 2.",
+        "After wave 2 (ElastiCache): track the cache hit rate for the 2 hot reads it fronts "
+        "on Aurora MySQL (70.4% of calls, 185.1 calls/s) and compare their latency with the "
+        "source before starting wave 3.",
+        "After wave 3 (DynamoDB): compare the latency of 1 query with their source baseline "
+        "(weighted average 5 ms) and check the engine sustains the design rate of "
+        "4 requests/s.",
+    ]
+
+
+def test_a_zero_baseline_is_not_printed() -> None:
+    groups = [_group([("a", 0.0, 10.0)], [])]
+    waves = [{"wave": 1, "engines": ["dynamodb"], "query_count": 1}]
+    assigned = [{"query_id": "a", "assigned_engine": "dynamodb"}]
+    (line,) = build_wave_checks(waves, groups, assigned, None)
+    assert (
+        line
+        == "After wave 1 (DynamoDB): compare the latency of 1 query with their source baseline."
+    )
+
+
+def test_wave_checks_say_nothing_the_report_does_not_support() -> None:
+    assert build_wave_checks(None, GROUPS, ASSIGNED, OVERLAY) == []
+    assert build_wave_checks([], GROUPS, ASSIGNED, OVERLAY) == []
+    bare = build_wave_checks([{"wave": 1, "engines": ["dynamodb"]}], [], [], None)
+    assert bare == [
+        "After wave 1 (DynamoDB): compare the latency of its queries with their source baseline."
+    ]
+    for line in build_wave_checks(WAVES, GROUPS, ASSIGNED, OVERLAY) + bare:
+        assert "closely" not in line and "2 weeks" not in line

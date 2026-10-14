@@ -132,12 +132,17 @@ def test_decision_report_states_resolved_count_when_no_open_risks_remain(report:
     assert renderers.NO_OPEN_RISKS_CAVEAT in html
 
 
-def test_decision_report_no_section_when_truly_no_risks(report: dict) -> None:
+def test_decision_report_says_so_with_the_caveat_when_truly_no_risks(report: dict) -> None:
+    """#645: as the deck's risk slide does, never an empty or missing section that
+    reads as "no migration risk"."""
     report["risk_assessment"]["risks"] = []
     report["risk_assessment"]["resolved_risks"] = []
     report["risk_assessment"]["mitigation_strategies"] = []
     html = renderers.render_decision_report_html(report)
-    assert "Risk posture" not in html
+    assert "Risk posture" in html
+    assert "No risks were identified in this analysis." in html
+    assert renderers.NO_OPEN_RISKS_CAVEAT in html
+    assert "Mitigation strategies" not in html
 
 
 def test_mitigation_repeating_the_description_is_not_rendered_twice(report: dict) -> None:

@@ -347,58 +347,61 @@ def render_decision_report_html(
     risks = filtered_risks(report)
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
     resolved_count = len(resolved_risks(report))
-    if risks or strategies or resolved_count:
-        out += ["<h2 class=section-title>Risk posture</h2>", "<div class=card><div class=card-b>"]
-        if not risks and resolved_count:
-            # #434: with no open risks this section used to disappear entirely
-            # when there were no mitigation strategies either, saying nothing
-            # about the resolved risks the Engineering Report still lists --
-            # "overall risk LOW" with no section at all reads as "no migration
-            # risk", which the caveat below exists to rule out.
-            out.append(
-                f"<p>No open migration risks; {resolved_count} "
-                f"{plural_verb(resolved_count, 'was', 'were')} resolved by the assignment "
-                "(see the Engineering Report).</p>"
-            )
-            out.append(f"<p class=note>{esc(NO_OPEN_RISKS_CAVEAT)}</p>")
-        if risks:
-            sev_txt = _severity_counts_text(risks)
-            types = sorted(
-                {
-                    str(r.get("risk_type", "")).replace("_", " ").lower()
-                    for r in risks
-                    if r.get("risk_type")
-                }
-            )
-            types_txt = ", ".join(types) if types else "several areas"
-            n_resolved = len(resolved_risks(report))
-            # The resolved risks are not among the open ones; saying "(…; 4 resolved)"
-            # inside the open count read as 4 of them being resolved (#258).
-            resolved_txt = (
-                f" {n_resolved} more {plural_verb(n_resolved, 'was', 'were')} resolved by the "
-                "assignment."
-                if n_resolved
-                else ""
-            )
-            out.append(
-                f"<p data-figure=risk-summary>Overall risk <b>{esc(risk_level)}</b>. "
-                f"{len(risks)} open migration "
-                f"{plural_noun(len(risks), 'risk')} "
-                f"({sev_txt}) across {esc(types_txt)}.{resolved_txt} The full "
-                "risk register, with "
-                "per-engine detail and mitigations, and the migration trade-offs are in the "
-                "Engineering Report.</p>"
-            )
-            # How the level is derived (#248; synthesis_report.overall_risk_level).
-            out.append(
-                "<p class=note>Overall risk is the highest severity among the open risks; "
-                "risks the assignment resolved do not count.</p>"
-            )
-        if strategies:
-            out.append("<p><b>Mitigation strategies</b></p><ul>")
-            out += [f"<li>{esc(s)}</li>" for s in strategies]
-            out.append("</ul>")
-        out.append("</div></div>")
+    # #645: always shown; an empty register still carries its caveat, as the deck does.
+    out += ["<h2 class=section-title>Risk posture</h2>", "<div class=card><div class=card-b>"]
+    if not risks:
+        # #434: with no open risks this section used to disappear entirely
+        # when there were no mitigation strategies either, saying nothing
+        # about the resolved risks the Engineering Report still lists --
+        # "overall risk LOW" with no section at all reads as "no migration
+        # risk", which the caveat below exists to rule out. With nothing
+        # resolved either, say so as the deck's risk slide does (#645).
+        out.append(
+            f"<p>No open migration risks; {resolved_count} "
+            f"{plural_verb(resolved_count, 'was', 'were')} resolved by the assignment "
+            "(see the Engineering Report).</p>"
+            if resolved_count
+            else "<p>No risks were identified in this analysis.</p>"
+        )
+        out.append(f"<p class=note>{esc(NO_OPEN_RISKS_CAVEAT)}</p>")
+    if risks:
+        sev_txt = _severity_counts_text(risks)
+        types = sorted(
+            {
+                str(r.get("risk_type", "")).replace("_", " ").lower()
+                for r in risks
+                if r.get("risk_type")
+            }
+        )
+        types_txt = ", ".join(types) if types else "several areas"
+        n_resolved = len(resolved_risks(report))
+        # The resolved risks are not among the open ones; saying "(…; 4 resolved)"
+        # inside the open count read as 4 of them being resolved (#258).
+        resolved_txt = (
+            f" {n_resolved} more {plural_verb(n_resolved, 'was', 'were')} resolved by the "
+            "assignment."
+            if n_resolved
+            else ""
+        )
+        out.append(
+            f"<p data-figure=risk-summary>Overall risk <b>{esc(risk_level)}</b>. "
+            f"{len(risks)} open migration "
+            f"{plural_noun(len(risks), 'risk')} "
+            f"({sev_txt}) across {esc(types_txt)}.{resolved_txt} The full "
+            "risk register, with "
+            "per-engine detail and mitigations, and the migration trade-offs are in the "
+            "Engineering Report.</p>"
+        )
+        # How the level is derived (#248; synthesis_report.overall_risk_level).
+        out.append(
+            "<p class=note>Overall risk is the highest severity among the open risks; "
+            "risks the assignment resolved do not count.</p>"
+        )
+    if strategies:
+        out.append("<p><b>Mitigation strategies</b></p><ul>")
+        out += [f"<li>{esc(s)}</li>" for s in strategies]
+        out.append("</ul>")
+    out.append("</div></div>")
 
     out += [
         "</main>",

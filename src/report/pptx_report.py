@@ -1313,7 +1313,6 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "by_type": sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])),
         "one_root_cause": one_root_cause,
         "high_type": crit_high_types[0].replace("_", " ").lower() if one_root_cause else "",
-        "mitigations": [str(s) for s in (risk.get("mitigation_strategies") or []) if s],
         "ops": ops_sorted,
         "n_ops": n_ops,
         "n_patterns": n_patterns,

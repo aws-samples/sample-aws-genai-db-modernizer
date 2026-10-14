@@ -43,6 +43,7 @@ from src.agents.referee.synthesis_report import (
     build_summary,
     build_table_mappings,
     build_tco_analysis,
+    build_wave_checks,
     designed_and_not_designed_engines,
     generate_executive_summary,
     schema_table_defs,
@@ -240,6 +241,16 @@ def run_synthesis_deterministic(
         # including one written before this field existed.
         aurora_engine_choice=assignment.get("aurora_engine_choice"),
     )
+    # #645: the post-migration checks come from the waves, built just above.
+    risk_assessment["mitigation_strategies"] = [
+        *risk_assessment.get("mitigation_strategies", []),
+        *build_wave_checks(
+            migration_waves,
+            query_groups,
+            assignment.get("query_assignments") or [],
+            cache_overlay,
+        ),
+    ]
     # #316: an assignment produced by this fix already resolved source_tables
     # noise against the collector's canonical schema (CTE aliases, system
     # catalogs, sequences, keywords, columns the SQL parser mistook for

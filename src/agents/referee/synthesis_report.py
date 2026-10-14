@@ -2237,6 +2237,9 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
     mitigation; every other line names the risks, engines or objects it is about.
     Only engines in ``effective_engines`` (the post-reality-check architecture) are
     suggested as homes for unsupported patterns.
+
+    Only risk-specific strategies: the list is empty when no risk is open (#645). The
+    post-migration checks, one per migration wave, come from :func:`build_wave_checks`.
     """
     strategies: list[str] = []
     severe = sorted(
@@ -2327,16 +2330,124 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
             + "."
         )
 
-    # Every engine in the target, the ones carrying risks first.
-    watched = _engines_of(risks)
-    watched += [
-        display_name(e) for e in sorted(effective_engines) if display_name(e) not in watched
-    ]
-    strategies.append(
-        f"Monitor {_join_and(watched) or 'the target databases'} closely during the first "
-        "2 weeks post-migration."
-    )
     return strategies
+
+
+def _wave_label(wave: dict) -> str:
+    engines = [display_name(e) for e in wave.get("engines") or [] if e]
+    return (
+        f"wave {wave.get('wave')} ({_join_and(engines)})" if engines else f"wave {wave.get('wave')}"
+    )
+
+
+def _wave_baseline_ms(query_ids: set[str], query_groups: list[dict]) -> float | None:
+    """Call-weighted mean of the source ``execution_time_ms_avg`` of ``query_ids``."""
+    seen: dict[str, tuple[float, float]] = {}
+    for group in query_groups:
+        for q in group.get("source_queries") or []:
+            qid = q.get("query_id")
+            ms = q.get("execution_time_ms_avg")
+            if qid in query_ids and qid not in seen and isinstance(ms, (int, float)):
+                weight = q.get("frequency_per_hour")
+                seen[qid] = (float(ms), float(weight) if isinstance(weight, (int, float)) else 0.0)
+    if not seen:
+        return None
+    total = sum(w for _, w in seen.values())
+    if total <= 0:
+        return sum(ms for ms, _ in seen.values()) / len(seen)
+    return sum(ms * w for ms, w in seen.values()) / total
+
+
+def _wave_design_rps(
+    query_ids: set[str],
+    query_groups: list[dict],
+    engines: set[str] | None,
+    skip_engines: set[str],
+) -> float:
+    """Design request rate of the in-scope access patterns that serve ``query_ids``.
+
+    Each ``(engine, pattern_id)`` counts once. ``engines`` limits the patterns to a
+    wave's own engines; ``None`` (the cutover wave, where every query moves) takes
+    every engine's patterns except ``skip_engines`` (the cache layer, which owns none).
+    """
+    seen: dict[tuple[str, str], float] = {}
+    for group in query_groups:
+        for ap in group.get("access_patterns") or []:
+            engine = ap.get("engine")
+            if (
+                (engine in engines if engines is not None else engine not in skip_engines)
+                and ap.get("in_scope", True) is not False
+                and isinstance(ap.get("design_rps"), (int, float))
+                and query_ids & {str(q) for q in ap.get("query_ids") or []}
+            ):
+                seen.setdefault((str(engine), str(ap.get("pattern_id"))), float(ap["design_rps"]))
+    return sum(seen.values())
+
+
+def build_wave_checks(
+    waves: list[dict] | None,
+    query_groups: list[dict],
+    query_assignments: list[dict],
+    cache_overlay: dict | None,
+) -> list[str]:
+    """One post-migration check per migration wave (#645), from ``report.json`` facts.
+
+    Each names the wave and its engines, the queries that move in it (a cutover wave
+    carries ``cutover_query_count``, the whole workload), their source latency baseline
+    (``execution_time_ms_avg`` weighted by ``frequency_per_hour``) and the design
+    request rate of the same queries' in-scope access patterns; a cache wave names the
+    hot reads it fronts and their share of calls. The check gates the next wave. Cache
+    figures use the Engineering Report's formatter. No waves, no checks: nothing here is
+    invented beyond what the report states.
+    """
+    from src.report.formatting import fmt_num  # the report's one number formatter
+
+    waves = [w for w in waves or [] if isinstance(w, dict) and w.get("wave") is not None]
+    overlay = cache_overlay or {}
+    cache_engines = {str(w["engines"][0]) for w in waves if w.get("fronts") and w.get("engines")}
+    cache_engines |= {str(overlay["engine"])} if overlay.get("engine") else set()
+    checks: list[str] = []
+    for i, wave in enumerate(waves):
+        gate = f" before starting wave {waves[i + 1]['wave']}" if i + 1 < len(waves) else ""
+        label = _wave_label(wave)
+        if wave.get("fronts"):
+            n = wave.get("query_count")
+            reads = _count(n, "hot read", "hot reads") if n else "the hot reads"
+            text = (
+                f"After {label}: track the cache hit rate for the {reads} it fronts "
+                f"on {display_name(wave['fronts'])}"
+            )
+            detail = []
+            if overlay.get("call_share_percent") is not None:
+                detail.append(f"{fmt_num(overlay['call_share_percent'], 1)}% of calls")
+            if overlay.get("calls_per_second") is not None:
+                detail.append(f"{fmt_num(overlay['calls_per_second'], 1)} calls/s")
+            if detail:
+                text += f" ({', '.join(detail)})"
+            checks.append(text + f" and compare their latency with the source{gate}.")
+            continue
+        engines = {str(e) for e in wave.get("engines") or []}
+        cutover = wave.get("cutover_query_count")
+        n = cutover if cutover else wave.get("query_count")
+        ids = {
+            str(qa["query_id"])
+            for qa in query_assignments
+            if qa.get("query_id")
+            and qa.get("in_scope", True) is not False
+            and (cutover or qa.get("assigned_engine") in engines)
+        }
+        queries = _count(n, "query", "queries") if n else "its queries"
+        baseline = _wave_baseline_ms(ids, query_groups)
+        text = f"After {label}: compare the latency of {queries} with their source baseline"
+        if baseline:
+            text += f" (weighted average {fmt_num(baseline, 2)} ms)"
+        rps = _wave_design_rps(ids, query_groups, None if cutover else engines, cache_engines)
+        if rps > 0:
+            text += (
+                f" and check the engine sustains the design rate of {fmt_num(rps, 1)} requests/s"
+            )
+        checks.append(text + f"{gate}.")
+    return checks
 
 
 def designed_and_not_designed_engines(ranking: list[dict]) -> tuple[list[str], list[str]]:
