@@ -69,7 +69,7 @@ export const normalizeTradeoff = (item, fallbackEngine = 'unknown') => {
 
 // A risk whose description has no real text after its "[engine] " prefix
 // (or the legacy "[engine] unknown:" pattern -- see #210) must not be counted or
-// rendered. Mirrors src/report/renderers.py's filtered_risks/_risk_has_content so
+// rendered. Mirrors src/report/risks.py's filtered_risks/_risk_has_content so
 // the UI's risk count can't diverge from the decision report, engineering report
 // and executive summary deck (#201 found exactly this kind of divergence: 9 vs 12).
 export const riskHasContent = (description) => {

@@ -11,7 +11,7 @@ from here instead means a new engine added to the rule only has to be added
 once.
 
 These are deliberately the narrow sets the wave rule itself cares about, not
-the broader membership ``src.report.renderers._CACHE_ENGINES`` /
+the broader membership ``src.report.engine_roles._CACHE_ENGINES`` /
 ``_RELATIONAL_ENGINES`` use for whole-report role classification (which also
 recognize ``memorydb`` and generic ``aurora``): the wave rule only ever
 sequences the six engines synthesis can target.
@@ -43,7 +43,7 @@ NAMED_ENGINES: frozenset[str] = (
 # real owner (``SEARCH_ENGINES``, #303). A table's ``primary_engine`` must
 # always be a system-of-record owner. Single source of truth for the resolver
 # (``assignment_resolver.derive_table_assignments``) and the wave builder's own
-# ``migration_waves._durable_owner``.
+# ``migration_wave_tables._durable_owner``.
 NON_OWNER_ENGINES: frozenset[str] = CACHE_ENGINES | SEARCH_ENGINES
 
 

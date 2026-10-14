@@ -11,7 +11,7 @@ import ExpandableSection from "@cloudscape-design/components/expandable-section"
  * their notice text and in whether there is a warnings list to expand:
  *
  * - The synthesis summary's `text` already names the check-specific reason
- *   (`fallbackWithheldReason`, ported from `renderers.fallback_withheld_reason`)
+ *   (`fallbackWithheldReason`, ported from `formatting.fallback_withheld_reason`)
  *   and passes no `warnings`, so no expandable section renders.
  * - The reality-check summary has only one check, so there is no comparable
  *   reason to name; its raw `warnings` render in an expandable section

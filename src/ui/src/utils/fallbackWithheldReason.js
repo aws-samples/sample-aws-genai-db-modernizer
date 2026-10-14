@@ -3,7 +3,7 @@
  * (#393, ported for #269; #536 added the risk-count reason).
  *
  * Mirrors ``_FALLBACK_REASONS`` / ``fallback_withheld_reason`` in
- * src/report/renderers.py. Four independent high-confidence checks can
+ * src/report/formatting.py. Four independent high-confidence checks can
  * reject the generated summary (``apply_synthesis_llm_output``:
  * ``check_summary_grounding``, ``check_summary_internal_leaks``,
  * ``check_summary_wave_order``, ``check_summary_risk_counts``), each stamping
@@ -18,7 +18,7 @@
  * does not apply there -- AssignmentGate.js shows its raw warnings instead.
  */
 // Exported (not just module-local) so fallbackWithheldReason.parity.test.js
-// can assert this table still matches renderers.py's own, marker for marker.
+// can assert this table still matches formatting.py's own, marker for marker.
 export const FALLBACK_REASONS = [
   ['internal field', "named one of this codebase's internal field names"],
   ['migration waves move', 'stated a migration order that contradicts the roadmap'],

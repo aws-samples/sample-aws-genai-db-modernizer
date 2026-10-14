@@ -72,7 +72,7 @@ export function buildAuroraTables(content) {
  * sample, so copying one onto every one of them was pure duplication. Every
  * other engine's entry still carries the string directly as `description`.
  * Mirrors `reason_text_for` in `synthesis_report.py` and `_reason_text_for`
- * in `src/report/renderers.py` (Python has no JS, so this is a third copy of
+ * in `src/report/engineering_report.py` (Python has no JS, so this is a third copy of
  * the same small lookup, not a shared import).
  */
 export function reasonTextFor(group, accessPattern) {

@@ -68,7 +68,7 @@ const ENGINE_BADGE_COLORS = {
   aurora: 'green',
 };
 
-// #373: mirrors src/report/renderers.py's .risk/.sev CSS -- red for the
+// #373: mirrors src/report/decision_report.py's .risk/.sev CSS -- red for the
 // error-level severities (CRITICAL and HIGH, kept equally severe, #270),
 // amber for MEDIUM, green for LOW. `stopped` is an unrated severity (#270
 // round-1 review) -- grey, matching the deck's muted UNRATED accent.
@@ -309,7 +309,7 @@ const AnalysisResultsPage = memo(() => {
   // #269: whether this synthesis summary was replaced by its deterministic
   // fallback (a grounding check rejected the generated text against the final
   // records, #205) -- the Decision Report already says so when it is
-  // (src/report/renderers.py); this keeps the Results page in agreement with it.
+  // (src/report/decision_report.py); this keeps the Results page in agreement with it.
   const summaryFallback = summaryFallbackInfo(
     synthesis?.summary_source,
     synthesis?.summary_validation_warnings,
@@ -347,7 +347,7 @@ const AnalysisResultsPage = memo(() => {
   // list, no severity tabs, no overall_risk_level, nothing, even for a
   // CRITICAL risk. openRisks/resolvedRisksList use the same content filter
   // (filterRisksWithContent) the decision/engineering reports use
-  // (renderers.filtered_risks/resolved_risks), so this view's risk count can
+  // (risks.filtered_risks/resolved_risks), so this view's risk count can
   // never disagree with theirs (#201). risksBySeverity always has one bucket
   // per severity -- including CRITICAL -- even when it is empty, so a
   // CRITICAL risk is never styled or tabbed the way #270 found HIGH/MEDIUM/LOW
@@ -372,7 +372,7 @@ const AnalysisResultsPage = memo(() => {
   // if this were added without the same unknown-baseline handling. known is
   // false both for an explicit current_cost_known: false and for an older
   // report with no current_cost_known field at all whose current_monthly_cost
-  // is still 0 -- the same rule renderers._cost_baseline_text uses, so this
+  // is still 0 -- the same rule formatting._cost_baseline_text uses, so this
   // tile can never disagree with the decision/engineering reports (see
   // utils/tcoAnalysis.js).
   const costBaseline = useMemo(

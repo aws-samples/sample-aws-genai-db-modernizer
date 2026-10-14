@@ -1,5 +1,5 @@
 /**
- * #393 / #269: ports ``src/report/renderers.py``'s ``fallback_withheld_reason``
+ * #393 / #269: ports ``src/report/formatting.py``'s ``fallback_withheld_reason``
  * (and its ``_FALLBACK_REASONS`` table) so the Results page and the standalone
  * HTML export name the same specific reason the Decision Report does, instead
  * of a hard-coded one that could show even when a different check actually

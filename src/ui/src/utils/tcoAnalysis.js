@@ -7,7 +7,7 @@
  * that was attempted and came out even, not as "no comparison was possible".
  *
  * Since #380, `tco_analysis.current_cost_known` says which case it is.
- * `isCostBaselineUnknown` matches `src/report/renderers.py::_cost_baseline_text`
+ * `isCostBaselineUnknown` matches `src/report/formatting.py::_cost_baseline_text`
  * exactly (#334 review) -- the one rule every deliverable (the decision and
  * engineering reports there; this UI, its HTML export, and
  * `analysis_report.py::_interactive_cost_baseline_stats` here) shares, so
@@ -27,7 +27,7 @@ export function isCostBaselineUnknown(tco) {
   return false;
 }
 
-/** "0%", "44%", "44.3%" -- trailing zeros dropped, mirrors renderers.fmt_num(x, 1). */
+/** "0%", "44%", "44.3%" -- trailing zeros dropped, mirrors formatting.fmt_num(x, 1). */
 export function formatSavingsPercent(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '0%';

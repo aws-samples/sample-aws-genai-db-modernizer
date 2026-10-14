@@ -24,7 +24,7 @@ describe('splitRiskDescription', () => {
   });
 });
 
-describe('riskHasContent / filterRisksWithContent (#201 parity with renderers.filtered_risks)', () => {
+describe('riskHasContent / filterRisksWithContent (#201 parity with risks.filtered_risks)', () => {
   it('is false for an empty body or a bare "unknown:" after the engine tag', () => {
     expect(riskHasContent('[dynamodb] unknown:')).toBe(false);
     expect(riskHasContent('[dynamodb]')).toBe(false);
@@ -103,7 +103,7 @@ describe('groupRisksBySeverity', () => {
   });
 });
 
-describe('mitigationRepeatsDescription (mirrors renderers._repeats)', () => {
+describe('mitigationRepeatsDescription (mirrors risks._repeats)', () => {
   it('is true when the mitigation text already appears in the description', () => {
     expect(mitigationRepeatsDescription('Keep it on Aurora.', 'Risk text. Keep it on Aurora.')).toBe(true);
   });

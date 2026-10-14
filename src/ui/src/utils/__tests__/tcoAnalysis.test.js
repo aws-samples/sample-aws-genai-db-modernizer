@@ -42,7 +42,7 @@ describe('isCostBaselineUnknown (#334)', () => {
 });
 
 describe('formatSavingsPercent', () => {
-  it('drops trailing zeros, like renderers.fmt_num', () => {
+  it('drops trailing zeros, like formatting.fmt_num', () => {
     expect(formatSavingsPercent(44)).toBe('44%');
     expect(formatSavingsPercent(44.0)).toBe('44%');
     expect(formatSavingsPercent(44.3)).toBe('44.3%');

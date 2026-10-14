@@ -3,7 +3,7 @@
  * when `summaryFallbackInfo(...)` reports `isFallback` -- never for a normal
  * LLM summary, and never for an older artifact with no `summary_source`
  * field at all. The reason clause comes from `fallbackWithheldReason`, ported
- * from `renderers.fallback_withheld_reason` (#393).
+ * from `formatting.fallback_withheld_reason` (#393).
  *
  * Round-2 review: exercises the real `SummaryFallbackNotice` component
  * (src/ui/src/components/SummaryFallbackNotice.js) that AnalysisResults-02.js

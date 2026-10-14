@@ -81,7 +81,7 @@ FEATURE_SIGNALS: tuple[str, ...] = (*PRIMARY_FEATURE_SIGNALS, "babelfish_compati
 
 # Human-readable labels for FEATURE_SIGNALS (#381 review): any user-visible text that
 # lists which feature(s) tipped a choice -- wave 1's rationale
-# (``migration_waves._aurora_wave``), this module's own ``reason`` trace -- names the
+# (``migration_wave_builders._aurora_wave``), this module's own ``reason`` trace -- names the
 # feature this way, never the bare internal identifier.
 FEATURE_LABELS: dict[str, str] = {
     "sequences": "sequences",
@@ -374,7 +374,7 @@ def choose_heterogeneous_engine(
     features and a one-line human-readable reason -- everything
     :class:`src.contracts.assignment_models.AuroraEngineChoice` records. The reason never
     claims a feature-driven win "earned" the move when it was really a tie-break or an
-    unneeded default (#381 review) -- callers (``migration_waves._aurora_wave``) should
+    unneeded default (#381 review) -- callers (``migration_wave_builders._aurora_wave``) should
     phrase it the same way.
 
     ``pool`` with only one Aurora engine (every other caller downstream of the #381

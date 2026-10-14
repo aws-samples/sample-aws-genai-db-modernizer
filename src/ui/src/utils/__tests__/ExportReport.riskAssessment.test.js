@@ -33,9 +33,9 @@ const data = {
         risks: [
           { risk_id: 'RISK-900', severity: 'CRITICAL', description: '[dynamodb] no serving engine for an in-scope query' },
           { risk_id: 'RISK-001', severity: 'HIGH', description: '[dynamodb] no server-side aggregation', mitigation: 'Pre-compute aggregates' },
-          // Contentless after its [engine] prefix -- renderers.filtered_risks drops this too (#201).
+          // Contentless after its [engine] prefix -- risks.filtered_risks drops this too (#201).
           { risk_id: 'RISK-002', severity: 'HIGH', description: '[documentdb] unknown:' },
-          // Mitigation repeats the body -- renderers._repeats would state this once, not twice.
+          // Mitigation repeats the body -- risks._repeats would state this once, not twice.
           { risk_id: 'RISK-003', severity: 'MEDIUM', description: '[opensearch] Keep it on Aurora MySQL.', mitigation: 'Keep it on Aurora MySQL.' },
         ],
         resolved_risks: [
@@ -100,7 +100,7 @@ describe('buildRiskAssessment (#373)', () => {
 
   it('MEDIUM text is dark brown, not the raw #ffc107 amber (#421: axe color-contrast, 1.63:1 on white)', () => {
     // #5b4708 on white is the decision report's own .sev.MEDIUM text color
-    // (src/report/renderers.py), which passes at 5.48:1 paired with #ffc107.
+    // (src/report/decision_report.py), which passes at 5.48:1 paired with #ffc107.
     const medHeading = [...container.querySelectorAll('div')].find((d) => d.textContent === 'MEDIUM (1)');
     expect(medHeading.style.color.toLowerCase()).toBe('rgb(91, 71, 8)'); // #5b4708
     expect(medHeading.style.color.toLowerCase()).not.toBe('rgb(255, 193, 7)'); // #ffc107

@@ -327,7 +327,7 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true }
  * Reads `safety_net_notes` only, never the full `notes` (#459 review): that
  * field also carries customer-edit notes (full query hashes) and the
  * legacy-migration note, neither of which is customer-facing -- those stay in
- * the engineering report only (`src.report.renderers._cache_layer_md`).
+ * the engineering report only (`src.report.cache_layer._cache_layer_md`).
  *
  * `Array.isArray` guarded (not a truthy check): a malformed or missing field
  * must render nothing, not throw on `.map()`. Always an array, never null, so

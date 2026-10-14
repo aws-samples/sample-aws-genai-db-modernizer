@@ -640,9 +640,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '\n';
   // #373: synthesis.risk_assessment was never read here -- no risk list, no
   // severity grouping, no overall_risk_level, including for a CRITICAL risk.
-  // Mirrors renderers.py's filtered_risks/_risk_has_content/_risk_engine_and_body
+  // Mirrors risks.py's filtered_risks/_risk_has_content/_risk_engine_and_body
   // (so the risk count here can never disagree with the decision/engineering
-  // reports, #201) and _risk_tile_class (CRITICAL and HIGH are equally severe
+  // reports, #201) and decision_report._risk_tile_class (CRITICAL and HIGH are equally severe
   // -- "error"/red -- never downgraded to a warning the way #270 found the
   // deleted ReportResults.js page treating CRITICAL). Severities are always
   // shown in CRITICAL/HIGH/MEDIUM/LOW order, each with its count, even at zero.
@@ -682,7 +682,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   // background) and sevBadgeFg (badge foreground, paired with sevAccent as
   // the badge background) both resolve to colors verified >= 4.5:1 for every
   // severity -- warning's dark brown #5b4708 reuses the decision report's own
-  // ``.sev.MEDIUM`` text color (src/report/renderers.py), which already pairs
+  // ``.sev.MEDIUM`` text color (src/report/decision_report.py), which already pairs
   // with #ffc107 at 5.48:1. unrated's #6b7280 is already used as a text
   // color on white elsewhere in this codebase (contrast ratio is symmetric,
   // so it is also valid as a background behind white badge text, #270
@@ -696,7 +696,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<div style="margin-bottom: 16px;"><span class="badge" style="background: \' + sevAccent[lvl] + \'; color: \' + sevBadgeFg[lvl] + \';">Overall risk: \' + escapeHtml(ra.overall_risk_level) + \'</span></div>\';\n';
   script += '      }\n';
   // #434: "0 open risks" must not read as "0 migration risk" -- the same
-  // reminder every deliverable's no-open-risk state carries (renderers.py's
+  // reminder every deliverable's no-open-risk state carries (risks.py's
   // NO_OPEN_RISKS_CAVEAT; JS cannot import it, so this copy is kept in sync by
   // hand).
   script += '      if (openRisks.length === 0) {\n';
@@ -1599,16 +1599,16 @@ export const generateHTMLReport = (data) => {
 
   // #269: whether the summary above is the deterministic fallback (a grounding
   // check rejected the generated text against the final records, #205) -- the
-  // Decision Report already says so when it is (src/report/renderers.py); this
+  // Decision Report already says so when it is (src/report/decision_report.py); this
   // keeps the standalone export in agreement with it, in the same wording
-  // (renderers.render_decision_report_html's own note: "The generated
+  // (decision_report.render_decision_report_html's own note: "The generated
   // narrative was withheld because it {reason}; this summary is built from
   // the effective assignment."). This file is i18n-exempt (English-only, see
   // header), so the wording is a fixed literal, matching
   // AnalysisResults-02.js's analysis-results-v2.executive-summary.fallback-notice
   // key and src/report/analysis_report.py's _summary_fallback_note (kept in
   // sync by hand, same reason as CACHE_LAYER_SUFFIX above). fallbackWithheldReason
-  // ports renderers.fallback_withheld_reason's own reason mapping.
+  // ports formatting.fallback_withheld_reason's own reason mapping.
   const summaryFallback = summaryFallbackInfo(
     results?.synthesis?.summary_source,
     results?.synthesis?.summary_validation_warnings,
@@ -1639,7 +1639,7 @@ export const generateHTMLReport = (data) => {
   // savings_percent at a bare 0 -- indistinguishable from a real zero-savings
   // outcome. Mirrors utils/tcoAnalysis.js's costBaselineStats (also used by
   // AnalysisResults-02.js), which matches the decision/engineering reports'
-  // renderers._cost_baseline_text exactly (#334 review), including for an
+  // formatting._cost_baseline_text exactly (#334 review), including for an
   // older report with no current_cost_known field at all whose
   // current_monthly_cost is still a literal 0 (see tcoAnalysis.js for why).
   // This file is i18n-exempt (English-only, see header), so the "unknown"

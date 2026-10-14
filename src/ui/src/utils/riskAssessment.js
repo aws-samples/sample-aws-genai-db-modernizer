@@ -6,16 +6,16 @@
  * `LOW` (`src/contracts/synthesis_output.py::Risk.severity`). A risk's
  * description carries its engine as a leading `[engine]` tag (there is no
  * separate `engine` field on an open risk) -- `splitRiskDescription` mirrors
- * `src/report/renderers.py::_risk_engine_and_body` so the UI shows the same
+ * `src/report/risks.py::_risk_engine_and_body` so the UI shows the same
  * engine/body split the decision and engineering reports do.
  *
- * `filterRisksWithContent` mirrors `renderers.py::filtered_risks` /
+ * `filterRisksWithContent` mirrors `risks.py::filtered_risks` /
  * `_risk_has_content`: a defensive guard against a risk whose description is
  * empty (or only `"unknown:"`) after its `[engine]` prefix is removed, so this
  * view's risk count can never disagree with the decision/engineering reports'
  * (#201).
  *
- * Severity styling mirrors `renderers.py::_risk_tile_class`: CRITICAL is at
+ * Severity styling mirrors `decision_report.py::_risk_tile_class`: CRITICAL is at
  * least as severe as HIGH (both map to `error`/red), never downgraded to a
  * plain warning (#270: the deleted `ReportResults.js` page's bug, where
  * CRITICAL fell back to the same styling as a warning and had no tab of its

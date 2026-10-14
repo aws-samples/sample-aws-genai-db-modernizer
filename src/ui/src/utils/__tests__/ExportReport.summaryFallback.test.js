@@ -2,10 +2,10 @@
  * #269: the standalone HTML export must say when the executive summary shown
  * is the deterministic fallback (a grounding check rejected the generated
  * text, same fact the Decision Report already states via
- * `summary_source === "deterministic_fallback"`, src/report/renderers.py),
+ * `summary_source === "deterministic_fallback"`, src/report/decision_report.py),
  * in the same wording the Decision Report uses, with the same
  * check-specific reason (`fallbackWithheldReason`, ported from
- * `renderers.fallback_withheld_reason`).
+ * `formatting.fallback_withheld_reason`).
  *
  * No script execution needed here -- the fallback note is part of the shell
  * `generateHTMLReport` returns, built the same way `safeSummary` is.
