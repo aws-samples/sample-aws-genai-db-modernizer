@@ -472,3 +472,135 @@ class TestNoSqlKeywordReturnedAsTable:
         for table in result[0]["tables_accessed"]:
             bare_name = table.split(".")[-1].strip('`"[]')
             assert bare_name.upper() not in self._KEYWORDS
+
+
+class TestSchemaQualifiedTableResolution:
+    """#653: an offline collection keys every table as ``<database>.<table>``
+    (``_build_tables``), so a schema-qualified reference to a collected table
+    must resolve to that id, or scoring never finds the table's
+    recommendation."""
+
+    @staticmethod
+    def _tables(sql: str, schemas: dict[str, set[str]] | None = None) -> list[str]:
+        from src.tools.database.offline_parser import _transform_queries
+
+        known = {"EventLog", "Product"}
+        if schemas is None:
+            schemas = {"EventLog": {"Audit"}, "Product": {"dbo"}}
+        result = _transform_queries(
+            [{"query_text": sql}], "trailgear", known, table_schemas=schemas
+        )
+        tables: list[str] = result[0]["tables_accessed"]
+        return tables
+
+    def test_bracketed_schema_qualified_insert_resolves(self):
+        sql = "INSERT INTO [Audit].[EventLog] ([EventType]) VALUES (@EventType)"
+        assert self._tables(sql) == ["trailgear.EventLog"]
+
+    def test_schema_qualified_select_and_join_resolve(self):
+        sql = (
+            "SELECT TOP (200) e.[EventID] FROM [Audit].[EventLog] e "
+            "JOIN [dbo].[Product] p ON p.[ProductID] = e.[EntityID]"
+        )
+        assert self._tables(sql) == ["trailgear.EventLog", "trailgear.Product"]
+
+    def test_schema_match_is_case_insensitive(self):
+        # SQL Server compares schema names case-insensitively by default.
+        assert self._tables("SELECT * FROM AUDIT.EventLog") == ["trailgear.EventLog"]
+
+    def test_database_name_as_qualifier_resolves(self):
+        # MySQL spells a qualified name <database>.<table>.
+        assert self._tables("SELECT * FROM `trailgear`.`Product`") == ["trailgear.Product"]
+
+    def test_other_schema_is_kept_as_written(self):
+        # [Archive].[EventLog] is not the collected Audit.EventLog table.
+        assert self._tables("SELECT * FROM [Archive].[EventLog]") == ["Archive.EventLog"]
+
+    def test_unknown_table_is_kept_as_written(self):
+        assert self._tables("SELECT * FROM [Audit].[LoginHistory]") == ["Audit.LoginHistory"]
+
+    def test_column_reference_after_from_is_not_resolved(self):
+        # EXTRACT(EPOCH FROM topics.id): "id" is not a collected table.
+        assert self._tables("SELECT EXTRACT(EPOCH FROM EventLog.id) FROM Product") == [
+            "EventLog.id",
+            "trailgear.Product",
+        ]
+
+    def test_table_without_reported_schema_resolves(self):
+        assert self._tables("SELECT * FROM [Audit].[EventLog]", schemas={}) == [
+            "trailgear.EventLog"
+        ]
+
+    def test_postgres_public_prefix_resolves(self):
+        from src.tools.database.offline_parser import _transform_queries
+
+        result = _transform_queries(
+            [{"query_text": 'SELECT * FROM public."topics"'}],
+            "discourse",
+            {"topics"},
+            table_schemas={"topics": {"public"}},
+        )
+        assert result[0]["tables_accessed"] == ["discourse.topics"]
+
+    def test_parse_offline_collection_passes_table_schemas(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = {
+            "metadata": {"database_name": "trailgear", "engine": "sqlserver"},
+            "tables": [
+                {"table_name": "EventLog", "schema_name": "Audit", "table_id": "Audit.EventLog"}
+            ],
+            "queries": [{"query_text": "INSERT INTO [Audit].[EventLog] ([A]) VALUES (@A)"}],
+        }
+        parsed = parse_offline_collection(data)
+        assert parsed["queries"][0]["tables_accessed"] == ["trailgear.EventLog"]
+
+    def test_qualified_and_bare_reference_to_one_table_dedupe(self):
+        sql = "SELECT * FROM [dbo].[Product] p JOIN Product q ON q.[ParentID] = p.[ProductID]"
+        assert self._tables(sql) == ["trailgear.Product"]
+
+    def test_table_name_in_two_collected_schemas_is_kept_as_written(self):
+        # Audit.EventLog and Archive.EventLog both get the id trailgear.EventLog
+        # (#382), so no single id is right: neither may resolve to the other.
+        schemas = {"EventLog": {"Audit", "Archive"}, "Product": {"dbo"}}
+        assert self._tables("SELECT * FROM [Audit].[EventLog]", schemas) == ["Audit.EventLog"]
+        assert self._tables("SELECT * FROM [Archive].[EventLog]", schemas) == ["Archive.EventLog"]
+        assert self._tables("SELECT * FROM [trailgear].[EventLog]", schemas) == [
+            "trailgear.EventLog"
+        ]
+
+    def test_two_schema_collection_through_parse_offline_collection(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = {
+            "metadata": {"database_name": "trailgear", "engine": "sqlserver"},
+            "tables": [
+                {"table_name": "EventLog", "schema_name": "Audit"},
+                {"table_name": "EventLog", "schema_name": "Archive"},
+            ],
+            "queries": [
+                {"digest": "a", "query_text": "SELECT * FROM [Audit].[EventLog]"},
+                {"digest": "b", "query_text": "SELECT * FROM [Archive].[EventLog]"},
+            ],
+        }
+        queries = parse_offline_collection(data)["queries"]
+        assert [q["tables_accessed"] for q in queries] == [["Audit.EventLog"], ["Archive.EventLog"]]
+
+    def test_three_part_name_resolves_by_its_schema_and_table(self):
+        # T-SQL's database.schema.table: the last two parts name the table.
+        assert self._tables("SELECT * FROM [trailgear].[Audit].[EventLog]") == [
+            "trailgear.EventLog"
+        ]
+        assert self._tables("INSERT INTO trailgear.dbo.Product (a) VALUES (@a)") == [
+            "trailgear.Product"
+        ]
+
+    def test_three_part_name_in_another_database_is_kept_as_written(self):
+        assert self._tables("SELECT * FROM [Reporting].[Audit].[EventLog]") == [
+            "Reporting.Audit.EventLog"
+        ]
+
+    def test_three_part_name_with_another_schema_is_kept_as_written(self):
+        assert self._tables("SELECT * FROM [trailgear].[Archive].[EventLog]") == [
+            "trailgear.Archive.EventLog"
+        ]

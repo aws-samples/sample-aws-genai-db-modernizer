@@ -9,6 +9,7 @@ existing _build_tables, _build_queries, etc. work unchanged.
 import json
 import logging
 import re
+from collections.abc import Mapping
 
 import boto3
 
@@ -127,11 +128,14 @@ def parse_offline_collection(data: dict) -> dict:
     # Assemble tables with nested children
     db_name = metadata.get("database_name", "unknown") if isinstance(metadata, dict) else "unknown"
     known_table_names: set[str] = set()
+    table_schemas: dict[str, set[str]] = {}
     tables = []
     for t in data.get("tables") or []:
         tbl_name = t["table_name"]
         table_id = t.get("table_id") or f"{db_name}.{tbl_name}"
         known_table_names.add(tbl_name)
+        if t.get("schema_name"):
+            table_schemas.setdefault(tbl_name, set()).add(str(t["schema_name"]))
         tables.append(
             {
                 **t,
@@ -163,7 +167,9 @@ def parse_offline_collection(data: dict) -> dict:
         "views": data.get("views", []),
         "procedures": data.get("procedures", []),
         "triggers": data.get("triggers", []),
-        "queries": _transform_queries(data.get("queries") or [], db_name, known_table_names),
+        "queries": _transform_queries(
+            data.get("queries") or [], db_name, known_table_names, table_schemas=table_schemas
+        ),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
         "wait_events": data.get("wait_events", []),
@@ -270,11 +276,68 @@ def _merge_query_variants(raw: list[dict]) -> list[dict]:
     return merged_rows
 
 
-def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str]) -> list[dict]:
+def _resolve_qualified_table(
+    qualifiers: list[str],
+    table: str,
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]],
+) -> str:
+    """The table id for a qualified reference ``[database.]schema.table`` (#653).
+
+    ``_build_tables`` keys every offline table as ``<database>.<table>``, whatever
+    schema the collection reports for it, so ``[Audit].[EventLog]`` has to become
+    ``trailgear.EventLog`` to match its own table recommendation. The qualifier must
+    name that table's own schema (compared case-insensitively, as SQL Server and
+    unquoted PostgreSQL/Oracle names do) or the database itself (MySQL's
+    ``db.table``); a table the collection reports no schema for accepts any
+    qualifier. A T-SQL three-part name ``database.schema.table`` resolves the same
+    way by its last two parts when the first names this database.
+
+    Anything else is kept as written: an unknown table, a table in a different
+    schema or database, ``alias.column`` after ``FROM``, and a table name the
+    collection holds in more than one schema (``Audit.EventLog`` and
+    ``Archive.EventLog`` both get the id ``<database>.EventLog``, #382, so no
+    single id is the right one).
+
+    Table names still match case-sensitively, the same as bare names do.
+    """
+    written = ".".join([*qualifiers, table])
+    if table not in known_table_names:
+        return written
+    if len(qualifiers) == 2:
+        if qualifiers[0].lower() != db_name.lower():
+            return written
+        qualifiers = qualifiers[1:]
+    qualifier = qualifiers[0].lower()
+    schemas = {s.lower() for s in table_schemas.get(table, ())}
+    if len(schemas) > 1:
+        logger.info(
+            "offline_parser: %s kept as written: table %s is collected in %d schemas",
+            written,
+            table,
+            len(schemas),
+        )
+        return written
+    if not schemas or qualifier in schemas or qualifier == db_name.lower():
+        return f"{db_name}.{table}"
+    return written
+
+
+def _transform_queries(
+    raw: list[dict],
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]] | None = None,
+) -> list[dict]:
     """Transform raw MySQL performance_schema rows into the format _build_queries expects.
 
     Maps field names from the SQL collection script output to the same
     keys that MySQLRemoteCollector.collect_query_patterns() produces.
+
+    ``table_schemas`` maps a collected table's bare name to the schema(s) the
+    collection reports for it, so a schema-qualified reference resolves to the
+    table's own id (see ``_resolve_qualified_table``, #653).
 
     Rows that share a ``digest`` are merged first (see
     ``_merge_query_variants``), as a safety net against collections where
@@ -300,11 +363,13 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
         #   FROM "table"       (PostgreSQL/Oracle double quote)
         #   FROM [table]       (SQL Server bracket)
         #   FROM schema.table, FROM [schema].[table], FROM `schema`.`table`
+        #   FROM database.schema.table (T-SQL three-part name)
         #   REFRESH MATERIALIZED VIEW [CONCURRENTLY] <name> (PostgreSQL)
-        # The named groups capture optional schema and the table.
+        # The named groups capture up to two qualifiers and the table.
         table_re = re.compile(
             r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+"
-            r'(?:[`"\[]?(?P<schema>\w+)[`"\]]?\s*\.\s*)?'
+            r'(?:[`"\[]?(?P<qual1>\w+)[`"\]]?\s*\.\s*)?'
+            r'(?:[`"\[]?(?P<qual2>\w+)[`"\]]?\s*\.\s*)?'
             r'[`"\[]?(?P<table>\w+)[`"\]]?',
             re.I,
         )
@@ -315,31 +380,31 @@ def _transform_queries(raw: list[dict], db_name: str, known_table_names: set[str
             query_text,
             flags=re.I,
         )
-        raw_tables: list[str] = []
+        tables_accessed: list[str] = []
         for m_raw in table_re.finditer(scanned_query):
-            schema = m_raw.group("schema")
+            # Up to two qualifiers: schema.table, or T-SQL's database.schema.table.
+            qualifiers = [q for q in (m_raw.group("qual1"), m_raw.group("qual2")) if q]
             table = m_raw.group("table")
             if not table:
                 continue
             # Skip system catalogs / RDS-internal references
-            if schema and schema.lower() in ("sys", "information_schema"):
+            if qualifiers and qualifiers[-1].lower() in ("sys", "information_schema"):
                 continue
             if table.lower() in ("sys", "information_schema"):
                 continue
-            raw_tables.append(f"{schema}.{table}" if schema else table)
-        # Dedupe preserving order
-        raw_tables = list(dict.fromkeys(raw_tables))
-
-        # Prefix with db_name if the bare-name table is known
-        tables_accessed: list[str] = []
-        for t in raw_tables:
-            # If the regex captured "schema.table", keep as-is (already qualified)
-            if "." in t:
-                tables_accessed.append(t)
-            elif t in known_table_names:
-                tables_accessed.append(f"{db_name}.{t}")
+            if qualifiers:
+                tables_accessed.append(
+                    _resolve_qualified_table(
+                        qualifiers, table, db_name, known_table_names, table_schemas or {}
+                    )
+                )
+            # Prefix with db_name if the bare-name table is known
+            elif table in known_table_names:
+                tables_accessed.append(f"{db_name}.{table}")
             else:
-                tables_accessed.append(t)
+                tables_accessed.append(table)
+        # A qualified and a bare reference to one table resolve to the same id.
+        tables_accessed = list(dict.fromkeys(tables_accessed))
         if not tables_accessed:
             tables_accessed = ["unknown"]
 
